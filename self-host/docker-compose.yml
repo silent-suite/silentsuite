@@ -1,0 +1,103 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: silentsuite-postgres
+    restart: unless-stopped
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_DB: silentsuite
+      POSTGRES_USER: silentsuite_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U silentsuite_admin -d silentsuite"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    shm_size: 128mb
+    networks:
+      - internal
+
+  etebase:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: etebase-server
+    restart: unless-stopped
+    expose:
+      - "3735"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - etebase_data:/data
+      - ./etebase-server.ini:/app/etebase-server.ini:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ETEBASE_CORS_ALLOWED_ORIGINS=https://${DOMAIN}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r = urllib.request.Request('http://localhost:3735/', headers={'Host': 'sync.localhost'}); urllib.request.urlopen(r)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - internal
+      - proxy
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+      args:
+        NEXT_PUBLIC_SELF_HOSTED: "true"
+        NEXT_PUBLIC_ETEBASE_SERVER_URL: https://sync.${DOMAIN}
+    container_name: silentsuite-web
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      NEXT_PUBLIC_ETEBASE_SERVER_URL: https://sync.${DOMAIN}
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - proxy
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: silentsuite-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN}
+    depends_on:
+      - web
+      - etebase
+    networks:
+      - proxy
+
+volumes:
+  pgdata:
+  etebase_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:
+    driver: bridge
+  proxy:
+    driver: bridge

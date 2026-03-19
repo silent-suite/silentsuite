@@ -1,0 +1,566 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 252 253 255;
+  --surface: 243 245 249;
+  --foreground: 17 27 39;
+  --primary: 16 185 129;
+  --primary-hover: 5 150 105;
+  --muted: 100 116 139;
+  --border: 226 232 240;
+  color-scheme: light;
+}
+
+.dark {
+  --background: 10 16 24;
+  --surface: 17 27 39;
+  --foreground: 217 223 232;
+  --primary: 52 211 153;
+  --primary-hover: 16 185 129;
+  --muted: 141 159 186;
+  --border: 37 53 73;
+  color-scheme: dark;
+}
+
+/* Schedule-X calendar theme overrides */
+.sx-silentsuite-calendar {
+  --sx-color-primary: rgb(var(--primary));
+  --sx-color-on-primary: #fff;
+  --sx-color-primary-container: rgb(var(--primary) / 0.15);
+  --sx-color-on-primary-container: rgb(var(--primary));
+  --sx-color-surface: rgb(var(--background));
+  --sx-color-on-surface: rgb(var(--foreground));
+  --sx-color-surface-container-low: rgb(var(--surface));
+  --sx-color-surface-container-high: rgb(var(--surface));
+  --sx-color-outline: rgb(var(--border));
+  --sx-color-outline-variant: rgb(var(--border));
+  --sx-color-on-surface-variant: rgb(var(--muted));
+}
+
+.sx-silentsuite-calendar .sx-react-calendar-wrapper {
+  width: 100%;
+  height: 100%;
+}
+
+.sx-silentsuite-calendar .sx__calendar-wrapper {
+  border: 1px solid rgb(var(--border));
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+/* Style schedule-x's built-in header to match our theme */
+.sx-silentsuite-calendar .sx__calendar-header {
+  border-bottom: 1px solid rgb(var(--border));
+}
+
+/* ==========================================================================
+   GNOME Calendar Visual Overrides
+   Scoped under .sx-silentsuite-calendar to avoid leaking styles.
+   Uses existing CSS custom-properties so light/dark mode works automatically.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   1. HIDE Schedule-X's built-in header / toolbar (we use our own)
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__calendar-header {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+   2. Calendar wrapper – remove outer border, let it blend with the page
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__calendar-wrapper {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: rgb(var(--background));
+}
+
+/* ---------------------------------------------------------------------------
+   3. WEEK VIEW – Day headers row
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__week-header {
+  border-bottom: 1px solid rgb(var(--border) / 0.4);
+  background: rgb(var(--background));
+  padding: 8px 0 6px;
+}
+
+.sx-silentsuite-calendar .sx__week-header-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  border: none;
+}
+
+.sx-silentsuite-calendar .sx__week-header-day .sx__week-header-day-name {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgb(var(--muted));
+}
+
+.sx-silentsuite-calendar .sx__week-header-day .sx__week-header-day-date {
+  font-size: 1.15rem;
+  font-weight: 500;
+  color: rgb(var(--foreground));
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+/* ---------------------------------------------------------------------------
+   4. TODAY highlight – solid circle badge (GNOME-style)
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__week-header-day.sx__week-header-day--today .sx__week-header-day-date,
+.sx-silentsuite-calendar .sx__week-header-day[data-is-today="true"] .sx__week-header-day-date {
+  background: rgb(var(--primary));
+  color: #fff;
+  font-weight: 700;
+  border-radius: 50%;
+}
+
+.sx-silentsuite-calendar .sx__is-today .sx__week-header-day-date,
+.sx-silentsuite-calendar [class*="is-today"] .sx__week-header-day-date {
+  background: rgb(var(--primary));
+  color: #fff;
+  font-weight: 700;
+  border-radius: 50%;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-day.sx__is-today,
+.sx-silentsuite-calendar .sx__time-grid-day[data-is-today="true"] {
+  background: rgb(var(--primary) / 0.03);
+}
+
+/* ---------------------------------------------------------------------------
+   5. WEEK VIEW – Time grid: minimal gridlines
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__week-grid {
+  background: rgb(var(--background));
+}
+
+.sx-silentsuite-calendar .sx__week-wrapper {
+  background: rgb(var(--background));
+}
+
+.sx-silentsuite-calendar .sx__time-grid-day {
+  border-left: 1px solid rgb(var(--border) / 0.2);
+}
+
+.sx-silentsuite-calendar .sx__time-grid-day:first-child {
+  border-left: none;
+}
+
+.sx-silentsuite-calendar .sx__week-grid .sx__time-grid-day .sx__time-grid-day-hours {
+  border-color: rgb(var(--border) / 0.15);
+}
+
+.sx-silentsuite-calendar .sx__time-grid-day__hour-line,
+.sx-silentsuite-calendar .sx__week-grid hr,
+.sx-silentsuite-calendar .sx__time-grid-day [class*="hour"] {
+  border-color: rgb(var(--border) / 0.15) !important;
+}
+
+.sx-silentsuite-calendar .sx__week-grid *:not(.sx__time-grid-event):not(.sx__time-grid-event-inner):not(.sx__current-time-indicator) {
+  border-color: rgb(var(--border) / 0.15);
+}
+
+/* Light mode: more visible gridlines */
+:root .sx-silentsuite-calendar .sx__time-grid-day__hour-line,
+:root .sx-silentsuite-calendar .sx__week-grid hr,
+:root .sx-silentsuite-calendar .sx__time-grid-day [class*="hour"] {
+  border-color: rgb(var(--border) / 0.4) !important;
+}
+
+:root .sx-silentsuite-calendar .sx__week-grid *:not(.sx__time-grid-event):not(.sx__time-grid-event-inner):not(.sx__current-time-indicator) {
+  border-color: rgb(var(--border) / 0.4);
+}
+
+:root .sx-silentsuite-calendar .sx__week-grid td,
+:root .sx-silentsuite-calendar .sx__week-grid th,
+:root .sx-silentsuite-calendar .sx__month-grid-wrapper td,
+:root .sx-silentsuite-calendar .sx__month-grid-wrapper th {
+  border-color: rgb(var(--border) / 0.4);
+}
+
+:root .sx-silentsuite-calendar .sx__month-grid-day {
+  border: 1px solid rgb(var(--border) / 0.4);
+}
+
+:root .sx-silentsuite-calendar .sx__time-grid-day {
+  border-left: 1px solid rgb(var(--border) / 0.35);
+}
+
+/* Half-hour indicator lines */
+.sx-silentsuite-calendar .sx__time-grid-day .sx__time-grid-day-half-hour-line {
+  border-bottom: 1px dashed rgb(var(--border) / 0.1);
+}
+
+:root .sx-silentsuite-calendar .sx__time-grid-day .sx__time-grid-day-half-hour-line {
+  border-bottom: 1px dashed rgb(var(--border) / 0.2);
+}
+
+/* ---------------------------------------------------------------------------
+   6. TIME GUTTER / AXIS
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__time-axis {
+  width: 52px;
+  min-width: 52px;
+  border-right: 1px solid rgb(var(--border) / 0.15);
+  background: rgb(var(--background));
+}
+
+.sx-silentsuite-calendar .sx__time-axis-hour {
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: rgb(var(--muted) / 0.7);
+  letter-spacing: 0.02em;
+  text-align: right;
+  padding-right: 10px;
+}
+
+/* ---------------------------------------------------------------------------
+   7. EVENT BLOCKS – rounded pills
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__time-grid-event {
+  border-radius: 6px !important;
+  border: none !important;
+  margin: 1px 3px !important;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  transition: box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event:hover {
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
+  transform: translateY(-0.5px);
+  cursor: pointer;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event-inner {
+  padding: 4px 8px !important;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.35;
+  border-radius: 6px !important;
+  border: none !important;
+  border-left: none !important;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event-inner::before {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------------------
+   8. ALL-DAY EVENTS – compact pills
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__day-grid-event {
+  border-radius: 4px !important;
+  border: none !important;
+  padding: 1px 8px !important;
+  font-size: 0.7rem;
+  font-weight: 500;
+  margin: 1px 2px !important;
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------------------------
+   9. MONTH VIEW – clean day cells with compact event chips
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__month-grid-wrapper {
+  background: rgb(var(--background));
+}
+
+.sx-silentsuite-calendar .sx__month-grid-day {
+  border: 1px solid rgb(var(--border) / 0.15);
+  padding: 4px;
+  min-height: 90px;
+  background: rgb(var(--background));
+  transition: background 0.1s ease;
+}
+
+.sx-silentsuite-calendar .sx__month-grid-day:hover {
+  background: rgb(var(--surface) / 0.5);
+}
+
+.sx-silentsuite-calendar .sx__month-grid-day__header {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: rgb(var(--muted));
+  padding: 2px 4px 4px;
+  display: flex;
+  justify-content: center;
+}
+
+.sx-silentsuite-calendar .sx__month-grid-day.sx__is-today .sx__month-grid-day__header,
+.sx-silentsuite-calendar .sx__month-grid-day[data-is-today="true"] .sx__month-grid-day__header {
+  color: #fff;
+  background: rgb(var(--primary));
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  margin: 0 auto;
+}
+
+.sx-silentsuite-calendar .sx__month-grid-event {
+  border-radius: 4px !important;
+  border: none !important;
+  padding: 1px 6px !important;
+  font-size: 0.65rem;
+  font-weight: 500;
+  line-height: 1.6;
+  margin: 1px 0 !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sx-silentsuite-calendar .sx__month-grid-day.sx__month-grid-day--outside,
+.sx-silentsuite-calendar .sx__month-grid-day.is-not-current-month,
+.sx-silentsuite-calendar .sx__month-grid-day[class*="outside"] {
+  opacity: 0.35;
+}
+
+.sx-silentsuite-calendar .sx__month-grid-wrapper .sx__month-grid-week-day-name,
+.sx-silentsuite-calendar .sx__month-grid-wrapper th {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgb(var(--muted));
+  padding: 8px 0;
+  border: none;
+}
+
+/* ---------------------------------------------------------------------------
+   10. CURRENT TIME INDICATOR
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__current-time-indicator {
+  height: 2px;
+  background: rgb(var(--primary));
+  border: none;
+  position: relative;
+  z-index: 10;
+}
+
+.sx-silentsuite-calendar .sx__current-time-indicator::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(var(--primary));
+}
+
+/* ---------------------------------------------------------------------------
+   11. SCROLLBAR STYLING – thin & subtle
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.sx-silentsuite-calendar ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sx-silentsuite-calendar ::-webkit-scrollbar-thumb {
+  background: rgb(var(--muted) / 0.2);
+  border-radius: 3px;
+}
+
+.sx-silentsuite-calendar ::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted) / 0.35);
+}
+
+.sx-silentsuite-calendar * {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--muted) / 0.2) transparent;
+}
+
+/* ---------------------------------------------------------------------------
+   12. GENERAL CLEANUP
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__calendar-wrapper,
+.sx-silentsuite-calendar .sx__week-wrapper,
+.sx-silentsuite-calendar .sx__week-header,
+.sx-silentsuite-calendar .sx__week-grid {
+  box-shadow: none;
+}
+
+.sx-silentsuite-calendar .sx__week-grid td,
+.sx-silentsuite-calendar .sx__week-grid th,
+.sx-silentsuite-calendar .sx__month-grid-wrapper td,
+.sx-silentsuite-calendar .sx__month-grid-wrapper th {
+  border-color: rgb(var(--border) / 0.15);
+}
+
+.sx-silentsuite-calendar .sx__week-header .sx__all-day-events,
+.sx-silentsuite-calendar [class*="all-day"] {
+  border-bottom: 1px solid rgb(var(--border) / 0.25);
+  padding: 2px 0;
+}
+
+.sx-silentsuite-calendar {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ---------------------------------------------------------------------------
+   13. EVENT COLOR VARIANTS – softer tones
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__time-grid-event,
+.sx-silentsuite-calendar .sx__day-grid-event,
+.sx-silentsuite-calendar .sx__month-grid-event {
+  opacity: 0.92;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event:hover,
+.sx-silentsuite-calendar .sx__day-grid-event:hover,
+.sx-silentsuite-calendar .sx__month-grid-event:hover {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------------
+   15. FOCUS & ACCESSIBILITY
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__time-grid-event:focus-visible,
+.sx-silentsuite-calendar .sx__day-grid-event:focus-visible,
+.sx-silentsuite-calendar .sx__month-grid-event:focus-visible,
+.sx-silentsuite-calendar .sx__month-grid-day:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 1px;
+}
+
+/* ---------------------------------------------------------------------------
+   16. DARK MODE fine-tuning
+   --------------------------------------------------------------------------- */
+.dark .sx-silentsuite-calendar .sx__time-grid-event {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+}
+
+.dark .sx-silentsuite-calendar .sx__time-grid-event:hover {
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.35);
+}
+
+.dark .sx-silentsuite-calendar .sx__month-grid-day:hover {
+  background: rgb(var(--surface));
+}
+
+.dark .sx-silentsuite-calendar ::-webkit-scrollbar-thumb {
+  background: rgb(var(--muted) / 0.15);
+}
+
+.dark .sx-silentsuite-calendar ::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--muted) / 0.3);
+}
+
+.dark .sx-silentsuite-calendar .sx__week-grid *:not(.sx__time-grid-event):not(.sx__time-grid-event-inner):not(.sx__current-time-indicator) {
+  border-color: rgb(var(--border) / 0.25);
+}
+
+.dark .sx-silentsuite-calendar .sx__week-grid td,
+.dark .sx-silentsuite-calendar .sx__week-grid th,
+.dark .sx-silentsuite-calendar .sx__month-grid-wrapper td,
+.dark .sx-silentsuite-calendar .sx__month-grid-wrapper th {
+  border-color: rgb(var(--border) / 0.25);
+}
+
+.dark .sx-silentsuite-calendar .sx__month-grid-day {
+  border: 1px solid rgb(var(--border) / 0.25);
+}
+
+/* ==========================================================================
+   General UI Polish (from UI/UX improvements branch)
+   ========================================================================== */
+
+/* Skeleton loader shimmer animation */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgb(var(--border) / 0.3) 25%,
+    rgb(var(--border) / 0.5) 50%,
+    rgb(var(--border) / 0.3) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Smooth page transitions */
+.page-transition {
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Accessible focus-visible styles */
+*:focus-visible {
+  outline: 2px solid rgb(var(--primary));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Smooth transitions for interactive elements */
+button, a, input, select, textarea {
+  transition-property: color, background-color, border-color, box-shadow, opacity;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Mobile: prevent iOS zoom on input focus */
+@media (max-width: 768px) {
+  input[type="text"], input[type="email"], input[type="password"],
+  input[type="search"], input[type="tel"], input[type="url"] {
+    font-size: 16px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Drag-to-move cursor styles
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__time-grid-event {
+  cursor: grab;
+}
+
+body.is-drag-moving {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+body.is-drag-moving * {
+  cursor: grabbing !important;
+}
+
+/* Safe area insets for devices with notches/home indicators */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .bottom-nav-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

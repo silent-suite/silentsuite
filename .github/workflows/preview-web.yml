@@ -1,0 +1,115 @@
+name: Preview Web App (non-main branches)
+
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - 'deploy/web.Dockerfile'
+      - '.github/workflows/preview-web.yml'
+
+concurrency:
+  group: preview-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build preview Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/web.Dockerfile
+          push: false
+          load: true
+          tags: silentsuite-web-preview:latest
+          build-args: |
+            NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image as artifact
+        run: docker save silentsuite-web-preview:latest | gzip > silentsuite-web-preview.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-web-image
+          path: silentsuite-web-preview.tar.gz
+          retention-days: 3
+
+      - name: Deploy to preview server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/silentsuite
+            
+            # Pull latest code
+            cd app && git fetch origin && git checkout ${{ github.sha }} && cd ..
+            
+            # Build and restart only the preview web container
+            docker compose -f docker-compose.yml -f docker-compose.preview.yml build web-preview
+            docker compose -f docker-compose.yml -f docker-compose.preview.yml up -d web-preview
+            
+            echo "Preview deployed at https://preview.app.silentsuite.io"
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'push'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${context.ref.replace('refs/heads/', '')}`,
+              state: 'open'
+            });
+
+            if (prs.length === 0) return;
+
+            const body = `**Web Preview deployed** to https://preview.app.silentsuite.io\n\nCommit: \`${context.sha.substring(0, 7)}\`\nBranch: \`${context.ref.replace('refs/heads/', '')}\``;
+            const pr = prs[0];
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Web Preview deployed')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body
+              });
+            }

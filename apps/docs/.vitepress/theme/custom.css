@@ -1,0 +1,54 @@
+/**
+ * SilentSuite brand overrides for VitePress default theme.
+ *
+ * Brand palette:
+ *   Navy:  #0a1018 (950), #0f1b27 (900), #1b2838 (800), #253549 (700)
+ *   Teal:  #34d399 (400), #10b981 (500), #059669 (600)
+ */
+
+:root {
+  /* Brand colors mapped to VitePress CSS variables */
+  --vp-c-brand-1: #10b981;
+  --vp-c-brand-2: #059669;
+  --vp-c-brand-3: #047857;
+  --vp-c-brand-soft: rgba(16, 185, 129, 0.14);
+
+  /* Tip / info boxes */
+  --vp-c-tip-1: var(--vp-c-brand-1);
+  --vp-c-tip-2: var(--vp-c-brand-2);
+  --vp-c-tip-3: var(--vp-c-brand-3);
+  --vp-c-tip-soft: var(--vp-c-brand-soft);
+}
+
+.dark {
+  --vp-c-brand-1: #34d399;
+  --vp-c-brand-2: #10b981;
+  --vp-c-brand-3: #059669;
+  --vp-c-brand-soft: rgba(52, 211, 153, 0.14);
+
+  /* Dark mode background overrides to match SilentSuite navy */
+  --vp-c-bg: #0f1b27;
+  --vp-c-bg-alt: #0a1018;
+  --vp-c-bg-elv: #1b2838;
+  --vp-c-bg-soft: #1b2838;
+}
+
+/* Home hero gradient */
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(135deg, #34d399, #10b981, #059669);
+  --vp-home-hero-image-background-image: linear-gradient(135deg, rgba(52, 211, 153, 0.2), rgba(16, 185, 129, 0.1));
+  --vp-home-hero-image-filter: blur(44px);
+}
+
+/* Button overrides */
+.VPButton.brand {
+  background-color: var(--vp-c-brand-1) !important;
+  border-color: var(--vp-c-brand-1) !important;
+  color: #0a1018 !important;
+}
+
+.VPButton.brand:hover {
+  background-color: var(--vp-c-brand-2) !important;
+  border-color: var(--vp-c-brand-2) !important;
+}

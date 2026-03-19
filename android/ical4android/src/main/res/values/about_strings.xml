@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="define_ical4android" translatable="false" />
+    <string name="library_ical4android_author" translatable="false">Ricki Hirner</string>
+    <string name="library_ical4android_authorWebsite" translatable="false">https://www.bitfire.at</string>
+    <string name="library_ical4android_libraryName" translatable="false">ical4android</string>
+    <string name="library_ical4android_libraryDescription">Library that brings together iCalendar and Android</string>
+    <string name="library_ical4android_libraryWebsite" translatable="false">https://gitlab.com/bitfireAT/ical4android</string>
+    <string name="library_ical4android_licenseId" translatable="false">gpl_3_0</string>
+    <string name="library_ical4android_isOpenSource" translatable="false">true</string>
+
+</resources>

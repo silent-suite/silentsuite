@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="certificate_notification_connection_security">Безопасность подключения</string>
+    <string name="certificate_notification_user_interaction">Ознакомьтесь с сертификатом</string>
+
+    <string name="service_rejected_temporarily">Сертификат временно отклонен</string>
+
+    <string name="trust_certificate_unknown_certificate_found">cert4android обнаружил неизвестный сертификат. Вы хотите доверять ему?</string>
+    <string name="trust_certificate_x509_certificate_details">Данные сертификата X509</string>
+    <string name="trust_certificate_issued_for">Выдан для</string>
+    <string name="trust_certificate_issued_by">Кем выдан</string>
+    <string name="trust_certificate_validity_period">Срок действия</string>
+    <string name="trust_certificate_validity_period_value">%1$s – %2$s (не будет применяться)</string>
+    <string name="trust_certificate_fingerprints">Отпечатки</string>
+    <string name="trust_certificate_fingerprint_verified">Я вручную проверил весь отпечаток.</string>
+    <string name="trust_certificate_accept">Принять</string>
+    <string name="trust_certificate_reject">Отклонить</string>
+    <string name="trust_certificate_reset_info">Вы можете сбросить все пользовательские сертификаты в настройках приложения.</string>
+
+</resources>

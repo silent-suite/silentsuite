@@ -1,0 +1,21 @@
+SilentSuite for Android
+Copyright 2026 Silent Suite
+
+Based on EteSync for Android
+Copyright 2013-2024 Ricki Hirner / bitfire web engineering and Tom Hacohen
+Original source: https://github.com/etesync/android
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program incorporates code from the following projects:
+
+- DAVdroid/DAVx5 by Ricki Hirner / bitfire web engineering (GPLv3)
+- cert4android by bitfire web engineering (GPLv3)
+- ical4android by bitfire web engineering (GPLv3)
+- vcard4android by bitfire web engineering (GPLv3)
+- Etebase client library by Tom Hacohen
+
+See LICENSE file for the full GPLv3 license text.

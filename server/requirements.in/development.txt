@@ -1,0 +1,6 @@
+coverage
+pip-tools
+pywatchman
+ruff
+mypy
+django-stubs

@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#0A1018"/>
+      <stop offset="100%" stop-color="#1B2838"/>
+    </linearGradient>
+    <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#253549" stroke-width="0.5" opacity="0.3"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect width="1600" height="900" fill="url(#grid)"/>
+
+  <!-- Divider -->
+  <line x1="800" y1="100" x2="800" y2="800" stroke="#34d399" stroke-width="1" opacity="0.12"/>
+
+  <!-- ========== LEFT SIDE: Self-Hosting (Server Rack) ========== -->
+  <g transform="translate(200, 140)" opacity="0.9">
+    <!-- Server rack frame -->
+    <rect width="400" height="600" rx="12" fill="#1B2838" stroke="#0284C7" stroke-width="2"/>
+
+    <!-- Rack unit 1 -->
+    <rect x="20" y="20" width="360" height="80" rx="6" fill="#253549" stroke="#0284C7" stroke-width="1" opacity="0.8"/>
+    <!-- LEDs -->
+    <circle cx="50" cy="45" r="5" fill="#34d399" opacity="0.85"/>
+    <circle cx="70" cy="45" r="5" fill="#34d399" opacity="0.4"/>
+    <circle cx="90" cy="45" r="5" fill="#F87171" opacity="0.3"/>
+    <!-- Drive bays -->
+    <rect x="130" y="30" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <rect x="168" y="30" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <rect x="206" y="30" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <rect x="244" y="30" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <!-- Vent holes -->
+    <rect x="310" y="35" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+    <rect x="310" y="45" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+    <rect x="310" y="55" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+    <rect x="310" y="65" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+
+    <!-- Rack unit 2 -->
+    <rect x="20" y="115" width="360" height="80" rx="6" fill="#253549" stroke="#0284C7" stroke-width="1" opacity="0.8"/>
+    <circle cx="50" cy="140" r="5" fill="#34d399" opacity="0.5"/>
+    <circle cx="70" cy="140" r="5" fill="#FCD34D" opacity="0.4"/>
+    <rect x="130" y="125" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <rect x="168" y="125" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <rect x="206" y="125" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <rect x="310" y="130" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+    <rect x="310" y="140" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+    <rect x="310" y="150" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+
+    <!-- Rack unit 3 -->
+    <rect x="20" y="210" width="360" height="80" rx="6" fill="#253549" stroke="#0284C7" stroke-width="1" opacity="0.8"/>
+    <circle cx="50" cy="235" r="5" fill="#34d399" opacity="0.85"/>
+    <circle cx="70" cy="235" r="5" fill="#34d399" opacity="0.3"/>
+    <rect x="130" y="220" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <rect x="168" y="220" width="30" height="55" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.8" opacity="0.5"/>
+    <rect x="310" y="225" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+    <rect x="310" y="235" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+    <rect x="310" y="245" width="50" height="4" rx="1" fill="#0284C7" opacity="0.2"/>
+
+    <!-- Patch panel -->
+    <rect x="20" y="310" width="360" height="50" rx="6" fill="#253549" stroke="#0284C7" stroke-width="0.8" opacity="0.85"/>
+    <!-- Ethernet ports -->
+    <rect x="40" y="322" width="18" height="22" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.6" opacity="0.5"/>
+    <rect x="66" y="322" width="18" height="22" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.6" opacity="0.5"/>
+    <rect x="92" y="322" width="18" height="22" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.6" opacity="0.5"/>
+    <rect x="118" y="322" width="18" height="22" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.6" opacity="0.5"/>
+    <rect x="144" y="322" width="18" height="22" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.6" opacity="0.5"/>
+    <rect x="170" y="322" width="18" height="22" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.6" opacity="0.5"/>
+    <rect x="196" y="322" width="18" height="22" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.6" opacity="0.5"/>
+    <rect x="222" y="322" width="18" height="22" rx="2" fill="#0A1018" stroke="#0284C7" stroke-width="0.6" opacity="0.5"/>
+
+    <!-- Empty rack units (below) -->
+    <rect x="20" y="380" width="360" height="40" rx="4" fill="#253549" stroke="#0284C7" stroke-width="0.5" opacity="0.3"/>
+    <rect x="20" y="430" width="360" height="40" rx="4" fill="#253549" stroke="#0284C7" stroke-width="0.5" opacity="0.3"/>
+    <rect x="20" y="480" width="360" height="40" rx="4" fill="#253549" stroke="#0284C7" stroke-width="0.5" opacity="0.3"/>
+    <rect x="20" y="530" width="360" height="40" rx="4" fill="#253549" stroke="#0284C7" stroke-width="0.5" opacity="0.3"/>
+  </g>
+
+  <!-- Terminal/CLI hint below rack -->
+  <g transform="translate(240, 780)" opacity="0.1">
+    <text x="0" y="0" font-family="monospace" font-size="13" fill="#0284C7">$ sudo apt update &amp;&amp; sudo apt upgrade</text>
+  </g>
+
+  <!-- ========== RIGHT SIDE: Hosted E2EE (Cloud + Shield) ========== -->
+
+  <!-- Cloud shape -->
+  <g transform="translate(980, 200)" opacity="0.7">
+    <!-- Cloud body -->
+    <ellipse cx="220" cy="220" rx="220" ry="120" fill="none" stroke="#34d399" stroke-width="2"/>
+    <ellipse cx="120" cy="200" rx="120" ry="100" fill="#1B2838" stroke="#34d399" stroke-width="1.5"/>
+    <ellipse cx="320" cy="200" rx="120" ry="100" fill="#1B2838" stroke="#34d399" stroke-width="1.5"/>
+    <ellipse cx="220" cy="170" rx="150" ry="110" fill="#1B2838" stroke="#34d399" stroke-width="1.5"/>
+    <!-- Fill center to hide overlap lines -->
+    <ellipse cx="220" cy="200" rx="160" ry="90" fill="#1B2838"/>
+  </g>
+
+  <!-- Shield (large, centered in the cloud) -->
+  <g transform="translate(1200, 300) scale(6)" opacity="0.65">
+    <path d="M16 3C12.5 5.5 9 6 7 6v10c0 5 4 8.5 9 10 5-1.5 9-5 9-10V6c-2 0-5.5-.5-9-3z" fill="none" stroke="#34d399" stroke-width="2"/>
+    <!-- Lock inside shield -->
+    <rect x="12" y="12" width="8" height="6" rx="1.5" fill="none" stroke="#34d399" stroke-width="1.2"/>
+    <path d="M13.5 12V10a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="#34d399" stroke-width="1.2"/>
+    <circle cx="16" cy="15.5" r="1" fill="#34d399" opacity="0.5"/>
+  </g>
+
+  <!-- Encrypted data flowing into cloud -->
+  <g transform="translate(1020, 520)" opacity="0.65">
+    <!-- Data packets -->
+    <rect x="0" y="0" width="80" height="22" rx="4" fill="#34d399" opacity="0.3"/>
+    <text x="10" y="16" font-family="monospace" font-size="10" fill="#34d399" opacity="0.9">aG9wZS...</text>
+    <rect x="100" y="30" width="90" height="22" rx="4" fill="#34d399" opacity="0.25"/>
+    <text x="110" y="46" font-family="monospace" font-size="10" fill="#34d399" opacity="0.9">xK8mP2q...</text>
+    <rect x="210" y="10" width="70" height="22" rx="4" fill="#34d399" opacity="0.3"/>
+    <text x="220" y="26" font-family="monospace" font-size="10" fill="#34d399" opacity="0.9">bR9vL...</text>
+    <rect x="310" y="35" width="100" height="22" rx="4" fill="#34d399" opacity="0.25"/>
+    <text x="320" y="51" font-family="monospace" font-size="10" fill="#34d399" opacity="0.9">nW4hJ7kZ...</text>
+  </g>
+
+  <!-- Devices below cloud (phone + laptop) -->
+  <g transform="translate(1060, 620)" opacity="0.65">
+    <!-- Laptop -->
+    <rect x="0" y="0" width="120" height="80" rx="6" fill="none" stroke="#34d399" stroke-width="1.5"/>
+    <rect x="8" y="8" width="104" height="60" rx="2" fill="#253549" opacity="0.5"/>
+    <rect x="-20" y="80" width="160" height="8" rx="3" fill="none" stroke="#34d399" stroke-width="1"/>
+    <!-- Screen content (encrypted) -->
+    <rect x="16" y="20" width="60" height="8" rx="2" fill="#34d399" opacity="0.3"/>
+    <rect x="16" y="34" width="80" height="8" rx="2" fill="#34d399" opacity="0.2"/>
+    <rect x="16" y="48" width="50" height="8" rx="2" fill="#34d399" opacity="0.25"/>
+  </g>
+
+  <g transform="translate(1320, 630)" opacity="0.65">
+    <!-- Phone -->
+    <rect x="0" y="0" width="50" height="90" rx="8" fill="none" stroke="#34d399" stroke-width="1.5"/>
+    <rect x="6" y="12" width="38" height="60" rx="2" fill="#253549" opacity="0.5"/>
+    <!-- Screen content -->
+    <rect x="10" y="20" width="28" height="6" rx="2" fill="#34d399" opacity="0.3"/>
+    <rect x="10" y="32" width="22" height="6" rx="2" fill="#34d399" opacity="0.2"/>
+    <rect x="10" y="44" width="30" height="6" rx="2" fill="#34d399" opacity="0.25"/>
+    <!-- Home indicator -->
+    <rect x="16" y="78" width="18" height="3" rx="1.5" fill="#34d399" opacity="0.2"/>
+  </g>
+
+  <!-- Arrow from devices up to cloud -->
+  <g opacity="0.1">
+    <line x1="1120" y1="620" x2="1160" y2="530" stroke="#34d399" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <line x1="1345" y1="630" x2="1280" y2="530" stroke="#34d399" stroke-width="1.5" stroke-dasharray="6 4"/>
+  </g>
+
+  <!-- Subtle labels -->
+  <text x="400" y="100" font-family="Inter, sans-serif" font-size="14" fill="#0284C7" text-anchor="middle" opacity="0.65">SELF-HOSTED</text>
+  <text x="1200" y="100" font-family="Inter, sans-serif" font-size="14" fill="#34d399" text-anchor="middle" opacity="0.65">HOSTED E2EE</text>
+
+  <!-- Soft glow -->
+  <circle cx="400" cy="450" r="200" fill="#0284C7" opacity="0.08"/>
+  <circle cx="1200" cy="400" r="200" fill="#34d399" opacity="0.1"/>
+</svg>

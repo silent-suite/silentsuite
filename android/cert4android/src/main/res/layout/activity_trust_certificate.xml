@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <data>
+        <variable
+            name="model"
+            type="at.bitfire.cert4android.TrustCertificateActivity.Model"/>
+    </data>
+
+    <ScrollView
+        android:layout_height="match_parent"
+        android:layout_width="match_parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="@dimen/activity_margin">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                style="@style/TextAppearance.MaterialComponents.Body1"
+                android:text="@string/trust_certificate_unknown_certificate_found" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                style="@style/Widget.MaterialComponents.CardView">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_margin="8dp"
+                    android:padding="8dp">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        style="@style/TextAppearance.MaterialComponents.Headline5"
+                        android:layout_marginBottom="16dp"
+                        android:text="@string/trust_certificate_x509_certificate_details"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        style="@style/TextAppearance.MaterialComponents.Overline"
+                        android:text="@string/trust_certificate_issued_for"/>
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="16dp"
+                        style="@style/TextAppearance.MaterialComponents.Body1"
+                        android:text="@{model.issuedFor}"
+                        tools:text="CN=example.com"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        style="@style/TextAppearance.MaterialComponents.Overline"
+                        android:text="@string/trust_certificate_issued_by"/>
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="16dp"
+                        style="@style/TextAppearance.MaterialComponents.Body1"
+                        android:text="@{model.issuedBy}"
+                        tools:text="CN=example.com"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        style="@style/TextAppearance.MaterialComponents.Overline"
+                        android:text="@string/trust_certificate_validity_period"/>
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginBottom="16dp"
+                        style="@style/TextAppearance.MaterialComponents.Body1"
+                        android:text="@{@string/trust_certificate_validity_period_value(model.validFrom, model.validTo)}"
+                        tools:text="1.1.1000 – 2.2.2000"/>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        style="@style/TextAppearance.MaterialComponents.Overline"
+                        android:text="@string/trust_certificate_fingerprints"/>
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        style="@style/TextAppearance.MaterialComponents.Body1"
+                        android:text="@{model.sha1}"
+                        tools:text="SHA-1: abcdef"/>
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginBottom="16dp"
+                        style="@style/TextAppearance.MaterialComponents.Body1"
+                        android:text="@{model.sha256}"
+                        tools:text="SHA-256: abcdef"/>
+
+                    <CheckBox
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:padding="8dp"
+                        android:layout_marginBottom="8dp"
+                        android:checked="@={model.verifiedByUser}"
+                        android:text="@string/trust_certificate_fingerprint_verified"/>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginRight="16dp"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:text="@string/trust_certificate_accept"
+                            android:onClick="acceptCertificate"
+                            android:enabled="@{model.verifiedByUser}" />
+
+                        <Button
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:text="@string/trust_certificate_reject"
+                            android:onClick="rejectCertificate"/>
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                style="@style/TextAppearance.MaterialComponents.Body2"
+                android:text="@string/trust_certificate_reset_info"/>
+
+        </LinearLayout>
+    </ScrollView>
+</layout>

@@ -1,0 +1,17 @@
+SilentSuite Server
+Copyright (C) 2026 Silent Suite
+Modified starting March 2026.
+
+This software is based on Etebase Server (https://github.com/etesync/server),
+originally developed by Tom Hacohen and the EteSync contributors.
+Copyright (C) 2017-2024 Tom Hacohen and EteSync contributors.
+
+Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+See the LICENSE file for the full license text.
+
+This repository also includes a bundled sendfile module licensed under the
+BSD 3-Clause License. See etebase_server/fastapi/sendfile/LICENSE for details.
+
+The Etebase protocol and data model are used under the terms of the AGPL-3.0
+license. SilentSuite is an independent project and is not affiliated with or
+endorsed by EteSync or Etebase.

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="certificate_notification_connection_security">أمن الاتصال</string>
+    <string name="certificate_notification_user_interaction">فضلاً راجع الشهادة</string>
+
+    <string name="service_rejected_temporarily">الشهادة مرفوضة مؤقتاً</string>
+
+    <string name="trust_certificate_unknown_certificate_found">عثر cert4android على شهادة غير معروفة.  هل تريد الوثوق بها؟</string>
+    <string name="trust_certificate_x509_certificate_details">تفاصيل شهادة X509</string>
+    <string name="trust_certificate_issued_for">صادرة لـ</string>
+    <string name="trust_certificate_issued_by">جهة الإصدار</string>
+    <string name="trust_certificate_validity_period">مدة الصلاحية</string>
+    <string name="trust_certificate_validity_period_value">%1$s - %2$s (لن يتم تنفيذها)</string>
+    <string name="trust_certificate_fingerprints">البصمات</string>
+    <string name="trust_certificate_fingerprint_verified">لقد قمت بالتحقق يدوياً من كامل البصمة.</string>
+    <string name="trust_certificate_accept">موافق</string>
+    <string name="trust_certificate_reject">أرفض</string>
+    <string name="trust_certificate_reset_info">يمكنك إعادة ضبط كل الشهادات المخصصة في إعدادات التطبيق.</string>
+
+</resources>

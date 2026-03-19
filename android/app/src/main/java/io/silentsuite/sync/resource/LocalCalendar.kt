@@ -1,0 +1,251 @@
+/*
+ * Copyright © 2013 – 2015 Ricki Hirner (bitfire web engineering).
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the GNU Public License v3.0
+ * which accompanies this distribution, and is available at
+ * http://www.gnu.org/licenses/gpl.html
+ */
+
+package io.silentsuite.sync.resource
+
+import android.accounts.Account
+import android.content.ContentProviderClient
+import android.content.ContentUris
+import android.content.ContentValues
+import android.net.Uri
+import android.os.RemoteException
+import android.provider.CalendarContract
+import android.provider.CalendarContract.*
+import at.bitfire.ical4android.*
+import com.etebase.client.CollectionAccessLevel
+import io.silentsuite.sync.CachedCollection
+import io.silentsuite.sync.log.Logger
+
+import io.silentsuite.sync.resource.LocalEvent.Companion.COLUMN_UID
+import org.apache.commons.lang3.StringUtils
+import java.util.*
+import java.util.logging.Level
+
+class LocalCalendar private constructor(
+        account: Account,
+        provider: ContentProviderClient,
+        id: Long
+): AndroidCalendar<LocalEvent>(account, provider, LocalEvent.Factory, id), LocalCollection<LocalEvent> {
+
+    companion object {
+        val defaultColor = -0x743cb6     // light green 500 - should be "8BC349"?
+
+        fun parseColor(color_: String?): Int {
+            if (color_.isNullOrBlank()) {
+                return defaultColor
+            }
+            val color = color_.replaceFirst("^#".toRegex(), "")
+            if (color.length == 8) {
+                return (color.substring(0, 6).toLong(16) or (color.substring(6, 8).toLong(16) shl 24)).toInt()
+            } else if (color.length == 6) {
+                return (color.toLong(16) or (0xFF000000)).toInt()
+            } else {
+                return defaultColor
+            }
+        }
+
+        val COLUMN_CTAG = Calendars.CAL_SYNC1
+
+        fun create(account: Account, provider: ContentProviderClient, cachedCollection: CachedCollection): Uri {
+            val values = valuesFromCachedCollection(cachedCollection, true)
+
+            // ACCOUNT_NAME and ACCOUNT_TYPE are required (see docs)! If it's missing, other apps will crash.
+            values.put(Calendars.ACCOUNT_NAME, account.name)
+            values.put(Calendars.ACCOUNT_TYPE, account.type)
+            values.put(Calendars.OWNER_ACCOUNT, account.name)
+
+            // flag as visible & synchronizable at creation, might be changed by user at any time
+            values.put(Calendars.VISIBLE, 1)
+            values.put(Calendars.SYNC_EVENTS, 1)
+
+            return AndroidCalendar.create(account, provider, values)
+        }
+
+        fun findByName(account: Account, provider: ContentProviderClient, factory: Factory, name: String): LocalCalendar?
+            = AndroidCalendar.find(account, provider, factory, Calendars.NAME + "==?", arrayOf(name)).firstOrNull()
+
+        private fun valuesFromCachedCollection(cachedCollection: CachedCollection, withColor: Boolean): ContentValues {
+            val values = ContentValues()
+            val col = cachedCollection.col
+            val meta = cachedCollection.meta
+            values.put(Calendars.NAME, col.uid)
+            values.put(Calendars.CALENDAR_DISPLAY_NAME, meta.name)
+
+            if (withColor)
+                values.put(Calendars.CALENDAR_COLOR, parseColor(meta.color))
+
+            if (col.accessLevel == CollectionAccessLevel.ReadOnly)
+                values.put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_READ)
+            else {
+                values.put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_OWNER)
+                values.put(Calendars.CAN_MODIFY_TIME_ZONE, 1)
+                values.put(Calendars.CAN_ORGANIZER_RESPOND, 1)
+            }
+
+            values.put(Calendars.ALLOWED_REMINDERS, Reminders.METHOD_ALERT)
+            values.put(Calendars.ALLOWED_AVAILABILITY, StringUtils.join(intArrayOf(Reminders.AVAILABILITY_TENTATIVE, Reminders.AVAILABILITY_FREE, Reminders.AVAILABILITY_BUSY), ","))
+            values.put(Calendars.ALLOWED_ATTENDEE_TYPES, StringUtils.join(intArrayOf(CalendarContract.Attendees.TYPE_OPTIONAL, CalendarContract.Attendees.TYPE_REQUIRED, CalendarContract.Attendees.TYPE_RESOURCE), ", "))
+            return values
+        }
+    }
+
+    override val url: String?
+        get() = name
+
+    fun update(cachedCollection: CachedCollection, updateColor: Boolean) =
+            update(valuesFromCachedCollection(cachedCollection, updateColor))
+
+
+    override fun findDeleted() =
+            queryEvents("${Events.DELETED}!=0 AND ${Events.ORIGINAL_ID} IS NULL", null)
+
+    override fun findDirty(limit: Int?): List<LocalEvent> {
+        val dirty = LinkedList<LocalEvent>()
+        val sortOrder = if (limit != null) "${Events._ID} ASC LIMIT $limit" else null
+
+        // get dirty events which are required to have an increased SEQUENCE value
+        for (localEvent in queryEvents("${Events.DIRTY}!=0 AND ${Events.DELETED}==0 AND ${Events.ORIGINAL_ID} IS NULL", null, sortOrder)) {
+            val event = localEvent.event!!
+            val sequence = event.sequence
+            if (event.sequence == null)      // sequence has not been assigned yet (i.e. this event was just locally created)
+                event.sequence = 0
+            else if (localEvent.weAreOrganizer)
+                event.sequence = sequence!! + 1
+            dirty += localEvent
+        }
+
+        return dirty
+    }
+
+    override fun findWithoutFileName(): List<LocalEvent>
+            = queryEvents(Events._SYNC_ID + " IS NULL AND " + Events.ORIGINAL_ID + " IS NULL", null)
+
+    override fun findAll(): List<LocalEvent>
+            = queryEvents(null, null)
+
+    override fun findByUid(uid: String): LocalEvent?
+        = queryEvents(COLUMN_UID + " =? ", arrayOf(uid)).firstOrNull()
+
+    override fun findByFilename(filename: String): LocalEvent?
+        = queryEvents(Events._SYNC_ID + " =? ", arrayOf(filename)).firstOrNull()
+
+    fun processDirtyExceptions() {
+        // process deleted exceptions
+        Logger.log.info("Processing deleted exceptions")
+        try {
+            val cursor = provider.query(
+                    syncAdapterURI(Events.CONTENT_URI),
+                    arrayOf(Events._ID, Events.ORIGINAL_ID, LocalEvent.COLUMN_SEQUENCE),
+                    Events.DELETED + "!=0 AND " + Events.ORIGINAL_ID + " IS NOT NULL", null, null)
+            while (cursor != null && cursor.moveToNext()) {
+                Logger.log.fine("Found deleted exception, removing; then re-schuling original event")
+                val id = cursor.getLong(0)
+                // can't be null (by definition)
+                val originalID = cursor.getLong(1)     // can't be null (by query)
+
+                // get original event's SEQUENCE
+                val cursor2 = provider.query(
+                        syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)),
+                        arrayOf(LocalEvent.COLUMN_SEQUENCE), null, null, null)
+                val originalSequence = if (cursor2 == null || cursor2.isNull(0)) 0 else cursor2.getInt(0)
+
+                cursor2!!.close()
+                val batch = BatchOperation(provider)
+                // re-schedule original event and set it to DIRTY
+                batch.enqueue(
+                        BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)))
+                                .withValue(LocalEvent.COLUMN_SEQUENCE, originalSequence + 1)
+                                .withValue(Events.DIRTY, 1)
+                )
+                // remove exception
+                batch.enqueue(
+                        BatchOperation.CpoBuilder.newDelete(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, id)))
+                )
+                batch.commit()
+            }
+            cursor!!.close()
+        } catch (e: RemoteException) {
+            throw CalendarStorageException("Couldn't process locally modified exception", e)
+        }
+
+        // process dirty exceptions
+        Logger.log.info("Processing dirty exceptions")
+        try {
+            val cursor = provider.query(
+                    syncAdapterURI(Events.CONTENT_URI),
+                    arrayOf(Events._ID, Events.ORIGINAL_ID, LocalEvent.COLUMN_SEQUENCE),
+                    Events.DIRTY + "!=0 AND " + Events.ORIGINAL_ID + " IS NOT NULL", null, null)
+            while (cursor != null && cursor.moveToNext()) {
+                Logger.log.fine("Found dirty exception, increasing SEQUENCE to re-schedule")
+                val id = cursor.getLong(0)
+                // can't be null (by definition)
+                val originalID = cursor.getLong(1)     // can't be null (by query)
+                val sequence = if (cursor.isNull(2)) 0 else cursor.getInt(2)
+
+                val batch = BatchOperation(provider)
+                // original event to DIRTY
+                batch.enqueue(BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)))
+                                .withValue(Events.DIRTY, 1)
+                )
+                // increase SEQUENCE and set DIRTY to 0
+                batch.enqueue(BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, id)))
+                                .withValue(LocalEvent.COLUMN_SEQUENCE, sequence + 1)
+                                .withValue(Events.DIRTY, 0)
+                )
+                batch.commit()
+            }
+            cursor!!.close()
+        } catch (e: RemoteException) {
+            throw CalendarStorageException("Couldn't process locally modified exception", e)
+        }
+
+    }
+
+    override fun count(): Long {
+        try {
+            val cursor = provider.query(
+                    syncAdapterURI(Events.CONTENT_URI), null,
+                    Events.CALENDAR_ID + "=?", arrayOf(id.toString()), null)
+            try {
+                return cursor?.count?.toLong()!!
+            } finally {
+                cursor?.close()
+            }
+        } catch (e: RemoteException) {
+            throw CalendarStorageException("Couldn't query calendar events", e)
+        }
+
+    }
+
+
+    /** Fix all of the etags of all of the non-dirty events to be non-null.
+     * Currently set to all ones..  */
+    @Throws(CalendarStorageException::class)
+    fun fixEtags() {
+        val newEtag = "1111111111111111111111111111111111111111111111111111111111111111"
+        val where = Events.CALENDAR_ID + "=? AND " + Events.DIRTY + "=0 AND " + LocalEvent.COLUMN_ETAG + " IS NULL"
+        val whereArgs = arrayOf(id.toString())
+
+        val values = ContentValues(1)
+        values.put(LocalEvent.COLUMN_ETAG, newEtag)
+        try {
+            val fixed = provider.update(syncAdapterURI(Events.CONTENT_URI),
+                    values, where, whereArgs)
+            Logger.log.info("Fixed entries: " + fixed.toString())
+        } catch (e: RemoteException) {
+            throw CalendarStorageException("Couldn't fix etags", e)
+        }
+
+    }
+
+    object Factory: AndroidCalendarFactory<LocalCalendar> {
+
+        override fun newInstance(account: Account, provider: ContentProviderClient, id: Long) =
+                LocalCalendar(account, provider, id)
+    }
+}

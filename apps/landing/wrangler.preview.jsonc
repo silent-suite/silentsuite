@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "silentsuite-preview",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-09-27",
+  "observability": {
+    "enabled": true
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+  // Preview deployments do not need the N8N_CONFIRM_WEBHOOK_URL secret.
+  // The waitlist confirmation endpoint will fail gracefully in preview.
+}

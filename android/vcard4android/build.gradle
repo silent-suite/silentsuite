@@ -1,0 +1,73 @@
+
+buildscript {
+    ext.versions = [
+        // latest Apache Commons versions that don't require Java 8 (Android 7)
+        commonsIO: '2.6',
+        commonsText: '1.3'
+    ]
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace 'at.bitfire.vcard4android'
+    compileSdkVersion rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        minSdkVersion 16        // Android 4.1
+        targetSdkVersion 33
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    packagingOptions {
+        resources {
+            excludes += ['LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE.txt']
+        }
+    }
+    buildFeatures {
+        buildConfig = true
+    }
+    
+    lint {
+        disable 'AllowBackup', 'InvalidPackage'
+    }
+
+    defaultConfig {
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.kotlin_version}"
+
+    implementation 'androidx.annotation:annotation:1.1.0'
+    // noinspection GradleDependency
+    implementation "commons-io:commons-io:${versions.commonsIO}"
+    // noinspection GradleDependency
+    implementation "org.apache.commons:commons-text:${versions.commonsText}"
+
+    // ez-vcard to parse/generate vCards
+    api('com.googlecode.ez-vcard:ez-vcard:0.11.2') {
+        // hCard functionality not needed
+        exclude group: 'org.jsoup'
+        exclude group: 'org.freemarker'
+        // jCard functionality not needed
+        exclude group: 'com.fasterxml.jackson.core'
+    }
+
+    androidTestImplementation 'androidx.test:runner:1.3.0'
+    androidTestImplementation 'androidx.test:rules:1.3.0'
+
+    testImplementation 'junit:junit:4.13'
+}

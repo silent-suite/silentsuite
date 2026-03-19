@@ -1,0 +1,44 @@
+/*
+ * Copyright (c) 2013 – 2015 Ricki Hirner (bitfire web engineering).
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the GNU Public License v3.0
+ * which accompanies this distribution, and is available at
+ * http://www.gnu.org/licenses/gpl.html
+ */
+
+ext {
+    kotlin_version = '1.8.21'
+    gradle_version = '8.2.2'
+    compileSdkVersion = 36
+    buildToolsVersion = '36.0.0'
+}
+
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+buildscript {
+    ext.kotlin_version = '1.8.21'
+    ext.gradle_version = '8.2.2'
+
+    repositories {
+        jcenter()
+        google()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:$gradle_version"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+allprojects {
+    repositories {
+        jcenter()
+        mavenCentral()
+        maven() {
+            url 'https://oss.sonatype.org/content/repositories/snapshots'
+        }
+        maven { url 'https://jitpack.io' }
+        google()
+    }
+}
+
+
+apply plugin: 'android-reporting'

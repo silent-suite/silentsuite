@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "silentsuite-bridge"
+version = "0.1.0"
+description = "SilentSuite Bridge — Local E2EE CalDAV/CardDAV sync daemon"
+readme = "README.md"
+license = "AGPL-3.0-only"
+requires-python = ">=3.10"
+authors = [
+    { name = "SilentSuite", email = "hello@silentsuite.io" },
+]
+keywords = ["silentsuite", "etebase", "caldav", "carddav", "encryption", "sync", "pim"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Groupware",
+]
+dependencies = [
+    "etebase>=0.31.0",
+    "radicale>=3.2.0,<3.3.0",
+    "peewee>=3.14.0",
+    "msgpack>=1.0.0",
+    "vobject>=0.9.6",
+    "appdirs>=1.4.3",
+    "pystray>=0.19.0",
+    "Pillow>=9.0.0",
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+
+[project.scripts]
+silentsuite-bridge = "silentsuite_bridge.__main__:main"
+
+[project.urls]
+Homepage = "https://silentsuite.io"
+Documentation = "https://docs.silentsuite.io/bridge"
+Repository = "https://github.com/silentsuite/silentsuite-bridge"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/silentsuite_bridge"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true

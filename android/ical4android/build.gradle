@@ -1,0 +1,75 @@
+
+buildscript {
+    ext.versions = [
+        ical4j: '3.0.20',
+        // latest Apache Commons versions that don't require Java 8 (Android 7)
+        commonsIO: '2.6'
+    ]
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace 'at.bitfire.ical4android'
+    compileSdkVersion rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        minSdkVersion 21        // Android 5.0
+        targetSdkVersion 33
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField "String", "version_ical4j", "\"${versions.ical4j}\""
+    }
+
+    compileOptions {
+        // ical4j >= 3.x uses the Java 8 Time API
+        coreLibraryDesugaringEnabled true
+
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE']
+        }
+    }
+
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    sourceSets {
+        main.java.srcDirs = [ "src/main/java", "opentasks-contract/src/main/java" ]
+    }
+    lint {
+        disable 'AllowBackup', 'InvalidPackage'
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:${rootProject.ext.kotlin_version}"
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.1.1'
+
+    api("org.mnode.ical4j:ical4j:${versions.ical4j}") {
+        exclude module: 'javax.mail'
+    }
+    // ical4j requires JavaMail API (e.g. for EMAIL parameter)
+    implementation 'com.sun.mail:android-mail:1.6.5'
+    // noinspection GradleDependency
+    implementation "commons-io:commons-io:${versions.commonsIO}"
+
+    implementation 'org.slf4j:slf4j-jdk14:1.7.30'
+    implementation 'androidx.core:core-ktx:1.3.2'
+
+    androidTestImplementation 'androidx.test:core:1.5.0'
+    androidTestImplementation 'androidx.test:runner:1.5.0'
+    androidTestImplementation 'androidx.test:rules:1.5.0'
+    testImplementation 'junit:junit:4.13'
+
+    // groovy is not really used, but required for running the tests
+    // noinspection GradleDependency
+    androidTestImplementation 'org.codehaus.groovy:groovy:2.2.2'
+}

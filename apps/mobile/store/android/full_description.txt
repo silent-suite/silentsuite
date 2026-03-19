@@ -1,0 +1,27 @@
+SilentSuite — Encrypted Calendar, Contacts & Tasks
+
+Your personal information deserves privacy. SilentSuite provides end-to-end encrypted sync for your calendar events, contacts, and tasks across all your devices.
+
+HOW IT WORKS
+• Sign in with your SilentSuite account
+• Your data is encrypted on your device before syncing
+• Only you can decrypt your information — not even we can read it
+• Choose Bridge Mode to sync with your phone's native calendar, contacts, and task apps
+• Or use Walled Garden mode for maximum privacy
+
+FEATURES
+• Calendar: Monthly view with event dots, day agenda, full CRUD
+• Contacts: Alphabetical list with search, detail view, tap-to-call
+• Tasks: Priority levels, due dates, sort by date/priority/name
+• Bridge Mode: Works with your existing calendar, contacts, and task apps (OpenTasks/Tasks.org)
+• Background Sync: Automatic updates via Android sync adapter
+• Dark Theme: Navy and emerald design
+• Offline Access: Data always available without internet
+
+PRIVACY FIRST
+SilentSuite uses the Etebase protocol for zero-knowledge encryption. Your encryption keys never leave your device. We cannot read your data, and neither can anyone else.
+
+OPEN SOURCE
+SilentSuite is built on open-source technology. Verify our security claims at silentsuite.io.
+
+Requires a SilentSuite account. Sign up at app.silentsuite.io.
