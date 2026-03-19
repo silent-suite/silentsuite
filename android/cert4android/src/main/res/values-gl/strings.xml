@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="certificate_notification_connection_security">Seguridade da conexión</string>
+    <string name="certificate_notification_user_interaction">Por favor revise o certificado</string>
+
+    <string name="service_rejected_temporarily">Certificado temporalmente rexeitado</string>
+
+    <string name="trust_certificate_unknown_certificate_found">cert4android atopou un certificado descoñecido. Quere confiar nel?</string>
+    <string name="trust_certificate_x509_certificate_details">Detalles do certificado X509</string>
+    <string name="trust_certificate_issued_for">Proporcionado para</string>
+    <string name="trust_certificate_issued_by">Proporcionado por</string>
+    <string name="trust_certificate_validity_period">Válido por </string>
+    <string name="trust_certificate_validity_period_value">%1$s – %2$s (non será imposto)</string>
+    <string name="trust_certificate_fingerprints">Pegadas dixitais</string>
+    <string name="trust_certificate_fingerprint_verified">Verifiquei manualmente toda a pegada dixital.</string>
+    <string name="trust_certificate_accept">Aceptar</string>
+    <string name="trust_certificate_reject">Rexeitar</string>
+    <string name="trust_certificate_reset_info">Pode restablecer os certificados personalizados nos axustes da app.</string>
+
+</resources>

@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#0A1018"/>
+      <stop offset="100%" stop-color="#1B2838"/>
+    </linearGradient>
+    <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#253549" stroke-width="0.5" opacity="0.3"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect width="1600" height="900" fill="url(#grid)"/>
+
+  <!-- ========== SERVICE CARDS (3 top, 3 bottom) ========== -->
+
+  <!-- Card 1: Proton (top-left) -->
+  <g transform="translate(80, 120)" opacity="0.9">
+    <rect width="440" height="260" rx="14" fill="#1B2838" stroke="#6D28D9" stroke-width="1.5"/>
+    <!-- Header -->
+    <rect x="0" y="0" width="440" height="48" rx="14" fill="#253549"/>
+    <rect x="0" y="32" width="440" height="16" fill="#253549"/>
+    <!-- Name placeholder -->
+    <rect x="55" y="14" width="130" height="16" rx="4" fill="#6D28D9" opacity="0.5"/>
+    <!-- Icon circle -->
+    <circle cx="28" cy="24" r="14" fill="none" stroke="#6D28D9" stroke-width="1.5" opacity="0.85"/>
+    <text x="28" y="29" font-family="Inter, sans-serif" font-size="14" fill="#6D28D9" text-anchor="middle" opacity="0.7">P</text>
+    <!-- Feature rows -->
+    <rect x="20" y="65" width="16" height="16" rx="3" fill="#34d399" opacity="0.3"/>
+    <text x="22" y="78" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.8">&#10003;</text>
+    <rect x="48" y="68" width="140" height="10" rx="3" fill="#34d399" opacity="0.25"/>
+    <rect x="20" y="100" width="16" height="16" rx="3" fill="#F87171" opacity="0.3"/>
+    <text x="24" y="113" font-family="Inter, sans-serif" font-size="12" fill="#F87171" opacity="0.8">&#10005;</text>
+    <rect x="48" y="103" width="120" height="10" rx="3" fill="#F87171" opacity="0.2"/>
+    <rect x="20" y="135" width="16" height="16" rx="3" fill="#F87171" opacity="0.3"/>
+    <text x="24" y="148" font-family="Inter, sans-serif" font-size="12" fill="#F87171" opacity="0.8">&#10005;</text>
+    <rect x="48" y="138" width="160" height="10" rx="3" fill="#F87171" opacity="0.2"/>
+    <rect x="20" y="170" width="16" height="16" rx="3" fill="#34d399" opacity="0.3"/>
+    <text x="22" y="183" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.8">&#10003;</text>
+    <rect x="48" y="173" width="100" height="10" rx="3" fill="#34d399" opacity="0.25"/>
+    <!-- Status bar -->
+    <rect x="20" y="210" width="80" height="24" rx="6" fill="#6D28D9" opacity="0.2"/>
+    <text x="60" y="227" font-family="Inter, sans-serif" font-size="11" fill="#6D28D9" text-anchor="middle" opacity="0.9">Active</text>
+  </g>
+
+  <!-- Card 2: Tuta (top-center) -->
+  <g transform="translate(580, 120)" opacity="0.9">
+    <rect width="440" height="260" rx="14" fill="#1B2838" stroke="#DC2626" stroke-width="1.5"/>
+    <rect x="0" y="0" width="440" height="48" rx="14" fill="#253549"/>
+    <rect x="0" y="32" width="440" height="16" fill="#253549"/>
+    <rect x="55" y="14" width="100" height="16" rx="4" fill="#DC2626" opacity="0.5"/>
+    <circle cx="28" cy="24" r="14" fill="none" stroke="#DC2626" stroke-width="1.5" opacity="0.85"/>
+    <text x="28" y="29" font-family="Inter, sans-serif" font-size="14" fill="#DC2626" text-anchor="middle" opacity="0.7">T</text>
+    <!-- Feature rows -->
+    <rect x="20" y="65" width="16" height="16" rx="3" fill="#34d399" opacity="0.3"/>
+    <text x="22" y="78" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.8">&#10003;</text>
+    <rect x="48" y="68" width="140" height="10" rx="3" fill="#34d399" opacity="0.25"/>
+    <rect x="20" y="100" width="16" height="16" rx="3" fill="#F87171" opacity="0.3"/>
+    <text x="24" y="113" font-family="Inter, sans-serif" font-size="12" fill="#F87171" opacity="0.8">&#10005;</text>
+    <rect x="48" y="103" width="120" height="10" rx="3" fill="#F87171" opacity="0.2"/>
+    <rect x="20" y="135" width="16" height="16" rx="3" fill="#F87171" opacity="0.3"/>
+    <text x="24" y="148" font-family="Inter, sans-serif" font-size="12" fill="#F87171" opacity="0.8">&#10005;</text>
+    <rect x="48" y="138" width="160" height="10" rx="3" fill="#F87171" opacity="0.2"/>
+    <rect x="20" y="170" width="16" height="16" rx="3" fill="#34d399" opacity="0.3"/>
+    <text x="22" y="183" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.8">&#10003;</text>
+    <rect x="48" y="173" width="100" height="10" rx="3" fill="#34d399" opacity="0.25"/>
+    <rect x="20" y="210" width="80" height="24" rx="6" fill="#DC2626" opacity="0.2"/>
+    <text x="60" y="227" font-family="Inter, sans-serif" font-size="11" fill="#DC2626" text-anchor="middle" opacity="0.9">Active</text>
+  </g>
+
+  <!-- Card 3: EteSync (top-right, crossed out / faded) -->
+  <g transform="translate(1080, 120)" opacity="0.65">
+    <rect width="440" height="260" rx="14" fill="#1B2838" stroke="#64748B" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <rect x="0" y="0" width="440" height="48" rx="14" fill="#253549"/>
+    <rect x="0" y="32" width="440" height="16" fill="#253549"/>
+    <rect x="55" y="14" width="120" height="16" rx="4" fill="#64748B" opacity="0.4"/>
+    <circle cx="28" cy="24" r="14" fill="none" stroke="#64748B" stroke-width="1.5" opacity="0.5"/>
+    <text x="28" y="29" font-family="Inter, sans-serif" font-size="14" fill="#64748B" text-anchor="middle" opacity="0.9">E</text>
+    <!-- Feature rows (all faded) -->
+    <rect x="20" y="65" width="16" height="16" rx="3" fill="#64748B" opacity="0.2"/>
+    <rect x="48" y="68" width="140" height="10" rx="3" fill="#64748B" opacity="0.15"/>
+    <rect x="20" y="100" width="16" height="16" rx="3" fill="#64748B" opacity="0.2"/>
+    <rect x="48" y="103" width="120" height="10" rx="3" fill="#64748B" opacity="0.15"/>
+    <rect x="20" y="135" width="16" height="16" rx="3" fill="#64748B" opacity="0.2"/>
+    <rect x="48" y="138" width="160" height="10" rx="3" fill="#64748B" opacity="0.15"/>
+    <rect x="20" y="170" width="16" height="16" rx="3" fill="#64748B" opacity="0.2"/>
+    <rect x="48" y="173" width="100" height="10" rx="3" fill="#64748B" opacity="0.15"/>
+    <!-- "Abandoned" label -->
+    <rect x="20" y="210" width="110" height="24" rx="6" fill="#64748B" opacity="0.15"/>
+    <text x="75" y="227" font-family="Inter, sans-serif" font-size="11" fill="#64748B" text-anchor="middle" opacity="0.5">Abandoned</text>
+    <!-- Strike-through line -->
+    <line x1="0" y1="130" x2="440" y2="130" stroke="#64748B" stroke-width="1.5" opacity="0.3"/>
+  </g>
+
+  <!-- Card 4: Nextcloud (bottom-left) -->
+  <g transform="translate(80, 480)" opacity="0.9">
+    <rect width="440" height="260" rx="14" fill="#1B2838" stroke="#0284C7" stroke-width="1.5"/>
+    <rect x="0" y="0" width="440" height="48" rx="14" fill="#253549"/>
+    <rect x="0" y="32" width="440" height="16" fill="#253549"/>
+    <rect x="55" y="14" width="150" height="16" rx="4" fill="#0284C7" opacity="0.5"/>
+    <circle cx="28" cy="24" r="14" fill="none" stroke="#0284C7" stroke-width="1.5" opacity="0.85"/>
+    <text x="28" y="29" font-family="Inter, sans-serif" font-size="14" fill="#0284C7" text-anchor="middle" opacity="0.7">N</text>
+    <!-- Feature rows -->
+    <rect x="20" y="65" width="16" height="16" rx="3" fill="#F87171" opacity="0.3"/>
+    <text x="24" y="78" font-family="Inter, sans-serif" font-size="12" fill="#F87171" opacity="0.8">&#10005;</text>
+    <rect x="48" y="68" width="140" height="10" rx="3" fill="#F87171" opacity="0.2"/>
+    <rect x="20" y="100" width="16" height="16" rx="3" fill="#34d399" opacity="0.3"/>
+    <text x="22" y="113" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.8">&#10003;</text>
+    <rect x="48" y="103" width="120" height="10" rx="3" fill="#34d399" opacity="0.25"/>
+    <rect x="20" y="135" width="16" height="16" rx="3" fill="#34d399" opacity="0.3"/>
+    <text x="22" y="148" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.8">&#10003;</text>
+    <rect x="48" y="138" width="160" height="10" rx="3" fill="#34d399" opacity="0.25"/>
+    <rect x="20" y="170" width="16" height="16" rx="3" fill="#34d399" opacity="0.3"/>
+    <text x="22" y="183" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.8">&#10003;</text>
+    <rect x="48" y="173" width="100" height="10" rx="3" fill="#34d399" opacity="0.25"/>
+    <rect x="20" y="210" width="80" height="24" rx="6" fill="#0284C7" opacity="0.2"/>
+    <text x="60" y="227" font-family="Inter, sans-serif" font-size="11" fill="#0284C7" text-anchor="middle" opacity="0.9">Active</text>
+  </g>
+
+  <!-- Card 5: Skiff (bottom-center, crossed out) -->
+  <g transform="translate(580, 480)" opacity="0.6">
+    <rect width="440" height="260" rx="14" fill="#1B2838" stroke="#64748B" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <rect x="0" y="0" width="440" height="48" rx="14" fill="#253549"/>
+    <rect x="0" y="32" width="440" height="16" fill="#253549"/>
+    <rect x="55" y="14" width="90" height="16" rx="4" fill="#64748B" opacity="0.4"/>
+    <circle cx="28" cy="24" r="14" fill="none" stroke="#64748B" stroke-width="1.5" opacity="0.5"/>
+    <text x="28" y="29" font-family="Inter, sans-serif" font-size="14" fill="#64748B" text-anchor="middle" opacity="0.9">S</text>
+    <!-- All faded -->
+    <rect x="20" y="65" width="16" height="16" rx="3" fill="#64748B" opacity="0.15"/>
+    <rect x="48" y="68" width="140" height="10" rx="3" fill="#64748B" opacity="0.12"/>
+    <rect x="20" y="100" width="16" height="16" rx="3" fill="#64748B" opacity="0.15"/>
+    <rect x="48" y="103" width="120" height="10" rx="3" fill="#64748B" opacity="0.12"/>
+    <rect x="20" y="135" width="16" height="16" rx="3" fill="#64748B" opacity="0.15"/>
+    <rect x="48" y="138" width="160" height="10" rx="3" fill="#64748B" opacity="0.12"/>
+    <rect x="20" y="170" width="16" height="16" rx="3" fill="#64748B" opacity="0.15"/>
+    <rect x="48" y="173" width="100" height="10" rx="3" fill="#64748B" opacity="0.12"/>
+    <rect x="20" y="210" width="100" height="24" rx="6" fill="#64748B" opacity="0.12"/>
+    <text x="70" y="227" font-family="Inter, sans-serif" font-size="11" fill="#64748B" text-anchor="middle" opacity="0.7">Acquired</text>
+    <!-- X through card -->
+    <line x1="40" y1="60" x2="400" y2="240" stroke="#64748B" stroke-width="1.5" opacity="0.2"/>
+    <line x1="400" y1="60" x2="40" y2="240" stroke="#64748B" stroke-width="1.5" opacity="0.2"/>
+  </g>
+
+  <!-- Card 6: SilentSuite (bottom-right, highlighted) -->
+  <g transform="translate(1080, 480)" opacity="0.9">
+    <rect width="440" height="260" rx="14" fill="#1B2838" stroke="#34d399" stroke-width="2"/>
+    <rect x="0" y="0" width="440" height="48" rx="14" fill="#253549"/>
+    <rect x="0" y="32" width="440" height="16" fill="#253549"/>
+    <rect x="55" y="14" width="160" height="16" rx="4" fill="#34d399" opacity="0.5"/>
+    <!-- Shield icon -->
+    <g transform="translate(16, 10) scale(1.1)">
+      <path d="M14 4C11 6 9 6.5 7 6.5v7c0 3.5 2.8 6 6.3 7 3.5-1 6.3-3.5 6.3-7V6.5c-1.8 0-4-.5-6.3-2.5z" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.7"/>
+    </g>
+    <!-- All green checks -->
+    <rect x="20" y="65" width="16" height="16" rx="3" fill="#34d399" opacity="0.35"/>
+    <text x="22" y="78" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.9">&#10003;</text>
+    <rect x="48" y="68" width="140" height="10" rx="3" fill="#34d399" opacity="0.3"/>
+    <rect x="20" y="100" width="16" height="16" rx="3" fill="#34d399" opacity="0.35"/>
+    <text x="22" y="113" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.9">&#10003;</text>
+    <rect x="48" y="103" width="120" height="10" rx="3" fill="#34d399" opacity="0.3"/>
+    <rect x="20" y="135" width="16" height="16" rx="3" fill="#34d399" opacity="0.35"/>
+    <text x="22" y="148" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.9">&#10003;</text>
+    <rect x="48" y="138" width="160" height="10" rx="3" fill="#34d399" opacity="0.3"/>
+    <rect x="20" y="170" width="16" height="16" rx="3" fill="#34d399" opacity="0.35"/>
+    <text x="22" y="183" font-family="Inter, sans-serif" font-size="12" fill="#34d399" opacity="0.9">&#10003;</text>
+    <rect x="48" y="173" width="100" height="10" rx="3" fill="#34d399" opacity="0.3"/>
+    <rect x="20" y="210" width="80" height="24" rx="6" fill="#34d399" opacity="0.2"/>
+    <text x="60" y="227" font-family="Inter, sans-serif" font-size="11" fill="#34d399" text-anchor="middle" opacity="0.7">Active</text>
+  </g>
+
+  <!-- Soft glow on SilentSuite card -->
+  <circle cx="1300" cy="610" r="180" fill="#34d399" opacity="0.1"/>
+</svg>

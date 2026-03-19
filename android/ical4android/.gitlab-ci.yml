@@ -1,0 +1,31 @@
+image: registry.gitlab.com/bitfireat/docker-android-emulator:latest
+
+before_script:
+  - export GRADLE_USER_HOME=`pwd`/.gradle; chmod +x gradlew
+
+cache:
+  paths:
+     - .gradle/
+
+test:
+  tags:
+    - privileged
+  script:
+    - start-emulator.sh
+    - wget -q https://f-droid.org/repo/org.dmfs.tasks_78500.apk && adb install org.dmfs.tasks_78500.apk
+    - wget -q https://f-droid.org/repo/org.tasks_100301.apk && adb install org.tasks_100301.apk
+    - ./gradlew check connectedCheck
+  artifacts:
+    paths:
+      - build/outputs/lint-results-debug.html
+      - build/reports/
+
+pages:
+  script:
+    - ./gradlew dokka
+    - mkdir public && mv build/dokka public
+  artifacts:
+    paths:
+      - public
+  only:
+    - master

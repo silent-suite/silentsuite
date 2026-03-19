@@ -1,0 +1,181 @@
+/*
+ * Copyright (c) Ricki Hirner (bitfire web engineering).
+ * All rights reserved. This program and the accompanying materials
+ * are made available under the terms of the GNU Public License v3.0
+ * which accompanies this distribution, and is available at
+ * http://www.gnu.org/licenses/gpl.html
+ */
+
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+// kotlin-kapt removed — was only used by Requery ORM (now deleted)
+
+android {
+    namespace 'io.silentsuite.sync'
+    compileSdkVersion rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        applicationId "io.silentsuite.sync"
+
+        minSdkVersion 21
+        targetSdkVersion 34
+
+        versionCode 1
+        versionName "1.0.0-beta.1"
+
+        buildConfigField "boolean", "customCerts", "true"
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+
+            /*
+             * To override the server's url (for example when developing),
+             * create file gradle.properties in ~/.gradle/ with this content:
+             *
+             * appDebugRemoteUrl="http://localserver:8080/"
+             */
+            if (project.hasProperty('appDebugRemoteUrl')) {
+                buildConfigField 'String', 'DEBUG_REMOTE_URL', appDebugRemoteUrl
+            } else {
+                buildConfigField 'String', 'DEBUG_REMOTE_URL', 'null'
+            }
+        }
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+            buildConfigField 'String', 'DEBUG_REMOTE_URL', 'null'
+
+            // Configure Kotlin compiler optimisations for releases
+            kotlinOptions {
+                freeCompilerArgs = [
+                        '-Xno-param-assertions',
+                        '-Xno-call-assertions',
+                        '-Xno-receiver-assertions'
+                ]
+            }
+        }
+    }
+
+
+    packagingOptions {
+        resources {
+            excludes += ['LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE.txt']
+        }
+    }
+
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
+    defaultConfig {
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    /*
+     * To sign release build, create file gradle.properties in ~/.gradle/ with this content:
+     *
+     * signingStoreLocation=/home/key.store
+     * signingKeyAlias=alias
+     *
+     * and set the KSTOREPWD env var to the store and key passwords (should be the same)
+     */
+    if (project.hasProperty('signingStoreLocation') &&
+            project.hasProperty('signingKeyAlias')) {
+        println "Found sign properties in gradle.properties! Signing build…"
+
+        signingConfigs {
+            release {
+                storeFile file(signingStoreLocation)
+                storePassword System.getenv("KSTOREPWD")
+                keyAlias signingKeyAlias
+                keyPassword System.getenv("KSTOREPWD")
+            }
+        }
+        buildTypes.release.signingConfig = signingConfigs.release
+    } else {
+        buildTypes.release.signingConfig = null
+    }
+    compileOptions {
+        // enable because ical4android requires desugaring
+        coreLibraryDesugaringEnabled true
+
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+         dataBinding = true
+         viewBinding = true
+         buildConfig = true
+    }
+    lint {
+        disable 'GoogleAppIndexingWarning', 'GradleDependency', 'GradleDynamicVersion', 'IconColors', 'IconLauncherShape', 'IconMissingDensityFolder', 'ImpliedQuantity', 'MissingQuantity', 'MissingTranslation', 'ExtraTranslation', 'Recycle', 'RtlEnabled', 'RtlHardcoded', 'Typos', 'RestrictedApi'
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.1.5'
+
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+    // Legacy journalmanager dependency removed — Etebase-only sync
+    def etebaseVersion = '2.3.2'
+    implementation "com.etebase:client:$etebaseVersion"
+
+    // ACRA crash reporting removed - will be replaced with Sentry in Phase 2
+    // def acraVersion = '5.7.0'
+    // implementation "ch.acra:acra-http:$acraVersion"
+    // implementation "ch.acra:acra-dialog:$acraVersion"
+    def supportVersion = '1.0.0'
+    implementation "androidx.legacy:legacy-support-core-ui:$supportVersion"
+    implementation "androidx.core:core:$supportVersion"
+    implementation "androidx.appcompat:appcompat:1.1.0"
+    implementation "androidx.cardview:cardview:1.0.0"
+    // KTX extensions
+    implementation "androidx.core:core-ktx:1.3.1"
+    implementation "androidx.fragment:fragment-ktx:1.2.5"
+    implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:2.4.0"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.4.0"
+    implementation "androidx.lifecycle:lifecycle-livedata-ktx:2.4.0"
+
+
+    implementation 'com.google.android.material:material:1.2.0-beta01'
+    implementation "androidx.legacy:legacy-preference-v14:$supportVersion"
+    implementation 'com.github.yukuku:ambilwarna:2.0.1'
+    implementation ('com.github.worker8:tourguide:1.0.18-SNAPSHOT@aar') {
+        transitive = true
+    }
+
+    // Requery ORM removed — Etebase uses EtebaseLocalCache for data persistence
+    implementation 'com.google.code.findbugs:jsr305:3.0.2'
+
+    def okhttp3Version = "4.8.1"
+    implementation "com.squareup.okhttp3:okhttp:$okhttp3Version"
+    implementation "com.squareup.okhttp3:logging-interceptor:$okhttp3Version"
+
+    implementation 'com.google.code.gson:gson:1.7.2'
+    implementation 'org.apache.commons:commons-collections4:4.1'
+    implementation 'org.apache.commons:commons-lang3:3.8.1'
+
+    implementation 'com.github.cachapa:ExpandableLayout:2.9.2'
+    implementation project(':cert4android')
+    implementation project(':ical4android')
+    implementation project(':vcard4android')
+    // for tests
+    androidTestImplementation('androidx.test:runner:1.1.0-alpha4') {
+        exclude group: 'com.android.support', module: 'support-annotations'
+    }
+    androidTestImplementation('androidx.test:rules:1.1.0-alpha4') {
+        exclude group: 'com.android.support', module: 'support-annotations'
+    }
+    androidTestImplementation 'junit:junit:4.12'
+    androidTestImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
+    testImplementation 'junit:junit:4.12'
+    testImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
+}

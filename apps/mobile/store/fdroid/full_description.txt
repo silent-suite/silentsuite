@@ -1,0 +1,17 @@
+SilentSuite provides end-to-end encrypted sync for your calendar events, contacts, and tasks using the Etebase protocol.
+
+Your data is encrypted on your device before syncing. Only you hold the encryption keys.
+
+Features:
+* Calendar with monthly view and full CRUD
+* Contacts with search and detail views
+* Tasks with priorities, due dates, and completion tracking
+* Bridge Mode: sync to your phone's native apps
+* Walled Garden mode: data stays encrypted in-app
+* Background sync
+* Dark theme
+* Offline access
+
+Requires a SilentSuite account (app.silentsuite.io) or self-hosted Etebase server.
+
+Source code: https://github.com/silent-suite/silentsuite-app

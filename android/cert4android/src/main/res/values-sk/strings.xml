@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="certificate_notification_connection_security">Zabezpečenie spojenia</string>
+    <string name="certificate_notification_user_interaction">Skontrolujte, prosím, certifikát</string>
+
+    <string name="service_rejected_temporarily">Certifikát bol dočasne odmietnutý</string>
+
+    <string name="trust_certificate_unknown_certificate_found">cert4android  zistil neznámy certifikát. Prajete si dôverovať mu?</string>
+    <string name="trust_certificate_x509_certificate_details">Detaily X509 certifikátu</string>
+    <string name="trust_certificate_issued_for">Vydaný pre</string>
+    <string name="trust_certificate_issued_by">Vydaný</string>
+    <string name="trust_certificate_validity_period">Obdobie platnosti</string>
+    <string name="trust_certificate_validity_period_value">%1$s – %2$s (nebude sa vynucovať)</string>
+    <string name="trust_certificate_fingerprints">Odtlačky</string>
+    <string name="trust_certificate_fingerprint_verified">Manuálne som skontroloval celý odtlačok.</string>
+    <string name="trust_certificate_accept">Prijať</string>
+    <string name="trust_certificate_reject">Odmietnuť</string>
+    <string name="trust_certificate_reset_info">V nastavení aplikácie môžete vynulovať všetky používateľské certifikáty</string>
+
+</resources>

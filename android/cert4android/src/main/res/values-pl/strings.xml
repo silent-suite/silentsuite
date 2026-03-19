@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="certificate_notification_connection_security">Bezpieczeństwo połączenia</string>
+    <string name="certificate_notification_user_interaction">Proszę zapoznać się z certyfikatem</string>
+
+    <string name="service_rejected_temporarily">Certyfikat tymczasowo odrzucony</string>
+
+    <string name="trust_certificate_unknown_certificate_found">cert4Android napotkał nieznany certyfikat. Czy chcesz go dodać?</string>
+    <string name="trust_certificate_x509_certificate_details">Szczegóły certyfikatu X509</string>
+    <string name="trust_certificate_issued_for">Wydane dla</string>
+    <string name="trust_certificate_issued_by">Wydane przez</string>
+    <string name="trust_certificate_validity_period">Okres ważności</string>
+    <string name="trust_certificate_validity_period_value">%1$s – %2$s (nie będzie egzekwowane)</string>
+    <string name="trust_certificate_fingerprints">Odciski palców</string>
+    <string name="trust_certificate_fingerprint_verified">Muszę ręcznie zweryfikowane cały odcisk palca.</string>
+    <string name="trust_certificate_accept">Akceptuj</string>
+    <string name="trust_certificate_reject">Odrzuć</string>
+    <string name="trust_certificate_reset_info">Można przywrócić wszystkie niestandardowe certyfikaty w ustawieniach aplikacji.</string>
+
+</resources>

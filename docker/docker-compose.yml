@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: silentsuite-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: silentsuite
+      POSTGRES_USER: silentsuite
+      POSTGRES_PASSWORD: silentsuite_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U silentsuite"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  etebase:
+    build:
+      context: ./etebase
+      dockerfile: Dockerfile
+    container_name: silentsuite-etebase
+    ports:
+      - "3735:3735"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVER: http
+    volumes:
+      - etebase_data:/data
+
+volumes:
+  postgres_data:
+  etebase_data:

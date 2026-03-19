@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="certificate_notification_connection_security">Безпека з\'єднання</string>
+    <string name="certificate_notification_user_interaction">Будь ласка, огляньте сертифікат</string>
+
+    <string name="service_rejected_temporarily">Сертифікат тимчасово відхилено</string>
+
+    <string name="trust_certificate_unknown_certificate_found">cert4android зіткнувся з невідомим сертифікатом. Чи довіряти йому?</string>
+    <string name="trust_certificate_x509_certificate_details">Подробиці сертифікату X509</string>
+    <string name="trust_certificate_issued_for">Видано для</string>
+    <string name="trust_certificate_issued_by">Видано</string>
+    <string name="trust_certificate_validity_period">Термін дії</string>
+    <string name="trust_certificate_validity_period_value">%1$s – %2$s (не буде виконано)</string>
+    <string name="trust_certificate_fingerprints">Відбитки</string>
+    <string name="trust_certificate_fingerprint_verified">Я вручну перевірив весь відбиток.</string>
+    <string name="trust_certificate_accept">Прийняти</string>
+    <string name="trust_certificate_reject">Відхилити</string>
+    <string name="trust_certificate_reset_info">Ви можете скинути всі сертифікати користувача в налаштуваннях додатку.</string>
+
+</resources>

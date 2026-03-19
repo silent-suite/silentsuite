@@ -1,0 +1,10 @@
+{
+  "name": "@silentsuite/config",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "typescript",
+    "eslint",
+    "tailwind"
+  ]
+}

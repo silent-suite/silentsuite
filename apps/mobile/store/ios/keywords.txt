@@ -1,0 +1,1 @@
+encrypted calendar,private contacts,secure tasks,e2ee,end-to-end encryption,privacy,calendar sync,contacts sync,etebase,zero knowledge

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="certificate_notification_connection_security">Защита на връзката</string>
+    <string name="certificate_notification_user_interaction">Моля прегледай сертификата</string>
+
+    <string name="service_rejected_temporarily">Сертификатът е временно отхвърлен</string>
+
+    <string name="trust_certificate_unknown_certificate_found">cert4android се натъкна на непознат сертификат.  Искаш ли да му се довериш?</string>
+    <string name="trust_certificate_x509_certificate_details">Подробности за X509 сертификата</string>
+    <string name="trust_certificate_issued_for">Издаден за</string>
+    <string name="trust_certificate_issued_by">Издаден от</string>
+    <string name="trust_certificate_validity_period">Период на годност</string>
+    <string name="trust_certificate_validity_period_value">%1$s – %2$s (няма да се прилага)</string>
+    <string name="trust_certificate_fingerprints">Пръстови отпечатъци</string>
+    <string name="trust_certificate_fingerprint_verified">Проверих целия пръстов отпечатък</string>
+    <string name="trust_certificate_accept">Приемам</string>
+    <string name="trust_certificate_reject">Отхвърлям</string>
+    </resources>

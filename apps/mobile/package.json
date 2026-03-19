@@ -1,0 +1,45 @@
+{
+  "name": "@silentsuite/mobile",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "lint": "eslint .",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-community/datetimepicker": "^8.0.0",
+    "@react-native-community/netinfo": "^11.4.0",
+    "@react-navigation/bottom-tabs": "^7.3.0",
+    "@react-navigation/native": "^7.1.0",
+    "@react-navigation/native-stack": "^7.3.0",
+    "@silentsuite/core": "workspace:*",
+    "buffer": "^6.0.3",
+    "expo": "~55.0.7",
+    "expo-background-fetch": "~55.0.10",
+    "expo-calendar": "~55.0.10",
+    "expo-contacts": "~55.0.9",
+    "expo-crypto": "~55.0.10",
+    "expo-font": "~55.0.4",
+    "expo-secure-store": "~55.0.9",
+    "expo-status-bar": "~55.0.4",
+    "expo-task-manager": "~55.0.10",
+    "libsodium-wrappers-sumo": "^0.7.6",
+    "react": "19.2.0",
+    "react-native": "0.83.2",
+    "react-native-calendars": "^1.1312.0",
+    "react-native-mmkv": "^3.2.0",
+    "react-native-safe-area-context": "~5.4.0",
+    "react-native-screens": "~4.24.0",
+    "react-native-svg": "~15.15.0",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~5.9.2"
+  },
+  "private": true
+}

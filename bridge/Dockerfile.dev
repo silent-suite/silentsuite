@@ -1,0 +1,28 @@
+FROM python:3.10-slim-bullseye
+
+# Install build dependencies for etebase (Rust + libsodium)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    libffi-dev \
+    libssl-dev \
+    pkg-config \
+    libsodium-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust (needed for etebase Python SDK)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.75.0
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml README.md LICENSE ./
+COPY src/ src/
+COPY tests/ tests/
+
+# Install the bridge and dependencies
+RUN pip install --no-cache-dir -e ".[dev]"
+
+# Default command
+CMD ["silentsuite-bridge", "--version"]

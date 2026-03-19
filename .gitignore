@@ -1,0 +1,63 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+
+# OpenNext / Cloudflare build output
+.open-next/
+
+# Production builds
+build/
+dist/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+**/.env
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# PWA generated files
+**/public/sw.js
+**/public/sw.js.map
+**/public/workbox-*.js
+**/public/workbox-*.js.map
+**/public/swe-worker-*.js
+
+# Misc
+.DS_Store
+*.pem
+.vercel
+package-lock.json
+tsconfig.tsbuildinfo
+
+# IDE / tools
+.opencode/
+.claude/
+
+# Syncthing
+.stversions/
+.stfolder/
+.stignore
+*.sync-conflict-*
+*.syncthing.*.tmp
+
+# Private directories
+_bmad/
+_bmad-output/
+_audit/
+memory/
+deploy/
+
+# Turborepo
+.turbo/

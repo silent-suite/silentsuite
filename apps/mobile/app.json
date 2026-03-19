@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "SilentSuite",
+    "slug": "silentsuite",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "scheme": "silentsuite",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1B2838"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "io.silentsuite.app",
+      "infoPlist": {
+        "NSCalendarsUsageDescription": "SilentSuite needs access to your calendar to sync your encrypted events.",
+        "NSContactsUsageDescription": "SilentSuite needs access to your contacts to sync your encrypted address book.",
+        "NSRemindersUsageDescription": "SilentSuite needs access to your reminders to sync your encrypted tasks."
+      }
+    },
+    "android": {
+      "package": "io.silentsuite.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#1B2838",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-font",
+      "expo-calendar",
+      "expo-contacts",
+      "expo-background-fetch",
+      "expo-task-manager",
+      "@react-native-community/datetimepicker",
+      "./plugins/withSyncAdapter"
+    ]
+  }
+}

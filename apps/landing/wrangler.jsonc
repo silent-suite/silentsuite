@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "silentsuite",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-09-27",
+  "observability": {
+    "enabled": true
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+  // N8N_CONFIRM_WEBHOOK_URL is set as a secret via:
+  // npx wrangler secret put N8N_CONFIRM_WEBHOOK_URL
+}

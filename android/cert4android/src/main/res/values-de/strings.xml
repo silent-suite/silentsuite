@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="certificate_notification_connection_security">Verbindungssicherheit</string>
+    <string name="certificate_notification_user_interaction">Bitte Zertifikat überprüfen</string>
+
+    <string name="service_rejected_temporarily">Zertifikat vorübergehend abgelehnt</string>
+
+    <string name="trust_certificate_unknown_certificate_found">cert4android ist auf ein unbekanntes Zertifikat gestoßen. Wollen Sie diesem vertrauen?</string>
+    <string name="trust_certificate_x509_certificate_details">X509-Zertifikat</string>
+    <string name="trust_certificate_issued_for">Ausgestellt für</string>
+    <string name="trust_certificate_issued_by">Ausgestellt von</string>
+    <string name="trust_certificate_validity_period">Gültigkeitszeitraum</string>
+    <string name="trust_certificate_validity_period_value">%1$s – %2$s (wird nicht erzwungen)</string>
+    <string name="trust_certificate_fingerprints">Prüfsummen</string>
+    <string name="trust_certificate_fingerprint_verified">Ich habe die vollständige Prüfsumme händisch überprüft.</string>
+    <string name="trust_certificate_accept">Akzeptieren</string>
+    <string name="trust_certificate_reject">Ablehnen</string>
+    <string name="trust_certificate_reset_info">Alle akzeptierten/abgelehnten Zertifikate können in den App-Einstellungen zurückgesetzt werden.</string>
+
+</resources>

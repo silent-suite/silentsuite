@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0A1018"/>
+      <stop offset="100%" stop-color="#1B2838"/>
+    </linearGradient>
+    <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+      <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#253549" stroke-width="0.5" opacity="0.3"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+
+  <!-- Shield icon -->
+  <g transform="translate(600, 200) scale(5)">
+    <path d="M16 5C12.5 7.5 9 8 7 8v10c0 5 4 8.5 9 10 5-1.5 9-5 9-10V8c-2 0-5.5-.5-9-3z" fill="none" stroke="#34d399" stroke-width="2"/>
+  </g>
+
+  <!-- Brand name -->
+  <text x="600" y="380" font-family="Inter, system-ui, sans-serif" font-size="64" font-weight="700" fill="white" text-anchor="middle" letter-spacing="-1">SilentSuite</text>
+
+  <!-- Tagline -->
+  <text x="600" y="430" font-family="Inter, system-ui, sans-serif" font-size="24" font-weight="400" fill="#8D9FBA" text-anchor="middle">Private Sync, By Design.</text>
+
+  <!-- Feature pills -->
+  <g transform="translate(370, 470)">
+    <rect x="0" y="0" width="110" height="32" rx="16" fill="#253549"/>
+    <text x="55" y="21" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="500" fill="#34d399" text-anchor="middle">Calendar</text>
+
+    <rect x="126" y="0" width="110" height="32" rx="16" fill="#253549"/>
+    <text x="181" y="21" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="500" fill="#34d399" text-anchor="middle">Contacts</text>
+
+    <rect x="252" y="0" width="90" height="32" rx="16" fill="#253549"/>
+    <text x="297" y="21" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="500" fill="#34d399" text-anchor="middle">Tasks</text>
+
+    <rect x="358" y="0" width="80" height="32" rx="16" fill="#253549"/>
+    <text x="398" y="21" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="500" fill="#34d399" text-anchor="middle">E2EE</text>
+  </g>
+
+  <!-- URL -->
+  <text x="600" y="570" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="400" fill="#677FA3" text-anchor="middle">silentsuite.io</text>
+
+  <!-- Bottom accent line -->
+  <rect x="0" y="624" width="1200" height="6" fill="#34d399" opacity="0.6"/>
+</svg>
