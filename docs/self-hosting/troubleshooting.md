@@ -16,14 +16,14 @@ All services should show `Up (healthy)`. If a service shows `Up (unhealthy)` or 
 # All services
 docker compose logs
 
-# Specific service (postgres, etebase, web, caddy)
-docker compose logs etebase
+# Specific service (postgres, server, caddy)
+docker compose logs server
 
 # Follow logs in real time
 docker compose logs -f caddy
 
 # Last 100 lines
-docker compose logs --tail 100 web
+docker compose logs --tail 100 server
 ```
 
 ## Run the Verification Script
@@ -44,7 +44,7 @@ docker compose logs --tail 100 web
 
 ```bash
 docker compose logs postgres
-docker compose logs etebase
+docker compose logs server
 ```
 
 ### SSL Certificate Errors
@@ -53,19 +53,18 @@ docker compose logs etebase
 
 **Causes and fixes:**
 
-- **DNS not resolving:** Verify both DNS records point to your server with `dig +short your-domain`.
+- **DNS not resolving:** Verify your DNS record points to your server with `dig +short your-domain.com`.
 - **Ports blocked:** Caddy needs ports 80 and 443 open for the ACME HTTP-01 challenge. Check your firewall: `sudo ufw status` or `sudo iptables -L -n`.
 - **Rate limiting:** Let's Encrypt has [rate limits](https://letsencrypt.org/docs/rate-limits/). If you have hit them, wait before retrying.
 
 ### Database Connection Errors
 
-**Symptom:** Etebase logs show "connection refused" or authentication errors.
+**Symptom:** Server logs show "connection refused" or authentication errors.
 
 **Fixes:**
 
 - Confirm PostgreSQL is healthy: `docker compose ps postgres`
-- Confirm the passwords in `.env` match what was used when the database was first initialized. If the database volume already exists, changing passwords in `.env` will not update the database. You must either recreate the volume or alter the passwords inside PostgreSQL.
-- Confirm the init scripts were copied: `ls ./init-db/`
+- Confirm the `DATABASE_PASSWORD` in `.env` matches what was used when the database was first initialized. If the database volume already exists, changing the password in `.env` will not update the database. You must either recreate the volume or alter the password inside PostgreSQL.
 
 ### "Permission Denied" Errors
 
@@ -76,15 +75,14 @@ docker compose logs etebase
 - Ensure the data volumes are owned by the correct users. Recreating volumes usually fixes this.
 - On SELinux-enabled systems, you may need to add the `:z` flag to volume mounts.
 
-### Etebase Not Accepting Connections
+### Server Not Accepting Connections
 
-**Symptom:** `https://sync.DOMAIN` returns 502.
+**Symptom:** `https://your-domain.com` returns 502.
 
-**Fix:** The Etebase container can take 20-30 seconds to initialize on first start. Wait, then check:
+**Fix:** The SilentSuite server can take 20-30 seconds to initialize on first start (database migrations, static files). Wait, then check:
 
 ```bash
-docker compose logs etebase
-docker compose exec etebase wget -q --spider http://127.0.0.1:3735/ && echo "OK"
+docker compose logs server
 ```
 
 ---
@@ -93,8 +91,8 @@ docker compose exec etebase wget -q --spider http://127.0.0.1:3735/ && echo "OK"
 
 ```bash
 # Restart a service
-docker compose restart web
+docker compose restart server
 
 # Recreate a service (picks up .env changes)
-docker compose up -d --force-recreate web
+docker compose up -d --force-recreate server
 ```

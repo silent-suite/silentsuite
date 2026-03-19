@@ -14,14 +14,13 @@ docker compose down
 docker volume rm self-host_pgdata self-host_etebase_data self-host_caddy_data self-host_caddy_config
 
 # Remove the Docker images
-docker rmi ghcr.io/silent-suite/silentsuite-web:latest
 docker rmi victorrds/etebase:latest
 docker rmi postgres:16-alpine
 docker rmi caddy:2-alpine
 
 # Remove the cloned repository
 cd ..
-rm -rf silentsuite.io
+rm -rf silentsuite
 ```
 
 ## Stop Without Deleting Data
