@@ -38,11 +38,10 @@ This starts all apps in development mode using [Turborepo](https://turbo.build/)
 SilentSuite is a pnpm monorepo managed by Turborepo:
 
 ```
-silentsuite.io/
+silentsuite/
   apps/
     landing/         # Landing page and blog (Next.js)
     web/             # Main web application (Next.js)
-    billing-api/     # Billing API
   packages/          # Shared packages
   self-host/         # Self-hosting configuration (Docker Compose)
   deploy/            # Deployment scripts and configuration

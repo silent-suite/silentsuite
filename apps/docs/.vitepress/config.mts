@@ -97,11 +97,11 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/silent-suite/silentsuite.io' },
+      { icon: 'github', link: 'https://github.com/silentsuite/silentsuite' },
     ],
 
     editLink: {
-      pattern: 'https://github.com/silent-suite/silentsuite.io/edit/main/apps/docs/:path',
+      pattern: 'https://github.com/silentsuite/silentsuite/edit/main/apps/docs/:path',
       text: 'Edit this page on GitHub',
     },
 

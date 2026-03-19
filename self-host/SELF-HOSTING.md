@@ -61,8 +61,8 @@ DNS propagation can take up to 48 hours, but typically completes within minutes.
 ## Quick Start
 
 ```bash
-git clone https://github.com/silentsuite/silentsuite.io.git
-cd silentsuite.io/self-host
+git clone https://github.com/silentsuite/silentsuite.git
+cd silentsuite/self-host
 ./install.sh
 ```
 

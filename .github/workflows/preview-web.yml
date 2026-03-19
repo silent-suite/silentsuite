@@ -39,7 +39,6 @@ jobs:
           load: true
           tags: silentsuite-web-preview:latest
           build-args: |
-            NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
             NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
           cache-from: type=gha
           cache-to: type=gha,mode=max
