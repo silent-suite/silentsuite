@@ -28,6 +28,10 @@ open class AndroidAddressBook<T1: AndroidContact, T2: AndroidGroup>(
 
     open var readOnly: Boolean = false
 
+    /** Returns the provider, throwing a descriptive exception if null. */
+    fun requireProvider(): ContentProviderClient =
+            provider ?: throw IllegalStateException("Content provider is not available for address book ${account.name}")
+
     var settings: ContentValues
         /**
          * Retrieves [ContactsContract.Settings] for the current address book.
@@ -35,7 +39,7 @@ open class AndroidAddressBook<T1: AndroidContact, T2: AndroidGroup>(
          * @throws android.os.RemoteException on content provider errors
          */
         get() {
-            provider!!.query(syncAdapterURI(ContactsContract.Settings.CONTENT_URI), null, null, null, null)?.use { cursor ->
+            requireProvider().query(syncAdapterURI(ContactsContract.Settings.CONTENT_URI), null, null, null, null)?.use { cursor ->
                 if (cursor.moveToNext()) {
                     val values = ContentValues(cursor.columnCount)
                     DatabaseUtils.cursorRowToContentValues(cursor, values)
@@ -54,7 +58,7 @@ open class AndroidAddressBook<T1: AndroidContact, T2: AndroidGroup>(
         set(values) {
             values.put(ContactsContract.Settings.ACCOUNT_NAME, account.name)
             values.put(ContactsContract.Settings.ACCOUNT_TYPE, account.type)
-            provider!!.insert(syncAdapterURI(ContactsContract.Settings.CONTENT_URI), values)
+            requireProvider().insert(syncAdapterURI(ContactsContract.Settings.CONTENT_URI), values)
         }
 
     var syncState: ByteArray?
@@ -64,7 +68,7 @@ open class AndroidAddressBook<T1: AndroidContact, T2: AndroidGroup>(
 
     fun queryContacts(where: String?, whereArgs: Array<String>?, sortOrder: String? = null): List<T1> {
         val contacts = LinkedList<T1>()
-        provider!!.query(rawContactsSyncUri(),
+        requireProvider().query(rawContactsSyncUri(),
                 null, where, whereArgs, sortOrder)?.use { cursor ->
             while (cursor.moveToNext()) {
                 val values = ContentValues(cursor.columnCount)
@@ -77,7 +81,7 @@ open class AndroidAddressBook<T1: AndroidContact, T2: AndroidGroup>(
 
     fun queryGroups(where: String?, whereArgs: Array<String>?, sortOrder: String? = null): List<T2> {
         val groups = LinkedList<T2>()
-        provider!!.query(groupsSyncUri(),
+        requireProvider().query(groupsSyncUri(),
                 arrayOf(Groups._ID, AndroidGroup.COLUMN_FILENAME, AndroidGroup.COLUMN_ETAG),
                 where, whereArgs, sortOrder)?.use { cursor ->
             while (cursor.moveToNext()) {

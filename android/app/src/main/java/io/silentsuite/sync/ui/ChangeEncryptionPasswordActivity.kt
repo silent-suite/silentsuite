@@ -35,7 +35,7 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        account = intent.extras!!.getParcelable(EXTRA_ACCOUNT)!!
+        account = requireNotNull(requireNotNull(intent.extras) { "ChangeEncryptionPasswordActivity requires intent extras" }.getParcelable(EXTRA_ACCOUNT)) { "ChangeEncryptionPasswordActivity requires EXTRA_ACCOUNT" }
 
         supportActionBar!!.setDisplayHomeAsUpEnabled(true)
 

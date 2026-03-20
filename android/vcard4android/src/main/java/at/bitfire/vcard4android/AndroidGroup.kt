@@ -60,7 +60,7 @@ open class AndroidGroup(
 
             val id = requireNotNull(id)
             val c = Contact()
-            addressBook.provider!!.query(addressBook.syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, id)),
+            addressBook.requireProvider().query(addressBook.syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, id)),
                     arrayOf(COLUMN_UID, Groups.TITLE, Groups.NOTES), null, null, null)?.use { cursor ->
                 if (!cursor.moveToNext())
                     throw FileNotFoundException("Contact group not found")
@@ -72,7 +72,8 @@ open class AndroidGroup(
             }
 
             // query UIDs of all contacts which are member of the group
-            addressBook.provider.query(addressBook.syncAdapterURI(ContactsContract.Data.CONTENT_URI),
+            val prov = addressBook.requireProvider()
+            prov.query(addressBook.syncAdapterURI(ContactsContract.Data.CONTENT_URI),
                     arrayOf(Data.RAW_CONTACT_ID),
                     GroupMembership.MIMETYPE + "=? AND " + GroupMembership.GROUP_ROW_ID + "=?",
                     arrayOf(GroupMembership.CONTENT_ITEM_TYPE, id.toString()), null)?.use { cursor ->
@@ -80,7 +81,7 @@ open class AndroidGroup(
                     val contactID = cursor.getLong(0)
                     Constants.log.fine("Member ID: $contactID")
 
-                    addressBook.provider.query(addressBook.syncAdapterURI(ContentUris.withAppendedId(RawContacts.CONTENT_URI, contactID)),
+                    prov.query(addressBook.syncAdapterURI(ContentUris.withAppendedId(RawContacts.CONTENT_URI, contactID)),
                             arrayOf(AndroidContact.COLUMN_UID), null, null, null)?.use { cursor ->
                         if (cursor.moveToNext()) {
                             val uid = cursor.getString(0)
@@ -123,7 +124,7 @@ open class AndroidGroup(
 		values.put(Groups.ACCOUNT_NAME, addressBook.account.name)
         values.put(Groups.SHOULD_SYNC, 1)
         // read-only: values.put(Groups.GROUP_VISIBLE, 1);
-        val uri = addressBook.provider!!.insert(addressBook.syncAdapterURI(Groups.CONTENT_URI), values)
+        val uri = addressBook.requireProvider().insert(addressBook.syncAdapterURI(Groups.CONTENT_URI), values)
                 ?: throw ContactsStorageException("Empty result from content provider when adding group")
         id = ContentUris.parseId(uri)
         return uri
@@ -143,11 +144,11 @@ open class AndroidGroup(
 
     fun update(values: ContentValues): Uri {
         val uri = groupSyncURI()
-        addressBook.provider!!.update(uri, values, null, null)
+        addressBook.requireProvider().update(uri, values, null, null)
         return uri
     }
 
-    fun delete() = addressBook.provider!!.delete(groupSyncURI(), null, null)
+    fun delete() = addressBook.requireProvider().delete(groupSyncURI(), null, null)
 
 
     // helpers

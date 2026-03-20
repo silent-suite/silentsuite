@@ -49,7 +49,10 @@ class ContactsSyncAdapterService : SyncAdapterService() {
             Logger.log.info("Synchronizing address book: " + addressBook.url)
             Logger.log.info("Taking settings from: " + addressBook.mainAccount)
 
-            val principal = settings.uri?.toHttpUrlOrNull()!!
+            val principal = settings.uri?.toHttpUrlOrNull() ?: run {
+                Logger.log.warning("Contacts sync skipped: no valid URI for account ${addressBook.mainAccount.name}")
+                return
+            }
             ContactsSyncManager(context, account, settings, extras, authority, provider, syncResult, addressBook, principal).use {
                 it.performSync()
             }

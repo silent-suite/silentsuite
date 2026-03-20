@@ -16,7 +16,7 @@ class InvitationsActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        account = intent.extras!!.getParcelable(EXTRA_ACCOUNT)!!
+        account = requireNotNull(requireNotNull(intent.extras) { "InvitationsActivity requires intent extras" }.getParcelable(EXTRA_ACCOUNT)) { "InvitationsActivity requires EXTRA_ACCOUNT" }
 
         setContentView(R.layout.etebase_fragment_activity)
 

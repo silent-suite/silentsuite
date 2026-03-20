@@ -113,7 +113,7 @@ open class AndroidContact(
             val id = requireNotNull(id)
             var iter: EntityIterator? = null
             try {
-                iter = RawContacts.newEntityIterator(addressBook.provider!!.query(
+                iter = RawContacts.newEntityIterator(addressBook.requireProvider().query(
                         addressBook.syncAdapterURI(ContactsContract.RawContactsEntity.CONTENT_URI),
                         null, RawContacts._ID + "=?", arrayOf(id.toString()), null))
 
@@ -258,7 +258,7 @@ open class AndroidContact(
                     }
                 }
         }
-        if (row.getAsInteger(Phone.IS_PRIMARY) != 0)
+        if ((row.getAsInteger(Phone.IS_PRIMARY) ?: 0) != 0)
             number.pref = 1
 
         contact!!.phoneNumbers += labeledNumber
@@ -281,7 +281,7 @@ open class AndroidContact(
                     email.types += EmailType.get(labelToXName(it))
                 }
         }
-        if (row.getAsInteger(Email.IS_PRIMARY) != 0)
+        if ((row.getAsInteger(Email.IS_PRIMARY) ?: 0) != 0)
             email.pref = 1
 
         contact!!.emails += labeledEmail
@@ -294,7 +294,7 @@ open class AndroidContact(
                     rawContactSyncURI(),
                     RawContacts.DisplayPhoto.CONTENT_DIRECTORY)
             try {
-                addressBook.provider!!.openAssetFile(photoUri, "r")?.let { afd ->
+                addressBook.requireProvider().openAssetFile(photoUri, "r")?.let { afd ->
                     afd.createInputStream().use { contact.photo = IOUtils.toByteArray(it) }
                 }
             } catch(e: IOException) {
@@ -546,7 +546,7 @@ open class AndroidContact(
 
 
     fun add(): Uri {
-        val batch = BatchOperation(addressBook.provider!!)
+        val batch = BatchOperation(addressBook.requireProvider())
 
         val builder = BatchOperation.CpoBuilder.newInsert(addressBook.syncAdapterURI(RawContacts.CONTENT_URI))
         buildContact(builder, false)
@@ -567,7 +567,7 @@ open class AndroidContact(
     fun update(contact: Contact): Uri {
         this.contact = contact
 
-        val batch = BatchOperation(addressBook.provider!!)
+        val batch = BatchOperation(addressBook.requireProvider())
         val uri = rawContactSyncURI()
         val builder = BatchOperation.CpoBuilder.newUpdate(uri)
         buildContact(builder, true)
@@ -604,7 +604,7 @@ open class AndroidContact(
         return uri
     }
 
-    fun delete() = addressBook.provider!!.delete(rawContactSyncURI(), null, null)
+    fun delete() = addressBook.requireProvider().delete(rawContactSyncURI(), null, null)
 
 
     @CallSuper
@@ -1161,7 +1161,7 @@ open class AndroidContact(
                 values.put(Data.IS_READ_ONLY, 1)
 
             try {
-                addressBook.provider!!.insert(dataSyncURI(), values)
+                addressBook.requireProvider().insert(dataSyncURI(), values)
             } catch(e: RemoteException) {
                 Constants.log.log(Level.WARNING, "Couldn't insert contact photo", e)
             }
