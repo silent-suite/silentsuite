@@ -118,7 +118,6 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
                 .setTitle(R.string.delete_collection_confirm_title)
                 .setMessage(R.string.change_encryption_password_are_you_sure)
                 .setPositiveButton(android.R.string.yes) { _, _ ->
-                    changePasswordDo(old_password, new_password)
                     progress = ProgressDialog(this)
                     progress.setTitle(R.string.setting_up_encryption)
                     progress.setMessage(getString(R.string.setting_up_encryption_content))
@@ -126,6 +125,7 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
                     progress.setCanceledOnTouchOutside(false)
                     progress.setCancelable(false)
                     progress.show()
+                    changePasswordDo(old_password, new_password)
                 }
                 .setNegativeButton(android.R.string.no) { _, _ -> }
                 .create().show()
