@@ -211,6 +211,6 @@ abstract class SyncAdapterService : Service() {
     }
 
     companion object {
-        var collectionLastFetchMap = HashMap<String, Long>()
+        var collectionLastFetchMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
     }
 }

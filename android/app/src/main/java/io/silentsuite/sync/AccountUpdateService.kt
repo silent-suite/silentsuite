@@ -19,8 +19,8 @@ class AccountUpdateService : Service() {
 
     private val binder = InfoBinder()
 
-    private val runningRefresh = HashSet<Long>()
-    private val refreshingStatusListeners = LinkedList<WeakReference<RefreshingStatusListener>>()
+    private val runningRefresh = Collections.synchronizedSet(HashSet<Long>())
+    private val refreshingStatusListeners = java.util.concurrent.CopyOnWriteArrayList<WeakReference<RefreshingStatusListener>>()
 
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
