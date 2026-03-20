@@ -16,6 +16,11 @@ import { useEtebaseStore } from '../stores/etebase-store';
 import { useSyncStore } from '../stores/sync-store';
 import type { CalendarEvent, Contact, Task } from '@silentsuite/core';
 
+// Concurrency guard for sync operations
+let isSyncing = false;
+export function getIsSyncing() { return isSyncing; }
+export function setIsSyncing(value: boolean) { isSyncing = value; }
+
 // --- Calendar ---
 
 export async function createEvent(event: CalendarEvent): Promise<string> {
