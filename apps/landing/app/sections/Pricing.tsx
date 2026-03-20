@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Check, Calendar, Users, CheckSquare, Shield, Github, X, Lock, CreditCard, RotateCcw, Globe } from 'lucide-react'
+import { Check, Calendar, Users, CheckSquare, Shield, Github, CreditCard, RotateCcw, Globe } from 'lucide-react'
 
 type BillingCycle = 'monthly' | 'yearly'
 
@@ -63,19 +63,6 @@ const plans = [
   },
 ]
 
-const comparison = [
-  { feature: 'Calendar sync', earlyAdopter: true, standard: true, selfHosted: true },
-  { feature: 'Contact sync', earlyAdopter: true, standard: true, selfHosted: true },
-  { feature: 'Task management', earlyAdopter: true, standard: true, selfHosted: true },
-  { feature: 'End-to-end encryption', earlyAdopter: true, standard: true, selfHosted: true },
-  { feature: 'Unlimited devices', earlyAdopter: true, standard: true, selfHosted: true },
-  { feature: 'Web, iOS & Android', earlyAdopter: true, standard: true, selfHosted: true },
-  { feature: '5 GB encrypted storage', earlyAdopter: true, standard: true, selfHosted: true },
-  { feature: 'Email support', earlyAdopter: true, standard: true, selfHosted: false },
-  { feature: 'Price locked forever', earlyAdopter: true, standard: false, selfHosted: false },
-  { feature: 'Self-hosted option', earlyAdopter: false, standard: false, selfHosted: true },
-]
-
 const trustSignals = [
   {
     icon: CreditCard,
@@ -98,14 +85,6 @@ const trustSignals = [
     description: 'Try SilentSuite free for up to 30 days. No commitment required.',
   },
 ]
-
-function ComparisonCell({ value }: { value: boolean }) {
-  return value ? (
-    <Check className="w-4 h-4 text-teal-400 mx-auto" />
-  ) : (
-    <X className="w-4 h-4 text-navy-600 mx-auto" />
-  )
-}
 
 function BillingToggle({
   billing,
@@ -168,107 +147,87 @@ export default function Pricing() {
 
         <BillingToggle billing={billing} onChange={setBilling} />
 
-        {/* Main layout: plans + trust signals sidebar */}
-        <div className="flex flex-col lg:flex-row gap-8">
-          {/* Plan cards */}
-          <div className="flex-1 grid md:grid-cols-3 gap-6">
-            {plans.map((plan) => {
-              const isFree = plan.monthlyPrice === 0
-              const price = isFree
-                ? 'Free'
-                : `\u20AC${billing === 'monthly' ? plan.monthlyPrice.toFixed(2) : plan.yearlyPrice.toFixed(2)}`
-              const period = isFree
-                ? 'forever'
-                : billing === 'monthly'
-                  ? '/month'
-                  : '/month, billed yearly'
+        {/* Plan cards — centered */}
+        <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
+          {plans.map((plan) => {
+            const isFree = plan.monthlyPrice === 0
+            const price = isFree
+              ? 'Free'
+              : `\u20AC${billing === 'monthly' ? plan.monthlyPrice.toFixed(2) : plan.yearlyPrice.toFixed(2)}`
+            const period = isFree
+              ? 'forever'
+              : billing === 'monthly'
+                ? '/month'
+                : '/month, billed yearly'
 
-              return (
-                <div
-                  key={plan.name}
-                  className={`relative p-8 rounded-2xl border flex flex-col transition-all ${
+            return (
+              <div
+                key={plan.name}
+                className={`relative p-8 rounded-2xl border flex flex-col transition-all ${
+                  plan.highlight
+                    ? 'bg-teal-400/10 border-teal-400/40 ring-1 ring-teal-400/20'
+                    : 'bg-navy-900 border-navy-700 hover:border-navy-600'
+                }`}
+              >
+                {'badge' in plan && plan.badge && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                    <span className="px-4 py-1 bg-teal-400 text-navy-950 text-xs font-bold rounded-full uppercase tracking-wide">
+                      {plan.badge}
+                    </span>
+                  </div>
+                )}
+                {plan.highlight && !('badge' in plan) && (
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                    <span className="px-4 py-1 bg-teal-400 text-navy-950 text-xs font-bold rounded-full uppercase tracking-wide">
+                      Most popular
+                    </span>
+                  </div>
+                )}
+
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold mb-2">{plan.name}</h3>
+                  {/* Product icons */}
+                  <div className="flex items-center gap-1.5 mb-4">
+                    {plan.icons.map((Icon, i) => (
+                      <div key={i} className="w-6 h-6 rounded bg-navy-800 flex items-center justify-center">
+                        <Icon className="w-3.5 h-3.5 text-teal-400" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-end gap-1 mb-1">
+                    <span className="text-4xl font-bold">{price}</span>
+                  </div>
+                  <p className="text-navy-400 text-sm mb-3">{period}</p>
+                  {!isFree && billing === 'yearly' && (
+                    <p className="text-teal-400 text-xs font-medium">
+                      Save &euro;{((plan.monthlyPrice - plan.yearlyPrice) * 12).toFixed(0)}/year vs monthly
+                    </p>
+                  )}
+                  <p className="text-navy-300 text-sm mt-3">{plan.description}</p>
+                </div>
+
+                <ul className="space-y-3 mb-8 flex-1">
+                  {plan.features.map((f) => (
+                    <li key={f} className="flex items-start gap-3 text-sm">
+                      <Check className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" />
+                      <span className="text-navy-200">{f}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                <a
+                  href={plan.href}
+                  className={`block text-center py-3 px-6 rounded-lg font-semibold transition-colors ${
                     plan.highlight
-                      ? 'bg-teal-400/10 border-teal-400/40 ring-1 ring-teal-400/20'
-                      : 'bg-navy-900 border-navy-700 hover:border-navy-600'
+                      ? 'bg-teal-400 hover:bg-teal-500 text-navy-950'
+                      : 'bg-navy-800 hover:bg-navy-700 text-white'
                   }`}
                 >
-                  {'badge' in plan && plan.badge && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                      <span className="px-4 py-1 bg-teal-400 text-navy-950 text-xs font-bold rounded-full uppercase tracking-wide">
-                        {plan.badge}
-                      </span>
-                    </div>
-                  )}
-                  {plan.highlight && !('badge' in plan) && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                      <span className="px-4 py-1 bg-teal-400 text-navy-950 text-xs font-bold rounded-full uppercase tracking-wide">
-                        Most popular
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="mb-6">
-                    <h3 className="text-lg font-semibold mb-2">{plan.name}</h3>
-                    {/* Product icons */}
-                    <div className="flex items-center gap-1.5 mb-4">
-                      {plan.icons.map((Icon, i) => (
-                        <div key={i} className="w-6 h-6 rounded bg-navy-800 flex items-center justify-center">
-                          <Icon className="w-3.5 h-3.5 text-teal-400" />
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex items-end gap-1 mb-1">
-                      <span className="text-4xl font-bold">{price}</span>
-                    </div>
-                    <p className="text-navy-400 text-sm mb-3">{period}</p>
-                    {!isFree && billing === 'yearly' && (
-                      <p className="text-teal-400 text-xs font-medium">
-                        Save &euro;{((plan.monthlyPrice - plan.yearlyPrice) * 12).toFixed(0)}/year vs monthly
-                      </p>
-                    )}
-                    <p className="text-navy-300 text-sm mt-3">{plan.description}</p>
-                  </div>
-
-                  <ul className="space-y-3 mb-8 flex-1">
-                    {plan.features.map((f) => (
-                      <li key={f} className="flex items-start gap-3 text-sm">
-                        <Check className="w-4 h-4 text-teal-400 mt-0.5 shrink-0" />
-                        <span className="text-navy-200">{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <a
-                    href={plan.href}
-                    className={`block text-center py-3 px-6 rounded-lg font-semibold transition-colors ${
-                      plan.highlight
-                        ? 'bg-teal-400 hover:bg-teal-500 text-navy-950'
-                        : 'bg-navy-800 hover:bg-navy-700 text-white'
-                    }`}
-                  >
-                    {plan.cta}
-                  </a>
-                </div>
-              )
-            })}
-          </div>
-
-          {/* Trust signals sidebar */}
-          <div className="lg:w-64 shrink-0">
-            <div className="lg:sticky lg:top-8 space-y-5">
-              {trustSignals.map(({ icon: Icon, title, description }) => (
-                <div key={title} className="flex gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-teal-400/10 flex items-center justify-center shrink-0">
-                    <Icon className="w-4 h-4 text-teal-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-white">{title}</p>
-                    <p className="text-xs text-navy-400 leading-relaxed">{description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+                  {plan.cta}
+                </a>
+              </div>
+            )
+          })}
         </div>
 
         <p className="text-center text-navy-500 text-sm mt-8">
@@ -279,31 +238,17 @@ export default function Pricing() {
           {' '}Cancel anytime, no lock-in.
         </p>
 
-        {/* Feature comparison table */}
-        <div className="mt-20">
-          <h3 className="text-2xl font-bold text-center mb-8">Compare plans</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-navy-700">
-                  <th className="text-left py-3 px-4 text-navy-400 font-medium">Feature</th>
-                  <th className="text-center py-3 px-4 text-teal-400 font-semibold">Early Adopter</th>
-                  <th className="text-center py-3 px-4 text-white font-semibold">Standard</th>
-                  <th className="text-center py-3 px-4 text-white font-semibold">Self-hosted</th>
-                </tr>
-              </thead>
-              <tbody className="text-navy-300">
-                {comparison.map((row) => (
-                  <tr key={row.feature} className="border-b border-navy-800">
-                    <td className="py-3 px-4">{row.feature}</td>
-                    <td className="py-3 px-4"><ComparisonCell value={row.earlyAdopter} /></td>
-                    <td className="py-3 px-4"><ComparisonCell value={row.standard} /></td>
-                    <td className="py-3 px-4"><ComparisonCell value={row.selfHosted} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {/* Trust signals — below pricing cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-16 max-w-4xl mx-auto">
+          {trustSignals.map(({ icon: Icon, title, description }) => (
+            <div key={title} className="text-center">
+              <div className="w-10 h-10 rounded-lg bg-teal-400/10 flex items-center justify-center mx-auto mb-3">
+                <Icon className="w-5 h-5 text-teal-400" />
+              </div>
+              <p className="text-sm font-semibold text-white mb-1">{title}</p>
+              <p className="text-xs text-navy-400 leading-relaxed">{description}</p>
+            </div>
+          ))}
         </div>
       </div>
     </section>
