@@ -7,6 +7,7 @@
     "dev": "turbo dev",
     "build": "turbo build",
     "build:landing": "turbo build --filter=@silentsuite/landing && cd apps/landing && npx opennextjs-cloudflare build",
+    "build:docs": "turbo build --filter=@silentsuite/docs",
     "lint": "turbo lint",
     "test": "turbo test",
     "type-check": "turbo type-check"
