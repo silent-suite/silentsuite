@@ -39,11 +39,11 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://plausible.silentsuite.io",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "font-src 'self'",
-              "connect-src 'self' https://app.formbricks.com",
+              "connect-src 'self' https://app.formbricks.com https://plausible.silentsuite.io",
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",
