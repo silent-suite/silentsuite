@@ -302,6 +302,7 @@ class BillingManager private constructor() {
             val httpClient = HttpClient.Builder(context, settings).build()
             val request = Request.Builder()
                 .url("$BILLING_API_BASE_URL/subscription")
+                .header("Authorization", "Token ${settings.etebaseSession}")
                 .get()
                 .build()
 
