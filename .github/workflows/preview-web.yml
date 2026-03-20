@@ -7,7 +7,7 @@ on:
     paths:
       - 'apps/web/**'
       - 'packages/**'
-      - 'deploy/web.Dockerfile'
+      - 'Dockerfile.web'
       - 'pnpm-lock.yaml'
       - '.github/workflows/preview-web.yml'
   pull_request:
@@ -15,7 +15,7 @@ on:
     paths:
       - 'apps/web/**'
       - 'packages/**'
-      - 'deploy/web.Dockerfile'
+      - 'Dockerfile.web'
       - 'pnpm-lock.yaml'
 
 concurrency:
@@ -50,7 +50,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: deploy/web.Dockerfile
+          file: Dockerfile.web
           push: true
           tags: |
             ghcr.io/silent-suite/silentsuite-web:preview
