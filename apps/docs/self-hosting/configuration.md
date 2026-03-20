@@ -6,11 +6,19 @@ All configuration is done through environment variables in the `.env` file.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DOMAIN` | Yes | `silentsuite.example.com` | Your domain. The app runs at `https://DOMAIN` and sync at `https://sync.DOMAIN`. |
-| `POSTGRES_PASSWORD` | Yes | -- | Password for the main PostgreSQL superuser (`silentsuite`). |
-| `ETEBASE_DB_PASSWORD` | Yes | -- | Password for the `etebase_user` PostgreSQL role. Used by the Etebase server to access the database. |
-| `ETEBASE_ADMIN_USER` | Yes | `admin` | Username for the Etebase admin account. |
-| `ETEBASE_ADMIN_PASSWORD` | Yes | -- | Password for the Etebase admin account. |
+| `DOMAIN` | Yes | -- | Your domain name. The SilentSuite server runs at `https://DOMAIN`. |
+| `DATABASE_PASSWORD` | Yes | -- | Password for the PostgreSQL `silentsuite` user. |
+| `SUPER_USER` | No | `admin` | Username for the admin panel at `https://DOMAIN/admin/`. |
+| `SUPER_PASS` | Yes | -- | Password for the admin panel. |
+
+## Advanced Variables
+
+These have sensible defaults and rarely need changing:
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_NAME` | `silentsuite` | PostgreSQL database name. |
+| `DATABASE_USER` | `silentsuite` | PostgreSQL username. |
 
 ## Security Note
 

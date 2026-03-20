@@ -9,11 +9,12 @@ import { z } from 'zod'
 import {
   Shield, Lock, Check, KeyRound, ChevronRight, User, Crown,
   ShieldCheck, Download, AlertTriangle, Copy, CheckCircle,
+  Users, Settings, Activity, ExternalLink,
 } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
-import { isSelfHosted } from '@/app/lib/self-hosted'
+import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -240,17 +241,17 @@ function StepCreateAccount({
           </summary>
           <div className="mt-3 space-y-2">
             <label className="block text-xs text-[rgb(var(--muted))]">
-              Etebase Server URL
+              Server URL
             </label>
             <Input
               type="url"
-              placeholder="https://api.etebase.com"
+              placeholder="https://sync.example.com"
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
               className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))] text-xs"
             />
             <p className="text-[10px] text-[rgb(var(--muted))]">
-              Leave empty to use the default SilentSuite server. Only change this if you run your own Etebase server.
+              Leave empty to use the default SilentSuite server. Self-hosters: enter your own server URL.
             </p>
           </div>
         </details>
@@ -338,6 +339,153 @@ function StepChoosePlan({ onNext }: { onNext: (planId: string) => void }) {
         <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
         <span>30-day money-back guarantee. Cancel anytime.</span>
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Step 2b: Self-Host Support Choice
+// ---------------------------------------------------------------------------
+
+function StepSelfHostSupport({ onNext }: { onNext: (choice: 'free' | 'support') => void }) {
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2 text-center">
+        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">You&apos;re self-hosting</h2>
+        <p className="text-sm text-[rgb(var(--muted))]">
+          Your account was created on your own server. All features are unlocked.
+        </p>
+      </div>
+
+      {/* Free option */}
+      <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 flex flex-col">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="rounded-lg bg-emerald-500/10 p-2.5">
+            <Shield className="h-5 w-5 text-emerald-500" />
+          </div>
+          <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Free forever</h3>
+        </div>
+        <p className="text-sm leading-relaxed text-[rgb(var(--muted))]">
+          Self-hosting is completely free. No limits, no feature gates, no expiry.
+          You run the server, you own the data.
+        </p>
+        <div className="mt-4">
+          <Button
+            onClick={() => onNext('free')}
+            variant="outline"
+            className="w-full py-2.5 text-sm"
+          >
+            Continue for free
+          </Button>
+        </div>
+      </div>
+
+      {/* Support option */}
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 ring-1 ring-amber-500/20 flex flex-col relative overflow-hidden">
+        <div className="absolute top-3 right-3">
+          <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-medium text-amber-400">
+            Optional
+          </span>
+        </div>
+        <div className="flex items-center gap-3 mb-3">
+          <div className="rounded-lg bg-amber-500/10 p-2.5">
+            <Crown className="h-5 w-5 text-amber-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Support the project</h3>
+        </div>
+        <p className="text-sm leading-relaxed text-[rgb(var(--muted))]">
+          SilentSuite is open source. If you find it useful, consider supporting
+          ongoing development.
+        </p>
+        <div className="mt-5 pt-4 border-t border-amber-500/10">
+          <div className="mb-4 flex items-baseline gap-1.5">
+            <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;4</span>
+            <span className="text-sm text-[rgb(var(--muted))]">/month</span>
+          </div>
+          <Button
+            onClick={() => onNext('support')}
+            className="w-full py-2.5 text-sm bg-amber-600 hover:bg-amber-700"
+          >
+            Support SilentSuite
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Step 2c: Admin Info (self-hosters only)
+// ---------------------------------------------------------------------------
+
+function StepAdminInfo({ serverUrl, onNext }: { serverUrl: string; onNext: () => void }) {
+  const adminUrl = serverUrl ? `${serverUrl.replace(/\/+$/, '')}/admin/` : ''
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2 text-center">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10">
+          <Shield className="h-7 w-7 text-emerald-500" />
+        </div>
+        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">You&apos;re the admin</h2>
+        <p className="text-sm text-[rgb(var(--muted))]">
+          As the first user on this server, you have admin privileges.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 flex items-start gap-3">
+          <Users className="h-5 w-5 text-emerald-500 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">User management</p>
+            <p className="text-xs text-[rgb(var(--muted))] mt-0.5">
+              View, create, and manage all user accounts on your server via the admin panel.
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 flex items-start gap-3">
+          <Activity className="h-5 w-5 text-emerald-500 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Server monitoring</p>
+            <p className="text-xs text-[rgb(var(--muted))] mt-0.5">
+              Monitor collections, check database state, and review server health.
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 flex items-start gap-3">
+          <Settings className="h-5 w-5 text-emerald-500 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Full control</p>
+            <p className="text-xs text-[rgb(var(--muted))] mt-0.5">
+              All features are unlocked for every user. No subscription tiers or feature gates.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {adminUrl && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+          <p className="text-xs text-[rgb(var(--muted))] mb-2">Your admin panel:</p>
+          <a
+            href={adminUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-sm font-medium text-emerald-500 hover:text-emerald-400 transition-colors"
+          >
+            {adminUrl}
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+          <p className="text-[10px] text-[rgb(var(--muted))] mt-2">
+            Log in with the admin credentials from your .env file.
+          </p>
+        </div>
+      )}
+
+      <Button onClick={onNext} className="w-full">
+        Continue
+      </Button>
     </div>
   )
 }
@@ -585,23 +733,30 @@ IMPORTANT:
 // Progress Stepper
 // ---------------------------------------------------------------------------
 
-type Step = 'account' | 'plan' | 'payment' | 'vault'
+type Step = 'account' | 'plan' | 'selfhost' | 'admin' | 'payment' | 'vault'
 
-const STEPS = [
+const STEPS_DEFAULT = [
   { key: 'account' as const, label: 'Create Account', number: 1 },
   { key: 'plan' as const, label: 'Choose Plan', number: 2 },
   { key: 'payment' as const, label: 'Payment', number: 3 },
   { key: 'vault' as const, label: 'Setup Vault', number: 4 },
 ]
 
-function ProgressStepper({ currentStep }: { currentStep: Step }) {
-  const currentIndex = STEPS.findIndex((s) => s.key === currentStep)
+const STEPS_SELFHOST = [
+  { key: 'account' as const, label: 'Create Account', number: 1 },
+  { key: 'selfhost' as const, label: 'Self-Hosting', number: 2 },
+  { key: 'admin' as const, label: 'Admin Setup', number: 3 },
+  { key: 'vault' as const, label: 'Setup Vault', number: 4 },
+]
+
+function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: readonly { key: string; label: string; number: number }[] }) {
+  const currentIndex = steps.findIndex((s) => s.key === currentStep)
 
   return (
     <>
       {/* Desktop: vertical stepper on the left */}
       <div className="hidden md:flex flex-col gap-0 mr-8">
-        {STEPS.map((step, i) => (
+        {steps.map((step, i) => (
           <div key={step.key} className="flex items-start gap-3">
             <div className="flex flex-col items-center">
               <div
@@ -619,7 +774,7 @@ function ProgressStepper({ currentStep }: { currentStep: Step }) {
                   step.number
                 )}
               </div>
-              {i < STEPS.length - 1 && (
+              {i < steps.length - 1 && (
                 <div
                   className={`w-0.5 h-12 transition-colors ${
                     i < currentIndex ? 'bg-emerald-500' : 'bg-[rgb(var(--border))]'
@@ -642,7 +797,7 @@ function ProgressStepper({ currentStep }: { currentStep: Step }) {
 
       {/* Mobile: horizontal stepper on top */}
       <div className="flex md:hidden items-center justify-center gap-2 mb-6">
-        {STEPS.map((step, i) => (
+        {steps.map((step, i) => (
           <div key={step.key} className="flex items-center gap-1.5">
             <div className="flex items-center gap-1">
               <div
@@ -670,7 +825,7 @@ function ProgressStepper({ currentStep }: { currentStep: Step }) {
                 {step.label}
               </span>
             </div>
-            {i < STEPS.length - 1 && (
+            {i < steps.length - 1 && (
               <div
                 className={`w-4 h-0.5 transition-colors ${
                   i < currentIndex ? 'bg-emerald-500' : 'bg-[rgb(var(--border))]'
@@ -691,21 +846,23 @@ function ProgressStepper({ currentStep }: { currentStep: Step }) {
 export default function SignupPage() {
   const router = useRouter()
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
+  const signup = useAuthStore((s) => s.signup)
   const [step, setStep] = useState<Step>('account')
   const [serverUrl, setServerUrl] = useState('')
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null)
+  const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const formDataRef = useRef<SignupFormData | null>(null)
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
     formDataRef.current = data
     const trimmedUrl = serverUrl.trim() || undefined
     if (trimmedUrl) {
-      localStorage.setItem('silentsuite-etebase-server', trimmedUrl)
+      localStorage.setItem('silentsuite-server-url', trimmedUrl)
     } else {
-      localStorage.removeItem('silentsuite-etebase-server')
+      localStorage.removeItem('silentsuite-server-url')
     }
 
-    // Create Etebase account now so we have auth token for Stripe provisioning
+    // Create account on the server (default or custom)
     const identifier = data.email || data.username || ''
     try {
       await createEtebaseAccount(identifier, data.password, trimmedUrl)
@@ -714,13 +871,34 @@ export default function SignupPage() {
       return
     }
 
-    if (isSelfHosted) {
-      // Self-hosted: skip plan/payment, go straight to vault
-      setStep('vault')
+    const selfHosted = isSelfHosted || isCustomServer(trimmedUrl)
+    setUsingSelfHostedServer(selfHosted)
+
+    if (selfHosted) {
+      // Self-hosted: show free vs support choice
+      setStep('selfhost')
     } else {
       setStep('plan')
     }
   }, [createEtebaseAccount, serverUrl])
+
+  const handleSelfHostChoice = useCallback(async (choice: 'free' | 'support') => {
+    if (choice === 'support') {
+      // Open Stripe payment link in new tab
+      window.open('https://buy.stripe.com/test_00wfZjeifgm49n94Qf3VC00', '_blank')
+    }
+    // Complete signup as self-hosted (skip billing API)
+    try {
+      await signup('self-hosted')
+    } catch {
+      // Error displayed by store
+    }
+    setStep('admin')
+  }, [signup])
+
+  const handleAdminInfoComplete = useCallback(() => {
+    setStep('vault')
+  }, [])
 
   const handlePlanSelected = useCallback((planId: string) => {
     setSelectedPlan(planId)
@@ -736,10 +914,11 @@ export default function SignupPage() {
   }, [router])
 
   const email = formDataRef.current?.email || formDataRef.current?.username || ''
+  const activeSteps = usingSelfHostedServer ? STEPS_SELFHOST : STEPS_DEFAULT
 
   return (
     <div className="flex items-start justify-center max-w-2xl mx-auto">
-      <ProgressStepper currentStep={step} />
+      <ProgressStepper currentStep={step} steps={activeSteps} />
       <div className="flex-1 max-w-md">
         {step === 'account' && (
           <StepCreateAccount
@@ -747,6 +926,12 @@ export default function SignupPage() {
             serverUrl={serverUrl}
             setServerUrl={setServerUrl}
           />
+        )}
+        {step === 'selfhost' && (
+          <StepSelfHostSupport onNext={handleSelfHostChoice} />
+        )}
+        {step === 'admin' && (
+          <StepAdminInfo serverUrl={serverUrl.trim()} onNext={handleAdminInfoComplete} />
         )}
         {step === 'plan' && (
           <StepChoosePlan onNext={handlePlanSelected} />

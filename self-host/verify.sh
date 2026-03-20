@@ -44,44 +44,43 @@ check_container() {
 
 echo "Container Status:"
 check_container "silentsuite-postgres"
-check_container "etebase-server"
-check_container "silentsuite-web"
+check_container "silentsuite-server"
 check_container "silentsuite-caddy"
 echo ""
 
-# ── Check endpoints ────────────────────────────────────────────────────
+# ── Check sync server endpoint ─────────────────────────────────────────
 
-check_endpoint() {
-  local label="$1"
-  local url="$2"
-
-  if curl -sf --max-time 10 "$url" >/dev/null 2>&1; then
-    echo "  [OK]    $label ($url)"
-  else
-    echo "  [FAIL]  $label ($url)"
-    EXIT_CODE=1
-  fi
-}
-
-echo "Endpoint Checks:"
-check_endpoint "Web App" "http://localhost:3000/"
-check_endpoint "Etebase" "http://localhost:3735/"
+echo "Internal Endpoint:"
+if curl -sf --max-time 10 "http://localhost:3735/" >/dev/null 2>&1; then
+  echo "  [OK]    SilentSuite server (http://localhost:3735/)"
+else
+  echo "  [FAIL]  SilentSuite server (http://localhost:3735/)"
+  EXIT_CODE=1
+fi
 echo ""
 
 # ── DNS check (non-fatal) ─────────────────────────────────────────────
 
 if command -v dig &>/dev/null; then
   echo "DNS Status:"
-  for host in "$DOMAIN" "sync.$DOMAIN"; do
-    ip=$(dig +short "$host" 2>/dev/null || echo "")
-    if [ -n "$ip" ]; then
-      echo "  [OK]    $host -> $ip"
-    else
-      echo "  [WARN]  $host (no DNS record found)"
-    fi
-  done
+  ip=$(dig +short "$DOMAIN" 2>/dev/null || echo "")
+  if [ -n "$ip" ]; then
+    echo "  [OK]    $DOMAIN -> $ip"
+  else
+    echo "  [WARN]  $DOMAIN (no DNS record found)"
+  fi
   echo ""
 fi
+
+# ── External endpoint check (non-fatal) ───────────────────────────────
+
+echo "External Endpoint (requires DNS + TLS):"
+if curl -sf --max-time 10 "https://$DOMAIN/" >/dev/null 2>&1; then
+  echo "  [OK]    https://$DOMAIN/"
+else
+  echo "  [WARN]  https://$DOMAIN/ (not reachable yet -- DNS may still be propagating)"
+fi
+echo ""
 
 if [ $EXIT_CODE -eq 0 ]; then
   echo "All checks passed!"

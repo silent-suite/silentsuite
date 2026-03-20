@@ -3,6 +3,8 @@ set -euo pipefail
 
 # SilentSuite Self-Hosted Installer
 # -----------------------------------
+# Sets up the SilentSuite sync server with PostgreSQL and Caddy (auto-TLS).
+# Users connect via app.silentsuite.io or mobile apps with a custom server URL.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -22,6 +24,7 @@ check_command() {
 }
 
 check_command docker
+check_command openssl
 
 if docker compose version &>/dev/null; then
   COMPOSE="docker compose"
@@ -32,58 +35,49 @@ else
   exit 1
 fi
 
-echo "Prerequisites OK: docker, $COMPOSE"
+echo "Prerequisites OK: docker, $COMPOSE, openssl"
 echo ""
 
 # ── Prompt for domain ─────────────────────────────────────────────────
 
-read -rp "Enter your domain name (e.g., silentsuite.example.com): " DOMAIN
+echo "Enter the domain for your SilentSuite server."
+echo "This is where your apps will connect to sync data."
+echo "Example: sync.example.com"
+echo ""
+read -rp "Domain: " DOMAIN
 if [[ -z "$DOMAIN" ]]; then
   echo "ERROR: Domain name is required."
   exit 1
 fi
 
 echo ""
-echo "Domain: $DOMAIN"
-echo "Sync:   sync.$DOMAIN"
+echo "SilentSuite server: https://$DOMAIN"
 echo ""
 
 # ── Generate passwords ────────────────────────────────────────────────
 
 echo "Generating secure passwords..."
-POSTGRES_PASSWORD=$(openssl rand -base64 32)
-ETEBASE_DB_PASSWORD=$(openssl rand -base64 32)
-ETEBASE_ADMIN_PASSWORD=$(openssl rand -base64 32)
+DATABASE_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
+SUPER_PASS=$(openssl rand -base64 16 | tr -d '/+=')
 
 # ── Write .env ─────────────────────────────────────────────────────────
 
 cat > .env <<EOF
 DOMAIN=$DOMAIN
-POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-ETEBASE_DB_PASSWORD=$ETEBASE_DB_PASSWORD
-ETEBASE_ADMIN_USER=admin
-ETEBASE_ADMIN_PASSWORD=$ETEBASE_ADMIN_PASSWORD
+DATABASE_PASSWORD=$DATABASE_PASSWORD
+SUPER_USER=admin
+SUPER_PASS=$SUPER_PASS
 EOF
 
-echo "Wrote .env"
+chmod 600 .env
+echo "Wrote .env (permissions: 600)"
 
-# ── Patch etebase-server.ini ───────────────────────────────────────────
-
-cp etebase-server.ini etebase-server.ini.bak
-sed -i "s|PLACEHOLDER_DOMAIN|sync.$DOMAIN|g" etebase-server.ini
-sed -i "s|PLACEHOLDER_ETEBASE_DB_PASSWORD|$ETEBASE_DB_PASSWORD|g" etebase-server.ini
-echo "Patched etebase-server.ini"
-
-# ── Create data directories ───────────────────────────────────────────
-
-mkdir -p data
-echo "Created data directories"
-
-# ── Build and start ───────────────────────────────────────────────────
+# ── Pull images and start ─────────────────────────────────────────────
 
 echo ""
-echo "Building and starting containers..."
-$COMPOSE up -d --build
+echo "Pulling images and starting containers..."
+$COMPOSE pull
+$COMPOSE up -d
 
 # ── Wait for health checks ───────────────────────────────────────────
 
@@ -93,39 +87,50 @@ echo "Waiting for services to become healthy..."
 MAX_WAIT=120
 ELAPSED=0
 while [ $ELAPSED -lt $MAX_WAIT ]; do
-  HEALTHY=$(docker ps --filter "name=silentsuite" --filter "health=healthy" --format '{{.Names}}' | wc -l)
-  TOTAL=$(docker ps --filter "name=silentsuite" --format '{{.Names}}' | wc -l)
-  ETEBASE_HEALTHY=$(docker ps --filter "name=etebase-server" --filter "health=healthy" --format '{{.Names}}' | wc -l)
+  HEALTHY=0
 
-  ALL_HEALTHY=$((HEALTHY + ETEBASE_HEALTHY))
-  ALL_TOTAL=$((TOTAL + $(docker ps --filter "name=etebase-server" --format '{{.Names}}' | wc -l)))
+  for container in silentsuite-postgres silentsuite-server; do
+    status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "unknown")
+    if [ "$status" = "healthy" ]; then
+      HEALTHY=$((HEALTHY + 1))
+    fi
+  done
 
-  if [ "$ALL_HEALTHY" -ge 3 ]; then
+  if [ "$HEALTHY" -ge 2 ]; then
     break
   fi
 
   sleep 5
   ELAPSED=$((ELAPSED + 5))
-  echo "  $ALL_HEALTHY/$ALL_TOTAL services healthy ($ELAPSED/${MAX_WAIT}s)..."
+  echo "  $HEALTHY/2 services healthy ($ELAPSED/${MAX_WAIT}s)..."
 done
+
+if [ "$HEALTHY" -lt 2 ]; then
+  echo ""
+  echo "WARNING: Not all services are healthy after ${MAX_WAIT}s."
+  echo "Run 'docker compose logs' to troubleshoot."
+  echo ""
+fi
 
 echo ""
 echo "============================================"
 echo "  SilentSuite is installed!"
 echo "============================================"
 echo ""
-echo "  Web App:       https://$DOMAIN"
-echo "  Sync Server:   https://sync.$DOMAIN"
-echo "  Etebase Admin: https://sync.$DOMAIN/admin/"
+echo "  Server URL:    https://$DOMAIN"
+echo "  Admin Panel:   https://$DOMAIN/admin/"
 echo ""
 echo "  Admin user:    admin"
-echo "  Admin pass:    $ETEBASE_ADMIN_PASSWORD"
+echo "  Admin pass:    $SUPER_PASS"
 echo ""
 echo "  IMPORTANT: Save these credentials!"
 echo "  They are also stored in .env"
 echo ""
 echo "  Next steps:"
-echo "  1. Point DNS A records for $DOMAIN and sync.$DOMAIN to this server"
-echo "  2. Caddy will auto-provision TLS certificates once DNS propagates"
-echo "  3. Open https://$DOMAIN to create your first account"
+echo "  1. Point a DNS A record for $DOMAIN to this server's IP"
+echo "  2. Caddy will auto-provision a TLS certificate once DNS propagates"
+echo "  3. Open app.silentsuite.io (or the mobile app)"
+echo "  4. On the signup/login page, expand 'Advanced Settings'"
+echo "  5. Enter https://$DOMAIN as your server URL"
+echo "  6. Create your account and start syncing!"
 echo ""
