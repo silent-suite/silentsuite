@@ -112,11 +112,13 @@ function StepCreateAccount({
   serverUrl,
   setServerUrl,
 }: {
-  onNext: (data: SignupFormData) => void
+  onNext: (data: SignupFormData) => Promise<void>
   serverUrl: string
   setServerUrl: (url: string) => void
 }) {
   const [useUsername, setUseUsername] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const {
     register,
@@ -127,7 +129,7 @@ function StepCreateAccount({
   } = useForm<SignupFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(useUsername ? usernameSignupSchema : emailSignupSchema) as any,
-    mode: 'onBlur',
+    mode: 'onChange',
   })
 
   const password = watch('password', '')
@@ -146,7 +148,18 @@ function StepCreateAccount({
         </p>
       </div>
 
-      <form onSubmit={handleSubmit(onNext)} className="space-y-4">
+      <form onSubmit={handleSubmit(async (data) => {
+        setSubmitError(null)
+        setIsSubmitting(true)
+        try {
+          await onNext(data)
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Account creation failed. Please try again.'
+          setSubmitError(message)
+        } finally {
+          setIsSubmitting(false)
+        }
+      })} className="space-y-4">
         {useUsername ? (
           <div className="space-y-2">
             <label
@@ -256,8 +269,21 @@ function StepCreateAccount({
           </div>
         </details>
 
-        <Button type="submit" disabled={!isValid} className="w-full">
-          Continue
+        {submitError && (
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+            <p className="text-sm text-red-400">{submitError}</p>
+          </div>
+        )}
+
+        <Button type="submit" disabled={!isValid || isSubmitting} className="w-full">
+          {isSubmitting ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              Creating account...
+            </span>
+          ) : (
+            'Continue'
+          )}
         </Button>
 
         <p className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
@@ -864,12 +890,7 @@ export default function SignupPage() {
 
     // Create account on the server (default or custom)
     const identifier = data.email || data.username || ''
-    try {
-      await createEtebaseAccount(identifier, data.password, trimmedUrl)
-    } catch {
-      // Error is displayed by the store
-      return
-    }
+    await createEtebaseAccount(identifier, data.password, trimmedUrl)
 
     const selfHosted = isSelfHosted || isCustomServer(trimmedUrl)
     setUsingSelfHostedServer(selfHosted)
