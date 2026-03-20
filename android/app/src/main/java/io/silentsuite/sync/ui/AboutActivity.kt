@@ -159,11 +159,7 @@ class AboutActivity : BaseActivity() {
 
         private val components = arrayOf(ComponentInfo(
                 App.appName, BuildConfig.VERSION_NAME, Constants.webUri.toString(),
-                "Silent Suite (based on EteSync by Tom Hacohen)",
-                R.string.about_license_info_no_warranty, "gpl-3.0-standalone.html"
-        ), ComponentInfo(
-                "EteSync for Android", "(forked from)", "https://github.com/etesync/android",
-                "Tom Hacohen / Ricki Hirner (bitfire web engineering)",
+                "Silent Suite",
                 R.string.about_license_info_no_warranty, "gpl-3.0-standalone.html"
         ), ComponentInfo(
                 "AmbilWarna", null, "https://github.com/yukuku/ambilwarna",
