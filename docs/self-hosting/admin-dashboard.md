@@ -1,15 +1,27 @@
-# Admin Dashboard
+# Admin Panel
 
-The web application includes a built-in admin dashboard for managing your self-hosted instance. It is accessible at `/admin` when you are logged in.
+The SilentSuite server includes a built-in admin panel for managing your instance.
+
+## Accessing the Admin Panel
+
+The admin panel is available at `https://your-domain.com/admin/`. Log in with the `SUPER_USER` and `SUPER_PASS` credentials from your `.env` file.
 
 ## Features
 
-The admin dashboard provides:
+The admin panel allows you to:
 
-- **Instance overview** -- a summary of your SilentSuite instance, including version information and basic statistics.
-- **User management** -- links to the Etebase admin panel at `https://sync.DOMAIN/admin/`, where you can manage user accounts, reset credentials, and monitor usage.
-- **System health** -- status indicators for each service in the stack, so you can confirm everything is running correctly without dropping to the command line.
+- **Manage user accounts** -- view, create, and delete user accounts.
+- **View collections** -- inspect the encrypted data collections stored on your server.
+- **Monitor database state** -- review the internal state of the server.
 
 ## Feature Access
 
-In self-hosted mode, all features are unlocked for every user on the instance. There are no subscription tiers or feature gates -- every account has full access to the complete SilentSuite feature set.
+In self-hosted mode, all features are unlocked for every user on the instance. There are no subscription tiers or feature gates. Every account has full access to the complete SilentSuite feature set.
+
+## Creating Additional Admin Users
+
+```bash
+docker exec -it silentsuite-server python manage.py createsuperuser
+```
+
+Follow the prompts to create a new admin account.
