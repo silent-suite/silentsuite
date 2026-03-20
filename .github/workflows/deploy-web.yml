@@ -7,7 +7,7 @@ on:
     paths:
       - 'apps/web/**'
       - 'packages/**'
-      - 'deploy/web.Dockerfile'
+      - 'Dockerfile.web'
       - 'pnpm-lock.yaml'
       - '.github/workflows/deploy-web.yml'
 
@@ -42,7 +42,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: deploy/web.Dockerfile
+          file: Dockerfile.web
           push: true
           tags: |
             ghcr.io/silent-suite/silentsuite-web:latest

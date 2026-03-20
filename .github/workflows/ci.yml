@@ -83,7 +83,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: deploy/web.Dockerfile
+          file: Dockerfile.web
           push: false
           tags: silentsuite-web:ci-${{ github.sha }}
           build-args: |
