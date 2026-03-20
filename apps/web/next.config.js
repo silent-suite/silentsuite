@@ -17,6 +17,10 @@ function resolveEtebase() {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  eslint: {
+    // ESLint runs as a separate CI step; skip during builds
+    ignoreDuringBuilds: true,
+  },
   transpilePackages: ['@silentsuite/ui', '@silentsuite/core'],
   webpack: (config) => {
     config.resolve.extensionAlias = {

@@ -1,26 +1,35 @@
-name: Preview Web App (non-main branches)
+name: Preview Web App (develop + PRs)
 
 on:
   push:
-    branches-ignore:
-      - main
+    branches:
+      - develop
     paths:
       - 'apps/web/**'
       - 'packages/**'
+      - 'Dockerfile.web'
       - 'pnpm-lock.yaml'
-      - 'deploy/web.Dockerfile'
       - '.github/workflows/preview-web.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'Dockerfile.web'
+      - 'pnpm-lock.yaml'
 
 concurrency:
   group: preview-web-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  deploy-preview:
+  build-preview:
+    name: Build Preview Image
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+      packages: write
       pull-requests: write
 
     steps:
@@ -30,72 +39,43 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build preview Docker image
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push preview image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: deploy/web.Dockerfile
-          push: false
-          load: true
-          tags: silentsuite-web-preview:latest
+          file: Dockerfile.web
+          push: true
+          tags: |
+            ghcr.io/silent-suite/silentsuite-web:preview
+            ghcr.io/silent-suite/silentsuite-web:preview-${{ github.sha }}
           build-args: |
             NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+            NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Save image as artifact
-        run: docker save silentsuite-web-preview:latest | gzip > silentsuite-web-preview.tar.gz
-
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: preview-web-image
-          path: silentsuite-web-preview.tar.gz
-          retention-days: 3
-
-      - name: Deploy to preview server
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            cd /opt/silentsuite
-            
-            # Pull latest code
-            cd app && git fetch origin && git checkout ${{ github.sha }} && cd ..
-            
-            # Build and restart only the preview web container
-            docker compose -f docker-compose.yml -f docker-compose.preview.yml build web-preview
-            docker compose -f docker-compose.yml -f docker-compose.preview.yml up -d web-preview
-            
-            echo "Preview deployed at https://preview.app.silentsuite.io"
-
-      - name: Comment preview URL on PR
-        if: github.event_name == 'push'
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: prs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: `${context.repo.owner}:${context.ref.replace('refs/heads/', '')}`,
-              state: 'open'
-            });
-
-            if (prs.length === 0) return;
-
-            const body = `**Web Preview deployed** to https://preview.app.silentsuite.io\n\nCommit: \`${context.sha.substring(0, 7)}\`\nBranch: \`${context.ref.replace('refs/heads/', '')}\``;
-            const pr = prs[0];
+            const body = `**Web preview image built** ✅\n\nImage: \`ghcr.io/silent-suite/silentsuite-web:preview-${context.sha.substring(0, 7)}\`\n\nTo test locally:\n\`\`\`bash\ndocker pull ghcr.io/silent-suite/silentsuite-web:preview-${context.sha.substring(0, 7)}\ndocker run -p 3000:3000 ghcr.io/silent-suite/silentsuite-web:preview-${context.sha.substring(0, 7)}\n\`\`\``;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: pr.number
+              issue_number: context.issue.number
             });
 
             const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Web Preview deployed')
+              c.user.type === 'Bot' && c.body.includes('Web preview image built')
             );
 
             if (existing) {
@@ -109,7 +89,7 @@ jobs:
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: pr.number,
+                issue_number: context.issue.number,
                 body
               });
             }

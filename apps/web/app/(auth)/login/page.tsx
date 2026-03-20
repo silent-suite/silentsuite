@@ -49,9 +49,9 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginFormData) => {
     const trimmedUrl = serverUrl.trim() || undefined
     if (trimmedUrl) {
-      localStorage.setItem('silentsuite-etebase-server', trimmedUrl)
+      localStorage.setItem('silentsuite-server-url', trimmedUrl)
     } else {
-      localStorage.removeItem('silentsuite-etebase-server')
+      localStorage.removeItem('silentsuite-server-url')
     }
     await login(data.email, data.password, trimmedUrl)
   }
@@ -121,17 +121,17 @@ export default function LoginPage() {
           </summary>
           <div className="mt-3 space-y-2">
             <label className="block text-xs text-[rgb(var(--muted))]">
-              Etebase Server URL
+              Server URL
             </label>
             <Input
               type="url"
-              placeholder="https://api.etebase.com"
+              placeholder="https://sync.example.com"
               value={serverUrl}
               onChange={(e) => setServerUrl(e.target.value)}
               className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))] text-xs"
             />
             <p className="text-[10px] text-[rgb(var(--muted))]">
-              Leave empty to use the default SilentSuite server. Only change this if you run your own Etebase server.
+              Leave empty to use the default SilentSuite server. Self-hosters: enter your own server URL.
             </p>
           </div>
         </details>

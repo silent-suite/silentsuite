@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { isSelfHosted } from '@/app/lib/self-hosted'
+import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 
 export interface User {
   isAdmin?: boolean
@@ -75,7 +75,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       localStorage.setItem('etebase_session', savedSession)
 
       let foundingMemberEligible = false
-      if (!isSelfHosted) {
+      if (!isSelfHosted && !isCustomServer(serverUrl)) {
         try {
           const res = await fetch(
             `${BILLING_API_URL}/auth/check-eligibility?email=${encodeURIComponent(email)}`,
@@ -109,7 +109,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signup: async (planId: string) => {
-    if (isSelfHosted) {
+    if (isSelfHosted || planId === 'self-hosted') {
       const pending = get().pendingSignup
       if (!pending) throw new Error('No pending signup')
       set({
@@ -163,7 +163,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const { authToken, savedSession } = await etebaseLogIn(email, password, serverUrl)
       localStorage.setItem('etebase_session', savedSession)
 
-      if (isSelfHosted) {
+      if (isSelfHosted || isCustomServer(serverUrl)) {
+        if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
         set({
           user: { id: 'self-hosted', email, planId: 'self-hosted', isAdmin: true },
           isAuthenticated: true,
@@ -231,6 +232,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     // Clear persisted data stores so next login starts fresh
     localStorage.removeItem('etebase_session')
+    localStorage.removeItem('silentsuite-server-url')
     localStorage.removeItem('silentsuite-tasks')
     localStorage.removeItem('silentsuite-contacts')
     localStorage.removeItem('silentsuite-calendar')
@@ -240,7 +242,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   refreshSession: async () => {
-    if (isSelfHosted) {
+    const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
+    if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
       const hasSession = !!localStorage.getItem('etebase_session')
       if (hasSession) {
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, subscriptionStatus: 'active' })
@@ -262,7 +265,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   restoreSession: async () => {
-    if (isSelfHosted) {
+    const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
+    if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
       const hasSession = !!localStorage.getItem('etebase_session')
       if (hasSession) {
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active' })
@@ -288,7 +292,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   fetchSubscription: async () => {
-    if (isSelfHosted) { set({ subscriptionStatus: 'active' }); return }
+    const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
+    if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) { set({ subscriptionStatus: 'active' }); return }
 
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })

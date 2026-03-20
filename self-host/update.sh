@@ -19,8 +19,8 @@ fi
 echo "Pulling latest images..."
 $COMPOSE pull
 
-echo "Rebuilding and restarting changed containers..."
-$COMPOSE up -d --build
+echo "Recreating containers with updated images..."
+$COMPOSE up -d
 
 echo ""
 echo "Update complete. Run ./verify.sh to check service health."
