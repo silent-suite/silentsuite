@@ -1,0 +1,11 @@
+**/node_modules
+**/.next
+**/.turbo
+**/.git
+**/dist
+_bmad/
+_bmad-output/
+_audit/
+memory/
+deploy/
+.opencode/

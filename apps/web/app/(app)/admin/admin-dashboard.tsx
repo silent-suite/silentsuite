@@ -250,7 +250,7 @@ function SelfHostedOverviewTab() {
           </a>
 
           <a
-            href="https://github.com/silentsuitehq/silentsuite"
+            href="https://github.com/silent-suite/silentsuite"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-between rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 transition-colors hover:border-[rgb(var(--primary))]"
