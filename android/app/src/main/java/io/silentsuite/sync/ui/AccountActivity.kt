@@ -313,7 +313,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private var syncStatusListener: Any? = null
 
         fun initialize(context: Context, account: Account) {
-            this.context = context
+            this.context = context.applicationContext
             this.account = account
 
             syncStatusListener = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_ACTIVE, this)
