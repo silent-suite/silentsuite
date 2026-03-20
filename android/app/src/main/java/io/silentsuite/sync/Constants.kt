@@ -25,7 +25,7 @@ object Constants {
     val webUri: Uri = Uri.parse("https://silentsuite.io/")
     val webAppUri: Uri = Uri.parse("https://app.silentsuite.io/")
     val docsUri: Uri = Uri.parse("https://docs.silentsuite.io/")
-    val etebaseDashboardPrefix: Uri = Uri.parse("https://dashboard.etebase.com/user/partner/")
+    val etebaseDashboardPrefix: Uri = Uri.parse("https://dashboard.silentsuite.io/user/partner/")
     val contactUri: Uri = webUri.buildUpon().appendEncodedPath("about/#contact").build()
     val registrationUrl: Uri = webUri.buildUpon().appendEncodedPath("accounts/signup/").build()
     val reportIssueUri: Uri = Uri.parse("https://github.com/silent-suite/silentsuite/issues")
