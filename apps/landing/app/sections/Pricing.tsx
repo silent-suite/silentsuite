@@ -7,9 +7,29 @@ type BillingCycle = 'monthly' | 'yearly'
 
 const plans = [
   {
-    name: 'Personal',
-    monthlyPrice: 4.99,
-    yearlyPrice: 3.99,
+    name: 'Early Adopter',
+    monthlyPrice: 3.60,
+    yearlyPrice: 3.00,
+    description: 'Limited time pricing for early supporters. Locked in for as long as you stay.',
+    icons: [Calendar, Users, CheckSquare, Shield],
+    features: [
+      'Calendar, contacts & tasks sync',
+      'End-to-end encryption',
+      'Unlimited devices',
+      'Web, iOS & Android apps',
+      '5 GB encrypted storage',
+      'Email support',
+      'Price locked forever',
+    ],
+    cta: 'Get started',
+    href: 'https://app.silentsuite.io/signup',
+    highlight: true,
+    badge: 'Limited time',
+  },
+  {
+    name: 'Standard',
+    monthlyPrice: 4.80,
+    yearlyPrice: 4.00,
     description: 'Everything you need for private sync across your devices.',
     icons: [Calendar, Users, CheckSquare, Shield],
     features: [
@@ -20,32 +40,15 @@ const plans = [
       '5 GB encrypted storage',
       'Email support',
     ],
-    cta: 'Join waitlist',
-    href: '#waitlist',
-    highlight: true,
-  },
-  {
-    name: 'Family',
-    monthlyPrice: 9.99,
-    yearlyPrice: 7.99,
-    description: 'Shared plan for households that take privacy seriously.',
-    icons: [Calendar, Users, CheckSquare, Shield],
-    features: [
-      'Everything in Personal',
-      'Up to 5 accounts',
-      'Shared encrypted calendars',
-      '20 GB shared storage',
-      'Priority support',
-    ],
-    cta: 'Join waitlist',
-    href: '#waitlist',
+    cta: 'Get started',
+    href: 'https://app.silentsuite.io/signup',
     highlight: false,
   },
   {
     name: 'Self-hosted',
     monthlyPrice: 0,
     yearlyPrice: 0,
-    description: 'Run the server yourself. Full control, zero cost.',
+    description: 'Run the server yourself. Full control, zero cost. Optional €4/mo to support development.',
     icons: [Github, Calendar, Users, CheckSquare],
     features: [
       'Open-source server (AGPL)',
@@ -61,16 +64,16 @@ const plans = [
 ]
 
 const comparison = [
-  { feature: 'Calendar sync', personal: true, family: true, selfHosted: true },
-  { feature: 'Contact sync', personal: true, family: true, selfHosted: true },
-  { feature: 'Task management', personal: true, family: true, selfHosted: true },
-  { feature: 'End-to-end encryption', personal: true, family: true, selfHosted: true },
-  { feature: 'Unlimited devices', personal: true, family: true, selfHosted: true },
-  { feature: 'Web, iOS & Android', personal: true, family: true, selfHosted: true },
-  { feature: 'Shared calendars', personal: false, family: true, selfHosted: true },
-  { feature: 'Multiple accounts', personal: false, family: true, selfHosted: true },
-  { feature: 'Priority support', personal: false, family: true, selfHosted: false },
-  { feature: 'Self-hosted option', personal: false, family: false, selfHosted: true },
+  { feature: 'Calendar sync', earlyAdopter: true, standard: true, selfHosted: true },
+  { feature: 'Contact sync', earlyAdopter: true, standard: true, selfHosted: true },
+  { feature: 'Task management', earlyAdopter: true, standard: true, selfHosted: true },
+  { feature: 'End-to-end encryption', earlyAdopter: true, standard: true, selfHosted: true },
+  { feature: 'Unlimited devices', earlyAdopter: true, standard: true, selfHosted: true },
+  { feature: 'Web, iOS & Android', earlyAdopter: true, standard: true, selfHosted: true },
+  { feature: '5 GB encrypted storage', earlyAdopter: true, standard: true, selfHosted: true },
+  { feature: 'Email support', earlyAdopter: true, standard: true, selfHosted: false },
+  { feature: 'Price locked forever', earlyAdopter: true, standard: false, selfHosted: false },
+  { feature: 'Self-hosted option', earlyAdopter: false, standard: false, selfHosted: true },
 ]
 
 const trustSignals = [
@@ -91,8 +94,8 @@ const trustSignals = [
   },
   {
     icon: Shield,
-    title: '30-day money back',
-    description: 'Not satisfied? Get a full refund within the first 30 days.',
+    title: 'Free trial included',
+    description: 'Try SilentSuite free for up to 30 days. No commitment required.',
   },
 ]
 
@@ -140,7 +143,7 @@ function BillingToggle({
       </span>
       {billing === 'yearly' && (
         <span className="ml-1 px-2 py-0.5 bg-teal-400/10 text-teal-400 text-xs font-semibold rounded-full border border-teal-400/20">
-          Save 20%
+          Save ~17%
         </span>
       )}
     </div>
@@ -159,7 +162,7 @@ export default function Pricing() {
           </h2>
           <p className="text-xl text-navy-300 max-w-2xl mx-auto">
             No ads. No data harvesting. You pay for the service, and the service works for you.
-            Waitlist members get early-access pricing locked in for life.
+            Early adopters get discounted pricing locked in for life.
           </p>
         </div>
 
@@ -189,7 +192,14 @@ export default function Pricing() {
                       : 'bg-navy-900 border-navy-700 hover:border-navy-600'
                   }`}
                 >
-                  {plan.highlight && (
+                  {'badge' in plan && plan.badge && (
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                      <span className="px-4 py-1 bg-teal-400 text-navy-950 text-xs font-bold rounded-full uppercase tracking-wide">
+                        {plan.badge}
+                      </span>
+                    </div>
+                  )}
+                  {plan.highlight && !('badge' in plan) && (
                     <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                       <span className="px-4 py-1 bg-teal-400 text-navy-950 text-xs font-bold rounded-full uppercase tracking-wide">
                         Most popular
@@ -262,11 +272,11 @@ export default function Pricing() {
         </div>
 
         <p className="text-center text-navy-500 text-sm mt-8">
-          Pricing in EUR.{' '}
+          Pricing in EUR. All plans include a free trial.{' '}
           {billing === 'yearly'
             ? 'Billed annually. Switch to monthly anytime.'
-            : 'Billed monthly. Save 20% with yearly billing.'}
-          {' '}No lock-in during beta.
+            : 'Billed monthly. Save ~17% with yearly billing.'}
+          {' '}Cancel anytime, no lock-in.
         </p>
 
         {/* Feature comparison table */}
@@ -277,8 +287,8 @@ export default function Pricing() {
               <thead>
                 <tr className="border-b border-navy-700">
                   <th className="text-left py-3 px-4 text-navy-400 font-medium">Feature</th>
-                  <th className="text-center py-3 px-4 text-teal-400 font-semibold">Personal</th>
-                  <th className="text-center py-3 px-4 text-white font-semibold">Family</th>
+                  <th className="text-center py-3 px-4 text-teal-400 font-semibold">Early Adopter</th>
+                  <th className="text-center py-3 px-4 text-white font-semibold">Standard</th>
                   <th className="text-center py-3 px-4 text-white font-semibold">Self-hosted</th>
                 </tr>
               </thead>
@@ -286,8 +296,8 @@ export default function Pricing() {
                 {comparison.map((row) => (
                   <tr key={row.feature} className="border-b border-navy-800">
                     <td className="py-3 px-4">{row.feature}</td>
-                    <td className="py-3 px-4"><ComparisonCell value={row.personal} /></td>
-                    <td className="py-3 px-4"><ComparisonCell value={row.family} /></td>
+                    <td className="py-3 px-4"><ComparisonCell value={row.earlyAdopter} /></td>
+                    <td className="py-3 px-4"><ComparisonCell value={row.standard} /></td>
                     <td className="py-3 px-4"><ComparisonCell value={row.selfHosted} /></td>
                   </tr>
                 ))}
