@@ -1,0 +1,62 @@
+# ---- Dependencies stage ----
+FROM node:22-alpine AS deps
+
+RUN corepack enable && corepack prepare pnpm@10.6.5 --activate
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+
+# Copy all package.json files so pnpm workspace resolution works
+COPY apps/web/package.json apps/web/
+COPY apps/landing/package.json apps/landing/
+COPY packages/core/package.json packages/core/
+COPY packages/ui/package.json packages/ui/
+COPY packages/config/package.json packages/config/
+
+RUN pnpm install --frozen-lockfile
+
+# ---- Build stage ----
+FROM node:22-alpine AS builder
+
+RUN corepack enable && corepack prepare pnpm@10.6.5 --activate
+
+WORKDIR /app
+
+ARG NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+ARG NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+ENV NEXT_PUBLIC_BILLING_API_URL=$NEXT_PUBLIC_BILLING_API_URL
+ENV NEXT_PUBLIC_ETEBASE_SERVER_URL=$NEXT_PUBLIC_ETEBASE_SERVER_URL
+
+COPY --from=deps /app/ ./
+
+COPY packages/ packages/
+COPY apps/web/ apps/web/
+
+RUN pnpm --filter @silentsuite/core build && \
+    pnpm --filter @silentsuite/ui build && \
+    pnpm --filter @silentsuite/web build
+
+# ---- Production stage ----
+FROM node:22-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
+
+CMD ["node", "apps/web/server.js"]
