@@ -426,7 +426,7 @@ abstract class AndroidTask(
         for (property in requireNotNull(task).unknownProperties) {
             if (property.value.length > UnknownProperty.MAX_UNKNOWN_PROPERTY_SIZE) {
                 Ical4Android.log.warning("Ignoring unknown property with ${property.value.length} octets (too long)")
-                return
+                continue
             }
 
             val builder = CpoBuilder.newInsert(taskList.tasksPropertiesSyncUri())

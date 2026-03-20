@@ -115,7 +115,7 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
             val event = local.event
 
             if (event?.attendees.isNullOrEmpty() || event?.organizer?.value?.replace("mailto:", "") != account.name) {
-                return
+                continue
             }
             createInviteAttendeesNotification(event, local.content)
         }
