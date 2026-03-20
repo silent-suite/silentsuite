@@ -220,7 +220,7 @@ class EditCollectionFragment : Fragment() {
             loadingModel.setLoading(true)
             lifecycleScope.launch {
                 try {
-                    withContext(Dispatchers.IO) {
+                    val colUid = withContext(Dispatchers.IO) {
                         val col = cachedCollection.col
                         col.meta = meta
                         uploadCollection(col)
@@ -228,7 +228,9 @@ class EditCollectionFragment : Fragment() {
                         if (applicationContext != null) {
                             requestSync(applicationContext, model.value!!.account)
                         }
+                        col.uid
                     }
+                    collectionModel.loadCollection(model.value!!, colUid)
                     if (isCreating) {
                         // Load the items since we just created it
                         itemsModel.loadItems(model.value!!, cachedCollection)
@@ -262,7 +264,6 @@ class EditCollectionFragment : Fragment() {
         synchronized(etebaseLocalCache) {
             etebaseLocalCache.collectionSet(colMgr, col)
         }
-        collectionModel.loadCollection(model.value!!, col.uid)
     }
 
     companion object {
