@@ -96,15 +96,17 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
     }
 
     override fun onStatusChanged(which: Int) {
-        if (syncStatusSnackbar != null) {
-            syncStatusSnackbar!!.dismiss()
-            syncStatusSnackbar = null
-        }
+        runOnUiThread {
+            if (syncStatusSnackbar != null) {
+                syncStatusSnackbar!!.dismiss()
+                syncStatusSnackbar = null
+            }
 
-        if (!ContentResolver.getMasterSyncAutomatically()) {
-            syncStatusSnackbar = Snackbar.make(findViewById(R.id.coordinator), R.string.accounts_global_sync_disabled, Snackbar.LENGTH_INDEFINITE)
-                    .setAction(R.string.accounts_global_sync_enable) { ContentResolver.setMasterSyncAutomatically(true) }
-            syncStatusSnackbar!!.show()
+            if (!ContentResolver.getMasterSyncAutomatically()) {
+                syncStatusSnackbar = Snackbar.make(findViewById(R.id.coordinator), R.string.accounts_global_sync_disabled, Snackbar.LENGTH_INDEFINITE)
+                        .setAction(R.string.accounts_global_sync_enable) { ContentResolver.setMasterSyncAutomatically(true) }
+                syncStatusSnackbar!!.show()
+            }
         }
     }
 
