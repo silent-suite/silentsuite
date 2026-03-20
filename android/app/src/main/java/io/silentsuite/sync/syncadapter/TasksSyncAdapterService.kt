@@ -57,7 +57,10 @@ class TasksSyncAdapterService: SyncAdapterService() {
 
             updateLocalTaskLists(taskProvider, account, accountSettings)
 
-            val principal = accountSettings.uri?.toHttpUrlOrNull()!!
+            val principal = accountSettings.uri?.toHttpUrlOrNull() ?: run {
+                Logger.log.warning("Task sync skipped: no valid URI for account ${account.name}")
+                return
+            }
 
             for (taskList in AndroidTaskList.find(account, taskProvider, LocalTaskList.Factory, "${TaskContract.TaskLists.SYNC_ENABLED}!=0", null)) {
                 Logger.log.info("Synchronizing task list #${taskList.id} [${taskList.syncId}]")

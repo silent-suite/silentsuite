@@ -35,7 +35,10 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
 
             updateLocalCalendars(provider, account, settings)
 
-            val principal = settings.uri?.toHttpUrlOrNull()!!
+            val principal = settings.uri?.toHttpUrlOrNull() ?: run {
+                Logger.log.warning("Calendar sync skipped: no valid URI for account ${account.name}")
+                return
+            }
 
             for (calendar in AndroidCalendar.find(account, provider, LocalCalendar.Factory, CalendarContract.Calendars.SYNC_EVENTS + "!=0", null)) {
                 Logger.log.info("Synchronizing calendar #" + calendar.id + ", URL: " + calendar.name)
