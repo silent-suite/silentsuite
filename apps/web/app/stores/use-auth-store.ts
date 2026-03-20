@@ -13,7 +13,7 @@ export interface User {
 interface PendingSignup {
   email: string
   etebaseAuthToken: string
-  foundingMemberEligible?: boolean
+  earlyAdopter?: boolean
 }
 
 interface AuthState {
@@ -26,7 +26,7 @@ interface AuthState {
   isReadOnly: () => boolean
   canWrite: () => boolean
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
-  signup: (planId: string) => Promise<string | null>
+  signup: (planId: string, trialPath: string) => Promise<string | null>
   login: (email: string, password: string, serverUrl?: string) => Promise<void>
   logout: () => Promise<void>
   refreshSession: () => Promise<boolean>
@@ -74,7 +74,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // SECURITY: Etebase session in localStorage is XSS-vulnerable. Move to encrypted IndexedDB storage.
       localStorage.setItem('etebase_session', savedSession)
 
-      let foundingMemberEligible = false
+      let earlyAdopter = false
       if (!isSelfHosted && !isCustomServer(serverUrl)) {
         try {
           const res = await fetch(
@@ -82,13 +82,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           )
           if (res.ok) {
             const data = await res.json()
-            foundingMemberEligible = data.foundingMemberEligible === true
+            earlyAdopter = data.earlyAdopter === true
           }
         } catch {}
       }
 
       set({
-        pendingSignup: { email, etebaseAuthToken: authToken, foundingMemberEligible },
+        pendingSignup: { email, etebaseAuthToken: authToken, earlyAdopter },
         isLoading: false,
       })
     } catch (err) {
@@ -108,7 +108,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signup: async (planId: string) => {
+  signup: async (planId: string, trialPath: string) => {
     if (isSelfHosted || planId === 'self-hosted') {
       const pending = get().pendingSignup
       if (!pending) throw new Error('No pending signup')
@@ -132,7 +132,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await fetch(`${BILLING_API_URL}/auth/provision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        body: JSON.stringify({ etebaseSessionToken: pending.etebaseAuthToken, planId }),
+        body: JSON.stringify({ etebaseSessionToken: pending.etebaseAuthToken, planId, trialPath }),
         credentials: 'include',
       })
       if (!res.ok) {
@@ -147,8 +147,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isAuthenticated: true,
         isLoading: false,
         pendingSignup: null,
+        subscriptionStatus: trialPath === '7day' ? 'trialing' : 'none',
       })
-      return (data.checkoutUrl as string) ?? null
+      return (data.clientSecret as string) ?? null
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Signup failed'
       set({ error: message, isLoading: false })

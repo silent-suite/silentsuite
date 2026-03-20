@@ -9,12 +9,29 @@ import { z } from 'zod'
 import {
   Shield, Lock, Check, KeyRound, ChevronRight, User, Crown,
   ShieldCheck, Download, AlertTriangle, Copy, CheckCircle,
-  Users, Settings, Activity, ExternalLink,
+  Users, Settings, Activity, ExternalLink, Rocket, CreditCard, Clock,
+  Star,
 } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
+import StripePaymentForm from '@/app/components/stripe-payment-form'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type PlanId = 'early_monthly' | 'early_annual' | 'standard_monthly' | 'standard_annual'
+type TrialPath = '7day' | '30day' | 'immediate'
+type BillingInterval = 'monthly' | 'annual'
+
+const PLAN_PRICES: Record<PlanId, number> = {
+  early_monthly: 3.60,
+  early_annual: 36,
+  standard_monthly: 4.80,
+  standard_annual: 48,
+}
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -321,49 +338,263 @@ function StepCreateAccount({
 // Step 2: Choose Plan
 // ---------------------------------------------------------------------------
 
-function StepChoosePlan({ onNext }: { onNext: (planId: string) => void }) {
+function StepChoosePlan({ onNext }: { onNext: (planId: PlanId) => void }) {
+  const [interval, setInterval] = useState<BillingInterval>('monthly')
+
   return (
     <div className="space-y-6">
       <div className="space-y-2 text-center">
         <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Start with a 30-day free trial. Cancel anytime.
+          All plans include a free trial. Cancel anytime.
         </p>
       </div>
 
-      {/* Founding Member Plan */}
-      <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 ring-1 ring-amber-500/20 flex flex-col relative overflow-hidden">
-        <div className="absolute top-3 right-3">
-          <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-medium text-amber-400">
-            Early supporter
-          </span>
-        </div>
-        <div className="flex items-center gap-3 mb-3">
-          <div className="rounded-lg bg-amber-500/10 p-2.5">
-            <Crown className="h-5 w-5 text-amber-400" />
+      {/* Monthly / Annual toggle */}
+      <div className="flex items-center justify-center gap-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-1">
+        <button
+          onClick={() => setInterval('monthly')}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+            interval === 'monthly'
+              ? 'bg-[rgb(var(--primary))] text-white'
+              : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+          }`}
+        >
+          Monthly
+        </button>
+        <button
+          onClick={() => setInterval('annual')}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+            interval === 'annual'
+              ? 'bg-[rgb(var(--primary))] text-white'
+              : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+          }`}
+        >
+          Annual
+        </button>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        {/* Early Adopter */}
+        <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 ring-1 ring-amber-500/20 flex flex-col relative overflow-hidden">
+          <div className="absolute top-3 right-3">
+            <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-medium text-amber-400">
+              Limited time
+            </span>
           </div>
-          <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Founding Member</h3>
-        </div>
-        <p className="text-sm leading-relaxed text-[rgb(var(--muted))]">
-          30 days free, then &euro;3/mo. Price locked forever as a thank you for your early support.
-        </p>
-        <div className="mt-5 pt-4 border-t border-amber-500/10">
-          <div className="mb-4 flex items-baseline gap-1.5">
-            <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;3</span>
-            <span className="text-sm text-[rgb(var(--muted))]">/month after trial</span>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="rounded-lg bg-amber-500/10 p-2.5">
+              <Crown className="h-5 w-5 text-amber-400" />
+            </div>
+            <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Early Adopter</h3>
           </div>
-          <Button
-            onClick={() => onNext('founding_member')}
-            className="w-full py-2.5 text-sm bg-amber-600 hover:bg-amber-700"
-          >
-            Become a founding member
-          </Button>
+          <p className="text-sm leading-relaxed text-[rgb(var(--muted))] mb-4">
+            Locked-in pricing as a thank you for your early support.
+          </p>
+          <div className="mt-auto pt-4 border-t border-amber-500/10">
+            <div className="mb-4 flex items-baseline gap-1.5">
+              {interval === 'monthly' ? (
+                <>
+                  <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;3.60</span>
+                  <span className="text-sm text-[rgb(var(--muted))]">/month</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;36</span>
+                  <span className="text-sm text-[rgb(var(--muted))]">/year</span>
+                  <span className="ml-1 text-xs text-emerald-500">(&euro;3/mo)</span>
+                </>
+              )}
+            </div>
+            <Button
+              onClick={() => onNext(interval === 'monthly' ? 'early_monthly' : 'early_annual')}
+              className="w-full py-2.5 text-sm bg-amber-600 hover:bg-amber-700"
+            >
+              Select Early Adopter
+            </Button>
+          </div>
+        </div>
+
+        {/* Standard */}
+        <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 flex flex-col relative overflow-hidden">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="rounded-lg bg-emerald-500/10 p-2.5">
+              <Star className="h-5 w-5 text-emerald-500" />
+            </div>
+            <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Standard</h3>
+          </div>
+          <p className="text-sm leading-relaxed text-[rgb(var(--muted))] mb-4">
+            Full access to all features. End-to-end encrypted workspace.
+          </p>
+          <div className="mt-auto pt-4 border-t border-[rgb(var(--border))]">
+            <div className="mb-4 flex items-baseline gap-1.5">
+              {interval === 'monthly' ? (
+                <>
+                  <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;4.80</span>
+                  <span className="text-sm text-[rgb(var(--muted))]">/month</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;48</span>
+                  <span className="text-sm text-[rgb(var(--muted))]">/year</span>
+                  <span className="ml-1 text-xs text-emerald-500">(&euro;4/mo)</span>
+                </>
+              )}
+            </div>
+            <Button
+              onClick={() => onNext(interval === 'monthly' ? 'standard_monthly' : 'standard_annual')}
+              variant="outline"
+              className="w-full py-2.5 text-sm"
+            >
+              Select Standard
+            </Button>
+          </div>
         </div>
       </div>
 
       <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
         <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
         <span>30-day money-back guarantee. Cancel anytime.</span>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Step 3: Choose Trial Path
+// ---------------------------------------------------------------------------
+
+function StepTrialPath({
+  planId,
+  onSelect,
+}: {
+  planId: PlanId
+  onSelect: (path: TrialPath) => void
+}) {
+  const price = PLAN_PRICES[planId]
+  const priceLabel = price % 1 === 0 ? `\u20AC${price}` : `\u20AC${price.toFixed(2)}`
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2 text-center">
+        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">How would you like to start?</h2>
+        <p className="text-sm text-[rgb(var(--muted))]">
+          Choose what works best for you.
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        {/* Pay now, 30 days free */}
+        <button
+          onClick={() => onSelect('immediate')}
+          className="w-full rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-5 text-left transition-colors hover:bg-emerald-500/10"
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-emerald-500/10 p-2.5 shrink-0">
+              <Rocket className="h-5 w-5 text-emerald-500" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">Pay now, get 30 days free</h3>
+              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                First charge today, then in 30 days. Best value.
+              </p>
+              <p className="mt-2 text-sm font-medium text-emerald-500">
+                Pay {priceLabel} now
+              </p>
+            </div>
+          </div>
+        </button>
+
+        {/* 30-day trial with card */}
+        <button
+          onClick={() => onSelect('30day')}
+          className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 text-left transition-colors hover:bg-[rgb(var(--border))]/30"
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
+              <CreditCard className="h-5 w-5 text-[rgb(var(--primary))]" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">30-day free trial</h3>
+              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                Add your card now. First charge in 30 days.
+              </p>
+              <p className="mt-2 text-sm font-medium text-[rgb(var(--primary))]">
+                Start trial
+              </p>
+            </div>
+          </div>
+        </button>
+
+        {/* 7-day trial, no card */}
+        <button
+          onClick={() => onSelect('7day')}
+          className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 text-left transition-colors hover:bg-[rgb(var(--border))]/30"
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
+              <Clock className="h-5 w-5 text-[rgb(var(--muted))]" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">7-day free trial</h3>
+              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                No card required. Try it out risk-free for 7 days.
+              </p>
+              <p className="mt-2 text-sm font-medium text-[rgb(var(--muted))]">
+                Start free
+              </p>
+            </div>
+          </div>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Step 4: Payment (inline Stripe Elements)
+// ---------------------------------------------------------------------------
+
+function StepPayment({
+  planId,
+  trialPath,
+  clientSecret,
+  onComplete,
+}: {
+  planId: PlanId
+  trialPath: TrialPath
+  clientSecret: string
+  onComplete: () => void
+}) {
+  const price = PLAN_PRICES[planId]
+  const priceLabel = price % 1 === 0 ? `\u20AC${price}` : `\u20AC${price.toFixed(2)}`
+
+  const mode = trialPath === '30day' ? 'setup' : 'payment'
+  const submitLabel = trialPath === '30day' ? 'Start 30-day trial' : `Pay ${priceLabel}`
+
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2 text-center">
+        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">
+          {trialPath === '30day' ? 'Add your payment method' : 'Complete your payment'}
+        </h2>
+        <p className="text-sm text-[rgb(var(--muted))]">
+          {trialPath === '30day'
+            ? 'Your card will not be charged for 30 days.'
+            : `You'll be charged ${priceLabel} today. Your next charge is in 30 days.`}
+        </p>
+      </div>
+
+      <StripePaymentForm
+        clientSecret={clientSecret}
+        onSuccess={onComplete}
+        submitLabel={submitLabel}
+        mode={mode}
+      />
+
+      <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+        <Lock className="h-3 w-3 text-emerald-500" />
+        <span>Secured by Stripe. We never see your card details.</span>
       </div>
     </div>
   )
@@ -517,62 +748,7 @@ function StepAdminInfo({ serverUrl, onNext }: { serverUrl: string; onNext: () =>
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Payment (redirects to Stripe Checkout)
-// ---------------------------------------------------------------------------
-
-function StepPayment({ planId, onComplete }: { planId: string; onComplete: () => void }) {
-  const signup = useAuthStore((s: any) => s.signup)
-  const pendingSignup = useAuthStore((s: any) => s.pendingSignup)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    async function processPayment() {
-      if (!pendingSignup) {
-        setError('Signup session expired. Please start again.')
-        return
-      }
-
-      try {
-        const checkoutUrl = await signup(planId)
-        if (checkoutUrl) {
-          // Redirect to Stripe Checkout
-          window.location.href = checkoutUrl
-        } else {
-          // No payment needed (e.g. coupon, or Stripe returned inline)
-          onComplete()
-        }
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Payment setup failed'
-        setError(message)
-      }
-    }
-
-    processPayment()
-  }, [planId, signup, pendingSignup, onComplete])
-
-  if (error) {
-    return (
-      <div className="space-y-4 text-center">
-        <p className="text-sm text-red-400">{error}</p>
-        <Button onClick={() => window.location.reload()} className="w-full">
-          Try again
-        </Button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col items-center justify-center py-12">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
-      <p className="mt-4 text-sm text-[rgb(var(--muted))]">
-        Setting up your payment...
-      </p>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Step 4: Create Vault + Recovery Key
+// Step 5: Create Vault + Recovery Key
 // ---------------------------------------------------------------------------
 
 function StepVaultAndRecovery({
@@ -759,12 +935,20 @@ IMPORTANT:
 // Progress Stepper
 // ---------------------------------------------------------------------------
 
-type Step = 'account' | 'plan' | 'selfhost' | 'admin' | 'payment' | 'vault'
+type Step = 'account' | 'plan' | 'trial' | 'selfhost' | 'admin' | 'payment' | 'vault'
 
 const STEPS_DEFAULT = [
   { key: 'account' as const, label: 'Create Account', number: 1 },
   { key: 'plan' as const, label: 'Choose Plan', number: 2 },
-  { key: 'payment' as const, label: 'Payment', number: 3 },
+  { key: 'trial' as const, label: 'Trial', number: 3 },
+  { key: 'payment' as const, label: 'Payment', number: 4 },
+  { key: 'vault' as const, label: 'Setup Vault', number: 5 },
+]
+
+const STEPS_7DAY = [
+  { key: 'account' as const, label: 'Create Account', number: 1 },
+  { key: 'plan' as const, label: 'Choose Plan', number: 2 },
+  { key: 'trial' as const, label: 'Trial', number: 3 },
   { key: 'vault' as const, label: 'Setup Vault', number: 4 },
 ]
 
@@ -875,7 +1059,11 @@ export default function SignupPage() {
   const signup = useAuthStore((s) => s.signup)
   const [step, setStep] = useState<Step>('account')
   const [serverUrl, setServerUrl] = useState('')
-  const [selectedPlan, setSelectedPlan] = useState<string | null>(null)
+  const [selectedPlan, setSelectedPlan] = useState<PlanId | null>(null)
+  const [selectedTrialPath, setSelectedTrialPath] = useState<TrialPath | null>(null)
+  const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [provisionError, setProvisionError] = useState<string | null>(null)
+  const [provisioning, setProvisioning] = useState(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const formDataRef = useRef<SignupFormData | null>(null)
 
@@ -896,7 +1084,6 @@ export default function SignupPage() {
     setUsingSelfHostedServer(selfHosted)
 
     if (selfHosted) {
-      // Self-hosted: show free vs support choice
       setStep('selfhost')
     } else {
       setStep('plan')
@@ -905,12 +1092,11 @@ export default function SignupPage() {
 
   const handleSelfHostChoice = useCallback(async (choice: 'free' | 'support') => {
     if (choice === 'support') {
-      // Open Stripe payment link in new tab
+      // TODO: Replace with inline Stripe Elements flow
       window.open('https://buy.stripe.com/test_00wfZjeifgm49n94Qf3VC00', '_blank')
     }
-    // Complete signup as self-hosted (skip billing API)
     try {
-      await signup('self-hosted')
+      await signup('self-hosted', 'immediate')
     } catch {
       // Error displayed by store
     }
@@ -921,10 +1107,35 @@ export default function SignupPage() {
     setStep('vault')
   }, [])
 
-  const handlePlanSelected = useCallback((planId: string) => {
+  const handlePlanSelected = useCallback((planId: PlanId) => {
     setSelectedPlan(planId)
-    setStep('payment')
+    setStep('trial')
   }, [])
+
+  const handleTrialPathSelected = useCallback(async (path: TrialPath) => {
+    if (!selectedPlan) return
+    setSelectedTrialPath(path)
+    setProvisionError(null)
+    setProvisioning(true)
+
+    try {
+      const secret = await signup(selectedPlan, path)
+
+      if (path === '7day') {
+        setStep('vault')
+      } else if (secret) {
+        setClientSecret(secret)
+        setStep('payment')
+      } else {
+        setStep('vault')
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to set up your account'
+      setProvisionError(message)
+    } finally {
+      setProvisioning(false)
+    }
+  }, [selectedPlan, signup])
 
   const handlePaymentComplete = useCallback(() => {
     setStep('vault')
@@ -935,7 +1146,12 @@ export default function SignupPage() {
   }, [router])
 
   const email = formDataRef.current?.email || formDataRef.current?.username || ''
-  const activeSteps = usingSelfHostedServer ? STEPS_SELFHOST : STEPS_DEFAULT
+
+  const activeSteps = usingSelfHostedServer
+    ? STEPS_SELFHOST
+    : selectedTrialPath === '7day'
+      ? STEPS_7DAY
+      : STEPS_DEFAULT
 
   return (
     <div className="flex items-start justify-center max-w-2xl mx-auto">
@@ -957,8 +1173,34 @@ export default function SignupPage() {
         {step === 'plan' && (
           <StepChoosePlan onNext={handlePlanSelected} />
         )}
-        {step === 'payment' && selectedPlan && (
-          <StepPayment planId={selectedPlan} onComplete={handlePaymentComplete} />
+        {step === 'trial' && selectedPlan && (
+          <>
+            {provisioning ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
+                <p className="mt-4 text-sm text-[rgb(var(--muted))]">
+                  Setting up your account...
+                </p>
+              </div>
+            ) : provisionError ? (
+              <div className="space-y-4 text-center">
+                <p className="text-sm text-red-400">{provisionError}</p>
+                <Button onClick={() => { setProvisionError(null) }} className="w-full">
+                  Try again
+                </Button>
+              </div>
+            ) : (
+              <StepTrialPath planId={selectedPlan} onSelect={handleTrialPathSelected} />
+            )}
+          </>
+        )}
+        {step === 'payment' && selectedPlan && selectedTrialPath && clientSecret && (
+          <StepPayment
+            planId={selectedPlan}
+            trialPath={selectedTrialPath}
+            clientSecret={clientSecret}
+            onComplete={handlePaymentComplete}
+          />
         )}
         {step === 'vault' && (
           <StepVaultAndRecovery email={email} onComplete={handleVaultComplete} />
