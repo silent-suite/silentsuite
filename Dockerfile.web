@@ -10,6 +10,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 # Copy all package.json files so pnpm workspace resolution works
 COPY apps/web/package.json apps/web/
 COPY apps/landing/package.json apps/landing/
+COPY apps/docs/package.json apps/docs/
+COPY apps/mobile/package.json apps/mobile/
 COPY packages/core/package.json packages/core/
 COPY packages/ui/package.json packages/ui/
 COPY packages/config/package.json packages/config/
