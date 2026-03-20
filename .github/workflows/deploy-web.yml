@@ -1,0 +1,80 @@
+name: Deploy Web App (production)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'deploy/web.Dockerfile'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-web.yml'
+
+concurrency:
+  group: deploy-web-production
+  cancel-in-progress: true
+
+jobs:
+  build-and-push:
+    name: Build & Push to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/web.Dockerfile
+          push: true
+          tags: |
+            ghcr.io/silent-suite/silentsuite-web:latest
+            ghcr.io/silent-suite/silentsuite-web:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+            NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            # Pull the new image
+            docker pull ghcr.io/silent-suite/silentsuite-web:latest
+
+            # Tag for local docker-compose
+            docker tag ghcr.io/silent-suite/silentsuite-web:latest etebase-web:latest
+
+            # Restart the web container
+            cd ~/etebase
+            docker compose up -d web
+
+            echo "Web app deployed successfully"
