@@ -2,6 +2,9 @@
 // Deployed via Cloudflare Workers Build
 const nextConfig = {
   output: 'standalone',
+  eslint: {
+    dirs: ['app'],
+  },
   images: {
     unoptimized: true,
   },
