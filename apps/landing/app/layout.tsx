@@ -43,6 +43,9 @@ export default function RootLayout({
             }),
           }}
         />
+        {/* Privacy-friendly analytics by Plausible */}
+        <script async src="https://plausible.silentsuite.io/js/pa-s_T_J7R2GNTmv-ZGgwbWL.js"></script>
+        <script dangerouslySetInnerHTML={{ __html: `window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()` }} />
       </head>
       <body className="font-sans antialiased">
         <Header />
