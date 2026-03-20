@@ -5,6 +5,9 @@ export default defineConfig({
   description: 'Documentation for SilentSuite — end-to-end encrypted calendar, contacts & tasks.',
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
+    // Privacy-friendly analytics by Plausible
+    ['script', { async: '', src: 'https://plausible.silentsuite.io/js/pa-cpFZuMRijOONfz35zBtMP.js' }],
+    ['script', {}, `window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()`],
     ['meta', { name: 'theme-color', content: '#0a1018' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:title', content: 'SilentSuite Docs' }],
