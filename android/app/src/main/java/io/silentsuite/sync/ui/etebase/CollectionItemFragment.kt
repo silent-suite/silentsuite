@@ -66,7 +66,7 @@ class CollectionItemFragment : Fragment() {
 
     private fun initUi(inflater: LayoutInflater, v: View, cachedCollection: CachedCollection) {
         val viewPager = v.findViewById<ViewPager>(R.id.viewpager)
-        viewPager.adapter = TabsAdapter(childFragmentManager, this, requireContext(), cachedCollection, cachedItem)
+        viewPager.adapter = TabsAdapter(childFragmentManager, requireContext(), cachedCollection, cachedItem)
 
         val tabLayout = v.findViewById<TabLayout>(R.id.tabs)
         tabLayout.setupWithViewPager(viewPager)
@@ -188,7 +188,7 @@ class CollectionItemFragment : Fragment() {
     }
 }
 
-private class TabsAdapter(fm: FragmentManager, private val mainFragment: CollectionItemFragment, private val context: Context, private val cachedCollection: CachedCollection, private val cachedItem: CachedItem) : FragmentPagerAdapter(fm) {
+private class TabsAdapter(fm: FragmentManager, private val context: Context, private val cachedCollection: CachedCollection, private val cachedItem: CachedItem) : FragmentPagerAdapter(fm) {
 
     override fun getCount(): Int {
         // FIXME: Make it depend on info enumType (only have non-raw for known types)
@@ -207,7 +207,7 @@ private class TabsAdapter(fm: FragmentManager, private val mainFragment: Collect
 
     override fun getItem(position: Int): Fragment {
         return if (position == 0) {
-            PrettyFragment.newInstance(mainFragment, cachedCollection, cachedItem.content)
+            PrettyFragment.newInstance(cachedCollection, cachedItem.content)
         } else if (position == 1) {
             TextFragment.newInstance(cachedItem.content)
         } else {
@@ -240,7 +240,6 @@ class TextFragment : Fragment() {
 
 class PrettyFragment : Fragment() {
     private var asyncTask: Job? = null
-    private lateinit var mainFragment: CollectionItemFragment
     private lateinit var cachedCollection: CachedCollection
     private lateinit var content: String
 
@@ -343,7 +342,7 @@ class PrettyFragment : Fragment() {
                     setTextViewText(view, R.id.reminders, sb.toString())
 
                     if (event.attendees.isNotEmpty()) {
-                        mainFragment.allowSendEmail(event, content)
+                        (parentFragment as? CollectionItemFragment)?.allowSendEmail(event, content)
                     }
             }
         }
@@ -526,9 +525,8 @@ class PrettyFragment : Fragment() {
     }
 
     companion object {
-        fun newInstance(mainFragment: CollectionItemFragment, cachedCollection: CachedCollection, content: String): PrettyFragment {
+        fun newInstance(cachedCollection: CachedCollection, content: String): PrettyFragment {
             val ret = PrettyFragment()
-            ret.mainFragment= mainFragment
             ret.cachedCollection = cachedCollection
             ret.content = content
             return ret
