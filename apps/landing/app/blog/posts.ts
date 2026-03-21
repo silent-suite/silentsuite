@@ -32,18 +32,18 @@ export const posts: BlogPost[] = [
     tags: ['privacy', 'encryption', 'comparison'],
     coverImage: '/blog/cover-who-can-read-your-calendar.png',
   },
+  {
+    slug: 'silentsuite-vs-google-calendar',
+    title: 'SilentSuite vs Google Calendar: What Google Knows About Your Schedule',
+    description:
+      'Every event you create in Google Calendar is processed in plaintext on Google\'s servers. We break down what Google sees, what "encrypted at rest" really means, and how zero-knowledge encryption changes things.',
+    date: '2026-03-21',
+    author: 'Tim Ross',
+    readingTime: '8 min read',
+    tags: ['privacy', 'comparison', 'encryption'],
+    coverImage: '/blog/cover-silentsuite-vs-google-calendar.png',
+  },
   // --- DRAFTS (cover images ready in public/blog/, publish one at a time) ---
-  // {
-  //   slug: 'silentsuite-vs-google-calendar',
-  //   title: 'SilentSuite vs Google Calendar: What Google Knows About Your Schedule',
-  //   description:
-  //     'Every event you create in Google Calendar is processed in plaintext on Google\'s servers. We break down what Google sees, what "encrypted at rest" really means, and how zero-knowledge encryption changes things.',
-  //   date: '2026-03-14',
-  //   author: 'Tim Ross',
-  //   readingTime: '8 min read',
-  //   tags: ['privacy', 'comparison', 'encryption'],
-  //   coverImage: '/blog/cover-silentsuite-vs-google-calendar.png',
-  // },
   // {
   //   slug: 'encrypted-calendar-sync-2026-comparing-options',
   //   title: 'Encrypted Calendar Sync in 2026: Comparing Your Options',
