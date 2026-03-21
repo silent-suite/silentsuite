@@ -1,12 +1,12 @@
 /**
- * Encryption Comparison Diagram: Google "encrypted at rest" vs SilentSuite E2EE.
- * Two-column visual with clear data flow and readable text.
+ * Encryption Comparison Diagram: Side-by-side Google vs SilentSuite.
+ * Shows clear data flow from device → server with visual encryption difference.
  */
 export default function EncryptionComparisonDiagram() {
   return (
     <div className="my-10 rounded-xl overflow-hidden border border-navy-700">
       <svg
-        viewBox="0 0 800 420"
+        viewBox="0 0 800 540"
         className="w-full h-auto"
         xmlns="http://www.w3.org/2000/svg"
       >
@@ -15,148 +15,189 @@ export default function EncryptionComparisonDiagram() {
             <stop offset="0%" stopColor="#0F1923" />
             <stop offset="100%" stopColor="#080E15" />
           </linearGradient>
+          <linearGradient id="ecRedGlow" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#EF4444" stopOpacity="0.12" />
+            <stop offset="100%" stopColor="#EF4444" stopOpacity="0" />
+          </linearGradient>
+          <linearGradient id="ecGreenGlow" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#34d399" stopOpacity="0.12" />
+            <stop offset="100%" stopColor="#34d399" stopOpacity="0" />
+          </linearGradient>
+          <filter id="ecGlow">
+            <feGaussianBlur stdDeviation="4" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
 
-        <rect width="800" height="420" fill="url(#ecBg)" />
+        <rect width="800" height="540" fill="url(#ecBg)" />
 
         {/* Grid */}
         <g opacity="0.03">
-          {Array.from({ length: 20 }).map((_, i) => (
-            <line key={`v${i}`} x1={i * 40} y1="0" x2={i * 40} y2="420" stroke="white" strokeWidth="0.5" />
+          {Array.from({ length: 21 }).map((_, i) => (
+            <line key={`v${i}`} x1={i * 40} y1="0" x2={i * 40} y2="540" stroke="white" strokeWidth="0.5" />
           ))}
-          {Array.from({ length: 11 }).map((_, i) => (
+          {Array.from({ length: 14 }).map((_, i) => (
             <line key={`h${i}`} x1="0" y1={i * 40} x2="800" y2={i * 40} stroke="white" strokeWidth="0.5" />
           ))}
         </g>
 
         {/* Title */}
-        <text x="400" y="36" fontFamily="Inter, system-ui, sans-serif" fontSize="18" fontWeight="700" fill="white" textAnchor="middle">
+        <text x="400" y="38" fontFamily="Inter, system-ui, sans-serif" fontSize="20" fontWeight="700" fill="white" textAnchor="middle">
           &quot;Encrypted at rest&quot; vs end-to-end encryption
         </text>
+        <text x="400" y="58" fontFamily="Inter, system-ui, sans-serif" fontSize="12" fill="#677FA3" textAnchor="middle">
+          The difference between marketing and mathematics
+        </text>
 
-        {/* === Left: Google Calendar === */}
-        <g transform="translate(30, 56)">
-          <rect x="0" y="0" width="360" height="340" rx="12" fill="#131D2A" stroke="#5B2020" strokeWidth="1" />
+        {/* === Left Column: Google Calendar === */}
+        <g transform="translate(24, 78)">
+          <rect x="0" y="0" width="364" height="444" rx="14" fill="url(#ecRedGlow)" />
+          <rect x="0" y="0" width="364" height="444" rx="14" fill="#131D2A" stroke="#5B2020" strokeWidth="1.2" />
 
           {/* Header */}
-          <rect x="0" y="0" width="360" height="48" rx="12" fill="#2D1515" />
-          <rect x="0" y="24" width="360" height="24" fill="#2D1515" />
-          <text x="180" y="32" fontFamily="Inter, system-ui, sans-serif" fontSize="15" fontWeight="700" fill="#EF4444" textAnchor="middle">
+          <rect x="0" y="0" width="364" height="52" rx="14" fill="#2D1515" />
+          <rect x="0" y="26" width="364" height="26" fill="#2D1515" />
+          <text x="182" y="34" fontFamily="Inter, system-ui, sans-serif" fontSize="15" fontWeight="700" fill="#EF4444" textAnchor="middle">
             Google Calendar
           </text>
 
-          {/* Device box */}
-          <rect x="24" y="68" width="140" height="52" rx="8" fill="#0A1018" stroke="#5B2020" strokeWidth="0.8" />
-          <text x="94" y="88" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fill="#8D9FBA" textAnchor="middle">Your device</text>
-          <text x="94" y="106" fontFamily="monospace" fontSize="10" fill="#EF4444" textAnchor="middle">&quot;Therapy 3pm&quot;</text>
+          {/* Step 1: Your Device */}
+          <text x="182" y="80" fontFamily="Inter, system-ui, sans-serif" fontSize="10" fill="#677FA3" textAnchor="middle" fontWeight="500">
+            YOUR DEVICE
+          </text>
+          <rect x="42" y="90" width="280" height="56" rx="10" fill="#0A1018" stroke="#5B2020" strokeWidth="0.8" />
+          <text x="182" y="114" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fill="#8D9FBA" textAnchor="middle">You type your event:</text>
+          <text x="182" y="134" fontFamily="monospace" fontSize="11" fill="#EF4444" textAnchor="middle">&quot;Therapy session — Thursday 3pm&quot;</text>
 
-          {/* Arrow with TLS label */}
-          <line x1="164" y1="94" x2="196" y2="94" stroke="#EF4444" strokeWidth="2" opacity="0.6" />
-          <polygon points="196,90 204,94 196,98" fill="#EF4444" opacity="0.6" />
-          <text x="184" y="84" fontFamily="Inter, system-ui, sans-serif" fontSize="9" fill="#677FA3" textAnchor="middle">TLS</text>
+          {/* Arrow down */}
+          <line x1="182" y1="150" x2="182" y2="176" stroke="#EF4444" strokeWidth="1.5" opacity="0.5" />
+          <polygon points="176,174 182,184 188,174" fill="#EF4444" opacity="0.5" />
+          <text x="210" y="168" fontFamily="Inter, system-ui, sans-serif" fontSize="9" fill="#677FA3">TLS only</text>
 
-          {/* Server box */}
-          <rect x="204" y="68" width="140" height="52" rx="8" fill="#0A1018" stroke="#5B2020" strokeWidth="0.8" />
-          <text x="274" y="88" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fill="#8D9FBA" textAnchor="middle">Google server</text>
-          <text x="274" y="106" fontFamily="monospace" fontSize="10" fill="#EF4444" textAnchor="middle">&quot;Therapy 3pm&quot;</text>
+          {/* Step 2: Google Server */}
+          <text x="182" y="200" fontFamily="Inter, system-ui, sans-serif" fontSize="10" fill="#677FA3" textAnchor="middle" fontWeight="500">
+            GOOGLE SERVER
+          </text>
+          <rect x="42" y="210" width="280" height="56" rx="10" fill="#0A1018" stroke="#5B2020" strokeWidth="0.8" />
+          <text x="182" y="234" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fill="#8D9FBA" textAnchor="middle">Server stores plaintext:</text>
+          <text x="182" y="254" fontFamily="monospace" fontSize="11" fill="#EF4444" textAnchor="middle">&quot;Therapy session — Thursday 3pm&quot;</text>
 
-          {/* Eye icon */}
-          <g transform="translate(152, 140)">
-            <ellipse cx="28" cy="12" rx="22" ry="10" fill="none" stroke="#EF4444" strokeWidth="1.8" />
-            <circle cx="28" cy="12" r="6" fill="none" stroke="#EF4444" strokeWidth="1.3" />
-            <circle cx="28" cy="12" r="2.5" fill="#EF4444" />
+          {/* Eye icon — they can read it */}
+          <g transform="translate(150, 280)">
+            <ellipse cx="32" cy="16" rx="28" ry="13" fill="none" stroke="#EF4444" strokeWidth="2" />
+            <circle cx="32" cy="16" r="8" fill="none" stroke="#EF4444" strokeWidth="1.5" />
+            <circle cx="32" cy="16" r="3.5" fill="#EF4444" />
           </g>
 
-          <text x="180" y="178" fontFamily="Inter, system-ui, sans-serif" fontSize="12" fill="#EF4444" textAnchor="middle" fontWeight="600">
+          <text x="182" y="326" fontFamily="Inter, system-ui, sans-serif" fontSize="13" fill="#EF4444" textAnchor="middle" fontWeight="600">
             Google can read everything
           </text>
 
-          {/* What they see */}
-          <g transform="translate(24, 194)">
-            <rect x="0" y="0" width="312" height="26" rx="5" fill="#2D1515" opacity="0.5" />
-            <text x="14" y="18" fontFamily="monospace" fontSize="10" fill="#EF4444">&quot;Therapy session, Thursday 3pm&quot;</text>
+          {/* What they extract */}
+          <g transform="translate(32, 340)">
+            <rect x="0" y="0" width="300" height="24" rx="5" fill="#2D1515" opacity="0.5" />
+            <circle cx="14" cy="12" r="3.5" fill="#EF4444" opacity="0.6" />
+            <text x="26" y="16" fontFamily="monospace" fontSize="10" fill="#EF4444">&quot;Therapy session — Thursday 3pm&quot;</text>
           </g>
-          <g transform="translate(24, 226)">
-            <rect x="0" y="0" width="312" height="26" rx="5" fill="#2D1515" opacity="0.5" />
-            <text x="14" y="18" fontFamily="monospace" fontSize="10" fill="#EF4444">&quot;123 Main St, Dr. Mueller&apos;s Office&quot;</text>
+          <g transform="translate(32, 370)">
+            <rect x="0" y="0" width="300" height="24" rx="5" fill="#2D1515" opacity="0.5" />
+            <circle cx="14" cy="12" r="3.5" fill="#EF4444" opacity="0.6" />
+            <text x="26" y="16" fontFamily="monospace" fontSize="10" fill="#EF4444">&quot;123 Main St, Dr. Mueller&apos;s Office&quot;</text>
           </g>
-          <g transform="translate(24, 258)">
-            <rect x="0" y="0" width="312" height="26" rx="5" fill="#2D1515" opacity="0.5" />
-            <text x="14" y="18" fontFamily="monospace" fontSize="10" fill="#EF4444">&quot;Meeting with: custody lawyer&quot;</text>
+          <g transform="translate(32, 400)">
+            <rect x="0" y="0" width="300" height="24" rx="5" fill="#2D1515" opacity="0.5" />
+            <circle cx="14" cy="12" r="3.5" fill="#EF4444" opacity="0.6" />
+            <text x="26" y="16" fontFamily="monospace" fontSize="10" fill="#EF4444">&quot;Meeting with: custody lawyer&quot;</text>
           </g>
-
-          {/* Bottom label */}
-          <text x="180" y="316" fontFamily="Inter, system-ui, sans-serif" fontSize="10" fill="#677FA3" textAnchor="middle">
-            Keys held by Google. Decrypted on demand.
-          </text>
         </g>
 
         {/* VS divider */}
-        <text x="400" y="236" fontFamily="Inter, system-ui, sans-serif" fontSize="13" fontWeight="700" fill="#677FA3" textAnchor="middle" opacity="0.5">
-          vs
-        </text>
+        <line x1="400" y1="90" x2="400" y2="510" stroke="#253549" strokeWidth="1" strokeDasharray="4 4" />
+        <g transform="translate(388, 290)">
+          <rect x="0" y="0" width="24" height="24" rx="12" fill="#1B2838" stroke="#253549" strokeWidth="1" />
+          <text x="12" y="17" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fontWeight="700" fill="#677FA3" textAnchor="middle">vs</text>
+        </g>
 
-        {/* === Right: SilentSuite === */}
-        <g transform="translate(410, 56)">
-          <rect x="0" y="0" width="360" height="340" rx="12" fill="#131D2A" stroke="#0D5E3B" strokeWidth="1" />
+        {/* === Right Column: SilentSuite === */}
+        <g transform="translate(412, 78)">
+          <rect x="0" y="0" width="364" height="444" rx="14" fill="url(#ecGreenGlow)" />
+          <rect x="0" y="0" width="364" height="444" rx="14" fill="#131D2A" stroke="#0D5E3B" strokeWidth="1.2" />
 
           {/* Header */}
-          <rect x="0" y="0" width="360" height="48" rx="12" fill="#0D2E1F" />
-          <rect x="0" y="24" width="360" height="24" fill="#0D2E1F" />
-          <text x="180" y="32" fontFamily="Inter, system-ui, sans-serif" fontSize="15" fontWeight="700" fill="#34d399" textAnchor="middle">
+          <rect x="0" y="0" width="364" height="52" rx="14" fill="#0D2E1F" />
+          <rect x="0" y="26" width="364" height="26" fill="#0D2E1F" />
+          <text x="182" y="34" fontFamily="Inter, system-ui, sans-serif" fontSize="15" fontWeight="700" fill="#34d399" textAnchor="middle">
             SilentSuite
           </text>
 
-          {/* Device box */}
-          <rect x="24" y="68" width="140" height="52" rx="8" fill="#0A1018" stroke="#0D5E3B" strokeWidth="0.8" />
-          <text x="94" y="88" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fill="#8D9FBA" textAnchor="middle">Your device</text>
-          <text x="94" y="106" fontFamily="monospace" fontSize="10" fill="#34d399" textAnchor="middle">&quot;Therapy 3pm&quot;</text>
+          {/* Step 1: Your Device */}
+          <text x="182" y="80" fontFamily="Inter, system-ui, sans-serif" fontSize="10" fill="#677FA3" textAnchor="middle" fontWeight="500">
+            YOUR DEVICE
+          </text>
+          <rect x="42" y="90" width="280" height="56" rx="10" fill="#0A1018" stroke="#0D5E3B" strokeWidth="0.8" />
+          <text x="182" y="114" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fill="#8D9FBA" textAnchor="middle">You type your event:</text>
+          <text x="182" y="134" fontFamily="monospace" fontSize="11" fill="#34d399" textAnchor="middle">&quot;Therapy session — Thursday 3pm&quot;</text>
 
-          {/* Arrow with lock icon */}
-          <line x1="164" y1="94" x2="196" y2="94" stroke="#34d399" strokeWidth="2" opacity="0.6" />
-          <polygon points="196,90 204,94 196,98" fill="#34d399" opacity="0.6" />
-          {/* Lock icon */}
-          <rect x="176" y="76" width="10" height="7" rx="1.5" fill="none" stroke="#34d399" strokeWidth="1.2" />
-          <path d="M178,76 L178,73 A3.5,3.5 0 0,1 185,73 L185,76" fill="none" stroke="#34d399" strokeWidth="1.2" />
-          <text x="184" y="72" fontFamily="Inter, system-ui, sans-serif" fontSize="8" fill="#34d399" textAnchor="middle">E2EE</text>
+          {/* Lock icon between device and server */}
+          <g transform="translate(168, 152)">
+            <rect x="5" y="8" width="18" height="13" rx="3" fill="#0D2E1F" stroke="#34d399" strokeWidth="1.5" />
+            <path d="M9,8 V5 A5,5 0 0,1 19,5 V8" fill="none" stroke="#34d399" strokeWidth="1.5" />
+          </g>
 
-          {/* Server box */}
-          <rect x="204" y="68" width="140" height="52" rx="8" fill="#0A1018" stroke="#0D5E3B" strokeWidth="0.8" />
-          <text x="274" y="88" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fill="#8D9FBA" textAnchor="middle">Our server</text>
-          <text x="274" y="106" fontFamily="monospace" fontSize="10" fill="#34d399" textAnchor="middle" opacity="0.7">aG9wZSB5b3U...</text>
+          {/* Arrow down */}
+          <line x1="182" y1="150" x2="182" y2="176" stroke="#34d399" strokeWidth="1.5" opacity="0.5" />
+          <polygon points="176,174 182,184 188,174" fill="#34d399" opacity="0.5" />
+          <text x="210" y="168" fontFamily="Inter, system-ui, sans-serif" fontSize="9" fill="#34d399">E2EE + TLS</text>
+
+          {/* Step 2: SilentSuite Server */}
+          <text x="182" y="200" fontFamily="Inter, system-ui, sans-serif" fontSize="10" fill="#677FA3" textAnchor="middle" fontWeight="500">
+            SILENTSUITE SERVER
+          </text>
+          <rect x="42" y="210" width="280" height="56" rx="10" fill="#0A1018" stroke="#0D5E3B" strokeWidth="0.8" />
+          <text x="182" y="234" fontFamily="Inter, system-ui, sans-serif" fontSize="11" fill="#8D9FBA" textAnchor="middle">Server stores ciphertext:</text>
+          <text x="182" y="254" fontFamily="monospace" fontSize="11" fill="#34d399" textAnchor="middle" opacity="0.7">xK8mP2qR7vN3bF5jL9wT2hQ6...</text>
 
           {/* Shield + checkmark */}
-          <g transform="translate(150, 136)">
+          <g transform="translate(148, 276)">
             <path
-              d="M28 4C22 10 17 11.5 15 11.5v18c0 9 6 14 13 17 7-3 13-8 13-17V11.5C38 11.5 34 10 28 4z"
-              fill="#0D2E1F" stroke="#34d399" strokeWidth="2"
+              d="M34 6C26 13 19 14.5 16 14.5v22c0 11 8 17 18 21 10-4 18-10 18-21V14.5C48 14.5 42 13 34 6z"
+              fill="#0D2E1F" stroke="#34d399" strokeWidth="2" filter="url(#ecGlow)"
             />
-            <polyline points="22,24 26,28 35,19" fill="none" stroke="#34d399" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+            <polyline points="26,28 32,34 44,22" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           </g>
 
-          <text x="180" y="178" fontFamily="Inter, system-ui, sans-serif" fontSize="12" fill="#34d399" textAnchor="middle" fontWeight="600">
-            We see only encrypted blobs
+          <text x="182" y="326" fontFamily="Inter, system-ui, sans-serif" fontSize="13" fill="#34d399" textAnchor="middle" fontWeight="600">
+            We can&apos;t read anything
           </text>
 
-          {/* What server sees */}
-          <g transform="translate(24, 194)">
-            <rect x="0" y="0" width="312" height="26" rx="5" fill="#0D2E1F" opacity="0.4" />
-            <text x="14" y="18" fontFamily="monospace" fontSize="10" fill="#34d399" opacity="0.7">xK8mP2qR7vN3bF5jL9wT2hQ6dR4...</text>
+          {/* What server sees — gibberish */}
+          <g transform="translate(32, 340)">
+            <rect x="0" y="0" width="300" height="24" rx="5" fill="#0D2E1F" opacity="0.4" />
+            <circle cx="14" cy="12" r="3.5" fill="#34d399" opacity="0.4" />
+            <text x="26" y="16" fontFamily="monospace" fontSize="10" fill="#34d399" opacity="0.7">xK8mP2qR7vN3bF5jL9wT2hQ6dR4k...</text>
           </g>
-          <g transform="translate(24, 226)">
-            <rect x="0" y="0" width="312" height="26" rx="5" fill="#0D2E1F" opacity="0.4" />
-            <text x="14" y="18" fontFamily="monospace" fontSize="10" fill="#34d399" opacity="0.7">bW9yZSBjb2RlIHRoYW4geW91Li4...</text>
+          <g transform="translate(32, 370)">
+            <rect x="0" y="0" width="300" height="24" rx="5" fill="#0D2E1F" opacity="0.4" />
+            <circle cx="14" cy="12" r="3.5" fill="#34d399" opacity="0.4" />
+            <text x="26" y="16" fontFamily="monospace" fontSize="10" fill="#34d399" opacity="0.7">bW9yZSBjb2RlIHRoYW4geW91Li4u...</text>
           </g>
-          <g transform="translate(24, 258)">
-            <rect x="0" y="0" width="312" height="26" rx="5" fill="#0D2E1F" opacity="0.4" />
-            <text x="14" y="18" fontFamily="monospace" fontSize="10" fill="#34d399" opacity="0.7">dCBkZWNvZGUgdGhpcyBlaXRoZXI...</text>
+          <g transform="translate(32, 400)">
+            <rect x="0" y="0" width="300" height="24" rx="5" fill="#0D2E1F" opacity="0.4" />
+            <circle cx="14" cy="12" r="3.5" fill="#34d399" opacity="0.4" />
+            <text x="26" y="16" fontFamily="monospace" fontSize="10" fill="#34d399" opacity="0.7">dCBkZWNvZGUgdGhpcyBlaXRoZXIu...</text>
           </g>
-
-          {/* Bottom label */}
-          <text x="180" y="316" fontFamily="Inter, system-ui, sans-serif" fontSize="10" fill="#677FA3" textAnchor="middle">
-            Keys on your device only. We can&apos;t decrypt.
-          </text>
         </g>
+
+        {/* Bottom labels */}
+        <text x="206" y="534" fontFamily="Inter, system-ui, sans-serif" fontSize="10" fill="#677FA3" textAnchor="middle">
+          Keys held by Google. Decrypted on demand.
+        </text>
+        <text x="594" y="534" fontFamily="Inter, system-ui, sans-serif" fontSize="10" fill="#677FA3" textAnchor="middle">
+          Keys on your device only. We can&apos;t decrypt.
+        </text>
       </svg>
     </div>
   )
