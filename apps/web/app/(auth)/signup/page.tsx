@@ -1025,6 +1025,7 @@ export default function SignupPage() {
   const router = useRouter()
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
   const signup = useAuthStore((s) => s.signup)
+  const completeSignup = useAuthStore((s) => s.completeSignup)
   const [step, setStep] = useState<Step>('account')
   const [serverUrl, setServerUrl] = useState('')
   const [selectedTrialPath, setSelectedTrialPath] = useState<TrialPath | null>(null)
@@ -1107,8 +1108,10 @@ export default function SignupPage() {
   }, [])
 
   const handleVaultComplete = useCallback(() => {
+    // Finalize authentication — only NOW does the user become authenticated.
+    completeSignup()
     router.push('/onboarding')
-  }, [router])
+  }, [completeSignup, router])
 
   const email = formDataRef.current?.email || formDataRef.current?.username || ''
 
@@ -1138,10 +1141,32 @@ export default function SignupPage() {
         {step === 'trial' && (
           <>
             {provisioning ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
-                <p className="mt-4 text-sm text-[rgb(var(--muted))]">
-                  Setting up your account...
+              <div className="flex flex-col items-center justify-center py-12 animate-in fade-in duration-300">
+                <div className="relative mb-6">
+                  <div className="h-16 w-16 rounded-2xl border-2 border-[rgb(var(--primary))]/40 bg-[rgb(var(--surface))] flex items-center justify-center">
+                    {selectedTrialPath === '7day' ? (
+                      <Gift className="h-8 w-8 text-[rgb(var(--primary))]" />
+                    ) : selectedTrialPath === 'immediate' ? (
+                      <Zap className="h-8 w-8 text-amber-400" />
+                    ) : (
+                      <Lock className="h-8 w-8 text-[rgb(var(--primary))]" />
+                    )}
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full border-2 border-[rgb(var(--background))] bg-[rgb(var(--primary))] flex items-center justify-center">
+                    <div className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-white border-t-transparent" />
+                  </div>
+                </div>
+                <p className="text-base font-medium text-[rgb(var(--foreground))]">
+                  {selectedTrialPath === '7day'
+                    ? 'Starting your free trial...'
+                    : 'Preparing your account...'}
+                </p>
+                <p className="mt-2 text-sm text-[rgb(var(--muted))]">
+                  {selectedTrialPath === '7day'
+                    ? 'Setting up 7 days of full access'
+                    : selectedTrialPath === '30day'
+                      ? 'Setting up your 30-day trial'
+                      : 'Activating your subscription'}
                 </p>
               </div>
             ) : provisionError ? (
