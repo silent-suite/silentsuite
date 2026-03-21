@@ -398,7 +398,7 @@ function StepTrialPath({
 }: {
   onSelect: (path: TrialPath, interval: BillingInterval) => void
 }) {
-  const [interval, setInterval] = useState<BillingInterval>('monthly')
+  const [interval, setInterval] = useState<BillingInterval>('annual')
 
   return (
     <div className="space-y-6">
@@ -410,7 +410,32 @@ function StepTrialPath({
       </div>
 
       <div className="space-y-4">
-        {/* 🔒 Hero: 30-day trial — card required, highest conversion */}
+        {/* 🎁 7-day free trial — no card, lowest barrier */}
+        <div className="rounded-xl border border-slate-700/50 bg-[rgb(var(--surface))] p-5 transition-all hover:border-slate-600/50">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
+              <Gift className="h-5 w-5 text-[rgb(var(--muted))]" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">Try free for 7 days</h3>
+              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                No card needed. Quick look around.
+              </p>
+              <div className="mt-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onSelect('7day', interval)}
+                  className="shrink-0"
+                >
+                  Start free trial
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 🔒 Hero: 30-day trial — card required, highlighted */}
         <button
           onClick={() => onSelect('30day', interval)}
           className="group w-full rounded-xl border-2 border-emerald-500/50 bg-emerald-500/5 p-6 text-left transition-all hover:border-emerald-500/80 hover:bg-emerald-500/10"
@@ -439,31 +464,6 @@ function StepTrialPath({
             </div>
           </div>
         </button>
-
-        {/* 🎁 7-day free trial — no card */}
-        <div className="rounded-xl border border-slate-700/50 bg-[rgb(var(--surface))] p-5 transition-all hover:border-slate-600/50">
-          <div className="flex items-start gap-3">
-            <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
-              <Gift className="h-5 w-5 text-[rgb(var(--muted))]" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-[rgb(var(--foreground))]">Try free for 7 days</h3>
-              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                No card needed. Quick look around.
-              </p>
-              <div className="mt-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onSelect('7day', interval)}
-                  className="shrink-0"
-                >
-                  Start free trial
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
 
         {/* ⚡ Pay now + 30 bonus days */}
         <div className="rounded-xl border border-slate-700/50 bg-[rgb(var(--surface))] p-5 transition-all hover:border-slate-600/50">
@@ -1029,7 +1029,7 @@ export default function SignupPage() {
   const [step, setStep] = useState<Step>('account')
   const [serverUrl, setServerUrl] = useState('')
   const [selectedTrialPath, setSelectedTrialPath] = useState<TrialPath | null>(null)
-  const [selectedInterval, setSelectedInterval] = useState<BillingInterval>('monthly')
+  const [selectedInterval, setSelectedInterval] = useState<BillingInterval>('annual')
   const [clientSecret, setClientSecret] = useState<string | null>(null)
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisioning, setProvisioning] = useState(false)
