@@ -98,7 +98,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        account = intent.getParcelableExtra(EXTRA_ACCOUNT)!!
+        account = requireNotNull(intent.getParcelableExtra(EXTRA_ACCOUNT)) { "AccountActivity requires EXTRA_ACCOUNT" }
         title = account.name
         settings = AccountSettings(this, account)
 
@@ -313,7 +313,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private var syncStatusListener: Any? = null
 
         fun initialize(context: Context, account: Account) {
-            this.context = context
+            this.context = context.applicationContext
             this.account = account
 
             syncStatusListener = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_ACTIVE, this)

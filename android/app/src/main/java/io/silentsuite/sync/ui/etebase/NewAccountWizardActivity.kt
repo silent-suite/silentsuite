@@ -38,7 +38,7 @@ class NewAccountWizardActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        account = intent.extras!!.getParcelable(EXTRA_ACCOUNT)!!
+        account = requireNotNull(requireNotNull(intent.extras) { "NewAccountWizardActivity requires intent extras" }.getParcelable(EXTRA_ACCOUNT)) { "NewAccountWizardActivity requires EXTRA_ACCOUNT" }
 
         setContentView(R.layout.etebase_fragment_activity)
 

@@ -87,8 +87,11 @@ export const useEtebaseStore = create<EtebaseState>((set, get) => ({
     const item = await createItem(account, collections[type], content);
     const uid = item.uid;
 
-    get().itemCache.set(uid, item);
-    get().itemTypeMap.set(uid, type);
+    const newCache = new Map(get().itemCache);
+    newCache.set(uid, item);
+    const newTypeMap = new Map(get().itemTypeMap);
+    newTypeMap.set(uid, type);
+    set({ itemCache: newCache, itemTypeMap: newTypeMap });
 
     return uid;
   },
@@ -114,8 +117,11 @@ export const useEtebaseStore = create<EtebaseState>((set, get) => ({
     const { deleteItem } = await import('@silentsuite/core');
     await deleteItem(account, collections[type], item);
 
-    itemCache.delete(itemUid);
-    get().itemTypeMap.delete(itemUid);
+    const newCache = new Map(itemCache);
+    newCache.delete(itemUid);
+    const newTypeMap = new Map(get().itemTypeMap);
+    newTypeMap.delete(itemUid);
+    set({ itemCache: newCache, itemTypeMap: newTypeMap });
   },
 
   fetchAllItems: async (type) => {
@@ -125,10 +131,12 @@ export const useEtebaseStore = create<EtebaseState>((set, get) => ({
     const { listItems } = await import('@silentsuite/core');
     const response = await listItems(account, collections[type]);
     const results: Array<{ uid: string; content: string }> = [];
+    const newCache = new Map(itemCache);
+    const newTypeMap = new Map(itemTypeMap);
 
     for (const item of response.items) {
-      itemCache.set(item.uid, item);
-      itemTypeMap.set(item.uid, type);
+      newCache.set(item.uid, item);
+      newTypeMap.set(item.uid, type);
       const rawContent = await item.getContent();
       const content = typeof rawContent === 'string'
         ? rawContent
@@ -136,6 +144,7 @@ export const useEtebaseStore = create<EtebaseState>((set, get) => ({
       results.push({ uid: item.uid, content });
     }
 
+    set({ itemCache: newCache, itemTypeMap: newTypeMap });
     return results;
   },
 

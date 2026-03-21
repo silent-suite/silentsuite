@@ -18,6 +18,7 @@ import android.view.Gravity
 import android.view.MenuItem
 import android.view.View
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.GravityCompat
@@ -53,7 +54,7 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
         val drawer = findViewById<View>(R.id.drawer_layout) as DrawerLayout
         val toggle = ActionBarDrawerToggle(
                 this, drawer, toolbar, R.string.navigation_drawer_open, R.string.navigation_drawer_close)
-        drawer.setDrawerListener(toggle)
+        drawer.addDrawerListener(toggle)
         toggle.syncState()
 
         val navigationView = findViewById<View>(R.id.nav_view) as NavigationView
@@ -70,6 +71,18 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
                 Toast.makeText(this, "Server: " + serviceUrl.toString(), Toast.LENGTH_SHORT).show()
             }
         }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val drawerLayout = findViewById<View>(R.id.drawer_layout) as DrawerLayout
+                if (drawerLayout.isDrawerOpen(GravityCompat.START))
+                    drawerLayout.closeDrawer(GravityCompat.START)
+                else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
 
         PermissionsActivity.requestAllPermissions(this)
 
@@ -96,25 +109,18 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
     }
 
     override fun onStatusChanged(which: Int) {
-        if (syncStatusSnackbar != null) {
-            syncStatusSnackbar!!.dismiss()
-            syncStatusSnackbar = null
+        runOnUiThread {
+            if (syncStatusSnackbar != null) {
+                syncStatusSnackbar!!.dismiss()
+                syncStatusSnackbar = null
+            }
+
+            if (!ContentResolver.getMasterSyncAutomatically()) {
+                syncStatusSnackbar = Snackbar.make(findViewById(R.id.coordinator), R.string.accounts_global_sync_disabled, Snackbar.LENGTH_INDEFINITE)
+                        .setAction(R.string.accounts_global_sync_enable) { ContentResolver.setMasterSyncAutomatically(true) }
+                syncStatusSnackbar!!.show()
+            }
         }
-
-        if (!ContentResolver.getMasterSyncAutomatically()) {
-            syncStatusSnackbar = Snackbar.make(findViewById(R.id.coordinator), R.string.accounts_global_sync_disabled, Snackbar.LENGTH_INDEFINITE)
-                    .setAction(R.string.accounts_global_sync_enable) { ContentResolver.setMasterSyncAutomatically(true) }
-            syncStatusSnackbar!!.show()
-        }
-    }
-
-
-    override fun onBackPressed() {
-        val drawer = findViewById<View>(R.id.drawer_layout) as DrawerLayout
-        if (drawer.isDrawerOpen(GravityCompat.START))
-            drawer.closeDrawer(GravityCompat.START)
-        else
-            super.onBackPressed()
     }
 
     override fun onNavigationItemSelected(item: MenuItem): Boolean {

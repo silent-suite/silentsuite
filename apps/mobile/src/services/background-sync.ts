@@ -28,9 +28,15 @@ TaskManager.defineTask(BACKGROUND_SYNC_TASK, async () => {
     const { deserializeContact } = await import('@silentsuite/core');
     const { deserializeTask } = await import('@silentsuite/core');
 
-    useCalendarStore.getState().setEvents(calItems.map(i => deserializeCalendarEvent(i.content)));
-    useContactStore.getState().setContacts(conItems.map(i => deserializeContact(i.content)));
-    useTaskStore.getState().setTasks(tskItems.map(i => deserializeTask(i.content)));
+    useCalendarStore.getState().setEvents(
+      calItems.map(i => { try { return deserializeCalendarEvent(i.content); } catch { return null; } }).filter(Boolean) as any[]
+    );
+    useContactStore.getState().setContacts(
+      conItems.map(i => { try { return deserializeContact(i.content); } catch { return null; } }).filter(Boolean) as any[]
+    );
+    useTaskStore.getState().setTasks(
+      tskItems.map(i => { try { return deserializeTask(i.content); } catch { return null; } }).filter(Boolean) as any[]
+    );
 
     // Sync to device if bridge mode
     if (Platform.OS === 'ios') {

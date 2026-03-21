@@ -84,7 +84,7 @@ function addUntilToRRule(rrule: string, untilDate: Date): string {
 }
 
 /** Sync a single event to Etebase (used by create/update helpers) */
-async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update'): Promise<string | null> {
+async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update', tempId?: string): Promise<string | null> {
   const etebase = useEtebaseStore.getState()
   if (!etebase.account) return null
 
@@ -92,10 +92,18 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
     const { serializeCalendarEvent } = await import('@silentsuite/core')
     const content = serializeCalendarEvent(event)
     if (mode === 'create') {
-      return await etebase.createItem('calendar', content)
+      return await etebase.createItem('calendar', content, tempId)
     } else {
-      await etebase.updateItem('calendar', event.id, content)
-      return event.id
+      // For updates of offline-created items, enqueue with tempId for compaction
+      const itemInCache = etebase.itemCache.has(event.id)
+      if (itemInCache) {
+        await etebase.updateItem('calendar', event.id, content)
+        return event.id
+      } else {
+        const { enqueue } = await import('@/app/lib/offline-queue')
+        await enqueue({ type: 'update', collectionType: 'calendar', content, tempId: event.id })
+        return event.id
+      }
     }
   } catch (err) {
     console.error(`[calendar-store] Failed to ${mode} event in Etebase:`, err)
@@ -134,8 +142,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
     // Optimistic local update
     set((state) => ({ events: [...state.events, event] }))
 
-    // Sync to Etebase
-    const itemUid = await syncEventToEtebase(event, 'create')
+    // Sync to Etebase (pass tempId for offline queue mapping)
+    const itemUid = await syncEventToEtebase(event, 'create', tempId)
     if (itemUid) {
       set((state) => ({
         events: state.events.map((e) =>
@@ -170,10 +178,17 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
     // Sync to Etebase
     const etebase = useEtebaseStore.getState()
     if (etebase.account) {
-      try {
-        await etebase.deleteItem('calendar', id)
-      } catch (err) {
-        console.error('[calendar-store] Failed to delete event in Etebase:', err)
+      const itemInCache = etebase.itemCache.has(id)
+      if (itemInCache) {
+        try {
+          await etebase.deleteItem('calendar', id)
+        } catch (err) {
+          console.error('[calendar-store] Failed to delete event in Etebase:', err)
+        }
+      } else {
+        // Item was created offline — enqueue delete with tempId for compaction
+        const { enqueue } = await import('@/app/lib/offline-queue')
+        await enqueue({ type: 'delete', collectionType: 'calendar', tempId: id })
       }
     }
   },
@@ -343,10 +358,16 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
-          try {
-            await etebase.deleteItem('calendar', id)
-          } catch (err) {
-            console.error('[calendar-store] Failed to delete recurring event in Etebase:', err)
+          const itemInCache = etebase.itemCache.has(id)
+          if (itemInCache) {
+            try {
+              await etebase.deleteItem('calendar', id)
+            } catch (err) {
+              console.error('[calendar-store] Failed to delete recurring event in Etebase:', err)
+            }
+          } else {
+            const { enqueue } = await import('@/app/lib/offline-queue')
+            await enqueue({ type: 'delete', collectionType: 'calendar', tempId: id })
           }
         }
         break

@@ -61,7 +61,7 @@ export default function App() {
     <SafeAreaProvider>
       <NavigationContainer theme={colorScheme === 'light' ? silentSuiteLightTheme : silentSuiteDarkTheme}>
         <RootNavigator />
-        <StatusBar style="light" />
+        <StatusBar style={colorScheme === 'light' ? 'dark' : 'light'} />
       </NavigationContainer>
     </SafeAreaProvider>
   );
