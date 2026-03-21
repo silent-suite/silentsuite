@@ -39,7 +39,7 @@ export const posts: BlogPost[] = [
       'Every event you create in Google Calendar is processed in plaintext on Google\'s servers. We break down what Google sees, what "encrypted at rest" really means, and how zero-knowledge encryption changes things.',
     date: '2026-03-21',
     author: 'Tim Ross',
-    readingTime: '8 min read',
+    readingTime: '5 min read',
     tags: ['privacy', 'comparison', 'encryption'],
     coverImage: '/blog/cover-silentsuite-vs-google-calendar.png',
   },
