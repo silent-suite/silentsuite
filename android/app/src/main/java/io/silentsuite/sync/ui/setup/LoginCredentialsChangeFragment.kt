@@ -10,13 +10,10 @@ package io.silentsuite.sync.ui.setup
 
 import android.accounts.Account
 import android.app.Dialog
-import android.content.Context
 import android.os.Bundle
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
-import androidx.loader.app.LoaderManager
-import androidx.loader.content.AsyncTaskLoader
-import androidx.loader.content.Loader
+import androidx.lifecycle.lifecycleScope
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
@@ -24,9 +21,12 @@ import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.ui.DebugInfoActivity
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.logging.Level
 
-class LoginCredentialsChangeFragment : DialogFragment(), LoaderManager.LoaderCallbacks<Configuration> {
+class LoginCredentialsChangeFragment : DialogFragment() {
     private lateinit var account: Account
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
@@ -41,19 +41,28 @@ class LoginCredentialsChangeFragment : DialogFragment(), LoaderManager.LoaderCal
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        loaderManager.initLoader(0, arguments, this)
         account = requireArguments().getParcelable(ARG_ACCOUNT)!!
+
+        if (savedInstanceState == null) {
+            val credentials = requireArguments().getParcelable<LoginCredentials>(ARG_LOGIN_CREDENTIALS)!!
+            findConfiguration(credentials)
+        }
     }
 
-    override fun onCreateLoader(id: Int, args: Bundle?): Loader<Configuration> {
-        return ServerConfigurationLoader(requireContext(), (args!!.getParcelable(ARG_LOGIN_CREDENTIALS) as LoginCredentials?)!!)
+    private fun findConfiguration(credentials: LoginCredentials) {
+        lifecycleScope.launch {
+            val data = withContext(Dispatchers.IO) {
+                BaseConfigurationFinder(requireContext(), credentials).findInitialConfiguration()
+            }
+            onLoadFinished(data)
+        }
     }
 
-    override fun onLoadFinished(loader: Loader<Configuration>, data: Configuration?) {
+    private fun onLoadFinished(data: Configuration?) {
         if (data != null) {
             if (data.isFailed)
             // no service found: show error message
-                requireFragmentManager().beginTransaction()
+                parentFragmentManager.beginTransaction()
                         .add(NothingDetectedFragment.newInstance(data.error!!.localizedMessage), null)
                         .commitAllowingStateLoss()
             else {
@@ -74,8 +83,6 @@ class LoginCredentialsChangeFragment : DialogFragment(), LoaderManager.LoaderCal
 
         dismissAllowingStateLoss()
     }
-
-    override fun onLoaderReset(loader: Loader<Configuration>) {}
 
 
     class NothingDetectedFragment : DialogFragment() {
@@ -106,17 +113,6 @@ class LoginCredentialsChangeFragment : DialogFragment(), LoaderManager.LoaderCal
                 fragment.arguments = args
                 return fragment
             }
-        }
-    }
-
-    internal class ServerConfigurationLoader(context: Context, val credentials: LoginCredentials) : AsyncTaskLoader<Configuration>(context) {
-
-        override fun onStartLoading() {
-            forceLoad()
-        }
-
-        override fun loadInBackground(): Configuration? {
-            return BaseConfigurationFinder(context, credentials).findInitialConfiguration()
         }
     }
 

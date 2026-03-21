@@ -9,7 +9,6 @@
 package io.silentsuite.sync.ui
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.os.Bundle
 import android.text.Html
 import android.text.Spanned
@@ -22,9 +21,7 @@ import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentPagerAdapter
-import androidx.loader.app.LoaderManager
-import androidx.loader.content.AsyncTaskLoader
-import androidx.loader.content.Loader
+import androidx.lifecycle.lifecycleScope
 import androidx.viewpager.widget.ViewPager
 import io.silentsuite.sync.App
 import io.silentsuite.sync.BuildConfig
@@ -33,6 +30,9 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import com.google.android.material.tabs.TabLayout
 import ezvcard.Ezvcard
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.logging.Level
 
@@ -70,7 +70,7 @@ class AboutActivity : BaseActivity() {
         }
     }
 
-    class ComponentFragment : Fragment(), LoaderManager.LoaderCallbacks<Spanned> {
+    class ComponentFragment : Fragment() {
 
         @SuppressLint("SetTextI18n")
         override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -92,32 +92,37 @@ class AboutActivity : BaseActivity() {
             tv.setText(info.licenseInfo)
 
             // load and format license text
-            val args = Bundle(1)
-            args.putString(KEY_FILE_NAME, info.licenseTextFile)
-            loaderManager.initLoader(0, args, this)
+            loadLicense(v, info.licenseTextFile)
 
             return v
         }
 
-        override fun onCreateLoader(id: Int, args: Bundle?): Loader<Spanned> {
-            return LicenseLoader(requireContext(), args!!.getString(KEY_FILE_NAME)!!)
-        }
-
-        override fun onLoadFinished(loader: Loader<Spanned>, license: Spanned) {
-            if (view != null) {
-                val tv = requireView().findViewById<View>(R.id.license_text) as TextView?
-                if (tv != null) {
-                    tv.autoLinkMask = Linkify.EMAIL_ADDRESSES or Linkify.WEB_URLS
-                    tv.text = license
+        private fun loadLicense(v: View, fileName: String) {
+            lifecycleScope.launch {
+                val license = withContext(Dispatchers.IO) {
+                    Logger.log.fine("Loading license file $fileName")
+                    try {
+                        val inputStream = requireContext().resources.assets.open(fileName)
+                        val raw = inputStream.readBytes()
+                        inputStream.close()
+                        Html.fromHtml(String(raw)) as Spanned
+                    } catch (e: IOException) {
+                        Logger.log.log(Level.SEVERE, "Couldn't read license file", e)
+                        null
+                    }
+                }
+                if (license != null && view != null) {
+                    val tv = v.findViewById<View>(R.id.license_text) as TextView?
+                    if (tv != null) {
+                        tv.autoLinkMask = Linkify.EMAIL_ADDRESSES or Linkify.WEB_URLS
+                        tv.text = license
+                    }
                 }
             }
         }
 
-        override fun onLoaderReset(loader: Loader<Spanned>) {}
-
         companion object {
             private val KEY_POSITION = "position"
-            private val KEY_FILE_NAME = "fileName"
 
             fun instantiate(position: Int): ComponentFragment {
                 val frag = ComponentFragment()
@@ -126,32 +131,6 @@ class AboutActivity : BaseActivity() {
                 frag.arguments = args
                 return frag
             }
-        }
-    }
-
-    private class LicenseLoader internal constructor(context: Context, internal val fileName: String) : AsyncTaskLoader<Spanned>(context) {
-        internal var content: Spanned? = null
-
-        override fun onStartLoading() {
-            if (content == null)
-                forceLoad()
-            else
-                deliverResult(content)
-        }
-
-        override fun loadInBackground(): Spanned? {
-            Logger.log.fine("Loading license file $fileName")
-            try {
-                val inputStream = context.resources.assets.open(fileName)
-                val raw = inputStream.readBytes()
-                inputStream.close()
-                content = Html.fromHtml(String(raw))
-                return content
-            } catch (e: IOException) {
-                Logger.log.log(Level.SEVERE, "Couldn't read license file", e)
-                return null
-            }
-
         }
     }
 
