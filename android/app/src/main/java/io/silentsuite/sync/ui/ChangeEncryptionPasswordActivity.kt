@@ -9,7 +9,7 @@
 package io.silentsuite.sync.ui
 
 import android.accounts.Account
-import android.app.ProgressDialog
+import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -21,6 +21,7 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.requestSync
+import io.silentsuite.sync.utils.ProgressDialogHelper
 import com.google.android.material.textfield.TextInputLayout
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -30,7 +31,7 @@ import kotlinx.coroutines.withContext
 open class ChangeEncryptionPasswordActivity : BaseActivity() {
 
     protected lateinit var account: Account
-    lateinit var progress: ProgressDialog
+    lateinit var progress: Dialog
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -118,12 +119,11 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
                 .setTitle(R.string.delete_collection_confirm_title)
                 .setMessage(R.string.change_encryption_password_are_you_sure)
                 .setPositiveButton(android.R.string.yes) { _, _ ->
-                    progress = ProgressDialog(this)
-                    progress.setTitle(R.string.setting_up_encryption)
-                    progress.setMessage(getString(R.string.setting_up_encryption_content))
-                    progress.isIndeterminate = true
-                    progress.setCanceledOnTouchOutside(false)
-                    progress.setCancelable(false)
+                    progress = ProgressDialogHelper.createIndeterminate(
+                        this,
+                        R.string.setting_up_encryption,
+                        getString(R.string.setting_up_encryption_content)
+                    )
                     progress.show()
                     changePasswordDo(old_password, new_password)
                 }

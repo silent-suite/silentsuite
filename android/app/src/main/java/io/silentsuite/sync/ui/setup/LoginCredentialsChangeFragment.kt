@@ -10,7 +10,6 @@ package io.silentsuite.sync.ui.setup
 
 import android.accounts.Account
 import android.app.Dialog
-import android.app.ProgressDialog
 import android.content.Context
 import android.os.Bundle
 import androidx.appcompat.app.AlertDialog
@@ -23,6 +22,7 @@ import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.ui.DebugInfoActivity
+import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
 import java.util.logging.Level
 
@@ -30,13 +30,12 @@ class LoginCredentialsChangeFragment : DialogFragment(), LoaderManager.LoaderCal
     private lateinit var account: Account
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        val progress = ProgressDialog(activity)
-        progress.setTitle(R.string.setting_up_encryption)
-        progress.setMessage(getString(R.string.setting_up_encryption_content))
-        progress.isIndeterminate = true
-        progress.setCanceledOnTouchOutside(false)
         isCancelable = false
-        return progress
+        return ProgressDialogHelper.createIndeterminate(
+            requireContext(),
+            R.string.setting_up_encryption,
+            getString(R.string.setting_up_encryption_content)
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
