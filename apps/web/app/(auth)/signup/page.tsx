@@ -410,55 +410,55 @@ function StepTrialPath({
       </div>
 
       <div className="space-y-4">
-        {/* 🎁 Hero: 7-day free trial — no card */}
+        {/* 🔒 Hero: 30-day trial — card required, highest conversion */}
         <button
-          onClick={() => onSelect('7day', interval)}
+          onClick={() => onSelect('30day', interval)}
           className="group w-full rounded-xl border-2 border-emerald-500/50 bg-emerald-500/5 p-6 text-left transition-all hover:border-emerald-500/80 hover:bg-emerald-500/10"
         >
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-emerald-500/15 p-3 shrink-0">
-              <Gift className="h-6 w-6 text-emerald-400" />
+              <Lock className="h-6 w-6 text-emerald-400" />
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Try free for 7 days</h3>
+                <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Try free for 30 days</h3>
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 uppercase tracking-wide">
                   Recommended
                 </span>
               </div>
               <p className="mt-1.5 text-sm text-[rgb(var(--muted))]">
-                No card needed. Full access to everything for 7 days.
+                Full access for 30 days. First charge on day 30, cancel anytime.
               </p>
+              <div className="mt-3 flex items-center gap-3">
+                <BillingToggle interval={interval} onChange={setInterval} />
+                <PriceDisplay interval={interval} />
+              </div>
               <p className="mt-3 text-sm font-medium text-emerald-400 group-hover:text-emerald-300 transition-colors">
-                Start free trial &rarr;
+                Start 30-day trial &rarr;
               </p>
             </div>
           </div>
         </button>
 
-        {/* 🔒 30-day trial — card required */}
+        {/* 🎁 7-day free trial — no card */}
         <div className="rounded-xl border border-slate-700/50 bg-[rgb(var(--surface))] p-5 transition-all hover:border-slate-600/50">
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
-              <Lock className="h-5 w-5 text-amber-400" />
+              <Gift className="h-5 w-5 text-[rgb(var(--muted))]" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-[rgb(var(--foreground))]">30-day trial</h3>
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">Try free for 7 days</h3>
               <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                Card required. First charge on day 30.
+                No card needed. Quick look around.
               </p>
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <BillingToggle interval={interval} onChange={setInterval} />
-                  <PriceDisplay interval={interval} />
-                </div>
+              <div className="mt-3">
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => onSelect('30day', interval)}
+                  onClick={() => onSelect('7day', interval)}
                   className="shrink-0"
                 >
-                  Start trial
+                  Start free trial
                 </Button>
               </div>
             </div>
