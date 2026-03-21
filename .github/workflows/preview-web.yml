@@ -72,9 +72,8 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             docker pull ghcr.io/silent-suite/silentsuite-web:preview
-            docker tag ghcr.io/silent-suite/silentsuite-web:preview etebase-web-preview:latest
             cd ~/etebase
-            docker compose -f docker-compose.preview.yml up -d web-preview
+            docker compose -f docker-compose.preview.yml up -d --force-recreate web-preview
             echo "Preview deployed: https://previewapp.silentsuite.io (branch: ${{ github.ref_name }})"
 
       - name: Comment on PR
