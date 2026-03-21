@@ -67,7 +67,7 @@ class TrustCertificateActivity: AppCompatActivity() {
         val intent = Intent(this, CustomCertService::class.java)
         with(intent) {
             action = CustomCertService.CMD_CERTIFICATION_DECISION
-            putExtra(CustomCertService.EXTRA_CERTIFICATE, getIntent().getSerializableExtra(EXTRA_CERTIFICATE))
+            putExtra(CustomCertService.EXTRA_CERTIFICATE, getIntent().getByteArrayExtra(EXTRA_CERTIFICATE))
             putExtra(CustomCertService.EXTRA_TRUSTED, trusted)
         }
         startService(intent)
