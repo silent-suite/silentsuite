@@ -55,7 +55,7 @@ class AboutActivity : BaseActivity() {
     private class ComponentInfo internal constructor(internal val title: String, internal val version: String?, internal val website: String, internal val copyright: String, internal val licenseInfo: Int, internal val licenseTextFile: String)
 
 
-    private class TabsAdapter(fm: FragmentManager) : FragmentPagerAdapter(fm) {
+    private class TabsAdapter(fm: FragmentManager) : FragmentPagerAdapter(fm, BEHAVIOR_RESUME_ONLY_CURRENT_FRAGMENT) {
 
         override fun getCount(): Int {
             return components.size
