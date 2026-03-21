@@ -23,5 +23,8 @@
       "unrs-resolver",
       "workerd"
     ]
+  },
+  "dependencies": {
+    "sharp": "^0.34.5"
   }
 }
