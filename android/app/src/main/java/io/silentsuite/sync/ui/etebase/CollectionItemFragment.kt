@@ -188,7 +188,7 @@ class CollectionItemFragment : Fragment() {
     }
 }
 
-private class TabsAdapter(fm: FragmentManager, private val context: Context, private val cachedCollection: CachedCollection, private val cachedItem: CachedItem) : FragmentPagerAdapter(fm) {
+private class TabsAdapter(fm: FragmentManager, private val context: Context, private val cachedCollection: CachedCollection, private val cachedItem: CachedItem) : FragmentPagerAdapter(fm, BEHAVIOR_RESUME_ONLY_CURRENT_FRAGMENT) {
 
     override fun getCount(): Int {
         // FIXME: Make it depend on info enumType (only have non-raw for known types)
