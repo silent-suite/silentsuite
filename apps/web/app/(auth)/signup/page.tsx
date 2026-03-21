@@ -10,7 +10,7 @@ import {
   Shield, Lock, Check, KeyRound, ChevronRight, User, Crown,
   ShieldCheck, Download, AlertTriangle, Copy, CheckCircle,
   Users, Settings, Activity, ExternalLink, Rocket, CreditCard, Clock,
-  Star,
+  Gift, Zap,
 } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
@@ -22,15 +22,13 @@ import StripePaymentForm from '@/app/components/stripe-payment-form'
 // Types
 // ---------------------------------------------------------------------------
 
-type PlanId = 'early_monthly' | 'early_annual' | 'standard_monthly' | 'standard_annual'
+type PlanId = 'early_monthly' | 'early_annual'
 type TrialPath = '7day' | '30day' | 'immediate'
 type BillingInterval = 'monthly' | 'annual'
 
-const PLAN_PRICES: Record<PlanId, number> = {
-  early_monthly: 3.60,
-  early_annual: 36,
-  standard_monthly: 4.80,
-  standard_annual: 48,
+const PLAN_PRICES: Record<PlanId, { monthly: number; annual: number; annualPerMonth: number }> = {
+  early_monthly: { monthly: 3.60, annual: 36, annualPerMonth: 3 },
+  early_annual: { monthly: 3.60, annual: 36, annualPerMonth: 3 },
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +115,63 @@ function PasswordStrength({ password }: { password: string }) {
         ))}
       </ul>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Billing interval toggle
+// ---------------------------------------------------------------------------
+
+function BillingToggle({
+  interval,
+  onChange,
+}: {
+  interval: BillingInterval
+  onChange: (interval: BillingInterval) => void
+}) {
+  return (
+    <div className="flex items-center justify-center gap-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-1">
+      <button
+        onClick={() => onChange('monthly')}
+        className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+          interval === 'monthly'
+            ? 'bg-[rgb(var(--primary))] text-white'
+            : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+        }`}
+      >
+        Monthly
+      </button>
+      <button
+        onClick={() => onChange('annual')}
+        className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+          interval === 'annual'
+            ? 'bg-[rgb(var(--primary))] text-white'
+            : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+        }`}
+      >
+        Annual
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Price display helper
+// ---------------------------------------------------------------------------
+
+function PriceDisplay({ interval }: { interval: BillingInterval }) {
+  if (interval === 'monthly') {
+    return (
+      <span className="text-sm font-medium text-[rgb(var(--foreground))]">
+        &euro;3.60<span className="text-[rgb(var(--muted))]">/mo</span>
+      </span>
+    )
+  }
+  return (
+    <span className="text-sm font-medium text-[rgb(var(--foreground))]">
+      &euro;36<span className="text-[rgb(var(--muted))]">/yr</span>
+      <span className="ml-1 text-xs text-emerald-500">(&euro;3/mo)</span>
+    </span>
   )
 }
 
@@ -335,242 +390,139 @@ function StepCreateAccount({
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Choose Plan
-// ---------------------------------------------------------------------------
-
-function StepChoosePlan({ onNext }: { onNext: (planId: PlanId) => void }) {
-  const [interval, setInterval] = useState<BillingInterval>('monthly')
-
-  return (
-    <div className="space-y-6">
-      <div className="space-y-2 text-center">
-        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
-        <p className="text-sm text-[rgb(var(--muted))]">
-          All plans include a free trial. Cancel anytime.
-        </p>
-      </div>
-
-      {/* Monthly / Annual toggle */}
-      <div className="flex items-center justify-center gap-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-1">
-        <button
-          onClick={() => setInterval('monthly')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
-            interval === 'monthly'
-              ? 'bg-[rgb(var(--primary))] text-white'
-              : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
-          }`}
-        >
-          Monthly
-        </button>
-        <button
-          onClick={() => setInterval('annual')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
-            interval === 'annual'
-              ? 'bg-[rgb(var(--primary))] text-white'
-              : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
-          }`}
-        >
-          Annual
-        </button>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        {/* Early Adopter */}
-        <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 ring-1 ring-amber-500/20 flex flex-col relative overflow-hidden">
-          <div className="absolute top-3 right-3">
-            <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-medium text-amber-400">
-              Limited time
-            </span>
-          </div>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="rounded-lg bg-amber-500/10 p-2.5">
-              <Crown className="h-5 w-5 text-amber-400" />
-            </div>
-            <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Early Adopter</h3>
-          </div>
-          <p className="text-sm leading-relaxed text-[rgb(var(--muted))] mb-4">
-            Locked-in pricing as a thank you for your early support.
-          </p>
-          <div className="mt-auto pt-4 border-t border-amber-500/10">
-            <div className="mb-4 flex items-baseline gap-1.5">
-              {interval === 'monthly' ? (
-                <>
-                  <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;3.60</span>
-                  <span className="text-sm text-[rgb(var(--muted))]">/month</span>
-                </>
-              ) : (
-                <>
-                  <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;36</span>
-                  <span className="text-sm text-[rgb(var(--muted))]">/year</span>
-                  <span className="ml-1 text-xs text-emerald-500">(&euro;3/mo)</span>
-                </>
-              )}
-            </div>
-            <Button
-              onClick={() => onNext(interval === 'monthly' ? 'early_monthly' : 'early_annual')}
-              className="w-full py-2.5 text-sm bg-amber-600 hover:bg-amber-700"
-            >
-              Select Early Adopter
-            </Button>
-          </div>
-        </div>
-
-        {/* Standard */}
-        <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 flex flex-col relative overflow-hidden">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="rounded-lg bg-emerald-500/10 p-2.5">
-              <Star className="h-5 w-5 text-emerald-500" />
-            </div>
-            <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Standard</h3>
-          </div>
-          <p className="text-sm leading-relaxed text-[rgb(var(--muted))] mb-4">
-            Full access to all features. End-to-end encrypted workspace.
-          </p>
-          <div className="mt-auto pt-4 border-t border-[rgb(var(--border))]">
-            <div className="mb-4 flex items-baseline gap-1.5">
-              {interval === 'monthly' ? (
-                <>
-                  <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;4.80</span>
-                  <span className="text-sm text-[rgb(var(--muted))]">/month</span>
-                </>
-              ) : (
-                <>
-                  <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;48</span>
-                  <span className="text-sm text-[rgb(var(--muted))]">/year</span>
-                  <span className="ml-1 text-xs text-emerald-500">(&euro;4/mo)</span>
-                </>
-              )}
-            </div>
-            <Button
-              onClick={() => onNext(interval === 'monthly' ? 'standard_monthly' : 'standard_annual')}
-              variant="outline"
-              className="w-full py-2.5 text-sm"
-            >
-              Select Standard
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
-        <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-        <span>30-day money-back guarantee. Cancel anytime.</span>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Step 3: Choose Trial Path
+// Step 2: How would you like to start? (Trial path selection)
 // ---------------------------------------------------------------------------
 
 function StepTrialPath({
-  planId,
   onSelect,
 }: {
-  planId: PlanId
-  onSelect: (path: TrialPath) => void
+  onSelect: (path: TrialPath, interval: BillingInterval) => void
 }) {
-  const price = PLAN_PRICES[planId]
-  const priceLabel = price % 1 === 0 ? `\u20AC${price}` : `\u20AC${price.toFixed(2)}`
+  const [interval, setInterval] = useState<BillingInterval>('monthly')
 
   return (
     <div className="space-y-6">
       <div className="space-y-2 text-center">
         <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">How would you like to start?</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Choose what works best for you.
+          Early Adopter pricing &mdash; locked in forever.
         </p>
       </div>
 
-      <div className="space-y-3">
-        {/* Pay now, 30 days free */}
+      <div className="space-y-4">
+        {/* 🎁 Hero: 7-day free trial — no card */}
         <button
-          onClick={() => onSelect('immediate')}
-          className="w-full rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-5 text-left transition-colors hover:bg-emerald-500/10"
+          onClick={() => onSelect('7day', interval)}
+          className="group w-full rounded-xl border-2 border-emerald-500/50 bg-emerald-500/5 p-6 text-left transition-all hover:border-emerald-500/80 hover:bg-emerald-500/10"
         >
-          <div className="flex items-start gap-3">
-            <div className="rounded-lg bg-emerald-500/10 p-2.5 shrink-0">
-              <Rocket className="h-5 w-5 text-emerald-500" />
+          <div className="flex items-start gap-4">
+            <div className="rounded-xl bg-emerald-500/15 p-3 shrink-0">
+              <Gift className="h-6 w-6 text-emerald-400" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-[rgb(var(--foreground))]">Pay now, get 30 days free</h3>
-              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                First charge today, then in 30 days. Best value.
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Try free for 7 days</h3>
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 uppercase tracking-wide">
+                  Recommended
+                </span>
+              </div>
+              <p className="mt-1.5 text-sm text-[rgb(var(--muted))]">
+                No card needed. Full access to everything for 7 days.
               </p>
-              <p className="mt-2 text-sm font-medium text-emerald-500">
-                Pay {priceLabel} now
+              <p className="mt-3 text-sm font-medium text-emerald-400 group-hover:text-emerald-300 transition-colors">
+                Start free trial &rarr;
               </p>
             </div>
           </div>
         </button>
 
-        {/* 30-day trial with card */}
-        <button
-          onClick={() => onSelect('30day')}
-          className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 text-left transition-colors hover:bg-[rgb(var(--border))]/30"
-        >
+        {/* 🔒 30-day trial — card required */}
+        <div className="rounded-xl border border-slate-700/50 bg-[rgb(var(--surface))] p-5 transition-all hover:border-slate-600/50">
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
-              <CreditCard className="h-5 w-5 text-[rgb(var(--primary))]" />
+              <Lock className="h-5 w-5 text-amber-400" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-[rgb(var(--foreground))]">30-day free trial</h3>
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">30-day trial</h3>
               <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                Add your card now. First charge in 30 days.
+                Card required. First charge on day 30.
               </p>
-              <p className="mt-2 text-sm font-medium text-[rgb(var(--primary))]">
-                Start trial
-              </p>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <BillingToggle interval={interval} onChange={setInterval} />
+                  <PriceDisplay interval={interval} />
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onSelect('30day', interval)}
+                  className="shrink-0"
+                >
+                  Start trial
+                </Button>
+              </div>
             </div>
           </div>
-        </button>
+        </div>
 
-        {/* 7-day trial, no card */}
-        <button
-          onClick={() => onSelect('7day')}
-          className="w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 text-left transition-colors hover:bg-[rgb(var(--border))]/30"
-        >
+        {/* ⚡ Pay now + 30 bonus days */}
+        <div className="rounded-xl border border-slate-700/50 bg-[rgb(var(--surface))] p-5 transition-all hover:border-slate-600/50">
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
-              <Clock className="h-5 w-5 text-[rgb(var(--muted))]" />
+              <Zap className="h-5 w-5 text-amber-400" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-[rgb(var(--foreground))]">7-day free trial</h3>
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">Pay now + 30 bonus days</h3>
               <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                No card required. Try it out risk-free for 7 days.
+                Get an extra month free. Best value.
               </p>
-              <p className="mt-2 text-sm font-medium text-[rgb(var(--muted))]">
-                Start free
-              </p>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <BillingToggle interval={interval} onChange={setInterval} />
+                  <PriceDisplay interval={interval} />
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => onSelect('immediate', interval)}
+                  className="shrink-0 bg-amber-600 hover:bg-amber-700"
+                >
+                  Subscribe now
+                </Button>
+              </div>
             </div>
           </div>
-        </button>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+        <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+        <span>Cancel anytime. Your data stays encrypted and exportable.</span>
       </div>
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Payment (inline Stripe Elements)
+// Step 3: Payment (inline Stripe Elements)
 // ---------------------------------------------------------------------------
 
 function StepPayment({
-  planId,
   trialPath,
+  interval,
   clientSecret,
   onComplete,
 }: {
-  planId: PlanId
   trialPath: TrialPath
+  interval: BillingInterval
   clientSecret: string
   onComplete: () => void
 }) {
-  const price = PLAN_PRICES[planId]
-  const priceLabel = price % 1 === 0 ? `\u20AC${price}` : `\u20AC${price.toFixed(2)}`
-
   const mode = trialPath === '30day' ? 'setup' : 'payment'
-  const submitLabel = trialPath === '30day' ? 'Start 30-day trial' : `Pay ${priceLabel}`
+  const priceLabel = interval === 'monthly' ? '\u20AC3.60/mo' : '\u20AC36/yr'
+
+  const submitLabel = trialPath === '30day'
+    ? 'Start 30-day trial'
+    : `Pay ${interval === 'monthly' ? '\u20AC3.60' : '\u20AC36'}`
 
   return (
     <div className="space-y-6">
@@ -581,7 +533,25 @@ function StepPayment({
         <p className="text-sm text-[rgb(var(--muted))]">
           {trialPath === '30day'
             ? 'Your card will not be charged for 30 days.'
-            : `You'll be charged ${priceLabel} today. Your next charge is in 30 days.`}
+            : `You\u2019ll be charged ${priceLabel} today. Your next charge is in 30 days.`}
+        </p>
+      </div>
+
+      {/* Selected option summary */}
+      <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Crown className="h-4 w-4 text-amber-400" />
+            <span className="text-sm font-medium text-[rgb(var(--foreground))]">Early Adopter</span>
+          </div>
+          <span className="text-sm text-[rgb(var(--foreground))]">
+            {interval === 'monthly' ? '\u20AC3.60/mo' : '\u20AC36/yr (\u20AC3/mo)'}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+          {trialPath === '30day'
+            ? 'First charge in 30 days. Cancel anytime before.'
+            : '30 bonus days included. Next charge in 30 days.'}
         </p>
       </div>
 
@@ -748,7 +718,7 @@ function StepAdminInfo({ serverUrl, onNext }: { serverUrl: string; onNext: () =>
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Create Vault + Recovery Key
+// Step 4: Create Vault + Recovery Key
 // ---------------------------------------------------------------------------
 
 function StepVaultAndRecovery({
@@ -935,28 +905,26 @@ IMPORTANT:
 // Progress Stepper
 // ---------------------------------------------------------------------------
 
-type Step = 'account' | 'plan' | 'trial' | 'selfhost' | 'admin' | 'payment' | 'vault'
+type Step = 'account' | 'trial' | 'selfhost' | 'admin' | 'payment' | 'vault'
 
 const STEPS_DEFAULT = [
-  { key: 'account' as const, label: 'Create Account', number: 1 },
-  { key: 'plan' as const, label: 'Choose Plan', number: 2 },
-  { key: 'trial' as const, label: 'Trial', number: 3 },
-  { key: 'payment' as const, label: 'Payment', number: 4 },
-  { key: 'vault' as const, label: 'Setup Vault', number: 5 },
+  { key: 'account' as const, label: 'Account', number: 1 },
+  { key: 'trial' as const, label: 'Trial', number: 2 },
+  { key: 'payment' as const, label: 'Payment', number: 3 },
+  { key: 'vault' as const, label: 'Setup', number: 4 },
 ]
 
 const STEPS_7DAY = [
-  { key: 'account' as const, label: 'Create Account', number: 1 },
-  { key: 'plan' as const, label: 'Choose Plan', number: 2 },
-  { key: 'trial' as const, label: 'Trial', number: 3 },
-  { key: 'vault' as const, label: 'Setup Vault', number: 4 },
+  { key: 'account' as const, label: 'Account', number: 1 },
+  { key: 'trial' as const, label: 'Trial', number: 2 },
+  { key: 'vault' as const, label: 'Setup', number: 3 },
 ]
 
 const STEPS_SELFHOST = [
-  { key: 'account' as const, label: 'Create Account', number: 1 },
+  { key: 'account' as const, label: 'Account', number: 1 },
   { key: 'selfhost' as const, label: 'Self-Hosting', number: 2 },
   { key: 'admin' as const, label: 'Admin Setup', number: 3 },
-  { key: 'vault' as const, label: 'Setup Vault', number: 4 },
+  { key: 'vault' as const, label: 'Setup', number: 4 },
 ]
 
 function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: readonly { key: string; label: string; number: number }[] }) {
@@ -1059,8 +1027,8 @@ export default function SignupPage() {
   const signup = useAuthStore((s) => s.signup)
   const [step, setStep] = useState<Step>('account')
   const [serverUrl, setServerUrl] = useState('')
-  const [selectedPlan, setSelectedPlan] = useState<PlanId | null>(null)
   const [selectedTrialPath, setSelectedTrialPath] = useState<TrialPath | null>(null)
+  const [selectedInterval, setSelectedInterval] = useState<BillingInterval>('monthly')
   const [clientSecret, setClientSecret] = useState<string | null>(null)
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisioning, setProvisioning] = useState(false)
@@ -1086,7 +1054,7 @@ export default function SignupPage() {
     if (selfHosted) {
       setStep('selfhost')
     } else {
-      setStep('plan')
+      setStep('trial')
     }
   }, [createEtebaseAccount, serverUrl])
 
@@ -1107,21 +1075,18 @@ export default function SignupPage() {
     setStep('vault')
   }, [])
 
-  const handlePlanSelected = useCallback((planId: PlanId) => {
-    setSelectedPlan(planId)
-    setStep('trial')
-  }, [])
-
-  const handleTrialPathSelected = useCallback(async (path: TrialPath) => {
-    if (!selectedPlan) return
+  const handleTrialPathSelected = useCallback(async (path: TrialPath, interval: BillingInterval) => {
+    const planId: PlanId = interval === 'monthly' ? 'early_monthly' : 'early_annual'
     setSelectedTrialPath(path)
+    setSelectedInterval(interval)
     setProvisionError(null)
     setProvisioning(true)
 
     try {
-      const secret = await signup(selectedPlan, path)
+      const secret = await signup(planId, path)
 
       if (path === '7day') {
+        // Skip payment — go straight to vault
         setStep('vault')
       } else if (secret) {
         setClientSecret(secret)
@@ -1135,7 +1100,7 @@ export default function SignupPage() {
     } finally {
       setProvisioning(false)
     }
-  }, [selectedPlan, signup])
+  }, [signup])
 
   const handlePaymentComplete = useCallback(() => {
     setStep('vault')
@@ -1170,10 +1135,7 @@ export default function SignupPage() {
         {step === 'admin' && (
           <StepAdminInfo serverUrl={serverUrl.trim()} onNext={handleAdminInfoComplete} />
         )}
-        {step === 'plan' && (
-          <StepChoosePlan onNext={handlePlanSelected} />
-        )}
-        {step === 'trial' && selectedPlan && (
+        {step === 'trial' && (
           <>
             {provisioning ? (
               <div className="flex flex-col items-center justify-center py-12">
@@ -1190,14 +1152,14 @@ export default function SignupPage() {
                 </Button>
               </div>
             ) : (
-              <StepTrialPath planId={selectedPlan} onSelect={handleTrialPathSelected} />
+              <StepTrialPath onSelect={handleTrialPathSelected} />
             )}
           </>
         )}
-        {step === 'payment' && selectedPlan && selectedTrialPath && clientSecret && (
+        {step === 'payment' && selectedTrialPath && clientSecret && (
           <StepPayment
-            planId={selectedPlan}
             trialPath={selectedTrialPath}
+            interval={selectedInterval}
             clientSecret={clientSecret}
             onComplete={handlePaymentComplete}
           />
