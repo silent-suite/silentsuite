@@ -69,9 +69,72 @@ function notifyListeners(): void {
 
 // --- Public API ---
 
+/**
+ * Compact the queue by merging or cancelling redundant entries.
+ * Called automatically before each enqueue.
+ *
+ * Rules:
+ * - create + update (same tempId) → merge: update content in the create entry
+ * - create + delete (same tempId) → cancel both: remove from queue
+ * - update + update (same itemUid) → merge: keep latest content
+ * - update + delete (same itemUid) → replace update with delete
+ *
+ * Returns the id of a compacted entry if the new entry was absorbed, or null.
+ */
+async function compact(
+  incoming: Omit<QueueEntry, 'id' | 'createdAt' | 'retryCount' | 'status'>,
+): Promise<string | null> {
+  const entries = await getAll()
+  const pending = entries.filter((e) => e.status === 'pending')
+
+  // Match by tempId (for items created offline that haven't synced yet)
+  if (incoming.tempId) {
+    const existing = pending.find(
+      (e) => e.tempId === incoming.tempId && e.collectionType === incoming.collectionType,
+    )
+    if (existing) {
+      if (existing.type === 'create' && incoming.type === 'update') {
+        // Merge: update content in the existing create entry
+        await updateEntry({ ...existing, content: incoming.content })
+        return existing.id
+      }
+      if (existing.type === 'create' && incoming.type === 'delete') {
+        // Cancel both: the item was created and deleted offline
+        await remove(existing.id)
+        return 'cancelled'
+      }
+    }
+  }
+
+  // Match by itemUid (for items that already exist on server)
+  if (incoming.itemUid) {
+    const existing = pending.find(
+      (e) => e.itemUid === incoming.itemUid && e.collectionType === incoming.collectionType,
+    )
+    if (existing) {
+      if (existing.type === 'update' && incoming.type === 'update') {
+        // Merge: keep latest content
+        await updateEntry({ ...existing, content: incoming.content })
+        return existing.id
+      }
+      if (existing.type === 'update' && incoming.type === 'delete') {
+        // Replace update with delete
+        await updateEntry({ ...existing, type: 'delete', content: undefined })
+        return existing.id
+      }
+    }
+  }
+
+  return null
+}
+
 export async function enqueue(
   entry: Omit<QueueEntry, 'id' | 'createdAt' | 'retryCount' | 'status'>,
 ): Promise<string> {
+  // Try compaction first
+  const compactedId = await compact(entry)
+  if (compactedId) return compactedId
+
   const db = await openDB()
   const record: QueueEntry = {
     ...entry,
@@ -137,6 +200,11 @@ async function updateEntry(entry: QueueEntry): Promise<void> {
   })
 }
 
+export async function getFailedCount(): Promise<number> {
+  const entries = await getAll()
+  return entries.filter((e) => e.status === 'failed').length
+}
+
 export async function clearFailed(): Promise<void> {
   const entries = await getAll()
   const db = await openDB()
@@ -154,6 +222,16 @@ export async function clearFailed(): Promise<void> {
     }
     tx.onerror = () => reject(tx.error)
   })
+}
+
+/** Reset failed entries back to pending so they can be retried */
+export async function retryFailed(): Promise<void> {
+  const entries = await getAll()
+  for (const entry of entries) {
+    if (entry.status === 'failed') {
+      await updateEntry({ ...entry, status: 'pending', retryCount: 0 })
+    }
+  }
 }
 
 /**

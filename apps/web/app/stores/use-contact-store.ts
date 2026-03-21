@@ -75,7 +75,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
           try {
             const { serializeContact } = await import('@silentsuite/core')
             const content = serializeContact(contact)
-            const itemUid = await etebase.createItem('contacts', content)
+            const itemUid = await etebase.createItem('contacts', content, tempId)
             if (itemUid) {
               set((state) => ({
                 contacts: state.contacts.map((c) =>

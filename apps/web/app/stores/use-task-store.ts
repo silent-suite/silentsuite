@@ -57,7 +57,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           try {
             const { serializeTask } = await import('@silentsuite/core')
             const content = serializeTask(task)
-            const itemUid = await etebase.createItem('tasks', content)
+            const itemUid = await etebase.createItem('tasks', content, tempId)
             if (itemUid) {
               // Replace temp id with real Etebase item UID
               set((state) => ({
