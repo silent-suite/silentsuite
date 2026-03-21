@@ -65,7 +65,7 @@ jobs:
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY_NOPASS }}
+          key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             # Pull the new image
             docker pull ghcr.io/silent-suite/silentsuite-web:latest
