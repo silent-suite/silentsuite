@@ -66,7 +66,7 @@ class CollectionItemFragment : Fragment() {
 
     private fun initUi(inflater: LayoutInflater, v: View, cachedCollection: CachedCollection) {
         val viewPager = v.findViewById<ViewPager>(R.id.viewpager)
-        viewPager.adapter = TabsAdapter(childFragmentManager, this, requireContext(), cachedCollection, cachedItem)
+        viewPager.adapter = TabsAdapter(childFragmentManager, requireContext(), cachedCollection, cachedItem)
 
         val tabLayout = v.findViewById<TabLayout>(R.id.tabs)
         tabLayout.setupWithViewPager(viewPager)
@@ -107,45 +107,63 @@ class CollectionItemFragment : Fragment() {
         val cachedCol = collectionModel.value!!
         when (cachedCol.collectionType) {
             Constants.ETEBASE_TYPE_CALENDAR -> {
-                val provider = context.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)!!
-                val localCalendar = LocalCalendar.findByName(account, provider, LocalCalendar.Factory, cachedCol.col.uid)!!
-                val event = Event.eventsFromReader(StringReader(cachedItem.content))[0]
-                var localEvent = localCalendar.findByUid(event.uid!!)
-                if (localEvent != null) {
-                    localEvent.updateAsDirty(event)
-                } else {
-                    localEvent = LocalEvent(localCalendar, event, event.uid, null)
-                    localEvent.addAsDirty()
+                val provider = context.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
+                        ?: return
+                try {
+                    val localCalendar = LocalCalendar.findByName(account, provider, LocalCalendar.Factory, cachedCol.col.uid)
+                            ?: return
+                    val event = Event.eventsFromReader(StringReader(cachedItem.content))[0]
+                    var localEvent = localCalendar.findByUid(event.uid!!)
+                    if (localEvent != null) {
+                        localEvent.updateAsDirty(event)
+                    } else {
+                        localEvent = LocalEvent(localCalendar, event, event.uid, null)
+                        localEvent.addAsDirty()
+                    }
+                } finally {
+                    provider.release()
                 }
             }
             Constants.ETEBASE_TYPE_TASKS -> {
                 TaskProviderHandling.getWantedTaskSyncProvider(context)?.let {
-                    val provider = TaskProvider.acquire(context, it)!!
-                    val localTaskList = LocalTaskList.findByName(account, provider, LocalTaskList.Factory, cachedCol.col.uid)!!
-                    val task = Task.tasksFromReader(StringReader(cachedItem.content))[0]
-                    var localTask = localTaskList.findByUid(task.uid!!)
-                    if (localTask != null) {
-                        localTask.updateAsDirty(task)
-                    } else {
-                        localTask = LocalTask(localTaskList, task, task.uid, null)
-                        localTask.addAsDirty()
+                    val provider = TaskProvider.acquire(context, it)
+                            ?: return
+                    try {
+                        val localTaskList = LocalTaskList.findByName(account, provider, LocalTaskList.Factory, cachedCol.col.uid)
+                                ?: return
+                        val task = Task.tasksFromReader(StringReader(cachedItem.content))[0]
+                        var localTask = localTaskList.findByUid(task.uid!!)
+                        if (localTask != null) {
+                            localTask.updateAsDirty(task)
+                        } else {
+                            localTask = LocalTask(localTaskList, task, task.uid, null)
+                            localTask.addAsDirty()
+                        }
+                    } finally {
+                        provider.close()
                     }
                 }
             }
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> {
-                val provider = context.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)!!
-                val localAddressBook = LocalAddressBook.findByUid(context, provider, account, cachedCol.col.uid)!!
-                val contact = Contact.fromReader(StringReader(cachedItem.content), null)[0]
-                if (contact.group) {
-                    // FIXME: not currently supported
-                } else {
-                    var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
-                    if (localContact != null) {
-                        localContact.updateAsDirty(contact)
+                val provider = context.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
+                        ?: return
+                try {
+                    val localAddressBook = LocalAddressBook.findByUid(context, provider, account, cachedCol.col.uid)
+                            ?: return
+                    val contact = Contact.fromReader(StringReader(cachedItem.content), null)[0]
+                    if (contact.group) {
+                        // FIXME: not currently supported
                     } else {
-                        localContact = LocalContact(localAddressBook, contact, contact.uid, null)
-                        localContact.createAsDirty()
+                        var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
+                        if (localContact != null) {
+                            localContact.updateAsDirty(contact)
+                        } else {
+                            localContact = LocalContact(localAddressBook, contact, contact.uid, null)
+                            localContact.createAsDirty()
+                        }
                     }
+                } finally {
+                    provider.release()
                 }
             }
         }
@@ -170,7 +188,7 @@ class CollectionItemFragment : Fragment() {
     }
 }
 
-private class TabsAdapter(fm: FragmentManager, private val mainFragment: CollectionItemFragment, private val context: Context, private val cachedCollection: CachedCollection, private val cachedItem: CachedItem) : FragmentPagerAdapter(fm) {
+private class TabsAdapter(fm: FragmentManager, private val context: Context, private val cachedCollection: CachedCollection, private val cachedItem: CachedItem) : FragmentPagerAdapter(fm, BEHAVIOR_RESUME_ONLY_CURRENT_FRAGMENT) {
 
     override fun getCount(): Int {
         // FIXME: Make it depend on info enumType (only have non-raw for known types)
@@ -189,7 +207,7 @@ private class TabsAdapter(fm: FragmentManager, private val mainFragment: Collect
 
     override fun getItem(position: Int): Fragment {
         return if (position == 0) {
-            PrettyFragment.newInstance(mainFragment, cachedCollection, cachedItem.content)
+            PrettyFragment.newInstance(cachedCollection, cachedItem.content)
         } else if (position == 1) {
             TextFragment.newInstance(cachedItem.content)
         } else {
@@ -222,7 +240,6 @@ class TextFragment : Fragment() {
 
 class PrettyFragment : Fragment() {
     private var asyncTask: Job? = null
-    private lateinit var mainFragment: CollectionItemFragment
     private lateinit var cachedCollection: CachedCollection
     private lateinit var content: String
 
@@ -325,7 +342,7 @@ class PrettyFragment : Fragment() {
                     setTextViewText(view, R.id.reminders, sb.toString())
 
                     if (event.attendees.isNotEmpty()) {
-                        mainFragment.allowSendEmail(event, content)
+                        (parentFragment as? CollectionItemFragment)?.allowSendEmail(event, content)
                     }
             }
         }
@@ -508,9 +525,8 @@ class PrettyFragment : Fragment() {
     }
 
     companion object {
-        fun newInstance(mainFragment: CollectionItemFragment, cachedCollection: CachedCollection, content: String): PrettyFragment {
+        fun newInstance(cachedCollection: CachedCollection, content: String): PrettyFragment {
             val ret = PrettyFragment()
-            ret.mainFragment= mainFragment
             ret.cachedCollection = cachedCollection
             ret.content = content
             return ret

@@ -114,8 +114,8 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         for (local in localDirty) {
             val event = local.event
 
-            if (event?.attendees?.isEmpty()!! || !event.organizer?.value?.replace("mailto:", "").equals(account.name)) {
-                return
+            if (event?.attendees.isNullOrEmpty() || event?.organizer?.value?.replace("mailto:", "") != account.name) {
+                continue
             }
             createInviteAttendeesNotification(event, local.content)
         }

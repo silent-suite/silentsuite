@@ -9,10 +9,10 @@ import { useSyncStore } from '../stores/sync-store';
  */
 export function useNetworkStatus() {
   const setStatus = useSyncStore((s) => s.setStatus);
-  const currentStatus = useSyncStore((s) => s.status);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
+      const currentStatus = useSyncStore.getState().status;
       if (!state.isConnected) {
         setStatus('offline');
       } else if (currentStatus === 'offline') {
@@ -22,5 +22,5 @@ export function useNetworkStatus() {
     });
 
     return () => unsubscribe();
-  }, [currentStatus]);
+  }, [setStatus]);
 }

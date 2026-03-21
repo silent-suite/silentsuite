@@ -113,8 +113,14 @@ class SyncNotification(internal val context: Context, internal val notificationT
 
         public override fun onCreate(savedBundle: Bundle?) {
             super.onCreate(savedBundle)
-            val extras = intent.extras
-            val e = extras!!.get(DebugInfoActivity.KEY_THROWABLE) as Exception
+            val extras = intent.extras ?: run {
+                finish()
+                return
+            }
+            val e = extras.get(DebugInfoActivity.KEY_THROWABLE) as? Exception ?: run {
+                finish()
+                return
+            }
 
             val detailsIntent: Intent
             if (e is UnauthorizedException || e is PermissionDeniedException) {
@@ -125,7 +131,7 @@ class SyncNotification(internal val context: Context, internal val notificationT
             } else {
                 detailsIntent = DebugInfoActivity.newIntent(this, this::class.toString())
             }
-            detailsIntent.putExtras(intent.extras!!)
+            detailsIntent.putExtras(extras)
             startActivity(detailsIntent)
         }
 

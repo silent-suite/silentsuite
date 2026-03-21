@@ -19,7 +19,6 @@ buildscript {
     ext.gradle_version = '8.2.2'
 
     repositories {
-        jcenter()
         google()
     }
     dependencies {
@@ -30,7 +29,6 @@ buildscript {
 
 allprojects {
     repositories {
-        jcenter()
         mavenCentral()
         maven() {
             url 'https://oss.sonatype.org/content/repositories/snapshots'
