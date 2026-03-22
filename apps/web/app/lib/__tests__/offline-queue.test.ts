@@ -334,6 +334,16 @@ describe('offline-queue', () => {
     it('MAX_QUEUE_SIZE is 100', () => {
       expect(MAX_QUEUE_SIZE).toBe(100)
     })
+
+    it('enqueue throws when queue is full (101st entry)', async () => {
+      for (let i = 0; i < MAX_QUEUE_SIZE; i++) {
+        await enqueue({ type: 'create', collectionType: 'tasks', content: `item-${i}`, tempId: `t-${i}` })
+      }
+
+      await expect(
+        enqueue({ type: 'create', collectionType: 'tasks', content: 'overflow', tempId: 't-overflow' }),
+      ).rejects.toThrow(/Offline queue is full/)
+    })
   })
 
   describe('stale entry detection', () => {

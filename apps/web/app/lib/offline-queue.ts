@@ -141,6 +141,11 @@ export async function enqueue(
   const compactedId = await compact(entry)
   if (compactedId) return compactedId
 
+  // Enforce queue size limit (count only pending entries)
+  if (await isQueueFull()) {
+    throw new Error(`Offline queue is full (max ${MAX_QUEUE_SIZE} pending entries). Connect to the internet to sync your changes.`)
+  }
+
   const db = await openDB()
   const record: QueueEntry = {
     ...entry,
