@@ -1,4 +1,4 @@
-import { Calendar, Users, CheckSquare, Smartphone, WifiOff, Github } from 'lucide-react'
+import { Calendar, Users, CheckSquare, Smartphone, WifiOff, Github, Download, Monitor } from 'lucide-react'
 
 const features = [
   {
@@ -9,7 +9,7 @@ const features = [
   {
     icon: Users,
     title: 'Contact sync',
-    description: 'Your address book, synced and encrypted. Names, numbers, emails — all private by default.',
+    description: 'Your address book, synced and encrypted. Names, numbers, emails, all private by default.',
   },
   {
     icon: CheckSquare,
@@ -19,7 +19,7 @@ const features = [
   {
     icon: Smartphone,
     title: 'Cross-platform',
-    description: 'Web, iOS, and Android. Use the SilentSuite apps or connect through compatible clients.',
+    description: 'Web, iOS, and Android. Installable as a PWA on any device for a native app experience.',
   },
   {
     icon: WifiOff,
@@ -27,9 +27,19 @@ const features = [
     description: 'Your data is always available locally. Sync happens in the background when you reconnect.',
   },
   {
+    icon: Download,
+    title: 'Data export',
+    description: 'Export your calendars (ICS), contacts (VCF), or everything (ZIP) at any time. No lock-in, no data hostage.',
+  },
+  {
+    icon: Monitor,
+    title: 'Self-hosting',
+    description: 'Run the SilentSuite server and PostgreSQL on your own infrastructure. Connect via app.silentsuite.io or the mobile apps.',
+  },
+  {
     icon: Github,
     title: 'Open source',
-    description: 'Fully auditable code. Self-host it yourself or use our managed service. Your choice.',
+    description: 'Fully auditable code. Self-host or use our managed service. Your choice.',
   },
 ]
 
@@ -47,7 +57,7 @@ export default function Features() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-8">
+        <div className="grid md:grid-cols-4 gap-8">
           {features.map(({ icon: Icon, title, description }) => (
             <div key={title} className="p-6 rounded-xl bg-navy-950 border border-navy-700 hover:border-teal-400/30 transition-colors">
               <div className="w-10 h-10 rounded-lg bg-teal-400/10 flex items-center justify-center mb-4">

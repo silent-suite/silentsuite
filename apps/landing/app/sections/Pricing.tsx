@@ -147,7 +147,7 @@ export default function Pricing() {
 
         <BillingToggle billing={billing} onChange={setBilling} />
 
-        {/* Plan cards — centered */}
+        {/* Plan cards */}
         <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
           {plans.map((plan) => {
             const isFree = plan.monthlyPrice === 0
@@ -238,7 +238,7 @@ export default function Pricing() {
           {' '}Cancel anytime, no lock-in.
         </p>
 
-        {/* Trust signals — below pricing cards */}
+        {/* Trust signals */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-16 max-w-4xl mx-auto">
           {trustSignals.map(({ icon: Icon, title, description }) => (
             <div key={title} className="text-center">

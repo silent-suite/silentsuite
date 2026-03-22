@@ -8,7 +8,7 @@ export default function Problem() {
         </h2>
 
         <p className="text-xl text-navy-300 max-w-3xl mx-auto mb-16">
-          Calendars, contacts, and tasks contain the most personal information about your life &mdash;
+          Calendars, contacts, and tasks reveal the most personal details of your life:
           who you meet, where you go, what you plan. Unlike Google Calendar or Apple iCloud,
           SilentSuite encrypts everything on your device before it ever reaches a server.
           Not even we can read it.
@@ -20,7 +20,7 @@ export default function Problem() {
             <h3 className="font-semibold text-lg mb-3">Data mining</h3>
             <p className="text-navy-300">
               Google scans your calendar and contacts to build advertising profiles.
-              With SilentSuite, your data is encrypted &mdash; there&apos;s nothing to mine.
+              With SilentSuite, your data is encrypted. There&apos;s nothing to mine.
             </p>
           </div>
 
@@ -36,7 +36,7 @@ export default function Problem() {
             <h3 className="font-semibold text-lg mb-3">No real encryption</h3>
             <p className="text-navy-300">
               Most services claim security but still have access to your information in plaintext.
-              Real privacy requires end&#8209;to&#8209;end encryption &mdash; where only you hold the keys.
+              Real privacy requires end&#8209;to&#8209;end encryption, where only you hold the keys.
             </p>
           </div>
 

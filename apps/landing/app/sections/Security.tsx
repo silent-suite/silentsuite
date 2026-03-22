@@ -13,13 +13,13 @@ export default function Security() {
         </div>
 
         <h2 className="text-4xl md:text-5xl font-bold mb-6">
-          Privacy by design &mdash; not even we can read your data
+          Privacy by design. Not even we can read your data.
         </h2>
 
         <p className="text-xl text-navy-300 max-w-3xl mx-auto mb-16">
           SilentSuite is built on a simple principle: your personal data should
           remain yours. Calendars, contacts and tasks are encrypted on your
-          device before they ever reach the server. Built on the battle-tested
+          device before they ever reach the server. Built on the
           Etebase encryption protocol.
         </p>
 
@@ -32,8 +32,8 @@ export default function Security() {
             <h3 className="font-semibold text-lg mb-3">End&#8209;to&#8209;end encryption</h3>
             <p className="text-navy-300 text-sm leading-relaxed">
               Your data is encrypted locally using XChaCha20-Poly1305 before syncing.
-              The server stores encrypted blobs and cannot read the contents &mdash;
-              by design, not just policy.
+              The server stores encrypted blobs and cannot read the contents.
+              By design, not just policy.
             </p>
           </div>
 
@@ -77,7 +77,7 @@ export default function Security() {
           <span className="hidden sm:inline text-navy-700">|</span>
           <span>Open source &amp; auditable</span>
           <span className="hidden sm:inline text-navy-700">|</span>
-          <span>Your data, your control &mdash; GDPR-compliant infrastructure</span>
+          <span>Your data, your control. GDPR-compliant infrastructure.</span>
         </div>
 
         <div className="mt-8">

@@ -6,19 +6,19 @@ import { ChevronDown } from 'lucide-react'
 const faqs = [
   {
     q: 'Is SilentSuite really end-to-end encrypted?',
-    a: 'Yes. Your calendar, contact, and task data is encrypted on your device before it ever leaves it. The server only stores encrypted blobs \u2014 it has no way to read the contents. This is enforced by design, not policy.',
+    a: 'Yes. Your calendar, contact, and task data is encrypted on your device before it ever leaves it. The server only stores encrypted blobs and has no way to read the contents. This is enforced by design, not policy.',
   },
   {
     q: 'How is this different from iCloud or Google?',
-    a: "iCloud and Google sync have access to your data in plaintext \u2014 they can read, analyze, and use it. SilentSuite is different: zero-knowledge encryption means even we can\u2019t read your data. And because it\u2019s open source, you don\u2019t have to take our word for it.",
+    a: "iCloud and Google sync have access to your data in plaintext. They can read, analyze, and use it. SilentSuite is different: zero-knowledge encryption means even we can\u2019t read your data. And because it\u2019s open source, you don\u2019t have to take our word for it.",
   },
   {
     q: 'What apps can I use?',
-    a: "SilentSuite provides its own web, iOS, and Android apps built for encrypted sync. We\u2019re also building bridge support so you can use your existing calendar and contacts apps with SilentSuite as the encrypted backend.",
+    a: "SilentSuite provides web, iOS, and Android apps built for encrypted sync. The web app is also installable as a PWA for a native app experience on any device.",
   },
   {
     q: 'What happens to my data if I cancel?',
-    a: 'Your data is yours. You can export everything in standard formats (ICS, VCF) at any time. We will never hold your data hostage.',
+    a: 'Your data is yours. You can export calendars (ICS), contacts (VCF), or everything as a ZIP at any time. We will never hold your data hostage.',
   },
   {
     q: 'Is it open source?',
@@ -29,12 +29,16 @@ const faqs = [
     a: 'Your data is end-to-end encrypted on your device before it reaches our servers. We comply with GDPR and maintain zero-knowledge architecture, meaning we cannot access your data regardless of server location. You can also self-host for complete control.',
   },
   {
-    q: 'When will it launch?',
-    a: "We\u2019re in the early development phase. Waitlist members will get early access first. Sign up and you\u2019ll be among the first to know.",
+    q: 'Is there a free trial?',
+    a: "Yes. You can try SilentSuite free for up to 30 days with no commitment. No credit card required to start.",
+  },
+  {
+    q: 'What encryption does SilentSuite use?',
+    a: 'SilentSuite uses the Etebase protocol with XChaCha20-Poly1305 for data encryption and Argon2id for key derivation. Your encryption keys never leave your device.',
   },
   {
     q: 'What if I want to self-host?',
-    a: 'Self-hosting is a first-class scenario. The server is open source and deployable with a single Docker command. Documentation will be available alongside the first public release.',
+    a: 'Self-hosting is a first-class option. Run the SilentSuite server and PostgreSQL on your own infrastructure, then connect using app.silentsuite.io or the mobile apps. The server is open source (AGPL) and deployable with a single Docker command.',
   },
 ]
 

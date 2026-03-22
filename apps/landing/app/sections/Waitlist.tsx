@@ -40,19 +40,18 @@ export default function Waitlist() {
     <section id="waitlist" className="py-28 bg-navy-900 text-white">
       <div className="max-w-2xl mx-auto px-6 text-center">
         <h2 className="text-4xl md:text-5xl font-bold mb-6">
-          Be first in line
+          Stay in the loop
         </h2>
         <p className="text-xl text-navy-300 mb-12">
-          SilentSuite is in early development. Join the waitlist to get early access,
-          influence the roadmap, and lock in launch pricing.
+          Get product updates, new feature announcements, and tips on getting the most out of SilentSuite.
         </p>
 
         {status === 'success' ? (
           <div className="p-8 rounded-2xl bg-teal-400/10 border border-teal-400/30">
-            <h3 className="text-xl font-semibold mb-2 text-teal-400">Almost there &mdash; check your inbox.</h3>
+            <h3 className="text-xl font-semibold mb-2 text-teal-400">Almost there. Check your inbox.</h3>
             <p className="text-navy-300">
               We&apos;ve sent a confirmation email to your address.
-              Click the link to confirm your spot on the waitlist.
+              Click the link to confirm your subscription.
             </p>
             <p className="text-navy-500 text-sm mt-3">
               Didn&apos;t receive it? Check your spam folder or try again.
@@ -136,7 +135,7 @@ export default function Waitlist() {
               disabled={status === 'loading' || !consent}
               className="w-full py-4 bg-teal-400 hover:bg-teal-500 disabled:opacity-60 text-navy-950 font-semibold rounded-lg transition-colors"
             >
-              {status === 'loading' ? 'Joining\u2026' : 'Join the waitlist'}
+              {status === 'loading' ? 'Subscribing\u2026' : 'Subscribe'}
             </button>
 
             <p className="text-center text-navy-500 text-xs">
