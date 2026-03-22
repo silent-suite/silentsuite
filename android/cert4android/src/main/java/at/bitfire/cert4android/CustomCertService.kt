@@ -26,7 +26,6 @@ import java.security.Security
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.*
-import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Level
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
@@ -76,9 +75,9 @@ class CustomCertService: Service() {
     private val trustedKeyStore = KeyStore.getInstance(KeyStore.getDefaultType())!!
     private var customTrustManager: X509TrustManager? = null
 
-    private var untrustedCerts = Collections.synchronizedSet(HashSet<X509Certificate>())
+    private var untrustedCerts = HashSet<X509Certificate>()
 
-    private val pendingDecisions = ConcurrentHashMap<X509Certificate, MutableList<IOnCertificateDecision>>()
+    private val pendingDecisions = mutableMapOf<X509Certificate, MutableList<IOnCertificateDecision>>()
 
 
     override fun onCreate() {

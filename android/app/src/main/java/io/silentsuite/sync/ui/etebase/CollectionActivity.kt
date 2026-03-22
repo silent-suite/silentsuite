@@ -29,10 +29,9 @@ class CollectionActivity() : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val extras = requireNotNull(intent.extras) { "CollectionActivity requires intent extras" }
-        account = requireNotNull(extras.getParcelable(EXTRA_ACCOUNT)) { "CollectionActivity requires EXTRA_ACCOUNT" }
-        val colUid = extras.getString(EXTRA_COLLECTION_UID)
-        val colType = extras.getString(EXTRA_COLLECTION_TYPE)
+        account = intent.extras!!.getParcelable(EXTRA_ACCOUNT)!!
+        val colUid = intent.extras!!.getString(EXTRA_COLLECTION_UID)
+        val colType = intent.extras!!.getString(EXTRA_COLLECTION_TYPE)
 
         setContentView(R.layout.etebase_fragment_activity)
 

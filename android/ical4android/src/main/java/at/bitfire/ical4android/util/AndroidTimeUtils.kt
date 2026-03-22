@@ -139,13 +139,12 @@ object AndroidTimeUtils {
         val tz = dates.firstOrNull()?.dates?.timeZone
 
         for (dateListProp in dates) {
-            if (dateListProp is RDate) {
+            if (dateListProp is RDate)
                 if (dateListProp.periods.isNotEmpty())
                     Ical4Android.log.warning("RDATE PERIOD not supported, ignoring")
-            } else if (dateListProp is ExDate) {
-                if (dateListProp.periods.isNotEmpty())
-                    Ical4Android.log.warning("EXDATE PERIOD not supported, ignoring")
-            }
+            else if (dateListProp is ExDate)
+                    if (dateListProp.periods.isNotEmpty())
+                        Ical4Android.log.warning("EXDATE PERIOD not supported, ignoring")
 
             when (dateListProp.dates.type) {
                 Value.DATE_TIME -> {
@@ -250,13 +249,12 @@ object AndroidTimeUtils {
         val allDay = tz == null
         val strDates = LinkedList<String>()
         for (dateListProp in dates) {
-            if (dateListProp is RDate) {
+            if (dateListProp is RDate)
                 if (dateListProp.periods.isNotEmpty())
                     Ical4Android.log.warning("RDATE PERIOD not supported, ignoring")
-            } else if (dateListProp is ExDate) {
-                if (dateListProp.periods.isNotEmpty())
-                    Ical4Android.log.warning("EXDATE PERIOD not supported, ignoring")
-            }
+                else if (dateListProp is ExDate)
+                    if (dateListProp.periods.isNotEmpty())
+                        Ical4Android.log.warning("EXDATE PERIOD not supported, ignoring")
 
             for (date in dateListProp.dates) {
                 val dateToUse =

@@ -25,20 +25,9 @@ export async function getOrCreateCalendar(): Promise<string> {
   }
 
   // Find the default calendar source (local)
-  let defaultCalendarSource: any;
-  if (Platform.OS === 'ios') {
-    const defaultCal = await Calendar.getDefaultCalendarAsync();
-    if (defaultCal) {
-      defaultCalendarSource = defaultCal.source;
-    } else {
-      // Fallback: find a local source
-      const allCalendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-      const localSource = allCalendars.find((c) => c.source?.type === 'local')?.source;
-      defaultCalendarSource = localSource ?? { isLocalAccount: true, name: CALENDAR_NAME, type: Calendar.CalendarType.LOCAL as any };
-    }
-  } else {
-    defaultCalendarSource = { isLocalAccount: true, name: CALENDAR_NAME, type: Calendar.CalendarType.LOCAL as any };
-  }
+  const defaultCalendarSource = Platform.OS === 'ios'
+    ? (await Calendar.getDefaultCalendarAsync())?.source
+    : { isLocalAccount: true, name: CALENDAR_NAME, type: Calendar.CalendarType.LOCAL as any };
 
   const id = await Calendar.createCalendarAsync({
     title: CALENDAR_NAME,

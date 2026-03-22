@@ -20,7 +20,7 @@ export default function SignupCancelPage() {
       </div>
 
       <div className="space-y-3">
-        <Link href="/signup/plan">
+        <Link href="/signup">
           <Button className="w-full">Try again</Button>
         </Link>
         <Link

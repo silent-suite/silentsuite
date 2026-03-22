@@ -34,7 +34,7 @@ export const useCalendarStore = create<CalendarState>()(
     {
       name: 'silentsuite-calendar',
       storage: createJSONStorage(() => mmkvStorage),
-      partialize: (state) => ({ events: state.events }),
+      partialize: (state) => ({ events: state.events, selectedDate: state.selectedDate }),
     },
   ),
 );

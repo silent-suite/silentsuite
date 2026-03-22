@@ -102,13 +102,11 @@ class CustomCertManager @JvmOverloads constructor(
 
             Constants.log.fine("Waiting for service to be bound")
             synchronized(serviceLock) {
-                if (service == null)
+                while (service == null)
                     try {
-                        serviceLock.wait(30_000)
+                        serviceLock.wait()
                     } catch(e: InterruptedException) {
                     }
-                if (service == null)
-                    throw IllegalStateException("CustomCertService failed to bind within 30 seconds")
             }
         } else
             Constants.log.severe("Couldn't bind CustomCertService to context")

@@ -172,45 +172,47 @@ abstract class SyncAdapterService : Service() {
                 Logger.log.info("Refreshing " + serviceType + " collections of service #" + serviceType.toString())
 
                 val settings = AccountSettings(context, account)
-                HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
-                    val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
-                    synchronized(etebaseLocalCache) {
-                        val cacheAge = 5 * 1000 // 5 seconds - it's just a hack for burst fetching
-                        val now = System.currentTimeMillis()
-                        val lastCollectionsFetch = collectionLastFetchMap[account.name] ?: 0
+                val httpClient = HttpClient.Builder(context, settings).setForeground(false).build()
 
-                        if (abs(now - lastCollectionsFetch) <= cacheAge) {
-                            return@synchronized
-                        }
+                val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
+                synchronized(etebaseLocalCache) {
+                    val cacheAge = 5 * 1000 // 5 seconds - it's just a hack for burst fetching
+                    val now = System.currentTimeMillis()
+                    val lastCollectionsFetch = collectionLastFetchMap[account.name] ?: 0
 
-                        val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
-                        val colMgr = etebase.collectionManager
-                        var stoken = etebaseLocalCache.loadStoken()
-                        var done = false
-                        while (!done) {
-                            val colList = colMgr.list(COLLECTION_TYPES, FetchOptions().stoken(stoken))
-                            for (col in colList.data) {
-                                etebaseLocalCache.collectionSet(colMgr, col)
-                            }
-
-                            for (col in colList.removedMemberships) {
-                                etebaseLocalCache.collectionUnset(colMgr, col.uid())
-                            }
-
-                            stoken = colList.stoken
-                            done = colList.isDone
-                            if (stoken != null) {
-                                etebaseLocalCache.saveStoken(stoken)
-                            }
-                        }
-                        collectionLastFetchMap[account.name] = now
+                    if (abs(now - lastCollectionsFetch) <= cacheAge) {
+                        return@synchronized
                     }
+
+                    val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
+                    val colMgr = etebase.collectionManager
+                    var stoken = etebaseLocalCache.loadStoken()
+                    var done = false
+                    while (!done) {
+                        val colList = colMgr.list(COLLECTION_TYPES, FetchOptions().stoken(stoken))
+                        for (col in colList.data) {
+                            etebaseLocalCache.collectionSet(colMgr, col)
+                        }
+
+                        for (col in colList.removedMemberships) {
+                            etebaseLocalCache.collectionUnset(colMgr, col.uid())
+                        }
+
+                        stoken = colList.stoken
+                        done = colList.isDone
+                        if (stoken != null) {
+                            etebaseLocalCache.saveStoken(stoken)
+                        }
+                    }
+                    collectionLastFetchMap[account.name] = now
                 }
+
+                httpClient.close()
             }
         }
     }
 
     companion object {
-        var collectionLastFetchMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        var collectionLastFetchMap = HashMap<String, Long>()
     }
 }

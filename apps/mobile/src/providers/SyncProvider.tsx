@@ -5,7 +5,6 @@ import { useCalendarStore } from '../stores/calendar-store';
 import { useContactStore } from '../stores/contact-store';
 import { useTaskStore } from '../stores/task-store';
 import { useSyncStore } from '../stores/sync-store';
-import { getIsSyncing, setIsSyncing } from '../services/sync-actions';
 
 /**
  * SyncProvider orchestrates the full data pipeline:
@@ -38,8 +37,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   }, [isAuthenticated, isInitialized, isInitializing]);
 
   async function initializeAndLoad() {
-    if (getIsSyncing()) return;
-    setIsSyncing(true);
     const syncStore = useSyncStore.getState();
     syncStore.setStatus('syncing');
 
@@ -88,8 +85,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       console.error('SyncProvider initialization failed:', e);
       syncStore.setError(e.message || 'Sync failed');
       hasRunRef.current = false; // allow retry
-    } finally {
-      setIsSyncing(false);
     }
   }
 
@@ -104,9 +99,8 @@ export async function triggerFullSync() {
   const etebase = useEtebaseStore.getState();
   const syncStore = useSyncStore.getState();
 
-  if (!etebase.isInitialized || getIsSyncing()) return;
+  if (!etebase.isInitialized) return;
 
-  setIsSyncing(true);
   syncStore.setStatus('syncing');
   try {
     const [calItems, conItems, tskItems] = await Promise.all([
@@ -130,7 +124,5 @@ export async function triggerFullSync() {
     syncStore.setSynced();
   } catch (e: any) {
     syncStore.setError(e.message || 'Sync failed');
-  } finally {
-    setIsSyncing(false);
   }
 }

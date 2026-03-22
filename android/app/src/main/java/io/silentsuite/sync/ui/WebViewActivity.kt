@@ -110,7 +110,7 @@ class WebViewActivity : BaseActivity() {
                 "</style>" +
                 "<body>" +
                 "<div align=\"center\">" +
-                "<a class=\"btn\" href=\"" + android.text.TextUtils.htmlEncode(failingUrl) + "\">" + getString(R.string.loading_error_content) +
+                "<a class=\"btn\" href=\"" + failingUrl + "\">" + getString(R.string.loading_error_content) +
                 "</a>" +
                 "</form></body></html>"
 

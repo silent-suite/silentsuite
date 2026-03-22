@@ -299,23 +299,21 @@ class BillingManager private constructor() {
                 return SubscriptionStatus.unreachable()
             }
 
-            HttpClient.Builder(context, settings).build().use { httpClient ->
-                val request = Request.Builder()
-                    .url("$BILLING_API_BASE_URL/subscription")
-                    .header("Authorization", "Token ${settings.etebaseSession}")
-                    .get()
-                    .build()
+            val httpClient = HttpClient.Builder(context, settings).build()
+            val request = Request.Builder()
+                .url("$BILLING_API_BASE_URL/subscription")
+                .get()
+                .build()
 
-                val response = httpClient.okHttpClient.newCall(request).execute()
-                response.use {
-                    if (!it.isSuccessful) {
-                        Logger.log.warning("Billing API returned ${it.code} for ${account.name}, allowing sync (optimistic)")
-                        return SubscriptionStatus.unreachable()
-                    }
-
-                    val body = it.body?.string() ?: return SubscriptionStatus.unreachable()
-                    return parseSubscriptionResponse(body)
+            val response = httpClient.okHttpClient.newCall(request).execute()
+            response.use {
+                if (!it.isSuccessful) {
+                    Logger.log.warning("Billing API returned ${it.code} for ${account.name}, allowing sync (optimistic)")
+                    return SubscriptionStatus.unreachable()
                 }
+
+                val body = it.body?.string() ?: return SubscriptionStatus.unreachable()
+                return parseSubscriptionResponse(body)
             }
         } catch (e: Exception) {
             Logger.log.log(Level.WARNING, "Failed to check subscription status for ${account.name}, allowing sync", e)

@@ -12,6 +12,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
 import android.content.SharedPreferences
+import android.os.AsyncTask
 import android.os.Build
 import android.os.Bundle
 import android.provider.CalendarContract
@@ -24,10 +25,6 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.utils.HintManager
 import io.silentsuite.sync.utils.LanguageUtils
 import com.google.android.material.snackbar.Snackbar
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import io.silentsuite.sync.utils.defaultSharedPreferences
 import java.net.URI
 import java.net.URISyntaxException
@@ -257,30 +254,7 @@ class AppSettingsActivity : BaseActivity() {
 
         private fun initSelectLanguageList() {
             val listPreference = findPreference("select_language") as ListPreference
-            lifecycleScope.launch {
-                val locales = withContext(Dispatchers.IO) {
-                    LanguageUtils.getAppLanguages(requireContext())
-                }
-                listPreference.entries = locales.displayNames
-                listPreference.entryValues = locales.localeData
-
-                listPreference.value = settings.getString(App.FORCE_LANGUAGE,
-                        App.DEFAULT_LANGUAGE)
-                listPreference.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { preference, newValue ->
-                    val value = newValue.toString()
-                    if (value == (preference as ListPreference).value) return@OnPreferenceChangeListener true
-
-                    LanguageUtils.setLanguage(requireContext(), value)
-
-                    settings.edit().putString(App.FORCE_LANGUAGE, newValue.toString()).apply()
-
-                    val intent = Intent(context, AccountsActivity::class.java)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(intent)
-                    false
-                }
-            }
+            LanguageTask(listPreference).execute()
         }
 
         override fun onPreferenceTreeClick(preference: Preference): Boolean {
@@ -307,5 +281,35 @@ class AppSettingsActivity : BaseActivity() {
                 Snackbar.make(requireView(), getString(R.string.app_settings_reset_certificates_success), Snackbar.LENGTH_LONG).show()
         }
 
+        private inner class LanguageTask internal constructor(private val mListPreference: ListPreference) : AsyncTask<Void, Void, LanguageUtils.LocaleList>() {
+
+            override fun doInBackground(vararg voids: Void): LanguageUtils.LocaleList {
+                return LanguageUtils.getAppLanguages(requireContext())
+
+            }
+
+            override fun onPostExecute(locales: LanguageUtils.LocaleList) {
+
+                mListPreference.entries = locales.displayNames
+                mListPreference.entryValues = locales.localeData
+
+                mListPreference.value = settings.getString(App.FORCE_LANGUAGE,
+                        App.DEFAULT_LANGUAGE)
+                mListPreference.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { preference, newValue ->
+                    val value = newValue.toString()
+                    if (value == (preference as ListPreference).value) return@OnPreferenceChangeListener true
+
+                    LanguageUtils.setLanguage(requireContext(), value)
+
+                    settings.edit().putString(App.FORCE_LANGUAGE, newValue.toString()).apply()
+
+                    val intent = Intent(context, AccountsActivity::class.java)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    false
+                }
+            }
+        }
     }
 }

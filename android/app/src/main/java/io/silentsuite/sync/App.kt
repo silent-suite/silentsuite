@@ -112,16 +112,10 @@ class App : Application() {
                     // Generate account settings to make sure account is migrated.
                     AccountSettings(this, account)
 
-                    val calendarProvider = this.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
-                            ?: continue
-                    try {
-                        val calendars = AndroidCalendar.find(account, calendarProvider,
-                                LocalCalendar.Factory, null, null)
-                        for (calendar in calendars) {
-                            calendar.fixEtags()
-                        }
-                    } finally {
-                        calendarProvider.release()
+                    val calendars = AndroidCalendar.find(account, this.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)!!,
+                            LocalCalendar.Factory, null, null)
+                    for (calendar in calendars) {
+                        calendar.fixEtags()
                     }
                 } catch (e: CalendarStorageException) {
                     e.printStackTrace()
@@ -132,15 +126,11 @@ class App : Application() {
             }
 
             for (account in am.getAccountsByType(App.addressBookAccountType)) {
-                val contactsProvider = this.contentResolver.acquireContentProviderClient(ContactsContract.Contacts.CONTENT_URI)
-                        ?: continue
+                val addressBook = LocalAddressBook(this, account, this.contentResolver.acquireContentProviderClient(ContactsContract.Contacts.CONTENT_URI))
                 try {
-                    val addressBook = LocalAddressBook(this, account, contactsProvider)
                     addressBook.fixEtags()
                 } catch (e: ContactsStorageException) {
                     e.printStackTrace()
-                } finally {
-                    contactsProvider.release()
                 }
 
             }

@@ -1,8 +1,9 @@
 package io.silentsuite.sync.ui.importlocal
 
 import android.accounts.Account
-import android.app.Dialog
+import android.app.ProgressDialog
 import android.content.Context
+import android.os.AsyncTask
 import android.os.Bundle
 import android.provider.CalendarContract
 import android.view.LayoutInflater
@@ -14,17 +15,12 @@ import android.widget.ImageView
 import android.widget.TextView
 import androidx.fragment.app.ListFragment
 import androidx.fragment.app.commit
-import androidx.lifecycle.lifecycleScope
 import at.bitfire.ical4android.CalendarStorageException
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.resource.LocalEvent
-import io.silentsuite.sync.utils.ProgressDialogHelper
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 
 class LocalCalendarImportFragment : ListFragment() {
@@ -55,7 +51,7 @@ class LocalCalendarImportFragment : ListFragment() {
         listCalendar.setAdapter(adapter)
 
         listCalendar.setOnChildClickListener { aExpandableListView, aView, groupPosition, childPosition, aL ->
-            importEvents(calendarAccountList[groupPosition].getCalendars()[childPosition])
+            ImportEvents().execute(calendarAccountList[groupPosition].getCalendars()[childPosition])
             false
         }
     }
@@ -166,77 +162,85 @@ class LocalCalendarImportFragment : ListFragment() {
         }
     }
 
-    private fun importEvents(fromCalendar: LocalCalendar) {
-        val progressDialog = ProgressDialogHelper.createHorizontal(
-            requireContext(),
-            R.string.import_dialog_title,
-            getString(R.string.import_dialog_adding_entries),
-            iconRes = R.drawable.ic_import_export_black
-        )
-        progressDialog.show()
+    protected inner class ImportEvents : AsyncTask<LocalCalendar, Int, ResultFragment.ImportResult>() {
+        private lateinit var progressDialog: ProgressDialog
 
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                doImportEvents(fromCalendar, progressDialog)
-            }
+        override fun onPreExecute() {
+            progressDialog = ProgressDialog(activity)
+            progressDialog.setTitle(R.string.import_dialog_title)
+            progressDialog.setMessage(getString(R.string.import_dialog_adding_entries))
+            progressDialog.setCanceledOnTouchOutside(false)
+            progressDialog.setCancelable(false)
+            progressDialog.isIndeterminate = false
+            progressDialog.setIcon(R.drawable.ic_import_export_black)
+            progressDialog.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+            progressDialog.show()
+        }
 
-            val currentActivity = activity
-            if (currentActivity == null) {
+        override fun doInBackground(vararg calendars: LocalCalendar): ResultFragment.ImportResult {
+            return importEvents(calendars[0])
+        }
+
+        override fun onProgressUpdate(vararg progress: Int?) {
+            progressDialog.progress = progress[0]!!
+        }
+
+        override fun onPostExecute(result: ResultFragment.ImportResult) {
+            val activity = activity
+            if (activity == null) {
                 Logger.log.warning("Activity is null on import.")
-                return@launch
+                return
             }
 
-            if (progressDialog.isShowing && !currentActivity.isDestroyed && !currentActivity.isFinishing) {
+            if (progressDialog.isShowing && !activity.isDestroyed && !activity.isFinishing) {
                 progressDialog.dismiss()
             }
             onImportResult(result)
         }
-    }
 
-    private fun doImportEvents(fromCalendar: LocalCalendar, progressDialog: Dialog): ResultFragment.ImportResult {
-        val result = ResultFragment.ImportResult()
-        try {
-            val localCalendar = LocalCalendar.findByName(account,
-                    requireContext().contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)!!,
-                    LocalCalendar.Factory, uid)
-            val localEvents = fromCalendar.findAll()
-            val total = localEvents.size
-            val progressBar = ProgressDialogHelper.getProgressBar(progressDialog)
-            activity?.runOnUiThread { progressBar.max = total }
-            result.total = total.toLong()
-            var progress = 0
-            for (currentLocalEvent in localEvents) {
-                val event = currentLocalEvent.event
-                try {
-                    localCalendar!!
+        private fun importEvents(fromCalendar: LocalCalendar): ResultFragment.ImportResult {
+            val result = ResultFragment.ImportResult()
+            try {
+                val localCalendar = LocalCalendar.findByName(account,
+                        requireContext().contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)!!,
+                        LocalCalendar.Factory, uid)
+                val localEvents = fromCalendar.findAll()
+                val total = localEvents.size
+                progressDialog.max = total
+                result.total = total.toLong()
+                var progress = 0
+                for (currentLocalEvent in localEvents) {
+                    val event = currentLocalEvent.event
+                    try {
+                        localCalendar!!
 
-                    var localEvent = if (event == null || event.uid == null)
-                        null
-                    else
-                        localCalendar.findByUid(event.uid!!)
+                        var localEvent = if (event == null || event.uid == null)
+                            null
+                        else
+                            localCalendar.findByUid(event.uid!!)
 
-                    if (localEvent != null) {
-                        localEvent.updateAsDirty(event!!)
-                        result.updated++
-                    } else {
-                        localEvent = LocalEvent(localCalendar, event!!, event.uid, null)
-                        localEvent.addAsDirty()
-                        result.added++
+                        if (localEvent != null) {
+                            localEvent.updateAsDirty(event!!)
+                            result.updated++
+                        } else {
+                            localEvent = LocalEvent(localCalendar, event!!, event.uid, null)
+                            localEvent.addAsDirty()
+                            result.added++
+                        }
+                    } catch (e: CalendarStorageException) {
+                        e.printStackTrace()
+
                     }
-                } catch (e: CalendarStorageException) {
-                    e.printStackTrace()
 
+                    publishProgress(++progress)
                 }
-
-                val currentProgress = ++progress
-                activity?.runOnUiThread { progressBar.progress = currentProgress }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                result.e = e
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            result.e = e
-        }
 
-        return result
+            return result
+        }
     }
 
     fun onImportResult(importResult: ResultFragment.ImportResult) {

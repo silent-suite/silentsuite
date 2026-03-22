@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import type { SyncStatus } from '@silentsuite/core'
-import { replay, getPendingCount, getFailedCount, onCountChange, type QueueEntry } from '@/app/lib/offline-queue'
+import { replay, getPendingCount, onCountChange, type QueueEntry } from '@/app/lib/offline-queue'
 
 interface SyncState {
   syncStatus: SyncStatus
@@ -10,7 +10,6 @@ interface SyncState {
   isOnline: boolean
   error: string | null
   pendingQueueCount: number
-  failedQueueCount: number
 }
 
 interface SyncActions {
@@ -34,7 +33,6 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   error: null,
   pendingQueueCount: 0,
-  failedQueueCount: 0,
 
   setSyncStatus: (status) => set({ syncStatus: status }),
   setLastSynced: (date) => set({ lastSyncedAt: date }),
@@ -56,27 +54,17 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
 
-    // Subscribe to queue count changes (update both pending and failed)
+    // Subscribe to queue count changes
     const unsubQueue = onCountChange((count) => {
       set({ pendingQueueCount: count })
-      // Also refresh failed count when queue changes
-      getFailedCount().then((fc) => set({ failedQueueCount: fc }))
     })
 
-    // Load initial queue counts
+    // Load initial queue count
     getPendingCount().then((count) => set({ pendingQueueCount: count }))
-    getFailedCount().then((count) => set({ failedQueueCount: count }))
 
     // Set initial state
     if (navigator.onLine) {
       set({ isOnline: true })
-      // Cold-start replay: if we load online with pending entries, replay them
-      getPendingCount().then(async (count) => {
-        if (count > 0) {
-          console.log(`[sync-store] Cold-start: replaying ${count} queued mutations`)
-          await get().replayOfflineQueue()
-        }
-      })
     } else {
       set({ syncStatus: 'offline', isOnline: false })
     }
@@ -99,38 +87,19 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const etebase = useEtebaseStore.getState()
       if (!etebase.account) throw new Error('No Etebase account')
 
-      try {
-        switch (entry.type) {
-          case 'create': {
-            const uid = await etebase.createItem(entry.collectionType, entry.content!)
-            return { itemUid: uid ?? undefined }
-          }
-          case 'update': {
-            await etebase.updateItem(entry.collectionType, entry.itemUid!, entry.content!)
-            return {}
-          }
-          case 'delete': {
-            await etebase.deleteItem(entry.collectionType, entry.itemUid!)
-            return {}
-          }
+      switch (entry.type) {
+        case 'create': {
+          const uid = await etebase.createItem(entry.collectionType, entry.content!)
+          return { itemUid: uid ?? undefined }
         }
-      } catch (err) {
-        // Handle 409 Conflict (ETag mismatch) — server-wins strategy
-        const is409 = err instanceof Error && (
-          err.message.includes('409') ||
-          err.message.includes('conflict') ||
-          err.message.includes('Conflict')
-        )
-        if (is409 && entry.type !== 'create') {
-          console.warn(
-            `[sync-store] Conflict on ${entry.type} ${entry.collectionType}/${entry.itemUid} — discarding local change (server wins)`,
-          )
-          // Refresh the collection to get server's version
-          await etebase.refreshCollection(entry.collectionType)
-          // Return success so the entry is removed from queue
+        case 'update': {
+          await etebase.updateItem(entry.collectionType, entry.itemUid!, entry.content!)
           return {}
         }
-        throw err
+        case 'delete': {
+          await etebase.deleteItem(entry.collectionType, entry.itemUid!)
+          return {}
+        }
       }
     }
 

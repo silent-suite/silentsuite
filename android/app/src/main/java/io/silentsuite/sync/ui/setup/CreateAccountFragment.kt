@@ -12,13 +12,13 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Activity
 import android.app.Dialog
+import android.app.ProgressDialog
 import android.os.Bundle
 import android.provider.CalendarContract
 import androidx.fragment.app.DialogFragment
 import at.bitfire.ical4android.TaskProvider.Companion.TASK_PROVIDERS
 import io.silentsuite.sync.*
 import io.silentsuite.sync.log.Logger
-import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
 import io.silentsuite.sync.utils.AndroidCompat
 import io.silentsuite.sync.utils.TaskProviderHandling
@@ -27,12 +27,13 @@ import java.util.logging.Level
 class CreateAccountFragment : DialogFragment() {
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
+        val progress = ProgressDialog(activity)
+        progress.setTitle(R.string.setting_up_encryption)
+        progress.setMessage(getString(R.string.setting_up_encryption_content))
+        progress.isIndeterminate = true
+        progress.setCanceledOnTouchOutside(false)
         isCancelable = false
-        return ProgressDialogHelper.createIndeterminate(
-            requireContext(),
-            R.string.setting_up_encryption,
-            getString(R.string.setting_up_encryption_content)
-        )
+        return progress
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

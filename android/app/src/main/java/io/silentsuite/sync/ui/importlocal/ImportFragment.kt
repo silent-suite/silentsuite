@@ -3,6 +3,7 @@ package io.silentsuite.sync.ui.importlocal
 import android.accounts.Account
 import android.app.Activity
 import android.app.Dialog
+import android.app.ProgressDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
@@ -25,7 +26,6 @@ import io.silentsuite.sync.resource.*
 import io.silentsuite.sync.syncadapter.ContactsSyncManager
 import io.silentsuite.sync.ui.Refreshable
 import io.silentsuite.sync.ui.importlocal.ResultFragment.ImportResult
-import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.utils.TaskProviderHandling
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -50,34 +50,34 @@ class ImportFragment : DialogFragment() {
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         super.onCreateDialog(savedInstanceState)
-        val progress = ProgressDialogHelper.createHorizontal(
-            requireContext(),
-            R.string.import_dialog_title,
-            getString(R.string.import_dialog_loading_file),
-            iconRes = R.drawable.ic_import_export_black
-        )
+        val progress = ProgressDialog(activity)
+        progress.setTitle(R.string.import_dialog_title)
+        progress.setMessage(getString(R.string.import_dialog_loading_file))
+        progress.setCanceledOnTouchOutside(false)
+        progress.isIndeterminate = false
+        progress.setIcon(R.drawable.ic_import_export_black)
+        progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
 
         if (savedInstanceState == null) {
             chooseFile()
         } else {
-            progress.setOnShowListener {
-                setDialogAddEntries(progress, savedInstanceState.getInt(TAG_PROGRESS_MAX))
-            }
+            setDialogAddEntries(progress, savedInstanceState.getInt(TAG_PROGRESS_MAX))
         }
 
         return progress
     }
 
-    private fun setDialogAddEntries(dialog: Dialog, length: Int) {
-        ProgressDialogHelper.getProgressBar(dialog).max = length
-        ProgressDialogHelper.setMessage(dialog, getString(R.string.import_dialog_adding_entries))
+    private fun setDialogAddEntries(dialog: ProgressDialog, length: Int) {
+        dialog.max = length
+        dialog.setMessage(getString(R.string.import_dialog_adding_entries))
         Logger.log.info("Adding entries. Total: ${length}")
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        val progressBar = dialog?.let { ProgressDialogHelper.getProgressBar(it) }
-        outState.putInt(TAG_PROGRESS_MAX, progressBar?.max ?: 0)
+        val dialog = dialog as ProgressDialog
+
+        outState.putInt(TAG_PROGRESS_MAX, dialog.max)
     }
 
     override fun onDestroyView() {
@@ -165,7 +165,7 @@ class ImportFragment : DialogFragment() {
                 return
             }
 
-            requireActivity().runOnUiThread { dialog?.let { setDialogAddEntries(it, length) } }
+            requireActivity().runOnUiThread { setDialogAddEntries(dialog as ProgressDialog, length) }
         }
 
         private fun entryProcessed() {
@@ -174,10 +174,9 @@ class ImportFragment : DialogFragment() {
             }
 
             requireActivity().runOnUiThread {
-                dialog?.let {
-                    val progressBar = ProgressDialogHelper.getProgressBar(it)
-                    progressBar.incrementProgressBy(1)
-                }
+                val dialog = dialog as ProgressDialog
+
+                dialog.incrementProgressBy(1)
             }
         }
 

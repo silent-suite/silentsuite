@@ -26,9 +26,8 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
 
         title = getString(R.string.import_dialog_title)
 
-        val extras = requireNotNull(intent.extras) { "ImportActivity requires intent extras" }
-        account = requireNotNull(extras.getParcelable(EXTRA_ACCOUNT)) { "ImportActivity requires EXTRA_ACCOUNT" }
-        info = requireNotNull(extras.getSerializable(EXTRA_COLLECTION_INFO) as? CollectionInfo) { "ImportActivity requires EXTRA_COLLECTION_INFO" }
+        account = intent.extras!!.getParcelable(EXTRA_ACCOUNT)!!
+        info = intent.extras!!.getSerializable(EXTRA_COLLECTION_INFO) as CollectionInfo
 
         if (savedInstanceState == null)
             supportFragmentManager.beginTransaction()

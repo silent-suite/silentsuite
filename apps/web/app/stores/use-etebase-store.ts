@@ -57,9 +57,8 @@ interface EtebaseActions {
   /**
    * Create an item in the given collection type.
    * Returns the item UID.
-   * @param tempId - optional temp ID from the domain store, used for offline queue mapping
    */
-  createItem: (type: CollectionTypeKey, content: string, tempId?: string) => Promise<string | null>
+  createItem: (type: CollectionTypeKey, content: string) => Promise<string | null>
 
   /**
    * Update an existing item by UID.
@@ -203,7 +202,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  createItem: async (type: CollectionTypeKey, content: string, tempId?: string) => {
+  createItem: async (type: CollectionTypeKey, content: string) => {
     const { account, collections } = get()
     const collection = collections[type]
     if (!account || !collection) {
@@ -223,9 +222,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return item.uid
     } catch (err) {
       if (isOfflineError(err)) {
-        const queueTempId = tempId ?? `pending-${Date.now()}`
-        console.warn(`[etebase-store] Offline — queuing create for ${type} (tempId: ${queueTempId})`)
-        await enqueue({ type: 'create', collectionType: type, content, tempId: queueTempId })
+        console.warn(`[etebase-store] Offline — queuing create for ${type}`)
+        await enqueue({ type: 'create', collectionType: type, content, tempId: `pending-${Date.now()}` })
       } else {
         console.error(`[etebase-store] Failed to create ${type} item:`, err)
       }

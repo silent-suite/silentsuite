@@ -4,7 +4,6 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Task, Priority, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
-import { enqueue } from '@/app/lib/offline-queue'
 
 interface NewTask {
   title: string
@@ -58,7 +57,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           try {
             const { serializeTask } = await import('@silentsuite/core')
             const content = serializeTask(task)
-            const itemUid = await etebase.createItem('tasks', content, tempId)
+            const itemUid = await etebase.createItem('tasks', content)
             if (itemUid) {
               // Replace temp id with real Etebase item UID
               set((state) => ({
@@ -89,20 +88,12 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
-          const itemInCache = etebase.itemCache.has(id)
-          if (itemInCache) {
-            try {
-              const { serializeTask } = await import('@silentsuite/core')
-              const content = serializeTask(updated)
-              await etebase.updateItem('tasks', id, content)
-            } catch (err) {
-              console.error('[task-store] Failed to sync task update to Etebase:', err)
-            }
-          } else {
-            // Item was created offline — enqueue update with tempId so compaction merges into create
+          try {
             const { serializeTask } = await import('@silentsuite/core')
             const content = serializeTask(updated)
-            await enqueue({ type: 'update', collectionType: 'tasks', content, tempId: id })
+            await etebase.updateItem('tasks', id, content)
+          } catch (err) {
+            console.error('[task-store] Failed to sync task update to Etebase:', err)
           }
         }
       },
@@ -113,17 +104,10 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
-          // Check if item exists in etebase cache — if not, it may be an offline-created item
-          const itemInCache = etebase.itemCache.has(id)
-          if (itemInCache) {
-            try {
-              await etebase.deleteItem('tasks', id)
-            } catch (err) {
-              console.error('[task-store] Failed to sync task deletion to Etebase:', err)
-            }
-          } else {
-            // Item was created offline and not yet synced — enqueue delete with tempId for compaction
-            await enqueue({ type: 'delete', collectionType: 'tasks', tempId: id })
+          try {
+            await etebase.deleteItem('tasks', id)
+          } catch (err) {
+            console.error('[task-store] Failed to sync task deletion to Etebase:', err)
           }
         }
       },
@@ -142,19 +126,12 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
-          const itemInCache = etebase.itemCache.has(id)
-          if (itemInCache) {
-            try {
-              const { serializeTask } = await import('@silentsuite/core')
-              const content = serializeTask(updated)
-              await etebase.updateItem('tasks', id, content)
-            } catch (err) {
-              console.error('[task-store] Failed to sync task toggle to Etebase:', err)
-            }
-          } else {
+          try {
             const { serializeTask } = await import('@silentsuite/core')
             const content = serializeTask(updated)
-            await enqueue({ type: 'update', collectionType: 'tasks', content, tempId: id })
+            await etebase.updateItem('tasks', id, content)
+          } catch (err) {
+            console.error('[task-store] Failed to sync task toggle to Etebase:', err)
           }
         }
       },

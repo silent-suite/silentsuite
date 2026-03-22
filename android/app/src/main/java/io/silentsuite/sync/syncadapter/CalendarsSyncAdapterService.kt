@@ -35,10 +35,7 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
 
             updateLocalCalendars(provider, account, settings)
 
-            val principal = settings.uri?.toHttpUrlOrNull() ?: run {
-                Logger.log.warning("Calendar sync skipped: no valid URI for account ${account.name}")
-                return
-            }
+            val principal = settings.uri?.toHttpUrlOrNull()!!
 
             for (calendar in AndroidCalendar.find(account, provider, LocalCalendar.Factory, CalendarContract.Calendars.SYNC_EVENTS + "!=0", null)) {
                 Logger.log.info("Synchronizing calendar #" + calendar.id + ", URL: " + calendar.name)
@@ -55,12 +52,11 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
             val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
             val collections: List<CachedCollection>
             synchronized(etebaseLocalCache) {
-                HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
-                    val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
-                    val colMgr = etebase.collectionManager
+                val httpClient = HttpClient.Builder(context, settings).setForeground(false).build()
+                val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
+                val colMgr = etebase.collectionManager
 
-                    collections = etebaseLocalCache.collectionList(colMgr).filter { it.collectionType == Constants.ETEBASE_TYPE_CALENDAR }
-                }
+                collections = etebaseLocalCache.collectionList(colMgr).filter { it.collectionType == Constants.ETEBASE_TYPE_CALENDAR }
             }
 
             for (collection in collections) {

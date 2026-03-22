@@ -12,7 +12,7 @@ import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.annotation.SuppressLint
-import android.app.Application
+import android.app.LoaderManager
 import android.content.*
 import android.content.pm.PackageManager
 import android.os.Build
@@ -25,10 +25,6 @@ import android.view.Menu
 import android.view.MenuItem
 import android.widget.TextView
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewModelScope
 import at.bitfire.ical4android.TaskProvider.ProviderName
 import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.*
@@ -40,11 +36,8 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.commons.lang3.text.WordUtils
 import java.io.File
 import java.util.logging.Level
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
-class DebugInfoActivity : BaseActivity() {
+class DebugInfoActivity : BaseActivity(), LoaderManager.LoaderCallbacks<String> {
 
     internal lateinit var tvReport: TextView
     internal lateinit var report: String
@@ -57,16 +50,7 @@ class DebugInfoActivity : BaseActivity() {
         setContentView(R.layout.activity_debug_info)
         tvReport = findViewById(R.id.text_report)
 
-        val model = ViewModelProvider(this).get(ReportViewModel::class.java)
-        model.reportData.observe(this) { data ->
-            if (data != null) {
-                report = data
-                tvReport.text = report
-            }
-        }
-        if (savedInstanceState == null) {
-            model.generateReport(intent.extras)
-        }
+        loaderManager.initLoader(0, intent.extras, this)
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -86,21 +70,28 @@ class DebugInfoActivity : BaseActivity() {
         startActivity(Intent.createChooser(sendIntent, "Share debug info"))
     }
 
+    override fun onCreateLoader(id: Int, args: Bundle?): Loader<String> {
+        return ReportLoader(this, args)
+    }
 
-    internal class ReportViewModel(application: Application) : AndroidViewModel(application) {
-        val reportData = MutableLiveData<String>()
+    override fun onLoadFinished(loader: Loader<String>, data: String?) {
+        if (data != null) {
+            report = data
+            tvReport.setText(report)
+        }
+    }
 
-        fun generateReport(extras: Bundle?) {
-            viewModelScope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    buildReport(extras)
-                }
-                reportData.value = result
-            }
+    override fun onLoaderReset(loader: Loader<String>) {}
+
+
+    internal class ReportLoader(context: Context, val extras: Bundle?) : AsyncTaskLoader<String>(context) {
+
+        override fun onStartLoading() {
+            forceLoad()
         }
 
         @SuppressLint("MissingPermission")
-        private fun buildReport(extras: Bundle?): String {
+        override fun loadInBackground(): String {
             var throwable: Throwable? = null
             var caller: String? = null
             var logs: String? = null
@@ -114,10 +105,9 @@ class DebugInfoActivity : BaseActivity() {
                 logs = extras.getString(KEY_LOGS)
                 account = extras.getParcelable(KEY_ACCOUNT)
                 authority = extras.getString(KEY_AUTHORITY)
-                phase = if (extras.containsKey(KEY_PHASE)) getApplication<Application>().getString(extras.getInt(KEY_PHASE)) else null
+                phase = if (extras.containsKey(KEY_PHASE)) context.getString(extras.getInt(KEY_PHASE)) else null
             }
 
-            val context = getApplication<Application>()
             val report = StringBuilder("--- BEGIN DEBUG INFO ---\n")
 
             // begin with most specific information
@@ -141,6 +131,8 @@ class DebugInfoActivity : BaseActivity() {
 
             if (logs != null)
                 report.append("\nLOGS:\n").append(logs).append("\n")
+
+            val context = context
 
             try {
                 val pm = context.packageManager
@@ -212,7 +204,7 @@ class DebugInfoActivity : BaseActivity() {
             return report.toString()
         }
 
-        private fun syncStatus(settings: AccountSettings, authority: String): String {
+        protected fun syncStatus(settings: AccountSettings, authority: String): String {
             val interval = settings.getSyncInterval(authority)
             return if (interval != null)
                 if (interval == AccountSettings.SYNC_INTERVAL_MANUALLY) "manually" else (interval / 60).toString() + " min"

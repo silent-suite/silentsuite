@@ -67,8 +67,14 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            # Pull the new image
             docker pull ghcr.io/silent-suite/silentsuite-web:latest
+
+            # Tag for local docker-compose
             docker tag ghcr.io/silent-suite/silentsuite-web:latest etebase-web:latest
+
+            # Restart the web container
             cd ~/etebase
-            docker compose up -d --force-recreate web
+            docker compose up -d web
+
             echo "Web app deployed successfully"

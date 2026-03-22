@@ -9,7 +9,7 @@
 package io.silentsuite.sync.ui
 
 import android.accounts.Account
-import android.app.Dialog
+import android.app.ProgressDialog
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -21,7 +21,6 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.requestSync
-import io.silentsuite.sync.utils.ProgressDialogHelper
 import com.google.android.material.textfield.TextInputLayout
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -31,12 +30,12 @@ import kotlinx.coroutines.withContext
 open class ChangeEncryptionPasswordActivity : BaseActivity() {
 
     protected lateinit var account: Account
-    lateinit var progress: Dialog
+    lateinit var progress: ProgressDialog
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        account = requireNotNull(requireNotNull(intent.extras) { "ChangeEncryptionPasswordActivity requires intent extras" }.getParcelable(EXTRA_ACCOUNT)) { "ChangeEncryptionPasswordActivity requires EXTRA_ACCOUNT" }
+        account = intent.extras!!.getParcelable(EXTRA_ACCOUNT)!!
 
         supportActionBar!!.setDisplayHomeAsUpEnabled(true)
 
@@ -119,13 +118,14 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
                 .setTitle(R.string.delete_collection_confirm_title)
                 .setMessage(R.string.change_encryption_password_are_you_sure)
                 .setPositiveButton(android.R.string.yes) { _, _ ->
-                    progress = ProgressDialogHelper.createIndeterminate(
-                        this,
-                        R.string.setting_up_encryption,
-                        getString(R.string.setting_up_encryption_content)
-                    )
-                    progress.show()
                     changePasswordDo(old_password, new_password)
+                    progress = ProgressDialog(this)
+                    progress.setTitle(R.string.setting_up_encryption)
+                    progress.setMessage(getString(R.string.setting_up_encryption_content))
+                    progress.isIndeterminate = true
+                    progress.setCanceledOnTouchOutside(false)
+                    progress.setCancelable(false)
+                    progress.show()
                 }
                 .setNegativeButton(android.R.string.no) { _, _ -> }
                 .create().show()

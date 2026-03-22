@@ -8,14 +8,16 @@ import { getPost, getAllPosts } from '../posts'
 // Blog post content components -- one per slug
 import WhyWeAreBuildingSilentSuite from '../content/why-we-are-building-silentsuite'
 import WhoCanReadYourCalendar from '../content/who-can-read-your-calendar'
-import SilentSuiteVsGoogleCalendar from '../content/silentsuite-vs-google-calendar'
+// Uncomment to publish:
+// import SilentSuiteVsGoogleCalendar from '../content/silentsuite-vs-google-calendar'
 // import EncryptedCalendarSync2026ComparingOptions from '../content/encrypted-calendar-sync-2026-comparing-options'
 // import SelfHostingVsHostedPrivateCalendar from '../content/self-hosting-vs-hosted-private-calendar'
 
 const contentMap: Record<string, React.ComponentType> = {
   'why-we-are-building-silentsuite': WhyWeAreBuildingSilentSuite,
   'who-can-read-your-calendar': WhoCanReadYourCalendar,
-  'silentsuite-vs-google-calendar': SilentSuiteVsGoogleCalendar,
+  // Uncomment to publish:
+  // 'silentsuite-vs-google-calendar': SilentSuiteVsGoogleCalendar,
   // 'encrypted-calendar-sync-2026-comparing-options': EncryptedCalendarSync2026ComparingOptions,
   // 'self-hosting-vs-hosted-private-calendar': SelfHostingVsHostedPrivateCalendar,
 }

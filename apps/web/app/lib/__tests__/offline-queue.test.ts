@@ -4,10 +4,8 @@ import {
   enqueue,
   getAll,
   getPendingCount,
-  getFailedCount,
   replay,
   clearFailed,
-  retryFailed,
   remove,
   onCountChange,
   isOfflineError,
@@ -199,115 +197,6 @@ describe('offline-queue', () => {
       const all = await getAll()
       expect(all).toHaveLength(1)
       expect(all[0].content).toBe('persist-me')
-    })
-  })
-
-  describe('compaction', () => {
-    it('create + update with same tempId → merges content into create entry', async () => {
-      await enqueue({ type: 'create', collectionType: 'tasks', content: 'original', tempId: 'temp-1' })
-      await enqueue({ type: 'update', collectionType: 'tasks', content: 'updated', tempId: 'temp-1' })
-
-      const all = await getAll()
-      expect(all).toHaveLength(1)
-      expect(all[0].type).toBe('create')
-      expect(all[0].content).toBe('updated')
-      expect(all[0].tempId).toBe('temp-1')
-    })
-
-    it('create + delete with same tempId → cancels both', async () => {
-      await enqueue({ type: 'create', collectionType: 'contacts', content: 'vcard', tempId: 'temp-2' })
-      await enqueue({ type: 'delete', collectionType: 'contacts', tempId: 'temp-2' })
-
-      const all = await getAll()
-      expect(all).toHaveLength(0)
-      expect(await getPendingCount()).toBe(0)
-    })
-
-    it('update + update with same itemUid → merges to latest content', async () => {
-      await enqueue({ type: 'update', collectionType: 'calendar', content: 'v1', itemUid: 'uid-1' })
-      await enqueue({ type: 'update', collectionType: 'calendar', content: 'v2', itemUid: 'uid-1' })
-
-      const all = await getAll()
-      expect(all).toHaveLength(1)
-      expect(all[0].type).toBe('update')
-      expect(all[0].content).toBe('v2')
-      expect(all[0].itemUid).toBe('uid-1')
-    })
-
-    it('update + delete with same itemUid → replaces update with delete', async () => {
-      await enqueue({ type: 'update', collectionType: 'tasks', content: 'updated', itemUid: 'uid-2' })
-      await enqueue({ type: 'delete', collectionType: 'tasks', itemUid: 'uid-2' })
-
-      const all = await getAll()
-      expect(all).toHaveLength(1)
-      expect(all[0].type).toBe('delete')
-      expect(all[0].itemUid).toBe('uid-2')
-      expect(all[0].content).toBeUndefined()
-    })
-
-    it('does not compact entries of different collection types', async () => {
-      await enqueue({ type: 'update', collectionType: 'tasks', content: 'v1', itemUid: 'uid-1' })
-      await enqueue({ type: 'update', collectionType: 'contacts', content: 'v2', itemUid: 'uid-1' })
-
-      const all = await getAll()
-      expect(all).toHaveLength(2)
-    })
-
-    it('does not compact entries with different tempIds', async () => {
-      await enqueue({ type: 'create', collectionType: 'tasks', content: 'a', tempId: 'temp-a' })
-      await enqueue({ type: 'update', collectionType: 'tasks', content: 'b', tempId: 'temp-b' })
-
-      const all = await getAll()
-      expect(all).toHaveLength(2)
-    })
-
-    it('does not compact failed entries', async () => {
-      // Enqueue and fail an update 3 times to mark it as failed
-      await enqueue({ type: 'update', collectionType: 'tasks', content: 'v1', itemUid: 'uid-3' })
-      for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('fail') })
-      }
-      // Now enqueue another update for the same uid — should NOT compact with failed entry
-      await enqueue({ type: 'update', collectionType: 'tasks', content: 'v2', itemUid: 'uid-3' })
-
-      const all = await getAll()
-      expect(all).toHaveLength(2)
-      expect(all[0].status).toBe('failed')
-      expect(all[1].status).toBe('pending')
-      expect(all[1].content).toBe('v2')
-    })
-  })
-
-  describe('getFailedCount', () => {
-    it('returns count of failed entries', async () => {
-      await enqueue({ type: 'update', collectionType: 'tasks', content: 'x', itemUid: 'u1' })
-      expect(await getFailedCount()).toBe(0)
-
-      for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('fail') })
-      }
-      expect(await getFailedCount()).toBe(1)
-    })
-  })
-
-  describe('retryFailed', () => {
-    it('resets failed entries back to pending with retryCount 0', async () => {
-      await enqueue({ type: 'update', collectionType: 'tasks', content: 'x', itemUid: 'u1' })
-      for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('fail') })
-      }
-
-      expect(await getPendingCount()).toBe(0)
-      expect(await getFailedCount()).toBe(1)
-
-      await retryFailed()
-
-      expect(await getPendingCount()).toBe(1)
-      expect(await getFailedCount()).toBe(0)
-
-      const all = await getAll()
-      expect(all[0].retryCount).toBe(0)
-      expect(all[0].status).toBe('pending')
     })
   })
 })

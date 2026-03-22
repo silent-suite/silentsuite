@@ -34,9 +34,8 @@ open class CreateCollectionActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val extras = requireNotNull(intent.extras) { "CreateCollectionActivity requires intent extras" }
-        account = requireNotNull(extras.getParcelable(EXTRA_ACCOUNT)) { "CreateCollectionActivity requires EXTRA_ACCOUNT" }
-        info = requireNotNull(extras.getSerializable(EXTRA_COLLECTION_INFO) as? CollectionInfo) { "CreateCollectionActivity requires EXTRA_COLLECTION_INFO" }
+        account = intent.extras!!.getParcelable(EXTRA_ACCOUNT)!!
+        info = intent.extras!!.getSerializable(EXTRA_COLLECTION_INFO) as CollectionInfo
 
         supportActionBar!!.setDisplayHomeAsUpEnabled(true)
 

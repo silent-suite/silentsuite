@@ -4,7 +4,6 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Contact, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
-import { enqueue } from '@/app/lib/offline-queue'
 
 interface NewContact {
   displayName: string
@@ -76,7 +75,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
           try {
             const { serializeContact } = await import('@silentsuite/core')
             const content = serializeContact(contact)
-            const itemUid = await etebase.createItem('contacts', content, tempId)
+            const itemUid = await etebase.createItem('contacts', content)
             if (itemUid) {
               set((state) => ({
                 contacts: state.contacts.map((c) =>
@@ -106,19 +105,12 @@ export const useContactStore = create<ContactState & ContactActions>()(
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
-          const itemInCache = etebase.itemCache.has(id)
-          if (itemInCache) {
-            try {
-              const { serializeContact } = await import('@silentsuite/core')
-              const content = serializeContact(updated)
-              await etebase.updateItem('contacts', id, content)
-            } catch (err) {
-              console.error('[contact-store] Failed to sync contact update to Etebase:', err)
-            }
-          } else {
+          try {
             const { serializeContact } = await import('@silentsuite/core')
             const content = serializeContact(updated)
-            await enqueue({ type: 'update', collectionType: 'contacts', content, tempId: id })
+            await etebase.updateItem('contacts', id, content)
+          } catch (err) {
+            console.error('[contact-store] Failed to sync contact update to Etebase:', err)
           }
         }
       },
@@ -129,16 +121,10 @@ export const useContactStore = create<ContactState & ContactActions>()(
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
-          const itemInCache = etebase.itemCache.has(id)
-          if (itemInCache) {
-            try {
-              await etebase.deleteItem('contacts', id)
-            } catch (err) {
-              console.error('[contact-store] Failed to sync contact deletion to Etebase:', err)
-            }
-          } else {
-            // Item was created offline and not yet synced — enqueue delete with tempId for compaction
-            await enqueue({ type: 'delete', collectionType: 'contacts', tempId: id })
+          try {
+            await etebase.deleteItem('contacts', id)
+          } catch (err) {
+            console.error('[contact-store] Failed to sync contact deletion to Etebase:', err)
           }
         }
       },

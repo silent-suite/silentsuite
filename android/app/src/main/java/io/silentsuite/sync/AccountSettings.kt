@@ -104,7 +104,6 @@ constructor(internal val context: Context, internal val account: Account) {
 
     fun username(): String {
         return accountManager.getUserData(account, KEY_USERNAME)
-                ?: throw IllegalStateException("Username not set for account ${account.name}")
     }
 
     fun username(userName: String) {
@@ -113,7 +112,6 @@ constructor(internal val context: Context, internal val account: Account) {
 
     fun password(): String {
         return accountManager.getPassword(account)
-                ?: throw IllegalStateException("Password not set for account ${account.name}")
     }
 
     fun password(password: String) {

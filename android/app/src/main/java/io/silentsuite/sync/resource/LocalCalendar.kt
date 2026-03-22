@@ -138,36 +138,37 @@ class LocalCalendar private constructor(
         // process deleted exceptions
         Logger.log.info("Processing deleted exceptions")
         try {
-            provider.query(
+            val cursor = provider.query(
                     syncAdapterURI(Events.CONTENT_URI),
                     arrayOf(Events._ID, Events.ORIGINAL_ID, LocalEvent.COLUMN_SEQUENCE),
-                    Events.DELETED + "!=0 AND " + Events.ORIGINAL_ID + " IS NOT NULL", null, null)?.use { cursor ->
-                while (cursor.moveToNext()) {
-                    Logger.log.fine("Found deleted exception, removing; then re-schuling original event")
-                    val id = cursor.getLong(0)
-                    // can't be null (by definition)
-                    val originalID = cursor.getLong(1)     // can't be null (by query)
+                    Events.DELETED + "!=0 AND " + Events.ORIGINAL_ID + " IS NOT NULL", null, null)
+            while (cursor != null && cursor.moveToNext()) {
+                Logger.log.fine("Found deleted exception, removing; then re-schuling original event")
+                val id = cursor.getLong(0)
+                // can't be null (by definition)
+                val originalID = cursor.getLong(1)     // can't be null (by query)
 
-                    // get original event's SEQUENCE
-                    val originalSequence = provider.query(
-                            syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)),
-                            arrayOf(LocalEvent.COLUMN_SEQUENCE), null, null, null)?.use { cursor2 ->
-                        if (cursor2.moveToFirst() && !cursor2.isNull(0)) cursor2.getInt(0) else 0
-                    } ?: 0
-                    val batch = BatchOperation(provider)
-                    // re-schedule original event and set it to DIRTY
-                    batch.enqueue(
-                            BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)))
-                                    .withValue(LocalEvent.COLUMN_SEQUENCE, originalSequence + 1)
-                                    .withValue(Events.DIRTY, 1)
-                    )
-                    // remove exception
-                    batch.enqueue(
-                            BatchOperation.CpoBuilder.newDelete(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, id)))
-                    )
-                    batch.commit()
-                }
+                // get original event's SEQUENCE
+                val cursor2 = provider.query(
+                        syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)),
+                        arrayOf(LocalEvent.COLUMN_SEQUENCE), null, null, null)
+                val originalSequence = if (cursor2 == null || cursor2.isNull(0)) 0 else cursor2.getInt(0)
+
+                cursor2!!.close()
+                val batch = BatchOperation(provider)
+                // re-schedule original event and set it to DIRTY
+                batch.enqueue(
+                        BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)))
+                                .withValue(LocalEvent.COLUMN_SEQUENCE, originalSequence + 1)
+                                .withValue(Events.DIRTY, 1)
+                )
+                // remove exception
+                batch.enqueue(
+                        BatchOperation.CpoBuilder.newDelete(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, id)))
+                )
+                batch.commit()
             }
+            cursor!!.close()
         } catch (e: RemoteException) {
             throw CalendarStorageException("Couldn't process locally modified exception", e)
         }
@@ -175,30 +176,30 @@ class LocalCalendar private constructor(
         // process dirty exceptions
         Logger.log.info("Processing dirty exceptions")
         try {
-            provider.query(
+            val cursor = provider.query(
                     syncAdapterURI(Events.CONTENT_URI),
                     arrayOf(Events._ID, Events.ORIGINAL_ID, LocalEvent.COLUMN_SEQUENCE),
-                    Events.DIRTY + "!=0 AND " + Events.ORIGINAL_ID + " IS NOT NULL", null, null)?.use { cursor ->
-                while (cursor.moveToNext()) {
-                    Logger.log.fine("Found dirty exception, increasing SEQUENCE to re-schedule")
-                    val id = cursor.getLong(0)
-                    // can't be null (by definition)
-                    val originalID = cursor.getLong(1)     // can't be null (by query)
-                    val sequence = if (cursor.isNull(2)) 0 else cursor.getInt(2)
+                    Events.DIRTY + "!=0 AND " + Events.ORIGINAL_ID + " IS NOT NULL", null, null)
+            while (cursor != null && cursor.moveToNext()) {
+                Logger.log.fine("Found dirty exception, increasing SEQUENCE to re-schedule")
+                val id = cursor.getLong(0)
+                // can't be null (by definition)
+                val originalID = cursor.getLong(1)     // can't be null (by query)
+                val sequence = if (cursor.isNull(2)) 0 else cursor.getInt(2)
 
-                    val batch = BatchOperation(provider)
-                    // original event to DIRTY
-                    batch.enqueue(BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)))
-                                    .withValue(Events.DIRTY, 1)
-                    )
-                    // increase SEQUENCE and set DIRTY to 0
-                    batch.enqueue(BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, id)))
-                                    .withValue(LocalEvent.COLUMN_SEQUENCE, sequence + 1)
-                                    .withValue(Events.DIRTY, 0)
-                    )
-                    batch.commit()
-                }
+                val batch = BatchOperation(provider)
+                // original event to DIRTY
+                batch.enqueue(BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, originalID)))
+                                .withValue(Events.DIRTY, 1)
+                )
+                // increase SEQUENCE and set DIRTY to 0
+                batch.enqueue(BatchOperation.CpoBuilder.newUpdate(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, id)))
+                                .withValue(LocalEvent.COLUMN_SEQUENCE, sequence + 1)
+                                .withValue(Events.DIRTY, 0)
+                )
+                batch.commit()
             }
+            cursor!!.close()
         } catch (e: RemoteException) {
             throw CalendarStorageException("Couldn't process locally modified exception", e)
         }

@@ -10,59 +10,51 @@ package io.silentsuite.sync.ui.setup
 
 import android.accounts.Account
 import android.app.Dialog
+import android.app.ProgressDialog
+import android.content.Context
 import android.os.Bundle
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
-import androidx.lifecycle.lifecycleScope
+import androidx.loader.app.LoaderManager
+import androidx.loader.content.AsyncTaskLoader
+import androidx.loader.content.Loader
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.ui.DebugInfoActivity
-import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.logging.Level
 
-class LoginCredentialsChangeFragment : DialogFragment() {
+class LoginCredentialsChangeFragment : DialogFragment(), LoaderManager.LoaderCallbacks<Configuration> {
     private lateinit var account: Account
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
+        val progress = ProgressDialog(activity)
+        progress.setTitle(R.string.setting_up_encryption)
+        progress.setMessage(getString(R.string.setting_up_encryption_content))
+        progress.isIndeterminate = true
+        progress.setCanceledOnTouchOutside(false)
         isCancelable = false
-        return ProgressDialogHelper.createIndeterminate(
-            requireContext(),
-            R.string.setting_up_encryption,
-            getString(R.string.setting_up_encryption_content)
-        )
+        return progress
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        loaderManager.initLoader(0, arguments, this)
         account = requireArguments().getParcelable(ARG_ACCOUNT)!!
-
-        if (savedInstanceState == null) {
-            val credentials = requireArguments().getParcelable<LoginCredentials>(ARG_LOGIN_CREDENTIALS)!!
-            findConfiguration(credentials)
-        }
     }
 
-    private fun findConfiguration(credentials: LoginCredentials) {
-        lifecycleScope.launch {
-            val data = withContext(Dispatchers.IO) {
-                BaseConfigurationFinder(requireContext(), credentials).findInitialConfiguration()
-            }
-            onLoadFinished(data)
-        }
+    override fun onCreateLoader(id: Int, args: Bundle?): Loader<Configuration> {
+        return ServerConfigurationLoader(requireContext(), (args!!.getParcelable(ARG_LOGIN_CREDENTIALS) as LoginCredentials?)!!)
     }
 
-    private fun onLoadFinished(data: Configuration?) {
+    override fun onLoadFinished(loader: Loader<Configuration>, data: Configuration?) {
         if (data != null) {
             if (data.isFailed)
             // no service found: show error message
-                parentFragmentManager.beginTransaction()
+                requireFragmentManager().beginTransaction()
                         .add(NothingDetectedFragment.newInstance(data.error!!.localizedMessage), null)
                         .commitAllowingStateLoss()
             else {
@@ -83,6 +75,8 @@ class LoginCredentialsChangeFragment : DialogFragment() {
 
         dismissAllowingStateLoss()
     }
+
+    override fun onLoaderReset(loader: Loader<Configuration>) {}
 
 
     class NothingDetectedFragment : DialogFragment() {
@@ -113,6 +107,17 @@ class LoginCredentialsChangeFragment : DialogFragment() {
                 fragment.arguments = args
                 return fragment
             }
+        }
+    }
+
+    internal class ServerConfigurationLoader(context: Context, val credentials: LoginCredentials) : AsyncTaskLoader<Configuration>(context) {
+
+        override fun onStartLoading() {
+            forceLoad()
+        }
+
+        override fun loadInBackground(): Configuration? {
+            return BaseConfigurationFinder(context, credentials).findInitialConfiguration()
         }
     }
 

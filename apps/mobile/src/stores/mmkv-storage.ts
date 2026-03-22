@@ -1,7 +1,7 @@
 import { MMKV } from 'react-native-mmkv';
 import type { StateStorage } from 'zustand/middleware';
 
-export const mmkv = new MMKV({ id: 'silentsuite-store' });
+const mmkv = new MMKV({ id: 'silentsuite-store' });
 
 export const mmkvStorage: StateStorage = {
   getItem: (name: string) => {

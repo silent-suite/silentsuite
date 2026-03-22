@@ -10,6 +10,7 @@
 package io.silentsuite.sync.ui.etebase
 
 import android.app.Dialog
+import android.app.ProgressDialog
 import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -35,7 +36,6 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.WebViewActivity
 import io.silentsuite.sync.ui.setup.*
-import io.silentsuite.sync.utils.ProgressDialogHelper
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import net.cachapa.expandablelayout.ExpandableLayout
@@ -159,12 +159,13 @@ class SignupDoFragment: DialogFragment() {
     private lateinit var signupCredentials: SignupCredentials
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
+        val progress = ProgressDialog(activity)
+        progress.setTitle(R.string.setting_up_encryption)
+        progress.setMessage(getString(R.string.setting_up_encryption_content))
+        progress.isIndeterminate = true
+        progress.setCanceledOnTouchOutside(false)
         isCancelable = false
-        return ProgressDialogHelper.createIndeterminate(
-            requireContext(),
-            R.string.setting_up_encryption,
-            getString(R.string.setting_up_encryption_content)
-        )
+        return progress
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

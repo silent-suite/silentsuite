@@ -13,7 +13,15 @@ export interface User {
 interface PendingSignup {
   email: string
   etebaseAuthToken: string
-  foundingMemberEligible?: boolean
+  earlyAdopter?: boolean
+  /** Provisioned user data — stored here until the entire signup flow completes. */
+  provisionedUser?: {
+    id: string
+    planId: string
+    isAdmin: boolean
+  }
+  /** Subscription status determined during provisioning. */
+  provisionedSubscriptionStatus?: string
 }
 
 interface AuthState {
@@ -26,7 +34,9 @@ interface AuthState {
   isReadOnly: () => boolean
   canWrite: () => boolean
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
-  signup: (planId: string) => Promise<string | null>
+  signup: (planId: string, trialPath: string) => Promise<string | null>
+  /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
+  completeSignup: () => void
   login: (email: string, password: string, serverUrl?: string) => Promise<void>
   logout: () => Promise<void>
   refreshSession: () => Promise<boolean>
@@ -74,7 +84,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // SECURITY: Etebase session in localStorage is XSS-vulnerable. Move to encrypted IndexedDB storage.
       localStorage.setItem('etebase_session', savedSession)
 
-      let foundingMemberEligible = false
+      let earlyAdopter = false
       if (!isSelfHosted && !isCustomServer(serverUrl)) {
         try {
           const res = await fetch(
@@ -82,13 +92,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           )
           if (res.ok) {
             const data = await res.json()
-            foundingMemberEligible = data.foundingMemberEligible === true
+            earlyAdopter = data.earlyAdopter === true
           }
         } catch {}
       }
 
+      // Mark signup as in progress so restoreSession won't authenticate mid-flow
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('silentsuite-signup-in-progress', 'true')
+      }
+
       set({
-        pendingSignup: { email, etebaseAuthToken: authToken, foundingMemberEligible },
+        pendingSignup: { email, etebaseAuthToken: authToken, earlyAdopter },
         isLoading: false,
       })
     } catch (err) {
@@ -108,16 +123,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signup: async (planId: string) => {
+  signup: async (planId: string, trialPath: string) => {
     if (isSelfHosted || planId === 'self-hosted') {
       const pending = get().pendingSignup
       if (!pending) throw new Error('No pending signup')
+      // Self-hosted: store provisioned data but do NOT authenticate yet.
+      // completeSignup() will finalize after vault creation.
       set({
-        user: { id: 'self-hosted', email: pending.email, planId: 'self-hosted', isAdmin: true },
-        isAuthenticated: true,
+        pendingSignup: {
+          ...pending,
+          provisionedUser: { id: 'self-hosted', planId: 'self-hosted', isAdmin: true },
+          provisionedSubscriptionStatus: 'active',
+        },
         isLoading: false,
-        pendingSignup: null,
-        subscriptionStatus: 'active',
       })
       return null
     }
@@ -132,7 +150,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await fetch(`${BILLING_API_URL}/auth/provision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        body: JSON.stringify({ etebaseSessionToken: pending.etebaseAuthToken, planId }),
+        body: JSON.stringify({ etebaseSessionToken: pending.etebaseAuthToken, planId, trialPath }),
         credentials: 'include',
       })
       if (!res.ok) {
@@ -142,18 +160,46 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const data = await res.json()
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin)
+      // Store provisioned data in pendingSignup — do NOT set isAuthenticated yet.
+      // The user is still in the signup flow (payment + vault steps remain).
       set({
-        user: { id: data.id, email: pending.email, planId, isAdmin },
-        isAuthenticated: true,
+        pendingSignup: {
+          ...pending,
+          provisionedUser: { id: data.id, planId, isAdmin },
+          provisionedSubscriptionStatus: trialPath === '7day' ? 'trialing' : 'none',
+        },
         isLoading: false,
-        pendingSignup: null,
       })
-      return (data.checkoutUrl as string) ?? null
+      return (data.clientSecret as string) ?? null
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Signup failed'
       set({ error: message, isLoading: false })
       throw err
     }
+  },
+
+  completeSignup: () => {
+    const pending = get().pendingSignup
+    if (!pending?.provisionedUser) {
+      console.warn('completeSignup called without provisioned data')
+      return
+    }
+    // Clear the signup-in-progress flag so restoreSession works normally
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('silentsuite-signup-in-progress')
+    }
+    set({
+      user: {
+        id: pending.provisionedUser.id,
+        email: pending.email,
+        planId: pending.provisionedUser.planId,
+        isAdmin: pending.provisionedUser.isAdmin,
+      },
+      isAuthenticated: true,
+      isLoading: false,
+      pendingSignup: null,
+      subscriptionStatus: pending.provisionedSubscriptionStatus ?? null,
+    })
   },
 
   login: async (email: string, password: string, serverUrl?: string) => {
@@ -165,7 +211,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (isSelfHosted || isCustomServer(serverUrl)) {
         if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
-        syncAdminCookie(true)
         set({
           user: { id: 'self-hosted', email, planId: 'self-hosted', isAdmin: true },
           isAuthenticated: true,
@@ -174,9 +219,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         })
         return
       }
-
-      // Logging in to the default server — clear any stale self-hosted URL
-      localStorage.removeItem('silentsuite-server-url')
 
       const res = await fetch(`${BILLING_API_URL}/auth/token-exchange`, {
         method: 'POST',
@@ -234,6 +276,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       useEtebaseStore.getState().destroy()
     } catch {}
 
+    // Clear signup-in-progress flag
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('silentsuite-signup-in-progress')
+    }
+
     // Clear persisted data stores so next login starts fresh
     localStorage.removeItem('etebase_session')
     localStorage.removeItem('silentsuite-server-url')
@@ -250,11 +297,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
       const hasSession = !!localStorage.getItem('etebase_session')
       if (hasSession) {
-        syncAdminCookie(true)
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, subscriptionStatus: 'active' })
         return true
       }
-      syncAdminCookie(false)
       set({ user: null, isAuthenticated: false })
       return false
     }
@@ -271,14 +316,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   restoreSession: async () => {
+    // If a signup is in progress (pendingSignup exists or flag in sessionStorage),
+    // do NOT restore the session — the user must complete the signup flow first.
+    const signupInProgress = typeof window !== 'undefined' && sessionStorage.getItem('silentsuite-signup-in-progress')
+    if (signupInProgress) {
+      set({ user: null, isAuthenticated: false, isLoading: false })
+      return
+    }
+
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
       const hasSession = !!localStorage.getItem('etebase_session')
       if (hasSession) {
-        syncAdminCookie(true)
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active' })
       } else {
-        syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false })
       }
       return

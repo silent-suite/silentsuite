@@ -9,6 +9,7 @@
 package io.silentsuite.sync.ui
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.os.Bundle
 import android.text.Html
 import android.text.Spanned
@@ -21,7 +22,9 @@ import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentPagerAdapter
-import androidx.lifecycle.lifecycleScope
+import androidx.loader.app.LoaderManager
+import androidx.loader.content.AsyncTaskLoader
+import androidx.loader.content.Loader
 import androidx.viewpager.widget.ViewPager
 import io.silentsuite.sync.App
 import io.silentsuite.sync.BuildConfig
@@ -30,9 +33,6 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import com.google.android.material.tabs.TabLayout
 import ezvcard.Ezvcard
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.logging.Level
 
@@ -55,7 +55,7 @@ class AboutActivity : BaseActivity() {
     private class ComponentInfo internal constructor(internal val title: String, internal val version: String?, internal val website: String, internal val copyright: String, internal val licenseInfo: Int, internal val licenseTextFile: String)
 
 
-    private class TabsAdapter(fm: FragmentManager) : FragmentPagerAdapter(fm, BEHAVIOR_RESUME_ONLY_CURRENT_FRAGMENT) {
+    private class TabsAdapter(fm: FragmentManager) : FragmentPagerAdapter(fm) {
 
         override fun getCount(): Int {
             return components.size
@@ -70,7 +70,7 @@ class AboutActivity : BaseActivity() {
         }
     }
 
-    class ComponentFragment : Fragment() {
+    class ComponentFragment : Fragment(), LoaderManager.LoaderCallbacks<Spanned> {
 
         @SuppressLint("SetTextI18n")
         override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -92,37 +92,32 @@ class AboutActivity : BaseActivity() {
             tv.setText(info.licenseInfo)
 
             // load and format license text
-            loadLicense(v, info.licenseTextFile)
+            val args = Bundle(1)
+            args.putString(KEY_FILE_NAME, info.licenseTextFile)
+            loaderManager.initLoader(0, args, this)
 
             return v
         }
 
-        private fun loadLicense(v: View, fileName: String) {
-            lifecycleScope.launch {
-                val license = withContext(Dispatchers.IO) {
-                    Logger.log.fine("Loading license file $fileName")
-                    try {
-                        val inputStream = requireContext().resources.assets.open(fileName)
-                        val raw = inputStream.readBytes()
-                        inputStream.close()
-                        Html.fromHtml(String(raw)) as Spanned
-                    } catch (e: IOException) {
-                        Logger.log.log(Level.SEVERE, "Couldn't read license file", e)
-                        null
-                    }
-                }
-                if (license != null && view != null) {
-                    val tv = v.findViewById<View>(R.id.license_text) as TextView?
-                    if (tv != null) {
-                        tv.autoLinkMask = Linkify.EMAIL_ADDRESSES or Linkify.WEB_URLS
-                        tv.text = license
-                    }
+        override fun onCreateLoader(id: Int, args: Bundle?): Loader<Spanned> {
+            return LicenseLoader(requireContext(), args!!.getString(KEY_FILE_NAME)!!)
+        }
+
+        override fun onLoadFinished(loader: Loader<Spanned>, license: Spanned) {
+            if (view != null) {
+                val tv = requireView().findViewById<View>(R.id.license_text) as TextView?
+                if (tv != null) {
+                    tv.autoLinkMask = Linkify.EMAIL_ADDRESSES or Linkify.WEB_URLS
+                    tv.text = license
                 }
             }
         }
 
+        override fun onLoaderReset(loader: Loader<Spanned>) {}
+
         companion object {
             private val KEY_POSITION = "position"
+            private val KEY_FILE_NAME = "fileName"
 
             fun instantiate(position: Int): ComponentFragment {
                 val frag = ComponentFragment()
@@ -134,11 +129,41 @@ class AboutActivity : BaseActivity() {
         }
     }
 
+    private class LicenseLoader internal constructor(context: Context, internal val fileName: String) : AsyncTaskLoader<Spanned>(context) {
+        internal var content: Spanned? = null
+
+        override fun onStartLoading() {
+            if (content == null)
+                forceLoad()
+            else
+                deliverResult(content)
+        }
+
+        override fun loadInBackground(): Spanned? {
+            Logger.log.fine("Loading license file $fileName")
+            try {
+                val inputStream = context.resources.assets.open(fileName)
+                val raw = inputStream.readBytes()
+                inputStream.close()
+                content = Html.fromHtml(String(raw))
+                return content
+            } catch (e: IOException) {
+                Logger.log.log(Level.SEVERE, "Couldn't read license file", e)
+                return null
+            }
+
+        }
+    }
+
     companion object {
 
         private val components = arrayOf(ComponentInfo(
                 App.appName, BuildConfig.VERSION_NAME, Constants.webUri.toString(),
-                "Silent Suite",
+                "Silent Suite (based on EteSync by Tom Hacohen)",
+                R.string.about_license_info_no_warranty, "gpl-3.0-standalone.html"
+        ), ComponentInfo(
+                "EteSync for Android", "(forked from)", "https://github.com/etesync/android",
+                "Tom Hacohen / Ricki Hirner (bitfire web engineering)",
                 R.string.about_license_info_no_warranty, "gpl-3.0-standalone.html"
         ), ComponentInfo(
                 "AmbilWarna", null, "https://github.com/yukuku/ambilwarna",

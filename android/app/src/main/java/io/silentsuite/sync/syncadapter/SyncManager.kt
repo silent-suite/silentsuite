@@ -345,34 +345,34 @@ constructor(protected val context: Context, protected val account: Account, prot
             }
         } finally {
             // FIXME: A bit fragile, we assume the order in createPushItems
-            var remaining = pushed
+            var left = pushed
             for (local in localDeleted!!) {
-                if (remaining <= 0) break
-                remaining--
+                if (pushed-- <= 0) {
+                    break
+                }
                 local.delete()
             }
-            val deletedCount = pushed - remaining
-            if (deletedCount > 0) {
-                localDeleted = localDeleted?.drop(deletedCount)
-                chunkPushItems = chunkPushItems.drop(deletedCount)
+            if (left > 0) {
+                localDeleted = localDeleted?.drop(left)
+                chunkPushItems = chunkPushItems.drop(left - pushed)
             }
 
-            val dirtyStart = remaining
+            left = pushed
             var i = 0
             for (local in localDirty) {
-                if (remaining <= 0) break
-                remaining--
+                if (pushed-- <= 0) {
+                    break
+                }
                 Logger.log.info("Added/changed resource with filename: " + local.fileName)
                 local.clearDirty(chunkPushItems[i].etag)
                 i++
             }
-            val dirtyCount = dirtyStart - remaining
-            if (dirtyCount > 0) {
-                localDirty = localDirty.drop(dirtyCount)
-                chunkPushItems = chunkPushItems.drop(dirtyCount)
+            if (left > 0) {
+                localDirty = localDirty.drop(left)
+                chunkPushItems.drop(left)
             }
 
-            if (remaining > 0) {
+            if (pushed > 0) {
                 Logger.log.severe("Unprocessed localentries left, this should never happen!")
             }
         }

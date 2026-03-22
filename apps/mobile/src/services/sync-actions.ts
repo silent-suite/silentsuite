@@ -16,11 +16,6 @@ import { useEtebaseStore } from '../stores/etebase-store';
 import { useSyncStore } from '../stores/sync-store';
 import type { CalendarEvent, Contact, Task } from '@silentsuite/core';
 
-// Concurrency guard for sync operations
-let isSyncing = false;
-export function getIsSyncing() { return isSyncing; }
-export function setIsSyncing(value: boolean) { isSyncing = value; }
-
 // --- Calendar ---
 
 export async function createEvent(event: CalendarEvent): Promise<string> {
@@ -50,9 +45,6 @@ export async function updateEvent(event: CalendarEvent): Promise<void> {
   const calStore = useCalendarStore.getState();
   const etebase = useEtebaseStore.getState();
 
-  // Store previous state for rollback
-  const previous = calStore.events.find((e) => e.id === event.id);
-
   // Optimistic local update
   calStore.updateEvent(event.id, event);
 
@@ -62,7 +54,6 @@ export async function updateEvent(event: CalendarEvent): Promise<void> {
     await etebase.updateItem('calendar', event.id, content);
   } catch (e: any) {
     console.error('Failed to update event in Etebase:', e);
-    if (previous) calStore.updateEvent(event.id, previous);
     throw e;
   }
 }
@@ -71,9 +62,6 @@ export async function deleteEvent(eventId: string): Promise<void> {
   const calStore = useCalendarStore.getState();
   const etebase = useEtebaseStore.getState();
 
-  // Store for rollback
-  const removed = calStore.events.find((e) => e.id === eventId);
-
   // Optimistic local remove
   calStore.removeEvent(eventId);
 
@@ -81,7 +69,6 @@ export async function deleteEvent(eventId: string): Promise<void> {
     await etebase.deleteItem('calendar', eventId);
   } catch (e: any) {
     console.error('Failed to delete event in Etebase:', e);
-    if (removed) calStore.addEvent(removed);
     throw e;
   }
 }
@@ -112,7 +99,6 @@ export async function updateContact(contact: Contact): Promise<void> {
   const conStore = useContactStore.getState();
   const etebase = useEtebaseStore.getState();
 
-  const previous = conStore.contacts.find((c) => c.id === contact.id);
   conStore.updateContact(contact.id, contact);
 
   try {
@@ -121,7 +107,6 @@ export async function updateContact(contact: Contact): Promise<void> {
     await etebase.updateItem('contacts', contact.id, content);
   } catch (e: any) {
     console.error('Failed to update contact in Etebase:', e);
-    if (previous) conStore.updateContact(contact.id, previous);
     throw e;
   }
 }
@@ -130,14 +115,12 @@ export async function deleteContact(contactId: string): Promise<void> {
   const conStore = useContactStore.getState();
   const etebase = useEtebaseStore.getState();
 
-  const removed = conStore.contacts.find((c) => c.id === contactId);
   conStore.removeContact(contactId);
 
   try {
     await etebase.deleteItem('contacts', contactId);
   } catch (e: any) {
     console.error('Failed to delete contact in Etebase:', e);
-    if (removed) conStore.addContact(removed);
     throw e;
   }
 }
@@ -168,7 +151,6 @@ export async function updateTask(task: Task): Promise<void> {
   const tskStore = useTaskStore.getState();
   const etebase = useEtebaseStore.getState();
 
-  const previous = tskStore.tasks.find((t) => t.id === task.id);
   tskStore.updateTask(task.id, task);
 
   try {
@@ -177,7 +159,6 @@ export async function updateTask(task: Task): Promise<void> {
     await etebase.updateItem('tasks', task.id, content);
   } catch (e: any) {
     console.error('Failed to update task in Etebase:', e);
-    if (previous) tskStore.updateTask(task.id, previous);
     throw e;
   }
 }
@@ -186,14 +167,12 @@ export async function deleteTask(taskId: string): Promise<void> {
   const tskStore = useTaskStore.getState();
   const etebase = useEtebaseStore.getState();
 
-  const removed = tskStore.tasks.find((t) => t.id === taskId);
   tskStore.removeTask(taskId);
 
   try {
     await etebase.deleteItem('tasks', taskId);
   } catch (e: any) {
     console.error('Failed to delete task in Etebase:', e);
-    if (removed) tskStore.addTask(removed);
     throw e;
   }
 }

@@ -57,10 +57,7 @@ class TasksSyncAdapterService: SyncAdapterService() {
 
             updateLocalTaskLists(taskProvider, account, accountSettings)
 
-            val principal = accountSettings.uri?.toHttpUrlOrNull() ?: run {
-                Logger.log.warning("Task sync skipped: no valid URI for account ${account.name}")
-                return
-            }
+            val principal = accountSettings.uri?.toHttpUrlOrNull()!!
 
             for (taskList in AndroidTaskList.find(account, taskProvider, LocalTaskList.Factory, "${TaskContract.TaskLists.SYNC_ENABLED}!=0", null)) {
                 Logger.log.info("Synchronizing task list #${taskList.id} [${taskList.syncId}]")
@@ -77,12 +74,11 @@ class TasksSyncAdapterService: SyncAdapterService() {
             val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
             val collections: List<CachedCollection>
             synchronized(etebaseLocalCache) {
-                HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
-                    val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
-                    val colMgr = etebase.collectionManager
+                val httpClient = HttpClient.Builder(context, settings).setForeground(false).build()
+                val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
+                val colMgr = etebase.collectionManager
 
-                    collections = etebaseLocalCache.collectionList(colMgr).filter { it.collectionType == Constants.ETEBASE_TYPE_TASKS }
-                }
+                collections = etebaseLocalCache.collectionList(colMgr).filter { it.collectionType == Constants.ETEBASE_TYPE_TASKS }
             }
 
             for (collection in collections) {

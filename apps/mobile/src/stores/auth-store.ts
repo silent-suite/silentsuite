@@ -1,9 +1,5 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
-import { useCalendarStore } from './calendar-store';
-import { useContactStore } from './contact-store';
-import { useTaskStore } from './task-store';
-import { mmkv } from './mmkv-storage';
 
 const ETEBASE_SESSION_KEY = 'etebase_session';
 const ETEBASE_USER_KEY = 'etebase_user';
@@ -18,7 +14,7 @@ interface AuthState {
   etebaseSession: string | null;
 
   login: (email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
+  logout: () => void;
   restoreSession: () => Promise<void>;
 }
 
@@ -73,14 +69,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Clear secure storage
     await SecureStore.deleteItemAsync(ETEBASE_SESSION_KEY);
     await SecureStore.deleteItemAsync(ETEBASE_USER_KEY);
-
-    // Clear domain stores
-    useCalendarStore.getState().setEvents([]);
-    useContactStore.getState().setContacts([]);
-    useTaskStore.getState().setTasks([]);
-
-    // Clear MMKV cache
-    mmkv.clearAll();
 
     set({
       isAuthenticated: false,
