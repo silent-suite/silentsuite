@@ -16,6 +16,10 @@ import {
   ExternalLink,
   Shield,
   Globe,
+  AlertTriangle,
+  Clock,
+  CreditCard,
+  TrendingUp,
 } from 'lucide-react'
 
 const BILLING_API_URL =
@@ -100,6 +104,33 @@ function formatDate(iso: string): string {
   })
 }
 
+function formatShortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+function daysSince(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const config: Record<string, { bg: string; text: string; label: string }> = {
+    active: { bg: 'bg-emerald-500/10', text: 'text-emerald-500', label: 'Active' },
+    trialing: { bg: 'bg-blue-500/10', text: 'text-blue-400', label: 'Trialing' },
+    past_due: { bg: 'bg-amber-500/10', text: 'text-amber-500', label: 'Past Due' },
+    cancelled: { bg: 'bg-red-500/10', text: 'text-red-400', label: 'Cancelled' },
+  }
+  const c = config[status] ?? { bg: 'bg-[rgb(var(--border))]', text: 'text-[rgb(var(--muted))]', label: status.replace(/_/g, ' ') }
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${c.bg} ${c.text}`}>
+      {c.label}
+    </span>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const router = useRouter()
@@ -110,7 +141,6 @@ export default function AdminDashboard() {
   // Check admin access
   useEffect(() => {
     if (isSelfHosted) {
-      // In self-hosted mode, all users are admin — skip billing API check
       setAuthorized(true)
       setLoading(false)
       return
@@ -158,6 +188,7 @@ export default function AdminDashboard() {
       ]
     : [
         { key: 'overview', label: 'Overview' },
+        { key: 'payments', label: 'Failed Payments' },
         { key: 'users', label: 'User Lookup' },
         { key: 'health', label: 'System Health' },
       ]
@@ -167,12 +198,12 @@ export default function AdminDashboard() {
       <h1 className="text-lg font-semibold text-[rgb(var(--foreground))]">Admin Dashboard</h1>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-[rgb(var(--border))]">
+      <div className="flex gap-1 overflow-x-auto border-b border-[rgb(var(--border))] -mx-1 px-1">
         {tabs.map(({ key, label }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            className={`whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
               activeTab === key
                 ? 'border-[rgb(var(--primary))] text-[rgb(var(--primary))]'
                 : 'border-transparent text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
@@ -184,6 +215,7 @@ export default function AdminDashboard() {
       </div>
 
       {activeTab === 'overview' && (isSelfHosted ? <SelfHostedOverviewTab /> : <OverviewTab />)}
+      {activeTab === 'payments' && !isSelfHosted && <FailedPaymentsTab />}
       {activeTab === 'users' && (isSelfHosted ? <SelfHostedUsersTab /> : <UserLookupTab />)}
       {activeTab === 'health' && (isSelfHosted ? <SelfHostedHealthTab /> : <HealthTab />)}
     </div>
@@ -327,7 +359,6 @@ function SelfHostedHealthTab() {
         method: 'GET',
         mode: 'no-cors',
       })
-      // With no-cors, an opaque response (type "opaque") means the server is reachable
       if (res.ok || res.type === 'opaque') {
         setEtebaseStatus('ok')
       } else {
@@ -407,10 +438,10 @@ function SelfHostedHealthTab() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// SaaS Tabs (existing behavior — unchanged)
+// SaaS Tabs
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// ─── Overview Tab (Story 8.2) ─────────────────────────────────────────
+// ─── Overview Tab ─────────────────────────────────────────────────────
 function OverviewTab() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
@@ -442,18 +473,61 @@ function OverviewTab() {
   useEffect(() => { fetchMetrics() }, [fetchMetrics])
   useEffect(() => { fetchEvents(eventsOffset) }, [fetchEvents, eventsOffset])
 
+  const totalUsers = metrics
+    ? metrics.subscribers.active + metrics.subscribers.trialing + metrics.subscribers.past_due + metrics.subscribers.cancelled + metrics.subscribers.none
+    : 0
+
   return (
     <div className="space-y-6">
-      {/* Metrics Cards */}
+      {/* Quick Stats Cards */}
       {metricsLoading ? (
-        <p className="text-sm text-[rgb(var(--muted))]">Loading metrics...</p>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 animate-pulse">
+              <div className="h-3 w-16 rounded bg-[rgb(var(--border))]" />
+              <div className="mt-2 h-7 w-20 rounded bg-[rgb(var(--border))]" />
+            </div>
+          ))}
+        </div>
       ) : metrics ? (
         <>
-          {/* MRR highlight */}
+          {/* Quick Stats Row */}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-[rgb(var(--muted))]" />
+                <p className="text-xs text-[rgb(var(--muted))]">Total Users</p>
+              </div>
+              <p className="mt-1 text-2xl font-bold text-[rgb(var(--foreground))]">{totalUsers}</p>
+            </div>
+            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-emerald-500" />
+                <p className="text-xs text-[rgb(var(--muted))]">Active Subscribers</p>
+              </div>
+              <p className="mt-1 text-2xl font-bold text-emerald-500">{metrics.subscribers.active}</p>
+            </div>
+            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+              <div className="flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-[rgb(var(--primary))]" />
+                <p className="text-xs text-[rgb(var(--muted))]">MRR</p>
+              </div>
+              <p className="mt-1 text-2xl font-bold text-[rgb(var(--foreground))]">${metrics.mrr.toFixed(2)}</p>
+            </div>
+            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+              <div className="flex items-center gap-2">
+                <UserPlus className="h-4 w-4 text-blue-400" />
+                <p className="text-xs text-[rgb(var(--muted))]">Signups Today</p>
+              </div>
+              <p className="mt-1 text-2xl font-bold text-[rgb(var(--foreground))]">{metrics.signups.today}</p>
+            </div>
+          </div>
+
+          {/* MRR Card with Subscriber Breakdown */}
           <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 mb-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10">
-                <DollarSign className="h-5 w-5 text-[rgb(var(--primary))]" />
+                <CreditCard className="h-5 w-5 text-[rgb(var(--primary))]" />
               </div>
               <div>
                 <p className="text-xs text-[rgb(var(--muted))]">Monthly Recurring Revenue</p>
@@ -462,28 +536,28 @@ function OverviewTab() {
                 </p>
               </div>
             </div>
+
+            {/* Subscriber breakdown */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              {([
+                { label: 'Active', value: metrics.subscribers.active, color: 'text-emerald-500', bg: 'bg-emerald-500' },
+                { label: 'Trialing', value: metrics.subscribers.trialing, color: 'text-blue-400', bg: 'bg-blue-400' },
+                { label: 'Past Due', value: metrics.subscribers.past_due, color: 'text-amber-500', bg: 'bg-amber-500' },
+                { label: 'Cancelled', value: metrics.subscribers.cancelled, color: 'text-red-400', bg: 'bg-red-400' },
+                { label: 'No Plan', value: metrics.subscribers.none, color: 'text-[rgb(var(--muted))]', bg: 'bg-[rgb(var(--muted))]' },
+              ] as const).map(({ label, value, color, bg }) => (
+                <div key={label} className="flex items-center gap-3 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2">
+                  <div className={`h-2 w-2 rounded-full ${bg}`} />
+                  <div>
+                    <p className="text-xs text-[rgb(var(--muted))]">{label}</p>
+                    <p className={`text-lg font-semibold ${color}`}>{value}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Subscriber counts */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {([
-              { label: 'Active', value: metrics.subscribers.active, color: 'text-emerald-500' },
-              { label: 'Trialing', value: metrics.subscribers.trialing, color: 'text-blue-400' },
-              { label: 'Past Due', value: metrics.subscribers.past_due, color: 'text-amber-500' },
-              { label: 'Cancelled', value: metrics.subscribers.cancelled, color: 'text-red-400' },
-              { label: 'None', value: metrics.subscribers.none, color: 'text-[rgb(var(--muted))]' },
-            ] as const).map(({ label, value, color }) => (
-              <div
-                key={label}
-                className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4"
-              >
-                <p className="text-xs text-[rgb(var(--muted))]">{label}</p>
-                <p className={`text-xl font-semibold ${color}`}>{value}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Signup counts */}
+          {/* Signups */}
           <div className="grid grid-cols-3 gap-3">
             {([
               { label: 'Signups Today', value: metrics.signups.today },
@@ -584,7 +658,128 @@ function OverviewTab() {
   )
 }
 
-// ─── User Lookup Tab (Story 8.3) ──────────────────────────────────────
+// ─── Failed Payments Tab ──────────────────────────────────────────────
+function FailedPaymentsTab() {
+  const [pastDueUsers, setPastDueUsers] = useState<UserListItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchPastDueUsers = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      // Fetch all users and filter to past_due on the client side.
+      // The billing API /admin/users endpoint returns paginated results —
+      // fetch enough to capture all past_due users.
+      const res = await fetch(
+        `${BILLING_API_URL}/admin/users?limit=200&offset=0`,
+        { credentials: 'include' },
+      )
+      if (res.ok) {
+        const data: UsersPage = await res.json()
+        setPastDueUsers(data.users.filter(u => u.subscriptionStatus === 'past_due'))
+      } else {
+        setError('Failed to load user data')
+      }
+    } catch {
+      setError('API unavailable')
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { fetchPastDueUsers() }, [fetchPastDueUsers])
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Failed Payments</h2>
+          {!loading && (
+            <span className="text-xs text-[rgb(var(--muted))]">({pastDueUsers.length} users)</span>
+          )}
+        </div>
+        <button
+          onClick={fetchPastDueUsers}
+          disabled={loading}
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <p className="text-sm text-red-400">{error}</p>
+      )}
+
+      {loading && pastDueUsers.length === 0 ? (
+        <p className="text-sm text-[rgb(var(--muted))]">Loading past due accounts...</p>
+      ) : pastDueUsers.length === 0 ? (
+        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-8 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10">
+            <CreditCard className="h-6 w-6 text-emerald-500" />
+          </div>
+          <p className="mt-3 text-sm font-medium text-[rgb(var(--foreground))]">No failed payments</p>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">All subscribers are in good standing</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {/* Summary banner */}
+          <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+            <p className="text-sm text-amber-500">
+              <span className="font-medium">{pastDueUsers.length}</span> user{pastDueUsers.length !== 1 ? 's' : ''} with
+              past due payments requiring attention
+            </p>
+          </div>
+
+          {/* Past due users list */}
+          <div className="overflow-x-auto rounded-lg border border-[rgb(var(--border))]">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
+                  <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Email</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Status</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Plan</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Days Past Due</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Joined</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pastDueUsers.map((u) => (
+                  <tr
+                    key={u.id}
+                    className="border-b border-[rgb(var(--border))] last:border-b-0 bg-amber-500/[0.02] hover:bg-amber-500/5 transition-colors"
+                  >
+                    <td className="px-4 py-2.5 text-sm text-[rgb(var(--foreground))] font-mono">{u.email}</td>
+                    <td className="px-4 py-2.5">
+                      <StatusBadge status={u.subscriptionStatus} />
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-[rgb(var(--foreground))] capitalize">
+                      {u.planId?.replace(/_/g, ' ') ?? '—'}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="h-3 w-3 text-amber-500" />
+                        <span className="text-xs font-medium text-amber-500">
+                          {daysSince(u.createdAt)}d
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{formatShortDate(u.createdAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── User Lookup Tab ──────────────────────────────────────────────────
 function UserLookupTab() {
   const [searchEmail, setSearchEmail] = useState('')
   const [lookupUser, setLookupUser] = useState<LookedUpUser | null>(null)
@@ -596,6 +791,9 @@ function UserLookupTab() {
   const [usersLoading, setUsersLoading] = useState(true)
   const [usersOffset, setUsersOffset] = useState(0)
   const USERS_LIMIT = 20
+
+  // Table search filter
+  const [tableFilter, setTableFilter] = useState('')
 
   const fetchUsers = useCallback(async (offset: number) => {
     setUsersLoading(true)
@@ -638,28 +836,22 @@ function UserLookupTab() {
     setLookupLoading(false)
   }
 
-  const statusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'text-emerald-500'
-      case 'trialing': return 'text-blue-400'
-      case 'past_due': return 'text-amber-500'
-      case 'cancelled': return 'text-red-400'
-      default: return 'text-[rgb(var(--muted))]'
-    }
-  }
-
   const totalPages = usersPage ? Math.ceil(usersPage.total / USERS_LIMIT) : 0
   const currentPage = Math.floor(usersOffset / USERS_LIMIT) + 1
 
+  const filteredUsers = usersPage?.users.filter(u =>
+    !tableFilter || u.email.toLowerCase().includes(tableFilter.toLowerCase())
+  )
+
   return (
     <div className="space-y-6">
-      {/* Search */}
+      {/* Email Lookup */}
       <form onSubmit={handleLookup} className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
           <input
             type="email"
-            placeholder="Search by email address..."
+            placeholder="Look up user by exact email address..."
             value={searchEmail}
             onChange={(e) => setSearchEmail(e.target.value)}
             className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-2 pl-10 pr-4 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:border-[rgb(var(--primary))] focus:outline-none focus:ring-1 focus:ring-[rgb(var(--primary))]"
@@ -680,23 +872,20 @@ function UserLookupTab() {
 
       {lookupUser && (
         <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5 space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[rgb(var(--primary))]/10">
-              <Users className="h-5 w-5 text-[rgb(var(--primary))]" />
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[rgb(var(--primary))]/10">
+                <Users className="h-5 w-5 text-[rgb(var(--primary))]" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[rgb(var(--foreground))]">{lookupUser.email}</p>
+                <p className="text-xs text-[rgb(var(--muted))]">Member since {formatShortDate(lookupUser.createdAt)}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-medium text-[rgb(var(--foreground))]">{lookupUser.email}</p>
-              <p className="text-xs text-[rgb(var(--muted))]">Member since {formatDate(lookupUser.createdAt)}</p>
-            </div>
+            <StatusBadge status={lookupUser.subscriptionStatus} />
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            <div>
-              <p className="text-xs text-[rgb(var(--muted))]">Status</p>
-              <p className={`text-sm font-medium capitalize ${statusColor(lookupUser.subscriptionStatus)}`}>
-                {lookupUser.subscriptionStatus.replace(/_/g, ' ')}
-              </p>
-            </div>
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Plan</p>
               <p className="text-sm text-[rgb(var(--foreground))] capitalize">
@@ -712,13 +901,13 @@ function UserLookupTab() {
             {lookupUser.trialEndsAt && (
               <div>
                 <p className="text-xs text-[rgb(var(--muted))]">Trial Ends</p>
-                <p className="text-sm text-[rgb(var(--foreground))]">{formatDate(lookupUser.trialEndsAt)}</p>
+                <p className="text-sm text-[rgb(var(--foreground))]">{formatShortDate(lookupUser.trialEndsAt)}</p>
               </div>
             )}
             {lookupUser.currentPeriodEnd && (
               <div>
                 <p className="text-xs text-[rgb(var(--muted))]">Period End</p>
-                <p className="text-sm text-[rgb(var(--foreground))]">{formatDate(lookupUser.currentPeriodEnd)}</p>
+                <p className="text-sm text-[rgb(var(--foreground))]">{formatShortDate(lookupUser.currentPeriodEnd)}</p>
               </div>
             )}
             {lookupUser.stripeCustomerId && (
@@ -733,7 +922,7 @@ function UserLookupTab() {
 
       {/* All Users Table */}
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
-        <div className="flex items-center justify-between border-b border-[rgb(var(--border))] px-4 py-3">
+        <div className="flex flex-col gap-3 border-b border-[rgb(var(--border))] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-[rgb(var(--muted))]" />
             <h3 className="text-sm font-medium text-[rgb(var(--foreground))]">All Users</h3>
@@ -741,14 +930,26 @@ function UserLookupTab() {
               <span className="text-xs text-[rgb(var(--muted))]">({usersPage.total} total)</span>
             )}
           </div>
-          <button
-            onClick={() => fetchUsers(usersOffset)}
-            disabled={usersLoading}
-            className="flex items-center gap-1 text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3 w-3 ${usersLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[rgb(var(--muted))]" />
+              <input
+                type="text"
+                placeholder="Filter by email..."
+                value={tableFilter}
+                onChange={(e) => setTableFilter(e.target.value)}
+                className="w-48 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] py-1.5 pl-8 pr-3 text-xs text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:border-[rgb(var(--primary))] focus:outline-none focus:ring-1 focus:ring-[rgb(var(--primary))]"
+              />
+            </div>
+            <button
+              onClick={() => fetchUsers(usersOffset)}
+              disabled={usersLoading}
+              className="flex items-center gap-1 text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3 w-3 ${usersLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -758,8 +959,8 @@ function UserLookupTab() {
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Email</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Status</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Plan</th>
-                <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Founding</th>
-                <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Admin</th>
+                <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Founding</th>
+                <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Admin</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Joined</th>
               </tr>
             </thead>
@@ -770,36 +971,34 @@ function UserLookupTab() {
                     Loading users...
                   </td>
                 </tr>
-              ) : usersPage?.users.length === 0 ? (
+              ) : filteredUsers?.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
-                    No users found
+                    {tableFilter ? 'No users match filter' : 'No users found'}
                   </td>
                 </tr>
               ) : (
-                usersPage?.users.map((u) => (
+                filteredUsers?.map((u) => (
                   <tr
                     key={u.id}
                     className="border-b border-[rgb(var(--border))] last:border-b-0 hover:bg-[rgb(var(--background))]/50 transition-colors cursor-pointer"
                     onClick={() => { setSearchEmail(u.email); }}
                   >
-                    <td className="px-4 py-2.5 text-sm text-[rgb(var(--foreground))] font-mono">{u.email}</td>
+                    <td className="px-4 py-2.5 text-sm text-[rgb(var(--foreground))] font-mono truncate max-w-[200px]">{u.email}</td>
                     <td className="px-4 py-2.5">
-                      <span className={`text-xs font-medium capitalize ${statusColor(u.subscriptionStatus)}`}>
-                        {u.subscriptionStatus.replace(/_/g, ' ')}
-                      </span>
+                      <StatusBadge status={u.subscriptionStatus} />
                     </td>
                     <td className="px-4 py-2.5 text-xs text-[rgb(var(--foreground))] capitalize">
                       {u.planId?.replace(/_/g, ' ') ?? '—'}
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className="hidden px-4 py-2.5 sm:table-cell">
                       {u.foundingMember ? (
                         <span className="text-xs font-medium text-emerald-500">Yes</span>
                       ) : (
                         <span className="text-xs text-[rgb(var(--muted))]">No</span>
                       )}
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className="hidden px-4 py-2.5 sm:table-cell">
                       {u.isAdmin ? (
                         <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-500">
                           <Shield className="h-3 w-3" /> Yes
@@ -808,7 +1007,7 @@ function UserLookupTab() {
                         <span className="text-xs text-[rgb(var(--muted))]">No</span>
                       )}
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{formatDate(u.createdAt)}</td>
+                    <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{formatShortDate(u.createdAt)}</td>
                   </tr>
                 ))
               )}
@@ -846,7 +1045,7 @@ function UserLookupTab() {
   )
 }
 
-// ─── Health Tab (Story 8.3) ───────────────────────────────────────────
+// ─── Health Tab ───────────────────────────────────────────────────────
 function HealthTab() {
   const [health, setHealth] = useState<Health | null>(null)
   const [healthLoading, setHealthLoading] = useState(true)
