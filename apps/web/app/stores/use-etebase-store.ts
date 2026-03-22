@@ -6,6 +6,7 @@ import type {
   SyncChangeEvent,
 } from '@silentsuite/core'
 import { enqueue, isOfflineError } from '@/app/lib/offline-queue'
+import { showErrorToast } from '@/app/stores/use-toast-store'
 
 /**
  * Holds live Etebase SDK objects (Account, Collections, Items, SyncEngine).
@@ -200,6 +201,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // Don't clear the session -- the user might be offline
       // They can retry on next page load
       set({ isInitialized: true })
+      if (!isOfflineError(err)) {
+        showErrorToast('Failed to restore session. Please try signing in again.')
+      }
     }
   },
 
@@ -232,6 +236,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to create ${type} item:`, err)
+        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : 'contact'}. Please try again.`)
       }
       return null
     }
@@ -262,6 +267,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to update ${type} item ${itemUid}:`, err)
+        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : 'contact'}. Please try again.`)
       }
     }
   },
@@ -293,6 +299,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to delete ${type} item ${itemUid}:`, err)
+        showErrorToast(`Failed to delete ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : 'contact'}. Please try again.`)
       }
     }
   },

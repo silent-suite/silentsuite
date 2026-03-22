@@ -7,6 +7,7 @@ import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { showErrorToast } from '@/app/stores/use-toast-store'
 
 type CalendarView = 'week' | 'month'
 
@@ -108,6 +109,10 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
     }
   } catch (err) {
     console.error(`[calendar-store] Failed to ${mode} event in Etebase:`, err)
+    const { isOfflineError } = await import('@/app/lib/offline-queue')
+    if (!isOfflineError(err)) {
+      showErrorToast('Failed to save event. Please try again.')
+    }
     return null
   }
 }
@@ -192,6 +197,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
           const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
           if (isOfflineError(err)) {
             await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: id })
+          } else {
+            showErrorToast('Failed to delete event. Please try again.')
           }
           console.error('[calendar-store] Failed to delete event in Etebase:', err)
         }
@@ -378,6 +385,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
               const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
               if (isOfflineError(err)) {
                 await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: id })
+              } else {
+                showErrorToast('Failed to delete event. Please try again.')
               }
               console.error('[calendar-store] Failed to delete recurring event in Etebase:', err)
             }

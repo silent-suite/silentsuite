@@ -6,6 +6,7 @@ import type { Contact, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
+import { showErrorToast } from '@/app/stores/use-toast-store'
 
 interface NewContact {
   displayName: string
@@ -89,6 +90,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
             }
           } catch (err) {
             console.error('[contact-store] Failed to sync new contact to Etebase:', err)
+            showErrorToast('Failed to save contact. Please try again.')
           }
         }
 
@@ -117,6 +119,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
               await etebase.updateItem('contacts', id, content)
             } catch (err) {
               console.error('[contact-store] Failed to sync contact update to Etebase:', err)
+              showErrorToast('Failed to save contact. Please try again.')
             }
           } else {
             const { serializeContact } = await import('@silentsuite/core')
@@ -139,6 +142,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
               await etebase.deleteItem('contacts', id)
             } catch (err) {
               console.error('[contact-store] Failed to sync contact deletion to Etebase:', err)
+              showErrorToast('Failed to delete contact. Please try again.')
             }
           } else {
             // Item was created offline and not yet synced — enqueue delete with tempId for compaction
