@@ -388,8 +388,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
       if (res.ok) { const data = await res.json(); set({ subscriptionStatus: data.status }) }
     } catch {
-      // Network error — don't clear existing status, enter degraded mode
-      set({ subscriptionStatus: 'billing_unavailable' })
+      // Network error — only enter degraded mode if there's no existing good status
+      const current = get().subscriptionStatus
+      if (!current) {
+        set({ subscriptionStatus: 'billing_unavailable' })
+      }
     }
   },
 
