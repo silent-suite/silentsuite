@@ -211,6 +211,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (isSelfHosted || isCustomServer(serverUrl)) {
         if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
+        syncAdminCookie(true)
         set({
           user: { id: 'self-hosted', email, planId: 'self-hosted', isAdmin: true },
           isAuthenticated: true,
@@ -219,6 +220,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         })
         return
       }
+
+      // Logging in to the default server — clear any stale self-hosted URL
+      localStorage.removeItem('silentsuite-server-url')
 
       const res = await fetch(`${BILLING_API_URL}/auth/token-exchange`, {
         method: 'POST',
@@ -297,9 +301,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
       const hasSession = !!localStorage.getItem('etebase_session')
       if (hasSession) {
+        syncAdminCookie(true)
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, subscriptionStatus: 'active' })
         return true
       }
+      syncAdminCookie(false)
       set({ user: null, isAuthenticated: false })
       return false
     }
@@ -328,8 +334,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
       const hasSession = !!localStorage.getItem('etebase_session')
       if (hasSession) {
+        syncAdminCookie(true)
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active' })
       } else {
+        syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false })
       }
       return
