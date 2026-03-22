@@ -3,8 +3,8 @@ set -euo pipefail
 
 # SilentSuite Self-Hosted Installer
 # -----------------------------------
-# Sets up the SilentSuite sync server with PostgreSQL and Caddy (auto-TLS).
-# Users connect via app.silentsuite.io or mobile apps with a custom server URL.
+# Sets up the SilentSuite sync server with PostgreSQL.
+# You provide your own reverse proxy for TLS.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -38,22 +38,6 @@ fi
 echo "Prerequisites OK: docker, $COMPOSE, openssl"
 echo ""
 
-# ── Prompt for domain ─────────────────────────────────────────────────
-
-echo "Enter the domain for your SilentSuite server."
-echo "This is where your apps will connect to sync data."
-echo "Example: sync.example.com"
-echo ""
-read -rp "Domain: " DOMAIN
-if [[ -z "$DOMAIN" ]]; then
-  echo "ERROR: Domain name is required."
-  exit 1
-fi
-
-echo ""
-echo "SilentSuite server: https://$DOMAIN"
-echo ""
-
 # ── Generate passwords ────────────────────────────────────────────────
 
 echo "Generating secure passwords..."
@@ -63,7 +47,7 @@ SUPER_PASS=$(openssl rand -base64 16 | tr -d '/+=')
 # ── Write .env ─────────────────────────────────────────────────────────
 
 cat > .env <<EOF
-DOMAIN=$DOMAIN
+SERVER_PORT=3735
 DATABASE_PASSWORD=$DATABASE_PASSWORD
 SUPER_USER=admin
 SUPER_PASS=$SUPER_PASS
@@ -117,8 +101,8 @@ echo "============================================"
 echo "  SilentSuite is installed!"
 echo "============================================"
 echo ""
-echo "  Server URL:    https://$DOMAIN"
-echo "  Admin Panel:   https://$DOMAIN/admin/"
+echo "  Server:        http://localhost:3735"
+echo "  Admin Panel:   http://localhost:3735/admin/"
 echo ""
 echo "  Admin user:    admin"
 echo "  Admin pass:    $SUPER_PASS"
@@ -127,10 +111,10 @@ echo "  IMPORTANT: Save these credentials!"
 echo "  They are also stored in .env"
 echo ""
 echo "  Next steps:"
-echo "  1. Point a DNS A record for $DOMAIN to this server's IP"
-echo "  2. Caddy will auto-provision a TLS certificate once DNS propagates"
-echo "  3. Open app.silentsuite.io (or the mobile app)"
-echo "  4. On the signup/login page, expand 'Advanced Settings'"
-echo "  5. Enter https://$DOMAIN as your server URL"
-echo "  6. Create your account and start syncing!"
+echo "  1. Configure your reverse proxy to forward HTTPS traffic"
+echo "     to localhost:3735 (see SELF-HOSTING.md for examples)"
+echo "  2. Open app.silentsuite.io (or the mobile app)"
+echo "  3. On the signup/login page, expand 'Advanced Settings'"
+echo "  4. Enter your server's HTTPS URL"
+echo "  5. Create your account and start syncing!"
 echo ""
