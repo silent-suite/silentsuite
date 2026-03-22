@@ -484,9 +484,20 @@ function StepChoosePlan({
             submitLabel="Start 30-day free trial"
             mode="setup"
           />
+        ) : provisionError ? (
+          <div className="space-y-4 text-center">
+            <p className="text-sm text-red-400">{provisionError}</p>
+            <button
+              onClick={onBack}
+              className="text-sm text-emerald-500 hover:text-emerald-400 transition-colors"
+            >
+              Go back and try again
+            </button>
+          </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-8">
-            <p className="text-sm text-[rgb(var(--muted))]">Waiting for payment setup...</p>
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
+            <p className="mt-3 text-sm text-[rgb(var(--muted))]">Setting up payment...</p>
           </div>
         )}
 
@@ -1234,6 +1245,10 @@ export default function SignupPage() {
         {step === 'vault' && (
           <StepVaultAndRecovery email={email} onComplete={handleVaultComplete} />
         )}
+      </div>
+      {/* Build version indicator */}
+      <div className="fixed bottom-2 left-2 text-[10px] text-slate-600 font-mono select-none pointer-events-none">
+        v0.3.0
       </div>
     </div>
   )
