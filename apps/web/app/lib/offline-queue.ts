@@ -285,10 +285,10 @@ export function onCountChange(fn: CountListener): () => void {
   return () => { listeners.delete(fn) }
 }
 
-/** Returns true if the queue has reached or exceeded MAX_QUEUE_SIZE */
+/** Returns true if pending entries have reached or exceeded MAX_QUEUE_SIZE */
 export async function isQueueFull(): Promise<boolean> {
   const entries = await getAll()
-  return entries.length >= MAX_QUEUE_SIZE
+  return entries.filter((e) => e.status === 'pending').length >= MAX_QUEUE_SIZE
 }
 
 /** Returns pending entries older than the given threshold (defaults to 24h) */
