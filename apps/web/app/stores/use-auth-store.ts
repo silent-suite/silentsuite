@@ -398,22 +398,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) return true
 
     try {
-      // Try to refresh session first
-      const refreshRes = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-      if (refreshRes.ok) {
-        const data = await refreshRes.json()
-        const isAdmin = data.isAdmin === true
-        syncAdminCookie(isAdmin)
-        set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin }, isAuthenticated: true })
-      }
-      // Then fetch subscription
-      const subRes = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
-      if (subRes.ok) {
-        const data = await subRes.json()
-        set({ subscriptionStatus: data.status })
-        return true
-      }
-      return false
+      // Fetch both endpoints — only apply state if BOTH succeed
+      const [refreshRes, subRes] = await Promise.all([
+        fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }),
+        fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' }),
+      ])
+      if (!refreshRes.ok || !subRes.ok) return false
+      const refreshData = await refreshRes.json()
+      const subData = await subRes.json()
+      const isAdmin = refreshData.isAdmin === true
+      syncAdminCookie(isAdmin)
+      set({
+        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin },
+        isAuthenticated: true,
+        subscriptionStatus: subData.status,
+      })
+      return true
     } catch {
       return false
     }
