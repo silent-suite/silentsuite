@@ -9,10 +9,12 @@ const TOAST_DURATION = 3000
 export function OfflineToast() {
   const [visible, setVisible] = useState(false)
   const [fadeOut, setFadeOut] = useState(false)
+  const [trigger, setTrigger] = useState(0)
 
   const show = useCallback(() => {
     setVisible(true)
     setFadeOut(false)
+    setTrigger(t => t + 1)
   }, [])
 
   useEffect(() => {
@@ -33,7 +35,7 @@ export function OfflineToast() {
       clearTimeout(fadeTimer)
       clearTimeout(hideTimer)
     }
-  }, [visible])
+  }, [visible, trigger])
 
   if (!visible) return null
 
