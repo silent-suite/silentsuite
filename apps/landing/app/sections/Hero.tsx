@@ -137,13 +137,6 @@ export default function Hero() {
           <ShieldCheck className="w-4 h-4" />
         </div>
 
-        {/* Coming Soon badge */}
-        <div className="flex justify-center mb-8">
-          <span className="px-3 py-1 rounded-full bg-navy-800 border border-navy-600 text-navy-300 text-xs font-medium">
-            Coming Soon
-          </span>
-        </div>
-
         {/* Headline */}
         <h1 className="text-5xl md:text-7xl font-bold text-white mb-6 leading-tight">
           Your Calendar & Contacts
@@ -159,10 +152,10 @@ export default function Hero() {
         {/* CTA Buttons */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
           <a
-            href="#waitlist"
+            href="https://app.silentsuite.io/signup"
             className="px-8 py-4 bg-teal-400 hover:bg-teal-500 text-navy-950 font-semibold rounded-lg transition-colors"
           >
-            Join the Waitlist
+            Get Started
           </a>
           <a
             href="#problem"
@@ -180,7 +173,7 @@ export default function Hero() {
           </div>
           <div className="flex items-center gap-2">
             <Fingerprint className="w-4 h-4 text-teal-400" />
-            <span>Zero-knowledge &mdash; not even we can read your data</span>
+            <span>Zero-knowledge. Not even we can read your data.</span>
           </div>
           <div className="flex items-center gap-2">
             <Shield className="w-4 h-4 text-teal-400" />

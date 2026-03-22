@@ -46,6 +46,7 @@ export function SyncIndicator() {
 
   const isSyncing = syncStatus === 'syncing'
   const isOffline = syncStatus === 'offline'
+  const isError = syncStatus === 'error'
 
   const handleSync = useCallback(() => {
     if (isSyncing || isOffline) return
@@ -85,8 +86,18 @@ export function SyncIndicator() {
         )}
       </div>
 
+      {/* Error label */}
+      {isError && (
+        <button
+          onClick={handleSync}
+          className="hidden text-xs text-rose-400 hover:text-rose-300 md:inline"
+        >
+          Sync error
+        </button>
+      )}
+
       {/* Pending count label */}
-      {pendingQueueCount > 0 && (
+      {!isError && pendingQueueCount > 0 && (
         <span className="hidden text-xs text-amber-400 md:inline">
           {pendingQueueCount} pending
         </span>

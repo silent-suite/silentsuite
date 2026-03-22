@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Crown, Star, Sparkles, AlertTriangle } from 'lucide-react'
+import { Crown, Star, Sparkles, AlertTriangle, Loader2, Check } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import StripePaymentForm from '@/app/components/stripe-payment-form'
 
@@ -126,6 +126,9 @@ export default function SubscriptionPage() {
   const [changingPlan, setChangingPlan] = useState(false)
   const [changePlanSuccess, setChangePlanSuccess] = useState<{ plan: string; effectiveDate: string; prorated: boolean } | null>(null)
   const [earlyAdopterForfeitConfirmed, setEarlyAdopterForfeitConfirmed] = useState(false)
+  const [selectedChangePlan, setSelectedChangePlan] = useState<string | null>(null)
+  const [changePlanError, setChangePlanError] = useState<string | null>(null)
+  const [changePlanToast, setChangePlanToast] = useState<string | null>(null)
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -187,6 +190,7 @@ export default function SubscriptionPage() {
 
   async function handleChangePlan(newPlanId: string) {
     setChangingPlan(true)
+    setChangePlanError(null)
     try {
       const isEarlyAdopterPlan = data?.plan?.startsWith('early_')
       const res = await fetch(`${BILLING_API_URL}/subscription/change-plan`, {
@@ -201,10 +205,18 @@ export default function SubscriptionPage() {
       if (res.ok) {
         const result = await res.json()
         setChangePlanSuccess(result)
+        setSelectedChangePlan(null)
         await fetchSubscription()
+        // Show toast and auto-dismiss
+        const planInfo = REACTIVATION_PLANS.find(p => p.id === newPlanId)
+        setChangePlanToast(`Switched to ${planInfo?.name ?? 'new plan'}`)
+        setTimeout(() => setChangePlanToast(null), 4000)
+      } else {
+        const body = await res.json().catch(() => null)
+        setChangePlanError(body?.error ?? 'Failed to change plan. Please try again.')
       }
     } catch {
-      // API may not be running in dev
+      setChangePlanError('Unable to reach billing service. Please try again.')
     } finally {
       setChangingPlan(false)
     }
@@ -230,7 +242,6 @@ export default function SubscriptionPage() {
   const isActiveOrTrialing = data.status === 'active' || data.status === 'trialing'
   const accessUntilFormatted = data.renewalDate ? formatDate(data.renewalDate) : 'the end of your current period'
   const isEarlyAdopterPlan = data.plan?.startsWith('early_')
-  const isMonthlyPlan = data.plan?.endsWith('_monthly')
 
   // Filter reactivation plans: show early adopter plans only if user is an early adopter
   const availablePlans = REACTIVATION_PLANS.filter(
@@ -334,7 +345,7 @@ export default function SubscriptionPage() {
       <div className="flex gap-3">
         {isActiveOrTrialing && !data.cancelAtPeriodEnd && (
           <>
-            <Button variant="outline" size="sm" onClick={() => { setShowChangePlanDialog(true); setChangePlanSuccess(null); setEarlyAdopterForfeitConfirmed(false) }}>
+            <Button variant="outline" size="sm" onClick={() => { setShowChangePlanDialog(true); setChangePlanSuccess(null); setEarlyAdopterForfeitConfirmed(false); setSelectedChangePlan(null); setChangePlanError(null) }}>
               Change plan
             </Button>
             <Button
@@ -440,7 +451,7 @@ export default function SubscriptionPage() {
       {/* Change plan dialog */}
       {showChangePlanDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(var(--background))]/80 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-md rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6 space-y-4">
+          <div className="mx-4 w-full max-w-lg rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6 space-y-4">
             {changePlanSuccess ? (
               <>
                 <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Plan changed</h2>
@@ -458,129 +469,152 @@ export default function SubscriptionPage() {
                   Done
                 </Button>
               </>
-            ) : isEarlyAdopterPlan ? (
+            ) : selectedChangePlan ? (
+              /* Confirmation step */
+              (() => {
+                const targetPlan = REACTIVATION_PLANS.find(p => p.id === selectedChangePlan)!
+                const isAnnualSwitch = selectedChangePlan.endsWith('_annual')
+                const isLeavingEarlyAdopter = isEarlyAdopterPlan && selectedChangePlan.startsWith('standard_')
+                return (
+                  <>
+                    <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Confirm plan change</h2>
+                    <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-4 space-y-2">
+                      <p className="text-sm text-[rgb(var(--foreground))]">
+                        Switch to <span className="font-medium">{targetPlan.name}</span> at{' '}
+                        <span className="font-medium">&euro;{targetPlan.price}{targetPlan.period}</span>
+                      </p>
+                      <p className="text-xs text-[rgb(var(--muted))]">
+                        {isAnnualSwitch
+                          ? 'You will be charged the prorated difference immediately.'
+                          : `Your new plan takes effect at your next billing date${data.renewalDate ? ` (${formatDate(data.renewalDate)})` : ''}.`}
+                      </p>
+                    </div>
+                    {isLeavingEarlyAdopter && (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                          <p className="text-sm text-amber-400">
+                            Switching to Standard will forfeit your Early Adopter rate. This cannot be undone.
+                          </p>
+                        </div>
+                        <label className="flex items-center gap-2 text-sm text-[rgb(var(--foreground))] cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={earlyAdopterForfeitConfirmed}
+                            onChange={(e) => setEarlyAdopterForfeitConfirmed(e.target.checked)}
+                            className="rounded border-[rgb(var(--border))]"
+                          />
+                          I understand and want to proceed
+                        </label>
+                      </div>
+                    )}
+                    {changePlanError && (
+                      <p className="text-xs text-red-400">{changePlanError}</p>
+                    )}
+                    <div className="flex gap-3 pt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => { setSelectedChangePlan(null); setChangePlanError(null); setEarlyAdopterForfeitConfirmed(false) }}
+                        disabled={changingPlan}
+                      >
+                        Back
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => handleChangePlan(selectedChangePlan)}
+                        disabled={changingPlan || (isLeavingEarlyAdopter && !earlyAdopterForfeitConfirmed)}
+                      >
+                        {changingPlan ? (
+                          <span className="flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Switching&hellip;
+                          </span>
+                        ) : (
+                          'Confirm switch'
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                )
+              })()
+            ) : (
+              /* Plan selection step */
               <>
                 <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Change plan</h2>
-                <div className="space-y-3">
-                  {/* Switch billing interval within early adopter */}
-                  <Button
-                    size="sm"
-                    onClick={() => handleChangePlan(isMonthlyPlan ? 'early_annual' : 'early_monthly')}
-                    disabled={changingPlan}
-                    className="w-full"
-                  >
-                    {changingPlan ? 'Switching\u2026' : isMonthlyPlan ? 'Switch to Annual (EUR 36/yr)' : 'Switch to Monthly (EUR 3.60/mo)'}
-                  </Button>
-                </div>
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-                    <p className="text-sm text-amber-400">
-                      Switching to Standard will forfeit your Early Adopter rate. This cannot be undone.
-                    </p>
-                  </div>
-                  <label className="flex items-center gap-2 text-sm text-[rgb(var(--foreground))] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={earlyAdopterForfeitConfirmed}
-                      onChange={(e) => setEarlyAdopterForfeitConfirmed(e.target.checked)}
-                      className="rounded border-[rgb(var(--border))]"
-                    />
-                    I understand and want to proceed
-                  </label>
-                </div>
-                <div className="space-y-2">
-                  <Button
-                    size="sm"
-                    onClick={() => handleChangePlan('standard_monthly')}
-                    disabled={!earlyAdopterForfeitConfirmed || changingPlan}
-                    className="w-full"
-                  >
-                    {changingPlan ? 'Switching\u2026' : 'Switch to Standard Monthly (EUR 4.80/mo)'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => handleChangePlan('standard_annual')}
-                    disabled={!earlyAdopterForfeitConfirmed || changingPlan}
-                    className="w-full"
-                  >
-                    {changingPlan ? 'Switching\u2026' : 'Switch to Standard Annual (EUR 48/yr)'}
-                  </Button>
+                <div className="grid gap-3">
+                  {availablePlans.map((plan) => {
+                    const Icon = plan.icon
+                    const isCurrent = plan.id === data.plan
+                    return (
+                      <button
+                        key={plan.id}
+                        disabled={isCurrent}
+                        onClick={() => { setSelectedChangePlan(plan.id); setChangePlanError(null); setEarlyAdopterForfeitConfirmed(false) }}
+                        className={`w-full rounded-lg border p-4 text-left transition-colors ${
+                          isCurrent
+                            ? 'border-emerald-500 bg-emerald-500/5 cursor-default'
+                            : 'border-[rgb(var(--border))] hover:border-[rgb(var(--primary))]/50 hover:bg-[rgb(var(--primary))]/5 cursor-pointer'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 rounded-lg bg-[rgb(var(--border))] p-2">
+                              <Icon className="h-5 w-5 text-[rgb(var(--primary))]" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-medium text-[rgb(var(--foreground))]">{plan.name}</h3>
+                                {isCurrent && (
+                                  <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                                    <Check className="h-3 w-3" /> Current
+                                  </span>
+                                )}
+                                {'badge' in plan && plan.badge && !isCurrent && (
+                                  <span className="rounded-full bg-[rgb(var(--primary))]/10 px-2 py-0.5 text-xs font-medium text-[rgb(var(--primary))]">
+                                    {plan.badge}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-0.5 text-sm text-[rgb(var(--muted))]">{plan.description}</p>
+                              {!isCurrent && (
+                                <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+                                  {plan.id.endsWith('_annual')
+                                    ? 'Prorated charge applies immediately'
+                                    : 'Takes effect at next billing date'}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <span className={`text-xl font-bold ${isCurrent ? 'text-emerald-400' : 'text-[rgb(var(--foreground))]'}`}>
+                              &euro;{plan.price}
+                            </span>
+                            <span className="text-sm text-[rgb(var(--muted))]">{plan.period}</span>
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setShowChangePlanDialog(false)}
-                  disabled={changingPlan}
                   className="w-full"
                 >
-                  Keep Early Adopter rate
+                  Cancel
                 </Button>
-              </>
-            ) : isMonthlyPlan ? (
-              <>
-                <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Switch to annual billing</h2>
-                <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-5 w-5 text-[rgb(var(--primary))]" />
-                    <h3 className="font-medium text-white">Save with annual billing</h3>
-                  </div>
-                  <p className="text-sm text-[rgb(var(--muted))]">
-                    EUR 48/year instead of EUR 57.60 (EUR 4.80/mo &times; 12). The change is effective immediately and your account will be prorated.
-                  </p>
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowChangePlanDialog(false)}
-                    disabled={changingPlan}
-                  >
-                    Keep monthly
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => handleChangePlan('standard_annual')}
-                    disabled={changingPlan}
-                  >
-                    {changingPlan ? 'Switching\u2026' : 'Switch to annual'}
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Switch to monthly billing</h2>
-                <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Star className="h-5 w-5 text-[rgb(var(--primary))]" />
-                    <h3 className="font-medium text-white">Monthly billing — EUR 4.80/mo</h3>
-                  </div>
-                  <p className="text-sm text-[rgb(var(--muted))]">
-                    The change takes effect at the end of your current billing period
-                    {data.renewalDate ? ` on ${formatDate(data.renewalDate)}` : ''}.
-                    No proration — you keep annual access until then.
-                  </p>
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowChangePlanDialog(false)}
-                    disabled={changingPlan}
-                  >
-                    Keep annual
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => handleChangePlan('standard_monthly')}
-                    disabled={changingPlan}
-                  >
-                    {changingPlan ? 'Switching\u2026' : 'Switch to monthly'}
-                  </Button>
-                </div>
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Success toast */}
+      {changePlanToast && (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 shadow-lg backdrop-blur-sm">
+          <p className="text-sm font-medium text-emerald-400">{changePlanToast}</p>
         </div>
       )}
     </div>

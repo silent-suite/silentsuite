@@ -10,6 +10,7 @@ import {
 import { createEventsServicePlugin } from '@schedule-x/events-service'
 import { useTheme } from 'next-themes'
 import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 
@@ -248,6 +249,7 @@ interface CalendarGridProps {
 
 export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGridProps) {
   const { resolvedTheme } = useTheme()
+  const canWrite = useAuthStore((s) => s.canWrite())
   const currentView = useCalendarStore((s) => s.currentView)
   const currentDate = useCalendarStore((s) => s.currentDate)
   const setSelectedEvent = useCalendarStore((s) => s.setSelectedEvent)
@@ -639,6 +641,9 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       if (target.closest('.sx__time-grid-event')) {
         if (!gridEl) return
 
+        // Only allow drag-to-move/resize when canWrite
+        if (!canWrite) return
+
         const eventEl = target.closest('.sx__time-grid-event') as HTMLElement
         const eventRect = eventEl.getBoundingClientRect()
         const isNearBottom = e.clientY > eventRect.bottom - 6
@@ -686,6 +691,9 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
 
       if (!gridEl) return
 
+      // Only allow drag-to-select when canWrite
+      if (!canWrite) return
+
       const dayInfo = getDayColumnInfo(e.clientX, wrapper)
       if (!dayInfo) return
 
@@ -712,11 +720,15 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         const target = e.target as HTMLElement
         const eventEl = target.closest('.sx__time-grid-event') as HTMLElement | null
         if (eventEl) {
-          const rect = eventEl.getBoundingClientRect()
-          if (e.clientY > rect.bottom - 6) {
-            eventEl.style.cursor = 'ns-resize'
+          if (!canWrite) {
+            eventEl.style.cursor = 'default'
           } else {
-            eventEl.style.cursor = 'grab'
+            const rect = eventEl.getBoundingClientRect()
+            if (e.clientY > rect.bottom - 6) {
+              eventEl.style.cursor = 'ns-resize'
+            } else {
+              eventEl.style.cursor = 'grab'
+            }
           }
         }
       }

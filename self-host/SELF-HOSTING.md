@@ -6,11 +6,13 @@ Run your own SilentSuite server. Your data stays on your hardware, fully end-to-
 
 You run the SilentSuite sync server and database. Your users connect via [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile apps, pointing at your server URL.
 
+You provide your own reverse proxy (nginx, Caddy, Traefik, Cloudflare Tunnel, etc.) to handle TLS and forward traffic to the SilentSuite server on port 3735.
+
 ```
     Your Server                         SilentSuite Apps
   ┌─────────────────┐
-  │  Caddy (HTTPS)  │◄──────────── app.silentsuite.io
-  │       :443      │              (or mobile apps)
+  │  Your Reverse   │◄──────────── app.silentsuite.io
+  │  Proxy (HTTPS)  │              (or mobile apps)
   └────────┬────────┘              enter your server URL
            │                       in Advanced Settings
   ┌────────┴────────┐
@@ -27,7 +29,6 @@ You run the SilentSuite sync server and database. Your users connect via [app.si
 
 | Service | Image | Role |
 |---------|-------|------|
-| **Caddy** | `caddy:2-alpine` | Reverse proxy with automatic TLS (Let's Encrypt) |
 | **SilentSuite Server** | `victorrds/etebase` | Sync server (built on the Etebase protocol). All data is E2E encrypted. |
 | **PostgreSQL** | `postgres:16-alpine` | Database for encrypted sync data and user accounts |
 
@@ -35,16 +36,8 @@ You run the SilentSuite sync server and database. Your users connect via [app.si
 
 - A Linux server (Ubuntu 22.04+, Debian 12+, or similar)
 - Docker Engine 24+ with Compose v2
-- A domain name (e.g., `sync.example.com`)
-- Port 80 and 443 open on your firewall
-
-## DNS Setup
-
-Create **one A record** pointing to your server's public IP:
-
-| Type | Name | Value |
-|------|------|-------|
-| A | `sync.example.com` | `YOUR_SERVER_IP` |
+- A reverse proxy for TLS termination (nginx, Caddy, Traefik, etc.)
+- A domain name (e.g., `sync.example.com`) with DNS pointing to your server
 
 ## Quick Start
 
@@ -57,12 +50,13 @@ chmod +x install.sh update.sh verify.sh
 
 The installer will:
 1. Check that Docker and Docker Compose are installed
-2. Prompt for your domain name
-3. Generate secure random passwords
-4. Write the `.env` file
-5. Pull Docker images and start all containers
-6. Wait for health checks to pass
-7. Print your server URL and admin credentials
+2. Generate secure random passwords
+3. Write the `.env` file
+4. Pull Docker images and start all containers
+5. Wait for health checks to pass
+6. Print your server URL and admin credentials
+
+Then configure your reverse proxy to forward HTTPS traffic to `localhost:3735`.
 
 ## Manual Setup
 
@@ -85,7 +79,6 @@ The installer will:
    ```
 
    Fill in all values in `.env`:
-   - `DOMAIN` -- your domain (e.g., `sync.example.com`)
    - `DATABASE_PASSWORD` -- the generated database password
    - `SUPER_USER` -- admin username (default: `admin`)
    - `SUPER_PASS` -- the generated admin password
@@ -95,13 +88,76 @@ The installer will:
    docker compose up -d
    ```
 
+5. **Set up your reverse proxy** (see examples below).
+
+## Reverse Proxy Examples
+
+The SilentSuite server listens on `127.0.0.1:3735` by default. Configure your reverse proxy to forward HTTPS traffic to it.
+
+### Caddy
+
+```
+sync.example.com {
+    reverse_proxy localhost:3735
+}
+```
+
+### nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name sync.example.com;
+
+    ssl_certificate     /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3735;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 50m;
+    }
+}
+```
+
+### Traefik (docker labels)
+
+```yaml
+# Add these labels to the server service in docker-compose.yml
+labels:
+  - "traefik.enable=true"
+  - "traefik.http.routers.silentsuite.rule=Host(`sync.example.com`)"
+  - "traefik.http.routers.silentsuite.tls.certresolver=letsencrypt"
+  - "traefik.http.services.silentsuite.loadbalancer.server.port=3735"
+```
+
+> **Note:** If Traefik itself runs in Docker, replace the `ports:` mapping on the server service with `expose: ["3735"]` in `docker-compose.yml` and ensure Traefik shares a Docker network with the server container.
+
+### Cloudflare Tunnel
+
+```bash
+cloudflared tunnel --url http://localhost:3735
+```
+
+### Recommended Security Headers
+
+Add these headers in your reverse proxy for defense in depth:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy: camera=(), microphone=(), geolocation=()`
+
 ## Connecting Your Apps
 
-Once your server is running:
+Once your server is running and your reverse proxy is configured:
 
 1. Open [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile app
 2. On the signup or login page, expand **Advanced Settings**
-3. Enter `https://your-domain.com` as the server URL
+3. Enter `https://sync.example.com` as the server URL
 4. Create your account and start syncing
 
 ## Updating
@@ -129,7 +185,7 @@ Run the built-in health checker:
 
 ## Admin Panel
 
-Access the admin panel at `https://your-domain.com/admin/` using the credentials from your `.env` file.
+Access the admin panel at `http://localhost:3735/admin/` (or via your reverse proxy at `https://your-domain.com/admin/`) using the credentials from your `.env` file.
 
 ## Backup and Restore
 
@@ -160,13 +216,7 @@ docker compose restart server
 ```bash
 docker compose logs postgres
 docker compose logs server
-docker compose logs caddy
 ```
-
-### TLS certificates not provisioning
-- Ensure ports 80 and 443 are open on your firewall
-- Verify DNS resolves to your server: `dig your-domain.com`
-- Check Caddy logs: `docker compose logs caddy`
 
 ### Database connection errors
 - Verify PostgreSQL is healthy: `docker compose ps`
@@ -181,6 +231,6 @@ docker compose down -v   # WARNING: This deletes all data!
 ## Security Notes
 
 - PostgreSQL is only accessible within the Docker network (not exposed to the host)
-- Caddy automatically provisions and renews TLS certificates via Let's Encrypt
+- The server binds to `127.0.0.1` only — not accessible from the network without a reverse proxy
 - All sync traffic is end-to-end encrypted. The server never sees your plaintext data.
 - The SilentSuite server is built on the [Etebase protocol](https://docs.etebase.com), an open standard for end-to-end encrypted data sync.

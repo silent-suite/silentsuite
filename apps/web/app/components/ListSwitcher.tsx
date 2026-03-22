@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Plus, ChevronDown, Trash2, Check } from 'lucide-react'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 
 interface ListItem {
   id: string
@@ -26,6 +27,7 @@ export function ListSwitcher({
   onRemoveList,
   label = 'Lists',
 }: ListSwitcherProps) {
+  const canWrite = useAuthStore((s) => s.canWrite())
   const [isOpen, setIsOpen] = useState(false)
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
@@ -98,7 +100,7 @@ export function ListSwitcher({
                   <Check className="ml-auto h-3.5 w-3.5 shrink-0 text-[rgb(var(--primary))]" />
                 )}
               </button>
-              {list.id !== 'default' && (
+              {list.id !== 'default' && canWrite && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
@@ -113,39 +115,41 @@ export function ListSwitcher({
             </div>
           ))}
 
-          <div className="border-t border-[rgb(var(--border))] mt-1 pt-1">
-            {isAdding ? (
-              <div className="flex items-center gap-2 px-3 py-1.5">
-                <input
-                  autoFocus
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleAdd()
-                    if (e.key === 'Escape') {
-                      setIsAdding(false)
-                      setNewName('')
-                    }
-                  }}
-                  onBlur={() => {
-                    if (newName.trim()) handleAdd()
-                    else setIsAdding(false)
-                  }}
-                  placeholder="List name"
-                  className="flex-1 min-w-0 bg-transparent text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] outline-none"
-                />
-              </div>
-            ) : (
-              <button
-                onClick={() => setIsAdding(true)}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add new list
-              </button>
-            )}
-          </div>
+          {canWrite && (
+            <div className="border-t border-[rgb(var(--border))] mt-1 pt-1">
+              {isAdding ? (
+                <div className="flex items-center gap-2 px-3 py-1.5">
+                  <input
+                    autoFocus
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleAdd()
+                      if (e.key === 'Escape') {
+                        setIsAdding(false)
+                        setNewName('')
+                      }
+                    }}
+                    onBlur={() => {
+                      if (newName.trim()) handleAdd()
+                      else setIsAdding(false)
+                    }}
+                    placeholder="List name"
+                    className="flex-1 min-w-0 bg-transparent text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] outline-none"
+                  />
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsAdding(true)}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add new list
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

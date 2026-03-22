@@ -19,14 +19,14 @@ services:
       start_period: 10s
     shm_size: 128mb
     networks:
-      - internal
+      - silentsuite
 
   server:
     image: victorrds/etebase:latest
     container_name: silentsuite-server
     restart: unless-stopped
-    expose:
-      - "3735"
+    ports:
+      - "127.0.0.1:${SERVER_PORT:-3735}:3735"
     depends_on:
       postgres:
         condition: service_healthy
@@ -40,7 +40,7 @@ services:
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
-      ALLOWED_HOSTS: ${DOMAIN}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost}
       SUPER_USER: ${SUPER_USER:-admin}
       SUPER_PASS: ${SUPER_PASS}
     volumes:
@@ -52,35 +52,12 @@ services:
       retries: 3
       start_period: 30s
     networks:
-      - internal
-      - proxy
-
-  caddy:
-    image: caddy:2-alpine
-    container_name: silentsuite-caddy
-    restart: unless-stopped
-    ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    environment:
-      DOMAIN: ${DOMAIN}
-    depends_on:
-      - server
-    networks:
-      - proxy
+      - silentsuite
 
 volumes:
   pgdata:
   server_data:
-  caddy_data:
-  caddy_config:
 
 networks:
-  internal:
-    driver: bridge
-  proxy:
+  silentsuite:
     driver: bridge

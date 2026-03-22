@@ -64,6 +64,9 @@ android {
         resources {
             excludes += ['LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE.txt']
         }
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 
 
