@@ -21,6 +21,8 @@
     "@schedule-x/theme-default": "^4.3.1",
     "@silentsuite/core": "workspace:*",
     "@silentsuite/ui": "workspace:*",
+    "@stripe/react-stripe-js": "^5.6.1",
+    "@stripe/stripe-js": "^8.11.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "jszip": "^3.10.1",

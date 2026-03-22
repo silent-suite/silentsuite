@@ -50,6 +50,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
             NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_51TAx8aPZr2w1sOdtvpdnjDy7I4P6zKxthjFpbdjwyxQA5HJaOCyIKA6Zg4nGG0ffjqnvtD9MdBut281pIqcyaBtt00WOqXFXWL
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -207,7 +207,7 @@ export default function SelfHostingVsHostedPrivateCalendar() {
           version bump is worth more than a year of hosting fees.
         </li>
         <li>
-          <strong>SilentSuite hosted:</strong> $4.99/month. We handle the
+          <strong>SilentSuite hosted:</strong> From &euro;3/month. We handle the
           server, the updates, the backups, the monitoring. You get E2EE sync
           that just works.
         </li>

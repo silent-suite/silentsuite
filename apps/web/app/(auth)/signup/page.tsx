@@ -9,12 +9,27 @@ import { z } from 'zod'
 import {
   Shield, Lock, Check, KeyRound, ChevronRight, User, Crown,
   ShieldCheck, Download, AlertTriangle, Copy, CheckCircle,
-  Users, Settings, Activity, ExternalLink,
+  Users, Settings, Activity, ExternalLink, Rocket, CreditCard, Clock,
+  Gift, ArrowLeft,
 } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
+import StripePaymentForm from '@/app/components/stripe-payment-form'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type PlanId = 'early_monthly' | 'early_annual'
+type TrialPath = '7day' | '30day'
+type BillingInterval = 'monthly' | 'annual'
+
+const PLAN_PRICES: Record<PlanId, { monthly: number; annual: number; annualPerMonth: number }> = {
+  early_monthly: { monthly: 3.60, annual: 36, annualPerMonth: 3 },
+  early_annual: { monthly: 3.60, annual: 36, annualPerMonth: 3 },
+}
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -104,6 +119,65 @@ function PasswordStrength({ password }: { password: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Billing interval toggle (section-level, larger tap targets)
+// ---------------------------------------------------------------------------
+
+function BillingToggle({
+  interval,
+  onChange,
+}: {
+  interval: BillingInterval
+  onChange: (interval: BillingInterval) => void
+}) {
+  return (
+    <div className="flex items-center justify-center gap-1 rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-1">
+      <button
+        onClick={() => onChange('monthly')}
+        className={`rounded-full min-h-[44px] px-4 py-2 text-sm font-medium transition-colors ${
+          interval === 'monthly'
+            ? 'bg-[rgb(var(--primary))] text-white'
+            : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+        }`}
+      >
+        Monthly
+      </button>
+      <button
+        onClick={() => onChange('annual')}
+        className={`rounded-full min-h-[44px] px-4 py-2 text-sm font-medium transition-colors ${
+          interval === 'annual'
+            ? 'bg-[rgb(var(--primary))] text-white'
+            : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+        }`}
+      >
+        Annual
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Price display helper
+// ---------------------------------------------------------------------------
+
+function PriceDisplay({ interval }: { interval: BillingInterval }) {
+  if (interval === 'monthly') {
+    return (
+      <div className="flex items-baseline gap-1">
+        <span className="text-2xl font-bold text-[rgb(var(--foreground))]">&euro;3.60</span>
+        <span className="text-sm text-[rgb(var(--muted))]">/month</span>
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-baseline gap-1">
+      <span className="text-2xl font-bold text-[rgb(var(--foreground))]">&euro;3.00</span>
+      <span className="text-sm text-[rgb(var(--muted))]">/month</span>
+      <span className="ml-2 text-xs font-medium text-emerald-400">&middot; Save 17%</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Step 1: Create Account
 // ---------------------------------------------------------------------------
 
@@ -111,12 +185,14 @@ function StepCreateAccount({
   onNext,
   serverUrl,
   setServerUrl,
+  initialData,
 }: {
   onNext: (data: SignupFormData) => Promise<void>
   serverUrl: string
   setServerUrl: (url: string) => void
+  initialData?: SignupFormData | null
 }) {
-  const [useUsername, setUseUsername] = useState(false)
+  const [useUsername, setUseUsername] = useState(initialData?.username ? true : false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -130,6 +206,7 @@ function StepCreateAccount({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(useUsername ? usernameSignupSchema : emailSignupSchema) as any,
     mode: 'onChange',
+    defaultValues: initialData ?? undefined,
   })
 
   const password = watch('password', '')
@@ -318,53 +395,259 @@ function StepCreateAccount({
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Choose Plan
+// Step 2: Choose your plan (2-card selection + inline payment sub-step)
 // ---------------------------------------------------------------------------
 
-function StepChoosePlan({ onNext }: { onNext: (planId: string) => void }) {
+type PlanView = 'cards' | 'payment'
+
+function StepChoosePlan({
+  interval,
+  onIntervalChange,
+  onSelectFree,
+  onSelectPaid,
+  planView,
+  onBack,
+  clientSecret,
+  provisioning,
+  provisionError,
+  onClearError,
+  onPaymentComplete,
+}: {
+  interval: BillingInterval
+  onIntervalChange: (interval: BillingInterval) => void
+  onSelectFree: () => void
+  onSelectPaid: () => void
+  planView: PlanView
+  onBack: () => void
+  clientSecret: string | null
+  provisioning: boolean
+  provisionError: string | null
+  onClearError: () => void
+  onPaymentComplete: () => void
+}) {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [selectedTrial, setSelectedTrial] = useState<TrialPath>('30day')
+
+  const handleContinue = useCallback(() => {
+    if (selectedTrial === '7day') {
+      onSelectFree()
+    } else {
+      onSelectPaid()
+    }
+  }, [selectedTrial, onSelectFree, onSelectPaid])
+
+  useEffect(() => {
+    // Scroll to top of page on step transitions, not just the element
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [planView])
+
+  // --- Payment sub-step ---
+  if (planView === 'payment') {
+    const priceLabel = interval === 'monthly' ? '\u20AC3.60/month' : '\u20AC3.00/month'
+
+    return (
+      <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+        <div className="space-y-2 text-center">
+          <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Add your payment method</h2>
+          <p className="text-sm text-[rgb(var(--muted))]">
+            Your card will not be charged for 30 days.
+          </p>
+        </div>
+
+        {/* Plan summary bar */}
+        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Crown className="h-4 w-4 text-emerald-400" />
+              <span className="text-sm font-medium text-[rgb(var(--foreground))]">Early Adopter Plan</span>
+            </div>
+            <span className="text-sm text-[rgb(var(--foreground))]">{priceLabel}</span>
+          </div>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">
+            30-day free trial included. Cancel anytime before.
+          </p>
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+            <Lock className="h-3 w-3 text-emerald-500" />
+            <span>Secured by Stripe. We never see your card details.</span>
+          </div>
+        </div>
+
+        {/* Stripe payment form */}
+        {provisioning ? (
+          <div className="flex flex-col items-center justify-center py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
+            <p className="mt-3 text-sm text-[rgb(var(--muted))]">Preparing payment form...</p>
+          </div>
+        ) : clientSecret ? (
+          <StripePaymentForm
+            clientSecret={clientSecret}
+            onSuccess={onPaymentComplete}
+            submitLabel="Start 30-day free trial"
+            mode="setup"
+          />
+        ) : provisionError ? (
+          <div className="space-y-4 text-center">
+            <p className="text-sm text-red-400">{provisionError}</p>
+            <button
+              onClick={onBack}
+              className="text-sm text-emerald-500 hover:text-emerald-400 transition-colors"
+            >
+              Go back and try again
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
+            <p className="mt-3 text-sm text-[rgb(var(--muted))]">Setting up payment...</p>
+          </div>
+        )}
+
+        {/* Back button — bottom-left */}
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to plan selection
+        </button>
+      </div>
+    )
+  }
+
+  // --- Cards view (plan selection) ---
   return (
-    <div className="space-y-6">
+    <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
       <div className="space-y-2 text-center">
         <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Start with a 30-day free trial. Cancel anytime.
+          Early Adopter pricing
         </p>
       </div>
 
-      {/* Founding Member Plan */}
-      <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 ring-1 ring-amber-500/20 flex flex-col relative overflow-hidden">
-        <div className="absolute top-3 right-3">
-          <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-medium text-amber-400">
-            Early supporter
+      {/* Billing toggle — section level */}
+      <div className="flex justify-center">
+        <BillingToggle interval={interval} onChange={onIntervalChange} />
+      </div>
+
+      <div className="space-y-4">
+        {/* Card A: 7 Day Free Trial — no card */}
+        <button
+          onClick={() => setSelectedTrial('7day')}
+          className={`group w-full rounded-xl border-2 p-5 text-left transition-all ${
+            selectedTrial === '7day'
+              ? 'border-emerald-500 bg-emerald-500/5'
+              : 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
+              <Gift className="h-5 w-5 text-[rgb(var(--muted))]" />
+            </div>
+            <div className="flex-1">
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">7 Day Free Trial</h3>
+              <ul className="mt-2 space-y-1.5">
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  Full access to all features
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  No credit card required
+                </li>
+              </ul>
+            </div>
+          </div>
+        </button>
+
+        {/* Card B: 30 Day Free Trial — credit card required */}
+        <button
+          onClick={() => setSelectedTrial('30day')}
+          className={`group w-full rounded-xl border-2 p-6 text-left transition-all ${
+            selectedTrial === '30day'
+              ? 'border-emerald-500 bg-emerald-500/5'
+              : 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80'
+          }`}
+        >
+          <div className="flex items-start gap-4">
+            <div className="rounded-xl bg-emerald-500/15 p-3 shrink-0">
+              <Crown className="h-6 w-6 text-emerald-400" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">30 Day Free Trial</h3>
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 uppercase tracking-wide">
+                  Recommended
+                </span>
+              </div>
+              <div className="mt-2">
+                <PriceDisplay interval={interval} />
+              </div>
+              <ul className="mt-3 space-y-1.5">
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  Full access to all features
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  Credit card required
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  Cancel anytime
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  {interval === 'annual' ? 'Billed annually after trial' : 'Billed monthly after trial'}
+                </li>
+              </ul>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* Continue button */}
+      <Button
+        onClick={handleContinue}
+        disabled={provisioning}
+        className="w-full"
+      >
+        {provisioning ? (
+          <span className="flex items-center justify-center gap-2">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            Setting up...
           </span>
-        </div>
-        <div className="flex items-center gap-3 mb-3">
-          <div className="rounded-lg bg-amber-500/10 p-2.5">
-            <Crown className="h-5 w-5 text-amber-400" />
-          </div>
-          <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">Founding Member</h3>
-        </div>
-        <p className="text-sm leading-relaxed text-[rgb(var(--muted))]">
-          30 days free, then &euro;3/mo. Price locked forever as a thank you for your early support.
-        </p>
-        <div className="mt-5 pt-4 border-t border-amber-500/10">
-          <div className="mb-4 flex items-baseline gap-1.5">
-            <span className="text-3xl font-bold text-[rgb(var(--foreground))]">&euro;3</span>
-            <span className="text-sm text-[rgb(var(--muted))]">/month after trial</span>
-          </div>
-          <Button
-            onClick={() => onNext('founding_member')}
-            className="w-full py-2.5 text-sm bg-amber-600 hover:bg-amber-700"
+        ) : (
+          'Continue'
+        )}
+      </Button>
+
+      {/* Error display */}
+      {provisionError && (
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+          <p className="text-sm text-red-400">{provisionError}</p>
+          <button
+            onClick={onClearError}
+            className="mt-2 text-xs text-red-400 hover:text-red-300 underline"
           >
-            Become a founding member
-          </Button>
+            Dismiss
+          </button>
         </div>
+      )}
+
+      {/* Trust signals */}
+      <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+        <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+        <span>Cancel anytime &middot; Your data stays encrypted &middot; Export anytime</span>
       </div>
 
-      <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
-        <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-        <span>30-day money-back guarantee. Cancel anytime.</span>
-      </div>
+      {/* Back button — bottom-left */}
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back
+      </button>
     </div>
   )
 }
@@ -517,62 +800,7 @@ function StepAdminInfo({ serverUrl, onNext }: { serverUrl: string; onNext: () =>
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Payment (redirects to Stripe Checkout)
-// ---------------------------------------------------------------------------
-
-function StepPayment({ planId, onComplete }: { planId: string; onComplete: () => void }) {
-  const signup = useAuthStore((s: any) => s.signup)
-  const pendingSignup = useAuthStore((s: any) => s.pendingSignup)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    async function processPayment() {
-      if (!pendingSignup) {
-        setError('Signup session expired. Please start again.')
-        return
-      }
-
-      try {
-        const checkoutUrl = await signup(planId)
-        if (checkoutUrl) {
-          // Redirect to Stripe Checkout
-          window.location.href = checkoutUrl
-        } else {
-          // No payment needed (e.g. coupon, or Stripe returned inline)
-          onComplete()
-        }
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Payment setup failed'
-        setError(message)
-      }
-    }
-
-    processPayment()
-  }, [planId, signup, pendingSignup, onComplete])
-
-  if (error) {
-    return (
-      <div className="space-y-4 text-center">
-        <p className="text-sm text-red-400">{error}</p>
-        <Button onClick={() => window.location.reload()} className="w-full">
-          Try again
-        </Button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-col items-center justify-center py-12">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
-      <p className="mt-4 text-sm text-[rgb(var(--muted))]">
-        Setting up your payment...
-      </p>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Step 4: Create Vault + Recovery Key
+// Step 3: Create Vault + Recovery Key
 // ---------------------------------------------------------------------------
 
 function StepVaultAndRecovery({
@@ -759,20 +987,19 @@ IMPORTANT:
 // Progress Stepper
 // ---------------------------------------------------------------------------
 
-type Step = 'account' | 'plan' | 'selfhost' | 'admin' | 'payment' | 'vault'
+type Step = 'account' | 'plan' | 'selfhost' | 'admin' | 'vault'
 
-const STEPS_DEFAULT = [
-  { key: 'account' as const, label: 'Create Account', number: 1 },
-  { key: 'plan' as const, label: 'Choose Plan', number: 2 },
-  { key: 'payment' as const, label: 'Payment', number: 3 },
-  { key: 'vault' as const, label: 'Setup Vault', number: 4 },
+const STEPS_HOSTED = [
+  { key: 'account' as const, label: 'Account', number: 1 },
+  { key: 'plan' as const, label: 'Plan', number: 2 },
+  { key: 'vault' as const, label: 'Setup', number: 3 },
 ]
 
 const STEPS_SELFHOST = [
-  { key: 'account' as const, label: 'Create Account', number: 1 },
+  { key: 'account' as const, label: 'Account', number: 1 },
   { key: 'selfhost' as const, label: 'Self-Hosting', number: 2 },
   { key: 'admin' as const, label: 'Admin Setup', number: 3 },
-  { key: 'vault' as const, label: 'Setup Vault', number: 4 },
+  { key: 'vault' as const, label: 'Setup', number: 4 },
 ]
 
 function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: readonly { key: string; label: string; number: number }[] }) {
@@ -873,10 +1100,20 @@ export default function SignupPage() {
   const router = useRouter()
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
   const signup = useAuthStore((s) => s.signup)
+  const completeSignup = useAuthStore((s) => s.completeSignup)
   const [step, setStep] = useState<Step>('account')
   const [serverUrl, setServerUrl] = useState('')
-  const [selectedPlan, setSelectedPlan] = useState<string | null>(null)
+
+  // Scroll to top on main step changes
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [step])
+  const [selectedInterval, setSelectedInterval] = useState<BillingInterval>('annual')
+  const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [provisionError, setProvisionError] = useState<string | null>(null)
+  const [provisioning, setProvisioning] = useState(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
+  const [planView, setPlanView] = useState<PlanView>('cards')
   const formDataRef = useRef<SignupFormData | null>(null)
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
@@ -896,7 +1133,6 @@ export default function SignupPage() {
     setUsingSelfHostedServer(selfHosted)
 
     if (selfHosted) {
-      // Self-hosted: show free vs support choice
       setStep('selfhost')
     } else {
       setStep('plan')
@@ -905,12 +1141,11 @@ export default function SignupPage() {
 
   const handleSelfHostChoice = useCallback(async (choice: 'free' | 'support') => {
     if (choice === 'support') {
-      // Open Stripe payment link in new tab
+      // TODO: Replace with inline Stripe Elements flow
       window.open('https://buy.stripe.com/test_00wfZjeifgm49n94Qf3VC00', '_blank')
     }
-    // Complete signup as self-hosted (skip billing API)
     try {
-      await signup('self-hosted')
+      await signup('self-hosted', 'immediate')
     } catch {
       // Error displayed by store
     }
@@ -921,21 +1156,64 @@ export default function SignupPage() {
     setStep('vault')
   }, [])
 
-  const handlePlanSelected = useCallback((planId: string) => {
-    setSelectedPlan(planId)
-    setStep('payment')
-  }, [])
+  const handleSelectFree = useCallback(async () => {
+    setProvisioning(true)
+    setProvisionError(null)
+    try {
+      const planId: PlanId = selectedInterval === 'monthly' ? 'early_monthly' : 'early_annual'
+      await signup(planId, '7day')
+      setStep('vault')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to set up your account'
+      setProvisionError(message)
+    } finally {
+      setProvisioning(false)
+    }
+  }, [signup, selectedInterval])
+
+  const handleSelectPaid = useCallback(async () => {
+    setProvisionError(null)
+    setProvisioning(true)
+    setPlanView('payment')
+    try {
+      const planId: PlanId = selectedInterval === 'monthly' ? 'early_monthly' : 'early_annual'
+      const secret = await signup(planId, '30day')
+      if (secret) {
+        setClientSecret(secret)
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to set up your account'
+      setProvisionError(message)
+      setPlanView('cards')
+    } finally {
+      setProvisioning(false)
+    }
+  }, [signup, selectedInterval])
+
+  const handlePlanBack = useCallback(() => {
+    if (planView === 'payment') {
+      setPlanView('cards')
+    } else {
+      // Back from cards view goes to account step
+      setStep('account')
+    }
+  }, [planView])
 
   const handlePaymentComplete = useCallback(() => {
     setStep('vault')
   }, [])
 
   const handleVaultComplete = useCallback(() => {
+    // Finalize authentication — only NOW does the user become authenticated.
+    completeSignup()
     router.push('/onboarding')
-  }, [router])
+  }, [completeSignup, router])
 
   const email = formDataRef.current?.email || formDataRef.current?.username || ''
-  const activeSteps = usingSelfHostedServer ? STEPS_SELFHOST : STEPS_DEFAULT
+
+  const activeSteps = usingSelfHostedServer
+    ? STEPS_SELFHOST
+    : STEPS_HOSTED
 
   return (
     <div className="flex items-start justify-center max-w-2xl mx-auto">
@@ -946,6 +1224,7 @@ export default function SignupPage() {
             onNext={handleAccountComplete}
             serverUrl={serverUrl}
             setServerUrl={setServerUrl}
+            initialData={formDataRef.current}
           />
         )}
         {step === 'selfhost' && (
@@ -955,14 +1234,27 @@ export default function SignupPage() {
           <StepAdminInfo serverUrl={serverUrl.trim()} onNext={handleAdminInfoComplete} />
         )}
         {step === 'plan' && (
-          <StepChoosePlan onNext={handlePlanSelected} />
-        )}
-        {step === 'payment' && selectedPlan && (
-          <StepPayment planId={selectedPlan} onComplete={handlePaymentComplete} />
+          <StepChoosePlan
+            interval={selectedInterval}
+            onIntervalChange={setSelectedInterval}
+            onSelectFree={handleSelectFree}
+            onSelectPaid={handleSelectPaid}
+            planView={planView}
+            onBack={handlePlanBack}
+            clientSecret={clientSecret}
+            provisioning={provisioning}
+            provisionError={provisionError}
+            onClearError={() => setProvisionError(null)}
+            onPaymentComplete={handlePaymentComplete}
+          />
         )}
         {step === 'vault' && (
           <StepVaultAndRecovery email={email} onComplete={handleVaultComplete} />
         )}
+      </div>
+      {/* Build version indicator */}
+      <div className="fixed bottom-2 left-2 text-[10px] text-slate-600 font-mono select-none pointer-events-none">
+        v0.3.0
       </div>
     </div>
   )
