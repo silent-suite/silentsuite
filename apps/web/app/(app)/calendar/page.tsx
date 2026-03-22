@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { CalendarViewSwitcher } from './components/CalendarViewSwitcher'
 import { CalendarGrid, type SlotClickEvent, type EventClickInfo } from './components/CalendarGrid'
@@ -85,6 +86,7 @@ interface CreateDialogState {
 }
 
 export default function CalendarPage() {
+  const canWrite = useAuthStore((s) => s.canWrite())
   const events = useCalendarStore((s) => s.events)
   const isLoading = useCalendarStore((s) => s.isLoading)
   const currentView = useCalendarStore((s) => s.currentView)
@@ -104,12 +106,13 @@ export default function CalendarPage() {
   )
 
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
+    if (!canWrite) return
     setCreateDialog({
       startDate: slot.startDate,
       endDate: slot.endDate,
       allDay: slot.allDay,
     })
-  }, [])
+  }, [canWrite])
 
   const handleCreateDialogClose = useCallback(() => {
     setCreateDialog(null)
@@ -168,8 +171,10 @@ export default function CalendarPage() {
               end.setHours(end.getHours() + 1)
               setCreateDialog({ startDate: start, endDate: end, allDay: false })
             }}
-            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+            disabled={!canWrite}
+            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
             aria-label="New event"
+            title={!canWrite ? 'Subscription required' : undefined}
           >
             <Plus className="h-4 w-4" />
             <span className="hidden lg:inline">New event</span>

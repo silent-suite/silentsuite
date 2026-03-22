@@ -5,6 +5,7 @@ import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil } from
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { ListSwitcher } from '@/app/components/ListSwitcher'
@@ -83,6 +84,7 @@ function sortTasks(tasks: Task[]): Task[] {
 function TaskQuickAdd() {
   const [title, setTitle] = useState('')
   const createTask = useTaskStore((s) => s.createTask)
+  const canWrite = useAuthStore((s) => s.canWrite())
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleSubmit = useCallback(
@@ -103,13 +105,16 @@ function TaskQuickAdd() {
         type="text"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        placeholder="Add a task..."
-        className="flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+        placeholder={canWrite ? 'Add a task...' : 'Read-only mode'}
+        disabled={!canWrite}
+        className={`flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent ${!canWrite ? 'opacity-50 cursor-not-allowed' : ''}`}
+        title={!canWrite ? 'Subscription required' : undefined}
       />
       <button
         type="submit"
-        disabled={!title.trim()}
-        className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+        disabled={!title.trim() || !canWrite}
+        className={`rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${canWrite ? 'hover:bg-emerald-500' : ''}`}
+        title={!canWrite ? 'Subscription required' : undefined}
       >
         Add
       </button>
@@ -301,9 +306,11 @@ function TaskDialog({
 function PrioritySelector({
   value,
   onChange,
+  disabled = false,
 }: {
   value: Priority
   onChange: (p: Priority) => void
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -322,8 +329,10 @@ function PrioritySelector({
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(!open)}
-        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${PRIORITY_COLORS[value]} hover:opacity-80 transition-opacity`}
+        onClick={() => !disabled && setOpen(!open)}
+        disabled={disabled}
+        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${PRIORITY_COLORS[value]} transition-opacity ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'}`}
+        title={disabled ? 'Subscription required' : undefined}
       >
         <Flag className="h-3 w-3" />
         {PRIORITY_LABELS[value]}
@@ -358,9 +367,11 @@ function PrioritySelector({
 function DateInput({
   value,
   onChange,
+  disabled = false,
 }: {
   value: Date | null
   onChange: (d: Date | null) => void
+  disabled?: boolean
 }) {
   const formatted = value
     ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
@@ -380,7 +391,9 @@ function DateInput({
             onChange(null)
           }
         }}
-        className="bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-1 py-0.5 border border-transparent hover:border-[rgb(var(--border))]"
+        readOnly={disabled}
+        className={`bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-1 py-0.5 border border-transparent hover:border-[rgb(var(--border))] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        title={disabled ? 'Subscription required' : undefined}
       />
     </div>
   )
@@ -392,6 +405,7 @@ function TaskItem({ task }: { task: Task }) {
   const updateTask = useTaskStore((s) => s.updateTask)
   const deleteTask = useTaskStore((s) => s.deleteTask)
   const toggleComplete = useTaskStore((s) => s.toggleComplete)
+  const canWrite = useAuthStore((s) => s.canWrite())
 
   const [expanded, setExpanded] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -448,13 +462,15 @@ function TaskItem({ task }: { task: Task }) {
         {/* Checkbox */}
         <button
           type="button"
-          onClick={() => toggleComplete(task.id)}
+          onClick={() => canWrite && toggleComplete(task.id)}
+          disabled={!canWrite}
           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
             task.completed
               ? 'border-emerald-500 bg-emerald-500'
               : 'border-[rgb(var(--muted))]/50 hover:border-emerald-500'
-          }`}
+          } ${!canWrite ? 'opacity-50 cursor-not-allowed' : ''}`}
           aria-label={task.completed ? 'Mark incomplete' : 'Mark complete'}
+          title={!canWrite ? 'Subscription required' : undefined}
         >
           {task.completed && (
             <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -488,6 +504,7 @@ function TaskItem({ task }: { task: Task }) {
                   : 'text-[rgb(var(--foreground))]'
               }`}
               onDoubleClick={(e) => {
+                if (!canWrite) return
                 e.stopPropagation()
                 setEditingTitle(true)
               }}
@@ -517,14 +534,16 @@ function TaskItem({ task }: { task: Task }) {
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setConfirmDelete(true) }}
-            className="no-min-size rounded p-1 text-[rgb(var(--muted))] opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all focus:outline-none focus:opacity-100 md:p-0.5"
-            aria-label="Delete task"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          {canWrite && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true) }}
+              className="no-min-size rounded p-1 text-[rgb(var(--muted))] opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all focus:outline-none focus:opacity-100 md:p-0.5"
+              aria-label="Delete task"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -534,11 +553,13 @@ function TaskItem({ task }: { task: Task }) {
           <div className="flex items-center gap-4 flex-wrap">
             <DateInput
               value={task.due_date}
-              onChange={(d) => updateTask(task.id, { due_date: d })}
+              onChange={(d) => canWrite && updateTask(task.id, { due_date: d })}
+              disabled={!canWrite}
             />
             <PrioritySelector
               value={task.priority}
-              onChange={(p) => updateTask(task.id, { priority: p })}
+              onChange={(p) => canWrite && updateTask(task.id, { priority: p })}
+              disabled={!canWrite}
             />
           </div>
           <textarea
@@ -547,7 +568,8 @@ function TaskItem({ task }: { task: Task }) {
             onBlur={handleDescBlur}
             placeholder="Add a description..."
             rows={3}
-            className="w-full resize-none rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            readOnly={!canWrite}
+            className={`w-full resize-none rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-1 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
           />
         </div>
       )}
@@ -587,6 +609,7 @@ function TaskSkeleton() {
 // ── Page ──
 
 export default function TasksPage() {
+  const canWrite = useAuthStore((s) => s.canWrite())
   const tasks = useTaskStore((s) => s.tasks)
   const isLoading = useTaskStore((s) => s.isLoading)
   const isOnline = useSyncStore((s) => s.isOnline)
@@ -631,7 +654,9 @@ export default function TasksPage() {
         </div>
         <button
           onClick={() => setShowDialog(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+          disabled={!canWrite}
+          className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
+          title={!canWrite ? 'Subscription required' : undefined}
         >
           <Plus className="h-4 w-4" />
           New task
