@@ -1,0 +1,47 @@
+FROM python:3.12-alpine AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_NO_CACHE_DIR=1
+
+# Install build dependencies
+RUN apk add --no-cache \
+    gcc musl-dev libffi-dev make \
+    postgresql-dev
+
+COPY server/requirements.txt /requirements.txt
+RUN pip install --no-cache-dir -r /requirements.txt
+
+# --- Production stage ---
+FROM python:3.12-alpine
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PYTHONUNBUFFERED=1
+
+# Runtime dependencies only
+RUN apk add --no-cache libpq libffi
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Create non-root user
+RUN addgroup -S etebase && adduser -S etebase -G etebase
+
+# Copy application code
+COPY server/ /app
+
+# Create data directories
+RUN mkdir -p /data /data/media /data/static && \
+    chown -R etebase:etebase /app /data
+
+WORKDIR /app
+
+# Run as non-root
+USER etebase
+
+EXPOSE 3735
+
+CMD ["uvicorn", "etebase_server.asgi:application", \
+     "--host", "0.0.0.0", "--port", "3735", \
+     "--workers", "2", "--proxy-headers", \
+     "--forwarded-allow-ips", "*"]

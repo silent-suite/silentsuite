@@ -8,7 +8,9 @@ import { useAuthStore } from '../../stores/auth-store';
 export function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { login, isLoading, error } = useAuthStore();
+  const login = useAuthStore((s) => s.login);
+  const isLoading = useAuthStore((s) => s.isLoading);
+  const error = useAuthStore((s) => s.error);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) return;

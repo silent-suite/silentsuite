@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'
-import { loadStripe } from '@stripe/stripe-js'
+import { loadStripe, type Stripe } from '@stripe/stripe-js'
 import { Button } from '@silentsuite/ui'
 
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!)
+const STRIPE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
 // Stripe Elements appearance matching our dark theme
 const appearance = {
@@ -33,6 +33,7 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
   const elements = useElements()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [ready, setReady] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -68,18 +69,77 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <PaymentElement />
+      {!ready && (
+        <div className="flex flex-col items-center justify-center py-6">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+          <p className="mt-2 text-xs text-slate-500">Loading payment form...</p>
+        </div>
+      )}
+      <div className={ready ? '' : 'sr-only'}>
+        <PaymentElement onReady={() => setReady(true)} />
+      </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
-      <Button type="submit" disabled={!stripe || loading} className="w-full">
-        {loading ? 'Processing...' : (submitLabel ?? 'Confirm payment')}
-      </Button>
+      {ready && (
+        <Button type="submit" disabled={!stripe || loading} className="w-full">
+          {loading ? 'Processing...' : (submitLabel ?? 'Confirm payment')}
+        </Button>
+      )}
     </form>
   )
 }
 
 export default function StripePaymentForm(props: PaymentFormProps) {
+  const [stripeInstance, setStripeInstance] = useState<Stripe | null>(null)
+  const [stripeError, setStripeError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!STRIPE_KEY) {
+      setStripeError('Payment system not configured. Please contact support.')
+      setLoading(false)
+      return
+    }
+    loadStripe(STRIPE_KEY).then((s) => {
+      if (s) {
+        setStripeInstance(s)
+      } else {
+        setStripeError('Failed to load payment system. Please refresh and try again.')
+      }
+      setLoading(false)
+    }).catch(() => {
+      setStripeError('Failed to load payment system. Please refresh and try again.')
+      setLoading(false)
+    })
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+        <p className="mt-3 text-sm text-slate-400">Connecting to payment system...</p>
+      </div>
+    )
+  }
+
+  if (stripeError) {
+    return (
+      <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-center">
+        <p className="text-sm text-red-400">{stripeError}</p>
+        <p className="mt-1 text-xs text-slate-500">Error code: STRIPE_INIT</p>
+      </div>
+    )
+  }
+
+  if (!stripeInstance) {
+    return (
+      <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-center">
+        <p className="text-sm text-red-400">Payment system unavailable. Please refresh the page.</p>
+      </div>
+    )
+  }
+
   return (
-    <Elements stripe={stripePromise} options={{ clientSecret: props.clientSecret, appearance }}>
+    <Elements stripe={stripeInstance} options={{ clientSecret: props.clientSecret, appearance }}>
       <PaymentFormInner
         onSuccess={props.onSuccess}
         onError={props.onError}

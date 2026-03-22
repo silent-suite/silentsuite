@@ -1,7 +1,6 @@
 package io.silentsuite.sync.ui.etebase
 
 import android.app.Dialog
-import android.app.ProgressDialog
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -24,6 +23,7 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.BaseActivity
+import io.silentsuite.sync.utils.ProgressDialogHelper
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -125,12 +125,12 @@ class AddMemberFragment : DialogFragment() {
     private lateinit var accessLevel: CollectionAccessLevel
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        val progress = ProgressDialog(context)
-        progress.setTitle(R.string.collection_members_adding)
-        progress.setMessage(getString(R.string.please_wait))
-        progress.isIndeterminate = true
-        progress.setCanceledOnTouchOutside(false)
         isCancelable = false
+        val progress = ProgressDialogHelper.createIndeterminate(
+            requireContext(),
+            R.string.collection_members_adding,
+            getString(R.string.please_wait)
+        )
 
         lifecycleScope.launch {
             val invitationManager = accountHolder.etebase.invitationManager

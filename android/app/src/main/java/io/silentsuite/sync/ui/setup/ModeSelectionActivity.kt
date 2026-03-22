@@ -38,7 +38,7 @@ class ModeSelectionActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.mode_selector_fragment)
 
-        val account = intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)!!
+        val account = requireNotNull(intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)) { "ModeSelectionActivity requires EXTRA_ACCOUNT" }
 
         val bridgeRadio = findViewById<RadioButton>(R.id.mode_bridge_radio)
         val walledRadio = findViewById<RadioButton>(R.id.mode_walled_radio)
