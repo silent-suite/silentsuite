@@ -23,4 +23,36 @@ echo "Recreating containers with updated images..."
 $COMPOSE up -d
 
 echo ""
-echo "Update complete. Run ./verify.sh to check service health."
+echo "Waiting for services to become healthy..."
+
+MAX_WAIT=120
+ELAPSED=0
+while [ $ELAPSED -lt $MAX_WAIT ]; do
+  HEALTHY=0
+
+  for container in silentsuite-postgres silentsuite-server; do
+    status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "unknown")
+    if [ "$status" = "healthy" ]; then
+      HEALTHY=$((HEALTHY + 1))
+    fi
+  done
+
+  if [ "$HEALTHY" -ge 2 ]; then
+    echo "All services healthy."
+    break
+  fi
+
+  sleep 5
+  ELAPSED=$((ELAPSED + 5))
+  echo "  $HEALTHY/2 services healthy ($ELAPSED/${MAX_WAIT}s)..."
+done
+
+if [ "$HEALTHY" -lt 2 ]; then
+  echo ""
+  echo "WARNING: Not all services are healthy after ${MAX_WAIT}s."
+  echo "Run '$COMPOSE logs' to troubleshoot."
+  exit 1
+fi
+
+echo ""
+echo "Update complete."

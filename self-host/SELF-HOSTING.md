@@ -118,6 +118,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 50m;
     }
 }
 ```
@@ -133,11 +134,22 @@ labels:
   - "traefik.http.services.silentsuite.loadbalancer.server.port=3735"
 ```
 
+> **Note:** If Traefik itself runs in Docker, replace the `ports:` mapping on the server service with `expose: ["3735"]` in `docker-compose.yml` and ensure Traefik shares a Docker network with the server container.
+
 ### Cloudflare Tunnel
 
 ```bash
 cloudflared tunnel --url http://localhost:3735
 ```
+
+### Recommended Security Headers
+
+Add these headers in your reverse proxy for defense in depth:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy: camera=(), microphone=(), geolocation=()`
 
 ## Connecting Your Apps
 

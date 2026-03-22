@@ -7,13 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [ ! -f .env ]; then
-  echo "ERROR: .env file not found. Run install.sh first."
-  exit 1
+if [ -f .env ]; then
+  set -a; source .env; set +a
 fi
-
-# shellcheck disable=SC1091
-source .env
 
 echo "SilentSuite Health Check"
 echo "========================"

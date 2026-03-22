@@ -40,7 +40,7 @@ services:
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       DATABASE_HOST: postgres
       DATABASE_PORT: "5432"
-      ALLOWED_HOSTS: "*"
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost}
       SUPER_USER: ${SUPER_USER:-admin}
       SUPER_PASS: ${SUPER_PASS}
     volumes:
