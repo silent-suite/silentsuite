@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
-import { isSelfHosted } from '@/app/lib/self-hosted'
+import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 
 const BILLING_API_URL =
   process.env.NEXT_PUBLIC_BILLING_API_URL ?? 'http://localhost:3736'
@@ -52,6 +52,11 @@ export default function AccountPage() {
     fetchAccount()
   }, [])
 
+  const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
+  const connectedServer = isSelfHosted || isCustomServer(storedServerUrl ?? undefined)
+    ? (storedServerUrl ?? process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'Self-Hosted')
+    : 'SilentSuite Cloud'
+
   const email = account?.email ?? user?.email ?? '—'
   const createdAt = account?.createdAt
     ? new Date(account.createdAt).toLocaleDateString('en-US', {
@@ -85,6 +90,11 @@ export default function AccountPage() {
               <div>
                 <p className="text-xs text-[rgb(var(--muted))]">Plan</p>
                 <p className="text-sm text-[rgb(var(--foreground))] capitalize">{status.replace(/_/g, ' ')}</p>
+              </div>
+
+              <div>
+                <p className="text-xs text-[rgb(var(--muted))]">Connected server</p>
+                <p className="text-sm text-[rgb(var(--foreground))]">{connectedServer}</p>
               </div>
             </div>
           </section>

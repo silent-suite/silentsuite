@@ -17,8 +17,17 @@ import { showErrorToast } from '@/app/stores/use-toast-store'
 // We dynamically import Etebase types to avoid SSR issues with the etebase WASM module.
 // The actual Etebase SDK objects are stored as `any` in the store and typed at usage sites.
 
-const ETEBASE_SERVER_URL =
+const DEFAULT_ETEBASE_SERVER_URL =
   process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'http://localhost:3735'
+
+/** Read the user's custom server URL from localStorage, falling back to the env default. */
+function getServerUrl(): string {
+  if (typeof window !== 'undefined') {
+    const custom = localStorage.getItem('silentsuite-server-url')
+    if (custom && custom.trim()) return custom.trim()
+  }
+  return DEFAULT_ETEBASE_SERVER_URL
+}
 
 const COLLECTION_TYPE_CALENDAR = 'etebase.vevent'
 const COLLECTION_TYPE_TASKS = 'etebase.vtodo'
@@ -122,7 +131,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
       // 1. Restore the Account
       console.log('[etebase-store] Restoring Etebase session...')
-      const account = await core.restoreSession(ETEBASE_SERVER_URL, savedSession)
+      const serverUrl = getServerUrl()
+      console.log(`[etebase-store] Using server URL: ${serverUrl}`)
+      const account = await core.restoreSession(serverUrl, savedSession)
       set({ account })
       console.log('[etebase-store] Session restored')
 
@@ -181,7 +192,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
       // 4. Start SyncEngine
       const engine = new core.SyncEngine({
-        serverUrl: ETEBASE_SERVER_URL,
+        serverUrl: serverUrl,
         pollIntervalMs: 30_000,
       })
 
