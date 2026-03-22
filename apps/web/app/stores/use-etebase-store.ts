@@ -20,11 +20,20 @@ import { showErrorToast } from '@/app/stores/use-toast-store'
 const DEFAULT_ETEBASE_SERVER_URL =
   process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'http://localhost:3735'
 
+function isValidServerUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 /** Read the user's custom server URL from localStorage, falling back to the env default. */
 function getServerUrl(): string {
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('silentsuite-server-url')
-    if (custom && custom.trim()) return custom.trim()
+    if (custom && custom.trim() && isValidServerUrl(custom.trim())) return custom.trim()
   }
   return DEFAULT_ETEBASE_SERVER_URL
 }
@@ -121,7 +130,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   initialize: async () => {
     const savedSession = localStorage.getItem('etebase_session')
     if (!savedSession) {
-      console.log('[etebase-store] No saved session, skipping initialization')
+      console.debug('[etebase-store] No saved session, skipping initialization')
       return
     }
 
@@ -130,12 +139,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const core = await import('@silentsuite/core')
 
       // 1. Restore the Account
-      console.log('[etebase-store] Restoring Etebase session...')
+      console.debug('[etebase-store] Restoring Etebase session...')
       const serverUrl = getServerUrl()
-      console.log(`[etebase-store] Using server URL: ${serverUrl}`)
       const account = await core.restoreSession(serverUrl, savedSession)
       set({ account })
-      console.log('[etebase-store] Session restored')
+      console.debug('[etebase-store] Session restored')
 
       // 2. Ensure collections exist (create if first login, fetch if returning)
       const collections: Record<CollectionTypeKey, any> = {
@@ -154,10 +162,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const existing = await core.listCollections(account, colType)
         if (existing.length > 0) {
           collections[key] = existing[0]
-          console.log(`[etebase-store] Found existing ${key} collection: ${existing[0].uid}`)
+          console.debug(`[etebase-store] Found existing ${key} collection: ${existing[0].uid}`)
         } else {
           collections[key] = await core.createCollection(account, colType, { name: defaultName })
-          console.log(`[etebase-store] Created ${key} collection: ${collections[key].uid}`)
+          console.debug(`[etebase-store] Created ${key} collection: ${collections[key].uid}`)
         }
       }
 
@@ -188,7 +196,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
 
       set({ itemCache, itemTypeMap })
-      console.log(`[etebase-store] Loaded ${itemCache.size} items into cache`)
+      console.debug(`[etebase-store] Loaded ${itemCache.size} items into cache`)
 
       // 4. Start SyncEngine
       const engine = new core.SyncEngine({
@@ -206,7 +214,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
       await engine.start(account)
       set({ syncEngine: engine, isInitialized: true })
-      console.log('[etebase-store] SyncEngine started')
+      console.debug('[etebase-store] SyncEngine started')
     } catch (err) {
       console.error('[etebase-store] Initialization failed:', err)
       // Don't clear the session -- the user might be offline
@@ -388,7 +396,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCollections[type] = freshCollection
       set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, collections: newCollections })
 
-      console.log(`[etebase-store] Refreshed ${type}: ${results.length} items`)
+      console.debug(`[etebase-store] Refreshed ${type}: ${results.length} items`)
       return results
     } catch (err) {
       console.error(`[etebase-store] Failed to refresh ${type}:`, err)
@@ -409,7 +417,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       isInitialized: false,
       syncEngine: null,
     })
-    console.log('[etebase-store] Destroyed')
+    console.debug('[etebase-store] Destroyed')
   },
 
   onSyncChange: (handler) => {

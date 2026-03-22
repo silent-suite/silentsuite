@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
@@ -52,10 +52,13 @@ export default function AccountPage() {
     fetchAccount()
   }, [])
 
-  const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
-  const connectedServer = isSelfHosted || isCustomServer(storedServerUrl ?? undefined)
-    ? (storedServerUrl ?? process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'Self-Hosted')
-    : 'SilentSuite Cloud'
+  const connectedServer = useMemo(() => {
+    const stored = localStorage.getItem('silentsuite-server-url')
+    if (isSelfHosted || isCustomServer(stored ?? undefined)) {
+      return stored ?? process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'Self-Hosted'
+    }
+    return 'SilentSuite Cloud'
+  }, [])
 
   const email = account?.email ?? user?.email ?? '—'
   const createdAt = account?.createdAt
