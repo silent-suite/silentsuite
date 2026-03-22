@@ -166,7 +166,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         pendingSignup: {
           ...pending,
           provisionedUser: { id: data.id, planId, isAdmin },
-          provisionedSubscriptionStatus: trialPath === '7day' ? 'trialing' : 'none',
+          provisionedSubscriptionStatus: 'trialing',
         },
         isLoading: false,
       })
