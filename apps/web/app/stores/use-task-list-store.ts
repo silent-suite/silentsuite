@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { useAuthStore } from './use-auth-store'
 
 export interface TaskList {
   id: string
@@ -39,6 +40,8 @@ export const useTaskListStore = create<TaskListState>()(
       activeListId: 'default',
 
       addList: (name, color) => {
+        const { canWrite } = useAuthStore.getState()
+        if (!canWrite()) throw new Error('Your subscription has ended. Renew to make changes.')
         const nextColor = color || get().getNextColor()
         set((state) => ({
           lists: [
@@ -54,6 +57,8 @@ export const useTaskListStore = create<TaskListState>()(
       },
 
       removeList: (id) => {
+        const { canWrite } = useAuthStore.getState()
+        if (!canWrite()) throw new Error('Your subscription has ended. Renew to make changes.')
         if (id === 'default') return
         set((state) => ({
           lists: state.lists.filter((l) => l.id !== id),
@@ -62,6 +67,8 @@ export const useTaskListStore = create<TaskListState>()(
       },
 
       updateList: (id, updates) => {
+        const { canWrite } = useAuthStore.getState()
+        if (!canWrite()) throw new Error('Your subscription has ended. Renew to make changes.')
         set((state) => ({
           lists: state.lists.map((l) =>
             l.id === id ? { ...l, ...updates } : l,
