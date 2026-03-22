@@ -426,6 +426,15 @@ function StepChoosePlan({
   onPaymentComplete: () => void
 }) {
   const contentRef = useRef<HTMLDivElement>(null)
+  const [selectedTrial, setSelectedTrial] = useState<TrialPath>('30day')
+
+  const handleContinue = useCallback(() => {
+    if (selectedTrial === '7day') {
+      onSelectFree()
+    } else {
+      onSelectPaid()
+    }
+  }, [selectedTrial, onSelectFree, onSelectPaid])
 
   useEffect(() => {
     contentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -511,8 +520,12 @@ function StepChoosePlan({
       <div className="space-y-4">
         {/* Card A: 7 Day Free Trial — no card */}
         <button
-          onClick={onSelectFree}
-          className="group w-full rounded-xl border border-slate-700/50 bg-[rgb(var(--surface))] p-5 text-left transition-all hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80"
+          onClick={() => setSelectedTrial('7day')}
+          className={`group w-full rounded-xl border-2 p-5 text-left transition-all ${
+            selectedTrial === '7day'
+              ? 'border-emerald-500 bg-emerald-500/5'
+              : 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80'
+          }`}
         >
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-[rgb(var(--border))] p-2.5 shrink-0">
@@ -527,29 +540,21 @@ function StepChoosePlan({
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  Sync across all devices
-                </li>
-                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  End-to-end encrypted
-                </li>
-                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                   No credit card required
                 </li>
               </ul>
-              <p className="mt-3 text-sm font-medium text-[rgb(var(--primary))] group-hover:text-emerald-400 transition-colors">
-                Start free trial &rarr;
-              </p>
             </div>
           </div>
         </button>
 
         {/* Card B: 30 Day Free Trial — credit card required */}
         <button
-          onClick={onSelectPaid}
-          disabled={provisioning}
-          className="group w-full rounded-xl border-2 border-emerald-500/30 bg-emerald-500/5 p-6 text-left transition-all hover:border-emerald-500/50 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={() => setSelectedTrial('30day')}
+          className={`group w-full rounded-xl border-2 p-6 text-left transition-all ${
+            selectedTrial === '30day'
+              ? 'border-emerald-500 bg-emerald-500/5'
+              : 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80'
+          }`}
         >
           <div className="flex items-start gap-4">
             <div className="rounded-xl bg-emerald-500/15 p-3 shrink-0">
@@ -572,14 +577,6 @@ function StepChoosePlan({
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  Sync across all devices
-                </li>
-                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  End-to-end encrypted
-                </li>
-                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                   Credit card required
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
@@ -591,13 +588,26 @@ function StepChoosePlan({
                   {interval === 'annual' ? 'Billed annually after trial' : 'Billed monthly after trial'}
                 </li>
               </ul>
-              <p className="mt-3 text-sm font-medium text-emerald-400 group-hover:text-emerald-300 transition-colors">
-                {provisioning ? 'Setting up...' : 'Choose Early Adopter \u2192'}
-              </p>
             </div>
           </div>
         </button>
       </div>
+
+      {/* Continue button */}
+      <Button
+        onClick={handleContinue}
+        disabled={provisioning}
+        className="w-full"
+      >
+        {provisioning ? (
+          <span className="flex items-center justify-center gap-2">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            Setting up...
+          </span>
+        ) : (
+          'Continue'
+        )}
+      </Button>
 
       {/* Error display */}
       {provisionError && (
