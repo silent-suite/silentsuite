@@ -6,6 +6,7 @@ import type { Task, Priority, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
+import { showErrorToast } from '@/app/stores/use-toast-store'
 
 interface NewTask {
   title: string
@@ -72,6 +73,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             }
           } catch (err) {
             console.error('[task-store] Failed to sync new task to Etebase:', err)
+            showErrorToast('Failed to save task. Please try again.')
           }
         }
 
@@ -100,6 +102,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               await etebase.updateItem('tasks', id, content)
             } catch (err) {
               console.error('[task-store] Failed to sync task update to Etebase:', err)
+              showErrorToast('Failed to save task. Please try again.')
             }
           } else {
             // Item was created offline — enqueue update with tempId so compaction merges into create
@@ -124,6 +127,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               await etebase.deleteItem('tasks', id)
             } catch (err) {
               console.error('[task-store] Failed to sync task deletion to Etebase:', err)
+              showErrorToast('Failed to delete task. Please try again.')
             }
           } else {
             // Item was created offline and not yet synced — enqueue delete with tempId for compaction
@@ -155,6 +159,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               await etebase.updateItem('tasks', id, content)
             } catch (err) {
               console.error('[task-store] Failed to sync task toggle to Etebase:', err)
+              showErrorToast('Failed to save task. Please try again.')
             }
           } else {
             const { serializeTask } = await import('@silentsuite/core')

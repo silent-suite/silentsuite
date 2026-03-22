@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type { SyncStatus } from '@silentsuite/core'
 import { replay, getPendingCount, getFailedCount, onCountChange, type QueueEntry } from '@/app/lib/offline-queue'
+import { showErrorToast } from '@/app/stores/use-toast-store'
 
 interface SyncState {
   syncStatus: SyncStatus
@@ -230,6 +231,8 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     }).catch((err) => {
       console.error('[sync-store] Manual sync failed:', err)
       set({ syncStatus: 'error', error: 'Sync failed' })
+      const isOnline = get().isOnline
+      showErrorToast(isOnline ? 'Sync failed. Check your connection.' : 'Sync failed. Retrying...')
     })
   },
 }))
