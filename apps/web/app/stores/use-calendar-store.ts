@@ -187,6 +187,12 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
         try {
           await etebase.deleteItem('calendar', id)
         } catch (err) {
+          // etebase.deleteItem handles offline enqueue internally,
+          // but if it throws a non-offline error, enqueue as fallback
+          const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
+          if (isOfflineError(err)) {
+            await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: id })
+          }
           console.error('[calendar-store] Failed to delete event in Etebase:', err)
         }
       } else {
@@ -369,6 +375,10 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
             try {
               await etebase.deleteItem('calendar', id)
             } catch (err) {
+              const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
+              if (isOfflineError(err)) {
+                await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: id })
+              }
               console.error('[calendar-store] Failed to delete recurring event in Etebase:', err)
             }
           } else {

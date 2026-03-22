@@ -32,6 +32,12 @@ const DB_VERSION = 1
 const STORE_NAME = 'mutations'
 const MAX_RETRIES = 3
 
+/** Maximum number of entries allowed in the queue before warning the user */
+export const MAX_QUEUE_SIZE = 100
+
+/** Entries older than this threshold (ms) are considered stale (24 hours) */
+export const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000
+
 type CountListener = (count: number) => void
 
 let dbPromise: Promise<IDBDatabase> | null = null
@@ -148,6 +154,7 @@ export async function enqueue(
     tx.objectStore(STORE_NAME).put(record)
     tx.oncomplete = () => {
       notifyListeners()
+      notifyEnqueueListeners()
       resolve(record.id)
     }
     tx.onerror = () => reject(tx.error)
@@ -273,6 +280,34 @@ export function onCountChange(fn: CountListener): () => void {
   return () => { listeners.delete(fn) }
 }
 
+/** Returns true if the queue has reached or exceeded MAX_QUEUE_SIZE */
+export async function isQueueFull(): Promise<boolean> {
+  const entries = await getAll()
+  return entries.length >= MAX_QUEUE_SIZE
+}
+
+/** Returns pending entries older than the given threshold (defaults to 24h) */
+export async function getStaleEntries(thresholdMs: number = STALE_THRESHOLD_MS): Promise<QueueEntry[]> {
+  const entries = await getAll()
+  const cutoff = Date.now() - thresholdMs
+  return entries.filter((e) => e.status === 'pending' && e.createdAt < cutoff)
+}
+
+type EnqueueListener = () => void
+const enqueueListeners = new Set<EnqueueListener>()
+
+/** Subscribe to enqueue events (fired each time a new entry is added) */
+export function onEnqueue(fn: EnqueueListener): () => void {
+  enqueueListeners.add(fn)
+  return () => { enqueueListeners.delete(fn) }
+}
+
+function notifyEnqueueListeners(): void {
+  for (const fn of enqueueListeners) {
+    try { fn() } catch {}
+  }
+}
+
 /** Helper: returns true if an error looks like a network/offline error */
 export function isOfflineError(err: unknown): boolean {
   if (!navigator.onLine) return true
@@ -292,5 +327,6 @@ export async function _resetForTests(): Promise<void> {
   }
   dbPromise = null
   listeners.clear()
+  enqueueListeners.clear()
   counter = 0
 }
