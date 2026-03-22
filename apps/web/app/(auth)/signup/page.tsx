@@ -149,7 +149,7 @@ function BillingToggle({
             : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
         }`}
       >
-        Annual <span className="text-emerald-400 text-xs ml-1">Save 17%</span>
+        Annual
       </button>
     </div>
   )
@@ -164,15 +164,15 @@ function PriceDisplay({ interval }: { interval: BillingInterval }) {
     return (
       <div className="flex items-baseline gap-1">
         <span className="text-2xl font-bold text-[rgb(var(--foreground))]">&euro;3.60</span>
-        <span className="text-sm text-[rgb(var(--muted))]">/mo</span>
+        <span className="text-sm text-[rgb(var(--muted))]">/month</span>
       </div>
     )
   }
   return (
     <div className="flex items-baseline gap-1">
-      <span className="text-2xl font-bold text-[rgb(var(--foreground))]">&euro;3</span>
-      <span className="text-sm text-[rgb(var(--muted))]">/mo</span>
-      <span className="ml-1 text-xs text-[rgb(var(--muted))]">billed &euro;36/yr</span>
+      <span className="text-2xl font-bold text-[rgb(var(--foreground))]">&euro;3.00</span>
+      <span className="text-sm text-[rgb(var(--muted))]">/month</span>
+      <span className="ml-2 text-xs font-medium text-emerald-400">&middot; Save 17%</span>
     </div>
   )
 }
@@ -185,12 +185,14 @@ function StepCreateAccount({
   onNext,
   serverUrl,
   setServerUrl,
+  initialData,
 }: {
   onNext: (data: SignupFormData) => Promise<void>
   serverUrl: string
   setServerUrl: (url: string) => void
+  initialData?: SignupFormData | null
 }) {
-  const [useUsername, setUseUsername] = useState(false)
+  const [useUsername, setUseUsername] = useState(initialData?.username ? true : false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -204,6 +206,7 @@ function StepCreateAccount({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(useUsername ? usernameSignupSchema : emailSignupSchema) as any,
     mode: 'onChange',
+    defaultValues: initialData ?? undefined,
   })
 
   const password = watch('password', '')
@@ -430,19 +433,10 @@ function StepChoosePlan({
 
   // --- Payment sub-step ---
   if (planView === 'payment') {
-    const priceLabel = interval === 'monthly' ? '\u20AC3.60/mo' : '\u20AC36/yr (\u20AC3/mo)'
+    const priceLabel = interval === 'monthly' ? '\u20AC3.60/month' : '\u20AC3.00/month'
 
     return (
       <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-        {/* Back button */}
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to plan selection
-        </button>
-
         <div className="space-y-2 text-center">
           <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Add your payment method</h2>
           <p className="text-sm text-[rgb(var(--muted))]">
@@ -462,6 +456,10 @@ function StepChoosePlan({
           <p className="mt-1 text-xs text-[rgb(var(--muted))]">
             30-day free trial included. Cancel anytime before.
           </p>
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+            <Lock className="h-3 w-3 text-emerald-500" />
+            <span>Secured by Stripe. We never see your card details.</span>
+          </div>
         </div>
 
         {/* Stripe payment form */}
@@ -483,10 +481,14 @@ function StepChoosePlan({
           </div>
         )}
 
-        <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
-          <Lock className="h-3 w-3 text-emerald-500" />
-          <span>Secured by Stripe. We never see your card details.</span>
-        </div>
+        {/* Back button — bottom-left */}
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to plan selection
+        </button>
       </div>
     )
   }
@@ -494,19 +496,10 @@ function StepChoosePlan({
   // --- Cards view (plan selection) ---
   return (
     <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
-      {/* Back to account step */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back
-      </button>
-
       <div className="space-y-2 text-center">
         <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Early Adopter pricing &mdash; locked in forever.
+          Early Adopter pricing
         </p>
       </div>
 
@@ -516,7 +509,7 @@ function StepChoosePlan({
       </div>
 
       <div className="space-y-4">
-        {/* Card A: Free Trial — 7 days, no card */}
+        {/* Card A: 7 Day Free Trial — no card */}
         <button
           onClick={onSelectFree}
           className="group w-full rounded-xl border border-slate-700/50 bg-[rgb(var(--surface))] p-5 text-left transition-all hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80"
@@ -526,10 +519,25 @@ function StepChoosePlan({
               <Gift className="h-5 w-5 text-[rgb(var(--muted))]" />
             </div>
             <div className="flex-1">
-              <h3 className="font-semibold text-[rgb(var(--foreground))]">Free Trial</h3>
-              <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                7 days, full access, no credit card needed.
-              </p>
+              <h3 className="font-semibold text-[rgb(var(--foreground))]">7 Day Free Trial</h3>
+              <ul className="mt-2 space-y-1.5">
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  Full access to all features
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  Sync across all devices
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  End-to-end encrypted
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  No credit card required
+                </li>
+              </ul>
               <p className="mt-3 text-sm font-medium text-[rgb(var(--primary))] group-hover:text-emerald-400 transition-colors">
                 Start free trial &rarr;
               </p>
@@ -537,7 +545,7 @@ function StepChoosePlan({
           </div>
         </button>
 
-        {/* Card B: 30-day Trial — credit card required */}
+        {/* Card B: 30 Day Free Trial — credit card required */}
         <button
           onClick={onSelectPaid}
           disabled={provisioning}
@@ -549,7 +557,7 @@ function StepChoosePlan({
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">30-day Trial</h3>
+                <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">30 Day Free Trial</h3>
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 uppercase tracking-wide">
                   Recommended
                 </span>
@@ -560,15 +568,27 @@ function StepChoosePlan({
               <ul className="mt-3 space-y-1.5">
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  30-day free trial included
+                  Full access to all features
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  Price locked forever
+                  Sync across all devices
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  End-to-end encrypted
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  Credit card required
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                   Cancel anytime
+                </li>
+                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  {interval === 'annual' ? 'Billed annually after trial' : 'Billed monthly after trial'}
                 </li>
               </ul>
               <p className="mt-3 text-sm font-medium text-emerald-400 group-hover:text-emerald-300 transition-colors">
@@ -597,6 +617,15 @@ function StepChoosePlan({
         <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
         <span>Cancel anytime &middot; Your data stays encrypted &middot; Export anytime</span>
       </div>
+
+      {/* Back button — bottom-left */}
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back
+      </button>
     </div>
   )
 }
@@ -1168,6 +1197,7 @@ export default function SignupPage() {
             onNext={handleAccountComplete}
             serverUrl={serverUrl}
             setServerUrl={setServerUrl}
+            initialData={formDataRef.current}
           />
         )}
         {step === 'selfhost' && (
