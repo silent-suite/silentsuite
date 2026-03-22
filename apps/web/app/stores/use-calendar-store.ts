@@ -6,6 +6,7 @@ import { persist } from 'zustand/middleware'
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 
 type CalendarView = 'week' | 'month'
 
@@ -120,6 +121,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
   selectedEventId: null,
 
   createEvent: async (newEvent: NewCalendarEvent) => {
+    if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     const tempId = crypto.randomUUID()
     const now = new Date()
     const event: CalendarEvent = {
@@ -157,6 +159,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
   },
 
   updateEvent: async (id: string, patch: Partial<CalendarEvent>) => {
+    if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     const { events } = get()
     const index = events.findIndex((e) => e.id === id)
     if (index === -1) return
@@ -172,6 +175,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
   },
 
   deleteEvent: async (id: string) => {
+    if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     // Optimistic update
     set((state) => ({ events: state.events.filter((e) => e.id !== id) }))
 
@@ -199,6 +203,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
     scope: RecurrenceScope,
     instanceDate: Date,
   ) => {
+    if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     const { events } = get()
     const master = events.find((e) => e.id === id)
     if (!master) return
@@ -309,6 +314,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
     scope: RecurrenceScope,
     instanceDate: Date,
   ) => {
+    if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     const { events } = get()
     const master = events.find((e) => e.id === id)
     if (!master) return

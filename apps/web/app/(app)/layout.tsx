@@ -4,7 +4,7 @@ import { ProtectedRoute } from '@/app/components/protected-route'
 import { Sidebar } from '@/app/components/sidebar'
 import { Header } from '@/app/components/header'
 import { BottomNav } from '@/app/components/bottom-nav'
-import { ReadOnlyOverlay } from '@/app/components/read-only-overlay'
+import { ReadOnlyBanner, DegradedModeBanner } from '@/app/components/read-only-overlay'
 import { PendingSyncBanner } from '@/app/components/PendingSyncBanner'
 import { SyncProvider } from '@/app/providers/sync-provider'
 import { NotificationProvider } from '@/app/providers/notification-provider'
@@ -12,12 +12,8 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const readOnly = useAuthStore((s) => {
-    if (isSelfHosted) return false
-    if (s.user?.isAdmin) return false
-    const status = s.subscriptionStatus
-    return status === 'cancelled' || status === 'expired' || status === 'none'
-  })
+  const readOnly = useAuthStore((s) => s.isReadOnly())
+  const degraded = useAuthStore((s) => s.isDegraded())
 
   return (
     <ProtectedRoute>
@@ -34,13 +30,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Sidebar />
             <div className="flex flex-1 flex-col min-w-0">
               <Header />
+              {!isSelfHosted && degraded && <DegradedModeBanner />}
+              {!isSelfHosted && readOnly && <ReadOnlyBanner />}
               <PendingSyncBanner />
               <main id="main-content" className="relative z-0 flex-1 overflow-auto p-3 pb-20 md:p-4 md:pb-4 page-transition">
                 {children}
               </main>
             </div>
             <BottomNav />
-            {!isSelfHosted && readOnly && <ReadOnlyOverlay />}
           </div>
         </NotificationProvider>
       </SyncProvider>

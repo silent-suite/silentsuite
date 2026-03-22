@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Shield } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+
+const DEGRADED_RETRY_INTERVAL_MS = 60_000 // retry billing every 60s in degraded mode
 
 function LoadingSpinner() {
   return (
@@ -24,13 +26,31 @@ function LoadingSpinner() {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const restoreSession = useAuthStore((s) => s.restoreSession)
   const fetchSubscription = useAuthStore((s) => s.fetchSubscription)
+  const retryBillingConnection = useAuthStore((s) => s.retryBillingConnection)
+  const isDegraded = useAuthStore((s) => s.isDegraded())
   const [isInitialized, setIsInitialized] = useState(false)
+  const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     restoreSession()
       .then(() => fetchSubscription())
       .finally(() => setIsInitialized(true))
   }, [restoreSession, fetchSubscription])
+
+  // Auto-retry billing connection when in degraded mode
+  useEffect(() => {
+    if (isDegraded && isInitialized) {
+      retryTimerRef.current = setInterval(() => {
+        retryBillingConnection()
+      }, DEGRADED_RETRY_INTERVAL_MS)
+    }
+    return () => {
+      if (retryTimerRef.current) {
+        clearInterval(retryTimerRef.current)
+        retryTimerRef.current = null
+      }
+    }
+  }, [isDegraded, isInitialized, retryBillingConnection])
 
   if (!isInitialized) {
     return <LoadingSpinner />
