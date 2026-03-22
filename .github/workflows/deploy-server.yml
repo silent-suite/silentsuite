@@ -1,4 +1,4 @@
-name: Deploy Etebase Server (production)
+name: Deploy SilentSuite Server (production)
 
 on:
   push:
@@ -63,7 +63,6 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             docker pull ghcr.io/silent-suite/silentsuite-server:latest
-            docker tag ghcr.io/silent-suite/silentsuite-server:latest etebase-etebase:latest
             cd ~/etebase
-            docker compose up -d --force-recreate etebase
-            echo "Etebase server deployed successfully"
+            docker compose up -d --force-recreate silentsuite-server
+            echo "SilentSuite server deployed successfully"

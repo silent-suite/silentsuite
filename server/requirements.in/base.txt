@@ -7,3 +7,4 @@ typing_extensions
 uvicorn[standard]
 aiofiles
 redis>=4.2.0rc1
+psycopg2-binary>=2.9
