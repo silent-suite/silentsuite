@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { Plus, Calendar, CheckSquare, Users, ChevronUp } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 
 const items = [
   { label: 'Event', icon: Calendar, path: '/calendar', key: 'event' },
@@ -25,6 +26,7 @@ export function GlobalAddButton() {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const canWrite = useAuthStore((s) => s.canWrite())
 
   // Hide on settings page
   if (pathname.startsWith('/settings') || pathname.startsWith('/admin')) {
@@ -90,16 +92,20 @@ export function GlobalAddButton() {
       <div className="flex items-center gap-0 rounded-full shadow-lg">
         <button
           onClick={handlePrimaryClick}
-          className="flex items-center gap-2 rounded-l-full bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700 active:scale-[0.97] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 md:px-5"
+          disabled={!canWrite}
+          className={`flex items-center gap-2 rounded-l-full bg-emerald-600 px-4 py-3 text-sm font-medium text-white transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 md:px-5 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-700 active:scale-[0.97]'}`}
+          title={!canWrite ? 'Subscription required' : undefined}
         >
           <Plus className="h-4 w-4" />
           New {getPrimaryLabel(primary)}
         </button>
         <button
-          onClick={() => setOpen(!open)}
-          className="flex items-center rounded-r-full border-l border-emerald-500/30 bg-emerald-600 px-3.5 py-3 text-white hover:bg-emerald-700 active:scale-[0.97] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+          onClick={() => canWrite && setOpen(!open)}
+          disabled={!canWrite}
+          className={`flex items-center rounded-r-full border-l border-emerald-500/30 bg-emerald-600 px-3.5 py-3 text-white transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-700 active:scale-[0.97]'}`}
           aria-label="More options"
           aria-expanded={open}
+          title={!canWrite ? 'Subscription required' : undefined}
         >
           <ChevronUp className={`h-4 w-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
         </button>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays } from 'lucide-react'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { RecurrencePicker } from './RecurrencePicker'
 import { RecurrenceScopeDialog, type RecurrenceScope } from './RecurrenceScopeDialog'
@@ -87,6 +88,7 @@ export function EventDialog({
   const updateRecurringEvent = useCalendarStore((s) => s.updateRecurringEvent)
   const deleteRecurringEvent = useCalendarStore((s) => s.deleteRecurringEvent)
 
+  const canWrite = useAuthStore((s) => s.canWrite())
   const notifications = useNotifications()
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
 
@@ -483,8 +485,9 @@ export function EventDialog({
             {/* Done button */}
             <button
               onClick={() => void handleSave()}
-              disabled={!canSave || saving}
+              disabled={!canSave || saving || !canWrite}
               className="shrink-0 rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+              title={!canWrite ? 'Subscription required' : undefined}
             >
               {saving ? 'Saving…' : 'Done'}
             </button>
@@ -506,7 +509,8 @@ export function EventDialog({
                   onKeyDown={handleTitleKeyDown}
                   placeholder="Event title"
                   aria-label="Event title"
-                  className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  readOnly={!canWrite}
+                  className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                 />
               </div>
 
@@ -519,7 +523,8 @@ export function EventDialog({
                   onChange={(e) => setLocation(e.target.value)}
                   placeholder="Add location"
                   aria-label="Event location"
-                  className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  readOnly={!canWrite}
+                  className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                 />
               </div>
 
@@ -561,7 +566,8 @@ export function EventDialog({
                     type="checkbox"
                     checked={allDay}
                     onChange={handleAllDayToggle}
-                    className="h-4 w-4 rounded border-[rgb(var(--border))] accent-emerald-500"
+                    disabled={!canWrite}
+                    className={`h-4 w-4 rounded border-[rgb(var(--border))] accent-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                   />
                 </label>
 
@@ -576,7 +582,8 @@ export function EventDialog({
                         value={startDate}
                         onChange={handleStartDateChange}
                         aria-label="Start date"
-                        className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        readOnly={!canWrite}
+                        className={`rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                       />
                       {!allDay && (
                         <input
@@ -584,7 +591,8 @@ export function EventDialog({
                           value={startTime}
                           onChange={handleStartTimeChange}
                           aria-label="Start time"
-                          className="w-[6.5rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          readOnly={!canWrite}
+                          className={`w-[6.5rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                         />
                       )}
                     </div>
@@ -602,7 +610,8 @@ export function EventDialog({
                         value={endDate}
                         onChange={handleEndDateChange}
                         aria-label="End date"
-                        className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        readOnly={!canWrite}
+                        className={`rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                       />
                       {!allDay && (
                         <input
@@ -610,7 +619,8 @@ export function EventDialog({
                           value={endTime}
                           onChange={handleEndTimeChange}
                           aria-label="End time"
-                          className="w-[6.5rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          readOnly={!canWrite}
+                          className={`w-[6.5rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                         />
                       )}
                     </div>
@@ -632,13 +642,15 @@ export function EventDialog({
                       <Bell className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
                       <span className="text-sm text-[rgb(var(--foreground))]">Reminders</span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setAlarms((prev) => [...prev, '15'])}
-                      className="text-xs text-emerald-500 hover:text-emerald-400 transition-colors"
-                    >
-                      + Add
-                    </button>
+                    {canWrite && (
+                      <button
+                        type="button"
+                        onClick={() => setAlarms((prev) => [...prev, '15'])}
+                        className="text-xs text-emerald-500 hover:text-emerald-400 transition-colors"
+                      >
+                        + Add
+                      </button>
+                    )}
                   </div>
 
                   {alarms.length === 0 && (
@@ -703,7 +715,8 @@ export function EventDialog({
                   placeholder="Add description"
                   aria-label="Event description"
                   rows={3}
-                  className="flex-1 resize-none rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  readOnly={!canWrite}
+                  className={`flex-1 resize-none rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                 />
               </div>
             </div>
@@ -712,7 +725,7 @@ export function EventDialog({
           {/* ----------------------------------------------------------------- */}
           {/* Footer: Delete button (edit mode only)                            */}
           {/* ----------------------------------------------------------------- */}
-          {isEdit && (
+          {isEdit && canWrite && (
             <div className="shrink-0 border-t border-[rgb(var(--border))] px-4 py-3">
               <button
                 onClick={handleDelete}

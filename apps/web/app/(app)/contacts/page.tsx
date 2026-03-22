@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
-
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { ListSwitcher } from '@/app/components/ListSwitcher'
 import { ContactsEmptyState, SearchEmptyState, ContactDetailEmptyState } from '@/app/components/empty-state'
@@ -512,6 +512,7 @@ function ContactDetail({
 }) {
   const updateContact = useContactStore((s) => s.updateContact)
   const deleteContact = useContactStore((s) => s.deleteContact)
+  const canWrite = useAuthStore((s) => s.canWrite())
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -636,22 +637,26 @@ function ContactDetail({
             Back
           </button>
           <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setEditing(true)}
-              className="rounded p-1.5 text-[rgb(var(--muted))] hover:text-emerald-400 transition-colors"
-              aria-label="Edit contact"
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmDelete(true)}
-              className="rounded p-1.5 text-[rgb(var(--muted))] hover:text-red-400 transition-colors"
-              aria-label="Delete contact"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+            {canWrite && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="rounded p-1.5 text-[rgb(var(--muted))] hover:text-emerald-400 transition-colors"
+                  aria-label="Edit contact"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="rounded p-1.5 text-[rgb(var(--muted))] hover:text-red-400 transition-colors"
+                  aria-label="Delete contact"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -660,16 +665,18 @@ function ContactDetail({
         <div className="flex flex-col items-center gap-3 pb-6 pt-2">
           <button
             type="button"
-            onClick={() => photoInputRef.current?.click()}
+            onClick={() => canWrite && photoInputRef.current?.click()}
             className="group relative flex h-16 w-16 items-center justify-center rounded-full text-2xl font-semibold text-white"
             aria-label={contact.photoUrl ? 'Change photo' : 'Add photo'}
           >
             <ContactAvatar contact={contact} size="md" />
             {/* Hover overlay */}
-            <div className="absolute inset-0 flex flex-col items-center justify-center rounded-full bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
-              <Camera className="h-4 w-4 text-white" />
-              <span className="mt-0.5 text-[10px] font-medium text-white">{contact.photoUrl ? 'Change' : 'Add photo'}</span>
-            </div>
+            {canWrite && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center rounded-full bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+                <Camera className="h-4 w-4 text-white" />
+                <span className="mt-0.5 text-[10px] font-medium text-white">{contact.photoUrl ? 'Change' : 'Add photo'}</span>
+              </div>
+            )}
           </button>
           <div className="text-center">
             <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">{contact.displayName}</h3>
@@ -766,6 +773,7 @@ function ContactDetail({
           >
             Done
           </button>
+          {canWrite && (
             <button
               type="button"
               onClick={() => setConfirmDelete(true)}
@@ -774,6 +782,7 @@ function ContactDetail({
             >
               <Trash2 className="h-4 w-4" />
             </button>
+          )}
           </div>
         </div>
 
@@ -811,14 +820,18 @@ function ContactDetail({
             <div key={i} className="flex gap-2">
               <TypeSelector value={p.type} options={PHONE_TYPES} onChange={(t) => handlePhoneUpdate(i, 'type', t)} />
               <EditableField value={p.value} onChange={(v) => handlePhoneUpdate(i, 'value', v)} placeholder="Phone number" />
-              <button type="button" onClick={() => handleRemovePhone(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
-                <X className="h-4 w-4" />
-              </button>
+              {canWrite && (
+                <button type="button" onClick={() => handleRemovePhone(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
           ))}
-          <button type="button" onClick={handleAddPhone} className="text-xs text-emerald-400 hover:text-emerald-300">
-            + Add phone
-          </button>
+          {canWrite && (
+            <button type="button" onClick={handleAddPhone} className="text-xs text-emerald-400 hover:text-emerald-300">
+              + Add phone
+            </button>
+          )}
         </DetailSection>
 
         {/* Emails */}
@@ -827,14 +840,18 @@ function ContactDetail({
             <div key={i} className="flex gap-2">
               <TypeSelector value={em.type} options={EMAIL_TYPES} onChange={(t) => handleEmailUpdate(i, 'type', t)} />
               <EditableField value={em.value} onChange={(v) => handleEmailUpdate(i, 'value', v)} placeholder="Email address" />
-              <button type="button" onClick={() => handleRemoveEmail(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
-                <X className="h-4 w-4" />
-              </button>
+              {canWrite && (
+                <button type="button" onClick={() => handleRemoveEmail(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                  <X className="h-4 w-4" />
+                </button>
+              )}
             </div>
           ))}
-          <button type="button" onClick={handleAddEmail} className="text-xs text-emerald-400 hover:text-emerald-300">
-            + Add email
-          </button>
+          {canWrite && (
+            <button type="button" onClick={handleAddEmail} className="text-xs text-emerald-400 hover:text-emerald-300">
+              + Add email
+            </button>
+          )}
         </DetailSection>
 
         {/* Addresses */}
@@ -843,9 +860,11 @@ function ContactDetail({
             <div key={i} className="space-y-1.5 rounded-md border border-[rgb(var(--border))] p-2">
               <div className="flex items-center justify-between">
                 <TypeSelector value={a.type} options={ADDRESS_TYPES} onChange={(t) => handleAddressUpdate(i, 'type', t)} />
-                <button type="button" onClick={() => handleRemoveAddress(i)} className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
-                  <X className="h-4 w-4" />
-                </button>
+                {canWrite && (
+                  <button type="button" onClick={() => handleRemoveAddress(i)} className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
               </div>
               <EditableField value={a.street} onChange={(v) => handleAddressUpdate(i, 'street', v)} placeholder="Street" />
               <div className="grid grid-cols-2 gap-1.5">
@@ -858,9 +877,11 @@ function ContactDetail({
               </div>
             </div>
           ))}
-          <button type="button" onClick={handleAddAddress} className="text-xs text-emerald-400 hover:text-emerald-300">
-            + Add address
-          </button>
+          {canWrite && (
+            <button type="button" onClick={handleAddAddress} className="text-xs text-emerald-400 hover:text-emerald-300">
+              + Add address
+            </button>
+          )}
         </DetailSection>
 
         {/* Work */}
@@ -911,6 +932,7 @@ function ContactSkeleton() {
 // ── Page ──
 
 export default function ContactsPage() {
+  const canWrite = useAuthStore((s) => s.canWrite())
   const contacts = useContactStore((s) => s.contacts)
   const isLoading = useContactStore((s) => s.isLoading)
   const searchQuery = useContactStore((s) => s.searchQuery)
@@ -968,7 +990,9 @@ export default function ContactsPage() {
         <button
           type="button"
           onClick={() => setShowNewForm(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 transition-colors"
+          disabled={!canWrite}
+          className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
+          title={!canWrite ? 'Subscription required' : undefined}
         >
           <Plus className="h-4 w-4" />
           New Contact
@@ -993,7 +1017,7 @@ export default function ContactsPage() {
       {isLoading ? (
         <ContactSkeleton />
       ) : isEmpty ? (
-        <ContactsEmptyState onAddContact={() => setShowNewForm(true)} />
+        <ContactsEmptyState onAddContact={canWrite ? () => setShowNewForm(true) : undefined} />
       ) : isEmptySearch ? (
         <SearchEmptyState query={searchQuery} />
       ) : (
