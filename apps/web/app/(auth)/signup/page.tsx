@@ -437,7 +437,8 @@ function StepChoosePlan({
   }, [selectedTrial, onSelectFree, onSelectPaid])
 
   useEffect(() => {
-    contentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Scroll to top of page on step transitions, not just the element
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [planView])
 
   // --- Payment sub-step ---
@@ -1102,6 +1103,11 @@ export default function SignupPage() {
   const completeSignup = useAuthStore((s) => s.completeSignup)
   const [step, setStep] = useState<Step>('account')
   const [serverUrl, setServerUrl] = useState('')
+
+  // Scroll to top on main step changes
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [step])
   const [selectedInterval, setSelectedInterval] = useState<BillingInterval>('annual')
   const [clientSecret, setClientSecret] = useState<string | null>(null)
   const [provisionError, setProvisionError] = useState<string | null>(null)
