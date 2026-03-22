@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { useAuthStore } from './use-auth-store'
 
 export interface CalendarList {
   id: string
@@ -38,6 +39,8 @@ export const useCalendarListStore = create<CalendarListState>()(
       ],
       defaultCalendarId: 'default',
       addCalendar: (name, color) => {
+        const { canWrite } = useAuthStore.getState()
+        if (!canWrite()) throw new Error('Your subscription has ended. Renew to make changes.')
         const nextColor = color || get().getNextColor()
         set((state) => ({
           calendars: [
@@ -52,6 +55,8 @@ export const useCalendarListStore = create<CalendarListState>()(
         }))
       },
       removeCalendar: (id) => {
+        const { canWrite } = useAuthStore.getState()
+        if (!canWrite()) throw new Error('Your subscription has ended. Renew to make changes.')
         if (id === 'default') return // Can't remove default
         set((state) => ({
           calendars: state.calendars.filter((c) => c.id !== id),
@@ -60,6 +65,8 @@ export const useCalendarListStore = create<CalendarListState>()(
         }))
       },
       updateCalendar: (id, updates) => {
+        const { canWrite } = useAuthStore.getState()
+        if (!canWrite()) throw new Error('Your subscription has ended. Renew to make changes.')
         set((state) => ({
           calendars: state.calendars.map((c) =>
             c.id === id ? { ...c, ...updates } : c,

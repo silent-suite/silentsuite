@@ -85,6 +85,13 @@ export function SyncIndicator() {
         )}
       </div>
 
+      {/* Pending count label */}
+      {pendingQueueCount > 0 && (
+        <span className="hidden text-xs text-amber-400 md:inline">
+          {pendingQueueCount} pending
+        </span>
+      )}
+
       {/* Sync button */}
       <button
         onClick={handleSync}

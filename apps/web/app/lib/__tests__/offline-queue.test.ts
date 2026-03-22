@@ -10,7 +10,12 @@ import {
   retryFailed,
   remove,
   onCountChange,
+  onEnqueue,
   isOfflineError,
+  isQueueFull,
+  getStaleEntries,
+  MAX_QUEUE_SIZE,
+  STALE_THRESHOLD_MS,
   _resetForTests,
 } from '../offline-queue'
 
@@ -308,6 +313,141 @@ describe('offline-queue', () => {
       const all = await getAll()
       expect(all[0].retryCount).toBe(0)
       expect(all[0].status).toBe('pending')
+    })
+  })
+
+  describe('queue size limit', () => {
+    it('isQueueFull returns false when under limit', async () => {
+      await enqueue({ type: 'create', collectionType: 'tasks', content: 'a', tempId: 't1' })
+      expect(await isQueueFull()).toBe(false)
+    })
+
+    it('isQueueFull returns true when at MAX_QUEUE_SIZE', async () => {
+      for (let i = 0; i < MAX_QUEUE_SIZE; i++) {
+        await enqueue({ type: 'create', collectionType: 'tasks', content: `item-${i}`, tempId: `t-${i}` })
+      }
+      expect(await isQueueFull()).toBe(true)
+      const all = await getAll()
+      expect(all).toHaveLength(MAX_QUEUE_SIZE)
+    })
+
+    it('MAX_QUEUE_SIZE is 100', () => {
+      expect(MAX_QUEUE_SIZE).toBe(100)
+    })
+
+    it('enqueue throws when queue is full (101st entry)', async () => {
+      for (let i = 0; i < MAX_QUEUE_SIZE; i++) {
+        await enqueue({ type: 'create', collectionType: 'tasks', content: `item-${i}`, tempId: `t-${i}` })
+      }
+
+      await expect(
+        enqueue({ type: 'create', collectionType: 'tasks', content: 'overflow', tempId: 't-overflow' }),
+      ).rejects.toThrow(/Offline queue is full/)
+    })
+  })
+
+  describe('stale entry detection', () => {
+    it('getStaleEntries returns entries older than threshold', async () => {
+      // Enqueue an entry then manually backdate it
+      await enqueue({ type: 'update', collectionType: 'tasks', content: 'old', itemUid: 'u1' })
+      const all = await getAll()
+      const entry = all[0]
+
+      // Manually update createdAt to 25 hours ago
+      const staleTime = Date.now() - 25 * 60 * 60 * 1000
+      const db = await new Promise<IDBDatabase>((resolve) => {
+        const req = indexedDB.open('silentsuite-offline-queue', 1)
+        req.onsuccess = () => resolve(req.result)
+      })
+      await new Promise<void>((resolve) => {
+        const tx = db.transaction('mutations', 'readwrite')
+        tx.objectStore('mutations').put({ ...entry, createdAt: staleTime })
+        tx.oncomplete = () => resolve()
+      })
+      db.close()
+
+      const stale = await getStaleEntries()
+      expect(stale).toHaveLength(1)
+      expect(stale[0].itemUid).toBe('u1')
+    })
+
+    it('getStaleEntries returns empty for fresh entries', async () => {
+      await enqueue({ type: 'create', collectionType: 'contacts', content: 'fresh', tempId: 't1' })
+      const stale = await getStaleEntries()
+      expect(stale).toHaveLength(0)
+    })
+
+    it('getStaleEntries excludes failed entries', async () => {
+      await enqueue({ type: 'update', collectionType: 'tasks', content: 'x', itemUid: 'u1' })
+
+      // Fail it to mark as failed
+      for (let i = 0; i < 3; i++) {
+        await replay(async () => { throw new Error('fail') })
+      }
+
+      // Backdate createdAt
+      const all = await getAll()
+      const entry = all[0]
+      const staleTime = Date.now() - 25 * 60 * 60 * 1000
+      const db = await new Promise<IDBDatabase>((resolve) => {
+        const req = indexedDB.open('silentsuite-offline-queue', 1)
+        req.onsuccess = () => resolve(req.result)
+      })
+      await new Promise<void>((resolve) => {
+        const tx = db.transaction('mutations', 'readwrite')
+        tx.objectStore('mutations').put({ ...entry, createdAt: staleTime })
+        tx.oncomplete = () => resolve()
+      })
+      db.close()
+
+      const stale = await getStaleEntries()
+      expect(stale).toHaveLength(0) // failed entries excluded
+    })
+
+    it('STALE_THRESHOLD_MS is 24 hours', () => {
+      expect(STALE_THRESHOLD_MS).toBe(24 * 60 * 60 * 1000)
+    })
+  })
+
+  describe('onEnqueue', () => {
+    it('fires when a new entry is enqueued (not compacted)', async () => {
+      const calls: number[] = []
+      const unsub = onEnqueue(() => calls.push(1))
+
+      await enqueue({ type: 'create', collectionType: 'tasks', content: 'a', tempId: 't1' })
+      await new Promise((r) => setTimeout(r, 10))
+      expect(calls).toHaveLength(1)
+
+      // Compacted entry (update merges into create) should NOT fire onEnqueue
+      await enqueue({ type: 'update', collectionType: 'tasks', content: 'b', tempId: 't1' })
+      await new Promise((r) => setTimeout(r, 10))
+      expect(calls).toHaveLength(1) // still 1, not 2
+
+      unsub()
+    })
+  })
+
+  describe('cold-start replay', () => {
+    it('replays pending entries that exist when app loads online', async () => {
+      // Simulate entries persisted from a previous session
+      await enqueue({ type: 'create', collectionType: 'tasks', content: 'offline-1', tempId: 't1' })
+      await enqueue({ type: 'update', collectionType: 'contacts', content: 'offline-2', itemUid: 'u1' })
+
+      // Simulate module reset (like a page reload)
+      await _resetForTests()
+
+      // Verify entries persist across resets
+      const count = await getPendingCount()
+      expect(count).toBe(2)
+
+      // Replay all pending entries (simulates cold-start replay)
+      const executeFn = vi.fn().mockResolvedValue({ itemUid: 'new-uid' })
+      const results = await replay(executeFn)
+
+      expect(executeFn).toHaveBeenCalledTimes(2)
+      expect(results).toHaveLength(2)
+      expect(results.every((r) => r.success)).toBe(true)
+      expect(await getPendingCount()).toBe(0)
     })
   })
 })

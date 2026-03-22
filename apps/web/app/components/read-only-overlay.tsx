@@ -1,40 +1,78 @@
 'use client'
 
-import { Lock } from 'lucide-react'
-import { Button } from '@silentsuite/ui'
+import { Lock, WifiOff, RefreshCw, ExternalLink } from 'lucide-react'
 import Link from 'next/link'
+import { useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
-export function ReadOnlyOverlay() {
+/**
+ * Non-blocking banner shown when subscription has ended.
+ * User retains read access but cannot create/update/delete.
+ */
+export function ReadOnlyBanner() {
   const subscriptionStatus = useAuthStore((s) => s.subscriptionStatus)
 
   const title =
-    subscriptionStatus === 'trialing' || subscriptionStatus === 'none'
-      ? 'Your trial has ended'
-      : 'Your subscription has ended'
+    subscriptionStatus === 'none'
+      ? 'Your trial has ended.'
+      : 'Your subscription has ended.'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(var(--background))]/80 backdrop-blur-sm">
-      <div className="mx-4 w-full max-w-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6 text-center space-y-4">
-        <div className="flex justify-center">
-          <Lock className="h-10 w-10 text-[rgb(var(--foreground))]" />
-        </div>
-        <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{title}</h2>
-        <p className="text-sm text-[rgb(var(--muted))]">Your data is safe and encrypted.</p>
-        <div className="flex flex-col gap-3 pt-2">
-          <Link href="/settings/subscription">
-            <Button size="sm" className="w-full">
-              Choose a plan
-            </Button>
-          </Link>
-          <Link
-            href="/settings/export"
-            className="text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--primary))] transition-colors"
-          >
-            Export my data
-          </Link>
-        </div>
+    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200 md:mx-4">
+      <Lock className="h-4 w-4 shrink-0 text-amber-400" />
+      <span className="flex-1">
+        {title} Your data is safe and read-only.
+      </span>
+      <div className="flex items-center gap-2">
+        <Link
+          href="/settings/subscription"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+        >
+          Choose a plan
+          <ExternalLink className="h-3 w-3" />
+        </Link>
+        <Link
+          href="/settings/export"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[rgb(var(--muted))] transition-colors hover:bg-amber-500/20"
+        >
+          Export data
+        </Link>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Non-blocking banner shown when billing API is unreachable.
+ * User retains full read + write access (degraded mode).
+ */
+export function DegradedModeBanner() {
+  const retryBillingConnection = useAuthStore((s) => s.retryBillingConnection)
+  const [isRetrying, setIsRetrying] = useState(false)
+
+  const handleRetry = async () => {
+    setIsRetrying(true)
+    try {
+      await retryBillingConnection()
+    } finally {
+      setIsRetrying(false)
+    }
+  }
+
+  return (
+    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-200 md:mx-4">
+      <WifiOff className="h-4 w-4 shrink-0 text-blue-400" />
+      <span className="flex-1">
+        Billing service temporarily unavailable. Your data is safe.
+      </span>
+      <button
+        onClick={handleRetry}
+        disabled={isRetrying}
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-500/20 disabled:opacity-50"
+      >
+        <RefreshCw className={`h-3 w-3 ${isRetrying ? 'animate-spin' : ''}`} />
+        {isRetrying ? 'Retrying…' : 'Retry'}
+      </button>
     </div>
   )
 }

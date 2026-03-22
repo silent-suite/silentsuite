@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Contact, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
 
 interface NewContact {
@@ -43,6 +44,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
       searchQuery: '',
 
       createContact: async (newContact: NewContact) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         const tempId = crypto.randomUUID()
         const now = new Date()
         const contact: Contact = {
@@ -94,6 +96,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
       },
 
       updateContact: async (id: string, patch: Partial<Contact>) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         const { contacts } = get()
         const index = contacts.findIndex((c) => c.id === id)
         if (index === -1) return
@@ -124,6 +127,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
       },
 
       deleteContact: async (id: string) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         set((state) => ({ contacts: state.contacts.filter((c) => c.id !== id) }))
 
         // Sync to Etebase

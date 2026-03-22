@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Task, Priority, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
 
 interface NewTask {
@@ -35,6 +36,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
       syncStatus: 'synced' as SyncStatus,
 
       createTask: async (newTask: NewTask) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         const tempId = crypto.randomUUID()
         const now = new Date()
         const task: Task = {
@@ -77,6 +79,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
       },
 
       updateTask: async (id: string, patch: Partial<Task>) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         const { tasks } = get()
         const index = tasks.findIndex((t) => t.id === id)
         if (index === -1) return
@@ -108,6 +111,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
       },
 
       deleteTask: async (id: string) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }))
 
         // Sync to Etebase
@@ -129,6 +133,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
       },
 
       toggleComplete: async (id: string) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         const { tasks } = get()
         const index = tasks.findIndex((t) => t.id === id)
         if (index === -1) return

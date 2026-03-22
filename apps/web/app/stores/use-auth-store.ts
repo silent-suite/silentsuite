@@ -31,6 +31,7 @@ interface AuthState {
   error: string | null
   pendingSignup: PendingSignup | null
   subscriptionStatus: string | null
+  isDegraded: () => boolean
   isReadOnly: () => boolean
   canWrite: () => boolean
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
@@ -42,6 +43,7 @@ interface AuthState {
   refreshSession: () => Promise<boolean>
   restoreSession: () => Promise<void>
   fetchSubscription: () => Promise<void>
+  retryBillingConnection: () => Promise<boolean>
   setUser: (user: User | null) => void
   clearError: () => void
 }
@@ -68,10 +70,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   pendingSignup: null,
   subscriptionStatus: null,
 
+  isDegraded: () => get().subscriptionStatus === 'billing_unavailable',
+
   isReadOnly: () => {
     if (isSelfHosted) return false
     if (get().user?.isAdmin) return false
     const status = get().subscriptionStatus
+    // billing_unavailable = degraded mode → full access (our infra problem, not theirs)
+    if (status === 'billing_unavailable') return false
     return status === 'cancelled' || status === 'expired' || status === 'none'
   },
   canWrite: () => !get().isReadOnly(),
@@ -352,10 +358,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         syncAdminCookie(isAdmin)
         set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin }, isAuthenticated: true, isLoading: false })
       } else {
+        // HTTP error (401/403 etc.) — billing responded, auth is invalid
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false })
       }
-    } catch { syncAdminCookie(false); set({ user: null, isAuthenticated: false, isLoading: false }) }
+    } catch {
+      // Network error — billing API is unreachable.
+      // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
+      const hasEtebaseSession = !!localStorage.getItem('etebase_session')
+      if (hasEtebaseSession) {
+        set({
+          user: { id: 'degraded', email: '', planId: 'unknown', isAdmin: false },
+          isAuthenticated: true,
+          isLoading: false,
+          subscriptionStatus: 'billing_unavailable',
+        })
+      } else {
+        syncAdminCookie(false)
+        set({ user: null, isAuthenticated: false, isLoading: false })
+      }
+    }
   },
 
   fetchSubscription: async () => {
@@ -365,7 +387,39 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
       if (res.ok) { const data = await res.json(); set({ subscriptionStatus: data.status }) }
-    } catch {}
+    } catch {
+      // Network error — only enter degraded mode if there's no existing good status
+      const current = get().subscriptionStatus
+      if (!current) {
+        set({ subscriptionStatus: 'billing_unavailable' })
+      }
+    }
+  },
+
+  retryBillingConnection: async () => {
+    const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
+    if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) return true
+
+    try {
+      // Fetch both endpoints — only apply state if BOTH succeed
+      const [refreshRes, subRes] = await Promise.all([
+        fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }),
+        fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' }),
+      ])
+      if (!refreshRes.ok || !subRes.ok) return false
+      const refreshData = await refreshRes.json()
+      const subData = await subRes.json()
+      const isAdmin = refreshData.isAdmin === true
+      syncAdminCookie(isAdmin)
+      set({
+        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin },
+        isAuthenticated: true,
+        subscriptionStatus: subData.status,
+      })
+      return true
+    } catch {
+      return false
+    }
   },
 
   setUser: (user: User | null) => set({ user, isAuthenticated: user !== null }),

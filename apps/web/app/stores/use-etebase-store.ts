@@ -225,7 +225,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (isOfflineError(err)) {
         const queueTempId = tempId ?? `pending-${Date.now()}`
         console.warn(`[etebase-store] Offline — queuing create for ${type} (tempId: ${queueTempId})`)
-        await enqueue({ type: 'create', collectionType: type, content, tempId: queueTempId })
+        try {
+          await enqueue({ type: 'create', collectionType: type, content, tempId: queueTempId })
+        } catch (queueErr) {
+          console.error(`[etebase-store] Failed to enqueue create:`, queueErr)
+        }
       } else {
         console.error(`[etebase-store] Failed to create ${type} item:`, err)
       }
@@ -251,7 +255,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     } catch (err) {
       if (isOfflineError(err)) {
         console.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
-        await enqueue({ type: 'update', collectionType: type, content, itemUid })
+        try {
+          await enqueue({ type: 'update', collectionType: type, content, itemUid })
+        } catch (queueErr) {
+          console.error(`[etebase-store] Failed to enqueue update:`, queueErr)
+        }
       } else {
         console.error(`[etebase-store] Failed to update ${type} item ${itemUid}:`, err)
       }
@@ -278,7 +286,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     } catch (err) {
       if (isOfflineError(err)) {
         console.warn(`[etebase-store] Offline — queuing delete for ${type}/${itemUid}`)
-        await enqueue({ type: 'delete', collectionType: type, itemUid })
+        try {
+          await enqueue({ type: 'delete', collectionType: type, itemUid })
+        } catch (queueErr) {
+          console.error(`[etebase-store] Failed to enqueue delete:`, queueErr)
+        }
       } else {
         console.error(`[etebase-store] Failed to delete ${type} item ${itemUid}:`, err)
       }

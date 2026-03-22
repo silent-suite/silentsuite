@@ -19,6 +19,7 @@ describe('useAuthStore', () => {
   beforeEach(() => {
     resetStore()
     vi.mocked(fetch).mockReset()
+    localStorage.clear()
   })
 
   it('login sets user and auth state', async () => {
@@ -88,5 +89,99 @@ describe('useAuthStore', () => {
     useAuthStore.getState().setUser(null)
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
     expect(useAuthStore.getState().user).toBeNull()
+  })
+
+  // --- Degraded mode tests ---
+
+  describe('degraded mode (billing_unavailable)', () => {
+    it('isReadOnly returns false when billing_unavailable', () => {
+      useAuthStore.setState({ subscriptionStatus: 'billing_unavailable' })
+      expect(useAuthStore.getState().isReadOnly()).toBe(false)
+    })
+
+    it('canWrite returns true when billing_unavailable', () => {
+      useAuthStore.setState({ subscriptionStatus: 'billing_unavailable' })
+      expect(useAuthStore.getState().canWrite()).toBe(true)
+    })
+
+    it('isDegraded returns true when billing_unavailable', () => {
+      useAuthStore.setState({ subscriptionStatus: 'billing_unavailable' })
+      expect(useAuthStore.getState().isDegraded()).toBe(true)
+    })
+
+    it('isDegraded returns false when active', () => {
+      useAuthStore.setState({ subscriptionStatus: 'active' })
+      expect(useAuthStore.getState().isDegraded()).toBe(false)
+    })
+
+    it('restoreSession enters degraded mode on network error with etebase session', async () => {
+      localStorage.setItem('etebase_session', 'fake-session-data')
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(true)
+      expect(state.subscriptionStatus).toBe('billing_unavailable')
+      expect(state.user).toEqual({ id: 'degraded', email: '', planId: 'unknown', isAdmin: false })
+    })
+
+    it('restoreSession does not enter degraded mode on network error without etebase session', async () => {
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.user).toBeNull()
+    })
+
+    it('restoreSession does NOT enter degraded mode on 401 response', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response)
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.subscriptionStatus).not.toBe('billing_unavailable')
+    })
+
+    it('fetchSubscription sets billing_unavailable on network error', async () => {
+      useAuthStore.setState({ subscriptionStatus: 'active' })
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      await useAuthStore.getState().fetchSubscription()
+
+      expect(useAuthStore.getState().subscriptionStatus).toBe('billing_unavailable')
+    })
+
+    it('retryBillingConnection restores normal status on success', async () => {
+      useAuthStore.setState({ subscriptionStatus: 'billing_unavailable', isAuthenticated: true })
+
+      vi.mocked(fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: 'u1', email: 'test@x.com', planId: 'pro', isAdmin: false }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ status: 'active' }),
+        } as Response)
+
+      const result = await useAuthStore.getState().retryBillingConnection()
+
+      expect(result).toBe(true)
+      expect(useAuthStore.getState().subscriptionStatus).toBe('active')
+      expect(useAuthStore.getState().isDegraded()).toBe(false)
+    })
+
+    it('retryBillingConnection returns false on continued network failure', async () => {
+      useAuthStore.setState({ subscriptionStatus: 'billing_unavailable' })
+      vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
+
+      const result = await useAuthStore.getState().retryBillingConnection()
+
+      expect(result).toBe(false)
+    })
   })
 })
