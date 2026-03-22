@@ -187,8 +187,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
         try {
           await etebase.deleteItem('calendar', id)
         } catch (err) {
-          // etebase.deleteItem handles offline enqueue internally,
-          // but if it throws a non-offline error, enqueue as fallback
+          // If the error is a network/offline error, enqueue for later replay.
+          // Non-offline errors are logged and the optimistic removal stands.
           const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
           if (isOfflineError(err)) {
             await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: id })
