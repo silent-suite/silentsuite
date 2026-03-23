@@ -3,7 +3,7 @@
 import { useCallback, useMemo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
 
 const WEEKDAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 
@@ -32,6 +32,8 @@ export function MiniCalendar() {
   const pathname = usePathname()
   const currentDate = useCalendarStore((s) => s.currentDate)
   const setCurrentDate = useCalendarStore((s) => s.setCurrentDate)
+  const currentView = useCalendarStore((s) => s.currentView)
+  const setCurrentView = useCalendarStore((s) => s.setCurrentView)
   const events = useCalendarStore((s) => s.events)
 
   const today = useMemo(() => new Date(), [])
@@ -39,11 +41,15 @@ export function MiniCalendar() {
   const handleDayClick = useCallback(
     (date: Date) => {
       setCurrentDate(date)
+      // Switch to week view so the main grid shows the clicked date's week
+      if (currentView === 'month') {
+        setCurrentView('week')
+      }
       if (!pathname.startsWith('/calendar')) {
         router.push('/calendar')
       }
     },
-    [setCurrentDate, pathname, router],
+    [setCurrentDate, setCurrentView, currentView, pathname, router],
   )
 
   const [miniMonth, miniYear] = useMemo(
