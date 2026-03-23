@@ -116,7 +116,14 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
             className={`w-full rounded-lg border ${inputBorder} ${inputBg} ${inputText} ${placeholderColor} px-3 py-2.5 text-sm outline-none transition-colors focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500`}
           />
         </div>
-        <PaymentElement onReady={() => setReady(true)} />
+        <PaymentElement
+          onReady={() => setReady(true)}
+          options={{
+            layout: 'tabs',
+            paymentMethodOrder: ['card'],
+            wallets: { applePay: 'never', googlePay: 'never' },
+          }}
+        />
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
       {ready && (
@@ -182,7 +189,7 @@ export default function StripePaymentForm(props: PaymentFormProps) {
   }
 
   return (
-    <Elements stripe={stripeInstance} options={{ clientSecret: props.clientSecret, appearance }}>
+    <Elements stripe={stripeInstance} options={{ clientSecret: props.clientSecret, appearance, paymentMethodTypes: ['card'] }}>
       <PaymentFormInner
         onSuccess={props.onSuccess}
         onError={props.onError}
