@@ -80,7 +80,7 @@ export default function Privacy() {
             <ul className="list-disc pl-6 space-y-1">
               <li>Email address (required)</li>
               <li>Name (optional)</li>
-              <li>Intended use case (optional)</li>
+
               <li>Consent confirmation</li>
             </ul>
             <p className="mt-2">
