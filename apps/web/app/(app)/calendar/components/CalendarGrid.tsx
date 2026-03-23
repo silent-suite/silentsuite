@@ -1253,7 +1253,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         {/* Dynamic calendar color styles */}
         <style dangerouslySetInnerHTML={{ __html: Array.from(calendarColors.entries()).map(([id, color]) => {
           const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
-          return `.${cls} { background-color: ${color} !important; color: #fff !important; }`
+          const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#10b981'
+          return `.${cls} { background-color: ${safeColor} !important; color: #fff !important; }`
         }).join('\n') }} />
         <ScheduleXCalendar calendarApp={calendar} />
         {dragSelection && (

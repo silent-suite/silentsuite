@@ -10,7 +10,9 @@ const BILLING_API_URL =
 
 export function EmailVerificationBanner() {
   const user = useAuthStore((s) => s.user)
-  const [dismissed, setDismissed] = useState(false)
+  const [dismissed, setDismissed] = useState(() => {
+    try { return sessionStorage.getItem('email-verify-dismissed') === 'true' } catch { return false }
+  })
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -66,7 +68,7 @@ export function EmailVerificationBanner() {
       )}
       {error && <span className="text-xs text-red-400">{error}</span>}
       <button
-        onClick={() => setDismissed(true)}
+        onClick={() => { sessionStorage.setItem('email-verify-dismissed', 'true'); setDismissed(true) }}
         className="shrink-0 text-amber-400/60 hover:text-amber-300"
         aria-label="Dismiss"
       >

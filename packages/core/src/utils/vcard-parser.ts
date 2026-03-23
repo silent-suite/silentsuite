@@ -231,6 +231,11 @@ export function parseVCard(vcardStr: string): VCard {
         break;
       case 'PHOTO': {
         const val = prop.value;
+        // Skip oversized photos (base64 > 1MB ≈ 750KB image)
+        if (val.length > 1_000_000) {
+          vcard.photo = undefined;
+          break;
+        }
         if (val.startsWith('data:') || val.startsWith('http://') || val.startsWith('https://')) {
           vcard.photo = val;
         } else {

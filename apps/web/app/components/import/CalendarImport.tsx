@@ -98,6 +98,10 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
       const allEvents: VEvent[] = []
       let todoCount = 0
       for (const file of files) {
+        if (file.size > 10 * 1024 * 1024) {
+          setError('File is too large. Maximum size is 10 MB.')
+          return
+        }
         const text = await file.text()
         const parsed = parseVCalendar(text)
         allEvents.push(...parsed)

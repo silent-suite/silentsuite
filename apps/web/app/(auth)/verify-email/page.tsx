@@ -25,26 +25,11 @@ export default function VerifyEmailPage() {
       return
     }
 
-    // If we have a token, call the billing API to verify
+    // If we have a token but no redirect status, redirect to the billing API
+    // which will verify and redirect back with ?verified=true or ?verified=expired
     if (token) {
       const billingApi = process.env.NEXT_PUBLIC_BILLING_API_URL || 'https://api.silentsuite.io'
-      // The billing API handles verification via GET and redirects,
-      // but we can also call it directly from the client
-      fetch(`${billingApi}/auth/verify-email?token=${encodeURIComponent(token)}`, {
-        redirect: 'manual', // Don't follow redirects
-      })
-        .then((res) => {
-          if (res.status === 200 || res.type === 'opaqueredirect') {
-            setState('success')
-          } else if (res.status === 410 || res.status === 400) {
-            setState('expired')
-          } else {
-            setState('invalid')
-          }
-        })
-        .catch(() => {
-          setState('error')
-        })
+      window.location.href = `${billingApi}/auth/verify-email?token=${encodeURIComponent(token)}`
       return
     }
 

@@ -3,18 +3,27 @@ import { NextRequest, NextResponse } from 'next/server'
 const { Resend } = require("resend")
 const resend = new Resend(process.env.RESEND_API_KEY)
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { email, name } = await req.json()
 
-    if (!email) {
-      return NextResponse.json({ error: 'Email is required' }, { status: 400 })
+    if (!email || typeof email !== 'string' || !email.includes('@') || !email.includes('.')) {
+      return NextResponse.json({ error: 'A valid email is required' }, { status: 400 })
     }
 
-    const firstName = name ? name.split(' ')[0] : ''
-    const greeting = firstName ? `Hi ${firstName},` : 'Hi there,'
+    const firstName = name ? String(name).split(' ')[0] : ''
+    const greeting = firstName ? `Hi ${escapeHtml(firstName)},` : 'Hi there,'
 
-    await resend.emails.send({
+    const { error: sendError } = await resend.emails.send({
       from: 'SilentSuite <noreply@silentsuite.io>',
       to: email,
       subject: 'Welcome to SilentSuite updates',
@@ -52,6 +61,11 @@ export async function POST(req: NextRequest) {
         </div>
       `,
     })
+
+    if (sendError) {
+      console.error('Resend error:', sendError)
+      return NextResponse.json({ error: 'Failed to send email' }, { status: 502 })
+    }
 
     return NextResponse.json({ ok: true })
   } catch (err) {

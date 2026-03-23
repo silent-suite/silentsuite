@@ -1079,7 +1079,7 @@ export default function SignupPage() {
     }
 
     // Create account on the server (default or custom)
-    const identifier = data.email || data.username || ''
+    const identifier = data.email || ''
     await createEtebaseAccount(identifier, data.password, trimmedUrl)
 
     const selfHosted = isSelfHosted || isCustomServer(trimmedUrl)
@@ -1162,7 +1162,7 @@ export default function SignupPage() {
     router.push('/')
   }, [completeSignup, router])
 
-  const email = formDataRef.current?.email || formDataRef.current?.username || ''
+  const email = formDataRef.current?.email || ''
 
   const activeSteps = usingSelfHostedServer
     ? STEPS_SELFHOST

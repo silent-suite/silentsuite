@@ -76,6 +76,10 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
     try {
       const allContacts: VCard[] = []
       for (const file of files) {
+        if (file.size > 10 * 1024 * 1024) {
+          setError('File is too large. Maximum size is 10 MB.')
+          return
+        }
         const text = await file.text()
         const vcardStrings = splitVCards(text)
         for (const vcStr of vcardStrings) {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'
 import { loadStripe, type Stripe, type Appearance } from '@stripe/stripe-js'
 import { useTheme } from 'next-themes'
@@ -140,8 +140,9 @@ export default function StripePaymentForm(props: PaymentFormProps) {
   const [stripeError, setStripeError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const { resolvedTheme } = useTheme()
+  const initialTheme = useRef(resolvedTheme)
 
-  const appearance = useMemo(() => getAppearance(resolvedTheme), [resolvedTheme])
+  const appearance = useMemo(() => getAppearance(initialTheme.current), [])
 
   useEffect(() => {
     if (!STRIPE_KEY) {
