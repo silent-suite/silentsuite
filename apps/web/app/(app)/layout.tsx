@@ -9,6 +9,7 @@ import { PendingSyncBanner } from '@/app/components/PendingSyncBanner'
 import { OfflineToast } from '@/app/components/OfflineToast'
 import { ToastContainer } from '@/app/components/Toast'
 import { OnboardingModal } from '@/app/components/OnboardingModal'
+import { EmailVerificationBanner } from '@/app/components/EmailVerificationBanner'
 import { SyncProvider } from '@/app/providers/sync-provider'
 import { NotificationProvider } from '@/app/providers/notification-provider'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -33,6 +34,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Sidebar />
             <div className="flex flex-1 flex-col min-w-0">
               <Header />
+              <EmailVerificationBanner />
               {!isSelfHosted && degraded && <DegradedModeBanner />}
               {!isSelfHosted && readOnly && <ReadOnlyBanner />}
               <PendingSyncBanner />
