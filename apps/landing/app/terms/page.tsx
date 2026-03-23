@@ -21,7 +21,7 @@ export default function Terms() {
       {/* Content */}
       <div className="max-w-3xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-bold mb-4">Terms and Conditions</h1>
-        <p className="text-navy-400 mb-12">Last updated: March 17, 2026</p>
+        <p className="text-navy-400 mb-12">Last updated: March 23, 2026</p>
 
         <div className="prose prose-invert max-w-none space-y-8 text-navy-200">
 
@@ -46,9 +46,12 @@ export default function Terms() {
             </h2>
             <p>
               SilentSuite provides an end-to-end encrypted synchronisation
-              service for calendars, contacts, and tasks. Data is encrypted on
-              your device before being transmitted to our servers. We have no
-              technical ability to decrypt your data.
+              service for calendars, contacts, and tasks. The Service is
+              available as a web application, an Android mobile app, and a
+              CalDAV bridge for compatibility with existing calendar and
+              contacts clients. Data is encrypted on your device before being
+              transmitted to our servers. We have no technical ability to
+              decrypt your data.
             </p>
           </section>
 
@@ -78,9 +81,10 @@ export default function Terms() {
             </h2>
             <p>
               Paid plans are billed monthly or annually via Stripe. Prices are
-              displayed in EUR and include applicable taxes. You may cancel at
-              any time; your subscription will remain active until the end of
-              the current billing period.
+              displayed in EUR and include applicable taxes. Your card details
+              are handled entirely by Stripe and are never stored on our
+              servers. You may cancel at any time; your subscription will
+              remain active until the end of the current billing period.
             </p>
             <p className="mt-2">
               We offer a 30-day money-back guarantee on all paid plans. If you
@@ -94,10 +98,10 @@ export default function Terms() {
               5. Free trial
             </h2>
             <p>
-              New accounts may include a 30-day free trial period. At the end
-              of the trial, your account will be placed in a read-only state
-              unless you subscribe to a paid plan. You may export your data at
-              any time.
+              New accounts include a free trial period of up to 30 days. At
+              the end of the trial, your account will be placed in a read-only
+              state unless you subscribe to a paid plan. You may export your
+              data at any time during or after the trial.
             </p>
           </section>
 
@@ -108,14 +112,29 @@ export default function Terms() {
             <p>
               Your data belongs to you. We do not claim any ownership or
               license over the content you store in SilentSuite. You may
-              export your data in standard formats (ICS, VCF) at any time
-              from the Settings page.
+              export your data in standard formats (ICS for calendar events,
+              VCF for contacts, ZIP for bulk export) at any time from the
+              Settings page.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">
-              7. Acceptable use
+              7. Self-hosting
+            </h2>
+            <p>
+              The SilentSuite server is open source and available under the
+              AGPL license. You may self-host the server for personal or
+              organisational use. Self-hosted instances are under your own
+              control and responsibility. These Terms apply to the hosted
+              Service operated by SilentSuite; self-hosted usage is governed
+              by the AGPL license terms.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-white mb-3">
+              8. Acceptable use
             </h2>
             <p>
               You agree not to use the Service for any unlawful purpose or in
@@ -127,7 +146,7 @@ export default function Terms() {
 
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">
-              8. Limitation of liability
+              9. Limitation of liability
             </h2>
             <p>
               The Service is provided &quot;as is&quot; without warranties of any
@@ -144,7 +163,7 @@ export default function Terms() {
 
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">
-              9. Changes to these Terms
+              10. Changes to these Terms
             </h2>
             <p>
               We may update these Terms from time to time. Changes will be
@@ -156,7 +175,7 @@ export default function Terms() {
 
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">
-              10. Governing law
+              11. Governing law
             </h2>
             <p>
               These Terms are governed by the applicable laws of the
@@ -169,7 +188,7 @@ export default function Terms() {
 
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">
-              11. Contact
+              12. Contact
             </h2>
             <p>
               For any questions regarding these Terms, please contact us at{' '}

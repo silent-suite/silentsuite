@@ -40,9 +40,11 @@ const plans = [
       '5 GB encrypted storage',
       'Email support',
     ],
-    cta: 'Get started',
-    href: 'https://app.silentsuite.io/signup',
+    cta: 'Available after beta',
+    href: '#',
     highlight: false,
+    badge: 'Coming Soon',
+    disabled: true,
   },
   {
     name: 'Self-hosted',
@@ -57,8 +59,8 @@ const plans = [
       'Full data sovereignty',
       'No usage limits',
     ],
-    cta: 'View on GitHub',
-    href: 'https://github.com/silent-suite',
+    cta: 'View Documentation',
+    href: 'https://docs.silentsuite.io',
     highlight: false,
   },
 ]
@@ -160,18 +162,26 @@ export default function Pricing() {
                 ? '/month'
                 : '/month, billed yearly'
 
+            const isDisabled = 'disabled' in plan && plan.disabled
+
             return (
               <div
                 key={plan.name}
                 className={`relative p-8 rounded-2xl border flex flex-col transition-all ${
-                  plan.highlight
-                    ? 'bg-teal-400/10 border-teal-400/40 ring-1 ring-teal-400/20'
-                    : 'bg-navy-900 border-navy-700 hover:border-navy-600'
+                  isDisabled
+                    ? 'bg-navy-900 border-navy-700 opacity-60'
+                    : plan.highlight
+                      ? 'bg-teal-400/10 border-teal-400/40 ring-1 ring-teal-400/20'
+                      : 'bg-navy-900 border-navy-700 hover:border-navy-600'
                 }`}
               >
                 {'badge' in plan && plan.badge && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="px-4 py-1 bg-teal-400 text-navy-950 text-xs font-bold rounded-full uppercase tracking-wide">
+                    <span className={`px-4 py-1 text-xs font-bold rounded-full uppercase tracking-wide ${
+                      isDisabled
+                        ? 'bg-navy-600 text-navy-300'
+                        : 'bg-teal-400 text-navy-950'
+                    }`}>
                       {plan.badge}
                     </span>
                   </div>
@@ -215,16 +225,25 @@ export default function Pricing() {
                   ))}
                 </ul>
 
-                <a
-                  href={plan.href}
-                  className={`block text-center py-3 px-6 rounded-lg font-semibold transition-colors ${
-                    plan.highlight
-                      ? 'bg-teal-400 hover:bg-teal-500 text-navy-950'
-                      : 'bg-navy-800 hover:bg-navy-700 text-white'
-                  }`}
-                >
-                  {plan.cta}
-                </a>
+                {isDisabled ? (
+                  <span
+                    className="block text-center py-3 px-6 rounded-lg font-semibold bg-navy-800 text-navy-500 cursor-not-allowed"
+                    aria-disabled="true"
+                  >
+                    {plan.cta}
+                  </span>
+                ) : (
+                  <a
+                    href={plan.href}
+                    className={`block text-center py-3 px-6 rounded-lg font-semibold transition-colors ${
+                      plan.highlight
+                        ? 'bg-teal-400 hover:bg-teal-500 text-navy-950'
+                        : 'bg-navy-800 hover:bg-navy-700 text-white'
+                    }`}
+                  >
+                    {plan.cta}
+                  </a>
+                )}
               </div>
             )
           })}

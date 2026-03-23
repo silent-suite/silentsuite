@@ -21,7 +21,7 @@ export default function Privacy() {
       {/* Content */}
       <div className="max-w-3xl mx-auto px-6 py-16">
         <h1 className="text-4xl font-bold mb-4">Privacy Policy</h1>
-        <p className="text-navy-400 mb-12">Last updated: March 12, 2026</p>
+        <p className="text-navy-400 mb-12">Last updated: March 23, 2026</p>
 
         <div className="prose prose-invert max-w-none space-y-8 text-navy-200">
 
@@ -30,10 +30,10 @@ export default function Privacy() {
               The short version
             </h2>
             <p>
-              SilentSuite is an end-to-end encrypted sync service. Your
-              calendar, contacts, and task data is encrypted on your device
-              before it reaches our servers. We cannot read, analyze, or share
-              your encrypted data. This is by design, not just by policy.
+              SilentSuite is an end-to-end encrypted sync service for calendars,
+              contacts, and tasks. Your data is encrypted on your device before
+              it reaches our servers. We cannot read, analyze, or share your
+              encrypted data. This is by design, not just by policy.
             </p>
           </section>
 
@@ -64,46 +64,44 @@ export default function Privacy() {
             </h3>
             <p>
               This website is hosted on Cloudflare Pages. Cloudflare may
-              process your IP address to deliver the website. We do not use
-              any analytics, tracking scripts, or cookies on this website.
-              Fonts are self-hosted. No requests are made to Google or
-              other third-party font services.
+              process your IP address to deliver the website. We use
+              Plausible Analytics (self-hosted), a privacy-friendly analytics
+              tool that does not use cookies, does not track individual users,
+              and does not collect personal data. Fonts are self-hosted. No
+              requests are made to Google or other third-party font services.
             </p>
 
             <h3 className="text-lg font-medium text-white mt-4 mb-2">
-              2.2 Waitlist signup
+              2.2 Newsletter subscription
             </h3>
             <p>
-              When you join our waitlist, we collect:
+              When you subscribe to our newsletter, we collect:
             </p>
             <ul className="list-disc pl-6 space-y-1">
               <li>Email address (required)</li>
               <li>Name (optional)</li>
               <li>Intended use case (optional)</li>
-              <li>Consent confirmation and timestamp</li>
+              <li>Consent confirmation</li>
             </ul>
             <p className="mt-2">
-              We use a double opt-in process: after submitting the form,
-              you will receive a confirmation email. Your email address is
-              only stored and used after you click the confirmation link.
-              Until confirmation, your data is held in a pending state and
-              automatically deleted if not confirmed within 48 hours.
-            </p>
-            <p className="mt-2">
-              This data is stored via Formbricks (self-hostable survey tool)
-              and used solely to contact you about SilentSuite availability.
+              We use Resend to send transactional and newsletter emails. Your
+              email address is used solely to send you product updates and
+              announcements about SilentSuite.
               Legal basis: Art. 6(1)(a) GDPR (consent). You can withdraw
-              consent at any time by emailing us at{' '}
+              consent at any time by replying with &quot;unsubscribe&quot; or
+              emailing us at{' '}
               <a href="mailto:info@silentsuite.io" className="text-teal-400 hover:underline">
                 info@silentsuite.io
               </a>.
             </p>
 
             <h3 className="text-lg font-medium text-white mt-4 mb-2">
-              2.3 SilentSuite sync service (server.silentsuite.io)
+              2.3 SilentSuite service (app.silentsuite.io)
             </h3>
             <p>
-              When you use the SilentSuite sync service, we process:
+              SilentSuite is available as a web app, an Android mobile app,
+              and a CalDAV bridge for use with existing calendar and contacts
+              clients. When you use the service, we process:
             </p>
             <ul className="list-disc pl-6 space-y-1">
               <li>
@@ -133,6 +131,17 @@ export default function Privacy() {
               account and encrypted data. Art. 6(1)(f) GDPR (legitimate
               interest) for security logs.
             </p>
+
+            <h3 className="text-lg font-medium text-white mt-4 mb-2">
+              2.4 Payment processing
+            </h3>
+            <p>
+              Payments are processed by Stripe. Your card details are handled
+              entirely by Stripe and are never stored on or transmitted to our
+              servers. We receive only a transaction reference, plan type, and
+              billing status from Stripe.
+              Legal basis: Art. 6(1)(b) GDPR (contract performance).
+            </p>
           </section>
 
           <section>
@@ -141,8 +150,10 @@ export default function Privacy() {
             </h2>
             <p>
               The SilentSuite sync server is hosted on secure, GDPR-compliant
-              infrastructure. Your encrypted data never leaves the EU. The landing
-              page is served via Cloudflare&apos;s global CDN.
+              infrastructure. Your encrypted data never leaves the EU. The
+              landing page is served via Cloudflare&apos;s global CDN. You may
+              also choose to self-host the SilentSuite server for complete
+              data sovereignty.
             </p>
           </section>
 
@@ -163,7 +174,15 @@ export default function Privacy() {
                 website hosting and CDN
               </li>
               <li>
-                <strong>Formbricks</strong>: waitlist form processing
+                <strong>Resend</strong>: transactional and newsletter email
+                delivery
+              </li>
+              <li>
+                <strong>Stripe</strong>: payment processing
+              </li>
+              <li>
+                <strong>Plausible Analytics</strong> (self-hosted):
+                privacy-friendly, cookieless website analytics
               </li>
             </ul>
           </section>
@@ -178,7 +197,7 @@ export default function Privacy() {
               <li>Rectify inaccurate data</li>
               <li>Request deletion of your data</li>
               <li>Restrict or object to processing</li>
-              <li>Data portability</li>
+              <li>Data portability (export in ICS, VCF, or ZIP formats)</li>
               <li>Withdraw consent at any time</li>
               <li>
                 Lodge a complaint with a supervisory authority
@@ -197,7 +216,7 @@ export default function Privacy() {
               6. Data retention
             </h2>
             <p>
-              Waitlist data is retained until the waitlist is closed or you
+              Newsletter subscriber data is retained until you unsubscribe or
               request removal. Account data and encrypted sync data are
               retained for the duration of your account. Server logs are
               retained for a maximum of 30 days. When you delete your account,
@@ -210,21 +229,34 @@ export default function Privacy() {
               7. Cookies
             </h2>
             <p>
-              This website does not use cookies. The SilentSuite sync service
-              uses authentication tokens stored in your application. These
-              are not browser cookies.
+              This website does not use cookies. Plausible Analytics is
+              cookieless. The SilentSuite service uses authentication tokens
+              stored in your application. These are not browser cookies.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-semibold text-white mb-3">
-              8. Changes to this policy
+              8. Self-hosting
+            </h2>
+            <p>
+              SilentSuite offers a self-hosted option. When you run your own
+              server, your data never touches our infrastructure. This privacy
+              policy applies only to services operated by SilentSuite (the
+              hosted service and this website). Self-hosted instances are under
+              your own control and responsibility.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-semibold text-white mb-3">
+              9. Changes to this policy
             </h2>
             <p>
               We may update this privacy policy from time to time. Changes
               will be posted on this page with an updated date. For
-              significant changes, we will notify waitlist members and
-              registered users via email.
+              significant changes, we will notify subscribers and registered
+              users via email.
             </p>
           </section>
 

@@ -200,7 +200,7 @@ export default function WhyWeAreBuildingSilentSuite() {
 
       <ol>
         <li>
-          <strong>Now:</strong> Server live, waitlist open, core protocol
+          <strong>Now:</strong> Server live, apps available, core protocol
           verified
         </li>
         <li>
@@ -226,9 +226,7 @@ export default function WhyWeAreBuildingSilentSuite() {
 
       <p>
         If this sounds like something you&apos;ve been waiting for,{' '}
-        <a href="/#waitlist">join the waitlist</a>. We&apos;ll notify you when
-        the beta is ready. No spam. No data harvesting. Just one email when
-        it&apos;s time.
+        <a href="https://app.silentsuite.io/signup">get started today</a>. No spam. No data harvesting.
       </p>
 
       <p>Your calendar is your life. It should be yours alone.</p>

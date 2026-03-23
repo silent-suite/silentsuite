@@ -157,14 +157,14 @@ export default async function BlogPost({
             Interested in private sync?
           </h2>
           <p className="text-navy-300 mb-6">
-            SilentSuite is currently in development. Join the waitlist to get
-            early access when we launch.
+            SilentSuite is available now. Sign up and start syncing your
+            calendar, contacts, and tasks with end-to-end encryption.
           </p>
           <a
-            href="/#waitlist"
+            href="https://app.silentsuite.io/signup"
             className="inline-block px-8 py-3 bg-teal-400 hover:bg-teal-500 text-navy-950 font-semibold rounded-lg transition-colors"
           >
-            Join the Waitlist
+            Get Started
           </a>
         </div>
 

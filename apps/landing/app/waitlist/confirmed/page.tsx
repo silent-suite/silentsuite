@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 
 export const metadata: Metadata = {
-  title: 'Waitlist Confirmed — SilentSuite',
-  description: 'Your waitlist signup has been confirmed.',
+  title: 'Subscription Confirmed | SilentSuite',
+  description: 'Your newsletter subscription has been confirmed.',
 }
 
 export default function Confirmed() {
@@ -16,8 +16,8 @@ export default function Confirmed() {
             You&apos;re confirmed.
           </h1>
           <p className="text-navy-300 mb-6">
-            Your email has been verified and you&apos;re officially on the
-            SilentSuite waitlist. We&apos;ll reach out when early access opens.
+            Your email has been verified and you&apos;re subscribed to
+            SilentSuite updates. We&apos;ll keep you posted on new features and releases.
           </p>
           <p className="text-navy-500 text-sm mb-8">
             You can unsubscribe at any time.
