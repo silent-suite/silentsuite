@@ -56,27 +56,35 @@ function parseICalDateValue(value: string, tzid?: string): { date: Date; allDay:
     return { date: new Date(Date.UTC(year, month, day, hour, minute, second)), allDay: false };
   }
 
-  // If a TZID is specified and differs from local timezone, convert via
-  // Intl.DateTimeFormat so the displayed time matches the original timezone.
+  // If a TZID is specified, convert via Intl.DateTimeFormat so the
+  // resulting Date represents the correct UTC instant.
   if (tzid) {
     try {
-      // Build a UTC date from the face-value components, then compute the
-      // offset for that instant in the given timezone so we can shift it.
       const utcGuess = Date.UTC(year, month, day, hour, minute, second);
-      const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: tzid,
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false,
-      });
-      // Find the offset between the tzid timezone and UTC for this instant
-      const parts = formatter.formatToParts(new Date(utcGuess));
-      const p = (type: string) => parseInt(parts.find((x) => x.type === type)?.value ?? '0', 10);
-      const tzDate = new Date(p('year'), p('month') - 1, p('day'), p('hour'), p('minute'), p('second'));
-      const offsetMs = tzDate.getTime() - utcGuess;
-      // The actual UTC instant is: face-value components treated as tzid local time
-      // So actual UTC = utcGuess - offsetMs
-      return { date: new Date(utcGuess - offsetMs), allDay: false };
+
+      function getOffsetMs(utcMs: number): number {
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: tzid,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: false,
+        });
+        const parts = formatter.formatToParts(new Date(utcMs));
+        const p = (type: string) => parseInt(parts.find((x) => x.type === type)?.value ?? '0', 10);
+        const localDate = new Date(p('year'), p('month') - 1, p('day'), p('hour'), p('minute'), p('second'));
+        return localDate.getTime() - utcMs;
+      }
+
+      // Two-pass approach: the first offset may be wrong when a DST
+      // transition falls between utcGuess and the real target instant.
+      const offset1 = getOffsetMs(utcGuess);
+      const betterUtc = utcGuess - offset1;
+
+      // Second pass — refine if DST boundary was crossed
+      const offset2 = getOffsetMs(betterUtc);
+      const finalUtc = utcGuess - offset2;
+
+      return { date: new Date(finalUtc), allDay: false };
     } catch {
       // Invalid TZID — fall through to local time interpretation
     }
