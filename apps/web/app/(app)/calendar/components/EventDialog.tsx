@@ -447,12 +447,12 @@ export function EventDialog({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-[60] bg-black/50 dark:bg-black/60 transition-opacity backdrop-blur-[1px]"
+        className="fixed inset-0 z-[200] bg-black/60 dark:bg-black/70 transition-opacity backdrop-blur-[1px]"
         onClick={onClose}
       />
 
       {/* Dialog container — centered on desktop, full-screen on mobile */}
-      <div className="fixed inset-0 z-[61] flex items-center justify-center p-0 sm:p-4">
+      <div className="fixed inset-0 z-[201] flex items-center justify-center p-0 sm:p-4">
         <div
           ref={dialogRef}
           role="dialog"

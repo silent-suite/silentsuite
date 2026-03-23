@@ -140,9 +140,22 @@ export default function StripePaymentForm(props: PaymentFormProps) {
   const [stripeError, setStripeError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const { resolvedTheme } = useTheme()
-  const initialTheme = useRef(resolvedTheme)
+  const [themeReady, setThemeReady] = useState(false)
+  const capturedTheme = useRef<string | undefined>(undefined)
 
-  const appearance = useMemo(() => getAppearance(initialTheme.current), [])
+  // Wait for next-themes to resolve (undefined on SSR, then resolves)
+  useEffect(() => {
+    if (resolvedTheme && !capturedTheme.current) {
+      capturedTheme.current = resolvedTheme
+      setThemeReady(true)
+    }
+  }, [resolvedTheme])
+
+  const appearance = useMemo(
+    () => getAppearance(capturedTheme.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [themeReady],
+  )
 
   useEffect(() => {
     if (!STRIPE_KEY) {
@@ -185,6 +198,16 @@ export default function StripePaymentForm(props: PaymentFormProps) {
     return (
       <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-center">
         <p className="text-sm text-red-400">Payment system unavailable. Please refresh the page.</p>
+      </div>
+    )
+  }
+
+  // Wait for theme to resolve before rendering Stripe Elements
+  if (!themeReady) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+        <p className="mt-3 text-sm text-slate-400">Preparing payment form...</p>
       </div>
     )
   }

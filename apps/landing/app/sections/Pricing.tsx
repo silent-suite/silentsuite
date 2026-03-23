@@ -7,6 +7,26 @@ type BillingCycle = 'monthly' | 'yearly'
 
 const plans = [
   {
+    name: 'Standard',
+    monthlyPrice: 4.80,
+    yearlyPrice: 4.00,
+    description: 'Everything you need for private sync across your devices.',
+    icons: [Calendar, Users, CheckSquare, Shield],
+    features: [
+      'Calendar, contacts & tasks sync',
+      'End-to-end encryption',
+      'Unlimited devices',
+      'Web, iOS & Android apps',
+      '5 GB encrypted storage',
+      'Email support',
+    ],
+    cta: 'Available after beta',
+    href: 'https://app.silentsuite.io/signup',
+    highlight: false,
+    disabled: true,
+    badge: 'Coming Soon',
+  },
+  {
     name: 'Early Adopter',
     monthlyPrice: 3.60,
     yearlyPrice: 3.00,
@@ -26,26 +46,7 @@ const plans = [
     highlight: true,
     badge: 'Limited time',
   },
-  {
-    name: 'Standard',
-    monthlyPrice: 4.80,
-    yearlyPrice: 4.00,
-    description: 'Everything you need for private sync across your devices.',
-    icons: [Calendar, Users, CheckSquare, Shield],
-    features: [
-      'Calendar, contacts & tasks sync',
-      'End-to-end encryption',
-      'Unlimited devices',
-      'Web, iOS & Android apps',
-      '5 GB encrypted storage',
-      'Email support',
-    ],
-    cta: 'Available after beta',
-    href: '#',
-    highlight: false,
-    badge: 'Coming Soon',
-    disabled: true,
-  },
+
   {
     name: 'Self-hosted',
     monthlyPrice: 0,
