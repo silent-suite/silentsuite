@@ -190,7 +190,7 @@ export default function StripePaymentForm(props: PaymentFormProps) {
   }
 
   return (
-    <Elements stripe={stripeInstance} options={{ clientSecret: props.clientSecret, appearance, paymentMethodTypes: ['card'] }}>
+    <Elements stripe={stripeInstance} options={{ clientSecret: props.clientSecret, appearance }}>
       <PaymentFormInner
         onSuccess={props.onSuccess}
         onError={props.onError}
