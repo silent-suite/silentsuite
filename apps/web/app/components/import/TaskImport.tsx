@@ -6,7 +6,9 @@ import { parseVTodo } from '@silentsuite/core/utils/ical-parser'
 import type { VTodo } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
+import ImportListSelector from './ImportListSelector'
 import { useTaskStore } from '@/app/stores/use-task-store'
+import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import type { Priority } from '@silentsuite/core'
 
 interface TaskImportProps {
@@ -186,7 +188,10 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
+  const [selectedListId, setSelectedListId] = useState('default')
   const createTask = useTaskStore((s) => s.createTask)
+  const taskLists = useTaskListStore((s) => s.lists)
+  const addList = useTaskListStore((s) => s.addList)
 
   const handleFiles = useCallback(async (files: File[]) => {
     setError(null)
@@ -222,6 +227,7 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
           description: task.description ?? '',
           due_date: task.due ? parseICalDate(task.due) : null,
           priority: mapPriorityToStore(task.priority),
+          listId: selectedListId,
         })
       }
       setImportedCount(tasks.length)
@@ -231,7 +237,14 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
     } finally {
       setIsImporting(false)
     }
-  }, [tasks, createTask, onImportComplete])
+  }, [tasks, createTask, onImportComplete, selectedListId])
+
+  const handleCreateList = useCallback((name: string, color: string) => {
+    addList(name, color)
+    const newLists = useTaskListStore.getState().lists
+    const created = newLists[newLists.length - 1]
+    if (created) setSelectedListId(created.id)
+  }, [addList])
 
   const handleCancel = useCallback(() => {
     setTasks([])
@@ -264,6 +277,14 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
           </div>
         ))}
       </div>
+
+      <ImportListSelector
+        lists={taskLists}
+        selectedId={selectedListId}
+        onSelect={setSelectedListId}
+        onCreateNew={handleCreateList}
+        label="task list"
+      />
 
       <FileDropZone accept=".ics,.csv" onFiles={handleFiles} />
 

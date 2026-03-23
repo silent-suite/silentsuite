@@ -19,6 +19,7 @@ interface NewContact {
   notes?: string
   birthday?: string | null
   photoUrl?: string | null
+  listId?: string
 }
 
 interface ContactState {
@@ -66,6 +67,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
           notes: newContact.notes ?? '',
           birthday: newContact.birthday ?? null,
           photoUrl: newContact.photoUrl ?? null,
+          listId: newContact.listId,
           created_at: now,
           updated_at: now,
         }

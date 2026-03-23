@@ -31,7 +31,7 @@ export default function SignupSuccessPage() {
         </p>
       </div>
 
-      <Button onClick={() => router.push('/onboarding')} className="w-full">
+      <Button onClick={() => router.push('/')} className="w-full">
         Set up your workspace
       </Button>
     </div>

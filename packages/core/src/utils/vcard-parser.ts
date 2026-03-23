@@ -229,9 +229,34 @@ export function parseVCard(vcardStr: string): VCard {
       case 'BDAY':
         vcard.bday = prop.value;
         break;
-      case 'PHOTO':
-        vcard.photo = prop.value;
+      case 'PHOTO': {
+        const val = prop.value;
+        if (val.startsWith('data:') || val.startsWith('http://') || val.startsWith('https://')) {
+          vcard.photo = val;
+        } else {
+          const encoding = (prop.params['ENCODING'] ?? '').toUpperCase();
+          if (encoding === 'B' || encoding === 'BASE64') {
+            const typeParam = (prop.params['TYPE'] ?? 'JPEG').toUpperCase();
+            const mimeMap: Record<string, string> = {
+              JPEG: 'image/jpeg',
+              JPG: 'image/jpeg',
+              PNG: 'image/png',
+              GIF: 'image/gif',
+              WEBP: 'image/webp',
+            };
+            const mime = mimeMap[typeParam] ?? 'image/jpeg';
+            vcard.photo = `data:${mime};base64,${val}`;
+          } else {
+            // Heuristic: if it looks like base64 (no spaces, long string), wrap it
+            if (val.length > 100 && /^[A-Za-z0-9+/=\r\n]+$/.test(val.replace(/\s/g, ''))) {
+              vcard.photo = `data:image/jpeg;base64,${val.replace(/\s/g, '')}`;
+            } else {
+              vcard.photo = val;
+            }
+          }
+        }
         break;
+      }
       case 'REV':
         vcard.rev = prop.value;
         break;
@@ -308,7 +333,13 @@ export function generateVCard(vcard: VCard): string {
   if (vcard.title) lines.push(foldLine(`TITLE:${escapeText(vcard.title)}`));
   if (vcard.note) lines.push(foldLine(`NOTE:${escapeText(vcard.note)}`));
   if (vcard.bday) lines.push(foldLine(`BDAY:${vcard.bday}`));
-  if (vcard.photo) lines.push(foldLine(`PHOTO;VALUE=URI:${vcard.photo}`));
+  if (vcard.photo) {
+    if (vcard.photo.startsWith('data:') || vcard.photo.startsWith('http://') || vcard.photo.startsWith('https://')) {
+      lines.push(foldLine(`PHOTO;VALUE=URI:${vcard.photo}`));
+    } else {
+      lines.push(foldLine(`PHOTO;ENCODING=b;TYPE=JPEG:${vcard.photo}`));
+    }
+  }
   if (vcard.rev) lines.push(foldLine(`REV:${vcard.rev}`));
 
   lines.push('END:VCARD');
