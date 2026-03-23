@@ -460,31 +460,19 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     },
   })
 
-  // Sync view changes from store → Schedule-X via internal API
+  // Sync view AND date changes from store → Schedule-X via internal API
+  // calendarState.setView(viewName, date) is the only reliable internal API;
+  // setRange/setDate do not exist on the CalendarApp public surface.
   useEffect(() => {
     if (!calendar) return
     const sxViewName = VIEW_MAP[currentView]
     try {
-      // CalendarApp has no public setView — access the internal singleton
       const app = (calendar as unknown as { $app: { calendarState: { setView: (view: string, date: Temporal.PlainDate) => void } } }).$app
       app.calendarState.setView(sxViewName, toPlainDate(currentDate))
     } catch {
       // Calendar may not be fully mounted yet
     }
-  }, [calendar, currentView])
-
-  // Sync date changes from store → Schedule-X via internal API
-  useEffect(() => {
-    if (!calendar) return
-    try {
-      const pd = toPlainDate(currentDate)
-      // CalendarApp has no public setDate — use calendarState.setRange
-      const app = (calendar as unknown as { $app: { calendarState: { setRange: (date: Temporal.PlainDate) => void } } }).$app
-      app.calendarState.setRange(pd)
-    } catch {
-      // Calendar may not be fully mounted yet
-    }
-  }, [calendar, currentDate])
+  }, [calendar, currentView, currentDate])
 
   // Sync events to schedule-x when they change
   useEffect(() => {
