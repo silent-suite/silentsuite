@@ -8,6 +8,7 @@ import { ReadOnlyBanner, DegradedModeBanner } from '@/app/components/read-only-o
 import { PendingSyncBanner } from '@/app/components/PendingSyncBanner'
 import { OfflineToast } from '@/app/components/OfflineToast'
 import { ToastContainer } from '@/app/components/Toast'
+import { OnboardingModal } from '@/app/components/OnboardingModal'
 import { SyncProvider } from '@/app/providers/sync-provider'
 import { NotificationProvider } from '@/app/providers/notification-provider'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -42,6 +43,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <BottomNav />
             <OfflineToast />
             <ToastContainer />
+            <OnboardingModal />
           </div>
         </NotificationProvider>
       </SyncProvider>

@@ -1159,7 +1159,7 @@ export default function SignupPage() {
   const handleVaultComplete = useCallback(() => {
     // Finalize authentication — only NOW does the user become authenticated.
     completeSignup()
-    router.push('/onboarding')
+    router.push('/')
   }, [completeSignup, router])
 
   const email = formDataRef.current?.email || formDataRef.current?.username || ''

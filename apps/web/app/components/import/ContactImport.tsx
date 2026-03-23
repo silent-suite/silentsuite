@@ -6,7 +6,9 @@ import { parseVCard } from '@silentsuite/core/utils/vcard-parser'
 import type { VCard } from '@silentsuite/core/utils/vcard-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
+import ImportListSelector from './ImportListSelector'
 import { useContactStore } from '@/app/stores/use-contact-store'
+import { useContactListStore } from '@/app/stores/use-contact-list-store'
 
 interface ContactImportProps {
   onImportComplete: (count: number) => void
@@ -61,7 +63,10 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
+  const [selectedListId, setSelectedListId] = useState('default')
   const createContact = useContactStore((s) => s.createContact)
+  const contactLists = useContactListStore((s) => s.lists)
+  const addList = useContactListStore((s) => s.addList)
 
   const handleFiles = useCallback(async (files: File[]) => {
     setError(null)
@@ -116,6 +121,7 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
           notes: contact.note ?? '',
           birthday: contact.bday ?? null,
           photoUrl: contact.photo ?? null,
+          listId: selectedListId,
         })
       }
       setImportedCount(contacts.length)
@@ -125,7 +131,14 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
     } finally {
       setIsImporting(false)
     }
-  }, [contacts, createContact, onImportComplete])
+  }, [contacts, createContact, onImportComplete, selectedListId])
+
+  const handleCreateList = useCallback((name: string, color: string) => {
+    addList(name, color)
+    const newLists = useContactListStore.getState().lists
+    const created = newLists[newLists.length - 1]
+    if (created) setSelectedListId(created.id)
+  }, [addList])
 
   const handleCancel = useCallback(() => {
     setContacts([])
@@ -158,6 +171,14 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
           </div>
         ))}
       </div>
+
+      <ImportListSelector
+        lists={contactLists}
+        selectedId={selectedListId}
+        onSelect={setSelectedListId}
+        onCreateNew={handleCreateList}
+        label="contact list"
+      />
 
       <FileDropZone accept=".vcf" onFiles={handleFiles} />
 
