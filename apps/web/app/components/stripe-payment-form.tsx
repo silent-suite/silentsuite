@@ -1,23 +1,38 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'
-import { loadStripe, type Stripe } from '@stripe/stripe-js'
+import { loadStripe, type Stripe, type Appearance } from '@stripe/stripe-js'
+import { useTheme } from 'next-themes'
 import { Button } from '@silentsuite/ui'
 
 const STRIPE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
-// Stripe Elements appearance matching our dark theme
-const appearance = {
-  theme: 'night' as const,
-  variables: {
-    colorPrimary: '#10b981', // emerald-500
-    colorBackground: 'rgb(15, 23, 42)', // slate-900ish
-    colorText: '#e2e8f0',
-    colorDanger: '#ef4444',
-    fontFamily: 'Inter, system-ui, sans-serif',
-    borderRadius: '8px',
-  },
+function getAppearance(theme: string | undefined): Appearance {
+  if (theme === 'light') {
+    return {
+      theme: 'stripe',
+      variables: {
+        colorPrimary: '#10b981',
+        colorBackground: '#ffffff',
+        colorText: '#1e293b',
+        colorDanger: '#ef4444',
+        fontFamily: 'Inter, system-ui, sans-serif',
+        borderRadius: '8px',
+      },
+    }
+  }
+  return {
+    theme: 'night',
+    variables: {
+      colorPrimary: '#10b981',
+      colorBackground: 'rgb(15, 23, 42)',
+      colorText: '#e2e8f0',
+      colorDanger: '#ef4444',
+      fontFamily: 'Inter, system-ui, sans-serif',
+      borderRadius: '8px',
+    },
+  }
 }
 
 interface PaymentFormProps {
@@ -25,7 +40,7 @@ interface PaymentFormProps {
   onSuccess: () => void
   onError?: (error: string) => void
   submitLabel?: string
-  mode?: 'setup' | 'payment' // setup = SetupIntent (trial), payment = PaymentIntent (immediate)
+  mode?: 'setup' | 'payment'
 }
 
 function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<PaymentFormProps, 'clientSecret'>) {
@@ -34,6 +49,13 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
+  const [cardholderName, setCardholderName] = useState('')
+  const { resolvedTheme } = useTheme()
+
+  const inputBg = resolvedTheme === 'light' ? 'bg-white' : 'bg-[rgb(15,23,42)]'
+  const inputText = resolvedTheme === 'light' ? 'text-slate-900' : 'text-slate-200'
+  const inputBorder = resolvedTheme === 'light' ? 'border-slate-300' : 'border-slate-700'
+  const placeholderColor = resolvedTheme === 'light' ? 'placeholder:text-slate-400' : 'placeholder:text-slate-500'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -42,17 +64,21 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
     setLoading(true)
     setError(null)
 
+    const billingDetails = cardholderName.trim()
+      ? { payment_method_data: { billing_details: { name: cardholderName.trim() } } }
+      : {}
+
     let result
     if (mode === 'setup') {
       result = await stripe.confirmSetup({
         elements,
-        confirmParams: { return_url: `${window.location.origin}/signup/success` },
+        confirmParams: { return_url: `${window.location.origin}/signup/success`, ...billingDetails },
         redirect: 'if_required',
       })
     } else {
       result = await stripe.confirmPayment({
         elements,
-        confirmParams: { return_url: `${window.location.origin}/signup/success` },
+        confirmParams: { return_url: `${window.location.origin}/signup/success`, ...billingDetails },
         redirect: 'if_required',
       })
     }
@@ -76,6 +102,20 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
         </div>
       )}
       <div className={ready ? '' : 'sr-only'}>
+        <div className="space-y-2 mb-3">
+          <label htmlFor="cardholder-name" className="block text-sm font-medium text-[rgb(var(--foreground))]/80">
+            Cardholder name
+          </label>
+          <input
+            id="cardholder-name"
+            type="text"
+            autoComplete="cc-name"
+            value={cardholderName}
+            onChange={(e) => setCardholderName(e.target.value)}
+            placeholder="Full name on card"
+            className={`w-full rounded-lg border ${inputBorder} ${inputBg} ${inputText} ${placeholderColor} px-3 py-2.5 text-sm outline-none transition-colors focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500`}
+          />
+        </div>
         <PaymentElement onReady={() => setReady(true)} />
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
@@ -92,6 +132,9 @@ export default function StripePaymentForm(props: PaymentFormProps) {
   const [stripeInstance, setStripeInstance] = useState<Stripe | null>(null)
   const [stripeError, setStripeError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const { resolvedTheme } = useTheme()
+
+  const appearance = useMemo(() => getAppearance(resolvedTheme), [resolvedTheme])
 
   useEffect(() => {
     if (!STRIPE_KEY) {
