@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 import { Resend } from 'resend'
-const resend = new Resend(process.env.RESEND_API_KEY)
+
+let _resend: Resend | null = null
+function getResend(): Resend {
+  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
+  return _resend
+}
 
 // Rate limiter: 10 confirmation attempts per IP per 15 minutes.
 // Resets on each Worker cold start, which is acceptable for basic protection.
@@ -93,7 +98,7 @@ export async function GET(req: NextRequest) {
 
   // Signature valid -- send the welcome email
   try {
-    const { error: sendError } = await resend.emails.send({
+    const { error: sendError } = await getResend().emails.send({
       from: 'SilentSuite <noreply@silentsuite.io>',
       to: email,
       subject: 'Welcome to SilentSuite updates',
