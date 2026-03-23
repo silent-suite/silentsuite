@@ -447,7 +447,7 @@ export function EventDialog({
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-[60] bg-black/40 transition-opacity"
+        className="fixed inset-0 z-[60] bg-black/50 dark:bg-black/60 transition-opacity backdrop-blur-[1px]"
         onClick={onClose}
       />
 
@@ -458,7 +458,7 @@ export function EventDialog({
           role="dialog"
           aria-label={isEdit ? 'Edit event' : 'New event'}
           aria-modal="true"
-          className="flex h-full w-full flex-col bg-[rgb(var(--background))] sm:h-auto sm:max-h-[85vh] sm:w-full sm:max-w-md sm:rounded-xl sm:border sm:border-[rgb(var(--border))] sm:shadow-xl"
+          className="flex h-full w-full flex-col bg-[rgb(var(--background))] text-[rgb(var(--foreground))] sm:h-auto sm:max-h-[85vh] sm:w-full sm:max-w-md sm:rounded-xl sm:border sm:border-[rgb(var(--border))] sm:shadow-xl dark:sm:shadow-2xl dark:sm:shadow-black/40"
         >
           {/* ----------------------------------------------------------------- */}
           {/* Header: Cancel | Title + Subtitle | Done                          */}

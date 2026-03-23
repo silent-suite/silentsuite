@@ -141,6 +141,30 @@
 }
 
 /* ---------------------------------------------------------------------------
+   4b. WEEK VIEW – Prevent events from hiding behind the sticky day header
+   --------------------------------------------------------------------------- */
+.sx-silentsuite-calendar .sx__week-grid {
+  /* Ensure the scrollable time grid does not overlap with the sticky header */
+  scroll-padding-top: 8px;
+}
+
+.sx-silentsuite-calendar .sx__week-header {
+  position: relative;
+  z-index: 5;
+}
+
+/* Add top padding to the time grid area so early events are not clipped */
+.sx-silentsuite-calendar .sx__week-grid .sx__time-grid-event:first-child,
+.sx-silentsuite-calendar .sx__time-grid-event {
+  margin-top: 2px;
+}
+
+/* Ensure the all-day event bar has clear separation */
+.sx-silentsuite-calendar .sx__week-header .sx__all-day-events {
+  min-height: 4px;
+}
+
+/* ---------------------------------------------------------------------------
    5. WEEK VIEW – Time grid: minimal gridlines
    --------------------------------------------------------------------------- */
 .sx-silentsuite-calendar .sx__week-grid {

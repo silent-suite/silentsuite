@@ -10,6 +10,7 @@ import {
 import { createEventsServicePlugin } from '@schedule-x/events-service'
 import { useTheme } from 'next-themes'
 import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
+import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
@@ -50,6 +51,7 @@ interface DisplayEvent {
   isRecurring: boolean
   /** The specific occurrence date for this instance */
   instanceDate: Date
+  calendarId?: string
 }
 
 /** Get the visible date range for the current view */
@@ -100,6 +102,7 @@ function expandEventsForRange(
           allDay: event.allDay,
           isRecurring: false,
           instanceDate: event.startDate,
+          calendarId: event.calendarId,
         })
       }
     } else {
@@ -125,6 +128,7 @@ function expandEventsForRange(
           allDay: event.allDay,
           isRecurring: true,
           instanceDate: occDate,
+          calendarId: event.calendarId,
         })
       }
     }
@@ -133,15 +137,26 @@ function expandEventsForRange(
   return result
 }
 
-function toScheduleXEvents(displayEvents: DisplayEvent[]): CalendarEventExternal[] {
-  return displayEvents.map((e) => ({
-    id: e.id,
-    title: e.isRecurring ? `↻ ${e.title}` : e.title,
-    start: e.allDay ? toPlainDate(e.startDate) : toZonedDateTime(e.startDate),
-    end: e.allDay ? toPlainDate(e.endDate) : toZonedDateTime(e.endDate),
-    description: e.description || undefined,
-    location: e.location || undefined,
-  }))
+function toScheduleXEvents(
+  displayEvents: DisplayEvent[],
+  calendarColors: Map<string, string>,
+): CalendarEventExternal[] {
+  return displayEvents.map((e) => {
+    const color = calendarColors.get(e.calendarId ?? 'default') ?? '#10b981'
+    return {
+      id: e.id,
+      title: e.isRecurring ? `↻ ${e.title}` : e.title,
+      start: e.allDay ? toPlainDate(e.startDate) : toZonedDateTime(e.startDate),
+      end: e.allDay ? toPlainDate(e.endDate) : toZonedDateTime(e.endDate),
+      description: e.description || undefined,
+      location: e.location || undefined,
+      calendarId: e.calendarId ?? 'default',
+      _options: {
+        additionalClasses: [`sx-cal-color-${(e.calendarId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '_')}`],
+      },
+      _color: color,
+    }
+  })
 }
 
 /** Convert a Temporal.ZonedDateTime to a JS Date */
@@ -259,6 +274,13 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
 
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
+  const calendars = useCalendarListStore((s) => s.calendars)
+  const calendarColors = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const cal of calendars) map.set(cal.id, cal.color)
+    return map
+  }, [calendars])
+
   const [eventsPlugin] = useState(() => createEventsServicePlugin())
 
   // Expand recurring events for the visible range
@@ -276,7 +298,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const displayEventMapRef = useRef(displayEventMap)
   displayEventMapRef.current = displayEventMap
 
-  const sxEvents = useMemo(() => toScheduleXEvents(displayEvents), [displayEvents])
+  const sxEvents = useMemo(() => toScheduleXEvents(displayEvents, calendarColors), [displayEvents, calendarColors])
   const selectedDate = useMemo(() => toPlainDate(currentDate), [currentDate])
 
   // Drag-to-move state
@@ -388,6 +410,10 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const viewsRef = useRef<[ReturnType<typeof createViewWeek>, ...Array<ReturnType<typeof createViewWeek>>]>([createViewWeek(), createViewMonthGrid()])
   const views = viewsRef.current
 
+  // Capture initial view so useNextCalendarApp config doesn't change on view switch
+  const initialViewRef = useRef(VIEW_MAP[currentView])
+  const initialDateRef = useRef(selectedDate)
+
   // Memoize the event click handler
   const handleEventClick = useCallback(
     (event: CalendarEventExternal) => {
@@ -417,8 +443,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const calendar = useNextCalendarApp({
     views,
     events: [],
-    selectedDate,
-    defaultView: VIEW_MAP[currentView],
+    selectedDate: initialDateRef.current,
+    defaultView: initialViewRef.current,
     isDark: resolvedTheme === 'dark',
     locale: 'en-US',
     dayBoundaries: { start: '06:00', end: '22:00' },
@@ -1224,6 +1250,11 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
+        {/* Dynamic calendar color styles */}
+        <style dangerouslySetInnerHTML={{ __html: Array.from(calendarColors.entries()).map(([id, color]) => {
+          const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+          return `.${cls} { background-color: ${color} !important; color: #fff !important; }`
+        }).join('\n') }} />
         <ScheduleXCalendar calendarApp={calendar} />
         {dragSelection && (
           <div
