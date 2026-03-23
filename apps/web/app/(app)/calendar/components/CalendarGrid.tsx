@@ -460,19 +460,30 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     },
   })
 
-  // Sync view AND date changes from store → Schedule-X via internal API
-  // calendarState.setView(viewName, date) is the only reliable internal API;
-  // setRange/setDate do not exist on the CalendarApp public surface.
+  // Sync view AND date changes from store → Schedule-X via internal API.
+  // CalendarApp has NO public navigation methods. We access the private $app
+  // singleton which exposes calendarState.setView(viewName, date) and
+  // calendarState.setRange(date). Both operate on Preact signals internally.
+  //
+  // Use currentDate.getTime() as dependency to ensure React detects Date changes
+  // (Date objects compared by reference would miss updates).
+  const currentDateTs = currentDate instanceof Date ? currentDate.getTime() : new Date(currentDate).getTime()
+
   useEffect(() => {
     if (!calendar) return
     const sxViewName = VIEW_MAP[currentView]
     try {
-      const app = (calendar as unknown as { $app: { calendarState: { setView: (view: string, date: Temporal.PlainDate) => void } } }).$app
-      app.calendarState.setView(sxViewName, toPlainDate(currentDate))
-    } catch {
-      // Calendar may not be fully mounted yet
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const app = (calendar as any).$app
+      if (!app?.calendarState) return
+      const date = currentDate instanceof Date ? currentDate : new Date(currentDate)
+      const pd = toPlainDate(date)
+      app.calendarState.setView(sxViewName, pd)
+    } catch (e) {
+      console.debug('[CalendarGrid] setView failed:', e)
     }
-  }, [calendar, currentView, currentDate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendar, currentView, currentDateTs])
 
   // Sync events to schedule-x when they change
   useEffect(() => {

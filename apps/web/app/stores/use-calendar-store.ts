@@ -499,6 +499,10 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
       const raw = localStorage.getItem(name)
       if (!raw) return null
       const parsed = JSON.parse(raw)
+      // Rehydrate currentDate from ISO string back to Date object
+      if (parsed?.state?.currentDate && typeof parsed.state.currentDate === 'string') {
+        parsed.state.currentDate = new Date(parsed.state.currentDate)
+      }
       if (parsed?.state?.events) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         parsed.state.events = parsed.state.events.map((e: any) => ({
