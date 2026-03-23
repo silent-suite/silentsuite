@@ -27,6 +27,7 @@ interface TaskActions {
   updateTask: (id: string, patch: Partial<Task>) => Promise<void>
   deleteTask: (id: string) => Promise<void>
   toggleComplete: (id: string) => Promise<void>
+  importTasks: (newTasks: NewTask[]) => Promise<number>
   syncFromRemote: (tasks: Task[]) => void
 }
 
@@ -169,6 +170,57 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             await enqueue({ type: 'update', collectionType: 'tasks', content, tempId: id })
           }
         }
+      },
+
+      importTasks: async (newTasks: NewTask[]) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
+        if (newTasks.length === 0) return 0
+
+        const now = new Date()
+        const tasks: Task[] = newTasks.map((nt) => {
+          const tempId = crypto.randomUUID()
+          return {
+            id: tempId,
+            uid: tempId,
+            title: nt.title,
+            description: nt.description ?? '',
+            due_date: nt.due_date ?? null,
+            priority: nt.priority ?? 'medium',
+            completed: false,
+            listId: nt.listId,
+            created_at: now,
+            updated_at: now,
+          }
+        })
+
+        // Optimistic local update — add all at once
+        set((state) => ({ tasks: [...state.tasks, ...tasks] }))
+
+        // Batch sync to Etebase
+        const etebase = useEtebaseStore.getState()
+        if (etebase.account) {
+          try {
+            const { serializeTask } = await import('@silentsuite/core')
+            const contents = tasks.map((t) => ({
+              content: serializeTask(t),
+              tempId: t.id,
+            }))
+            const uids = await etebase.createItemsBatch('tasks', contents)
+            set((state) => ({
+              tasks: state.tasks.map((t) => {
+                const idx = tasks.findIndex((task) => task.id === t.id)
+                if (idx !== -1 && uids[idx]) {
+                  return { ...t, id: uids[idx]!, uid: uids[idx]! }
+                }
+                return t
+              }),
+            }))
+          } catch (err) {
+            console.error('[task-store] Failed to batch import tasks:', err)
+          }
+        }
+
+        return tasks.length
       },
 
       syncFromRemote: (remoteTasks: Task[]) => {

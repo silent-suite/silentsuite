@@ -84,7 +84,7 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
   const [selectedCalendarId, setSelectedCalendarId] = useState('default')
-  const createEvent = useCalendarStore((s) => s.createEvent)
+  const importEvents = useCalendarStore((s) => s.importEvents)
   const calendars = useCalendarListStore((s) => s.calendars)
   const addCalendar = useCalendarListStore((s) => s.addCalendar)
 
@@ -128,14 +128,14 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
   const handleImport = useCallback(async () => {
     setIsImporting(true)
     try {
-      for (const event of events) {
+      const newEvents = events.map((event) => {
         const start = parseICalDateTime(event.dtstart)
         const end = event.dtend
           ? parseICalDateTime(event.dtend)
           : new Date(start.getTime() + 60 * 60 * 1000)
         const isAllDay = /^\d{8}$/.test(event.dtstart)
 
-        await createEvent({
+        return {
           title: event.summary || 'Untitled Event',
           description: event.description ?? '',
           location: event.location ?? '',
@@ -145,16 +145,17 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
           recurrenceRule: event.rrule ?? null,
           alarms: event.valarms ?? [],
           calendarId: selectedCalendarId,
-        })
-      }
-      setImportedCount(events.length)
-      onImportComplete(events.length)
+        }
+      })
+      const count = await importEvents(newEvents)
+      setImportedCount(count)
+      onImportComplete(count)
     } catch {
       setError('An error occurred while importing events. Please try again.')
     } finally {
       setIsImporting(false)
     }
-  }, [events, createEvent, onImportComplete, selectedCalendarId])
+  }, [events, importEvents, onImportComplete, selectedCalendarId])
 
   const handleCreateCalendar = useCallback((name: string, color: string) => {
     addCalendar(name, color)

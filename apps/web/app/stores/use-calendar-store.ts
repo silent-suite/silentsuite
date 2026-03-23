@@ -53,6 +53,7 @@ interface CalendarActions {
   navigateForward: () => void
   navigateBackward: () => void
   navigateToday: () => void
+  importEvents: (newEvents: NewCalendarEvent[]) => Promise<number>
   syncFromRemote: (events: CalendarEvent[]) => void
 }
 
@@ -429,6 +430,62 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
   },
 
   navigateToday: () => set({ currentDate: new Date() }),
+
+  importEvents: async (newEvents: NewCalendarEvent[]) => {
+    if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
+    if (newEvents.length === 0) return 0
+
+    const now = new Date()
+    const events: CalendarEvent[] = newEvents.map((ne) => {
+      const tempId = crypto.randomUUID()
+      return {
+        id: tempId,
+        uid: tempId,
+        title: ne.title,
+        description: ne.description ?? '',
+        location: ne.location ?? '',
+        startDate: ne.startDate,
+        endDate: ne.endDate,
+        allDay: ne.allDay ?? false,
+        recurrenceRule: ne.recurrenceRule ?? null,
+        exceptions: [],
+        alarms: ne.alarms ?? [],
+        calendarId: ne.calendarId ?? 'default',
+        created: now,
+        updated: now,
+      }
+    })
+
+    // Optimistic local update — add all at once
+    set((state) => ({ events: [...state.events, ...events] }))
+
+    // Batch sync to Etebase
+    const etebase = useEtebaseStore.getState()
+    if (etebase.account) {
+      try {
+        const { serializeCalendarEvent } = await import('@silentsuite/core')
+        const contents = events.map((e) => ({
+          content: serializeCalendarEvent(e),
+          tempId: e.id,
+        }))
+        const uids = await etebase.createItemsBatch('calendar', contents)
+        // Replace temp IDs with real UIDs
+        set((state) => ({
+          events: state.events.map((e) => {
+            const idx = events.findIndex((ev) => ev.id === e.id)
+            if (idx !== -1 && uids[idx]) {
+              return { ...e, id: uids[idx]!, uid: uids[idx]! }
+            }
+            return e
+          }),
+        }))
+      } catch (err) {
+        console.error('[calendar-store] Failed to batch import events:', err)
+      }
+    }
+
+    return events.length
+  },
 
   syncFromRemote: (remoteEvents: CalendarEvent[]) => {
     set({ events: remoteEvents, syncStatus: 'synced' })

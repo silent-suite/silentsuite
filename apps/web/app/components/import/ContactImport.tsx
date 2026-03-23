@@ -64,7 +64,7 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
   const [selectedListId, setSelectedListId] = useState('default')
-  const createContact = useContactStore((s) => s.createContact)
+  const importContacts = useContactStore((s) => s.importContacts)
   const contactLists = useContactListStore((s) => s.lists)
   const addList = useContactListStore((s) => s.addList)
 
@@ -99,43 +99,42 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
   const handleImport = useCallback(async () => {
     setIsImporting(true)
     try {
-      for (const contact of contacts) {
-        await createContact({
-          displayName: contact.fn || 'Unnamed Contact',
-          name: contact.n
-            ? {
-                given: contact.n.given,
-                family: contact.n.family,
-                prefix: contact.n.prefix ?? '',
-                suffix: contact.n.suffix ?? '',
-              }
-            : undefined,
-          phones: contact.tel?.map((t) => ({ type: t.type, value: t.value })),
-          emails: contact.email?.map((e) => ({ type: e.type, value: e.value })),
-          addresses: contact.adr?.map((a) => ({
-            type: a.type,
-            street: a.street,
-            city: a.city,
-            state: a.state,
-            postalCode: a.postalCode,
-            country: a.country,
-          })),
-          organization: contact.org ?? '',
-          title: contact.title ?? '',
-          notes: contact.note ?? '',
-          birthday: contact.bday ?? null,
-          photoUrl: contact.photo ?? null,
-          listId: selectedListId,
-        })
-      }
-      setImportedCount(contacts.length)
-      onImportComplete(contacts.length)
+      const newContacts = contacts.map((contact) => ({
+        displayName: contact.fn || 'Unnamed Contact',
+        name: contact.n
+          ? {
+              given: contact.n.given,
+              family: contact.n.family,
+              prefix: contact.n.prefix ?? '',
+              suffix: contact.n.suffix ?? '',
+            }
+          : undefined,
+        phones: contact.tel?.map((t) => ({ type: t.type, value: t.value })),
+        emails: contact.email?.map((e) => ({ type: e.type, value: e.value })),
+        addresses: contact.adr?.map((a) => ({
+          type: a.type,
+          street: a.street,
+          city: a.city,
+          state: a.state,
+          postalCode: a.postalCode,
+          country: a.country,
+        })),
+        organization: contact.org ?? '',
+        title: contact.title ?? '',
+        notes: contact.note ?? '',
+        birthday: contact.bday ?? null,
+        photoUrl: contact.photo ?? null,
+        listId: selectedListId,
+      }))
+      const count = await importContacts(newContacts)
+      setImportedCount(count)
+      onImportComplete(count)
     } catch {
       setError('An error occurred while importing contacts. Please try again.')
     } finally {
       setIsImporting(false)
     }
-  }, [contacts, createContact, onImportComplete, selectedListId])
+  }, [contacts, importContacts, onImportComplete, selectedListId])
 
   const handleCreateList = useCallback((name: string, color: string) => {
     addList(name, color)

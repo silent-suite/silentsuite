@@ -34,6 +34,7 @@ interface ContactActions {
   updateContact: (id: string, patch: Partial<Contact>) => Promise<void>
   deleteContact: (id: string) => Promise<void>
   setSearchQuery: (query: string) => void
+  importContacts: (newContacts: NewContact[]) => Promise<number>
   syncFromRemote: (contacts: Contact[]) => void
 }
 
@@ -154,6 +155,67 @@ export const useContactStore = create<ContactState & ContactActions>()(
       },
 
       setSearchQuery: (query: string) => set({ searchQuery: query }),
+
+      importContacts: async (newContacts: NewContact[]) => {
+        if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
+        if (newContacts.length === 0) return 0
+
+        const now = new Date()
+        const contacts: Contact[] = newContacts.map((nc) => {
+          const tempId = crypto.randomUUID()
+          return {
+            id: tempId,
+            uid: tempId,
+            displayName: nc.displayName,
+            name: {
+              prefix: nc.name?.prefix ?? '',
+              given: nc.name?.given ?? '',
+              family: nc.name?.family ?? '',
+              suffix: nc.name?.suffix ?? '',
+            },
+            phones: nc.phones ?? [],
+            emails: nc.emails ?? [],
+            addresses: nc.addresses ?? [],
+            organization: nc.organization ?? '',
+            title: nc.title ?? '',
+            notes: nc.notes ?? '',
+            birthday: nc.birthday ?? null,
+            photoUrl: nc.photoUrl ?? null,
+            listId: nc.listId,
+            created_at: now,
+            updated_at: now,
+          }
+        })
+
+        // Optimistic local update — add all at once
+        set((state) => ({ contacts: [...state.contacts, ...contacts] }))
+
+        // Batch sync to Etebase
+        const etebase = useEtebaseStore.getState()
+        if (etebase.account) {
+          try {
+            const { serializeContact } = await import('@silentsuite/core')
+            const contents = contacts.map((c) => ({
+              content: serializeContact(c),
+              tempId: c.id,
+            }))
+            const uids = await etebase.createItemsBatch('contacts', contents)
+            set((state) => ({
+              contacts: state.contacts.map((c) => {
+                const idx = contacts.findIndex((contact) => contact.id === c.id)
+                if (idx !== -1 && uids[idx]) {
+                  return { ...c, id: uids[idx]!, uid: uids[idx]! }
+                }
+                return c
+              }),
+            }))
+          } catch (err) {
+            console.error('[contact-store] Failed to batch import contacts:', err)
+          }
+        }
+
+        return contacts.length
+      },
 
       syncFromRemote: (remoteContacts: Contact[]) => {
         set({ contacts: remoteContacts, syncStatus: 'synced' })

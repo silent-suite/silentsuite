@@ -189,7 +189,7 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
   const [selectedListId, setSelectedListId] = useState('default')
-  const createTask = useTaskStore((s) => s.createTask)
+  const importTasks = useTaskStore((s) => s.importTasks)
   const taskLists = useTaskListStore((s) => s.lists)
   const addList = useTaskListStore((s) => s.addList)
 
@@ -225,23 +225,22 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
   const handleImport = useCallback(async () => {
     setIsImporting(true)
     try {
-      for (const task of tasks) {
-        await createTask({
-          title: task.summary || 'Untitled Task',
-          description: task.description ?? '',
-          due_date: task.due ? parseICalDate(task.due) : null,
-          priority: mapPriorityToStore(task.priority),
-          listId: selectedListId,
-        })
-      }
-      setImportedCount(tasks.length)
-      onImportComplete(tasks.length)
+      const newTasks = tasks.map((task) => ({
+        title: task.summary || 'Untitled Task',
+        description: task.description ?? '',
+        due_date: task.due ? parseICalDate(task.due) : null,
+        priority: mapPriorityToStore(task.priority),
+        listId: selectedListId,
+      }))
+      const count = await importTasks(newTasks)
+      setImportedCount(count)
+      onImportComplete(count)
     } catch {
       setError('An error occurred while importing tasks. Please try again.')
     } finally {
       setIsImporting(false)
     }
-  }, [tasks, createTask, onImportComplete, selectedListId])
+  }, [tasks, importTasks, onImportComplete, selectedListId])
 
   const handleCreateList = useCallback((name: string, color: string) => {
     addList(name, color)

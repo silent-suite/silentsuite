@@ -460,25 +460,27 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     },
   })
 
-  // Sync view changes from store → Schedule-X
+  // Sync view changes from store → Schedule-X via internal API
   useEffect(() => {
     if (!calendar) return
     const sxViewName = VIEW_MAP[currentView]
     try {
-      // @ts-expect-error - Schedule-X CalendarApp has setView method not in hook types
-      if (typeof calendar.setView === 'function') calendar.setView(sxViewName)
+      // CalendarApp has no public setView — access the internal singleton
+      const app = (calendar as unknown as { $app: { calendarState: { setView: (view: string, date: Temporal.PlainDate) => void } } }).$app
+      app.calendarState.setView(sxViewName, toPlainDate(currentDate))
     } catch {
       // Calendar may not be fully mounted yet
     }
   }, [calendar, currentView])
 
-  // Sync date changes from store → Schedule-X
+  // Sync date changes from store → Schedule-X via internal API
   useEffect(() => {
     if (!calendar) return
     try {
       const pd = toPlainDate(currentDate)
-      // @ts-expect-error - Schedule-X CalendarApp has setDate method not in hook types
-      if (typeof calendar.setDate === 'function') calendar.setDate(pd)
+      // CalendarApp has no public setDate — use calendarState.setRange
+      const app = (calendar as unknown as { $app: { calendarState: { setRange: (date: Temporal.PlainDate) => void } } }).$app
+      app.calendarState.setRange(pd)
     } catch {
       // Calendar may not be fully mounted yet
     }
