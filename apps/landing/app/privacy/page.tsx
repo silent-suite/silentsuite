@@ -80,16 +80,23 @@ export default function Privacy() {
             <ul className="list-disc pl-6 space-y-1">
               <li>Email address (required)</li>
               <li>Name (optional)</li>
-
               <li>Consent confirmation</li>
             </ul>
+            <p className="mt-2">
+              We use a double opt-in process to comply with GDPR. After you
+              submit the subscription form, we send a confirmation email
+              containing a signed link. Your subscription only becomes active
+              once you click that link. Confirmation links expire after
+              48 hours. If the link expires, you can subscribe again to
+              receive a new one.
+            </p>
             <p className="mt-2">
               We use Resend to send transactional and newsletter emails. Your
               email address is used solely to send you product updates and
               announcements about SilentSuite.
               Legal basis: Art. 6(1)(a) GDPR (consent). You can withdraw
-              consent at any time by replying with &quot;unsubscribe&quot; or
-              emailing us at{' '}
+              consent at any time by using the unsubscribe link in any email,
+              replying with &quot;unsubscribe&quot;, or emailing us at{' '}
               <a href="mailto:info@silentsuite.io" className="text-teal-400 hover:underline">
                 info@silentsuite.io
               </a>.

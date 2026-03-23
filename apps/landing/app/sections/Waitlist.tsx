@@ -48,10 +48,10 @@ export default function Waitlist() {
 
         {status === 'success' ? (
           <div className="p-8 rounded-2xl bg-teal-400/10 border border-teal-400/30">
-            <h3 className="text-xl font-semibold mb-2 text-teal-400">Almost there. Check your inbox.</h3>
+            <h3 className="text-xl font-semibold mb-2 text-teal-400">Check your inbox.</h3>
             <p className="text-navy-300">
-              We&apos;ve sent a confirmation email to your address.
-              Click the link to confirm your subscription.
+              We&apos;ve sent you a confirmation email.
+              Click the confirmation link to complete your subscription.
             </p>
             <p className="text-navy-500 text-sm mt-3">
               Didn&apos;t receive it? Check your spam folder or try again.
