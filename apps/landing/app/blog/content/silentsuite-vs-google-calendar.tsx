@@ -130,7 +130,7 @@ export default function SilentSuiteVsGoogleCalendar() {
       <p>
         Your schedule deserves the same protection as your messages. Not more,
         not less. If that sounds right,{' '}
-        <a href="/#waitlist">join the waitlist</a>. One email, no tracking.
+        <a href="https://app.silentsuite.io/signup">get started with SilentSuite</a>. No tracking.
       </p>
     </>
   )

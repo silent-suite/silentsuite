@@ -345,3 +345,97 @@ describe('edge cases', () => {
     expect(event.title).toBe('Untitled');
   });
 });
+
+// ── DST / timezone conversion ──
+
+describe('DST timezone conversion (two-pass offset)', () => {
+  it('handles Europe/Berlin spring-forward DST edge case', () => {
+    // 2026-03-29 is spring-forward in Europe/Berlin (CET→CEST, clocks jump 2:00→3:00)
+    // Event at 02:30 local Berlin time → should be 01:30 UTC (CET = UTC+1 before transition)
+    // Note: 02:30 is in the "gap" — Intl treats it as CEST (UTC+2), so 00:30 UTC
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:dst-berlin',
+      'DTSTART;TZID=Europe/Berlin:20260329T023000',
+      'DTEND;TZID=Europe/Berlin:20260329T033000',
+      'SUMMARY:DST Berlin',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = fromVEvent(ical);
+    // The key assertion: the two-pass approach should produce a stable result
+    // that represents the intended local time converted to UTC.
+    // 02:30 is in the gap; runtime resolves to CET (UTC+1) → 01:30 UTC
+    expect(event.startDate.getUTCHours()).toBe(1);
+    expect(event.startDate.getUTCMinutes()).toBe(30);
+    expect(event.startDate.getUTCDate()).toBe(29);
+  });
+
+  it('handles America/New_York spring-forward DST edge case', () => {
+    // 2026-03-08 is spring-forward in America/New_York (EST→EDT, clocks jump 2:00→3:00)
+    // Event at 02:30 local → gap time, Intl resolves to EDT (UTC-4) → 06:30 UTC
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:dst-nyc',
+      'DTSTART;TZID=America/New_York:20260308T023000',
+      'DTEND;TZID=America/New_York:20260308T033000',
+      'SUMMARY:DST NYC',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = fromVEvent(ical);
+    expect(event.startDate.getUTCHours()).toBe(6);
+    expect(event.startDate.getUTCMinutes()).toBe(30);
+    expect(event.startDate.getUTCDate()).toBe(8);
+  });
+
+  it('converts normal time (no DST transition) correctly', () => {
+    // 2026-06-15 14:00 Europe/Berlin → CEST (UTC+2) → 12:00 UTC
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:no-dst',
+      'DTSTART;TZID=Europe/Berlin:20260615T140000',
+      'DTEND;TZID=Europe/Berlin:20260615T150000',
+      'SUMMARY:Normal Time',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = fromVEvent(ical);
+    expect(event.startDate.getUTCHours()).toBe(12);
+    expect(event.startDate.getUTCMinutes()).toBe(0);
+    expect(event.startDate.getUTCDate()).toBe(15);
+  });
+
+  it('leaves UTC-suffixed dates unaffected by TZID logic', () => {
+    // Z suffix means UTC — TZID should be ignored
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:utc-event',
+      'DTSTART:20260315T100000Z',
+      'DTEND:20260315T110000Z',
+      'SUMMARY:UTC Event',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = fromVEvent(ical);
+    expect(event.startDate.getUTCHours()).toBe(10);
+    expect(event.startDate.getUTCMinutes()).toBe(0);
+  });
+
+  it('uses local time when no TZID is provided', () => {
+    // No TZID and no Z → local time interpretation
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:local-event',
+      'DTSTART:20260315T100000',
+      'DTEND:20260315T110000',
+      'SUMMARY:Local Event',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = fromVEvent(ical);
+    // Should be interpreted as local time: hour/minute match face value
+    expect(event.startDate.getHours()).toBe(10);
+    expect(event.startDate.getMinutes()).toBe(0);
+  });
+});

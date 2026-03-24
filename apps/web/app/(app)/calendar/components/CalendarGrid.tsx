@@ -10,6 +10,7 @@ import {
 import { createEventsServicePlugin } from '@schedule-x/events-service'
 import { useTheme } from 'next-themes'
 import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
+import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
@@ -50,6 +51,7 @@ interface DisplayEvent {
   isRecurring: boolean
   /** The specific occurrence date for this instance */
   instanceDate: Date
+  calendarId?: string
 }
 
 /** Get the visible date range for the current view */
@@ -100,6 +102,7 @@ function expandEventsForRange(
           allDay: event.allDay,
           isRecurring: false,
           instanceDate: event.startDate,
+          calendarId: event.calendarId,
         })
       }
     } else {
@@ -125,6 +128,7 @@ function expandEventsForRange(
           allDay: event.allDay,
           isRecurring: true,
           instanceDate: occDate,
+          calendarId: event.calendarId,
         })
       }
     }
@@ -133,15 +137,26 @@ function expandEventsForRange(
   return result
 }
 
-function toScheduleXEvents(displayEvents: DisplayEvent[]): CalendarEventExternal[] {
-  return displayEvents.map((e) => ({
-    id: e.id,
-    title: e.isRecurring ? `↻ ${e.title}` : e.title,
-    start: e.allDay ? toPlainDate(e.startDate) : toZonedDateTime(e.startDate),
-    end: e.allDay ? toPlainDate(e.endDate) : toZonedDateTime(e.endDate),
-    description: e.description || undefined,
-    location: e.location || undefined,
-  }))
+function toScheduleXEvents(
+  displayEvents: DisplayEvent[],
+  calendarColors: Map<string, string>,
+): CalendarEventExternal[] {
+  return displayEvents.map((e) => {
+    const color = calendarColors.get(e.calendarId ?? 'default') ?? '#10b981'
+    return {
+      id: e.id,
+      title: e.isRecurring ? `↻ ${e.title}` : e.title,
+      start: e.allDay ? toPlainDate(e.startDate) : toZonedDateTime(e.startDate),
+      end: e.allDay ? toPlainDate(e.endDate) : toZonedDateTime(e.endDate),
+      description: e.description || undefined,
+      location: e.location || undefined,
+      calendarId: e.calendarId ?? 'default',
+      _options: {
+        additionalClasses: [`sx-cal-color-${(e.calendarId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '_')}`],
+      },
+      _color: color,
+    }
+  })
 }
 
 /** Convert a Temporal.ZonedDateTime to a JS Date */
@@ -259,6 +274,16 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
 
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
+  // Ref to prevent feedback loops between store↔Schedule-X sync
+  const isSyncingToSxRef = useRef(false)
+
+  const calendars = useCalendarListStore((s) => s.calendars)
+  const calendarColors = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const cal of calendars) map.set(cal.id, cal.color)
+    return map
+  }, [calendars])
+
   const [eventsPlugin] = useState(() => createEventsServicePlugin())
 
   // Expand recurring events for the visible range
@@ -276,7 +301,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const displayEventMapRef = useRef(displayEventMap)
   displayEventMapRef.current = displayEventMap
 
-  const sxEvents = useMemo(() => toScheduleXEvents(displayEvents), [displayEvents])
+  const sxEvents = useMemo(() => toScheduleXEvents(displayEvents, calendarColors), [displayEvents, calendarColors])
   const selectedDate = useMemo(() => toPlainDate(currentDate), [currentDate])
 
   // Drag-to-move state
@@ -388,6 +413,10 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const viewsRef = useRef<[ReturnType<typeof createViewWeek>, ...Array<ReturnType<typeof createViewWeek>>]>([createViewWeek(), createViewMonthGrid()])
   const views = viewsRef.current
 
+  // Capture initial view so useNextCalendarApp config doesn't change on view switch
+  const initialViewRef = useRef(VIEW_MAP[currentView])
+  const initialDateRef = useRef(selectedDate)
+
   // Memoize the event click handler
   const handleEventClick = useCallback(
     (event: CalendarEventExternal) => {
@@ -417,10 +446,11 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const calendar = useNextCalendarApp({
     views,
     events: [],
-    selectedDate,
-    defaultView: VIEW_MAP[currentView],
+    selectedDate: initialDateRef.current,
+    defaultView: initialViewRef.current,
     isDark: resolvedTheme === 'dark',
     locale: 'en-US',
+    firstDayOfWeek: 1, // Monday — must match getViewRange() and formatDateRange()
     dayBoundaries: { start: '06:00', end: '22:00' },
     weekOptions: {
       gridHeight: 800,
@@ -434,29 +464,120 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     },
   })
 
-  // Sync view changes from store → Schedule-X
+  // Sync view AND date changes from store → Schedule-X via internal API.
+  // CalendarApp has NO public navigation methods. We access the private $app
+  // singleton which exposes calendarState.setView(viewName, date) and
+  // calendarState.setRange(date). Both operate on Preact signals internally.
+  //
+  // Use currentDate.getTime() as dependency to ensure React detects Date changes
+  // (Date objects compared by reference would miss updates).
+  const currentDateTs = currentDate instanceof Date ? currentDate.getTime() : new Date(currentDate).getTime()
+
   useEffect(() => {
     if (!calendar) return
     const sxViewName = VIEW_MAP[currentView]
     try {
-      // @ts-expect-error - Schedule-X CalendarApp has setView method not in hook types
-      if (typeof calendar.setView === 'function') calendar.setView(sxViewName)
-    } catch {
-      // Calendar may not be fully mounted yet
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const app = (calendar as any).$app
+      if (!app?.calendarState) return
+      isSyncingToSxRef.current = true
+      const date = currentDate instanceof Date ? currentDate : new Date(currentDate)
+      const pd = toPlainDate(date)
+      app.calendarState.setView(sxViewName, pd)
+      // Move the visible range to the target date (setView only changes view type)
+      app.calendarState.setRange(pd)
+      // Sync the date picker highlight if present
+      if (app.datePickerState?.selectedDate) {
+        app.datePickerState.selectedDate.value = pd
+      }
+    } catch (e) {
+      console.debug('[CalendarGrid] setView/setRange failed:', e)
     }
-  }, [calendar, currentView])
+    // Clear sync flag after SX signals settle (next animation frame)
+    const raf = requestAnimationFrame(() => {
+      isSyncingToSxRef.current = false
+    })
+    return () => {
+      cancelAnimationFrame(raf)
+      isSyncingToSxRef.current = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calendar, currentView, currentDateTs])
 
-  // Sync date changes from store → Schedule-X
+  // Reverse sync: Schedule-X → store.
+  // Schedule-X maintains its own internal date state via Preact signals.
+  // If it drifts (e.g. from internal interactions), we detect the mismatch
+  // by polling $app.calendarState.range and update the Zustand store.
   useEffect(() => {
     if (!calendar) return
-    try {
-      const pd = toPlainDate(currentDate)
-      // @ts-expect-error - Schedule-X CalendarApp has setDate method not in hook types
-      if (typeof calendar.setDate === 'function') calendar.setDate(pd)
-    } catch {
-      // Calendar may not be fully mounted yet
+
+    let lastSeenStart = ''
+
+    const checkSxRange = () => {
+      // Don't read back while we're pushing a change TO Schedule-X
+      if (isSyncingToSxRef.current) return
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const app = (calendar as any).$app
+        if (!app?.calendarState) return
+
+        // $app.calendarState.range is a Preact signal — read via .value
+        const rangeSignal = app.calendarState.range
+        const range = rangeSignal?.value ?? rangeSignal
+        if (!range?.start) return
+
+        const startStr = typeof range.start === 'string' ? range.start : String(range.start)
+        if (startStr === lastSeenStart) return // No change in SX
+        lastSeenStart = startStr
+
+        // Parse the SX range start (YYYY-MM-DD)
+        const parts = startStr.split('-').map(Number)
+        if (parts.length < 3 || parts.some(isNaN)) return
+        const [y, m, d] = parts
+        const sxRangeStart = new Date(y!, m! - 1, d!)
+
+        // Compare with the store's expected range for the current view
+        const storeState = useCalendarStore.getState()
+        const storeRange = getViewRange(storeState.currentDate, storeState.currentView)
+
+        // Allow 1-day tolerance (month views may extend into adjacent months)
+        const startDiff = Math.abs(sxRangeStart.getTime() - storeRange.start.getTime())
+        if (startDiff < 86400000) return // Close enough — no drift
+
+        // SX is showing a different range — update store to match.
+        // Pick a representative date from the SX range for currentDate:
+        // week view → Wednesday of the SX week; month view → middle of range.
+        let newDate: Date
+        if (storeState.currentView === 'week') {
+          newDate = new Date(sxRangeStart)
+          newDate.setDate(newDate.getDate() + 3) // mid-week avoids boundary issues
+        } else {
+          const endStr = typeof range.end === 'string' ? range.end : String(range.end)
+          const endParts = endStr.split('-').map(Number)
+          if (endParts.length >= 3 && !endParts.some(isNaN)) {
+            const sxRangeEnd = new Date(endParts[0]!, endParts[1]! - 1, endParts[2]!)
+            newDate = new Date((sxRangeStart.getTime() + sxRangeEnd.getTime()) / 2)
+          } else {
+            newDate = new Date(sxRangeStart)
+            newDate.setDate(newDate.getDate() + 15)
+          }
+        }
+
+        // Push to store — set flag to avoid re-triggering store→SX effect
+        isSyncingToSxRef.current = true
+        setCurrentDate(newDate)
+        requestAnimationFrame(() => {
+          isSyncingToSxRef.current = false
+        })
+      } catch {
+        // Silently ignore — SX internals may not be ready yet
+      }
     }
-  }, [calendar, currentDate])
+
+    const interval = setInterval(checkSxRange, 300)
+    return () => clearInterval(interval)
+  }, [calendar, setCurrentDate])
 
   // Sync events to schedule-x when they change
   useEffect(() => {
@@ -1224,6 +1345,12 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
+        {/* Dynamic calendar color styles */}
+        <style dangerouslySetInnerHTML={{ __html: Array.from(calendarColors.entries()).map(([id, color]) => {
+          const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+          const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#10b981'
+          return `.${cls} { background-color: ${safeColor} !important; color: #fff !important; }`
+        }).join('\n') }} />
         <ScheduleXCalendar calendarApp={calendar} />
         {dragSelection && (
           <div

@@ -302,8 +302,7 @@ export default function WhoCanReadYourCalendar() {
       <p>
         Your calendar deserves the same protection as your messages. If that
         matters to you,{' '}
-        <a href="/#waitlist">join the waitlist</a>. We&apos;ll let you know
-        when the beta is ready.
+        <a href="https://app.silentsuite.io/signup">get started with SilentSuite</a>.
       </p>
     </>
   )

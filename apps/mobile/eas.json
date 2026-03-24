@@ -22,8 +22,7 @@
     },
     "production": {
       "ios": {
-        "autoIncrement": true,
-        "buildNumber": "1"
+        "autoIncrement": true
       },
       "android": {
         "autoIncrement": true,

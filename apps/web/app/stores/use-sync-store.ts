@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import type { SyncStatus } from '@silentsuite/core'
-import { replay, getPendingCount, getFailedCount, onCountChange, type QueueEntry } from '@/app/lib/offline-queue'
+import { replay, getPendingCount, getFailedCount, onCountChange, getStaleEntries, remove, type QueueEntry } from '@/app/lib/offline-queue'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 
 interface SyncState {
@@ -227,7 +227,16 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         useCalendarStore.getState().syncFromRemote(events)
       }
 
-      set({ syncStatus: 'synced', lastSyncedAt: new Date(), error: null })
+      // Purge stale queue entries (older than 24h) that may cause phantom indicators
+      const stale = await getStaleEntries()
+      for (const entry of stale) {
+        await remove(entry.id)
+      }
+
+      // Refresh counts to ensure UI is accurate after sync
+      const pc = await getPendingCount()
+      const fc = await getFailedCount()
+      set({ syncStatus: 'synced', lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
     }).catch((err) => {
       console.error('[sync-store] Manual sync failed:', err)
       set({ syncStatus: 'error', error: 'Sync failed' })

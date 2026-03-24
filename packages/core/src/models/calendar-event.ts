@@ -38,7 +38,7 @@ function formatICalDateTime(date: Date): string {
   return `${y}${mo}${d}T${h}${mi}${s}`;
 }
 
-function parseICalDateValue(value: string): { date: Date; allDay: boolean } {
+function parseICalDateValue(value: string, tzid?: string): { date: Date; allDay: boolean } {
   const clean = value.replace(/[^0-9TZ]/g, '');
   const year = parseInt(clean.slice(0, 4), 10);
   const month = parseInt(clean.slice(4, 6), 10) - 1;
@@ -55,6 +55,41 @@ function parseICalDateValue(value: string): { date: Date; allDay: boolean } {
   if (clean.endsWith('Z')) {
     return { date: new Date(Date.UTC(year, month, day, hour, minute, second)), allDay: false };
   }
+
+  // If a TZID is specified, convert via Intl.DateTimeFormat so the
+  // resulting Date represents the correct UTC instant.
+  if (tzid) {
+    try {
+      const utcGuess = Date.UTC(year, month, day, hour, minute, second);
+
+      function getOffsetMs(utcMs: number): number {
+        const formatter = new Intl.DateTimeFormat('en-US', {
+          timeZone: tzid,
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit',
+          hour12: false,
+        });
+        const parts = formatter.formatToParts(new Date(utcMs));
+        const p = (type: string) => parseInt(parts.find((x) => x.type === type)?.value ?? '0', 10);
+        const localDate = new Date(p('year'), p('month') - 1, p('day'), p('hour'), p('minute'), p('second'));
+        return localDate.getTime() - utcMs;
+      }
+
+      // Two-pass approach: the first offset may be wrong when a DST
+      // transition falls between utcGuess and the real target instant.
+      const offset1 = getOffsetMs(utcGuess);
+      const betterUtc = utcGuess - offset1;
+
+      // Second pass — refine if DST boundary was crossed
+      const offset2 = getOffsetMs(betterUtc);
+      const finalUtc = utcGuess - offset2;
+
+      return { date: new Date(finalUtc), allDay: false };
+    } catch {
+      // Invalid TZID — fall through to local time interpretation
+    }
+  }
+
   return { date: new Date(year, month, day, hour, minute, second), allDay: false };
 }
 
@@ -96,9 +131,11 @@ export function fromVEvent(veventStr: string): CalendarEvent {
   const isAllDay =
     vevent.dtstartParams?.['VALUE'] === 'DATE' || vevent.dtstart.length === 8;
 
-  const startParsed = parseICalDateValue(vevent.dtstart);
+  const startTzid = vevent.dtstartParams?.['TZID'];
+  const endTzid = vevent.dtendParams?.['TZID'] ?? startTzid;
+  const startParsed = parseICalDateValue(vevent.dtstart, startTzid);
   const endParsed = vevent.dtend
-    ? parseICalDateValue(vevent.dtend)
+    ? parseICalDateValue(vevent.dtend, endTzid)
     : { date: new Date(startParsed.date.getTime()), allDay: startParsed.allDay };
 
   const exceptions = (vevent.exdate ?? []).map(
