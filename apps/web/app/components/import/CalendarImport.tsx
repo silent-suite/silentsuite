@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { parseVCalendar } from '@silentsuite/core/utils/ical-parser'
+import { parseVCalendar, parseICalDateValue } from '@silentsuite/core'
 import type { VEvent } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
@@ -54,27 +54,6 @@ function formatICalDate(dtstart: string): string {
   return dtstart
 }
 
-function parseICalDateTime(dtstart: string): Date {
-  if (/^\d{8}$/.test(dtstart)) {
-    return new Date(
-      parseInt(dtstart.slice(0, 4)),
-      parseInt(dtstart.slice(4, 6)) - 1,
-      parseInt(dtstart.slice(6, 8)),
-    )
-  }
-  if (/^\d{8}T\d{6}/.test(dtstart)) {
-    const isUtc = dtstart.endsWith('Z')
-    const y = parseInt(dtstart.slice(0, 4))
-    const mo = parseInt(dtstart.slice(4, 6)) - 1
-    const d = parseInt(dtstart.slice(6, 8))
-    const h = parseInt(dtstart.slice(9, 11))
-    const mi = parseInt(dtstart.slice(11, 13))
-    const s = parseInt(dtstart.slice(13, 15))
-    if (isUtc) return new Date(Date.UTC(y, mo, d, h, mi, s))
-    return new Date(y, mo, d, h, mi, s)
-  }
-  return new Date(dtstart)
-}
 
 export default function CalendarImport({ onImportComplete }: CalendarImportProps) {
   const [events, setEvents] = useState<VEvent[]>([])
@@ -129,11 +108,12 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
     setIsImporting(true)
     try {
       const newEvents = events.map((event) => {
-        const start = parseICalDateTime(event.dtstart)
+        const startTzid = event.dtstartParams?.['TZID']
+        const endTzid = event.dtendParams?.['TZID'] ?? startTzid
+        const { date: start, allDay: isAllDay } = parseICalDateValue(event.dtstart, startTzid)
         const end = event.dtend
-          ? parseICalDateTime(event.dtend)
+          ? parseICalDateValue(event.dtend, endTzid).date
           : new Date(start.getTime() + 60 * 60 * 1000)
-        const isAllDay = /^\d{8}$/.test(event.dtstart)
 
         return {
           title: event.summary || 'Untitled Event',
