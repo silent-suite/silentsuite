@@ -41,15 +41,12 @@ export function MiniCalendar() {
   const handleDayClick = useCallback(
     (date: Date) => {
       setCurrentDate(date)
-      // Switch to week view so the main grid shows the clicked date's week
-      if (currentView === 'month') {
-        setCurrentView('week')
-      }
+      // Stay in the current view — just navigate to the clicked date
       if (!pathname.startsWith('/calendar')) {
         router.push('/calendar')
       }
     },
-    [setCurrentDate, setCurrentView, currentView, pathname, router],
+    [setCurrentDate, pathname, router],
   )
 
   const [miniMonth, miniYear] = useMemo(
