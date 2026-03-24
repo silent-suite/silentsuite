@@ -18,7 +18,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.63.0"
 
       - name: Install dependencies
         working-directory: bridge
