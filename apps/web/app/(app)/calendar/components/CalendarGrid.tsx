@@ -274,6 +274,9 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
 
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
+  // Ref to prevent feedback loops between store↔Schedule-X sync
+  const isSyncingToSxRef = useRef(false)
+
   const calendars = useCalendarListStore((s) => s.calendars)
   const calendarColors = useMemo(() => {
     const map = new Map<string, string>()
@@ -447,6 +450,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     defaultView: initialViewRef.current,
     isDark: resolvedTheme === 'dark',
     locale: 'en-US',
+    firstDayOfWeek: 1, // Monday — must match getViewRange() and formatDateRange()
     dayBoundaries: { start: '06:00', end: '22:00' },
     weekOptions: {
       gridHeight: 800,
@@ -476,14 +480,98 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const app = (calendar as any).$app
       if (!app?.calendarState) return
+      isSyncingToSxRef.current = true
       const date = currentDate instanceof Date ? currentDate : new Date(currentDate)
       const pd = toPlainDate(date)
       app.calendarState.setView(sxViewName, pd)
     } catch (e) {
       console.debug('[CalendarGrid] setView failed:', e)
     }
+    // Clear sync flag after SX signals settle (next animation frame)
+    const raf = requestAnimationFrame(() => {
+      isSyncingToSxRef.current = false
+    })
+    return () => {
+      cancelAnimationFrame(raf)
+      isSyncingToSxRef.current = false
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calendar, currentView, currentDateTs])
+
+  // Reverse sync: Schedule-X → store.
+  // Schedule-X maintains its own internal date state via Preact signals.
+  // If it drifts (e.g. from internal interactions), we detect the mismatch
+  // by polling $app.calendarState.range and update the Zustand store.
+  useEffect(() => {
+    if (!calendar) return
+
+    let lastSeenStart = ''
+
+    const checkSxRange = () => {
+      // Don't read back while we're pushing a change TO Schedule-X
+      if (isSyncingToSxRef.current) return
+
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const app = (calendar as any).$app
+        if (!app?.calendarState) return
+
+        // $app.calendarState.range is a Preact signal — read via .value
+        const rangeSignal = app.calendarState.range
+        const range = rangeSignal?.value ?? rangeSignal
+        if (!range?.start) return
+
+        const startStr = typeof range.start === 'string' ? range.start : String(range.start)
+        if (startStr === lastSeenStart) return // No change in SX
+        lastSeenStart = startStr
+
+        // Parse the SX range start (YYYY-MM-DD)
+        const parts = startStr.split('-').map(Number)
+        if (parts.length < 3 || parts.some(isNaN)) return
+        const [y, m, d] = parts
+        const sxRangeStart = new Date(y!, m! - 1, d!)
+
+        // Compare with the store's expected range for the current view
+        const storeState = useCalendarStore.getState()
+        const storeRange = getViewRange(storeState.currentDate, storeState.currentView)
+
+        // Allow 1-day tolerance (month views may extend into adjacent months)
+        const startDiff = Math.abs(sxRangeStart.getTime() - storeRange.start.getTime())
+        if (startDiff < 86400000) return // Close enough — no drift
+
+        // SX is showing a different range — update store to match.
+        // Pick a representative date from the SX range for currentDate:
+        // week view → Wednesday of the SX week; month view → middle of range.
+        let newDate: Date
+        if (storeState.currentView === 'week') {
+          newDate = new Date(sxRangeStart)
+          newDate.setDate(newDate.getDate() + 3) // mid-week avoids boundary issues
+        } else {
+          const endStr = typeof range.end === 'string' ? range.end : String(range.end)
+          const endParts = endStr.split('-').map(Number)
+          if (endParts.length >= 3 && !endParts.some(isNaN)) {
+            const sxRangeEnd = new Date(endParts[0]!, endParts[1]! - 1, endParts[2]!)
+            newDate = new Date((sxRangeStart.getTime() + sxRangeEnd.getTime()) / 2)
+          } else {
+            newDate = new Date(sxRangeStart)
+            newDate.setDate(newDate.getDate() + 15)
+          }
+        }
+
+        // Push to store — set flag to avoid re-triggering store→SX effect
+        isSyncingToSxRef.current = true
+        setCurrentDate(newDate)
+        requestAnimationFrame(() => {
+          isSyncingToSxRef.current = false
+        })
+      } catch {
+        // Silently ignore — SX internals may not be ready yet
+      }
+    }
+
+    const interval = setInterval(checkSxRange, 300)
+    return () => clearInterval(interval)
+  }, [calendar, setCurrentDate])
 
   // Sync events to schedule-x when they change
   useEffect(() => {
