@@ -38,7 +38,7 @@ function formatICalDateTime(date: Date): string {
   return `${y}${mo}${d}T${h}${mi}${s}`;
 }
 
-function parseICalDateValue(value: string, tzid?: string): { date: Date; allDay: boolean } {
+export function parseICalDateValue(value: string, tzid?: string): { date: Date; allDay: boolean } {
   const clean = value.replace(/[^0-9TZ]/g, '');
   const year = parseInt(clean.slice(0, 4), 10);
   const month = parseInt(clean.slice(4, 6), 10) - 1;
