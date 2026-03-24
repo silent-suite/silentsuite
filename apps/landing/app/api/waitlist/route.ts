@@ -80,10 +80,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { email, name } = await req.json()
+    const { email, name, consent } = await req.json()
 
     if (!email || typeof email !== 'string' || !email.includes('@') || !email.includes('.')) {
       return NextResponse.json({ error: 'A valid email is required' }, { status: 400 })
+    }
+
+    if (consent !== true) {
+      return NextResponse.json({ error: 'Consent is required' }, { status: 400 })
     }
 
     const secret = process.env.NEWSLETTER_SECRET
