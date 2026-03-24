@@ -17,9 +17,17 @@ function ErrorContent() {
       title: 'Link expired or already used',
       body: 'This confirmation link is no longer valid. It may have expired or already been used. Please sign up again if needed.',
     },
+    'expired': {
+      title: 'Link expired',
+      body: 'This confirmation link has expired. Confirmation links are valid for 48 hours. Please subscribe again to get a new link.',
+    },
+    'rate-limited': {
+      title: 'Too many attempts',
+      body: 'You\'ve made too many attempts in a short time. Please wait a few minutes and try again.',
+    },
     'server-error': {
       title: 'Something went wrong',
-      body: 'We couldn\'t process your confirmation right now. Please try again later or contact us.',
+      body: 'We couldn\'t process your request right now. Please try again later or contact us.',
     },
   }
 
@@ -49,7 +57,7 @@ function ErrorContent() {
   )
 }
 
-export default function WaitlistError() {
+export default function NewsletterError() {
   return (
     <main className="min-h-screen bg-navy-950 text-white flex items-center justify-center pt-16">
       <Suspense fallback={

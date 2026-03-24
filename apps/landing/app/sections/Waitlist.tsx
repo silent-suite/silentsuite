@@ -7,7 +7,6 @@ import Link from 'next/link'
 export default function Waitlist() {
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
-  const [useCase, setUseCase] = useState('')
   const [consent, setConsent] = useState(false)
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
 
@@ -16,17 +15,16 @@ export default function Waitlist() {
     setStatus('loading')
 
     try {
-      const res = await fetch('/api/waitlist', {
+      const res = await fetch('/api/newsletter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, name, useCase, consent }),
+        body: JSON.stringify({ email, name, consent }),
       })
 
       if (res.ok) {
         setStatus('success')
         setEmail('')
         setName('')
-        setUseCase('')
         setConsent(false)
       } else {
         setStatus('error')
@@ -37,7 +35,7 @@ export default function Waitlist() {
   }
 
   return (
-    <section id="waitlist" className="py-28 bg-navy-900 text-white">
+    <section id="newsletter" className="py-28 bg-navy-900 text-white">
       <div className="max-w-2xl mx-auto px-6 text-center">
         <h2 className="text-4xl md:text-5xl font-bold mb-6">
           Stay in the loop
@@ -86,25 +84,6 @@ export default function Waitlist() {
                 placeholder="you@example.com"
                 className="w-full px-4 py-3 rounded-lg bg-navy-950 border border-navy-700 focus:border-teal-400 focus:outline-none text-white placeholder-navy-500 transition-colors"
               />
-            </div>
-
-            <div>
-              <label htmlFor="useCase" className="block text-sm font-medium text-navy-200 mb-1">
-                How would you use SilentSuite? <span className="text-navy-500">(optional)</span>
-              </label>
-              <select
-                id="useCase"
-                value={useCase}
-                onChange={(e) => setUseCase(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg bg-navy-950 border border-navy-700 focus:border-teal-400 focus:outline-none text-white transition-colors"
-              >
-                <option value="">Select one&hellip;</option>
-                <option value="personal">Personal use</option>
-                <option value="family">Family / household</option>
-                <option value="smb">Small business / team</option>
-                <option value="selfhost">Self-hosting</option>
-                <option value="other">Other</option>
-              </select>
             </div>
 
             <div className="flex items-start gap-3">
