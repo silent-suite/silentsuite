@@ -37,7 +37,7 @@ export const useTaskListStore = create<TaskListState>()(
       lists: [
         { id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true },
       ],
-      activeListId: 'default',
+      activeListId: 'all',
 
       addList: (name, color) => {
         const { canWrite } = useAuthStore.getState()

@@ -37,7 +37,7 @@ export const useContactListStore = create<ContactListState>()(
       lists: [
         { id: 'default', name: 'My Contacts', color: '#8b5cf6', visible: true },
       ],
-      activeListId: 'default',
+      activeListId: 'all',
 
       addList: (name, color) => {
         const { canWrite } = useAuthStore.getState()

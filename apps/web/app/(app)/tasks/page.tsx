@@ -621,9 +621,11 @@ export default function TasksPage() {
   const [showDialog, setShowDialog] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
 
-  // Filter tasks by active list (all tasks default to 'default' list)
+  // Filter tasks by active list ('all' shows everything)
   const filteredTasks = useMemo(
-    () => tasks.filter((t) => (t.listId ?? 'default') === activeListId),
+    () => activeListId === 'all'
+      ? tasks
+      : tasks.filter((t) => (t.listId ?? 'default') === activeListId),
     [tasks, activeListId],
   )
   const sortedTasks = useMemo(() => sortTasks(filteredTasks), [filteredTasks])

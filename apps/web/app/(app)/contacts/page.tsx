@@ -945,9 +945,11 @@ export default function ContactsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showNewForm, setShowNewForm] = useState(false)
 
-  // Filter contacts by active list
+  // Filter contacts by active list ('all' shows everything)
   const listFilteredContacts = useMemo(
-    () => contacts.filter((c) => (c.listId ?? 'default') === activeListId),
+    () => activeListId === 'all'
+      ? contacts
+      : contacts.filter((c) => (c.listId ?? 'default') === activeListId),
     [contacts, activeListId],
   )
 
