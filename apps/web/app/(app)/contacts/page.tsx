@@ -3,13 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
-  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser,
+  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List,
 } from 'lucide-react'
 import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
-import { ListSwitcher } from '@/app/components/ListSwitcher'
 import { ContactsEmptyState, SearchEmptyState, ContactDetailEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import type { Contact } from '@silentsuite/core'
@@ -223,10 +222,14 @@ function ContactForm({
 }) {
   const createContact = useContactStore((s) => s.createContact)
   const contactLists = useContactListStore((s) => s.lists)
-  const activeListId = useContactListStore((s) => s.activeListId)
   const photoInputRef = useRef<HTMLInputElement>(null)
 
-  const [selectedListId, setSelectedListId] = useState(activeListId === 'all' ? 'default' : activeListId)
+  const defaultListId = useMemo(() => {
+    const visible = contactLists.filter(l => l.visible)
+    return visible.length === 1 ? visible[0]!.id : 'default'
+  }, [contactLists])
+
+  const [selectedListId, setSelectedListId] = useState(defaultListId)
   const [given, setGiven] = useState('')
   const [family, setFamily] = useState('')
   const [prefix, setPrefix] = useState('')
@@ -402,23 +405,32 @@ function ContactForm({
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Job title" className={INPUT_CLASS} />
           </fieldset>
 
-          {/* Address Book selector */}
+          {/* Address Book selector — colored pill buttons */}
           <fieldset className="space-y-2">
             <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Address Book</legend>
             <div className="flex items-center gap-3">
               <BookUser className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-              <select
-                value={selectedListId}
-                onChange={(e) => setSelectedListId(e.target.value)}
-                aria-label="Address book"
-                className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
+              <div className="flex flex-wrap gap-1.5">
                 {contactLists.map((list) => (
-                  <option key={list.id} value={list.id}>
+                  <button
+                    key={list.id}
+                    type="button"
+                    onClick={() => setSelectedListId(list.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors border ${
+                      selectedListId === list.id
+                        ? 'border-transparent text-white'
+                        : 'border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] bg-[rgb(var(--surface))]'
+                    }`}
+                    style={selectedListId === list.id ? { backgroundColor: list.color } : undefined}
+                  >
+                    <div
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: list.color }}
+                    />
                     {list.name}
-                  </option>
+                  </button>
                 ))}
-              </select>
+              </div>
             </div>
           </fieldset>
 
@@ -962,19 +974,14 @@ export default function ContactsPage() {
   const searchQuery = useContactStore((s) => s.searchQuery)
   const isOnline = useSyncStore((s) => s.isOnline)
   const contactLists = useContactListStore((s) => s.lists)
-  const activeListId = useContactListStore((s) => s.activeListId)
-  const setActiveList = useContactListStore((s) => s.setActiveList)
-  const addContactList = useContactListStore((s) => s.addList)
-  const removeContactList = useContactListStore((s) => s.removeList)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showNewForm, setShowNewForm] = useState(false)
 
-  // Filter contacts by active list ('all' shows everything)
+  // Filter contacts by visible lists
+  const visibleListIds = useMemo(() => new Set(contactLists.filter(l => l.visible).map(l => l.id)), [contactLists])
   const listFilteredContacts = useMemo(
-    () => activeListId === 'all'
-      ? contacts
-      : contacts.filter((c) => (c.listId ?? 'default') === activeListId),
-    [contacts, activeListId],
+    () => contacts.filter((c) => visibleListIds.has(c.listId ?? 'default')),
+    [contacts, visibleListIds],
   )
 
   const filtered = useMemo(
@@ -1004,14 +1011,6 @@ export default function ContactsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Contacts</h2>
-          <ListSwitcher
-            lists={contactLists}
-            activeListId={activeListId}
-            onSelectList={setActiveList}
-            onAddList={addContactList}
-            onRemoveList={removeContactList}
-            label="Address Books"
-          />
         </div>
         <button
           type="button"

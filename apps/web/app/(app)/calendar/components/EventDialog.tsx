@@ -528,24 +528,31 @@ export function EventDialog({
                 />
               </div>
 
-              {/* ---- Calendar selector ---- */}
-              {calendarLists.length > 1 && (
-                <div className="flex items-center gap-3">
-                  <CalendarDays className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-                  <select
-                    value={selectedCalendarId}
-                    onChange={(e) => setSelectedCalendarId(e.target.value)}
-                    aria-label="Calendar"
-                    className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  >
-                    {calendarLists.map((cal) => (
-                      <option key={cal.id} value={cal.id}>
-                        {cal.name}
-                      </option>
-                    ))}
-                  </select>
+              {/* ---- Calendar selector — colored pill buttons ---- */}
+              <div className="flex items-center gap-3">
+                <CalendarDays className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                <div className="flex flex-wrap gap-1.5">
+                  {calendarLists.map((cal) => (
+                    <button
+                      key={cal.id}
+                      type="button"
+                      onClick={() => setSelectedCalendarId(cal.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors border ${
+                        selectedCalendarId === cal.id
+                          ? 'border-transparent text-white'
+                          : 'border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] bg-[rgb(var(--surface))]'
+                      }`}
+                      style={selectedCalendarId === cal.id ? { backgroundColor: cal.color } : undefined}
+                    >
+                      <div
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: cal.color }}
+                      />
+                      {cal.name}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
 
               {/* ---- Divider ---- */}
               <div className="border-t border-[rgb(var(--border))]" />

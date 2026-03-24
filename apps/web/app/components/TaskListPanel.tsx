@@ -5,7 +5,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 
 export function TaskListPanel() {
-  const { lists, activeListId, addList, removeList, setActiveList, getNextColor } = useTaskListStore()
+  const { lists, addList, removeList, toggleVisibility, getNextColor } = useTaskListStore()
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
 
@@ -33,46 +33,24 @@ export function TaskListPanel() {
       </div>
 
       <div className="space-y-0.5">
-        {/* All tasks option */}
-        <button
-          onClick={() => setActiveList('all')}
-          className={`flex items-center gap-2 w-full rounded px-1 py-1 transition-colors ${
-            activeListId === 'all'
-              ? 'bg-[rgb(var(--primary))]/10'
-              : 'hover:bg-[rgb(var(--background))]'
-          }`}
-        >
-          <div className="h-3 w-3 shrink-0 rounded-sm bg-gradient-to-br from-blue-500 to-emerald-500" />
-          <span className={`text-xs truncate ${
-            activeListId === 'all'
-              ? 'text-[rgb(var(--primary))] font-medium'
-              : 'text-[rgb(var(--foreground))]'
-          }`}>
-            All Tasks
-          </span>
-        </button>
-
         {lists.map((list) => (
           <div
             key={list.id}
-            className={`group flex items-center gap-2 rounded px-1 py-1 transition-colors ${
-              activeListId === list.id
-                ? 'bg-[rgb(var(--primary))]/10'
-                : 'hover:bg-[rgb(var(--background))]'
-            }`}
+            className="group flex items-center gap-2 rounded px-1 py-1 hover:bg-[rgb(var(--background))] transition-colors"
           >
             <button
-              onClick={() => setActiveList(list.id)}
+              onClick={() => toggleVisibility(list.id)}
               className="flex items-center gap-2 flex-1 min-w-0"
             >
               <div
                 className="h-3 w-3 shrink-0 rounded-sm"
-                style={{ backgroundColor: list.color }}
+                style={{
+                  backgroundColor: list.visible ? list.color : 'transparent',
+                  border: list.visible ? 'none' : `2px solid ${list.color}`,
+                }}
               />
               <span className={`text-xs truncate ${
-                activeListId === list.id
-                  ? 'text-[rgb(var(--primary))] font-medium'
-                  : 'text-[rgb(var(--foreground))]'
+                list.visible ? 'text-[rgb(var(--foreground))]' : 'text-[rgb(var(--muted))]'
               }`}>
                 {list.name}
               </span>
