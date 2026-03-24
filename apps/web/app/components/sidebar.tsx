@@ -54,21 +54,13 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Context-aware sidebar panel */}
+      {/* Mini calendar (always visible) + context-aware list panel */}
       {isExpanded && (
         <div className="border-t border-b border-[rgb(var(--border))]">
-          {pathname.startsWith('/calendar') && (
-            <>
-              <MiniCalendar />
-              <CalendarListPanel />
-            </>
-          )}
-          {pathname.startsWith('/tasks') && (
-            <TaskListPanel />
-          )}
-          {pathname.startsWith('/contacts') && (
-            <ContactListPanel />
-          )}
+          <MiniCalendar />
+          {pathname.startsWith('/calendar') && <CalendarListPanel />}
+          {pathname.startsWith('/tasks') && <TaskListPanel />}
+          {pathname.startsWith('/contacts') && <ContactListPanel />}
         </div>
       )}
 
