@@ -96,7 +96,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/waitlist/error?reason=invalid-token', req.url))
   }
 
-  // Signature valid -- send the welcome email
+  // Persist the confirmed subscriber to Resend Audience
+  const audienceId = process.env.RESEND_AUDIENCE_ID
+  if (audienceId) {
+    try {
+      await getResend().contacts.create({ email, audienceId })
+    } catch (err) {
+      console.error('Failed to add contact to audience:', err)
+    }
+  } else {
+    console.error('RESEND_AUDIENCE_ID not configured; subscriber not stored')
+  }
+
+  // Send the welcome email
   try {
     const { error: sendError } = await getResend().emails.send({
       from: 'SilentSuite <noreply@silentsuite.io>',
