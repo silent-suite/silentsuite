@@ -52,6 +52,7 @@ export {
   deserializeCalendarEvent,
   buildAlarmTrigger,
   parseAlarmTriggerMinutes,
+  parseICalDateValue,
 } from './models/calendar-event.js';
 export type { CalendarEvent } from './models/calendar-event.js';
 

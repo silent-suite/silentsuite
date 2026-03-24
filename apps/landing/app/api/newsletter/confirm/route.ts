@@ -53,6 +53,19 @@ async function verifySignature(
   return hexEncode(expected) === sig
 }
 
+async function signPayload(payload: string, secret: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload))
+  return hexEncode(signature)
+}
+
 const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000
 
 export async function GET(req: NextRequest) {
@@ -63,7 +76,7 @@ export async function GET(req: NextRequest) {
     'unknown'
 
   if (isRateLimited(ip)) {
-    return NextResponse.redirect(new URL('/waitlist/error?reason=rate-limited', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=rate-limited', req.url))
   }
 
   const email = req.nextUrl.searchParams.get('email')
@@ -71,39 +84,56 @@ export async function GET(req: NextRequest) {
   const sig = req.nextUrl.searchParams.get('sig')
 
   if (!email || !tsParam || !sig) {
-    return NextResponse.redirect(new URL('/waitlist/error?reason=missing-token', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=missing-token', req.url))
   }
 
   const ts = Number(tsParam)
   if (isNaN(ts)) {
-    return NextResponse.redirect(new URL('/waitlist/error?reason=invalid-token', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=invalid-token', req.url))
   }
 
   // Check 48-hour expiry
   if (Date.now() - ts > FORTY_EIGHT_HOURS_MS) {
-    return NextResponse.redirect(new URL('/waitlist/error?reason=expired', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=expired', req.url))
   }
 
   const secret = process.env.NEWSLETTER_SECRET
   if (!secret) {
     console.error('NEWSLETTER_SECRET not configured')
-    return NextResponse.redirect(new URL('/waitlist/error?reason=server-error', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=server-error', req.url))
   }
 
   // Verify HMAC signature
   const valid = await verifySignature(email, ts, sig, secret)
   if (!valid) {
-    return NextResponse.redirect(new URL('/waitlist/error?reason=invalid-token', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=invalid-token', req.url))
   }
 
-  // Signature valid -- send the welcome email
+  // Persist the confirmed subscriber to Resend Audience
+  const audienceId = process.env.RESEND_AUDIENCE_ID
+  if (audienceId) {
+    try {
+      await getResend().contacts.create({ email, audienceId })
+    } catch (err) {
+      console.error('Failed to add contact to audience:', err)
+    }
+  } else {
+    console.error('RESEND_AUDIENCE_ID not configured; subscriber not stored')
+  }
+
+  // Generate HMAC-signed unsubscribe link (no expiry)
+  const unsubSig = await signPayload(`unsubscribe|${email}`, secret)
+  const unsubUrl =
+    `https://silentsuite.io/api/newsletter/unsubscribe?email=${encodeURIComponent(email)}&sig=${unsubSig}`
+
+  // Send the welcome email
   try {
     const { error: sendError } = await getResend().emails.send({
       from: 'SilentSuite <noreply@silentsuite.io>',
       to: email,
       subject: 'Welcome to SilentSuite updates',
       headers: {
-        'List-Unsubscribe': '<mailto:unsubscribe@silentsuite.io>',
+        'List-Unsubscribe': `<${unsubUrl}>, <mailto:unsubscribe@silentsuite.io>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       },
       html: `
@@ -134,11 +164,9 @@ export async function GET(req: NextRequest) {
           <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 24px 0;" />
           <p style="font-size: 12px; color: #888;">
             You received this email because you confirmed your subscription on
-            silentsuite.io. To unsubscribe, reply to this email with
-            "unsubscribe" or email
-            <a href="mailto:info@silentsuite.io">info@silentsuite.io</a>.
+            silentsuite.io.
             <br />
-            <a href="mailto:unsubscribe@silentsuite.io">One-click unsubscribe</a>
+            <a href="${unsubUrl}">Unsubscribe</a>
           </p>
         </div>
       `,
@@ -146,12 +174,12 @@ export async function GET(req: NextRequest) {
 
     if (sendError) {
       console.error('Resend error:', sendError)
-      return NextResponse.redirect(new URL('/waitlist/error?reason=server-error', req.url))
+      return NextResponse.redirect(new URL('/newsletter/error?reason=server-error', req.url))
     }
 
-    return NextResponse.redirect(new URL('/waitlist/confirmed', req.url))
+    return NextResponse.redirect(new URL('/newsletter/confirmed', req.url))
   } catch (err) {
     console.error('Confirmation API error:', err)
-    return NextResponse.redirect(new URL('/waitlist/error?reason=server-error', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=server-error', req.url))
   }
 }

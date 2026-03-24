@@ -47,7 +47,7 @@ function hexEncode(buffer: ArrayBuffer): string {
     .join('')
 }
 
-async function signPayload(email: string, ts: number, secret: string): Promise<string> {
+async function signPayload(payload: string, secret: string): Promise<string> {
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey(
     'raw',
@@ -56,8 +56,7 @@ async function signPayload(email: string, ts: number, secret: string): Promise<s
     false,
     ['sign'],
   )
-  const data = encoder.encode(`${email}|${ts}`)
-  const signature = await crypto.subtle.sign('HMAC', key, data)
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload))
   return hexEncode(signature)
 }
 
@@ -80,10 +79,14 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { email, name } = await req.json()
+    const { email, name, consent } = await req.json()
 
     if (!email || typeof email !== 'string' || !email.includes('@') || !email.includes('.')) {
       return NextResponse.json({ error: 'A valid email is required' }, { status: 400 })
+    }
+
+    if (consent !== true) {
+      return NextResponse.json({ error: 'Consent is required' }, { status: 400 })
     }
 
     const secret = process.env.NEWSLETTER_SECRET
@@ -97,18 +100,14 @@ export async function POST(req: NextRequest) {
 
     // Generate HMAC-signed confirmation link (stateless double opt-in)
     const ts = Date.now()
-    const sig = await signPayload(email, ts, secret)
+    const sig = await signPayload(`${email}|${ts}`, secret)
     const confirmUrl =
-      `https://silentsuite.io/api/waitlist/confirm?email=${encodeURIComponent(email)}&ts=${ts}&sig=${sig}`
+      `https://silentsuite.io/api/newsletter/confirm?email=${encodeURIComponent(email)}&ts=${ts}&sig=${sig}`
 
     const { error: sendError } = await getResend().emails.send({
       from: 'SilentSuite <noreply@silentsuite.io>',
       to: email,
       subject: 'Please confirm your subscription to SilentSuite updates',
-      headers: {
-        'List-Unsubscribe': '<mailto:unsubscribe@silentsuite.io>',
-        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-      },
       html: `
         <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto; color: #1a1a1a;">
           <h2>${greeting}</h2>
@@ -135,9 +134,8 @@ export async function POST(req: NextRequest) {
           <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 24px 0;" />
           <p style="font-size: 12px; color: #888;">
             You received this email because someone entered your address on
-            silentsuite.io. If this was not you, no action is needed.
-            <br />
-            <a href="mailto:unsubscribe@silentsuite.io">Unsubscribe</a>
+            silentsuite.io. If this was not you, no action is needed and you
+            will not receive any further emails.
           </p>
         </div>
       `,
