@@ -1,0 +1,49 @@
+name: Test Bridge (Linux x86_64)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build linux-x86_64
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        working-directory: bridge
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e ".[dev,tray]" || pip install -e ".[tray]" || pip install -e .
+
+      - name: Build binary
+        working-directory: bridge
+        run: |
+          pyinstaller silentsuite-bridge.spec --clean --noconfirm \
+            --distpath dist/ \
+            --workpath build/
+
+      - name: Smoke test
+        working-directory: bridge
+        run: |
+          dist/silentsuite-bridge --version
+          dist/silentsuite-bridge --help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: silentsuite-bridge-linux-x86_64-test
+          path: bridge/dist/silentsuite-bridge
+          if-no-files-found: error
+          retention-days: 7
