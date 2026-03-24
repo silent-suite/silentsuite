@@ -47,7 +47,7 @@ function hexEncode(buffer: ArrayBuffer): string {
     .join('')
 }
 
-async function signPayload(email: string, ts: number, secret: string): Promise<string> {
+async function signPayload(payload: string, secret: string): Promise<string> {
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey(
     'raw',
@@ -56,8 +56,7 @@ async function signPayload(email: string, ts: number, secret: string): Promise<s
     false,
     ['sign'],
   )
-  const data = encoder.encode(`${email}|${ts}`)
-  const signature = await crypto.subtle.sign('HMAC', key, data)
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(payload))
   return hexEncode(signature)
 }
 
@@ -101,16 +100,21 @@ export async function POST(req: NextRequest) {
 
     // Generate HMAC-signed confirmation link (stateless double opt-in)
     const ts = Date.now()
-    const sig = await signPayload(email, ts, secret)
+    const sig = await signPayload(`${email}|${ts}`, secret)
     const confirmUrl =
       `https://silentsuite.io/api/waitlist/confirm?email=${encodeURIComponent(email)}&ts=${ts}&sig=${sig}`
+
+    // Generate HMAC-signed unsubscribe link (no expiry)
+    const unsubSig = await signPayload(`unsubscribe|${email}`, secret)
+    const unsubUrl =
+      `https://silentsuite.io/api/waitlist/unsubscribe?email=${encodeURIComponent(email)}&sig=${unsubSig}`
 
     const { error: sendError } = await getResend().emails.send({
       from: 'SilentSuite <noreply@silentsuite.io>',
       to: email,
       subject: 'Please confirm your subscription to SilentSuite updates',
       headers: {
-        'List-Unsubscribe': '<mailto:unsubscribe@silentsuite.io>',
+        'List-Unsubscribe': `<${unsubUrl}>, <mailto:unsubscribe@silentsuite.io>`,
         'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
       },
       html: `
@@ -141,7 +145,7 @@ export async function POST(req: NextRequest) {
             You received this email because someone entered your address on
             silentsuite.io. If this was not you, no action is needed.
             <br />
-            <a href="mailto:unsubscribe@silentsuite.io">Unsubscribe</a>
+            <a href="${unsubUrl}">Unsubscribe</a>
           </p>
         </div>
       `,
