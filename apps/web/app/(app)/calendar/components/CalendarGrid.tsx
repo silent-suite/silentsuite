@@ -484,8 +484,14 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       const date = currentDate instanceof Date ? currentDate : new Date(currentDate)
       const pd = toPlainDate(date)
       app.calendarState.setView(sxViewName, pd)
+      // Move the visible range to the target date (setView only changes view type)
+      app.calendarState.setRange(pd)
+      // Sync the date picker highlight if present
+      if (app.datePickerState?.selectedDate) {
+        app.datePickerState.selectedDate.value = pd
+      }
     } catch (e) {
-      console.debug('[CalendarGrid] setView failed:', e)
+      console.debug('[CalendarGrid] setView/setRange failed:', e)
     }
     // Clear sync flag after SX signals settle (next animation frame)
     const raf = requestAnimationFrame(() => {
