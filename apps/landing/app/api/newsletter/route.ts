@@ -104,19 +104,10 @@ export async function POST(req: NextRequest) {
     const confirmUrl =
       `https://silentsuite.io/api/newsletter/confirm?email=${encodeURIComponent(email)}&ts=${ts}&sig=${sig}`
 
-    // Generate HMAC-signed unsubscribe link (no expiry)
-    const unsubSig = await signPayload(`unsubscribe|${email}`, secret)
-    const unsubUrl =
-      `https://silentsuite.io/api/newsletter/unsubscribe?email=${encodeURIComponent(email)}&sig=${unsubSig}`
-
     const { error: sendError } = await getResend().emails.send({
       from: 'SilentSuite <noreply@silentsuite.io>',
       to: email,
       subject: 'Please confirm your subscription to SilentSuite updates',
-      headers: {
-        'List-Unsubscribe': `<${unsubUrl}>, <mailto:unsubscribe@silentsuite.io>`,
-        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-      },
       html: `
         <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto; color: #1a1a1a;">
           <h2>${greeting}</h2>
@@ -143,9 +134,8 @@ export async function POST(req: NextRequest) {
           <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 24px 0;" />
           <p style="font-size: 12px; color: #888;">
             You received this email because someone entered your address on
-            silentsuite.io. If this was not you, no action is needed.
-            <br />
-            <a href="${unsubUrl}">Unsubscribe</a>
+            silentsuite.io. If this was not you, no action is needed and you
+            will not receive any further emails.
           </p>
         </div>
       `,
