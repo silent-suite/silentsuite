@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
-  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera,
+  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser,
 } from 'lucide-react'
 import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
@@ -222,8 +222,11 @@ function ContactForm({
   onSaved: (id: string) => void
 }) {
   const createContact = useContactStore((s) => s.createContact)
+  const contactLists = useContactListStore((s) => s.lists)
+  const activeListId = useContactListStore((s) => s.activeListId)
   const photoInputRef = useRef<HTMLInputElement>(null)
 
+  const [selectedListId, setSelectedListId] = useState(activeListId === 'all' ? 'default' : activeListId)
   const [given, setGiven] = useState('')
   const [family, setFamily] = useState('')
   const [prefix, setPrefix] = useState('')
@@ -269,10 +272,11 @@ function ContactForm({
         birthday: birthday || null,
         notes,
         photoUrl,
+        listId: selectedListId,
       })
       onSaved(contact.id)
     },
-    [given, family, prefix, suffix, phones, emails, addresses, organization, title, birthday, notes, photoUrl, createContact, onSaved],
+    [given, family, prefix, suffix, phones, emails, addresses, organization, title, birthday, notes, photoUrl, selectedListId, createContact, onSaved],
   )
 
   return (
@@ -396,6 +400,26 @@ function ContactForm({
             <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Work</legend>
             <input value={organization} onChange={(e) => setOrganization(e.target.value)} placeholder="Organization" className={INPUT_CLASS} />
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Job title" className={INPUT_CLASS} />
+          </fieldset>
+
+          {/* Address Book selector */}
+          <fieldset className="space-y-2">
+            <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Address Book</legend>
+            <div className="flex items-center gap-3">
+              <BookUser className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+              <select
+                value={selectedListId}
+                onChange={(e) => setSelectedListId(e.target.value)}
+                aria-label="Address book"
+                className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                {contactLists.map((list) => (
+                  <option key={list.id} value={list.id}>
+                    {list.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </fieldset>
 
           {/* Birthday & Notes */}

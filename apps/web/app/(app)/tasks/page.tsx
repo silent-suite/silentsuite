@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil } from 'lucide-react'
+import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List } from 'lucide-react'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
@@ -85,6 +85,7 @@ function TaskQuickAdd() {
   const [title, setTitle] = useState('')
   const createTask = useTaskStore((s) => s.createTask)
   const canWrite = useAuthStore((s) => s.canWrite())
+  const activeListId = useTaskListStore((s) => s.activeListId)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleSubmit = useCallback(
@@ -92,10 +93,10 @@ function TaskQuickAdd() {
       e.preventDefault()
       const trimmed = title.trim()
       if (!trimmed) return
-      createTask({ title: trimmed })
+      createTask({ title: trimmed, listId: activeListId === 'all' ? 'default' : activeListId })
       setTitle('')
     },
-    [title, createTask],
+    [title, createTask, activeListId],
   )
 
   return (
@@ -142,6 +143,8 @@ function TaskDialog({
 }) {
   const createTask = useTaskStore((s) => s.createTask)
   const updateTask = useTaskStore((s) => s.updateTask)
+  const taskLists = useTaskListStore((s) => s.lists)
+  const activeListId = useTaskListStore((s) => s.activeListId)
   const titleRef = useRef<HTMLInputElement>(null)
 
   const [title, setTitle] = useState(task?.title ?? '')
@@ -152,6 +155,7 @@ function TaskDialog({
       : '',
   )
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
+  const [selectedListId, setSelectedListId] = useState(task?.listId ?? (activeListId === 'all' ? 'default' : activeListId))
 
   useEffect(() => {
     const timer = setTimeout(() => titleRef.current?.focus(), 50)
@@ -183,6 +187,7 @@ function TaskDialog({
         description,
         due_date: parsedDue,
         priority,
+        listId: selectedListId,
       })
     } else if (task) {
       updateTask(task.id, {
@@ -190,10 +195,11 @@ function TaskDialog({
         description,
         due_date: parsedDue,
         priority,
+        listId: selectedListId,
       })
     }
     onClose()
-  }, [title, description, dueDate, priority, mode, task, createTask, updateTask, onClose])
+  }, [title, description, dueDate, priority, selectedListId, mode, task, createTask, updateTask, onClose])
 
   return (
     <>
@@ -281,6 +287,23 @@ function TaskDialog({
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* List selector */}
+            <div className="flex items-center gap-3">
+              <List className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+              <select
+                value={selectedListId}
+                onChange={(e) => setSelectedListId(e.target.value)}
+                aria-label="Task list"
+                className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                {taskLists.map((list) => (
+                  <option key={list.id} value={list.id}>
+                    {list.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Description / Notes */}
