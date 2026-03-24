@@ -102,12 +102,12 @@ export async function POST(req: NextRequest) {
     const ts = Date.now()
     const sig = await signPayload(`${email}|${ts}`, secret)
     const confirmUrl =
-      `https://silentsuite.io/api/waitlist/confirm?email=${encodeURIComponent(email)}&ts=${ts}&sig=${sig}`
+      `https://silentsuite.io/api/newsletter/confirm?email=${encodeURIComponent(email)}&ts=${ts}&sig=${sig}`
 
     // Generate HMAC-signed unsubscribe link (no expiry)
     const unsubSig = await signPayload(`unsubscribe|${email}`, secret)
     const unsubUrl =
-      `https://silentsuite.io/api/waitlist/unsubscribe?email=${encodeURIComponent(email)}&sig=${unsubSig}`
+      `https://silentsuite.io/api/newsletter/unsubscribe?email=${encodeURIComponent(email)}&sig=${unsubSig}`
 
     const { error: sendError } = await getResend().emails.send({
       from: 'SilentSuite <noreply@silentsuite.io>',

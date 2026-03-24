@@ -15,7 +15,7 @@ export default function Waitlist() {
     setStatus('loading')
 
     try {
-      const res = await fetch('/api/waitlist', {
+      const res = await fetch('/api/newsletter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, name, consent }),
@@ -35,7 +35,7 @@ export default function Waitlist() {
   }
 
   return (
-    <section id="waitlist" className="py-28 bg-navy-900 text-white">
+    <section id="newsletter" className="py-28 bg-navy-900 text-white">
       <div className="max-w-2xl mx-auto px-6 text-center">
         <h2 className="text-4xl md:text-5xl font-bold mb-6">
           Stay in the loop

@@ -52,23 +52,23 @@ export async function GET(req: NextRequest) {
   const sig = req.nextUrl.searchParams.get('sig')
 
   if (!email || !sig) {
-    return NextResponse.redirect(new URL('/waitlist/error?reason=missing-token', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=missing-token', req.url))
   }
 
   const secret = process.env.NEWSLETTER_SECRET
   if (!secret) {
     console.error('NEWSLETTER_SECRET not configured')
-    return NextResponse.redirect(new URL('/waitlist/error?reason=server-error', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=server-error', req.url))
   }
 
   const valid = await verifySignature(email, sig, secret)
   if (!valid) {
-    return NextResponse.redirect(new URL('/waitlist/error?reason=invalid-token', req.url))
+    return NextResponse.redirect(new URL('/newsletter/error?reason=invalid-token', req.url))
   }
 
   await removeContact(email)
 
-  return NextResponse.redirect(new URL('/waitlist/unsubscribed', req.url))
+  return NextResponse.redirect(new URL('/newsletter/unsubscribed', req.url))
 }
 
 // POST: RFC 8058 one-click unsubscribe from email client
