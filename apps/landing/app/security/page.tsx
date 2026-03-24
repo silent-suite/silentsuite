@@ -198,14 +198,13 @@ export default function SecurityPage() {
         <div className="rounded-2xl bg-navy-900 border border-navy-700 p-10">
           <h2 className="text-2xl font-bold mb-4">Ready to take back your privacy?</h2>
           <p className="text-navy-300 mb-8 max-w-lg mx-auto">
-            Join the waitlist and be among the first to experience truly private
-            productivity tools.
+            Sign up and experience truly private productivity tools today.
           </p>
           <a
-            href="/#waitlist"
+            href="https://app.silentsuite.io/signup"
             className="inline-block px-8 py-4 bg-teal-400 hover:bg-teal-500 text-navy-950 font-semibold rounded-lg transition-colors"
           >
-            Join the Waitlist
+            Get Started
           </a>
         </div>
       </div>

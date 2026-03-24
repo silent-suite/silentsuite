@@ -1,14 +1,13 @@
 'use client'
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil } from 'lucide-react'
+import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List } from 'lucide-react'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
-import { ListSwitcher } from '@/app/components/ListSwitcher'
 import { TasksEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import type { Task, Priority } from '@silentsuite/core'
@@ -85,17 +84,23 @@ function TaskQuickAdd() {
   const [title, setTitle] = useState('')
   const createTask = useTaskStore((s) => s.createTask)
   const canWrite = useAuthStore((s) => s.canWrite())
+  const taskLists = useTaskListStore((s) => s.lists)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const defaultListId = useMemo(() => {
+    const visible = taskLists.filter(l => l.visible)
+    return visible.length === 1 ? visible[0]!.id : 'default'
+  }, [taskLists])
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault()
       const trimmed = title.trim()
       if (!trimmed) return
-      createTask({ title: trimmed })
+      createTask({ title: trimmed, listId: defaultListId })
       setTitle('')
     },
-    [title, createTask],
+    [title, createTask, defaultListId],
   )
 
   return (
@@ -142,7 +147,13 @@ function TaskDialog({
 }) {
   const createTask = useTaskStore((s) => s.createTask)
   const updateTask = useTaskStore((s) => s.updateTask)
+  const taskLists = useTaskListStore((s) => s.lists)
   const titleRef = useRef<HTMLInputElement>(null)
+
+  const defaultListId = useMemo(() => {
+    const visible = taskLists.filter(l => l.visible)
+    return visible.length === 1 ? visible[0]!.id : 'default'
+  }, [taskLists])
 
   const [title, setTitle] = useState(task?.title ?? '')
   const [description, setDescription] = useState(task?.description ?? '')
@@ -152,6 +163,7 @@ function TaskDialog({
       : '',
   )
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
+  const [selectedListId, setSelectedListId] = useState(task?.listId ?? defaultListId)
 
   useEffect(() => {
     const timer = setTimeout(() => titleRef.current?.focus(), 50)
@@ -183,6 +195,7 @@ function TaskDialog({
         description,
         due_date: parsedDue,
         priority,
+        listId: selectedListId,
       })
     } else if (task) {
       updateTask(task.id, {
@@ -190,10 +203,11 @@ function TaskDialog({
         description,
         due_date: parsedDue,
         priority,
+        listId: selectedListId,
       })
     }
     onClose()
-  }, [title, description, dueDate, priority, mode, task, createTask, updateTask, onClose])
+  }, [title, description, dueDate, priority, selectedListId, mode, task, createTask, updateTask, onClose])
 
   return (
     <>
@@ -278,6 +292,32 @@ function TaskDialog({
                     }`}
                   >
                     {PRIORITY_LABELS[p]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* List selector — colored pill buttons */}
+            <div className="flex items-center gap-3">
+              <List className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+              <div className="flex flex-wrap gap-1.5">
+                {taskLists.map((list) => (
+                  <button
+                    key={list.id}
+                    type="button"
+                    onClick={() => setSelectedListId(list.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors border ${
+                      selectedListId === list.id
+                        ? 'border-transparent text-white'
+                        : 'border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] bg-[rgb(var(--surface))]'
+                    }`}
+                    style={selectedListId === list.id ? { backgroundColor: list.color } : undefined}
+                  >
+                    <div
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: list.color }}
+                    />
+                    {list.name}
                   </button>
                 ))}
               </div>
@@ -614,17 +654,14 @@ export default function TasksPage() {
   const isLoading = useTaskStore((s) => s.isLoading)
   const isOnline = useSyncStore((s) => s.isOnline)
   const taskLists = useTaskListStore((s) => s.lists)
-  const activeListId = useTaskListStore((s) => s.activeListId)
-  const setActiveList = useTaskListStore((s) => s.setActiveList)
-  const addTaskList = useTaskListStore((s) => s.addList)
-  const removeTaskList = useTaskListStore((s) => s.removeList)
   const [showDialog, setShowDialog] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
 
-  // Filter tasks by active list (all tasks default to 'default' list)
+  // Filter tasks by visible lists
+  const visibleListIds = useMemo(() => new Set(taskLists.filter(l => l.visible).map(l => l.id)), [taskLists])
   const filteredTasks = useMemo(
-    () => tasks.filter((t) => (t.listId ?? 'default') === activeListId),
-    [tasks, activeListId],
+    () => tasks.filter((t) => visibleListIds.has(t.listId ?? 'default')),
+    [tasks, visibleListIds],
   )
   const sortedTasks = useMemo(() => sortTasks(filteredTasks), [filteredTasks])
   const isEmpty = tasks.length === 0 && !isLoading
@@ -643,14 +680,6 @@ export default function TasksPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Tasks</h2>
-          <ListSwitcher
-            lists={taskLists}
-            activeListId={activeListId}
-            onSelectList={setActiveList}
-            onAddList={addTaskList}
-            onRemoveList={removeTaskList}
-            label="Task Lists"
-          />
         </div>
         <button
           onClick={() => setShowDialog(true)}

@@ -6,7 +6,9 @@ import { parseVTodo } from '@silentsuite/core/utils/ical-parser'
 import type { VTodo } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
+import ImportListSelector from './ImportListSelector'
 import { useTaskStore } from '@/app/stores/use-task-store'
+import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import type { Priority } from '@silentsuite/core'
 
 interface TaskImportProps {
@@ -186,7 +188,10 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
-  const createTask = useTaskStore((s) => s.createTask)
+  const [selectedListId, setSelectedListId] = useState('default')
+  const importTasks = useTaskStore((s) => s.importTasks)
+  const taskLists = useTaskListStore((s) => s.lists)
+  const addList = useTaskListStore((s) => s.addList)
 
   const handleFiles = useCallback(async (files: File[]) => {
     setError(null)
@@ -196,6 +201,10 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
     try {
       const allTasks: VTodo[] = []
       for (const file of files) {
+        if (file.size > 10 * 1024 * 1024) {
+          setError('File is too large. Maximum size is 10 MB.')
+          return
+        }
         const text = await file.text()
         if (file.name.endsWith('.csv')) {
           allTasks.push(...parseTodoistCsv(text))
@@ -216,22 +225,29 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
   const handleImport = useCallback(async () => {
     setIsImporting(true)
     try {
-      for (const task of tasks) {
-        await createTask({
-          title: task.summary || 'Untitled Task',
-          description: task.description ?? '',
-          due_date: task.due ? parseICalDate(task.due) : null,
-          priority: mapPriorityToStore(task.priority),
-        })
-      }
-      setImportedCount(tasks.length)
-      onImportComplete(tasks.length)
+      const newTasks = tasks.map((task) => ({
+        title: task.summary || 'Untitled Task',
+        description: task.description ?? '',
+        due_date: task.due ? parseICalDate(task.due) : null,
+        priority: mapPriorityToStore(task.priority),
+        listId: selectedListId,
+      }))
+      const count = await importTasks(newTasks)
+      setImportedCount(count)
+      onImportComplete(count)
     } catch {
       setError('An error occurred while importing tasks. Please try again.')
     } finally {
       setIsImporting(false)
     }
-  }, [tasks, createTask, onImportComplete])
+  }, [tasks, importTasks, onImportComplete, selectedListId])
+
+  const handleCreateList = useCallback((name: string, color: string) => {
+    addList(name, color)
+    const newLists = useTaskListStore.getState().lists
+    const created = newLists[newLists.length - 1]
+    if (created) setSelectedListId(created.id)
+  }, [addList])
 
   const handleCancel = useCallback(() => {
     setTasks([])
@@ -264,6 +280,14 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
           </div>
         ))}
       </div>
+
+      <ImportListSelector
+        lists={taskLists}
+        selectedId={selectedListId}
+        onSelect={setSelectedListId}
+        onCreateNew={handleCreateList}
+        label="task list"
+      />
 
       <FileDropZone accept=".ics,.csv" onFiles={handleFiles} />
 

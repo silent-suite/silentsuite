@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "SilentSuite",
-    "slug": "silentsuite",
+    "slug": "silensuite",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -28,7 +28,15 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR",
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.WAKE_LOCK"
+      ]
     },
     "plugins": [
       "expo-secure-store",
@@ -39,6 +47,12 @@
       "expo-task-manager",
       "@react-native-community/datetimepicker",
       "./plugins/withSyncAdapter"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d4f93279-0b18-4dd8-8d90-c03f8241c57c"
+      }
+    },
+    "owner": "silentsuite"
   }
 }

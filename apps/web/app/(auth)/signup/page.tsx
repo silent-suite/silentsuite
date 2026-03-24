@@ -7,7 +7,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import {
-  Shield, Lock, Check, KeyRound, ChevronRight, User, Crown,
+  Shield, Lock, Check, KeyRound, ChevronRight, Crown,
   ShieldCheck, Download, AlertTriangle, Copy, CheckCircle,
   Users, Settings, Activity, ExternalLink, Rocket, CreditCard, Clock,
   Gift, ArrowLeft,
@@ -37,8 +37,7 @@ const PLAN_PRICES: Record<PlanId, { monthly: number; annual: number; annualPerMo
 
 const signupSchema = z
   .object({
-    email: z.string().optional(),
-    username: z.string().optional(),
+    email: z.string().min(1, 'Please enter a valid email address'),
     password: z
       .string()
       .min(8, 'Password must be at least 8 characters')
@@ -51,16 +50,10 @@ const signupSchema = z
     message: 'Passwords do not match',
     path: ['confirmPassword'],
   })
-
-const emailSignupSchema = signupSchema.refine(
-  (data) => data.email && data.email.includes('@'),
-  { message: 'Please enter a valid email address', path: ['email'] },
-)
-
-const usernameSignupSchema = signupSchema.refine(
-  (data) => data.username && data.username.length >= 3 && data.username.length <= 20 && /^[a-zA-Z0-9_]+$/.test(data.username),
-  { message: 'Username: 3-20 characters, letters/numbers/underscores only', path: ['username'] },
-)
+  .refine((data) => data.email.includes('@'), {
+    message: 'Please enter a valid email address',
+    path: ['email'],
+  })
 
 type SignupFormData = z.infer<typeof signupSchema>
 
@@ -192,7 +185,6 @@ function StepCreateAccount({
   setServerUrl: (url: string) => void
   initialData?: SignupFormData | null
 }) {
-  const [useUsername, setUseUsername] = useState(initialData?.username ? true : false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -200,21 +192,15 @@ function StepCreateAccount({
     register,
     handleSubmit,
     watch,
-    reset,
     formState: { errors, isValid },
   } = useForm<SignupFormData>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    resolver: zodResolver(useUsername ? usernameSignupSchema : emailSignupSchema) as any,
+    resolver: zodResolver(signupSchema) as any,
     mode: 'onChange',
     defaultValues: initialData ?? undefined,
   })
 
   const password = watch('password', '')
-
-  const toggleMode = useCallback(() => {
-    setUseUsername((prev) => !prev)
-    reset()
-  }, [reset])
 
   return (
     <div className="space-y-6">
@@ -237,52 +223,24 @@ function StepCreateAccount({
           setIsSubmitting(false)
         }
       })} className="space-y-4">
-        {useUsername ? (
-          <div className="space-y-2">
-            <label
-              htmlFor="username"
-              className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
-            >
-              Username
-            </label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[rgb(var(--muted))]" />
-              <Input
-                id="username"
-                type="text"
-                autoFocus
-                placeholder="your_username"
-                {...register('username')}
-                className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))] pl-10"
-              />
-            </div>
-            {errors.username && (
-              <p className="text-xs text-red-400">{errors.username.message}</p>
-            )}
-            <p className="text-[10px] text-[rgb(var(--muted))]">
-              3-20 characters. Letters, numbers, and underscores only.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
-            >
-              Email address
-            </label>
-            <Input
-              id="email"
-              type="email"
-              autoFocus
-              {...register('email')}
-              className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
-            />
-            {errors.email && (
-              <p className="text-xs text-red-400">{errors.email.message}</p>
-            )}
-          </div>
-        )}
+        <div className="space-y-2">
+          <label
+            htmlFor="email"
+            className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
+          >
+            Email address
+          </label>
+          <Input
+            id="email"
+            type="email"
+            autoFocus
+            {...register('email')}
+            className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
+          />
+          {errors.email && (
+            <p className="text-xs text-red-400">{errors.email.message}</p>
+          )}
+        </div>
 
         <div className="space-y-2">
           <label
@@ -365,24 +323,9 @@ function StepCreateAccount({
 
         <p className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
           <KeyRound className="h-3 w-3 text-emerald-500" />
-          {useUsername
-            ? 'No email required. Just a username and password.'
-            : 'No phone number required. Just email and password.'}
+          No phone number required. Just email and password.
         </p>
       </form>
-
-      {/* Toggle between email and username mode */}
-      <div className="text-center">
-        <button
-          type="button"
-          onClick={toggleMode}
-          className="text-xs text-emerald-500 hover:text-emerald-400 hover:underline transition-colors"
-        >
-          {useUsername
-            ? 'Sign up with email instead'
-            : 'Sign up with username only (advanced)'}
-        </button>
-      </div>
 
       <p className="text-center text-sm text-[rgb(var(--muted))]">
         Already have an account?{' '}
@@ -479,12 +422,22 @@ function StepChoosePlan({
             <p className="mt-3 text-sm text-[rgb(var(--muted))]">Preparing payment form...</p>
           </div>
         ) : clientSecret ? (
-          <StripePaymentForm
-            clientSecret={clientSecret}
-            onSuccess={onPaymentComplete}
-            submitLabel="Start 30-day free trial"
-            mode="setup"
-          />
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4 text-[rgb(var(--muted))]" />
+              <h3 className="text-sm font-medium text-[rgb(var(--foreground))]">Card <span className="text-[rgb(var(--muted))] font-normal">(powered by Stripe)</span></h3>
+            </div>
+            <StripePaymentForm
+              clientSecret={clientSecret}
+              onSuccess={onPaymentComplete}
+              submitLabel="Start 30-day free trial"
+              mode="setup"
+            />
+            <p className="flex items-center justify-center gap-1.5 text-[10px] text-[rgb(var(--muted))]">
+              <Lock className="h-3 w-3 text-emerald-500" />
+              Secured by Stripe
+            </p>
+          </div>
         ) : provisionError ? (
           <div className="space-y-4 text-center">
             <p className="text-sm text-red-400">{provisionError}</p>
@@ -1126,7 +1079,7 @@ export default function SignupPage() {
     }
 
     // Create account on the server (default or custom)
-    const identifier = data.email || data.username || ''
+    const identifier = data.email || ''
     await createEtebaseAccount(identifier, data.password, trimmedUrl)
 
     const selfHosted = isSelfHosted || isCustomServer(trimmedUrl)
@@ -1206,10 +1159,10 @@ export default function SignupPage() {
   const handleVaultComplete = useCallback(() => {
     // Finalize authentication — only NOW does the user become authenticated.
     completeSignup()
-    router.push('/onboarding')
+    router.push('/')
   }, [completeSignup, router])
 
-  const email = formDataRef.current?.email || formDataRef.current?.username || ''
+  const email = formDataRef.current?.email || ''
 
   const activeSteps = usingSelfHostedServer
     ? STEPS_SELFHOST

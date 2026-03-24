@@ -105,10 +105,10 @@ export default function Header() {
 
           {/* CTA */}
           <a
-            href={isHome ? '#waitlist' : '/#waitlist'}
+            href="https://app.silentsuite.io/signup"
             className="px-4 py-2 bg-teal-400 hover:bg-teal-500 text-navy-950 text-sm font-semibold rounded-lg transition-colors"
           >
-            Join Waitlist
+            Get Started
           </a>
         </div>
 
@@ -164,11 +164,11 @@ export default function Header() {
             </div>
 
             <a
-              href={isHome ? '#waitlist' : '/#waitlist'}
+              href="https://app.silentsuite.io/signup"
               onClick={() => setMobileOpen(false)}
               className="mt-2 px-4 py-3 bg-teal-400 hover:bg-teal-500 text-navy-950 text-sm font-semibold rounded-lg transition-colors text-center"
             >
-              Join Waitlist
+              Get Started
             </a>
           </div>
         </div>

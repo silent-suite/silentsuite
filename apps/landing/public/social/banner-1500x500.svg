@@ -4,7 +4,6 @@
       <stop offset="0%" stop-color="#0A1018"/>
       <stop offset="100%" stop-color="#1B2838"/>
     </linearGradient>
-    <!-- Subtle grid pattern -->
     <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
       <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#253549" stroke-width="0.5" opacity="0.3"/>
     </pattern>
@@ -14,44 +13,159 @@
   <rect width="1500" height="500" fill="url(#bg)"/>
   <rect width="1500" height="500" fill="url(#grid)"/>
 
-  <!-- Shield icon (left side) -->
-  <g transform="translate(280, 250) scale(6)" opacity="0.15">
-    <path d="M16 5C12.5 7.5 9 8 7 8v10c0 5 4 8.5 9 10 5-1.5 9-5 9-10V8c-2 0-5.5-.5-9-3z" fill="none" stroke="#34d399" stroke-width="1.8"/>
+  <!-- Left: Brand -->
+  <g transform="translate(80, 160)">
+    <!-- Shield icon -->
+    <g transform="scale(3.5)">
+      <path d="M16 5C12.5 7.5 9 8 7 8v10c0 5 4 8.5 9 10 5-1.5 9-5 9-10V8c-2 0-5.5-.5-9-3z" fill="none" stroke="#34d399" stroke-width="2"/>
+    </g>
+    <!-- Name -->
+    <text x="90" y="30" font-family="Inter, system-ui, sans-serif" font-size="52" font-weight="700" fill="white" letter-spacing="-1">SilentSuite</text>
+    <!-- Tagline -->
+    <text x="92" y="70" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="400" fill="#8D9FBA">End-to-end encrypted Calendar, Contacts &amp; Tasks</text>
+    <!-- Feature pills -->
+    <g transform="translate(90, 95)">
+      <rect x="0" y="0" width="60" height="26" rx="13" fill="#34d399" opacity="0.15" stroke="#34d399" stroke-width="0.5"/>
+      <text x="30" y="17" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="600" fill="#34d399" text-anchor="middle">E2EE</text>
+      <rect x="72" y="0" width="100" height="26" rx="13" fill="#253549"/>
+      <text x="122" y="17" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#8D9FBA" text-anchor="middle">Open Source</text>
+      <rect x="184" y="0" width="90" height="26" rx="13" fill="#253549"/>
+      <text x="229" y="17" font-family="Inter, system-ui, sans-serif" font-size="11" font-weight="500" fill="#8D9FBA" text-anchor="middle">Self-Host</text>
+    </g>
   </g>
 
-  <!-- Main shield (centered-left) -->
-  <g transform="translate(380, 250) scale(4)">
-    <path d="M16 5C12.5 7.5 9 8 7 8v10c0 5 4 8.5 9 10 5-1.5 9-5 9-10V8c-2 0-5.5-.5-9-3z" fill="none" stroke="#34d399" stroke-width="2"/>
+  <!-- Right: Mini Calendar UI -->
+  <g transform="translate(680, 40)" opacity="0.9">
+    <rect width="300" height="260" rx="12" fill="#141E2C" stroke="#253549" stroke-width="1.5"/>
+    <rect x="0" y="0" width="300" height="40" rx="12" fill="#1B2838"/>
+    <rect x="0" y="28" width="300" height="12" fill="#1B2838"/>
+    <text x="150" y="27" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="600" fill="#34d399" text-anchor="middle">March 2026</text>
+    <!-- Day headers -->
+    <text x="30" y="64" font-family="Inter, sans-serif" font-size="10" fill="#5A7191" text-anchor="middle">Mo</text>
+    <text x="72" y="64" font-family="Inter, sans-serif" font-size="10" fill="#5A7191" text-anchor="middle">Tu</text>
+    <text x="114" y="64" font-family="Inter, sans-serif" font-size="10" fill="#5A7191" text-anchor="middle">We</text>
+    <text x="156" y="64" font-family="Inter, sans-serif" font-size="10" fill="#5A7191" text-anchor="middle">Th</text>
+    <text x="198" y="64" font-family="Inter, sans-serif" font-size="10" fill="#5A7191" text-anchor="middle">Fr</text>
+    <text x="240" y="64" font-family="Inter, sans-serif" font-size="10" fill="#5A7191" text-anchor="middle">Sa</text>
+    <text x="274" y="64" font-family="Inter, sans-serif" font-size="10" fill="#5A7191" text-anchor="middle">Su</text>
+    <!-- Week 1 -->
+    <text x="114" y="90" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">1</text>
+    <text x="156" y="90" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">2</text>
+    <text x="198" y="90" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">3</text>
+    <text x="240" y="90" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">4</text>
+    <text x="274" y="90" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">5</text>
+    <!-- Event bar -->
+    <rect x="96" y="96" width="90" height="14" rx="3" fill="#34d399" opacity="0.4"/>
+    <text x="141" y="107" font-family="Inter, sans-serif" font-size="8" fill="#34d399" text-anchor="middle">Team Sync</text>
+    <!-- Week 2 -->
+    <text x="30" y="128" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">6</text>
+    <text x="72" y="128" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">7</text>
+    <text x="114" y="128" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">8</text>
+    <text x="156" y="128" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">9</text>
+    <text x="198" y="128" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">10</text>
+    <text x="240" y="128" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">11</text>
+    <text x="274" y="128" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">12</text>
+    <rect x="12" y="134" width="70" height="14" rx="3" fill="#3b82f6" opacity="0.4"/>
+    <text x="47" y="145" font-family="Inter, sans-serif" font-size="8" fill="#93c5fd" text-anchor="middle">Workshop</text>
+    <!-- Week 3 -->
+    <text x="30" y="168" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">13</text>
+    <text x="72" y="168" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">14</text>
+    <text x="114" y="168" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">15</text>
+    <text x="156" y="168" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">16</text>
+    <text x="198" y="168" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">17</text>
+    <text x="240" y="168" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">18</text>
+    <text x="274" y="168" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">19</text>
+    <!-- Today highlight -->
+    <circle cx="156" cy="165" r="12" fill="#34d399" opacity="0.2"/>
+    <!-- Week 4 -->
+    <text x="30" y="206" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">20</text>
+    <text x="72" y="206" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">21</text>
+    <text x="114" y="206" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">22</text>
+    <text x="156" y="206" font-family="Inter, sans-serif" font-size="12" fill="white" font-weight="600" text-anchor="middle">23</text>
+    <circle cx="156" cy="203" r="12" fill="#34d399" opacity="0.3"/>
+    <text x="198" y="206" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">24</text>
+    <text x="240" y="206" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">25</text>
+    <text x="274" y="206" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">26</text>
+    <rect x="138" y="212" width="120" height="14" rx="3" fill="#34d399" opacity="0.35"/>
+    <text x="198" y="223" font-family="Inter, sans-serif" font-size="8" fill="#34d399" text-anchor="middle">Project Review</text>
+    <!-- Week 5 -->
+    <text x="30" y="244" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">27</text>
+    <text x="72" y="244" font-family="Inter, sans-serif" font-size="12" fill="#8D9FBA" text-anchor="middle">28</text>
+    <text x="114" y="244" font-family="Inter, sans-serif" font-size="12" fill="#5A7191" text-anchor="middle">29</text>
+    <text x="156" y="244" font-family="Inter, sans-serif" font-size="12" fill="#5A7191" text-anchor="middle">30</text>
+    <text x="198" y="244" font-family="Inter, sans-serif" font-size="12" fill="#5A7191" text-anchor="middle">31</text>
+    <!-- Lock icon in corner -->
+    <g transform="translate(268, 8)" opacity="0.5">
+      <rect x="3" y="0" width="8" height="5" rx="3" fill="none" stroke="#34d399" stroke-width="1.2"/>
+      <rect x="0" y="5" width="14" height="10" rx="2" fill="#34d399" opacity="0.3" stroke="#34d399" stroke-width="0.8"/>
+    </g>
   </g>
 
-  <!-- Brand name -->
-  <text x="520" y="235" font-family="Inter, system-ui, sans-serif" font-size="72" font-weight="700" fill="white" letter-spacing="-1">SilentSuite</text>
-
-  <!-- Tagline -->
-  <text x="522" y="290" font-family="Inter, system-ui, sans-serif" font-size="24" font-weight="400" fill="#8D9FBA" letter-spacing="0.5">Private Sync, By Design.</text>
-
-  <!-- Feature pills -->
-  <g transform="translate(520, 320)">
-    <rect x="0" y="0" width="120" height="32" rx="16" fill="#253549"/>
-    <text x="60" y="21" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="500" fill="#34d399" text-anchor="middle">Calendar</text>
-
-    <rect x="136" y="0" width="120" height="32" rx="16" fill="#253549"/>
-    <text x="196" y="21" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="500" fill="#34d399" text-anchor="middle">Contacts</text>
-
-    <rect x="272" y="0" width="100" height="32" rx="16" fill="#253549"/>
-    <text x="322" y="21" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="500" fill="#34d399" text-anchor="middle">Tasks</text>
-
-    <rect x="388" y="0" width="80" height="32" rx="16" fill="#253549"/>
-    <text x="428" y="21" font-family="Inter, system-ui, sans-serif" font-size="13" font-weight="500" fill="#34d399" text-anchor="middle">E2EE</text>
+  <!-- Right: Contacts card -->
+  <g transform="translate(1010, 40)" opacity="0.85">
+    <rect width="220" height="200" rx="12" fill="#141E2C" stroke="#253549" stroke-width="1.5"/>
+    <rect x="0" y="0" width="220" height="36" rx="12" fill="#1B2838"/>
+    <rect x="0" y="24" width="220" height="12" fill="#1B2838"/>
+    <text x="110" y="24" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#34d399" text-anchor="middle">Contacts</text>
+    <!-- Contact 1 -->
+    <circle cx="30" cy="62" r="12" fill="#34d399" opacity="0.2" stroke="#34d399" stroke-width="0.8"/>
+    <text x="30" y="66" font-family="Inter, sans-serif" font-size="9" fill="#34d399" text-anchor="middle" font-weight="600">AR</text>
+    <rect x="52" y="55" width="90" height="7" rx="3" fill="#34d399" opacity="0.4"/>
+    <rect x="52" y="66" width="60" height="5" rx="2" fill="#253549"/>
+    <!-- Contact 2 -->
+    <circle cx="30" cy="98" r="12" fill="#3b82f6" opacity="0.2" stroke="#3b82f6" stroke-width="0.8"/>
+    <text x="30" y="102" font-family="Inter, sans-serif" font-size="9" fill="#93c5fd" text-anchor="middle" font-weight="600">JM</text>
+    <rect x="52" y="91" width="110" height="7" rx="3" fill="#3b82f6" opacity="0.3"/>
+    <rect x="52" y="102" width="70" height="5" rx="2" fill="#253549"/>
+    <!-- Contact 3 -->
+    <circle cx="30" cy="134" r="12" fill="#8b5cf6" opacity="0.2" stroke="#8b5cf6" stroke-width="0.8"/>
+    <text x="30" y="138" font-family="Inter, sans-serif" font-size="9" fill="#c4b5fd" text-anchor="middle" font-weight="600">KL</text>
+    <rect x="52" y="127" width="80" height="7" rx="3" fill="#8b5cf6" opacity="0.3"/>
+    <rect x="52" y="138" width="50" height="5" rx="2" fill="#253549"/>
+    <!-- Contact 4 -->
+    <circle cx="30" cy="170" r="12" fill="#f59e0b" opacity="0.2" stroke="#f59e0b" stroke-width="0.8"/>
+    <text x="30" y="174" font-family="Inter, sans-serif" font-size="9" fill="#fbbf24" text-anchor="middle" font-weight="600">SW</text>
+    <rect x="52" y="163" width="100" height="7" rx="3" fill="#f59e0b" opacity="0.25"/>
+    <rect x="52" y="174" width="65" height="5" rx="2" fill="#253549"/>
+    <!-- Lock -->
+    <g transform="translate(196, 8)" opacity="0.5">
+      <rect x="3" y="0" width="8" height="5" rx="3" fill="none" stroke="#34d399" stroke-width="1.2"/>
+      <rect x="0" y="5" width="14" height="10" rx="2" fill="#34d399" opacity="0.3" stroke="#34d399" stroke-width="0.8"/>
+    </g>
   </g>
 
-  <!-- Bottom accent line -->
-  <rect x="0" y="494" width="1500" height="6" fill="#34d399" opacity="0.6"/>
-
-  <!-- Decorative dots (right side) -->
-  <g opacity="0.08">
-    <circle cx="1200" cy="120" r="80" fill="#34d399"/>
-    <circle cx="1350" cy="200" r="60" fill="#34d399"/>
-    <circle cx="1250" cy="350" r="100" fill="#34d399"/>
+  <!-- Right: Tasks card -->
+  <g transform="translate(1010, 260)" opacity="0.85">
+    <rect width="220" height="180" rx="12" fill="#141E2C" stroke="#253549" stroke-width="1.5"/>
+    <rect x="0" y="0" width="220" height="36" rx="12" fill="#1B2838"/>
+    <rect x="0" y="24" width="220" height="12" fill="#1B2838"/>
+    <text x="110" y="24" font-family="Inter, sans-serif" font-size="12" font-weight="600" fill="#34d399" text-anchor="middle">Tasks</text>
+    <!-- Task 1 (done) -->
+    <rect x="16" y="48" width="14" height="14" rx="3" fill="#34d399" opacity="0.3" stroke="#34d399" stroke-width="0.8"/>
+    <path d="M20 55 L23 58 L28 52" fill="none" stroke="#34d399" stroke-width="1.5" stroke-linecap="round"/>
+    <rect x="40" y="51" width="120" height="7" rx="3" fill="#5A7191" opacity="0.5"/>
+    <!-- Task 2 -->
+    <rect x="16" y="78" width="14" height="14" rx="3" fill="none" stroke="#5A7191" stroke-width="0.8"/>
+    <rect x="40" y="81" width="140" height="7" rx="3" fill="#8D9FBA" opacity="0.4"/>
+    <rect x="40" y="92" width="80" height="5" rx="2" fill="#34d399" opacity="0.25"/>
+    <!-- Task 3 -->
+    <rect x="16" y="108" width="14" height="14" rx="3" fill="none" stroke="#5A7191" stroke-width="0.8"/>
+    <rect x="40" y="111" width="100" height="7" rx="3" fill="#8D9FBA" opacity="0.4"/>
+    <!-- Task 4 -->
+    <rect x="16" y="138" width="14" height="14" rx="3" fill="none" stroke="#5A7191" stroke-width="0.8"/>
+    <rect x="40" y="141" width="130" height="7" rx="3" fill="#8D9FBA" opacity="0.4"/>
+    <rect x="40" y="152" width="60" height="5" rx="2" fill="#f59e0b" opacity="0.25"/>
+    <!-- Lock -->
+    <g transform="translate(196, 8)" opacity="0.5">
+      <rect x="3" y="0" width="8" height="5" rx="3" fill="none" stroke="#34d399" stroke-width="1.2"/>
+      <rect x="0" y="5" width="14" height="10" rx="2" fill="#34d399" opacity="0.3" stroke="#34d399" stroke-width="0.8"/>
+    </g>
   </g>
+
+  <!-- Glow effects -->
+  <circle cx="830" cy="170" r="120" fill="#34d399" opacity="0.03"/>
+  <circle cx="1120" cy="340" r="80" fill="#34d399" opacity="0.03"/>
+
+  <!-- Bottom accent -->
+  <rect x="0" y="494" width="1500" height="6" fill="#34d399" opacity="0.5"/>
 </svg>

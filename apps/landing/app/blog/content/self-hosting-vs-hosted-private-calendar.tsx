@@ -290,8 +290,7 @@ export default function SelfHostingVsHostedPrivateCalendar() {
 
       <p>
         Ready to try private calendar sync?{' '}
-        <a href="/#waitlist">Join the SilentSuite waitlist</a>. We&apos;ll send
-        you one email when the beta opens. That&apos;s it.
+        <a href="https://app.silentsuite.io/signup">Get started with SilentSuite</a>.
       </p>
     </>
   )

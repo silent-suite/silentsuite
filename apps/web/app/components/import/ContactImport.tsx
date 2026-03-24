@@ -6,7 +6,9 @@ import { parseVCard } from '@silentsuite/core/utils/vcard-parser'
 import type { VCard } from '@silentsuite/core/utils/vcard-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
+import ImportListSelector from './ImportListSelector'
 import { useContactStore } from '@/app/stores/use-contact-store'
+import { useContactListStore } from '@/app/stores/use-contact-list-store'
 
 interface ContactImportProps {
   onImportComplete: (count: number) => void
@@ -61,7 +63,10 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
-  const createContact = useContactStore((s) => s.createContact)
+  const [selectedListId, setSelectedListId] = useState('default')
+  const importContacts = useContactStore((s) => s.importContacts)
+  const contactLists = useContactListStore((s) => s.lists)
+  const addList = useContactListStore((s) => s.addList)
 
   const handleFiles = useCallback(async (files: File[]) => {
     setError(null)
@@ -71,6 +76,10 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
     try {
       const allContacts: VCard[] = []
       for (const file of files) {
+        if (file.size > 10 * 1024 * 1024) {
+          setError('File is too large. Maximum size is 10 MB.')
+          return
+        }
         const text = await file.text()
         const vcardStrings = splitVCards(text)
         for (const vcStr of vcardStrings) {
@@ -90,42 +99,49 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
   const handleImport = useCallback(async () => {
     setIsImporting(true)
     try {
-      for (const contact of contacts) {
-        await createContact({
-          displayName: contact.fn || 'Unnamed Contact',
-          name: contact.n
-            ? {
-                given: contact.n.given,
-                family: contact.n.family,
-                prefix: contact.n.prefix ?? '',
-                suffix: contact.n.suffix ?? '',
-              }
-            : undefined,
-          phones: contact.tel?.map((t) => ({ type: t.type, value: t.value })),
-          emails: contact.email?.map((e) => ({ type: e.type, value: e.value })),
-          addresses: contact.adr?.map((a) => ({
-            type: a.type,
-            street: a.street,
-            city: a.city,
-            state: a.state,
-            postalCode: a.postalCode,
-            country: a.country,
-          })),
-          organization: contact.org ?? '',
-          title: contact.title ?? '',
-          notes: contact.note ?? '',
-          birthday: contact.bday ?? null,
-          photoUrl: contact.photo ?? null,
-        })
-      }
-      setImportedCount(contacts.length)
-      onImportComplete(contacts.length)
+      const newContacts = contacts.map((contact) => ({
+        displayName: contact.fn || 'Unnamed Contact',
+        name: contact.n
+          ? {
+              given: contact.n.given,
+              family: contact.n.family,
+              prefix: contact.n.prefix ?? '',
+              suffix: contact.n.suffix ?? '',
+            }
+          : undefined,
+        phones: contact.tel?.map((t) => ({ type: t.type, value: t.value })),
+        emails: contact.email?.map((e) => ({ type: e.type, value: e.value })),
+        addresses: contact.adr?.map((a) => ({
+          type: a.type,
+          street: a.street,
+          city: a.city,
+          state: a.state,
+          postalCode: a.postalCode,
+          country: a.country,
+        })),
+        organization: contact.org ?? '',
+        title: contact.title ?? '',
+        notes: contact.note ?? '',
+        birthday: contact.bday ?? null,
+        photoUrl: contact.photo ?? null,
+        listId: selectedListId,
+      }))
+      const count = await importContacts(newContacts)
+      setImportedCount(count)
+      onImportComplete(count)
     } catch {
       setError('An error occurred while importing contacts. Please try again.')
     } finally {
       setIsImporting(false)
     }
-  }, [contacts, createContact, onImportComplete])
+  }, [contacts, importContacts, onImportComplete, selectedListId])
+
+  const handleCreateList = useCallback((name: string, color: string) => {
+    addList(name, color)
+    const newLists = useContactListStore.getState().lists
+    const created = newLists[newLists.length - 1]
+    if (created) setSelectedListId(created.id)
+  }, [addList])
 
   const handleCancel = useCallback(() => {
     setContacts([])
@@ -158,6 +174,14 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
           </div>
         ))}
       </div>
+
+      <ImportListSelector
+        lists={contactLists}
+        selectedId={selectedListId}
+        onSelect={setSelectedListId}
+        onCreateNew={handleCreateList}
+        label="contact list"
+      />
 
       <FileDropZone accept=".vcf" onFiles={handleFiles} />
 

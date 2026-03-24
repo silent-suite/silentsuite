@@ -284,9 +284,8 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
       <h2>What we&apos;re asking</h2>
 
       <p>
-        We&apos;re not asking you to switch today. We&apos;re still building.
-        What we are asking is this: if encrypted calendar sync matters to you,{' '}
-        <a href="/#waitlist">join our waitlist</a>. It helps us understand
+        If encrypted calendar sync matters to you,{' '}
+        <a href="https://app.silentsuite.io/signup">get started with SilentSuite</a>. It helps us understand
         demand, plan capacity, and prioritize features.
       </p>
 

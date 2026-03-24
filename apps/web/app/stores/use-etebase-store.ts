@@ -81,6 +81,12 @@ interface EtebaseActions {
   createItem: (type: CollectionTypeKey, content: string, tempId?: string) => Promise<string | null>
 
   /**
+   * Create multiple items in a single batch upload.
+   * Returns an array of item UIDs (null for any that failed).
+   */
+  createItemsBatch: (type: CollectionTypeKey, contents: { content: string; tempId: string }[]) => Promise<(string | null)[]>
+
+  /**
    * Update an existing item by UID.
    */
   updateItem: (type: CollectionTypeKey, itemUid: string, content: string) => Promise<void>
@@ -258,6 +264,62 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : 'contact'}. Please try again.`)
       }
       return null
+    }
+  },
+
+  createItemsBatch: async (type: CollectionTypeKey, contents: { content: string; tempId: string }[]) => {
+    const { account, collections } = get()
+    const collection = collections[type]
+    if (!account || !collection) {
+      console.warn(`[etebase-store] Cannot create items: no account or ${type} collection`)
+      return contents.map(() => null)
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      const collectionManager = account.getCollectionManager()
+      const itemManager = collectionManager.getItemManager(collection)
+
+      // Create all item objects locally
+      const items: any[] = []
+      for (const { content } of contents) {
+        const item = await itemManager.create({}, content)
+        items.push(item)
+      }
+
+      // Upload in batches of 50 to avoid oversized requests
+      const BATCH_SIZE = 50
+      for (let i = 0; i < items.length; i += BATCH_SIZE) {
+        const batch = items.slice(i, i + BATCH_SIZE)
+        await itemManager.batch(batch)
+      }
+
+      // Update cache with all items at once
+      const itemCache = new Map(get().itemCache)
+      const itemTypeMap = new Map(get().itemTypeMap)
+      const uids: (string | null)[] = []
+      for (const item of items) {
+        itemCache.set(item.uid, item)
+        itemTypeMap.set(item.uid, type)
+        uids.push(item.uid)
+      }
+      set({ itemCache, itemTypeMap })
+      return uids
+    } catch (err) {
+      if (isOfflineError(err)) {
+        console.warn(`[etebase-store] Offline — queuing ${contents.length} creates for ${type}`)
+        for (const { content, tempId } of contents) {
+          try {
+            await enqueue({ type: 'create', collectionType: type, content, tempId })
+          } catch (queueErr) {
+            console.error(`[etebase-store] Failed to enqueue create:`, queueErr)
+          }
+        }
+      } else {
+        console.error(`[etebase-store] Failed to batch create ${type} items:`, err)
+        showErrorToast(`Failed to import ${type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : 'contacts'}. Please try again.`)
+      }
+      return contents.map(() => null)
     }
   },
 

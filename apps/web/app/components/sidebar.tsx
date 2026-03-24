@@ -17,6 +17,8 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
 import { MiniCalendar } from '@/app/(app)/calendar/components/MiniCalendar'
 import { CalendarListPanel } from '@/app/components/CalendarListPanel'
+import { TaskListPanel } from '@/app/components/TaskListPanel'
+import { ContactListPanel } from '@/app/components/ContactListPanel'
 import { OnboardingChecklist } from '@/app/components/OnboardingChecklist'
 
 const navItems = [
@@ -52,11 +54,13 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Mini calendar + calendar list — always visible when expanded */}
+      {/* Mini calendar (always visible) + context-aware list panel */}
       {isExpanded && (
         <div className="border-t border-b border-[rgb(var(--border))]">
           <MiniCalendar />
-          <CalendarListPanel />
+          {pathname.startsWith('/calendar') && <CalendarListPanel />}
+          {pathname.startsWith('/tasks') && <TaskListPanel />}
+          {pathname.startsWith('/contacts') && <ContactListPanel />}
         </div>
       )}
 

@@ -8,6 +8,7 @@ export interface User {
   id: string
   email: string
   planId: string
+  emailVerified?: boolean
 }
 
 interface PendingSignup {
@@ -251,7 +252,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin)
       set({
-        user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin },
+        user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false },
         isAuthenticated: true,
         isLoading: false,
       })
@@ -322,7 +323,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const data = await res.json()
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin)
-      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin }, isAuthenticated: true })
+      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false }, isAuthenticated: true })
       return true
     } catch { syncAdminCookie(false); set({ user: null, isAuthenticated: false }); return false }
   },
@@ -356,7 +357,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         const data = await res.json()
         const isAdmin = data.isAdmin === true
         syncAdminCookie(isAdmin)
-        set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin }, isAuthenticated: true, isLoading: false })
+        set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false }, isAuthenticated: true, isLoading: false })
       } else {
         // HTTP error (401/403 etc.) — billing responded, auth is invalid
         syncAdminCookie(false)
@@ -412,7 +413,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const isAdmin = refreshData.isAdmin === true
       syncAdminCookie(isAdmin)
       set({
-        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin },
+        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin, emailVerified: refreshData.emailVerified ?? false },
         isAuthenticated: true,
         subscriptionStatus: subData.status,
       })
