@@ -1102,6 +1102,14 @@ export default function SignupPage() {
     const identifier = data.email || ''
     await createEtebaseAccount(identifier, data.password, trimmedUrl)
 
+    // Store product updates preference in pendingSignup for later use
+    const pending = useAuthStore.getState().pendingSignup
+    if (pending) {
+      useAuthStore.setState({
+        pendingSignup: { ...pending, wantsProductUpdates },
+      })
+    }
+
     const selfHosted = isSelfHosted || isCustomServer(trimmedUrl)
     setUsingSelfHostedServer(selfHosted)
 
@@ -1110,7 +1118,7 @@ export default function SignupPage() {
     } else {
       setStep('plan')
     }
-  }, [createEtebaseAccount, serverUrl])
+  }, [createEtebaseAccount, serverUrl, wantsProductUpdates])
 
   const handleSelfHostChoice = useCallback(async (choice: 'free' | 'support') => {
     if (choice === 'support') {

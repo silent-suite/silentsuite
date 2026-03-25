@@ -15,6 +15,7 @@ interface PendingSignup {
   email: string
   etebaseAuthToken: string
   earlyAdopter?: boolean
+  wantsProductUpdates?: boolean
   /** Provisioned user data — stored here until the entire signup flow completes. */
   provisionedUser?: {
     id: string
@@ -36,7 +37,7 @@ interface AuthState {
   isReadOnly: () => boolean
   canWrite: () => boolean
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
-  signup: (planId: string, trialPath: string) => Promise<string | null>
+  signup: (planId: string, trialPath: string, wantsProductUpdates?: boolean) => Promise<string | null>
   /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
   completeSignup: () => void
   login: (email: string, password: string, serverUrl?: string) => Promise<void>
@@ -130,10 +131,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signup: async (planId: string, trialPath: string) => {
+  signup: async (planId: string, trialPath: string, wantsProductUpdates?: boolean) => {
     if (isSelfHosted || planId === 'self-hosted') {
       const pending = get().pendingSignup
       if (!pending) throw new Error('No pending signup')
+
+      // Self-hosted: if user opted in, subscribe to newsletter on the SilentSuite API
+      if (pending.wantsProductUpdates ?? wantsProductUpdates) {
+        try {
+          await fetch('https://api.silentsuite.io/newsletter/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: pending.email, source: 'self_hosted' }),
+          })
+        } catch {
+          // Newsletter subscription is best-effort — don't block signup
+        }
+      }
+
       // Self-hosted: store provisioned data but do NOT authenticate yet.
       // completeSignup() will finalize after vault creation.
       set({
@@ -157,7 +172,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await fetch(`${BILLING_API_URL}/auth/provision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        body: JSON.stringify({ etebaseSessionToken: pending.etebaseAuthToken, planId, trialPath }),
+        body: JSON.stringify({
+          etebaseSessionToken: pending.etebaseAuthToken,
+          planId,
+          trialPath,
+          wantsProductUpdates: pending.wantsProductUpdates ?? wantsProductUpdates,
+        }),
         credentials: 'include',
       })
       if (!res.ok) {
