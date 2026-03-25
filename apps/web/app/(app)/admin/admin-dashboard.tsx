@@ -930,11 +930,11 @@ function UserLookupTab() {
             </div>
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Email Verified</p>
-              <p className="text-sm">{lookupUser.emailVerified ? '✅' : '❌'}</p>
+              <p className="text-sm">{lookupUser.emailVerified === true ? '✅' : lookupUser.emailVerified === false ? '❌' : '—'}</p>
             </div>
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Product Updates</p>
-              <p className="text-sm">{lookupUser.wantsProductUpdates ? '✅' : '❌'}</p>
+              <p className="text-sm">{lookupUser.wantsProductUpdates === true ? '✅' : lookupUser.wantsProductUpdates === false ? '❌' : '—'}</p>
             </div>
             {lookupUser.trialPath && (
               <div>
@@ -944,7 +944,7 @@ function UserLookupTab() {
             )}
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Early Adopter</p>
-              <p className="text-sm">{lookupUser.earlyAdopter ? '✅' : '❌'}</p>
+              <p className="text-sm">{lookupUser.earlyAdopter === true ? '✅' : lookupUser.earlyAdopter === false ? '❌' : '—'}</p>
             </div>
             {lookupUser.trialEndsAt && (
               <div>
@@ -1047,16 +1047,16 @@ function UserLookupTab() {
                       {u.planId?.replace(/_/g, ' ') ?? '—'}
                     </td>
                     <td className="hidden px-4 py-2.5 text-center sm:table-cell">
-                      <span className="text-xs">{u.emailVerified ? '✅' : '❌'}</span>
+                      <span className="text-xs">{u.emailVerified === true ? '✅' : u.emailVerified === false ? '❌' : '—'}</span>
                     </td>
                     <td className="hidden px-4 py-2.5 text-center sm:table-cell">
-                      <span className="text-xs">{u.wantsProductUpdates ? '✅' : '❌'}</span>
+                      <span className="text-xs">{u.wantsProductUpdates === true ? '✅' : u.wantsProductUpdates === false ? '❌' : '—'}</span>
                     </td>
                     <td className="hidden px-4 py-2.5 text-xs text-[rgb(var(--foreground))] lg:table-cell">
                       {u.trialPath ?? '—'}
                     </td>
                     <td className="hidden px-4 py-2.5 text-center lg:table-cell">
-                      <span className="text-xs">{u.earlyAdopter ? '✅' : '❌'}</span>
+                      <span className="text-xs">{u.earlyAdopter === true ? '✅' : u.earlyAdopter === false ? '❌' : '—'}</span>
                     </td>
                     <td className="hidden px-4 py-2.5 sm:table-cell">
                       {u.foundingMember ? (
@@ -1118,9 +1118,11 @@ function EmailsSentSection({ userId }: { userId: string }) {
   const [emails, setEmails] = useState<EmailRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [emailsError, setEmailsError] = useState<string | null>(null)
 
   const fetchEmails = useCallback(async () => {
     setLoading(true)
+    setEmailsError(null)
     try {
       const res = await fetch(
         `${BILLING_API_URL}/admin/users/${encodeURIComponent(userId)}/emails`,
@@ -1129,8 +1131,12 @@ function EmailsSentSection({ userId }: { userId: string }) {
       if (res.ok) {
         const data = await res.json()
         setEmails(data.emails ?? data)
+      } else {
+        setEmailsError('Failed to load emails')
       }
-    } catch { /* ignore */ }
+    } catch {
+      setEmailsError('Failed to load emails')
+    }
     setLoading(false)
     setLoaded(true)
   }, [userId])
@@ -1159,6 +1165,8 @@ function EmailsSentSection({ userId }: { userId: string }) {
               <Loader2 className="h-4 w-4 animate-spin text-[rgb(var(--muted))]" />
               <span className="text-xs text-[rgb(var(--muted))]">Loading emails...</span>
             </div>
+          ) : emailsError ? (
+            <p className="text-xs text-red-400 py-2">{emailsError}</p>
           ) : emails.length === 0 ? (
             <p className="text-xs text-[rgb(var(--muted))] py-2">No emails sent to this user</p>
           ) : (
@@ -1176,7 +1184,7 @@ function EmailsSentSection({ userId }: { userId: string }) {
                   {emails.map((em) => (
                     <tr key={em.id} className="border-b border-[rgb(var(--border))] last:border-b-0">
                       <td className="px-3 py-1.5 text-xs font-mono text-[rgb(var(--foreground))]">{em.type}</td>
-                      <td className="px-3 py-1.5 text-xs text-[rgb(var(--foreground))] truncate max-w-[200px]">{em.subject}</td>
+                      <td className="px-3 py-1.5 text-xs text-[rgb(var(--foreground))]"><div className="truncate max-w-[200px]">{em.subject}</div></td>
                       <td className="px-3 py-1.5">
                         <span className={`text-xs font-medium ${em.status === 'delivered' ? 'text-emerald-500' : em.status === 'bounced' ? 'text-red-400' : 'text-[rgb(var(--muted))]'}`}>
                           {em.status}
@@ -1200,17 +1208,23 @@ function SubscribersTab() {
   const [subscribers, setSubscribers] = useState<Subscriber[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [subscribersOffset, setSubscribersOffset] = useState(0)
+  const [subscribersTotal, setSubscribersTotal] = useState(0)
+  const SUBSCRIBERS_LIMIT = 20
 
-  const fetchSubscribers = useCallback(async () => {
+  const fetchSubscribers = useCallback(async (offset: number) => {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${BILLING_API_URL}/admin/contacts`, {
-        credentials: 'include',
-      })
+      const res = await fetch(
+        `${BILLING_API_URL}/admin/contacts?limit=${SUBSCRIBERS_LIMIT}&offset=${offset}`,
+        { credentials: 'include' },
+      )
       if (res.ok) {
         const data = await res.json()
         setSubscribers(data.contacts ?? data)
+        if (typeof data.total === 'number') setSubscribersTotal(data.total)
+        else setSubscribersTotal((data.contacts ?? data).length)
       } else {
         setError('Failed to load subscribers')
       }
@@ -1220,7 +1234,10 @@ function SubscribersTab() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { fetchSubscribers() }, [fetchSubscribers])
+  useEffect(() => { fetchSubscribers(subscribersOffset) }, [fetchSubscribers, subscribersOffset])
+
+  const subscribersTotalPages = Math.ceil(subscribersTotal / SUBSCRIBERS_LIMIT)
+  const subscribersCurrentPage = Math.floor(subscribersOffset / SUBSCRIBERS_LIMIT) + 1
 
   return (
     <div className="space-y-6">
@@ -1229,11 +1246,11 @@ function SubscribersTab() {
           <Mail className="h-4 w-4 text-[rgb(var(--muted))]" />
           <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Newsletter Subscribers</h2>
           {!loading && (
-            <span className="text-xs text-[rgb(var(--muted))]">({subscribers.length} total)</span>
+            <span className="text-xs text-[rgb(var(--muted))]">({subscribersTotal} total)</span>
           )}
         </div>
         <button
-          onClick={fetchSubscribers}
+          onClick={() => fetchSubscribers(subscribersOffset)}
           disabled={loading}
           className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] transition-colors disabled:opacity-50"
         >
@@ -1269,7 +1286,7 @@ function SubscribersTab() {
             <tbody>
               {subscribers.map((s) => (
                 <tr
-                  key={s.email}
+                  key={`${s.email}-${s.subscribedAt}`}
                   className={`border-b border-[rgb(var(--border))] last:border-b-0 hover:bg-[rgb(var(--background))]/50 transition-colors ${s.unsubscribedAt ? 'opacity-60' : ''}`}
                 >
                   <td className="px-4 py-2.5 text-sm font-mono text-[rgb(var(--foreground))]">{s.email}</td>
@@ -1283,6 +1300,32 @@ function SubscribersTab() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {subscribersTotalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-[rgb(var(--muted))]">
+            Showing {subscribersOffset + 1}–{Math.min(subscribersOffset + SUBSCRIBERS_LIMIT, subscribersTotal)} of {subscribersTotal}
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setSubscribersOffset(Math.max(0, subscribersOffset - SUBSCRIBERS_LIMIT))}
+              disabled={subscribersOffset === 0}
+              className="rounded p-1 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] disabled:opacity-30 transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="px-2 text-xs text-[rgb(var(--muted))]">{subscribersCurrentPage} / {subscribersTotalPages}</span>
+            <button
+              onClick={() => setSubscribersOffset(subscribersOffset + SUBSCRIBERS_LIMIT)}
+              disabled={subscribersOffset + SUBSCRIBERS_LIMIT >= subscribersTotal}
+              className="rounded p-1 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] disabled:opacity-30 transition-colors"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -37,7 +37,7 @@ interface AuthState {
   isReadOnly: () => boolean
   canWrite: () => boolean
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
-  signup: (planId: string, trialPath: string, wantsProductUpdates?: boolean) => Promise<string | null>
+  signup: (planId: string, trialPath: string) => Promise<string | null>
   /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
   completeSignup: () => void
   login: (email: string, password: string, serverUrl?: string) => Promise<void>
@@ -131,21 +131,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signup: async (planId: string, trialPath: string, wantsProductUpdates?: boolean) => {
+  signup: async (planId: string, trialPath: string) => {
     if (isSelfHosted || planId === 'self-hosted') {
       const pending = get().pendingSignup
       if (!pending) throw new Error('No pending signup')
 
       // Self-hosted: if user opted in, subscribe to newsletter on the SilentSuite API
-      if (pending.wantsProductUpdates ?? wantsProductUpdates) {
+      if (pending.wantsProductUpdates) {
         try {
-          await fetch('https://api.silentsuite.io/newsletter/subscribe', {
+          const res = await fetch('https://api.silentsuite.io/newsletter/subscribe', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: pending.email, source: 'self_hosted' }),
           })
-        } catch {
-          // Newsletter subscription is best-effort — don't block signup
+          if (!res.ok) console.warn('Newsletter subscribe failed:', res.status)
+        } catch (err) {
+          console.warn('Newsletter subscribe failed:', err)
         }
       }
 
@@ -176,7 +177,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           etebaseSessionToken: pending.etebaseAuthToken,
           planId,
           trialPath,
-          wantsProductUpdates: pending.wantsProductUpdates ?? wantsProductUpdates,
+          wantsProductUpdates: pending.wantsProductUpdates,
         }),
         credentials: 'include',
       })

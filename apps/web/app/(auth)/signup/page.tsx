@@ -1086,7 +1086,7 @@ export default function SignupPage() {
   const [provisioning, setProvisioning] = useState(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
-  const [wantsProductUpdates, setWantsProductUpdates] = useState(true)
+  const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
   const formDataRef = useRef<SignupFormData | null>(null)
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
@@ -1104,6 +1104,7 @@ export default function SignupPage() {
 
     // Store product updates preference in pendingSignup for later use
     const pending = useAuthStore.getState().pendingSignup
+    if (!pending) console.error('pendingSignup not set after createEtebaseAccount')
     if (pending) {
       useAuthStore.setState({
         pendingSignup: { ...pending, wantsProductUpdates },
