@@ -4,17 +4,15 @@ Protect your self-hosted SilentSuite data with regular backups.
 
 ## What to Back Up
 
-There are three things to back up:
-
-1. **The PostgreSQL database** -- contains all encrypted sync data and user accounts.
-2. **The server data volume** -- stores the server's secret key and media files.
-3. **The `.env` file** -- contains all your secrets and configuration.
+| Item | Why |
+|---|---|
+| **PostgreSQL database** | All encrypted sync data and user accounts |
+| **Server data volume** | Server secret key and media files. **If you lose the secret key, existing encrypted data becomes unrecoverable.** |
+| **`.env` file** | Contains all passwords and configuration |
 
 ---
 
 ## Back Up the Database
-
-Create a full PostgreSQL dump:
 
 ```bash
 docker exec silentsuite-postgres pg_dump -U silentsuite silentsuite > backup-$(date +%Y%m%d-%H%M%S).sql
@@ -23,15 +21,16 @@ docker exec silentsuite-postgres pg_dump -U silentsuite silentsuite > backup-$(d
 ## Back Up the Server Data Volume
 
 ```bash
+mkdir -p backups
 docker run --rm \
-  -v silentsuite_server_data:/data \
+  -v self-host_server_data:/data \
   -v $(pwd)/backups:/backup \
   alpine tar czf /backup/server-data-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .
 ```
 
-## Back Up the .env File
+> **Note:** The volume name depends on the directory name where `docker-compose.yml` lives. If you cloned to the default location, it will be `self-host_server_data`. Check with `docker volume ls | grep server_data`.
 
-Your `.env` file contains all secrets. Keep a secure, encrypted copy:
+## Back Up the .env File
 
 ```bash
 cp .env backups/.env.backup
@@ -39,18 +38,24 @@ cp .env backups/.env.backup
 
 ## Automated Backups
 
-For production deployments, set up a cron job:
+Set up a daily cron job:
 
 ```bash
-# Run a full backup daily at 2:00 AM
+crontab -e
+```
+
+Add:
+
+```
+# SilentSuite daily backup at 2:00 AM
 0 2 * * * cd /path/to/silentsuite/self-host && docker exec silentsuite-postgres pg_dump -U silentsuite silentsuite > /path/to/backups/silentsuite-$(date +\%Y\%m\%d).sql
 ```
+
+For off-site backups, use `rsync`, `rclone`, or your preferred tool to copy the backup directory to another server.
 
 ---
 
 ## Restore the Database
-
-To restore from a backup, stop the stack, replace the database, and restart:
 
 ```bash
 # Stop all services
@@ -62,14 +67,14 @@ docker volume rm self-host_pgdata
 # Start only PostgreSQL
 docker compose up -d postgres
 
-# Wait for it to be healthy
+# Wait for it to be ready
 sleep 10
 docker compose exec postgres pg_isready -U silentsuite
 
 # Restore the backup
 docker exec -i silentsuite-postgres psql -U silentsuite silentsuite < backup-20260101-020000.sql
 
-# Start the rest of the stack
+# Start the server
 docker compose up -d
 ```
 
@@ -88,3 +93,7 @@ docker run --rm \
 
 docker compose up -d
 ```
+
+## Test Your Backups
+
+Backups you've never restored from are not backups. Periodically verify by restoring to a test instance.

@@ -11,6 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
+    command: postgres -c max_connections=200
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U silentsuite"]
       interval: 5s

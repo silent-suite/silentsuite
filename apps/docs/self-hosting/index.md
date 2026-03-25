@@ -1,6 +1,6 @@
 # Self-Hosting SilentSuite
 
-Deploy and manage SilentSuite on your own infrastructure. Self-hosting gives you full data sovereignty, no third-party dependencies, and all features unlocked with no subscription required.
+Run the SilentSuite sync server on your own infrastructure. Your data stays on your hardware, fully end-to-end encrypted. No subscriptions, no third-party dependencies.
 
 ---
 
@@ -19,11 +19,17 @@ Deploy and manage SilentSuite on your own infrastructure. Self-hosting gives you
 
 ---
 
+## How It Works
+
+You run the SilentSuite sync server and a PostgreSQL database. That's it -- two containers.
+
+Your users connect using [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile apps. They enter your server URL in **Advanced Settings** during signup, and all their data syncs to your server, encrypted end-to-end.
+
+You provide your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) to handle HTTPS.
+
 ## Why Self-Host?
 
 - **Full data sovereignty** -- your data stays on your infrastructure, under your control.
 - **No third-party dependencies** -- nothing phones home.
-- **Custom domain** -- run the suite on your own domain with automatic HTTPS.
 - **All features unlocked** -- every feature, no subscription required.
-
-The self-hosted stack runs four services via Docker Compose: PostgreSQL, Etebase (encrypted sync), a Next.js web frontend, and Caddy as a reverse proxy with automatic TLS.
+- **Minimal footprint** -- just 2 containers, ~200 MB RAM.

@@ -179,11 +179,15 @@ function StepCreateAccount({
   serverUrl,
   setServerUrl,
   initialData,
+  wantsProductUpdates,
+  onWantsProductUpdatesChange,
 }: {
   onNext: (data: SignupFormData) => Promise<void>
   serverUrl: string
   setServerUrl: (url: string) => void
   initialData?: SignupFormData | null
+  wantsProductUpdates: boolean
+  onWantsProductUpdatesChange: (value: boolean) => void
 }) {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -280,6 +284,21 @@ function StepCreateAccount({
             </p>
           )}
         </div>
+
+        {/* Product updates opt-in */}
+        <label className="flex items-start gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={wantsProductUpdates}
+            onChange={(e) => onWantsProductUpdatesChange(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
+          />
+          <span className="text-xs text-[rgb(var(--muted))] leading-relaxed">
+            Send me product updates and feature announcements (~8/year)
+            <br />
+            <span className="text-[rgb(var(--muted))]/70">We will never share your email. Unsubscribe anytime.</span>
+          </span>
+        </label>
 
         {/* Advanced Settings */}
         <details className="group">
@@ -1067,6 +1086,7 @@ export default function SignupPage() {
   const [provisioning, setProvisioning] = useState(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
+  const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
   const formDataRef = useRef<SignupFormData | null>(null)
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
@@ -1082,6 +1102,15 @@ export default function SignupPage() {
     const identifier = data.email || ''
     await createEtebaseAccount(identifier, data.password, trimmedUrl)
 
+    // Store product updates preference in pendingSignup for later use
+    const pending = useAuthStore.getState().pendingSignup
+    if (!pending) console.error('pendingSignup not set after createEtebaseAccount')
+    if (pending) {
+      useAuthStore.setState({
+        pendingSignup: { ...pending, wantsProductUpdates },
+      })
+    }
+
     const selfHosted = isSelfHosted || isCustomServer(trimmedUrl)
     setUsingSelfHostedServer(selfHosted)
 
@@ -1090,7 +1119,7 @@ export default function SignupPage() {
     } else {
       setStep('plan')
     }
-  }, [createEtebaseAccount, serverUrl])
+  }, [createEtebaseAccount, serverUrl, wantsProductUpdates])
 
   const handleSelfHostChoice = useCallback(async (choice: 'free' | 'support') => {
     if (choice === 'support') {
@@ -1178,6 +1207,8 @@ export default function SignupPage() {
             serverUrl={serverUrl}
             setServerUrl={setServerUrl}
             initialData={formDataRef.current}
+            wantsProductUpdates={wantsProductUpdates}
+            onWantsProductUpdatesChange={setWantsProductUpdates}
           />
         )}
         {step === 'selfhost' && (

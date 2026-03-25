@@ -8,28 +8,42 @@ How to keep your self-hosted SilentSuite instance up to date.
 ./update.sh
 ```
 
-This script pulls the latest images and restarts the stack with zero-downtime rolling updates where possible.
+This script pulls the latest images, recreates the containers, and waits for health checks to pass.
 
 ## Manual Update
 
 ```bash
-# Pull latest images
 docker compose pull
-
-# Recreate containers with new images
 docker compose up -d
-
-# Verify
-docker compose ps
 ```
+
+Verify the update:
+
+```bash
+docker compose ps
+./verify.sh
+```
+
+## What Gets Updated
+
+The `docker-compose.yml` uses the `latest` tag for both images by default:
+
+- `victorrds/etebase:latest` -- the SilentSuite sync server
+- `postgres:16-alpine` -- PostgreSQL database
+
+Running `docker compose pull` fetches the newest versions of these images.
 
 ## Pinning Versions
 
-By default, the `docker-compose.yml` uses the `latest` tag for SilentSuite images. To pin a specific version, edit the image tags:
+For production deployments, you can pin specific image versions in `docker-compose.yml`:
 
 ```yaml
-web:
-  image: ghcr.io/silent-suite/silentsuite-web:v1.2.0
+server:
+  image: victorrds/etebase:v0.15.0
 ```
 
-Pinning versions is recommended for production deployments to avoid unexpected changes.
+This prevents unexpected changes when pulling. Check the [Etebase Docker Hub page](https://hub.docker.com/r/victorrds/etebase) for available tags.
+
+## Data Safety
+
+Updates preserve your data. Docker named volumes (`pgdata`, `server_data`) are not affected by container recreation. However, it is good practice to [back up](./backup-and-restore.md) before major updates.

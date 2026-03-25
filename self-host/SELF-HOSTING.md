@@ -1,12 +1,12 @@
 # SilentSuite Self-Hosting Guide
 
-Run your own SilentSuite server. Your data stays on your hardware, fully end-to-end encrypted.
+Run your own SilentSuite sync server. Your data stays on your hardware, fully end-to-end encrypted.
 
 ## How It Works
 
-You run the SilentSuite sync server and database. Your users connect via [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile apps, pointing at your server URL.
+You run the SilentSuite sync server and a PostgreSQL database (2 containers). Your users connect via [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile apps, pointing at your server URL in Advanced Settings.
 
-You provide your own reverse proxy (nginx, Caddy, Traefik, Cloudflare Tunnel, etc.) to handle TLS and forward traffic to the SilentSuite server on port 3735.
+You provide your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) to handle TLS and forward traffic to the SilentSuite server on port 3735.
 
 ```
     Your Server                         SilentSuite Apps
@@ -29,14 +29,14 @@ You provide your own reverse proxy (nginx, Caddy, Traefik, Cloudflare Tunnel, et
 
 | Service | Image | Role |
 |---------|-------|------|
-| **SilentSuite Server** | `victorrds/etebase` | Sync server (built on the Etebase protocol). All data is E2E encrypted. |
-| **PostgreSQL** | `postgres:16-alpine` | Database for encrypted sync data and user accounts |
+| **SilentSuite Server** | `victorrds/etebase` | Sync server (Etebase protocol). All data is E2E encrypted. |
+| **PostgreSQL** | `postgres:16-alpine` | Database for encrypted sync data and user accounts. |
 
 ## Prerequisites
 
 - A Linux server (Ubuntu 22.04+, Debian 12+, or similar)
 - Docker Engine 24+ with Compose v2
-- A reverse proxy for TLS termination (nginx, Caddy, Traefik, etc.)
+- A reverse proxy for TLS termination
 - A domain name (e.g., `sync.example.com`) with DNS pointing to your server
 
 ## Quick Start
@@ -50,13 +50,14 @@ chmod +x install.sh update.sh verify.sh
 
 The installer will:
 1. Check that Docker and Docker Compose are installed
-2. Generate secure random passwords
-3. Write the `.env` file
-4. Pull Docker images and start all containers
-5. Wait for health checks to pass
-6. Print your server URL and admin credentials
+2. Ask for your domain name
+3. Generate secure random passwords
+4. Write the `.env` file
+5. Pull Docker images and start the containers
+6. Wait for health checks to pass
+7. Print your admin credentials
 
-Then configure your reverse proxy to forward HTTPS traffic to `localhost:3735`.
+Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
 
 ## Manual Setup
 
@@ -71,30 +72,29 @@ Then configure your reverse proxy to forward HTTPS traffic to `localhost:3735`.
    cp .env.example .env
    ```
 
-3. **Generate passwords and edit `.env`:**
+3. **Generate passwords:**
    ```bash
-   # Generate passwords
    openssl rand -base64 32 | tr -d '/+='   # use for DATABASE_PASSWORD
    openssl rand -base64 16 | tr -d '/+='   # use for SUPER_PASS
    ```
 
-   Fill in all values in `.env`:
+4. **Edit `.env`:**
    - `DATABASE_PASSWORD` -- the generated database password
-   - `SUPER_USER` -- admin username (default: `admin`)
    - `SUPER_PASS` -- the generated admin password
+   - `ALLOWED_HOSTS` -- your domain, e.g., `sync.example.com,localhost`
 
-4. **Start the stack:**
+5. **Start the stack:**
    ```bash
    docker compose up -d
    ```
 
-5. **Set up your reverse proxy** (see examples below).
+6. **Set up your reverse proxy** (see examples below).
 
 ## Reverse Proxy Examples
 
 The SilentSuite server listens on `127.0.0.1:3735` by default. Configure your reverse proxy to forward HTTPS traffic to it.
 
-### Caddy
+### Caddy (recommended -- automatic HTTPS)
 
 ```
 sync.example.com {
@@ -123,7 +123,7 @@ server {
 }
 ```
 
-### Traefik (docker labels)
+### Traefik (Docker labels)
 
 ```yaml
 # Add these labels to the server service in docker-compose.yml
@@ -134,7 +134,7 @@ labels:
   - "traefik.http.services.silentsuite.loadbalancer.server.port=3735"
 ```
 
-> **Note:** If Traefik itself runs in Docker, replace the `ports:` mapping on the server service with `expose: ["3735"]` in `docker-compose.yml` and ensure Traefik shares a Docker network with the server container.
+> If Traefik runs in Docker, replace the `ports:` mapping with `expose: ["3735"]` and ensure Traefik shares the `silentsuite` Docker network.
 
 ### Cloudflare Tunnel
 
@@ -144,7 +144,7 @@ cloudflared tunnel --url http://localhost:3735
 
 ### Recommended Security Headers
 
-Add these headers in your reverse proxy for defense in depth:
+Add these in your reverse proxy for defense in depth:
 
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY`
@@ -156,13 +156,11 @@ Add these headers in your reverse proxy for defense in depth:
 Once your server is running and your reverse proxy is configured:
 
 1. Open [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile app
-2. On the signup or login page, expand **Advanced Settings**
-3. Enter `https://sync.example.com` as the server URL
+2. On the signup page, expand **Advanced Settings**
+3. Enter `https://sync.example.com` (your domain) as the server URL
 4. Create your account and start syncing
 
 ## Updating
-
-Pull the latest images and restart:
 
 ```bash
 ./update.sh
@@ -177,60 +175,85 @@ docker compose up -d
 
 ## Health Checks
 
-Run the built-in health checker:
-
 ```bash
 ./verify.sh
 ```
 
 ## Admin Panel
 
-Access the admin panel at `http://localhost:3735/admin/` (or via your reverse proxy at `https://your-domain.com/admin/`) using the credentials from your `.env` file.
+Access the admin panel at `https://your-domain/admin/` using the credentials from `.env`.
 
 ## Backup and Restore
 
 ### Backup
 
 ```bash
-# Database dump
+# Database
 docker exec silentsuite-postgres pg_dump -U silentsuite silentsuite > backup.sql
 
 # Server data (secret key, media)
-docker cp silentsuite-server:/data ./server-backup
+docker run --rm \
+  -v self-host_server_data:/data \
+  -v $(pwd)/backups:/backup \
+  alpine tar czf /backup/server-data.tar.gz -C /data .
+
+# Environment file
+cp .env backups/.env.backup
 ```
 
 ### Restore
 
 ```bash
 # Database
-cat backup.sql | docker exec -i silentsuite-postgres psql -U silentsuite silentsuite
+docker compose down
+docker volume rm self-host_pgdata
+docker compose up -d postgres
+sleep 10
+docker exec -i silentsuite-postgres psql -U silentsuite silentsuite < backup.sql
+docker compose up -d
 
 # Server data
-docker cp ./server-backup/. silentsuite-server:/data
-docker compose restart server
+docker compose down
+docker volume rm self-host_server_data
+docker volume create self-host_server_data
+docker run --rm \
+  -v self-host_server_data:/data \
+  -v $(pwd)/backups:/backup \
+  alpine tar xzf /backup/server-data.tar.gz -C /data
+docker compose up -d
 ```
 
 ## Troubleshooting
 
 ### Containers won't start
 ```bash
-docker compose logs postgres
 docker compose logs server
+docker compose logs postgres
+```
+
+### Server returns 400 Bad Request
+Your domain is not in `ALLOWED_HOSTS`. Update `.env` and recreate:
+```bash
+docker compose up -d --force-recreate server
 ```
 
 ### Database connection errors
 - Verify PostgreSQL is healthy: `docker compose ps`
-- Check that `DATABASE_PASSWORD` in `.env` is correct
+- Check that `DATABASE_PASSWORD` in `.env` matches the original value (changing it after first run requires a volume reset or manual password change in PostgreSQL)
 
 ### Reset everything
 ```bash
-docker compose down -v   # WARNING: This deletes all data!
+docker compose down -v   # WARNING: Deletes all data!
 ./install.sh
 ```
 
 ## Security Notes
 
 - PostgreSQL is only accessible within the Docker network (not exposed to the host)
-- The server binds to `127.0.0.1` only — not accessible from the network without a reverse proxy
+- The server binds to `127.0.0.1` only -- not accessible from the network without a reverse proxy
 - All sync traffic is end-to-end encrypted. The server never sees your plaintext data.
-- The SilentSuite server is built on the [Etebase protocol](https://docs.etebase.com), an open standard for end-to-end encrypted data sync.
+- Built on the [Etebase protocol](https://docs.etebase.com), an open standard for E2E encrypted data sync.
+
+## Full Documentation
+
+For more details, see [docs.silentsuite.io/self-hosting](https://docs.silentsuite.io/self-hosting/).

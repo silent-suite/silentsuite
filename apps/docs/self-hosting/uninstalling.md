@@ -2,33 +2,30 @@
 
 How to remove SilentSuite from your server.
 
+## Stop Without Deleting Data
+
+If you only want to stop the services but keep your data for later:
+
+```bash
+docker compose down
+```
+
+The data volumes will persist. Run `docker compose up -d` to start again.
+
 ## Complete Removal
 
 To completely remove SilentSuite and all its data:
 
 ```bash
-# Stop and remove all containers
-docker compose down
-
-# Remove all data volumes (THIS DELETES ALL DATA)
-docker volume rm self-host_pgdata self-host_etebase_data self-host_caddy_data self-host_caddy_config
+# Stop and remove all containers and volumes
+docker compose down -v
 
 # Remove the Docker images
-docker rmi victorrds/etebase:latest
-docker rmi postgres:16-alpine
-docker rmi caddy:2-alpine
+docker rmi victorrds/etebase:latest postgres:16-alpine
 
 # Remove the cloned repository
 cd ..
 rm -rf silentsuite
 ```
 
-## Stop Without Deleting Data
-
-If you only want to stop the services but preserve your data for later:
-
-```bash
-docker compose down
-```
-
-The data volumes will persist and the stack will resume where it left off when you run `docker compose up -d` again.
+> **Warning:** `docker compose down -v` deletes all data volumes. This is irreversible. [Back up](./backup-and-restore.md) first if you want to keep your data.

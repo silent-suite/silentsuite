@@ -12,6 +12,7 @@ import {
   Server,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   RefreshCw,
   ExternalLink,
   Shield,
@@ -20,6 +21,8 @@ import {
   Clock,
   CreditCard,
   TrendingUp,
+  Mail,
+  Loader2,
 } from 'lucide-react'
 
 const BILLING_API_URL =
@@ -51,6 +54,7 @@ interface EventsPage {
 }
 
 interface LookedUpUser {
+  id: string
   email: string
   createdAt: string
   subscriptionStatus: string
@@ -59,6 +63,10 @@ interface LookedUpUser {
   currentPeriodEnd: string | null
   stripeCustomerId: string | null
   foundingMember: boolean
+  emailVerified?: boolean
+  wantsProductUpdates?: boolean
+  trialPath?: string | null
+  earlyAdopter?: boolean
 }
 
 interface UserListItem {
@@ -69,6 +77,26 @@ interface UserListItem {
   planId: string | null
   foundingMember: boolean
   isAdmin: boolean
+  emailVerified?: boolean
+  wantsProductUpdates?: boolean
+  trialPath?: string | null
+  earlyAdopter?: boolean
+}
+
+interface EmailRecord {
+  id: string
+  type: string
+  subject: string
+  sentAt: string
+  status: string
+}
+
+interface Subscriber {
+  email: string
+  source: string
+  doiConfirmed: boolean
+  subscribedAt: string
+  unsubscribedAt: string | null
 }
 
 interface UsersPage {
@@ -190,6 +218,7 @@ export default function AdminDashboard() {
         { key: 'overview', label: 'Overview' },
         { key: 'payments', label: 'Failed Payments' },
         { key: 'users', label: 'User Lookup' },
+        { key: 'subscribers', label: 'Subscribers' },
         { key: 'health', label: 'System Health' },
       ]
 
@@ -217,6 +246,7 @@ export default function AdminDashboard() {
       {activeTab === 'overview' && (isSelfHosted ? <SelfHostedOverviewTab /> : <OverviewTab />)}
       {activeTab === 'payments' && !isSelfHosted && <FailedPaymentsTab />}
       {activeTab === 'users' && (isSelfHosted ? <SelfHostedUsersTab /> : <UserLookupTab />)}
+      {activeTab === 'subscribers' && !isSelfHosted && <SubscribersTab />}
       {activeTab === 'health' && (isSelfHosted ? <SelfHostedHealthTab /> : <HealthTab />)}
     </div>
   )
@@ -898,6 +928,24 @@ function UserLookupTab() {
                 {lookupUser.foundingMember ? 'Yes' : 'No'}
               </p>
             </div>
+            <div>
+              <p className="text-xs text-[rgb(var(--muted))]">Email Verified</p>
+              <p className="text-sm">{lookupUser.emailVerified === true ? '✅' : lookupUser.emailVerified === false ? '❌' : '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs text-[rgb(var(--muted))]">Product Updates</p>
+              <p className="text-sm">{lookupUser.wantsProductUpdates === true ? '✅' : lookupUser.wantsProductUpdates === false ? '❌' : '—'}</p>
+            </div>
+            {lookupUser.trialPath && (
+              <div>
+                <p className="text-xs text-[rgb(var(--muted))]">Trial Path</p>
+                <p className="text-sm text-[rgb(var(--foreground))]">{lookupUser.trialPath}</p>
+              </div>
+            )}
+            <div>
+              <p className="text-xs text-[rgb(var(--muted))]">Early Adopter</p>
+              <p className="text-sm">{lookupUser.earlyAdopter === true ? '✅' : lookupUser.earlyAdopter === false ? '❌' : '—'}</p>
+            </div>
             {lookupUser.trialEndsAt && (
               <div>
                 <p className="text-xs text-[rgb(var(--muted))]">Trial Ends</p>
@@ -917,6 +965,9 @@ function UserLookupTab() {
               </div>
             )}
           </div>
+
+          {/* Emails Sent */}
+          {lookupUser.id && <EmailsSentSection userId={lookupUser.id} />}
         </div>
       )}
 
@@ -959,6 +1010,10 @@ function UserLookupTab() {
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Email</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Status</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Plan</th>
+                <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Verified</th>
+                <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Updates</th>
+                <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] lg:table-cell">Trial</th>
+                <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] lg:table-cell">Early</th>
                 <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Founding</th>
                 <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Admin</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Joined</th>
@@ -967,13 +1022,13 @@ function UserLookupTab() {
             <tbody>
               {usersLoading && !usersPage ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
+                  <td colSpan={10} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
                     Loading users...
                   </td>
                 </tr>
               ) : filteredUsers?.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
+                  <td colSpan={10} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
                     {tableFilter ? 'No users match filter' : 'No users found'}
                   </td>
                 </tr>
@@ -990,6 +1045,18 @@ function UserLookupTab() {
                     </td>
                     <td className="px-4 py-2.5 text-xs text-[rgb(var(--foreground))] capitalize">
                       {u.planId?.replace(/_/g, ' ') ?? '—'}
+                    </td>
+                    <td className="hidden px-4 py-2.5 text-center sm:table-cell">
+                      <span className="text-xs">{u.emailVerified === true ? '✅' : u.emailVerified === false ? '❌' : '—'}</span>
+                    </td>
+                    <td className="hidden px-4 py-2.5 text-center sm:table-cell">
+                      <span className="text-xs">{u.wantsProductUpdates === true ? '✅' : u.wantsProductUpdates === false ? '❌' : '—'}</span>
+                    </td>
+                    <td className="hidden px-4 py-2.5 text-xs text-[rgb(var(--foreground))] lg:table-cell">
+                      {u.trialPath ?? '—'}
+                    </td>
+                    <td className="hidden px-4 py-2.5 text-center lg:table-cell">
+                      <span className="text-xs">{u.earlyAdopter === true ? '✅' : u.earlyAdopter === false ? '❌' : '—'}</span>
                     </td>
                     <td className="hidden px-4 py-2.5 sm:table-cell">
                       {u.foundingMember ? (
@@ -1041,6 +1108,226 @@ function UserLookupTab() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── Emails Sent Section (per-user expandable) ──────────────────────
+function EmailsSentSection({ userId }: { userId: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const [emails, setEmails] = useState<EmailRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [emailsError, setEmailsError] = useState<string | null>(null)
+
+  const fetchEmails = useCallback(async () => {
+    setLoading(true)
+    setEmailsError(null)
+    try {
+      const res = await fetch(
+        `${BILLING_API_URL}/admin/users/${encodeURIComponent(userId)}/emails`,
+        { credentials: 'include' },
+      )
+      if (res.ok) {
+        const data = await res.json()
+        setEmails(data.emails ?? data)
+      } else {
+        setEmailsError('Failed to load emails')
+      }
+    } catch {
+      setEmailsError('Failed to load emails')
+    }
+    setLoading(false)
+    setLoaded(true)
+  }, [userId])
+
+  const handleToggle = () => {
+    if (!expanded && !loaded) {
+      fetchEmails()
+    }
+    setExpanded(!expanded)
+  }
+
+  return (
+    <div className="mt-4 border-t border-[rgb(var(--border))] pt-4">
+      <button
+        onClick={handleToggle}
+        className="flex items-center gap-2 text-sm font-medium text-[rgb(var(--foreground))] hover:text-[rgb(var(--primary))] transition-colors"
+      >
+        <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-0' : '-rotate-90'}`} />
+        <Mail className="h-4 w-4 text-[rgb(var(--muted))]" />
+        Emails Sent
+      </button>
+      {expanded && (
+        <div className="mt-3">
+          {loading ? (
+            <div className="flex items-center gap-2 py-4">
+              <Loader2 className="h-4 w-4 animate-spin text-[rgb(var(--muted))]" />
+              <span className="text-xs text-[rgb(var(--muted))]">Loading emails...</span>
+            </div>
+          ) : emailsError ? (
+            <p className="text-xs text-red-400 py-2">{emailsError}</p>
+          ) : emails.length === 0 ? (
+            <p className="text-xs text-[rgb(var(--muted))] py-2">No emails sent to this user</p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-[rgb(var(--border))]">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Type</th>
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Subject</th>
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Status</th>
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Sent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {emails.map((em) => (
+                    <tr key={em.id} className="border-b border-[rgb(var(--border))] last:border-b-0">
+                      <td className="px-3 py-1.5 text-xs font-mono text-[rgb(var(--foreground))]">{em.type}</td>
+                      <td className="px-3 py-1.5 text-xs text-[rgb(var(--foreground))]"><div className="truncate max-w-[200px]">{em.subject}</div></td>
+                      <td className="px-3 py-1.5">
+                        <span className={`text-xs font-medium ${em.status === 'delivered' ? 'text-emerald-500' : em.status === 'bounced' ? 'text-red-400' : 'text-[rgb(var(--muted))]'}`}>
+                          {em.status}
+                        </span>
+                      </td>
+                      <td className="px-3 py-1.5 text-xs text-[rgb(var(--muted))]">{formatDate(em.sentAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Subscribers Tab ─────────────────────────────────────────────────
+function SubscribersTab() {
+  const [subscribers, setSubscribers] = useState<Subscriber[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [subscribersOffset, setSubscribersOffset] = useState(0)
+  const [subscribersTotal, setSubscribersTotal] = useState(0)
+  const SUBSCRIBERS_LIMIT = 20
+
+  const fetchSubscribers = useCallback(async (offset: number) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(
+        `${BILLING_API_URL}/admin/contacts?limit=${SUBSCRIBERS_LIMIT}&offset=${offset}`,
+        { credentials: 'include' },
+      )
+      if (res.ok) {
+        const data = await res.json()
+        setSubscribers(data.contacts ?? data)
+        if (typeof data.total === 'number') setSubscribersTotal(data.total)
+        else setSubscribersTotal((data.contacts ?? data).length)
+      } else {
+        setError('Failed to load subscribers')
+      }
+    } catch {
+      setError('API unavailable')
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { fetchSubscribers(subscribersOffset) }, [fetchSubscribers, subscribersOffset])
+
+  const subscribersTotalPages = Math.ceil(subscribersTotal / SUBSCRIBERS_LIMIT)
+  const subscribersCurrentPage = Math.floor(subscribersOffset / SUBSCRIBERS_LIMIT) + 1
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Mail className="h-4 w-4 text-[rgb(var(--muted))]" />
+          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Newsletter Subscribers</h2>
+          {!loading && (
+            <span className="text-xs text-[rgb(var(--muted))]">({subscribersTotal} total)</span>
+          )}
+        </div>
+        <button
+          onClick={() => fetchSubscribers(subscribersOffset)}
+          disabled={loading}
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
+      </div>
+
+      {error && <p className="text-sm text-red-400">{error}</p>}
+
+      {loading && subscribers.length === 0 ? (
+        <p className="text-sm text-[rgb(var(--muted))]">Loading subscribers...</p>
+      ) : subscribers.length === 0 ? (
+        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-8 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[rgb(var(--primary))]/10">
+            <Mail className="h-6 w-6 text-[rgb(var(--primary))]" />
+          </div>
+          <p className="mt-3 text-sm font-medium text-[rgb(var(--foreground))]">No subscribers yet</p>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">Subscribers will appear here once users opt in</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-[rgb(var(--border))]">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Email</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Source</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">DOI Confirmed</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Subscribed</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Unsubscribed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subscribers.map((s) => (
+                <tr
+                  key={`${s.email}-${s.subscribedAt}`}
+                  className={`border-b border-[rgb(var(--border))] last:border-b-0 hover:bg-[rgb(var(--background))]/50 transition-colors ${s.unsubscribedAt ? 'opacity-60' : ''}`}
+                >
+                  <td className="px-4 py-2.5 text-sm font-mono text-[rgb(var(--foreground))]">{s.email}</td>
+                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--foreground))] capitalize">{s.source}</td>
+                  <td className="px-4 py-2.5 text-center">
+                    <span className="text-xs">{s.doiConfirmed ? '✅' : '❌'}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{formatShortDate(s.subscribedAt)}</td>
+                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{s.unsubscribedAt ? formatShortDate(s.unsubscribedAt) : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {subscribersTotalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-[rgb(var(--muted))]">
+            Showing {subscribersOffset + 1}–{Math.min(subscribersOffset + SUBSCRIBERS_LIMIT, subscribersTotal)} of {subscribersTotal}
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setSubscribersOffset(Math.max(0, subscribersOffset - SUBSCRIBERS_LIMIT))}
+              disabled={subscribersOffset === 0}
+              className="rounded p-1 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] disabled:opacity-30 transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="px-2 text-xs text-[rgb(var(--muted))]">{subscribersCurrentPage} / {subscribersTotalPages}</span>
+            <button
+              onClick={() => setSubscribersOffset(subscribersOffset + SUBSCRIBERS_LIMIT)}
+              disabled={subscribersOffset + SUBSCRIBERS_LIMIT >= subscribersTotal}
+              className="rounded p-1 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] disabled:opacity-30 transition-colors"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -165,6 +165,12 @@ if any(os.path.isfile(x) for x in config_locations):
 
     if "database" in config:
         DATABASES = {"default": {x.upper(): y for x, y in config.items("database")}}
+        # Cast numeric/boolean database connection settings to their correct Python types
+        db_default = DATABASES["default"]
+        if "CONN_MAX_AGE" in db_default:
+            db_default["CONN_MAX_AGE"] = int(db_default["CONN_MAX_AGE"])
+        if "CONN_HEALTH_CHECKS" in db_default:
+            db_default["CONN_HEALTH_CHECKS"] = db_default["CONN_HEALTH_CHECKS"].lower() in ("true", "1", "yes")
 
     if "database-options" in config:
         DATABASES["default"]["OPTIONS"] = config["database-options"]

@@ -15,6 +15,7 @@ interface PendingSignup {
   email: string
   etebaseAuthToken: string
   earlyAdopter?: boolean
+  wantsProductUpdates?: boolean
   /** Provisioned user data — stored here until the entire signup flow completes. */
   provisionedUser?: {
     id: string
@@ -134,6 +135,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (isSelfHosted || planId === 'self-hosted') {
       const pending = get().pendingSignup
       if (!pending) throw new Error('No pending signup')
+
+      // Self-hosted: if user opted in, subscribe to newsletter on the SilentSuite API
+      if (pending.wantsProductUpdates) {
+        try {
+          const res = await fetch('https://api.silentsuite.io/newsletter/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: pending.email, source: 'self_hosted' }),
+          })
+          if (!res.ok) console.warn('Newsletter subscribe failed:', res.status)
+        } catch (err) {
+          console.warn('Newsletter subscribe failed:', err)
+        }
+      }
+
       // Self-hosted: store provisioned data but do NOT authenticate yet.
       // completeSignup() will finalize after vault creation.
       set({
@@ -157,7 +173,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await fetch(`${BILLING_API_URL}/auth/provision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        body: JSON.stringify({ etebaseSessionToken: pending.etebaseAuthToken, planId, trialPath }),
+        body: JSON.stringify({
+          etebaseSessionToken: pending.etebaseAuthToken,
+          planId,
+          trialPath,
+          wantsProductUpdates: pending.wantsProductUpdates,
+        }),
         credentials: 'include',
       })
       if (!res.ok) {
