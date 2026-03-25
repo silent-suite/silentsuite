@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { MailWarning, X, Loader2 } from 'lucide-react'
+import { MailWarning, Loader2 } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
 
@@ -10,15 +10,12 @@ const BILLING_API_URL =
 
 export function EmailVerificationBanner() {
   const user = useAuthStore((s) => s.user)
-  const [dismissed, setDismissed] = useState(() => {
-    try { return sessionStorage.getItem('email-verify-dismissed') === 'true' } catch { return false }
-  })
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Don't show for self-hosted, unauthenticated, or already verified
-  if (isSelfHosted || !user || user.emailVerified !== false || dismissed) {
+  if (isSelfHosted || !user || user.emailVerified !== false) {
     return null
   }
 
@@ -46,9 +43,9 @@ export function EmailVerificationBanner() {
   }
 
   return (
-    <div className="relative flex items-center gap-3 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-200 text-sm">
+    <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-200 text-sm">
       <MailWarning className="w-4 h-4 text-amber-400 shrink-0" />
-      <span className="flex-1">
+      <span className="flex-1 text-xs">
         {resent
           ? 'Verification email sent. Check your inbox.'
           : 'Please verify your email address to ensure you receive important account notifications.'}
@@ -67,13 +64,6 @@ export function EmailVerificationBanner() {
         </button>
       )}
       {error && <span className="text-xs text-red-400">{error}</span>}
-      <button
-        onClick={() => { sessionStorage.setItem('email-verify-dismissed', 'true'); setDismissed(true) }}
-        className="shrink-0 text-amber-400/60 hover:text-amber-300"
-        aria-label="Dismiss"
-      >
-        <X className="w-4 h-4" />
-      </button>
     </div>
   )
 }
