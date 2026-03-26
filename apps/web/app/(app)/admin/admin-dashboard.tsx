@@ -822,14 +822,29 @@ function UserLookupTab() {
   const [usersOffset, setUsersOffset] = useState(0)
   const USERS_LIMIT = 20
 
-  // Table search filter
+  // Table search filter — server-side search via API
   const [tableFilter, setTableFilter] = useState('')
+  const [debouncedFilter, setDebouncedFilter] = useState('')
 
-  const fetchUsers = useCallback(async (offset: number) => {
+  // Debounce filter input to avoid excessive API calls
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedFilter(tableFilter)
+      setUsersOffset(0) // reset to page 1 on new search
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [tableFilter])
+
+  const fetchUsers = useCallback(async (offset: number, search?: string) => {
     setUsersLoading(true)
     try {
+      const params = new URLSearchParams({
+        limit: String(USERS_LIMIT),
+        offset: String(offset),
+      })
+      if (search) params.set('search', search)
       const res = await fetch(
-        `${BILLING_API_URL}/admin/users?limit=${USERS_LIMIT}&offset=${offset}`,
+        `${BILLING_API_URL}/admin/users?${params}`,
         { credentials: 'include' },
       )
       if (res.ok) {
@@ -839,7 +854,7 @@ function UserLookupTab() {
     setUsersLoading(false)
   }, [])
 
-  useEffect(() => { fetchUsers(usersOffset) }, [fetchUsers, usersOffset])
+  useEffect(() => { fetchUsers(usersOffset, debouncedFilter) }, [fetchUsers, usersOffset, debouncedFilter])
 
   async function handleLookup(e: React.FormEvent) {
     e.preventDefault()
@@ -869,9 +884,8 @@ function UserLookupTab() {
   const totalPages = usersPage ? Math.ceil(usersPage.total / USERS_LIMIT) : 0
   const currentPage = Math.floor(usersOffset / USERS_LIMIT) + 1
 
-  const filteredUsers = usersPage?.users.filter(u =>
-    !tableFilter || u.email.toLowerCase().includes(tableFilter.toLowerCase())
-  )
+  // Users are now filtered server-side via the search param
+  const filteredUsers = usersPage?.users
 
   return (
     <div className="space-y-6">
@@ -993,7 +1007,7 @@ function UserLookupTab() {
               />
             </div>
             <button
-              onClick={() => fetchUsers(usersOffset)}
+              onClick={() => fetchUsers(usersOffset, debouncedFilter)}
               disabled={usersLoading}
               className="flex items-center gap-1 text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors disabled:opacity-50"
             >

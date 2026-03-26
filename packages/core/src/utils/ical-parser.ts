@@ -193,8 +193,19 @@ function parseVAlarm(lines: string[], startIdx: number): { alarm: VAlarm; endIdx
 
 /**
  * Parse a VEVENT block (content lines between BEGIN:VEVENT and END:VEVENT).
+ * Also accepts a full VCALENDAR document — the first VEVENT inside will be extracted.
  */
 export function parseVEvent(ical: string): VEvent {
+  const trimmed = ical.trimStart();
+  if (trimmed.startsWith('BEGIN:VCALENDAR')) {
+    // Extract the first VEVENT block from the VCALENDAR wrapper
+    const match = trimmed.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/);
+    if (!match) {
+      throw new Error('VCALENDAR contains no VEVENT component');
+    }
+    ical = match[0];
+  }
+
   const unfolded = unfoldLines(ical);
   const lines = unfolded.split(/\r?\n/).filter((l) => l.length > 0);
 
@@ -361,8 +372,19 @@ export function generateVEvent(event: VEvent): string {
 
 /**
  * Parse a VTODO block (content lines between BEGIN:VTODO and END:VTODO).
+ * Also accepts a full VCALENDAR document — the first VTODO inside will be extracted.
  */
 export function parseVTodo(ical: string): VTodo {
+  const trimmed = ical.trimStart();
+  if (trimmed.startsWith('BEGIN:VCALENDAR')) {
+    // Extract the first VTODO block from the VCALENDAR wrapper
+    const match = trimmed.match(/BEGIN:VTODO[\s\S]*?END:VTODO/);
+    if (!match) {
+      throw new Error('VCALENDAR contains no VTODO component');
+    }
+    ical = match[0];
+  }
+
   const unfolded = unfoldLines(ical);
   const lines = unfolded.split(/\r?\n/).filter((l) => l.length > 0);
 

@@ -191,9 +191,17 @@ export function parseAlarmTriggerMinutes(trigger: string): number {
 
 /**
  * Serialize a CalendarEvent to a string for Etebase item content.
+ * Produces a complete VCALENDAR document (RFC 5545 compliant).
  */
 export function serializeCalendarEvent(event: CalendarEvent): string {
-  return toVEvent(event);
+  const vevent = toVEvent(event);
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//SilentSuite//EN',
+    vevent,
+    'END:VCALENDAR',
+  ].join('\r\n');
 }
 
 /**

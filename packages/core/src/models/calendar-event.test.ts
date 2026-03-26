@@ -234,16 +234,20 @@ describe('CalendarEvent with minimal fields', () => {
 // ── serializeCalendarEvent / deserializeCalendarEvent ──
 
 describe('serializeForEtebase / deserializeFromEtebase', () => {
-  it('serialize produces a VEVENT string', () => {
+  it('serialize produces a VCALENDAR-wrapped VEVENT string', () => {
     const event = makeFullEvent();
     const serialized = serializeCalendarEvent(event);
 
     expect(typeof serialized).toBe('string');
+    expect(serialized).toContain('BEGIN:VCALENDAR');
+    expect(serialized).toContain('VERSION:2.0');
+    expect(serialized).toContain('PRODID:-//SilentSuite//EN');
     expect(serialized).toContain('BEGIN:VEVENT');
     expect(serialized).toContain('END:VEVENT');
+    expect(serialized).toContain('END:VCALENDAR');
   });
 
-  it('deserialize restores a CalendarEvent from VEVENT string', () => {
+  it('deserialize restores a CalendarEvent from VCALENDAR-wrapped string', () => {
     const event = makeFullEvent();
     const serialized = serializeCalendarEvent(event);
     const restored = deserializeCalendarEvent(serialized);
@@ -272,6 +276,48 @@ describe('serializeForEtebase / deserializeFromEtebase', () => {
     expect(restored.endDate.getTime()).toBe(original.endDate.getTime());
     expect(restored.recurrenceRule).toBe(original.recurrenceRule);
     expect(restored.exceptions).toHaveLength(1);
+  });
+
+  // P1: backward compatibility — existing Etebase items stored as bare VEVENT
+  it('deserialize handles legacy bare VEVENT (backward compatibility)', () => {
+    const bareVEvent = [
+      'BEGIN:VEVENT',
+      'UID:legacy-001',
+      'DTSTART:20260315T100000',
+      'DTEND:20260315T110000',
+      'SUMMARY:Legacy Event',
+      'CREATED:20260101T000000',
+      'LAST-MODIFIED:20260310T120000',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const restored = deserializeCalendarEvent(bareVEvent);
+    expect(restored.uid).toBe('legacy-001');
+    expect(restored.title).toBe('Legacy Event');
+    expect(restored.startDate.getHours()).toBe(10);
+  });
+
+  // P1: forward compatibility — new VCALENDAR-wrapped items
+  it('deserialize handles VCALENDAR-wrapped VEVENT (forward compatibility)', () => {
+    const wrapped = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//SilentSuite//EN',
+      'BEGIN:VEVENT',
+      'UID:wrapped-001',
+      'DTSTART:20260315T100000',
+      'DTEND:20260315T110000',
+      'SUMMARY:Wrapped Event',
+      'CREATED:20260101T000000',
+      'LAST-MODIFIED:20260310T120000',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const restored = deserializeCalendarEvent(wrapped);
+    expect(restored.uid).toBe('wrapped-001');
+    expect(restored.title).toBe('Wrapped Event');
+    expect(restored.startDate.getHours()).toBe(10);
   });
 });
 

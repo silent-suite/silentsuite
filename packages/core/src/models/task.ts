@@ -135,9 +135,17 @@ export function fromVTodo(vtodoStr: string): Task {
 
 /**
  * Serialize a Task to a string for Etebase item content.
+ * Produces a complete VCALENDAR document (RFC 5545 compliant).
  */
 export function serializeTask(task: Task): string {
-  return toVTodo(task);
+  const vtodo = toVTodo(task);
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//SilentSuite//EN',
+    vtodo,
+    'END:VCALENDAR',
+  ].join('\r\n');
 }
 
 /**

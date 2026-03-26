@@ -169,16 +169,20 @@ describe('due date serialization', () => {
 // ── serializeTask / deserializeTask ──
 
 describe('serializeTask / deserializeTask', () => {
-  it('serialize produces a VTODO string', () => {
+  it('serialize produces a VCALENDAR-wrapped VTODO string', () => {
     const task = makeFullTask();
     const serialized = serializeTask(task);
 
     expect(typeof serialized).toBe('string');
+    expect(serialized).toContain('BEGIN:VCALENDAR');
+    expect(serialized).toContain('VERSION:2.0');
+    expect(serialized).toContain('PRODID:-//SilentSuite//EN');
     expect(serialized).toContain('BEGIN:VTODO');
     expect(serialized).toContain('END:VTODO');
+    expect(serialized).toContain('END:VCALENDAR');
   });
 
-  it('deserialize restores a Task from VTODO string', () => {
+  it('deserialize restores a Task from VCALENDAR-wrapped string', () => {
     const task = makeFullTask();
     const serialized = serializeTask(task);
     const restored = deserializeTask(serialized);
@@ -203,6 +207,46 @@ describe('serializeTask / deserializeTask', () => {
     expect(restored.due_date!.getTime()).toBe(original.due_date!.getTime());
     expect(restored.priority).toBe(original.priority);
     expect(restored.completed).toBe(original.completed);
+  });
+
+  // P1: backward compatibility — existing Etebase items stored as bare VTODO
+  it('deserialize handles legacy bare VTODO (backward compatibility)', () => {
+    const bareVTodo = [
+      'BEGIN:VTODO',
+      'UID:legacy-task-001',
+      'SUMMARY:Legacy Task',
+      'PRIORITY:5',
+      'STATUS:NEEDS-ACTION',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const restored = deserializeTask(bareVTodo);
+    expect(restored.uid).toBe('legacy-task-001');
+    expect(restored.title).toBe('Legacy Task');
+    expect(restored.priority).toBe('medium');
+    expect(restored.completed).toBe(false);
+  });
+
+  // P1: forward compatibility — new VCALENDAR-wrapped items
+  it('deserialize handles VCALENDAR-wrapped VTODO (forward compatibility)', () => {
+    const wrapped = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//SilentSuite//EN',
+      'BEGIN:VTODO',
+      'UID:wrapped-task-001',
+      'SUMMARY:Wrapped Task',
+      'PRIORITY:2',
+      'STATUS:NEEDS-ACTION',
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const restored = deserializeTask(wrapped);
+    expect(restored.uid).toBe('wrapped-task-001');
+    expect(restored.title).toBe('Wrapped Task');
+    expect(restored.priority).toBe('high');
+    expect(restored.completed).toBe(false);
   });
 });
 
