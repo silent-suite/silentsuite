@@ -15,6 +15,7 @@ import {
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import StripePaymentForm from '@/app/components/stripe-payment-form'
 
@@ -1091,16 +1092,16 @@ export default function SignupPage() {
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
     formDataRef.current = data
-    const trimmedUrl = serverUrl.trim() || undefined
-    if (trimmedUrl) {
-      localStorage.setItem('silentsuite-server-url', trimmedUrl)
+    const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
+    if (normalizedUrl) {
+      localStorage.setItem('silentsuite-server-url', normalizedUrl)
     } else {
       localStorage.removeItem('silentsuite-server-url')
     }
 
     // Create account on the server (default or custom)
     const identifier = data.email || ''
-    await createEtebaseAccount(identifier, data.password, trimmedUrl)
+    await createEtebaseAccount(identifier, data.password, normalizedUrl)
 
     // Store product updates preference in pendingSignup for later use
     const pending = useAuthStore.getState().pendingSignup
@@ -1111,7 +1112,7 @@ export default function SignupPage() {
       })
     }
 
-    const selfHosted = isSelfHosted || isCustomServer(trimmedUrl)
+    const selfHosted = isSelfHosted || isCustomServer(normalizedUrl)
     setUsingSelfHostedServer(selfHosted)
 
     if (selfHosted) {

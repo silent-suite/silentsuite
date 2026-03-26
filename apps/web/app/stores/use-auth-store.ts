@@ -57,8 +57,12 @@ const BILLING_API_URL =
 function syncAdminCookie(isAdmin: boolean) {
   if (typeof document === 'undefined') return
   const secure = window.location.protocol === 'https:' ? '; Secure' : ''
+  // Self-hosted users are always admin — use a longer cookie lifetime (7 days).
+  // SaaS users get 15 min and rely on session refresh to renew.
+  const isSH = typeof localStorage !== 'undefined' && !!localStorage.getItem('silentsuite-server-url')
+  const maxAge = (isSelfHosted || isSH) ? 7 * 24 * 60 * 60 : 15 * 60
   if (isAdmin) {
-    document.cookie = `is_admin=true; path=/; max-age=${15 * 60}; SameSite=Strict${secure}`
+    document.cookie = `is_admin=true; path=/; max-age=${maxAge}; SameSite=Strict${secure}`
   } else {
     document.cookie = `is_admin=; path=/; max-age=0; SameSite=Strict${secure}`
   }
@@ -216,6 +220,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('silentsuite-signup-in-progress')
     }
+    // Sync admin cookie so middleware allows /admin access
+    syncAdminCookie(pending.provisionedUser.isAdmin)
     set({
       user: {
         id: pending.provisionedUser.id,

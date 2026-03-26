@@ -19,7 +19,9 @@ const DEFAULT_SERVER_URL =
 
 export function isCustomServer(serverUrl?: string): boolean {
   if (!serverUrl || !serverUrl.trim()) return false
-  const trimmed = serverUrl.trim().replace(/\/+$/, '')
+  let trimmed = serverUrl.trim().replace(/\/+$/, '')
+  // Normalize: add https:// if no protocol present
+  if (!/^https?:\/\//i.test(trimmed)) trimmed = `https://${trimmed}`
   const defaultTrimmed = DEFAULT_SERVER_URL.replace(/\/+$/, '')
   return trimmed !== defaultTrimmed
 }

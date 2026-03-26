@@ -46,6 +46,8 @@ services:
       SUPER_PASS: ${SUPER_PASS}
     volumes:
       - server_data:/data
+      - ./success.html:/etebase/etebase_server/templates/success.html:ro
+      - ./etebase-server.ini:/data/etebase-server.ini
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:3735/')\""]
       interval: 30s

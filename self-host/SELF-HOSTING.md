@@ -42,29 +42,30 @@ You provide your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) to
 ## Quick Start
 
 ```bash
-git clone https://github.com/silent-suite/silentsuite.git
-cd silentsuite/self-host
-chmod +x install.sh update.sh verify.sh
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
 ```
 
 The installer will:
 1. Check that Docker and Docker Compose are installed
-2. Ask for your domain name
-3. Generate secure random passwords
-4. Write the `.env` file
-5. Pull Docker images and start the containers
-6. Wait for health checks to pass
-7. Print your admin credentials
+2. Create a `silentsuite-server/` directory
+3. Download the Docker Compose configuration
+4. Ask for your domain name
+5. Generate secure random passwords
+6. Write the `.env` file
+7. Pull Docker images and start the containers
+8. Wait for health checks to pass
+
+The first user to sign up in the SilentSuite app becomes the server admin.
 
 Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
 
 ## Manual Setup
 
-1. **Clone the repository:**
+1. **Create a directory and download the config:**
    ```bash
-   git clone https://github.com/silent-suite/silentsuite.git
-   cd silentsuite/self-host
+   mkdir silentsuite-server && cd silentsuite-server
+   curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/docker-compose.yml -o docker-compose.yml
+   curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/.env.example -o .env
    ```
 
 2. **Create the environment file:**
@@ -244,7 +245,7 @@ docker compose up -d --force-recreate server
 ### Reset everything
 ```bash
 docker compose down -v   # WARNING: Deletes all data!
-./install.sh
+curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
 ```
 
 ## Security Notes

@@ -12,6 +12,9 @@
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
+  },
+  "vars": {
+    "RESEND_AUDIENCE_ID": "c6a65bf6-cc38-4dbb-8c3d-081c409b93b4"
   }
   // N8N_CONFIRM_WEBHOOK_URL is set as a secret via:
   // npx wrangler secret put N8N_CONFIRM_WEBHOOK_URL

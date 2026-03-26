@@ -29,11 +29,22 @@ function isValidServerUrl(url: string): boolean {
   }
 }
 
+/** Normalize a server URL: trim, add https:// if no protocol present. */
+export function normalizeServerUrl(url: string): string {
+  const trimmed = url.trim()
+  if (!trimmed) return trimmed
+  if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`
+  return trimmed
+}
+
 /** Read the user's custom server URL from localStorage, falling back to the env default. */
 function getServerUrl(): string {
   if (typeof window !== 'undefined') {
     const custom = localStorage.getItem('silentsuite-server-url')
-    if (custom && custom.trim() && isValidServerUrl(custom.trim())) return custom.trim()
+    if (custom && custom.trim()) {
+      const normalized = normalizeServerUrl(custom)
+      if (isValidServerUrl(normalized)) return normalized
+    }
   }
   return DEFAULT_ETEBASE_SERVER_URL
 }

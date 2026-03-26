@@ -10,6 +10,7 @@ import { ChevronRight } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),
@@ -47,13 +48,13 @@ export default function LoginPage() {
   }, [clearError])
 
   const onSubmit = async (data: LoginFormData) => {
-    const trimmedUrl = serverUrl.trim() || undefined
-    if (trimmedUrl) {
-      localStorage.setItem('silentsuite-server-url', trimmedUrl)
+    const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
+    if (normalizedUrl) {
+      localStorage.setItem('silentsuite-server-url', normalizedUrl)
     } else {
       localStorage.removeItem('silentsuite-server-url')
     }
-    await login(data.email, data.password, trimmedUrl)
+    await login(data.email, data.password, normalizedUrl)
   }
 
   return (
