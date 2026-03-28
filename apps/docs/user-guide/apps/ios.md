@@ -1,4 +1,4 @@
-# EteSync for iOS
+# iOS Calendar & Contacts
 
 Sync your SilentSuite calendar, contacts, and reminders with the native iOS apps.
 

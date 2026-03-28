@@ -21,6 +21,22 @@ from . import db, models
 logger = logging.getLogger("silentsuite-bridge.cache")
 
 
+def _extract_uid(vobject_item):
+    """Extract UID from a vobject item, handling wrapper components.
+
+    For VCALENDAR wrappers, the UID is on the child (VEVENT, VTODO, VJOURNAL).
+    For VCARD, the UID is directly on the item.
+    """
+    if hasattr(vobject_item, "uid"):
+        return vobject_item.uid.value if hasattr(vobject_item.uid, "value") else str(vobject_item.uid)
+    # Try child components for VCALENDAR
+    for child_name in ("vevent", "vtodo", "vjournal"):
+        child = getattr(vobject_item, child_name, None)
+        if child is not None and hasattr(child, "uid"):
+            return child.uid.value if hasattr(child.uid, "value") else str(child.uid)
+    raise ValueError(f"Cannot extract UID from vobject item: {vobject_item.name}")
+
+
 def msgpack_encode(content):
     return msgpack.packb(content, use_bin_type=True)
 
@@ -144,6 +160,14 @@ class Etebase:
                         )
                         collection.deleted = True
                         collection.save()
+                        # Cascade-delete orphaned ItemEntity and HrefMapper rows
+                        for item in collection.items:
+                            models.HrefMapper.delete().where(
+                                models.HrefMapper.content == item
+                            ).execute()
+                        models.ItemEntity.delete().where(
+                            models.ItemEntity.collection == collection
+                        ).execute()
                     except models.CollectionEntity.DoesNotExist:
                         pass
 
@@ -177,6 +201,7 @@ class Etebase:
                 col_mgr.upload(col, None)
 
                 collection.dirty = False
+                collection.new = False
                 collection.save()
 
     def sync_collection(self, uid):
@@ -188,8 +213,6 @@ class Etebase:
         with db.database_proxy:
             col_mgr = self.etebase.get_collection_manager()
             cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
-            if cache_col.stoken == cache_col.local_stoken:
-                return
 
             col = col_mgr.cache_load(cache_col.eb_col)
             item_mgr = col_mgr.get_item_manager(col)
@@ -329,10 +352,13 @@ class Collection:
     def create(self, vobject_item):
         with db.database_proxy:
             item_mgr = self.col_mgr.get_item_manager(self.col)
-            item_meta = {"name": vobject_item.uid, "mtime": get_millis()}
+            # Extract UID from the child component (VEVENT, VTODO, VCARD)
+            # vobject_item may be a VCALENDAR/VCARD wrapper
+            uid = _extract_uid(vobject_item)
+            item_meta = {"name": uid, "mtime": get_millis()}
             item = item_mgr.create(item_meta, vobject_item.serialize().encode())
             cache_item = models.ItemEntity(
-                collection=self.cache_col, uid=vobject_item.uid
+                collection=self.cache_col, uid=uid
             )
             cache_item.eb_item = item_mgr.cache_save(item)
             cache_item.deleted = item.deleted
@@ -352,6 +378,13 @@ class Collection:
                 )
             except models.ItemEntity.DoesNotExist:
                 return None
+
+    def delete(self):
+        """Mark this collection as deleted and dirty so push_collection_list() will handle it."""
+        with db.database_proxy:
+            self.cache_col.deleted = True
+            self.cache_col.dirty = True
+            self.cache_col.save()
 
     def list(self):
         with db.database_proxy:

@@ -69,18 +69,28 @@ def build_radicale_configuration():
 
 
 def check_credentials():
-    """Check if any user credentials exist."""
+    """Check if any user credentials exist. If not, run browser login."""
     from .radicale.creds import Credentials
 
     creds = Credentials()
     users = creds.list_users()
 
     if not users:
-        logger.warning(
-            "No users configured. "
-            "Please authenticate first via: silentsuite-bridge --manual-login"
-        )
-        return False
+        logger.info("No users configured — starting browser login...")
+        print("\nNo account configured yet. Opening browser to sign in...\n")
+
+        from .auth_browser import browser_login
+
+        email = browser_login()
+        if not email:
+            logger.error("Login cancelled or failed.")
+            return False
+
+        # Re-check after login
+        creds = Credentials()
+        users = creds.list_users()
+        if not users:
+            return False
 
     logger.info("Found %d configured user(s): %s", len(users), ", ".join(users))
     return True
@@ -103,6 +113,54 @@ def start_tray():
         return None
 
 
+def _start_sync_threads():
+    """Start a SyncThread for each configured user at boot."""
+    from .radicale.creds import Credentials
+    from .radicale.storage import start_sync_thread
+
+    creds = Credentials()
+    users = creds.list_users()
+    for user in users:
+        start_sync_thread(user)
+
+
+def _initial_status_check():
+    """Run an initial Etebase sync and update dashboard status at startup."""
+    from .radicale.creds import Credentials
+    from .radicale.etesync_cache import etesync_for_user
+    from .web import log_sync_event, update_status
+
+    creds = Credentials()
+    users = creds.list_users()
+    if not users:
+        return
+
+    user = users[0]
+    try:
+        with etesync_for_user(user) as (etesync, _):
+            etesync.sync()
+            collections = {"calendars": 0, "contacts": 0, "tasks": 0}
+            for col in etesync.list():
+                if col.col_type == "etebase.vevent":
+                    collections["calendars"] += 1
+                elif col.col_type == "etebase.vcard":
+                    collections["contacts"] += 1
+                elif col.col_type == "etebase.vtodo":
+                    collections["tasks"] += 1
+            update_status("connected", collections=collections)
+            log_sync_event("info", f"Initial sync complete for {user}")
+            logger.info(
+                "Initial sync: %d calendars, %d contacts, %d tasks",
+                collections["calendars"],
+                collections["contacts"],
+                collections["tasks"],
+            )
+    except Exception as e:
+        logger.warning("Initial status check failed: %s", e)
+        update_status("error", error=str(e))
+        log_sync_event("error", f"Initial sync failed: {e}")
+
+
 def run_server():
     """Start the Radicale server with SilentSuite backends."""
     from radicale.server import serve
@@ -122,6 +180,12 @@ def run_server():
         config.LISTEN_PORT,
     )
 
+    # Run initial sync so dashboard shows correct status immediately
+    _initial_status_check()
+
+    # Start periodic SyncThread for all configured users
+    _start_sync_threads()
+
     # Start system tray (non-blocking)
     tray = None
     if "--no-tray" not in sys.argv:
@@ -140,13 +204,46 @@ def run_server():
 
 def main():
     """Main entry point for the bridge CLI."""
-    configure_logging()
-    config.ensure_data_dir()
-
-    # Handle --version
+    # Handle --version and --help before any side effects
     if "--version" in sys.argv:
         print(f"SilentSuite Bridge v{__version__}")
         sys.exit(0)
+
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(f"SilentSuite Bridge v{__version__}")
+        print("E2EE CalDAV/CardDAV sync daemon\n")
+        print("Usage: silentsuite-bridge [OPTIONS]\n")
+        print("Options:")
+        print("  --help, -h            Show this help message and exit")
+        print("  --version             Show version and exit")
+        print("  --login               Run browser-based login flow")
+        print("  --server URL          Etebase server URL (for self-hosters)")
+        print("  --manual-login        Run CLI login (for development/testing)")
+        print("  --install-autostart   Install auto-start for current platform")
+        print("  --remove-autostart    Remove auto-start for current platform")
+        print("  --no-tray             Start without system tray icon")
+        print()
+        print("Environment variables:")
+        print("  SILENTSUITE_SERVER_URL       Etebase server URL")
+        print("  SILENTSUITE_LISTEN_ADDRESS   Listen address (default: 127.0.0.1)")
+        print("  SILENTSUITE_LISTEN_PORT      Listen port (default: 37358)")
+        print("  SILENTSUITE_DATA_DIR         Data directory path")
+        print("  SILENTSUITE_LOG_LEVEL        Log level (default: INFO)")
+        print("  SILENTSUITE_LOG_FILE         Log file path")
+        print("  SILENTSUITE_SYNC_INTERVAL    Sync interval in seconds (default: 900)")
+        sys.exit(0)
+
+    # Handle --server before anything that uses config.ETEBASE_SERVER_URL
+    if "--server" in sys.argv:
+        idx = sys.argv.index("--server")
+        if idx + 1 < len(sys.argv):
+            config.ETEBASE_SERVER_URL = sys.argv[idx + 1]
+        else:
+            print("Error: --server requires a URL argument")
+            sys.exit(1)
+
+    configure_logging()
+    config.ensure_data_dir()
 
     # Handle --login (browser-based auth)
     if "--login" in sys.argv:

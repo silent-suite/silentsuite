@@ -184,11 +184,12 @@ Ensure `localhost:37358` is not blocked by your firewall. The bridge only listen
 
 Once the bridge is running, set up your apps:
 
-- [Thunderbird](./thunderbird.md)
+- [Thunderbird](./thunderbird.md) (Linux, macOS, Windows)
 - [macOS Calendar & Contacts](./macos.md)
+- [Windows / Outlook](./windows.md)
 - [GNOME Calendar & Contacts](./gnome.md)
-- [Evolution](./evolution.md)
-- [KDE Kontact](./kde.md)
-- [Windows Calendar & Outlook](./windows.md)
 - [iOS Calendar & Contacts](./ios.md)
-- Or any CalDAV/CardDAV-compatible app using the connection details above.
+- [Android (DAVx5)](./android.md)
+- [GNOME Evolution](./evolution.md) (also supports native Etebase)
+- [KDE Kontact](./kde.md) (also supports native Etebase)
+- [Other CalDAV/CardDAV Apps](./other.md) (em Client, BusyCal, Fantastical, and more)

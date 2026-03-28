@@ -10,7 +10,7 @@ readme = "README.md"
 license = "AGPL-3.0-only"
 requires-python = ">=3.10"
 authors = [
-    { name = "SilentSuite", email = "hello@silentsuite.io" },
+    { name = "SilentSuite", email = "info@silentsuite.io" },
 ]
 keywords = ["silentsuite", "etebase", "caldav", "carddav", "encryption", "sync", "pim"]
 classifiers = [
@@ -19,22 +19,23 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Topic :: Office/Business :: Groupware",
 ]
 dependencies = [
     "etebase>=0.31.0",
     "radicale>=3.2.0,<3.3.0",
-    "peewee>=3.14.0",
+    "peewee>=3.14.0,<4.0.0",
     "msgpack>=1.0.0",
     "vobject>=0.9.6",
     "appdirs>=1.4.3",
-    "pystray>=0.19.0",
-    "Pillow>=9.0.0",
     "requests>=2.28.0",
 ]
 
 [project.optional-dependencies]
+tray = [
+    "pystray>=0.19.0",
+    "Pillow>=9.0.0",
+]
 dev = [
     "pytest>=7.0",
     "ruff>=0.1.0",
@@ -47,7 +48,7 @@ silentsuite-bridge = "silentsuite_bridge.__main__:main"
 [project.urls]
 Homepage = "https://silentsuite.io"
 Documentation = "https://docs.silentsuite.io/bridge"
-Repository = "https://github.com/silentsuite/silentsuite-bridge"
+Repository = "https://github.com/silent-suite/silentsuite"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/silentsuite_bridge"]

@@ -33,8 +33,9 @@ For apps that don't support Etebase natively, the [SilentSuite Bridge](./dav-bri
 |---|---|---|
 | [Thunderbird](./thunderbird.md) | Linux, macOS, Windows | Yes |
 | [macOS Calendar & Contacts](./macos.md) | macOS | Yes |
-| [Windows Calendar & Outlook](./windows.md) | Windows | Yes |
-| Any CalDAV/CardDAV client | Any | Yes |
+| [Windows / Outlook](./windows.md) | Windows | Yes |
+| [GNOME Calendar & Contacts](./gnome.md) | Linux (GNOME) | Yes |
+| [Other CalDAV/CardDAV Apps](./other.md) | Any | Yes |
 
 ::: tip
 If your app supports CalDAV/CardDAV, it works with SilentSuite through the DAV bridge. Set up the [SilentSuite Bridge](./dav-bridge.md) first, then point your app at `http://localhost:37358/`.

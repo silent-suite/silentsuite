@@ -10,6 +10,7 @@ Serves a status dashboard at the bridge root URL showing:
 Integrates with Radicale's web module system.
 """
 
+import html
 import json
 import logging
 import time
@@ -188,6 +189,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="container">
         <h1>SilentSuite Bridge</h1>
         <div class="version">v{{VERSION}}</div>
+        <div style="background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:10px 14px;margin-bottom:20px;font-size:13px;color:#888;">
+            Tip: Bookmark this page to easily find your connection details.
+        </div>
 
         {{ERROR_BANNER}}
 
@@ -205,6 +209,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span class="info-value">{{LAST_SYNC}}</span>
                 <span class="info-label">Collections</span>
                 <span class="info-value">{{COLLECTIONS}}</span>
+                <span class="info-label">Sync interval</span>
+                <span class="info-value">{{SYNC_INTERVAL_DISPLAY}}</span>
             </div>
 
             <div class="url-section">
@@ -214,31 +220,104 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         <label>CalDAV (Calendars + Tasks)</label>
                         <code id="caldavUrl">{{CALDAV_URL}}</code>
                     </div>
-                    <button class="copy-btn" onclick="copy('caldavUrl')">Copy</button>
+                    <button class="copy-btn" onclick="copy(event, 'caldavUrl')">Copy</button>
                 </div>
                 <div class="url-box">
                     <div>
                         <label>CardDAV (Contacts)</label>
                         <code id="carddavUrl">{{CARDDAV_URL}}</code>
                     </div>
-                    <button class="copy-btn" onclick="copy('carddavUrl')">Copy</button>
+                    <button class="copy-btn" onclick="copy(event, 'carddavUrl')">Copy</button>
                 </div>
             </div>
         </div>
+
+        <div class="status-card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+            <button id="syncNowBtn" class="copy-btn" style="padding:8px 18px;font-size:13px;background:#1a7f37;color:#fff;" onclick="triggerSync()">Sync Now</button>
+            <label style="font-size:13px;color:#888;">Sync every</label>
+            <select id="syncInterval" onchange="updateInterval()" style="background:#111;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px 10px;font-size:13px;">
+                <option value="60">1 min</option>
+                <option value="300">5 min</option>
+                <option value="900">15 min</option>
+                <option value="1800">30 min</option>
+                <option value="3600">1 hr</option>
+            </select>
+            <span id="syncIntervalStatus" style="font-size:12px;color:#555;"></span>
+        </div>
+        <script>
+            (function() {
+                var sel = document.getElementById('syncInterval');
+                sel.value = '{{SYNC_INTERVAL}}';
+                // fallback if value doesn't match any option
+                if (sel.selectedIndex === -1) sel.value = '900';
+            })();
+            function triggerSync() {
+                var btn = document.getElementById('syncNowBtn');
+                btn.textContent = 'Syncing...';
+                btn.disabled = true;
+                fetch('/.web/api/sync', {method:'POST'})
+                    .then(function(r) { return r.json(); })
+                    .then(function() { btn.textContent = 'Done!'; setTimeout(function() { location.reload(); }, 1000); })
+                    .catch(function() { btn.textContent = 'Error'; })
+                    .finally(function() { setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Now'; }, 3000); });
+            }
+            function updateInterval() {
+                var val = document.getElementById('syncInterval').value;
+                var st = document.getElementById('syncIntervalStatus');
+                fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({syncInterval: parseInt(val)})})
+                    .then(function(r) { return r.json(); })
+                    .then(function() { st.textContent = 'Saved'; setTimeout(function() { st.textContent = ''; }, 2000); })
+                    .catch(function() { st.textContent = 'Error'; });
+            }
+        </script>
 
         <div class="status-card log-section">
             <h3>Sync Log</h3>
             {{SYNC_LOG}}
         </div>
+
+        <div class="status-card">
+            <h3 style="font-size:14px;color:#888;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px;">Setup Guides</h3>
+            <div style="font-size:14px;line-height:2;color:#ccc;">
+                <a href="https://docs.silentsuite.io/user-guide/apps/windows" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Outlook</a> &middot;
+                <a href="https://docs.silentsuite.io/user-guide/apps/thunderbird" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Thunderbird</a> &middot;
+                <a href="https://docs.silentsuite.io/user-guide/apps/macos" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Apple (macOS/iOS)</a> &middot;
+                <a href="https://docs.silentsuite.io/user-guide/apps/gnome" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">GNOME Calendar/Contacts</a> &middot;
+                <a href="https://docs.silentsuite.io/user-guide/apps/android" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">DAVx5 (Android)</a> &middot;
+                <a href="https://docs.silentsuite.io/user-guide/apps/evolution" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Evolution</a> &middot;
+                <a href="https://docs.silentsuite.io/user-guide/apps/kde" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">KDE</a>
+            </div>
+            <div style="margin-top:12px;font-size:13px;">
+                <a href="https://docs.silentsuite.io/user-guide/apps/dav-bridge" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Full documentation at docs.silentsuite.io &rarr;</a>
+            </div>
+        </div>
     </div>
     <script>
-        function copy(id) {
-            const text = document.getElementById(id).textContent;
-            navigator.clipboard.writeText(text).then(() => {
-                const btn = event.target;
-                btn.textContent = 'Copied!';
-                setTimeout(() => btn.textContent = 'Copy', 2000);
-            });
+        function copy(event, id) {
+            var text = document.getElementById(id).textContent;
+            var btn = event.currentTarget;
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(function() {
+                    btn.textContent = 'Copied!';
+                    setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+                }).catch(function() {
+                    fallbackCopy(text, btn);
+                });
+            } else {
+                fallbackCopy(text, btn);
+            }
+        }
+        function fallbackCopy(text, btn) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); btn.textContent = 'Copied!'; }
+            catch(e) { btn.textContent = 'Failed'; }
+            document.body.removeChild(ta);
+            setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
         }
     </script>
 </body>
@@ -248,6 +327,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 def _render_dashboard():
     """Render the dashboard HTML with current status."""
     from .. import __version__
+
+    def esc(value):
+        return html.escape(str(value))
 
     creds = Credentials()
     users = creds.list_users()
@@ -272,37 +354,49 @@ def _render_dashboard():
 
     error_banner = ""
     if _bridge_status.get("error"):
-        error_banner = f'<div class="error-banner">{_bridge_status["error"]}</div>'
+        error_banner = f'<div class="error-banner">{esc(_bridge_status["error"])}</div>'
 
     # Build sync log HTML
     if _sync_log:
         log_html = ""
         for entry in list(_sync_log)[:20]:
-            type_class = f"type-{entry['type']}"
+            entry_type = esc(entry['type'])
+            type_class = f"type-{entry_type}"
             log_html += (
                 f'<div class="log-entry">'
-                f'<span class="time">{entry["time"]}</span>'
-                f'<span class="{type_class}">[{entry["type"]}]</span> '
-                f'{entry["message"]}'
+                f'<span class="time">{esc(entry["time"])}</span>'
+                f'<span class="{type_class}">[{entry_type}]</span> '
+                f'{esc(entry["message"])}'
                 f'</div>'
             )
     else:
         log_html = '<div class="log-empty">No sync activity yet</div>'
 
-    html = DASHBOARD_HTML
-    html = html.replace("{{VERSION}}", __version__)
-    html = html.replace("{{ERROR_BANNER}}", error_banner)
-    html = html.replace("{{STATUS_STATE}}", state)
-    html = html.replace("{{STATUS_TEXT}}", status_text)
-    html = html.replace("{{USER_EMAIL}}", email)
-    html = html.replace("{{SERVER_URL}}", config.ETEBASE_SERVER_URL)
-    html = html.replace("{{LAST_SYNC}}", last_sync or "Never")
-    html = html.replace("{{COLLECTIONS}}", col_text)
-    html = html.replace("{{CALDAV_URL}}", caldav_url)
-    html = html.replace("{{CARDDAV_URL}}", carddav_url)
-    html = html.replace("{{SYNC_LOG}}", log_html)
+    page = DASHBOARD_HTML
+    page = page.replace("{{VERSION}}", esc(__version__))
+    page = page.replace("{{ERROR_BANNER}}", error_banner)
+    page = page.replace("{{STATUS_STATE}}", esc(state))
+    page = page.replace("{{STATUS_TEXT}}", esc(status_text))
+    page = page.replace("{{USER_EMAIL}}", esc(email))
+    page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
+    page = page.replace("{{LAST_SYNC}}", esc(last_sync or "Never"))
+    page = page.replace("{{COLLECTIONS}}", esc(col_text))
+    page = page.replace("{{CALDAV_URL}}", esc(caldav_url))
+    page = page.replace("{{CARDDAV_URL}}", esc(carddav_url))
+    page = page.replace("{{SYNC_LOG}}", log_html)
 
-    return html
+    # Sync interval display
+    interval = config.SYNC_INTERVAL
+    if interval >= 3600:
+        interval_display = f"{interval // 3600} hr"
+    elif interval >= 60:
+        interval_display = f"{interval // 60} min"
+    else:
+        interval_display = f"{interval} sec"
+    page = page.replace("{{SYNC_INTERVAL}}", str(interval))
+    page = page.replace("{{SYNC_INTERVAL_DISPLAY}}", esc(interval_display))
+
+    return page
 
 
 class Web(BaseWeb):
@@ -331,6 +425,74 @@ class Web(BaseWeb):
                 200,
                 {"Content-Type": "application/json"},
                 json.dumps(data).encode(),
+            )
+
+        # API endpoint for current settings
+        if path == "/.web/api/settings":
+            data = {"syncInterval": config.SYNC_INTERVAL}
+            return (
+                200,
+                {"Content-Type": "application/json"},
+                json.dumps(data).encode(),
+            )
+
+        return (404, {}, b"Not found")
+
+    def post(self, environ, base_prefix, path, user):
+        """Handle POST requests for API endpoints."""
+        from ..radicale.storage import get_sync_thread, _sync_threads
+
+        content_length = int(environ.get("CONTENT_LENGTH", 0) or 0)
+        body = environ["wsgi.input"].read(content_length) if content_length else b""
+
+        # Trigger immediate sync
+        if path == "/.web/api/sync":
+            for thread in _sync_threads.values():
+                if thread.is_alive():
+                    thread.force_sync()
+                    thread.wait_for_sync(30)
+            log_sync_event("info", "Manual sync triggered from dashboard")
+            return (
+                200,
+                {"Content-Type": "application/json"},
+                json.dumps({"ok": True}).encode(),
+            )
+
+        # Update settings
+        if path == "/.web/api/settings":
+            try:
+                data = json.loads(body)
+            except (json.JSONDecodeError, ValueError):
+                return (
+                    400,
+                    {"Content-Type": "application/json"},
+                    json.dumps({"error": "Invalid JSON"}).encode(),
+                )
+
+            if "syncInterval" in data:
+                new_interval = int(data["syncInterval"])
+                if new_interval < 30:
+                    new_interval = 30  # enforce minimum
+
+                # Save to settings.json
+                settings = config.get_settings()
+                settings["syncInterval"] = new_interval
+                config.save_settings(settings)
+
+                # Update running config
+                config.SYNC_INTERVAL = new_interval
+
+                # Update all running SyncThreads
+                for thread in _sync_threads.values():
+                    if thread.is_alive():
+                        thread.set_interval(new_interval)
+
+                log_sync_event("info", f"Sync interval changed to {new_interval}s")
+
+            return (
+                200,
+                {"Content-Type": "application/json"},
+                json.dumps({"ok": True, "syncInterval": config.SYNC_INTERVAL}).encode(),
             )
 
         return (404, {}, b"Not found")

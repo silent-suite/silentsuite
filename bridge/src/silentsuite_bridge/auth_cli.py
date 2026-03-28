@@ -7,6 +7,7 @@ Provides a simple terminal-based login flow for early development.
 import getpass
 import hashlib
 import logging
+import os
 import sys
 
 from etebase import Account, Client
@@ -54,20 +55,28 @@ def manual_login():
     print("Saving credentials...")
 
     creds = Credentials()
+    # Clear any existing users — bridge supports one account at a time
+    for old_user in creds.list_users():
+        creds.delete(old_user)
     creds.set_etebase(
         username,
         etebase.save(None),
         config.ETEBASE_SERVER_URL,
     )
 
-    # Store password hash for CalDAV client auth
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    # Store password hash for CalDAV client auth (PBKDF2)
+    salt = os.urandom(32)
+    password_hash = hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt, 600000,
+    ).hex()
+    creds.set_password_salt(username, salt.hex())
     creds.set_password_hash(username, password_hash)
 
     creds.save()
 
     print()
     print("Setup complete!")
+    print(f"Etebase server: {config.ETEBASE_SERVER_URL}")
     print(f"CalDAV/CardDAV URL: http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{username}/")
     print(f"Username: {username}")
     print("Password: (your SilentSuite password)")

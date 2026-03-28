@@ -69,5 +69,4 @@ def etesync_for_user(user):
     """Get an Etebase session for a user (thread-safe, cached)."""
     with _get_etesync_lock:
         ret = _etesync_cache.etesync_for_user(user)
-
-    yield ret
+        yield ret

@@ -13,9 +13,11 @@ In the future, this will redirect to app.silentsuite.io/bridge-auth.
 """
 
 import hashlib
+import html as html_mod
 import http.server
 import json
 import logging
+import os
 import socket
 import threading
 import urllib.parse
@@ -82,7 +84,7 @@ AUTH_PAGE_HTML = """<!DOCTYPE html>
             font-size: 14px;
             color: #ccc;
         }
-        input[type="email"], input[type="password"] {
+        input[type="email"], input[type="password"], input[type="url"] {
             width: 100%;
             padding: 12px 14px;
             background: #111;
@@ -149,6 +151,18 @@ AUTH_PAGE_HTML = """<!DOCTYPE html>
             <input type="password" id="password" name="password" required
                    placeholder="Your SilentSuite password">
 
+            <details style="margin-bottom:16px;">
+                <summary style="cursor:pointer;font-size:13px;color:#888;list-style:none;display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:10px;color:#666;">&#9654;</span> Advanced
+                </summary>
+                <div style="margin-top:10px;">
+                    <label for="server_url">Server URL</label>
+                    <input type="url" id="server_url" name="server_url"
+                           value="SERVER_URL"
+                           placeholder="https://server.silentsuite.io">
+                </div>
+            </details>
+
             <button type="submit" id="submitBtn">Sign In</button>
         </form>
         <div class="spinner" id="spinner">Authenticating...</div>
@@ -203,102 +217,352 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background: #0a0a0a;
             color: #e0e0e0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
+            padding: 40px 20px;
         }
-        .container {
+        .container { max-width: 680px; margin: 0 auto; }
+        .hero {
             background: #1a1a1a;
             border: 1px solid #333;
             border-radius: 12px;
             padding: 40px;
-            max-width: 520px;
-            width: 100%;
+            text-align: center;
+            margin-bottom: 20px;
         }
+        .check { font-size: 48px; margin-bottom: 16px; }
         h1 { font-size: 24px; margin-bottom: 8px; color: #4ade80; }
-        .subtitle { color: #888; margin-bottom: 24px; font-size: 14px; }
+        .subtitle { color: #888; margin-bottom: 16px; font-size: 14px; }
         .url-box {
             background: #111;
-            border: 1px solid #333;
+            border: 1px solid #2a2a2a;
             border-radius: 8px;
-            padding: 14px;
-            margin-bottom: 12px;
+            padding: 12px 14px;
+            margin: 12px 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            text-align: left;
         }
         .url-box label {
             font-size: 12px;
-            color: #888;
+            color: #666;
             display: block;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
         }
-        .url-box code {
-            color: #fff;
-            font-size: 14px;
-        }
+        .url-box code { color: #fff; font-size: 13px; }
         .copy-btn {
             background: #333;
             color: #fff;
             border: none;
             border-radius: 6px;
-            padding: 8px 14px;
+            padding: 6px 12px;
             cursor: pointer;
-            font-size: 12px;
-            white-space: nowrap;
+            font-size: 11px;
+            flex-shrink: 0;
         }
         .copy-btn:hover { background: #444; }
-        .info {
-            background: #0a1a15;
-            border: 1px solid #1a3a2a;
+        .url-note {
+            color: #666;
+            font-size: 12px;
+            margin-top: 8px;
+            font-style: italic;
+        }
+        .bookmark-box {
+            background: #0a2a1a;
+            border: 1px solid #166534;
             border-radius: 8px;
-            padding: 14px;
-            margin-top: 20px;
+            padding: 14px 16px;
+            margin: 16px 0;
+            font-size: 14px;
+            color: #4ade80;
+            text-align: left;
+        }
+        .bookmark-box a {
+            color: #fff;
+            text-decoration: underline;
+        }
+        .next-step {
+            background: #111;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-top: 16px;
             font-size: 13px;
             color: #aaa;
+            text-align: left;
         }
-        .info strong { color: #ccc; }
+        .next-step strong { color: #ccc; }
+        .next-step code {
+            background: #0a0a0a;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #4ade80;
+            font-size: 12px;
+        }
+
+        .card {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .card h2 {
+            font-size: 16px;
+            color: #fff;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        details {
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            overflow: hidden;
+        }
+        summary {
+            padding: 12px 16px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            color: #ccc;
+            background: #111;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        summary::-webkit-details-marker { display: none; }
+        summary::before {
+            content: "\\25B6";
+            font-size: 10px;
+            color: #666;
+            transition: transform 0.2s;
+        }
+        details[open] summary::before { transform: rotate(90deg); }
+        summary:hover { background: #1a1a1a; }
+        .guide-content {
+            padding: 16px;
+            font-size: 13px;
+            line-height: 1.7;
+            color: #aaa;
+            border-top: 1px solid #2a2a2a;
+        }
+        .guide-content ol {
+            padding-left: 20px;
+            margin: 8px 0;
+        }
+        .guide-content li { margin-bottom: 6px; }
+        .guide-content code {
+            background: #0a0a0a;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #4ade80;
+            font-size: 12px;
+        }
+        .guide-content strong { color: #ccc; }
+        .guide-content .doc-link {
+            display: inline-block;
+            margin-top: 10px;
+            color: #4ade80;
+            text-decoration: none;
+            font-size: 12px;
+        }
+        .guide-content .doc-link:hover { text-decoration: underline; }
+
+        .docs-link {
+            text-align: center;
+            padding: 16px;
+            font-size: 13px;
+            color: #888;
+        }
+        .docs-link a { color: #4ade80; text-decoration: none; }
+        .docs-link a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Bridge Connected</h1>
-        <p class="subtitle">Signed in as <strong>USER_EMAIL</strong></p>
-
-        <div class="url-box">
-            <div>
-                <label>CalDAV URL (Calendars + Tasks)</label>
-                <code id="caldavUrl">CALDAV_URL</code>
+        <div class="hero">
+            <div class="check">&#10003;</div>
+            <h1>Login successful</h1>
+            <p class="subtitle">Signed in as <strong>USER_EMAIL</strong></p>
+            <div class="url-box">
+                <div>
+                    <label>CalDAV / CardDAV URL</label>
+                    <code id="bridgeUrl">BRIDGE_URL</code>
+                </div>
+                <button class="copy-btn" onclick="copyUrl(event, 'bridgeUrl')">Copy</button>
             </div>
-            <button class="copy-btn" onclick="copy('caldavUrl')">Copy</button>
+            <p class="url-note">CalDAV and CardDAV share the same base URL &mdash; this is normal. Your app will discover calendars and contacts automatically.</p>
+            <div class="bookmark-box">
+                &#11088; Bookmark <a href="DASHBOARD_URL">DASHBOARD_URL</a> to find these details later
+            </div>
+            <div class="next-step">
+                <strong>Next step:</strong> You can close this tab. Start the bridge with <code>./silentsuite-bridge</code> to begin syncing.<br>
+                The dashboard will be at <code>DASHBOARD_URL</code>
+            </div>
         </div>
 
-        <div class="url-box">
-            <div>
-                <label>CardDAV URL (Contacts)</label>
-                <code id="carddavUrl">CARDDAV_URL</code>
-            </div>
-            <button class="copy-btn" onclick="copy('carddavUrl')">Copy</button>
+        <div class="card">
+            <h2>Connect Your Apps</h2>
+
+            <details>
+                <summary>Outlook (CalDav Synchronizer)</summary>
+                <div class="guide-content">
+                    <ol>
+                        <li>Download and install the free <strong><a href="https://caldavsynchronizer.org/" target="_blank" rel="noopener" style="color:#4ade80;">CalDav Synchronizer</a></strong> plugin for Outlook.</li>
+                        <li>Restart Outlook after installation.</li>
+                        <li>Go to the <strong>CalDav Synchronizer</strong> tab in the ribbon and click <strong>Synchronization Profiles</strong>.</li>
+                        <li>Click the <strong>+</strong> (Add) button to create a new profile.</li>
+                        <li>Select <strong>Generic CalDAV/CardDAV</strong> as the profile type.</li>
+                        <li>Set the <strong>DAV URL</strong> to: <code>BRIDGE_URL</code></li>
+                        <li>Enter your <strong>SilentSuite email</strong> as the username and your <strong>SilentSuite password</strong>.</li>
+                        <li>Choose the Outlook folder to sync with (e.g. your default Calendar).</li>
+                        <li>Click <strong>Test or discover settings</strong> to verify the connection.</li>
+                        <li>Click <strong>OK</strong> to save. For contacts, create a second profile with the same URL and select your Contacts folder.</li>
+                    </ol>
+                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/windows" target="_blank" rel="noopener">Full Outlook guide &#8594;</a>
+                </div>
+            </details>
+
+            <details>
+                <summary>Thunderbird</summary>
+                <div class="guide-content">
+                    <ol>
+                        <li>Open <strong>Thunderbird</strong> and switch to the <strong>Calendar</strong> tab (or press <code>Ctrl+Shift+C</code>).</li>
+                        <li>Right-click in the calendar list on the left and select <strong>New Calendar...</strong></li>
+                        <li>Choose <strong>On the Network</strong> and click <strong>Next</strong>.</li>
+                        <li>Select <strong>CalDAV</strong> format and enter the URL: <code>BRIDGE_URL</code></li>
+                        <li>When prompted, enter your <strong>SilentSuite email</strong> and <strong>password</strong>.</li>
+                        <li>Thunderbird will discover your calendars. Select the ones you want and click <strong>Subscribe</strong>.</li>
+                        <li>For contacts: open the <strong>Address Book</strong>, click <strong>New Address Book</strong> &gt; <strong>Add CardDAV Address Book</strong>.</li>
+                        <li>Enter the same URL: <code>BRIDGE_URL</code> and your credentials.</li>
+                    </ol>
+                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/thunderbird" target="_blank" rel="noopener">Full Thunderbird guide &#8594;</a>
+                </div>
+            </details>
+
+            <details>
+                <summary>Apple Calendar &amp; Contacts (macOS + iOS)</summary>
+                <div class="guide-content">
+                    <strong>macOS:</strong>
+                    <ol>
+                        <li>Open <strong>System Settings</strong> (or System Preferences on older macOS) and go to <strong>Internet Accounts</strong>.</li>
+                        <li>Click <strong>Add Other Account...</strong> then select <strong>CalDAV Account</strong>.</li>
+                        <li>Set the Account Type to <strong>Manual</strong>.</li>
+                        <li>Enter your <strong>SilentSuite email</strong> as the username, your <strong>password</strong>, and the server address: <code>BRIDGE_URL</code></li>
+                        <li>Click <strong>Sign In</strong>. macOS Calendar will discover your calendars automatically.</li>
+                        <li>To add contacts: repeat steps 1-2 but choose <strong>CardDAV Account</strong> and enter the same server URL and credentials.</li>
+                    </ol>
+                    <strong>iOS / iPadOS:</strong>
+                    <ol>
+                        <li>Go to <strong>Settings &gt; Calendar &gt; Accounts &gt; Add Account &gt; Other</strong>.</li>
+                        <li>Tap <strong>Add CalDAV Account</strong>.</li>
+                        <li>Enter the server URL: <code>BRIDGE_URL</code>, your SilentSuite email, and password.</li>
+                        <li>Tap <strong>Next</strong> to verify and save.</li>
+                        <li>For contacts: go back to <strong>Other</strong> and tap <strong>Add CardDAV Account</strong> with the same details.</li>
+                    </ol>
+                    <p><em>Note: Your iOS device needs network access to your bridge host (e.g. via Tailscale or LAN).</em></p>
+                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/macos" target="_blank" rel="noopener">Full macOS guide &#8594;</a>
+                    &nbsp;
+                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/ios" target="_blank" rel="noopener">Full iOS guide &#8594;</a>
+                </div>
+            </details>
+
+            <details>
+                <summary>GNOME Calendar &amp; Contacts</summary>
+                <div class="guide-content">
+                    <ol>
+                        <li>Open <strong>GNOME Settings</strong> and go to <strong>Online Accounts</strong>.</li>
+                        <li>Click <strong>Other</strong> (on GNOME 46+ you may see a dedicated <strong>CalDAV / CardDAV</strong> option).</li>
+                        <li>Select <strong>CalDAV</strong> or <strong>GNOME Online Account (WebDAV)</strong>.</li>
+                        <li>Enter the URL: <code>BRIDGE_URL</code></li>
+                        <li>Enter your <strong>SilentSuite email</strong> as the username and your <strong>password</strong>.</li>
+                        <li>Toggle on <strong>Calendar</strong> and <strong>Contacts</strong>.</li>
+                        <li>GNOME Calendar and GNOME Contacts will both discover your data automatically.</li>
+                    </ol>
+                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/gnome" target="_blank" rel="noopener">Full GNOME guide &#8594;</a>
+                </div>
+            </details>
+
+            <details>
+                <summary>DAVx&#8309; (Android)</summary>
+                <div class="guide-content">
+                    <ol>
+                        <li>Install <strong>DAVx&#8309;</strong> from <a href="https://f-droid.org/packages/at.bitfire.davdroid/" target="_blank" rel="noopener" style="color:#4ade80;">F-Droid</a> or <a href="https://play.google.com/store/apps/details?id=at.bitfire.davdroid" target="_blank" rel="noopener" style="color:#4ade80;">Google Play</a>.</li>
+                        <li>Open DAVx&#8309; and tap the <strong>+</strong> button to add a new account.</li>
+                        <li>Select <strong>Login with URL and user name</strong>.</li>
+                        <li>Enter the base URL: <code>BRIDGE_URL</code></li>
+                        <li>Enter your <strong>SilentSuite email</strong> as the user name and your <strong>password</strong>.</li>
+                        <li>Tap <strong>Login</strong>. DAVx&#8309; will discover your calendars, tasks, and address books.</li>
+                        <li>Select the collections you want to sync and tap the sync icon.</li>
+                        <li>Your data will now appear in your Android Calendar, Contacts, and Tasks apps.</li>
+                    </ol>
+                    <p><em>Note: Your Android device needs network access to your bridge host (e.g. via Tailscale or LAN).</em></p>
+                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/android" target="_blank" rel="noopener">Full Android guide &#8594;</a>
+                </div>
+            </details>
+
+            <details>
+                <summary>Evolution</summary>
+                <div class="guide-content">
+                    <ol>
+                        <li>Open <strong>Evolution</strong> and go to <strong>Edit &gt; Accounts</strong> (or <strong>File &gt; New &gt; Calendar</strong>).</li>
+                        <li>Click <strong>Add</strong> and choose <strong>CalDAV</strong> as the type.</li>
+                        <li>Enter the URL: <code>BRIDGE_URL</code></li>
+                        <li>Enter your <strong>SilentSuite email</strong> and <strong>password</strong>.</li>
+                        <li>Click <strong>Find Calendars</strong> to discover available collections, then select the ones you want.</li>
+                        <li>For contacts: go to <strong>File &gt; New &gt; Address Book</strong>, choose <strong>CardDAV</strong>, and enter the same URL and credentials.</li>
+                    </ol>
+                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/evolution" target="_blank" rel="noopener">Full Evolution guide &#8594;</a>
+                </div>
+            </details>
+
+            <details>
+                <summary>Other CalDAV/CardDAV App</summary>
+                <div class="guide-content">
+                    <p>Any app that supports the <strong>CalDAV</strong> or <strong>CardDAV</strong> protocol can connect to SilentSuite Bridge. You will need:</p>
+                    <ol>
+                        <li><strong>Server URL:</strong> <code>BRIDGE_URL</code></li>
+                        <li><strong>Username:</strong> your SilentSuite email address (<code>USER_EMAIL</code>)</li>
+                        <li><strong>Password:</strong> your SilentSuite password</li>
+                    </ol>
+                    <p style="margin-top:8px;">Most apps have an <strong>"Add CalDAV account"</strong>, <strong>"Add internet calendar"</strong>, or <strong>"Add WebDAV account"</strong> option in their settings. Enter the details above and the app will auto-discover your calendars, contacts, and tasks.</p>
+                    <p style="margin-top:8px;"><em>If the app asks for separate CalDAV and CardDAV URLs, use the same URL for both &mdash; the bridge handles discovery automatically.</em></p>
+                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/dav-bridge" target="_blank" rel="noopener">Full documentation &#8594;</a>
+                </div>
+            </details>
         </div>
 
-        <div class="info">
-            <strong>Next steps:</strong> Add these URLs to your calendar/contacts app
-            (Thunderbird, Apple Calendar, GNOME Calendar, etc.).
-            Use your SilentSuite email and password when prompted.<br><br>
-            <strong>Username:</strong> USER_EMAIL<br>
-            <strong>Password:</strong> Your SilentSuite password<br><br>
-            You can close this tab. The bridge is running in the background.
+        <div class="docs-link">
+            <a href="https://docs.silentsuite.io/user-guide/apps/dav-bridge" target="_blank" rel="noopener">Full documentation at docs.silentsuite.io &#8594;</a>
         </div>
     </div>
     <script>
-        function copy(id) {
-            const text = document.getElementById(id).textContent;
-            navigator.clipboard.writeText(text).then(() => {
-                const btn = event.target;
-                btn.textContent = 'Copied!';
-                setTimeout(() => btn.textContent = 'Copy', 2000);
-            });
+        function copyUrl(event, id) {
+            var text = document.getElementById(id).textContent;
+            var btn = event.currentTarget;
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(function() {
+                    btn.textContent = 'Copied!';
+                    setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+                }).catch(function() {
+                    fallbackCopy(text, btn);
+                });
+            } else {
+                fallbackCopy(text, btn);
+            }
+        }
+        function fallbackCopy(text, btn) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); btn.textContent = 'Copied!'; }
+            catch(e) { btn.textContent = 'Failed'; }
+            document.body.removeChild(ta);
+            setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
         }
     </script>
 </body>
@@ -315,7 +579,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/auth"):
-            html = AUTH_PAGE_HTML.replace("SERVER_URL", config.ETEBASE_SERVER_URL)
+            html = AUTH_PAGE_HTML.replace("SERVER_URL", html_mod.escape(config.ETEBASE_SERVER_URL))
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
@@ -323,19 +587,18 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
         elif self.path.startswith("/success"):
             params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             email = params.get("email", [""])[0]
-            base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}"
-            caldav_url = f"{base_url}/{email}/"
-            carddav_url = f"{base_url}/{email}/"
+            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
+            bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
 
-            html = SUCCESS_PAGE_HTML
-            html = html.replace("USER_EMAIL", email)
-            html = html.replace("CALDAV_URL", caldav_url)
-            html = html.replace("CARDDAV_URL", carddav_url)
+            page = SUCCESS_PAGE_HTML
+            page = page.replace("USER_EMAIL", html_mod.escape(email))
+            page = page.replace("BRIDGE_URL", html_mod.escape(bridge_url))
+            page = page.replace("DASHBOARD_URL", html_mod.escape(dashboard_url))
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
-            self.wfile.write(html.encode())
+            self.wfile.write(page.encode())
 
             # Signal auth complete after a short delay to ensure page renders
             threading.Timer(1.0, self._signal_complete).start()
@@ -349,6 +612,9 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             params = urllib.parse.parse_qs(body)
             email = params.get("email", [""])[0]
             password = params.get("password", [""])[0]
+            server_url = params.get("server_url", [config.ETEBASE_SERVER_URL])[0].strip()
+            if not server_url:
+                server_url = config.ETEBASE_SERVER_URL
 
             if not email or not password:
                 self._json_response(400, {
@@ -359,7 +625,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
 
             # Authenticate with Etebase
             try:
-                client = Client("silentsuite-bridge", config.ETEBASE_SERVER_URL)
+                client = Client("silentsuite-bridge", server_url)
                 etebase = Account.login(client, email, password)
             except Exception as e:
                 error_msg = str(e)
@@ -377,22 +643,34 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 })
                 return
 
-            # Store credentials
+            # Update runtime config if a custom server URL was provided
+            if server_url != config.ETEBASE_SERVER_URL:
+                config.ETEBASE_SERVER_URL = server_url
+
+            # Store credentials — clear any existing users first
+            # (bridge supports one account at a time)
             creds = Credentials()
+            for old_user in creds.list_users():
+                creds.delete(old_user)
             creds.set_etebase(
                 email,
                 etebase.save(None),
-                config.ETEBASE_SERVER_URL,
+                server_url,
             )
 
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            salt = os.urandom(32)
+            password_hash = hashlib.pbkdf2_hmac(
+                "sha256", password.encode(), salt, 600000,
+            ).hex()
+            creds.set_password_salt(email, salt.hex())
             creds.set_password_hash(email, password_hash)
             creds.save()
 
             logger.info("Authentication successful for %s", email)
 
-            # Store the email for the success handler
+            # Store the email and server URL for the success handler
             self.server.authenticated_email = email
+            self.server.authenticated_server_url = server_url
 
             redirect_url = f"/success?email={urllib.parse.quote(email)}"
             self._json_response(200, {
@@ -434,6 +712,7 @@ def browser_login():
     server = http.server.HTTPServer(("127.0.0.1", port), AuthCallbackHandler)
     server.auth_complete = threading.Event()
     server.authenticated_email = None
+    server.authenticated_server_url = config.ETEBASE_SERVER_URL
 
     auth_url = f"http://127.0.0.1:{port}/"
 
@@ -466,8 +745,15 @@ def browser_login():
 
     email = server.authenticated_email
     if email:
-        print(f"Authenticated as {email}")
-        print(f"CalDAV/CardDAV URL: http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/")
-        print(f"\nStart the bridge with: silentsuite-bridge\n")
+        used_server = server.authenticated_server_url
+        dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
+        base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+        print(f"\n  Login successful! Now start the bridge daemon:")
+        print(f"    ./silentsuite-bridge")
+        print()
+        print(f"  Etebase server: {used_server}")
+        print(f"  Dashboard will be available at: {dashboard_url}")
+        print(f"  CalDAV/CardDAV URL for your apps: {base_url}")
+        print(f"\n  Full setup guides: https://docs.silentsuite.io/user-guide/apps/dav-bridge\n")
 
     return email

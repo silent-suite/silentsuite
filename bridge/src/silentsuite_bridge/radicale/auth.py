@@ -6,7 +6,9 @@ auth flow has already proven the user's identity.
 """
 
 import hashlib
+import hmac
 import logging
+import os
 
 from radicale.auth import BaseAuth
 
@@ -49,10 +51,31 @@ class Auth(BaseAuth):
             )
             return ""
 
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
-        if password_hash == stored_hash:
-            logger.debug("Successful login for user: %s", login)
-            return login
+        stored_salt = self._creds.get_password_salt(login)
+        if stored_salt:
+            # PBKDF2 verification
+            password_hash = hashlib.pbkdf2_hmac(
+                "sha256", password.encode(), bytes.fromhex(stored_salt), 600000,
+            ).hex()
+        else:
+            # Legacy SHA-256 fallback for existing credentials
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
 
-        logger.warning("Invalid password for user: %s", login)
-        return ""
+        if not hmac.compare_digest(password_hash, stored_hash):
+            logger.warning("Invalid password for user: %s", login)
+            return ""
+
+        logger.debug("Successful login for user: %s", login)
+
+        # Auto-upgrade legacy SHA-256 hashes to PBKDF2
+        if not stored_salt:
+            logger.info("Upgrading password hash to PBKDF2 for user: %s", login)
+            new_salt = os.urandom(32)
+            new_hash = hashlib.pbkdf2_hmac(
+                "sha256", password.encode(), new_salt, 600000,
+            ).hex()
+            self._creds.set_password_salt(login, new_salt.hex())
+            self._creds.set_password_hash(login, new_hash)
+            self._creds.save()
+
+        return login

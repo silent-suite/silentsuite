@@ -1,0 +1,299 @@
+name: Build Bridge Binaries
+
+on:
+  push:
+    tags:
+      - "v*-bridge"
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: "Create a GitHub Release (yes/no)"
+        required: false
+        default: "no"
+
+# Cancel in-progress runs on the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build matrix
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (${{ matrix.os-label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 (native)
+          - runner: ubuntu-22.04
+            os-label: linux-x86_64
+            asset-name: silentsuite-bridge-linux-x86_64
+            exe-suffix: ""
+            qemu: false
+
+          # Linux arm64 via QEMU
+          - runner: ubuntu-22.04
+            os-label: linux-arm64
+            asset-name: silentsuite-bridge-linux-arm64
+            exe-suffix: ""
+            qemu: true
+            qemu-arch: aarch64
+
+          # macOS x86_64 (Intel)
+          - runner: macos-13
+            os-label: macos-x86_64
+            asset-name: silentsuite-bridge-macos-x86_64
+            exe-suffix: ""
+            qemu: false
+
+          # macOS arm64 (Apple Silicon)
+          - runner: macos-14
+            os-label: macos-arm64
+            asset-name: silentsuite-bridge-macos-arm64
+            exe-suffix: ""
+            qemu: false
+
+          # Windows x86_64
+          - runner: windows-latest
+            os-label: windows-x86_64
+            asset-name: silentsuite-bridge-windows-x86_64.exe
+            exe-suffix: ".exe"
+            qemu: false
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout
+      # -----------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Set up QEMU (arm64 Linux only)
+      # -----------------------------------------------------------------------
+      - name: Set up QEMU
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.qemu-arch }}
+
+      # -----------------------------------------------------------------------
+      # 3. Python 3.12
+      # -----------------------------------------------------------------------
+      # etebase-py 0.31.5 uses cpython 0.7.x which doesn't support Python 3.12+
+      - name: Set up Python 3.10
+        if: "!matrix.qemu"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # -----------------------------------------------------------------------
+      # 4. Rust (required to build etebase from source if wheels unavailable)
+      # -----------------------------------------------------------------------
+      # Pin Rust 1.63.0: etebase-py 0.31.x depends on socket2 0.3.12
+      # which fails on Rust >= 1.64 (SocketAddrV4 size change)
+      - name: Install Rust toolchain
+        if: "!matrix.qemu"
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.63.0"
+
+      # -----------------------------------------------------------------------
+      # 5. Install bridge + PyInstaller (native builds)
+      # -----------------------------------------------------------------------
+      - name: Install dependencies (native)
+        if: "!matrix.qemu"
+        working-directory: bridge
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e ".[dev,tray]" || pip install -e ".[tray]" || pip install -e .
+
+      # -----------------------------------------------------------------------
+      # 6. Run PyInstaller (native builds)
+      # -----------------------------------------------------------------------
+      - name: Build binary (native)
+        if: "!matrix.qemu"
+        working-directory: bridge
+        shell: bash
+        run: |
+          pyinstaller silentsuite-bridge.spec --clean --noconfirm \
+            --distpath dist/ \
+            --workpath build/
+
+      # -----------------------------------------------------------------------
+      # 7. Smoke test (native builds)
+      # -----------------------------------------------------------------------
+      - name: Smoke test (native)
+        if: "!matrix.qemu"
+        working-directory: bridge
+        shell: bash
+        run: |
+          BINARY="dist/silentsuite-bridge${{ matrix.exe-suffix }}"
+          echo "--- Smoke test: $BINARY --version ---"
+          "$BINARY" --version
+          echo "Smoke test passed."
+
+      # -----------------------------------------------------------------------
+      # 8. QEMU arm64 container build (Linux arm64 only)
+      # -----------------------------------------------------------------------
+      - name: Build + smoke test (QEMU arm64)
+        if: matrix.qemu
+        uses: addnab/docker-run-action@v3
+        with:
+          image: arm64v8/python:3.10-slim
+          options: >-
+            --platform linux/arm64
+            -v ${{ github.workspace }}:/workspace
+          run: |
+            set -e
+            echo "=== Installing system deps ==="
+            apt-get update -qq
+            apt-get install -y --no-install-recommends \
+              curl build-essential pkg-config libssl-dev git
+            echo "=== Installing Rust ==="
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.63.0
+            . "$HOME/.cargo/env"
+            echo "=== Installing Python deps ==="
+            python -m pip install --upgrade pip
+            pip install pyinstaller
+            cd /workspace/bridge
+            pip install -e ".[dev,tray]" || pip install -e ".[tray]" || pip install -e .
+            echo "=== Running PyInstaller ==="
+            pyinstaller silentsuite-bridge.spec --clean --noconfirm \
+              --distpath dist/ \
+              --workpath build/
+            echo "=== Smoke test ==="
+            dist/silentsuite-bridge --version
+            echo "Smoke test passed."
+
+      # -----------------------------------------------------------------------
+      # 9. Rename artifact to final asset name
+      # -----------------------------------------------------------------------
+      - name: Rename binary
+        shell: bash
+        run: |
+          SRC="bridge/dist/silentsuite-bridge${{ matrix.exe-suffix }}"
+          DST="bridge/dist/${{ matrix.asset-name }}"
+          mv "$SRC" "$DST"
+          echo "Renamed: $SRC → $DST"
+
+      # -----------------------------------------------------------------------
+      # 10. Compute SHA256
+      # -----------------------------------------------------------------------
+      - name: Compute SHA256
+        shell: bash
+        working-directory: bridge/dist
+        run: |
+          ASSET="${{ matrix.asset-name }}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ASSET" > "${ASSET}.sha256"
+          else
+            # macOS / Windows fallback
+            shasum -a 256 "$ASSET" > "${ASSET}.sha256"
+          fi
+          cat "${ASSET}.sha256"
+
+      # -----------------------------------------------------------------------
+      # 11. Upload artifact (always — for manual inspect even without release)
+      # -----------------------------------------------------------------------
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset-name }}
+          path: |
+            bridge/dist/${{ matrix.asset-name }}
+            bridge/dist/${{ matrix.asset-name }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Release job — only on tag push OR when manually requested
+  # ---------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-22.04
+    if: >
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'yes')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Download all build artifacts
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets/
+
+      # Flatten the nested artifact directories
+      - name: Flatten artifact directories
+        run: |
+          mkdir -p flat/
+          find release-assets/ -type f -exec mv {} flat/ \;
+          ls -lh flat/
+
+      # Concatenate all SHA256 files into one checksum manifest
+      - name: Build checksum manifest
+        working-directory: flat
+        run: |
+          cat *.sha256 > SHA256SUMS.txt
+          echo "=== SHA256SUMS.txt ==="
+          cat SHA256SUMS.txt
+
+      # Determine tag name (real tag or synthetic for manual dispatch)
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v0.0.0-bridge-manual-$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      # Create the release and upload all binaries + checksums
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: SilentSuite Bridge ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.tag, 'alpha') || contains(steps.tag.outputs.tag, 'beta') || contains(steps.tag.outputs.tag, 'rc') }}
+          body: |
+            ## SilentSuite Bridge ${{ steps.tag.outputs.tag }}
+
+            Local CalDAV/CardDAV ↔ Etebase bridge daemon.
+
+            ### Installation
+
+            ```sh
+            curl -fsSL https://silentsuite.io/bridge/install.sh | sh
+            ```
+
+            Or download the binary for your platform below.
+
+            ### Supported Platforms
+
+            | Binary | Platform |
+            |--------|----------|
+            | `silentsuite-bridge-linux-x86_64` | Linux (x86_64) |
+            | `silentsuite-bridge-linux-arm64` | Linux (ARM64 / Raspberry Pi) |
+            | `silentsuite-bridge-macos-x86_64` | macOS (Intel) |
+            | `silentsuite-bridge-macos-arm64` | macOS (Apple Silicon) |
+            | `silentsuite-bridge-windows-x86_64.exe` | Windows (x86_64) |
+
+            ### Verify checksum
+
+            ```sh
+            sha256sum -c SHA256SUMS.txt
+            ```
+          files: flat/*

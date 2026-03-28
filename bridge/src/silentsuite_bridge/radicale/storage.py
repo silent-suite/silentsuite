@@ -8,6 +8,7 @@ Forked and adapted from etesync-dav (AGPL-3.0).
 Original: https://github.com/etesync/etesync-dav
 """
 
+import email.utils
 import logging
 import posixpath
 import re
@@ -26,7 +27,9 @@ from radicale.storage import (
 
 from .. import config
 from ..local_cache import Etebase
-from ..local_cache.models import HrefMapper
+from ..local_cache import models as cache_models
+from ..local_cache.models import HrefMapper, ItemEntity
+from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user
 
 logger = logging.getLogger("silentsuite-bridge.storage")
@@ -34,8 +37,11 @@ logger = logging.getLogger("silentsuite-bridge.storage")
 
 # --- Sync Thread ---
 
-SYNC_INTERVAL = config.SYNC_INTERVAL
 SYNC_MINIMUM = config.SYNC_MINIMUM
+
+# Global registry of sync threads keyed by username
+_sync_threads = {}
+_sync_threads_lock = threading.Lock()
 
 
 class SyncThread(threading.Thread):
@@ -49,6 +55,7 @@ class SyncThread(threading.Thread):
         self.user = user
         self.last_sync = None
         self._exception = None
+        self.interval = config.SYNC_INTERVAL
 
     def force_sync(self):
         self._force_sync.set()
@@ -61,6 +68,12 @@ class SyncThread(threading.Thread):
     @property
     def forced_sync(self):
         return self._force_sync.is_set()
+
+    def set_interval(self, seconds):
+        """Update the sync interval. Takes effect after the current wait."""
+        self.interval = seconds
+        # Wake up the wait so the new interval applies immediately
+        self._force_sync.set()
 
     def wait_for_sync(self, timeout=None):
         ret = self._done_syncing.wait(timeout)
@@ -78,14 +91,56 @@ class SyncThread(threading.Thread):
                     self._done_syncing.clear()
                     etesync.sync()
                     logger.debug("Sync completed for user %s", self.user)
+
+                    # Update dashboard status with collection counts
+                    collections = {"calendars": 0, "contacts": 0, "tasks": 0}
+                    try:
+                        for col in etesync.list():
+                            if col.col_type == "etebase.vevent":
+                                collections["calendars"] += 1
+                            elif col.col_type == "etebase.vcard":
+                                collections["contacts"] += 1
+                            elif col.col_type == "etebase.vtodo":
+                                collections["tasks"] += 1
+                    except Exception:
+                        pass
+                    update_status("connected", collections=collections)
+                    log_sync_event("sync", f"Synced for {self.user}")
             except Exception as e:
                 logger.exception("Sync error for user %s: %s", self.user, e)
                 self._exception = e
+                update_status("error", error=str(e))
+                log_sync_event("error", f"Sync failed: {e}")
             finally:
+                was_re_requested = self._force_sync.is_set()
                 self._force_sync.clear()
                 self._done_syncing.set()
 
-            self._force_sync.wait(SYNC_INTERVAL)
+            if was_re_requested:
+                continue  # immediately loop back to sync without waiting
+            self._force_sync.wait(self.interval)
+
+
+def start_sync_thread(user):
+    """Start a SyncThread for the given user if one isn't already running.
+
+    Returns the SyncThread instance.
+    """
+    with _sync_threads_lock:
+        thread = _sync_threads.get(user)
+        if thread is not None and thread.is_alive():
+            return thread
+        thread = SyncThread(user, daemon=True)
+        _sync_threads[user] = thread
+        thread.start()
+        logger.info("Started SyncThread for user %s (interval=%ds)", user, thread.interval)
+        return thread
+
+
+def get_sync_thread(user):
+    """Get the SyncThread for a user, or None."""
+    with _sync_threads_lock:
+        return _sync_threads.get(user)
 
 
 # --- Meta Mapping ---
@@ -208,15 +263,12 @@ class Collection(BaseCollection):
 
             if col_type == "etebase.vevent":
                 self.meta_mappings = MetaMappingCalendar()
-                self.set_meta({"tag": "VCALENDAR"})
                 self.content_suffix = ".ics"
             elif col_type == "etebase.vtodo":
                 self.meta_mappings = MetaMappingTaskList()
-                self.set_meta({"tag": "VCALENDAR"})
                 self.content_suffix = ".ics"
             elif col_type == "etebase.vcard":
                 self.meta_mappings = MetaMappingContacts()
-                self.set_meta({"tag": "VADDRESSBOOK"})
                 self.content_suffix = ".vcf"
         else:
             self.is_fake = True
@@ -235,7 +287,14 @@ class Collection(BaseCollection):
 
     @property
     def tag(self) -> str:
-        return self.get_meta("tag") or ""
+        if self.is_fake:
+            return ""
+        col_type = self.collection.col_type
+        if col_type in ("etebase.vevent", "etebase.vtodo"):
+            return "VCALENDAR"
+        elif col_type == "etebase.vcard":
+            return "VADDRESSBOOK"
+        return ""
 
     def sync(self, old_token=None):
         token_prefix = "http://radicale.org/ns/sync/"
@@ -251,13 +310,10 @@ class Collection(BaseCollection):
             return
 
         for item in self.collection.list():
-            try:
-                href_mapper = item.cache_item.href.get()
-            except HrefMapper.DoesNotExist:
-                href = item.item.uid + self.content_suffix
-                href_mapper = HrefMapper(content=item.cache_item, href=href)
-                href_mapper.save(force_insert=True)
-
+            href = item.item.uid + self.content_suffix
+            href_mapper, _ = HrefMapper.get_or_create(
+                content=item.cache_item, defaults={"href": href}
+            )
             yield href_mapper.href
 
     def get_multi(self, hrefs):
@@ -278,7 +334,16 @@ class Collection(BaseCollection):
             return
 
         try:
-            href_mapper = HrefMapper.get(HrefMapper.href == href)
+            href_mapper = (
+                HrefMapper
+                .select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(
+                    (HrefMapper.href == href)
+                    & (ItemEntity.collection == self.collection.cache_col)
+                )
+                .get()
+            )
             uid = href_mapper.content.uid
         except HrefMapper.DoesNotExist:
             return None
@@ -321,11 +386,14 @@ class Collection(BaseCollection):
                 "Failed to parse item %r in %r" % (href, self.path)
             ) from e
 
+        mtime_ms = etesync_item.meta.get("mtime", 0)
+        last_modified = email.utils.formatdate(mtime_ms / 1000, usegmt=True)
+
         return EteSyncItem(
             collection=self,
             vobject_item=item,
             href=href,
-            last_modified="",
+            last_modified=last_modified,
             etesync_item=etesync_item,
         )
 
@@ -344,6 +412,7 @@ class Collection(BaseCollection):
             etesync_item = existing.etesync_item
             etesync_item.content = vobject_item.serialize()
             etesync_item.save()
+            log_sync_event("sync", f"Updated item {href}")
         else:
             etesync_item = self.collection.create(vobject_item)
             etesync_item.save()
@@ -351,6 +420,7 @@ class Collection(BaseCollection):
                 content=etesync_item.cache_item, href=href
             )
             href_mapper.save(force_insert=True)
+            log_sync_event("sync", f"Created item {href}")
 
         return self._get(href)
 
@@ -361,6 +431,7 @@ class Collection(BaseCollection):
 
         if href is None:
             self.collection.delete()
+            log_sync_event("sync", f"Deleted collection {self._path}")
             return
 
         item = self._get(href)
@@ -368,6 +439,7 @@ class Collection(BaseCollection):
             raise ComponentNotFoundError(href)
 
         item.etesync_item.delete()
+        log_sync_event("sync", f"Deleted item {href}")
 
     def get_meta(self, key=None):
         if self.is_fake:
@@ -376,9 +448,12 @@ class Collection(BaseCollection):
         if key is None:
             ret = {}
             meta = self.collection.meta
-            for key in meta.keys():
-                ret[key] = self.meta_mappings.map_get(meta, key)[1]
+            for k in meta.keys():
+                ret[k] = self.meta_mappings.map_get(meta, k)[1]
+            ret["tag"] = self.tag
             return ret
+        elif key == "tag":
+            return self.tag
         else:
             meta = self.collection.meta
             key, value = self.meta_mappings.map_get(meta, key)
@@ -406,7 +481,6 @@ class Collection(BaseCollection):
 class Storage(BaseStorage):
     """Radicale storage that serves Etebase data via local cache."""
 
-    _sync_thread_lock = threading.RLock()
     _etesync_user_lock = None
 
     def __init__(self, configuration):
@@ -436,7 +510,9 @@ class Storage(BaseStorage):
                 item = attributes.pop()
                 path = "/".join(attributes)
                 collection = Collection(self, path)
-                yield collection._get(item)
+                result = collection._get(item)
+                if result is not None:
+                    yield result
                 return
 
             collection = Collection(self, path)
@@ -469,7 +545,81 @@ class Storage(BaseStorage):
         raise NotImplementedError
 
     def create_collection(self, href, items=None, props=None):
-        raise NotImplementedError
+        """Create a new collection (calendar/address book) via CalDAV.
+
+        Maps Radicale props to Etebase collection metadata and creates
+        the collection on the server.
+        """
+        # Only handle creating sub-collections (user/collection-uid),
+        # not the root user principal
+        attributes = _get_attributes_from_path(href)
+        if len(attributes) < 2:
+            # Creating the user principal itself — nothing to do
+            return Collection(self, href)
+
+        props = props or {}
+        tag = props.get("tag", "")
+
+        # Determine Etebase collection type from CalDAV/CardDAV tag
+        if tag == "VADDRESSBOOK":
+            col_type = "etebase.vcard"
+            meta_mappings = MetaMappingContacts()
+        elif tag == "VCALENDAR":
+            # Check for VTODO support hint
+            comp_set = props.get("C:supported-calendar-component-set", "")
+            if comp_set and "VTODO" in comp_set.upper():
+                col_type = "etebase.vtodo"
+                meta_mappings = MetaMappingTaskList()
+            else:
+                col_type = "etebase.vevent"
+                meta_mappings = MetaMappingCalendar()
+        else:
+            # Default to calendar
+            col_type = "etebase.vevent"
+            meta_mappings = MetaMappingCalendar()
+
+        # Map Radicale props to Etebase meta
+        meta = {}
+        for key, value in props.items():
+            if key == "tag":
+                continue
+            mapped_key, mapped_value = meta_mappings.map_set(key, value)
+            if mapped_value is not None:
+                meta[mapped_key] = mapped_value
+
+        if "name" not in meta:
+            # Use last path component as display name fallback
+            meta["name"] = attributes[-1]
+
+        # Create the collection via Etebase
+        col_mgr = self.etesync.etebase.get_collection_manager()
+        col = col_mgr.create(col_type, meta, b"")
+        col_mgr.upload(col)
+
+        # Cache it locally
+        from ..local_cache import models, db
+        with db.database_proxy:
+            cache_col = models.CollectionEntity(
+                local_user=self.etesync.user,
+                uid=col.uid,
+            )
+            cache_col.eb_col = col_mgr.cache_save(col)
+            cache_col.stoken = col.stoken or ""
+            cache_col.local_stoken = col.stoken or ""
+            cache_col.new = False
+            cache_col.dirty = False
+            cache_col.save()
+
+        logger.info("Created collection %s (type=%s, name=%s)", col.uid, col_type, meta.get("name"))
+        log_sync_event("sync", f"Created collection {meta.get('name', col.uid)}")
+
+        # Upload any items that came with the collection
+        collection = Collection(self, posixpath.join("/", attributes[0], col.uid))
+        if items:
+            for item in items:
+                collection.upload(item.href, item)
+
+        return collection
 
     @contextmanager
     def acquire_lock(self, mode, user=""):
@@ -478,15 +628,14 @@ class Storage(BaseStorage):
             yield
             return
 
-        with etesync_for_user(user) as (etesync, _):
-            with self.__class__._sync_thread_lock:
-                if not hasattr(etesync, "sync_thread"):
-                    etesync.sync_thread = SyncThread(user, daemon=True)
-                    etesync.sync_thread.start()
-                else:
-                    etesync.sync_thread.request_sync()
-
-        etesync.sync_thread.wait_for_sync(5)
+        sync_thread = start_sync_thread(user)
+        sync_thread.force_sync()
+        try:
+            sync_thread.wait_for_sync(20)
+        except Exception as e:
+            logger.warning(
+                "Sync failed for user %s, continuing with local cache: %s", user, e
+            )
 
         with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
             self.user = user
@@ -495,7 +644,7 @@ class Storage(BaseStorage):
             yield
 
             if mode == "w":
-                etesync.sync_thread.force_sync()
+                sync_thread.force_sync()
 
             self.etesync = None
             self.user = None

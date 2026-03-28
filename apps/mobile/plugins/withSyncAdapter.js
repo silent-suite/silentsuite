@@ -86,7 +86,23 @@ function withSyncAdapter(config) {
             },
           ],
         },
-        // Contacts Sync Adapter
+        // Address Book NullAuthenticatorService (must be exported for Android 11+ contacts visibility)
+        {
+          $: {
+            'android:name': 'io.silentsuite.sync.syncadapter.NullAuthenticatorService',
+            'android:exported': 'true',
+          },
+          'intent-filter': [{ action: [{ $: { 'android:name': 'android.accounts.AccountAuthenticator' } }] }],
+          'meta-data': [
+            {
+              $: {
+                'android:name': 'android.accounts.AccountAuthenticator',
+                'android:resource': '@xml/account_authenticator_address_book',
+              },
+            },
+          ],
+        },
+        // Address Books Sync Adapter
         {
           $: {
             'android:name': 'io.silentsuite.sync.syncadapter.AddressBooksSyncAdapterService',
@@ -99,7 +115,31 @@ function withSyncAdapter(config) {
             {
               $: {
                 'android:name': 'android.content.SyncAdapter',
+                'android:resource': '@xml/sync_address_books',
+              },
+            },
+          ],
+        },
+        // Contacts Sync Adapter
+        {
+          $: {
+            'android:name': 'io.silentsuite.sync.syncadapter.ContactsSyncAdapterService',
+            'android:exported': 'true',
+            'android:process': ':sync',
+            'tools:ignore': 'ExportedService',
+          },
+          'intent-filter': [{ action: [{ $: { 'android:name': 'android.content.SyncAdapter' } }] }],
+          'meta-data': [
+            {
+              $: {
+                'android:name': 'android.content.SyncAdapter',
                 'android:resource': '@xml/sync_contacts',
+              },
+            },
+            {
+              $: {
+                'android:name': 'android.provider.CONTACTS_STRUCTURE',
+                'android:resource': '@xml/contacts',
               },
             },
           ],
@@ -122,12 +162,73 @@ function withSyncAdapter(config) {
             },
           ],
         },
+        // Account Update Service
+        {
+          $: {
+            'android:name': 'io.silentsuite.sync.AccountUpdateService',
+            'android:exported': 'false',
+            'android:enabled': 'true',
+          },
+        },
       ];
 
       for (const svc of servicesToAdd) {
         if (!existingServices.has(svc.$['android:name'])) {
           app.service.push(svc);
         }
+      }
+
+      // Add AddressBookProvider
+      if (!app.provider) {
+        app.provider = [];
+      }
+      const existingProviders = new Set(app.provider.map((p) => p.$?.['android:name']));
+      if (!existingProviders.has('io.silentsuite.sync.syncadapter.AddressBookProvider')) {
+        app.provider.push({
+          $: {
+            'android:name': 'io.silentsuite.sync.syncadapter.AddressBookProvider',
+            'android:authorities': 'io.silentsuite.sync.addressbooks',
+            'android:exported': 'false',
+            'android:label': 'Address books',
+            'android:multiprocess': 'false',
+          },
+        });
+      }
+
+      // Add NotificationHandlerActivity
+      if (!app.activity) {
+        app.activity = [];
+      }
+      const existingActivities = new Set(app.activity.map((a) => a.$?.['android:name']));
+      if (!existingActivities.has('io.silentsuite.sync.syncadapter.SyncNotification$NotificationHandlerActivity')) {
+        app.activity.push({
+          $: {
+            'android:name': 'io.silentsuite.sync.syncadapter.SyncNotification$NotificationHandlerActivity',
+            'android:exported': 'false',
+            'android:theme': '@android:style/Theme.Translucent.NoTitleBar',
+          },
+        });
+      }
+
+      // Add PackageChangedReceiver
+      if (!app.receiver) {
+        app.receiver = [];
+      }
+      const existingReceivers = new Set(app.receiver.map((r) => r.$?.['android:name']));
+      if (!existingReceivers.has('io.silentsuite.sync.PackageChangedReceiver')) {
+        app.receiver.push({
+          $: {
+            'android:name': 'io.silentsuite.sync.PackageChangedReceiver',
+            'android:exported': 'true',
+          },
+          'intent-filter': [{
+            action: [
+              { $: { 'android:name': 'android.intent.action.PACKAGE_ADDED' } },
+              { $: { 'android:name': 'android.intent.action.PACKAGE_FULLY_REMOVED' } },
+            ],
+            data: [{ $: { 'android:scheme': 'package' } }],
+          }],
+        });
       }
     }
 
@@ -147,7 +248,7 @@ function withSyncAdapter(config) {
     android:accountType="io.silentsuite.sync"
     android:icon="@mipmap/ic_launcher"
     android:smallIcon="@mipmap/ic_launcher"
-    android:label="@string/app_name"
+    android:label="SilentSuite"
     android:accountPreferences="@xml/sync_prefs" />
 `;
 
@@ -180,10 +281,79 @@ function withSyncAdapter(config) {
 </PreferenceScreen>
 `;
 
+      // Address book authenticator descriptor
+      const addressBookAuthenticator = `<?xml version="1.0" encoding="utf-8"?>
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="io.silentsuite.sync.address_book"
+    android:icon="@mipmap/ic_launcher"
+    android:label="SilentSuite Address book"
+    android:smallIcon="@mipmap/ic_launcher"
+    android:accountPreferences="@xml/sync_prefs" />
+`;
+
+      // Address books sync adapter
+      const addressBooksSync = `<?xml version="1.0" encoding="utf-8"?>
+<sync-adapter xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="io.silentsuite.sync"
+    android:contentAuthority="io.silentsuite.sync.addressbooks"
+    android:isAlwaysSyncable="true"
+    android:supportsUploading="false" />
+`;
+
+      // Contacts structure descriptor
+      const contactsStructure = `<?xml version="1.0" encoding="utf-8"?>
+<ContactsAccountType>
+    <EditSchema>
+        <DataKind kind="name" maxOccurs="1" supportsDisplayName="true"
+            supportsFamilyName="true" supportsMiddleName="true"
+            supportsPhoneticFamilyName="true" supportsPhoneticGivenName="true"
+            supportsPhoneticMiddleName="true" supportsPrefix="true" supportsSuffix="true" />
+        <DataKind kind="phone">
+            <Type type="mobile" /><Type type="home" /><Type type="work" />
+            <Type type="fax_work" /><Type type="fax_home" /><Type type="pager" />
+            <Type type="other" /><Type type="custom" />
+        </DataKind>
+        <DataKind kind="email">
+            <Type type="home" /><Type type="work" /><Type type="other" />
+            <Type type="mobile" /><Type type="custom" />
+        </DataKind>
+        <DataKind kind="photo" maxOccurs="1" />
+        <DataKind kind="organization" maxOccurs="1" />
+        <DataKind kind="im">
+            <Type type="aim" /><Type type="msn" /><Type type="yahoo" />
+            <Type type="skype" /><Type type="qq" /><Type type="google_talk" />
+            <Type type="icq" /><Type type="jabber" /><Type type="custom" />
+        </DataKind>
+        <DataKind kind="nickname" maxOccurs="1" />
+        <DataKind kind="note" maxOccurs="1" />
+        <DataKind kind="group_membership" maxOccurs="1" />
+        <DataKind kind="postal" needsStructured="true">
+            <Type type="home" /><Type type="work" /><Type type="other" /><Type type="custom" />
+        </DataKind>
+        <DataKind kind="website" />
+        <DataKind kind="event" dateWithTime="false">
+            <Type maxOccurs="1" type="birthday" yearOptional="true" />
+            <Type maxOccurs="1" type="anniversary" yearOptional="true" />
+        </DataKind>
+        <DataKind kind="relationship">
+            <Type type="assistant" /><Type type="brother" /><Type type="child" />
+            <Type type="domestic_partner" /><Type type="father" /><Type type="friend" />
+            <Type type="manager" /><Type type="mother" /><Type type="parent" />
+            <Type type="partner" /><Type type="relative" /><Type type="sister" />
+            <Type type="spouse" /><Type type="custom" />
+        </DataKind>
+        <DataKind kind="sip_address" maxOccurs="1" />
+    </EditSchema>
+</ContactsAccountType>
+`;
+
       fs.writeFileSync(path.join(resDir, 'authenticator.xml'), authenticator);
+      fs.writeFileSync(path.join(resDir, 'account_authenticator_address_book.xml'), addressBookAuthenticator);
       fs.writeFileSync(path.join(resDir, 'sync_contacts.xml'), contactsSync);
+      fs.writeFileSync(path.join(resDir, 'sync_address_books.xml'), addressBooksSync);
       fs.writeFileSync(path.join(resDir, 'sync_calendars.xml'), calendarSync);
       fs.writeFileSync(path.join(resDir, 'sync_prefs.xml'), syncPrefs);
+      fs.writeFileSync(path.join(resDir, 'contacts.xml'), contactsStructure);
 
       return config;
     },

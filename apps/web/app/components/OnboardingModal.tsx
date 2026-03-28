@@ -7,6 +7,9 @@ import { Button } from '@silentsuite/ui'
 import CalendarImport from '@/app/components/import/CalendarImport'
 import TaskImport from '@/app/components/import/TaskImport'
 import ContactImport from '@/app/components/import/ContactImport'
+import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useContactStore } from '@/app/stores/use-contact-store'
+import { useTaskStore } from '@/app/stores/use-task-store'
 
 interface ImportCounts {
   calendar: number
@@ -210,10 +213,23 @@ export function OnboardingModal() {
   const [counts, setCounts] = useState<ImportCounts>({ calendar: 0, tasks: 0, contacts: 0 })
   const backdropRef = useRef<HTMLDivElement>(null)
 
+  const events = useCalendarStore((s) => s.events)
+  const contacts = useContactStore((s) => s.contacts)
+  const tasks = useTaskStore((s) => s.tasks)
+
   useEffect(() => {
     const completed = localStorage.getItem('onboardingCompleted')
-    if (!completed) setShow(true)
-  }, [])
+    if (completed) return
+
+    // If user already has synced data, skip onboarding
+    const hasData = events.length > 0 || contacts.length > 0 || tasks.length > 0
+    if (hasData) {
+      localStorage.setItem('onboardingCompleted', 'true')
+      return
+    }
+
+    setShow(true)
+  }, [events.length, contacts.length, tasks.length])
 
   const goTo = useCallback(
     (nextStep: number, dir: Direction) => {

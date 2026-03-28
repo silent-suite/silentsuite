@@ -27,8 +27,9 @@ env/
 credentials.json
 htpasswd
 
-# PyInstaller
+# PyInstaller — ignore generated .spec files but track the committed one
 *.spec
+!silentsuite-bridge.spec
 
 # OS
 .DS_Store

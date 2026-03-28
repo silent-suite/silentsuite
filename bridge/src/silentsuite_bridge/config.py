@@ -4,6 +4,7 @@ Platform-appropriate paths for data storage and credentials.
 All defaults point to server.silentsuite.io.
 """
 
+import json
 import os
 import sys
 
@@ -16,7 +17,7 @@ ETEBASE_SERVER_URL = os.environ.get(
 )
 
 # --- Network ---
-LISTEN_ADDRESS = os.environ.get("SILENTSUITE_LISTEN_ADDRESS", "localhost")
+LISTEN_ADDRESS = os.environ.get("SILENTSUITE_LISTEN_ADDRESS", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("SILENTSUITE_LISTEN_PORT", "37358"))
 SERVER_HOSTS = os.environ.get(
     "SILENTSUITE_SERVER_HOSTS",
@@ -43,8 +44,12 @@ CREDS_FILE = os.path.join(DATA_DIR, "credentials.json")
 HTPASSWD_FILE = os.path.join(DATA_DIR, "htpasswd")
 
 # --- Sync ---
-SYNC_INTERVAL = int(os.environ.get("SILENTSUITE_SYNC_INTERVAL", str(15 * 60)))  # 15 minutes
+_DEFAULT_SYNC_INTERVAL = int(os.environ.get("SILENTSUITE_SYNC_INTERVAL", str(15 * 60)))  # 15 minutes
+SYNC_INTERVAL = _DEFAULT_SYNC_INTERVAL
 SYNC_MINIMUM = int(os.environ.get("SILENTSUITE_SYNC_MINIMUM", "30"))  # 30 seconds
+
+# --- Settings file ---
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
 
 # --- Collection types ---
 # These must match the Etebase collection types used by SilentSuite
@@ -65,6 +70,34 @@ def ensure_data_dir():
         os.makedirs(DATA_DIR, mode=0o700)
 
 
+def load_settings():
+    """Load settings from settings.json, applying overrides to module globals."""
+    global SYNC_INTERVAL
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            settings = json.load(f)
+        if "syncInterval" in settings:
+            SYNC_INTERVAL = int(settings["syncInterval"])
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        pass
+
+
+def save_settings(settings):
+    """Save settings dict to settings.json."""
+    ensure_data_dir()
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
+def get_settings():
+    """Read current settings from settings.json."""
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
 def get_platform() -> str:
     """Return normalized platform name."""
     if sys.platform == "darwin":
@@ -73,3 +106,7 @@ def get_platform() -> str:
         return "windows"
     else:
         return "linux"
+
+
+# Load settings on import to apply overrides
+load_settings()

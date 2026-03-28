@@ -9,6 +9,7 @@ Forked and adapted from etesync-dav (AGPL-3.0).
 import json
 import logging
 import os
+import tempfile
 
 from .. import config
 
@@ -30,23 +31,35 @@ class Credentials:
             mtime = os.path.getmtime(self.filename)
             if mtime != self.last_mtime:
                 with open(self.filename, "r") as f:
-                    self.content = json.load(f)
+                    try:
+                        self.content = json.load(f)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Corrupted credentials file %s — resetting",
+                            self.filename,
+                        )
+                        self.content = {"users": {}}
             self.last_mtime = mtime
 
     def save(self):
-        """Persist credentials to disk."""
+        """Persist credentials to disk atomically."""
         directory = os.path.dirname(self.filename)
         if directory and not os.path.exists(directory):
             os.makedirs(directory, mode=0o700)
 
-        with open(self.filename, "w") as f:
-            json.dump(self.content, f)
-
-        # Restrict file permissions (not effective on Windows)
+        fd, tmp_path = tempfile.mkstemp(dir=directory or ".", suffix=".tmp")
         try:
-            os.chmod(self.filename, 0o600)
-        except OSError:
-            pass
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.content, f)
+            # Restrict file permissions (not effective on Windows)
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass
+            os.rename(tmp_path, self.filename)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
 
     def get_server_url(self, username):
         """Get the Etebase server URL for a user."""
@@ -70,10 +83,10 @@ class Credentials:
             server_url = config.ETEBASE_SERVER_URL
 
         users = self.content.setdefault("users", {})
-        users[username] = {
-            "storedSession": stored_session,
-            "serverUrl": server_url,
-        }
+        if username not in users:
+            users[username] = {}
+        users[username]["storedSession"] = stored_session
+        users[username]["serverUrl"] = server_url
 
     def get_password_hash(self, username):
         """Get the locally stored password hash for CalDAV auth."""
@@ -89,6 +102,21 @@ class Credentials:
         if username not in users:
             users[username] = {}
         users[username]["passwordHash"] = password_hash
+
+    def get_password_salt(self, username):
+        """Get the password salt for PBKDF2 auth."""
+        users = self.content.get("users", {})
+        if username not in users:
+            return None
+
+        return users[username].get("passwordSalt", None)
+
+    def set_password_salt(self, username, salt_hex):
+        """Store the password salt for PBKDF2 auth."""
+        users = self.content.setdefault("users", {})
+        if username not in users:
+            users[username] = {}
+        users[username]["passwordSalt"] = salt_hex
 
     def delete(self, username):
         """Remove a user's credentials."""
