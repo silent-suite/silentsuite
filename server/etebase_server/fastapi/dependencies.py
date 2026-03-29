@@ -83,6 +83,6 @@ def get_item_queryset(collection: models.Collection = Depends(get_collection)) -
     default_item_queryset: QuerySet = models.CollectionItem.objects.all()
     queryset = default_item_queryset.filter(
         collection__pk=collection.pk, revisions__current=True
-    ).prefetch_related('revisions__chunks__chunk', 'revisions__chunks_relation')
+    )
 
     return queryset

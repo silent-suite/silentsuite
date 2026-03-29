@@ -17,7 +17,6 @@ const plans = [
       'End-to-end encryption',
       'Unlimited devices',
       'Web, iOS & Android apps',
-      '5 GB encrypted storage',
       'Email support',
     ],
     cta: 'Available after beta',
@@ -37,7 +36,6 @@ const plans = [
       'End-to-end encryption',
       'Unlimited devices',
       'Web, iOS & Android apps',
-      '5 GB encrypted storage',
       'Email support',
       'Price locked forever',
     ],
@@ -97,7 +95,7 @@ function BillingToggle({
   onChange: (cycle: BillingCycle) => void
 }) {
   return (
-    <div className="flex items-center justify-center gap-3 mb-12">
+    <div className="relative flex items-center justify-center gap-3 mb-12">
       <span
         className={`text-sm font-medium transition-colors ${
           billing === 'monthly' ? 'text-white' : 'text-navy-400'
@@ -124,7 +122,7 @@ function BillingToggle({
         Yearly
       </span>
       {billing === 'yearly' && (
-        <span className="ml-1 px-2 py-0.5 bg-teal-400/10 text-teal-400 text-xs font-semibold rounded-full border border-teal-400/20">
+        <span className="absolute left-1/2 translate-x-[105px] px-2 py-0.5 bg-teal-400/10 text-teal-400 text-xs font-semibold rounded-full border border-teal-400/20">
           Save ~17%
         </span>
       )}
