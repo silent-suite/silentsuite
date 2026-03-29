@@ -1,3 +1,4 @@
+import os
 import typing as t
 
 from django.conf import settings
@@ -48,9 +49,15 @@ def create_application(prefix="", middlewares=[]):
 
         app.include_router(test_reset_view_router, prefix=f"{BASE_PATH}/test/authentication")
 
+    cors_origins_env = os.environ.get(
+        "CORS_ALLOWED_ORIGINS",
+        "https://app.silentsuite.io,https://previewapp.silentsuite.io,http://localhost:3000,http://localhost:3001",
+    )
+    cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex="https?://.*",
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

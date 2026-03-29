@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_DB: silentsuite
       POSTGRES_USER: silentsuite
-      POSTGRES_PASSWORD: silentsuite_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-silentsuite_dev}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d

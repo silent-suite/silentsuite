@@ -30,7 +30,7 @@ AUTH_USER_MODEL = "myauth.User"
 SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('ETEBASE_DEBUG', 'false').lower() == 'true'
 
 ALLOWED_HOSTS = []
 
