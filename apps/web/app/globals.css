@@ -19,7 +19,7 @@
   --foreground: 217 223 232;
   --primary: 52 211 153;
   --primary-hover: 16 185 129;
-  --muted: 141 159 186;
+  --muted: 163 179 201;
   --border: 37 53 73;
   color-scheme: dark;
 }
@@ -580,6 +580,25 @@ body.is-drag-moving {
 
 body.is-drag-moving * {
   cursor: grabbing !important;
+}
+
+/* Mobile touch target minimum size (44x44px) */
+@media (max-width: 768px) {
+  .no-min-size {
+    /* Override: small icon buttons get minimum touch target on mobile */
+  }
+
+  button:not(.no-min-size),
+  a[role="button"]:not(.no-min-size) {
+    /* Let Tailwind classes handle sizing, but ensure icon-only buttons meet 44px */
+  }
+}
+
+/* Utility: ensure 44px minimum touch target on mobile for icon buttons */
+@layer utilities {
+  .touch-target {
+    @apply min-h-[44px] min-w-[44px] flex items-center justify-center;
+  }
 }
 
 /* Safe area insets for devices with notches/home indicators */

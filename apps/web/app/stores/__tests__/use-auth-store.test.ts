@@ -4,6 +4,27 @@ import { useAuthStore } from '../use-auth-store'
 // Mock fetch globally
 vi.stubGlobal('fetch', vi.fn())
 
+// Mock etebase-auth (dynamically imported by login)
+vi.mock('@/app/lib/etebase-auth', () => ({
+  etebaseLogIn: vi.fn().mockResolvedValue({
+    authToken: 'mock-auth-token',
+    savedSession: 'mock-saved-session',
+  }),
+}))
+
+// Mock self-hosted checks
+vi.mock('@/app/lib/self-hosted', () => ({
+  isSelfHosted: false,
+  isCustomServer: () => false,
+}))
+
+// Mock etebase store (used by logout)
+vi.mock('@/app/stores/use-etebase-store', () => ({
+  useEtebaseStore: {
+    getState: () => ({ destroy: vi.fn() }),
+  },
+}))
+
 function resetStore() {
   useAuthStore.setState({
     user: null,
@@ -20,13 +41,15 @@ describe('useAuthStore', () => {
     resetStore()
     vi.mocked(fetch).mockReset()
     localStorage.clear()
+    sessionStorage.clear()
   })
 
   it('login sets user and auth state', async () => {
+    // login calls etebaseLogIn (mocked above), then fetch for token-exchange
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ userId: 'user-1', email: 'test@example.com', planId: 'pro' }),
+      json: async () => ({ id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false }),
     } as Response)
 
     await useAuthStore.getState().login('test@example.com', 'password123')
@@ -146,13 +169,24 @@ describe('useAuthStore', () => {
       expect(state.subscriptionStatus).not.toBe('billing_unavailable')
     })
 
-    it('fetchSubscription sets billing_unavailable on network error', async () => {
-      useAuthStore.setState({ subscriptionStatus: 'active' })
+    it('fetchSubscription sets billing_unavailable on network error when no existing status', async () => {
+      // fetchSubscription only sets billing_unavailable when current status is null/falsy
+      useAuthStore.setState({ subscriptionStatus: null })
       vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
       await useAuthStore.getState().fetchSubscription()
 
       expect(useAuthStore.getState().subscriptionStatus).toBe('billing_unavailable')
+    })
+
+    it('fetchSubscription preserves existing good status on network error', async () => {
+      // When there's already a good status, network errors don't override it
+      useAuthStore.setState({ subscriptionStatus: 'active' })
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      await useAuthStore.getState().fetchSubscription()
+
+      expect(useAuthStore.getState().subscriptionStatus).toBe('active')
     })
 
     it('retryBillingConnection restores normal status on success', async () => {

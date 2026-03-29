@@ -78,12 +78,13 @@ export function Sidebar() {
                   : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]'
               }`}
               aria-current={isActive ? 'page' : undefined}
+              aria-label={!isExpanded ? label : undefined}
             >
               <Icon className="h-5 w-5 shrink-0" />
               {isExpanded ? (
                 <span className="truncate">{label}</span>
               ) : (
-                <span className="pointer-events-none absolute left-full ml-2 z-[100] hidden whitespace-nowrap rounded-md bg-[rgb(var(--foreground))] px-2 py-1 text-xs text-[rgb(var(--background))] shadow-lg group-hover:block">
+                <span className="pointer-events-none absolute left-full ml-2 z-[100] hidden whitespace-nowrap rounded-md bg-[rgb(var(--foreground))] px-2 py-1 text-xs text-[rgb(var(--background))] shadow-lg group-hover:block group-focus-within:block">
                   {label}
                 </span>
               )}
@@ -106,12 +107,13 @@ export function Sidebar() {
                 : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]'
             }`}
             aria-current={pathname.startsWith('/admin') ? 'page' : undefined}
+            aria-label={!isExpanded ? 'Admin' : undefined}
           >
             <Shield className="h-5 w-5 shrink-0" />
             {isExpanded ? (
               <span className="truncate">Admin</span>
             ) : (
-              <span className="pointer-events-none absolute left-full ml-2 z-[100] hidden whitespace-nowrap rounded-md bg-[rgb(var(--foreground))] px-2 py-1 text-xs text-[rgb(var(--background))] shadow-lg group-hover:block">
+              <span className="pointer-events-none absolute left-full ml-2 z-[100] hidden whitespace-nowrap rounded-md bg-[rgb(var(--foreground))] px-2 py-1 text-xs text-[rgb(var(--background))] shadow-lg group-hover:block group-focus-within:block">
                 Admin
               </span>
             )}
@@ -125,12 +127,13 @@ export function Sidebar() {
               : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]'
           }`}
           aria-current={pathname.startsWith('/settings') ? 'page' : undefined}
+          aria-label={!isExpanded ? 'Settings' : undefined}
         >
           <Settings className="h-5 w-5 shrink-0" />
           {isExpanded ? (
             <span className="truncate">Settings</span>
           ) : (
-            <span className="pointer-events-none absolute left-full ml-2 z-[100] hidden whitespace-nowrap rounded-md bg-[rgb(var(--foreground))] px-2 py-1 text-xs text-[rgb(var(--background))] shadow-lg group-hover:block">
+            <span className="pointer-events-none absolute left-full ml-2 z-[100] hidden whitespace-nowrap rounded-md bg-[rgb(var(--foreground))] px-2 py-1 text-xs text-[rgb(var(--background))] shadow-lg group-hover:block group-focus-within:block">
               Settings
             </span>
           )}

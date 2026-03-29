@@ -24,12 +24,7 @@ import {
   Mail,
   Loader2,
 } from 'lucide-react'
-
-const BILLING_API_URL =
-  process.env.NEXT_PUBLIC_BILLING_API_URL ?? 'http://localhost:3736'
-
-const ETEBASE_SERVER_URL =
-  process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'http://localhost:3735'
+import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 
 // ─── Types ────────────────────────────────────────────────────────────
 interface Metrics {

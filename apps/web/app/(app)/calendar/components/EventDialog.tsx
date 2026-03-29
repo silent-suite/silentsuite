@@ -448,6 +448,7 @@ export function EventDialog({
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-[200] bg-black/60 dark:bg-black/70 transition-opacity backdrop-blur-[1px]"
+        aria-hidden="true"
         onClick={onClose}
       />
 
@@ -458,12 +459,17 @@ export function EventDialog({
           role="dialog"
           aria-label={isEdit ? 'Edit event' : 'New event'}
           aria-modal="true"
-          className="flex h-full w-full flex-col bg-[rgb(var(--background))] text-[rgb(var(--foreground))] sm:h-auto sm:max-h-[85vh] sm:w-full sm:max-w-md sm:rounded-xl sm:border sm:border-[rgb(var(--border))] sm:shadow-xl dark:sm:shadow-2xl dark:sm:shadow-black/40"
+          className="flex h-full w-full flex-col bg-[rgb(var(--background))] text-[rgb(var(--foreground))] pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[85vh] sm:w-full sm:max-w-md sm:rounded-xl sm:border sm:border-[rgb(var(--border))] sm:shadow-xl dark:sm:shadow-2xl dark:sm:shadow-black/40"
         >
+          {/* Mobile drag handle / swipe indicator */}
+          <div className="flex justify-center pt-2 pb-0 sm:hidden" aria-hidden="true">
+            <div className="h-1 w-10 rounded-full bg-[rgb(var(--border))]" />
+          </div>
+
           {/* ----------------------------------------------------------------- */}
-          {/* Header: Cancel | Title + Subtitle | Done                          */}
+          {/* Header: Cancel | Title + Subtitle | Done (sticky for keyboard)    */}
           {/* ----------------------------------------------------------------- */}
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[rgb(var(--border))] px-4 py-3">
+          <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-2 border-b border-[rgb(var(--border))] bg-[rgb(var(--background))] px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
             {/* Cancel button */}
             <button
               onClick={onClose}

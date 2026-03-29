@@ -3,8 +3,12 @@
  *
  * Must be imported before any @silentsuite/core usage.
  *
- * 1. Buffer: Used by ical-parser.ts and vcard-parser.ts for line folding
- * 2. crypto.randomUUID: Available in Hermes, but polyfilled here as safety net
+ * 1. Buffer: React Native / Hermes doesn't include Node's Buffer global.
+ *    @silentsuite/core's ical-parser.ts and vcard-parser.ts use Buffer for
+ *    RFC 6350/5545 line folding (splitting on multi-byte boundaries).
+ *    Without this polyfill, vCard/iCal import and export will crash at runtime.
+ *
+ * 2. crypto.randomUUID: Available in Hermes, but polyfilled here as safety net.
  */
 import { Buffer } from 'buffer';
 

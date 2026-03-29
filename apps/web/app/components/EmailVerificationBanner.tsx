@@ -4,9 +4,7 @@ import { useState } from 'react'
 import { MailWarning, Loader2 } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
-
-const BILLING_API_URL =
-  process.env.NEXT_PUBLIC_BILLING_API_URL ?? 'http://localhost:3736'
+import { BILLING_API_URL } from '@/app/lib/config'
 
 export function EmailVerificationBanner() {
   const user = useAuthStore((s) => s.user)

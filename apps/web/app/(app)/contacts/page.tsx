@@ -11,6 +11,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { ContactsEmptyState, SearchEmptyState, ContactDetailEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
+import { useFocusTrap } from '@/app/lib/use-focus-trap'
 import type { Contact } from '@silentsuite/core'
 
 // ── Helpers ──
@@ -133,15 +134,28 @@ const ADDRESS_TYPES = ['home', 'work', 'other']
 function SearchBar() {
   const searchQuery = useContactStore((s) => s.searchQuery)
   const setSearchQuery = useContactStore((s) => s.setSearchQuery)
+  const [localQuery, setLocalQuery] = useState(searchQuery)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setLocalQuery(value)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setSearchQuery(value), 300)
+  }, [setSearchQuery])
+
+  // Clean up timeout on unmount
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current) }, [])
 
   return (
     <div className="relative">
       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
       <input
         type="text"
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
+        value={localQuery}
+        onChange={handleChange}
         placeholder="Search contacts..."
+        aria-label="Search contacts"
         className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] pl-9 pr-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
       />
     </div>
@@ -223,6 +237,20 @@ function ContactForm({
   const createContact = useContactStore((s) => s.createContact)
   const contactLists = useContactListStore((s) => s.lists)
   const photoInputRef = useRef<HTMLInputElement>(null)
+  const modalRef = useRef<HTMLDivElement>(null)
+  const [nameError, setNameError] = useState(false)
+
+  // Focus trap: keep Tab cycling within the modal
+  useFocusTrap(modalRef)
+
+  // Close on Escape key
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
 
   const defaultListId = useMemo(() => {
     const visible = contactLists.filter(l => l.visible)
@@ -282,14 +310,28 @@ function ContactForm({
     [given, family, prefix, suffix, phones, emails, addresses, organization, title, birthday, notes, photoUrl, selectedListId, createContact, onSaved],
   )
 
+  // Validate name on blur — show error if both given and family are empty
+  const handleNameBlur = useCallback(() => {
+    if (!given.trim() && !family.trim()) {
+      setNameError(true)
+    }
+  }, [given, family])
+
+  // Clear name error when either field gets a value
+  useEffect(() => {
+    if (given.trim() || family.trim()) setNameError(false)
+  }, [given, family])
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-start md:p-4 md:pt-16">
-      <div className="w-full max-h-[92vh] overflow-y-auto rounded-t-2xl border-t border-[rgb(var(--border))] bg-[rgb(var(--background))] px-4 pb-8 pt-3 shadow-2xl md:max-w-lg md:rounded-xl md:border md:p-6">
+      {/* Backdrop */}
+      <div className="fixed inset-0" aria-hidden="true" onClick={onClose} />
+      <div ref={modalRef} role="dialog" aria-modal="true" aria-label="New Contact" className="relative w-full max-h-[92vh] overflow-y-auto rounded-t-2xl border-t border-[rgb(var(--border))] bg-[rgb(var(--background))] px-4 pb-8 pt-3 shadow-2xl md:max-w-lg md:rounded-xl md:border md:p-6">
         {/* Drag indicator (mobile) */}
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[rgb(var(--border))] md:hidden" />
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">New Contact</h3>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors">
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -325,8 +367,37 @@ function ContactForm({
           {/* Name */}
           <fieldset className="space-y-2">
             <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Name</legend>
-            <input value={given} onChange={(e) => setGiven(e.target.value)} placeholder="Given name *" className={INPUT_CLASS} autoFocus />
-            <input value={family} onChange={(e) => setFamily(e.target.value)} placeholder="Family name" className={INPUT_CLASS} />
+            <div>
+              <input
+                value={given}
+                onChange={(e) => setGiven(e.target.value)}
+                onBlur={handleNameBlur}
+                placeholder="Given name *"
+                required
+                aria-label="Given name"
+                aria-invalid={nameError || undefined}
+                aria-describedby={nameError ? 'name-error' : undefined}
+                className={INPUT_CLASS}
+                autoFocus
+              />
+            </div>
+            <div>
+              <input
+                value={family}
+                onChange={(e) => setFamily(e.target.value)}
+                onBlur={handleNameBlur}
+                placeholder="Family name"
+                aria-label="Family name"
+                aria-invalid={nameError || undefined}
+                aria-describedby={nameError ? 'name-error' : undefined}
+                className={INPUT_CLASS}
+              />
+              {nameError && (
+                <p id="name-error" role="alert" className="mt-1 text-xs text-red-400">
+                  At least one name field is required.
+                </p>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="Prefix (e.g. Dr.)" className={INPUT_CLASS} />
               <input value={suffix} onChange={(e) => setSuffix(e.target.value)} placeholder="Suffix (e.g. Jr.)" className={INPUT_CLASS} />
@@ -341,7 +412,7 @@ function ContactForm({
                 <TypeSelector value={p.type} options={PHONE_TYPES} onChange={(t) => { const next = [...phones]; next[i] = { ...p, type: t }; setPhones(next) }} />
                 <input value={p.value} onChange={(e) => { const next = [...phones]; next[i] = { ...p, value: e.target.value }; setPhones(next) }} placeholder="Phone number" className={INPUT_CLASS} />
                 {phones.length > 1 && (
-                  <button type="button" onClick={() => setPhones(phones.filter((_, j) => j !== i))} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                  <button type="button" onClick={() => setPhones(phones.filter((_, j) => j !== i))} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove phone">
                     <X className="h-4 w-4" />
                   </button>
                 )}
@@ -360,7 +431,7 @@ function ContactForm({
                 <TypeSelector value={em.type} options={EMAIL_TYPES} onChange={(t) => { const next = [...emails]; next[i] = { ...em, type: t }; setEmails(next) }} />
                 <input value={em.value} onChange={(e) => { const next = [...emails]; next[i] = { ...em, value: e.target.value }; setEmails(next) }} placeholder="Email address" className={INPUT_CLASS} />
                 {emails.length > 1 && (
-                  <button type="button" onClick={() => setEmails(emails.filter((_, j) => j !== i))} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                  <button type="button" onClick={() => setEmails(emails.filter((_, j) => j !== i))} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove email">
                     <X className="h-4 w-4" />
                   </button>
                 )}
@@ -378,7 +449,7 @@ function ContactForm({
               <div key={i} className="space-y-1.5 rounded-md border border-[rgb(var(--border))] p-2">
                 <div className="flex items-center justify-between">
                   <TypeSelector value={a.type} options={ADDRESS_TYPES} onChange={(t) => { const next = [...addresses]; next[i] = { ...a, type: t }; setAddresses(next) }} />
-                  <button type="button" onClick={() => setAddresses(addresses.filter((_, j) => j !== i))} className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                  <button type="button" onClick={() => setAddresses(addresses.filter((_, j) => j !== i))} className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove address">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -437,8 +508,8 @@ function ContactForm({
           {/* Birthday & Notes */}
           <fieldset className="space-y-2">
             <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Personal</legend>
-            <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} className={INPUT_CLASS} />
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" rows={3} className={`${INPUT_CLASS} resize-none`} />
+            <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} aria-label="Birthday" className={INPUT_CLASS} />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" aria-label="Notes" rows={3} className={`${INPUT_CLASS} resize-none`} />
           </fieldset>
 
           {/* Actions */}
@@ -857,7 +928,7 @@ function ContactDetail({
               <TypeSelector value={p.type} options={PHONE_TYPES} onChange={(t) => handlePhoneUpdate(i, 'type', t)} />
               <EditableField value={p.value} onChange={(v) => handlePhoneUpdate(i, 'value', v)} placeholder="Phone number" />
               {canWrite && (
-                <button type="button" onClick={() => handleRemovePhone(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                <button type="button" onClick={() => handleRemovePhone(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove phone">
                   <X className="h-4 w-4" />
                 </button>
               )}
@@ -877,7 +948,7 @@ function ContactDetail({
               <TypeSelector value={em.type} options={EMAIL_TYPES} onChange={(t) => handleEmailUpdate(i, 'type', t)} />
               <EditableField value={em.value} onChange={(v) => handleEmailUpdate(i, 'value', v)} placeholder="Email address" />
               {canWrite && (
-                <button type="button" onClick={() => handleRemoveEmail(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                <button type="button" onClick={() => handleRemoveEmail(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove email">
                   <X className="h-4 w-4" />
                 </button>
               )}
@@ -897,7 +968,7 @@ function ContactDetail({
               <div className="flex items-center justify-between">
                 <TypeSelector value={a.type} options={ADDRESS_TYPES} onChange={(t) => handleAddressUpdate(i, 'type', t)} />
                 {canWrite && (
-                  <button type="button" onClick={() => handleRemoveAddress(i)} className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-400">
+                  <button type="button" onClick={() => handleRemoveAddress(i)} className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove address">
                     <X className="h-4 w-4" />
                   </button>
                 )}

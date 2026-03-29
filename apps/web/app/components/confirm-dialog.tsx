@@ -44,13 +44,14 @@ export function ConfirmDialog({
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
       onClick={onCancel}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="confirm-title"
-      aria-describedby="confirm-message"
+      aria-hidden="true"
     >
       <div
         ref={dialogContainerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+        aria-describedby="confirm-message"
         className="w-full max-w-sm rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >

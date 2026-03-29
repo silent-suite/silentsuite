@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import * as Sentry from '@sentry/nextjs'
 import { useSyncStore } from '@/app/stores/use-sync-store'
+import { logger } from '@/app/lib/logger'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
@@ -62,6 +64,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         setSyncStatus('synced')
         setLastSynced(new Date())
       } catch (err) {
+        Sentry.captureException(err)
         console.error('[sync-provider] Init failed:', err)
         setSyncStatus('error')
         setError(err instanceof Error ? err.message : 'Sync initialization failed')
@@ -83,9 +86,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             return { ...task, id: item.uid, uid: item.uid }
           })
           useTaskStore.getState().syncFromRemote(tasks)
-          console.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
+          logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
         }
       } catch (err) {
+        Sentry.captureException(err)
         console.error('[sync-provider] Failed to load tasks:', err)
       }
 
@@ -99,9 +103,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             return { ...contact, id: item.uid, uid: item.uid }
           })
           useContactStore.getState().syncFromRemote(contacts)
-          console.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
+          logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
         }
       } catch (err) {
+        Sentry.captureException(err)
         console.error('[sync-provider] Failed to load contacts:', err)
       }
 
@@ -115,9 +120,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             return { ...event, id: item.uid, uid: item.uid }
           })
           useCalendarStore.getState().syncFromRemote(events)
-          console.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
+          logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
         }
       } catch (err) {
+        Sentry.captureException(err)
         console.error('[sync-provider] Failed to load calendar events:', err)
       }
     }
@@ -125,7 +131,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     function wireChangeHandler(): (() => void) | null {
       const etebase = useEtebaseStore.getState()
       return etebase.onSyncChange(async (event) => {
-        console.log('[sync-provider] Sync change:', event.changeType, event.collectionType, event.itemUids.length, 'items')
+        logger.log('[sync-provider] Sync change:', event.changeType, event.collectionType, event.itemUids.length, 'items')
 
         // Re-fetch ALL items from the Etebase server for the changed collection.
         // refreshCollection() bypasses the stale local cache and goes to the server.
@@ -142,6 +148,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             useTaskStore.getState().syncFromRemote(tasks)
           } catch (err) {
+            Sentry.captureException(err)
             console.error('[sync-provider] Failed to sync tasks:', err)
           }
         } else if (collectionType === 'etebase.vcard') {
@@ -153,6 +160,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             useContactStore.getState().syncFromRemote(contacts)
           } catch (err) {
+            Sentry.captureException(err)
             console.error('[sync-provider] Failed to sync contacts:', err)
           }
         } else if (collectionType === 'etebase.vevent') {
@@ -164,6 +172,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             useCalendarStore.getState().syncFromRemote(events)
           } catch (err) {
+            Sentry.captureException(err)
             console.error('[sync-provider] Failed to sync calendar events:', err)
           }
         }

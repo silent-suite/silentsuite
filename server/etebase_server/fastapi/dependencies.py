@@ -81,7 +81,8 @@ def get_collection(collection_uid: str, queryset: QuerySet = Depends(get_collect
 @django_db_cleanup_decorator
 def get_item_queryset(collection: models.Collection = Depends(get_collection)) -> QuerySet:
     default_item_queryset: QuerySet = models.CollectionItem.objects.all()
-    # XXX Potentially add this for performance: .prefetch_related('revisions__chunks')
-    queryset = default_item_queryset.filter(collection__pk=collection.pk, revisions__current=True)
+    queryset = default_item_queryset.filter(
+        collection__pk=collection.pk, revisions__current=True
+    ).prefetch_related('revisions__chunks__chunk', 'revisions__chunks_relation')
 
     return queryset

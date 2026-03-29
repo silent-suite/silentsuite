@@ -10,6 +10,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { TasksEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
+import { useFocusTrap } from '@/app/lib/use-focus-trap'
 import type { Task, Priority } from '@silentsuite/core'
 
 // ── Priority config ──
@@ -22,10 +23,10 @@ const PRIORITY_ORDER: Record<Priority, number> = {
 }
 
 const PRIORITY_COLORS: Record<Priority, string> = {
-  low: 'bg-emerald-500/20 text-emerald-400',
-  medium: 'bg-amber-500/20 text-amber-400',
-  high: 'bg-orange-500/20 text-orange-400',
-  urgent: 'bg-red-500/20 text-red-400',
+  low: 'bg-emerald-500/30 text-emerald-300',
+  medium: 'bg-amber-500/30 text-amber-300',
+  high: 'bg-orange-500/30 text-orange-300',
+  urgent: 'bg-red-500/30 text-red-300',
 }
 
 const PRIORITY_LABELS: Record<Priority, string> = {
@@ -111,6 +112,7 @@ function TaskQuickAdd() {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder={canWrite ? 'Add a task...' : 'Read-only mode'}
+        aria-label="Add a task"
         disabled={!canWrite}
         className={`flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent ${!canWrite ? 'opacity-50 cursor-not-allowed' : ''}`}
         title={!canWrite ? 'Subscription required' : undefined}
@@ -130,10 +132,10 @@ function TaskQuickAdd() {
 // ── TaskDialog (full task creation/edit form) ──
 
 const PRIORITY_BUTTON_ACTIVE: Record<Priority, string> = {
-  low: 'bg-emerald-500/20 text-emerald-400',
-  medium: 'bg-amber-500/20 text-amber-400',
-  high: 'bg-orange-500/20 text-orange-400',
-  urgent: 'bg-red-500/20 text-red-400',
+  low: 'bg-emerald-500/30 text-emerald-300',
+  medium: 'bg-amber-500/30 text-amber-300',
+  high: 'bg-orange-500/30 text-orange-300',
+  urgent: 'bg-red-500/30 text-red-300',
 }
 
 function TaskDialog({
@@ -149,6 +151,10 @@ function TaskDialog({
   const updateTask = useTaskStore((s) => s.updateTask)
   const taskLists = useTaskListStore((s) => s.lists)
   const titleRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  // Focus trap: keep Tab cycling within the dialog
+  useFocusTrap(dialogRef)
 
   const defaultListId = useMemo(() => {
     const visible = taskLists.filter(l => l.visible)
@@ -211,9 +217,9 @@ function TaskDialog({
 
   return (
     <>
-      <div className="fixed inset-0 z-[60] bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 z-[60] bg-black/40" aria-hidden="true" onClick={onClose} />
       <div className="fixed inset-0 z-[61] flex items-end justify-center sm:items-center sm:p-4">
-        <div className="flex w-full max-h-[90vh] flex-col bg-[rgb(var(--background))] sm:max-w-lg sm:rounded-xl sm:border sm:border-[rgb(var(--border))] sm:shadow-xl rounded-t-2xl">
+        <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={mode === 'create' ? 'New Task' : 'Edit Task'} className="flex w-full max-h-[90vh] flex-col bg-[rgb(var(--background))] sm:max-w-lg sm:rounded-xl sm:border sm:border-[rgb(var(--border))] sm:shadow-xl rounded-t-2xl">
           {/* Mobile drag handle */}
           <div className="mx-auto mt-2 mb-1 h-1 w-10 rounded-full bg-[rgb(var(--border))] sm:hidden" />
 
@@ -261,6 +267,7 @@ function TaskDialog({
                   type="date"
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
+                  aria-label="Due date"
                   className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
                 {dueDate && (
@@ -354,6 +361,8 @@ function PrioritySelector({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const optionsRef = useRef<(HTMLButtonElement | null)[]>([])
+  const priorities: Priority[] = ['urgent', 'high', 'medium', 'low']
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -365,12 +374,45 @@ function PrioritySelector({
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open])
 
+  // Auto-focus selected option on open
+  useEffect(() => {
+    if (open) {
+      requestAnimationFrame(() => {
+        const idx = priorities.indexOf(value)
+        optionsRef.current[idx >= 0 ? idx : 0]?.focus()
+      })
+    }
+  }, [open, value])
+
+  const handleListKeyDown = (e: React.KeyboardEvent) => {
+    const items = optionsRef.current.filter(Boolean) as HTMLElement[]
+    const idx = items.indexOf(document.activeElement as HTMLElement)
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      items[(idx + 1) % items.length]?.focus()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      items[(idx - 1 + items.length) % items.length]?.focus()
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      items[0]?.focus()
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      items[items.length - 1]?.focus()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setOpen(false)
+    }
+  }
+
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
         onClick={() => !disabled && setOpen(!open)}
         disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${PRIORITY_COLORS[value]} transition-opacity ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'}`}
         title={disabled ? 'Subscription required' : undefined}
       >
@@ -379,16 +421,27 @@ function PrioritySelector({
         <ChevronDown className="h-3 w-3" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-32 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] py-1 shadow-lg">
-          {(['urgent', 'high', 'medium', 'low'] as Priority[]).map((p) => (
+        <div
+          className="absolute right-0 top-full z-30 mt-1 w-32 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] py-1 shadow-lg"
+          role="listbox"
+          aria-label="Priority"
+          aria-activedescendant={`priority-${value}`}
+          onKeyDown={handleListKeyDown}
+        >
+          {priorities.map((p, i) => (
             <button
               key={p}
+              ref={(el) => { optionsRef.current[i] = el }}
+              id={`priority-${p}`}
               type="button"
+              role="option"
+              aria-selected={p === value}
+              tabIndex={-1}
               onClick={() => {
                 onChange(p)
                 setOpen(false)
               }}
-              className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-[rgb(var(--surface))] transition-colors ${
+              className={`flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none transition-colors ${
                 p === value ? 'font-medium' : ''
               }`}
             >
@@ -432,7 +485,8 @@ function DateInput({
           }
         }}
         readOnly={disabled}
-        className={`bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-1 py-0.5 border border-transparent hover:border-[rgb(var(--border))] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        aria-label="Task due date"
+        className={`bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1.5 border border-transparent hover:border-[rgb(var(--border))] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         title={disabled ? 'Subscription required' : undefined}
       />
     </div>
@@ -569,7 +623,7 @@ function TaskItem({ task }: { task: Task }) {
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
-            className="no-min-size rounded p-1 text-[rgb(var(--muted))] opacity-0 group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
+            className="rounded p-1 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-[rgb(var(--primary))] transition-all focus:outline-none focus:opacity-100 md:p-0.5"
             aria-label="Edit task"
           >
             <Pencil className="h-3.5 w-3.5" />
@@ -578,7 +632,7 @@ function TaskItem({ task }: { task: Task }) {
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setConfirmDelete(true) }}
-              className="no-min-size rounded p-1 text-[rgb(var(--muted))] opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all focus:outline-none focus:opacity-100 md:p-0.5"
+              className="rounded p-1 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center text-[rgb(var(--muted))] md:opacity-0 md:group-hover:opacity-100 hover:text-red-400 transition-all focus:outline-none focus:opacity-100 md:p-0.5"
               aria-label="Delete task"
             >
               <X className="h-4 w-4" />

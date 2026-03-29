@@ -84,11 +84,13 @@ export default function LoginPage() {
             id="email"
             type="email"
             autoFocus
+            aria-invalid={!!errors.email}
+            aria-describedby={errors.email ? 'email-error' : undefined}
             {...register('email')}
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.email && (
-            <p className="text-xs text-red-400">{errors.email.message}</p>
+            <p id="email-error" role="alert" className="text-xs text-red-400">{errors.email.message}</p>
           )}
         </div>
 
@@ -102,11 +104,13 @@ export default function LoginPage() {
           <Input
             id="password"
             type="password"
+            aria-invalid={!!errors.password}
+            aria-describedby={errors.password ? 'password-error' : undefined}
             {...register('password')}
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.password && (
-            <p className="text-xs text-red-400">{errors.password.message}</p>
+            <p id="password-error" role="alert" className="text-xs text-red-400">{errors.password.message}</p>
           )}
         </div>
 

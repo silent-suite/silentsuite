@@ -33,7 +33,9 @@ services:
         condition: service_healthy
     environment:
       SERVER: http
-      AUTO_UPDATE: "true"
+      # AUTO_UPDATE: set to "true" to enable automatic Etebase server updates on container restart.
+      # Disabled by default for stability — opt in when you're ready to accept upstream changes.
+      AUTO_UPDATE: "false"
       AUTO_SIGNUP: "true"
       DB_ENGINE: postgres
       DATABASE_NAME: ${DATABASE_NAME:-silentsuite}

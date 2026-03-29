@@ -38,7 +38,7 @@ describe('SyncIndicator', () => {
     render(<SyncIndicator />)
     const dot = screen.getByRole('status')
     expect(dot).toHaveAttribute('aria-label', 'Sync status: syncing')
-    expect(dot.className).toContain('bg-amber-500')
+    expect(dot.className).toContain('bg-amber-400')
   })
 
   it('renders offline status with gray color', () => {

@@ -42,22 +42,29 @@ const faqs = [
   },
 ]
 
-function FAQItem({ q, a }: { q: string; a: string }) {
+function FAQItem({ q, a, id }: { q: string; a: string; id: string }) {
   const [open, setOpen] = useState(false)
+  const buttonId = `faq-q-${id}`
+  const panelId = `faq-a-${id}`
 
   return (
     <div className="">
       <button
+        id={buttonId}
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls={panelId}
         className="w-full flex items-center justify-between gap-4 py-5 text-left"
       >
-        <span className="font-medium text-white">{q}</span>
+        <h3 className="font-medium text-white text-base">{q}</h3>
         <ChevronDown
           className={`w-5 h-5 text-navy-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
       {open && (
-        <p className="pb-5 text-navy-300 text-sm leading-relaxed">{a}</p>
+        <div id={panelId} role="region" aria-labelledby={buttonId}>
+          <p className="pb-5 text-navy-300 text-sm leading-relaxed">{a}</p>
+        </div>
       )}
     </div>
   )
@@ -80,8 +87,8 @@ export default function FAQ() {
         </div>
 
         <div className="bg-navy-900 rounded-2xl border border-navy-700 px-6">
-          {faqs.map((item) => (
-            <FAQItem key={item.q} {...item} />
+          {faqs.map((item, i) => (
+            <FAQItem key={item.q} {...item} id={String(i)} />
           ))}
         </div>
       </div>

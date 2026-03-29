@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import type { SyncStatus } from '@silentsuite/core'
 import { replay, getPendingCount, getFailedCount, onCountChange, getStaleEntries, remove, type QueueEntry } from '@/app/lib/offline-queue'
 import { showErrorToast } from '@/app/stores/use-toast-store'
+import { logger } from '@/app/lib/logger'
 
 interface SyncState {
   syncStatus: SyncStatus
@@ -74,7 +75,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       // Cold-start replay: if we load online with pending entries, replay them
       getPendingCount().then(async (count) => {
         if (count > 0) {
-          console.log(`[sync-store] Cold-start: replaying ${count} queued mutations`)
+          logger.log(`[sync-store] Cold-start: replaying ${count} queued mutations`)
           await get().replayOfflineQueue()
         }
       })
@@ -93,7 +94,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     const count = await getPendingCount()
     if (count === 0) return
 
-    console.log(`[sync-store] Replaying ${count} queued offline mutations...`)
+    logger.log(`[sync-store] Replaying ${count} queued offline mutations...`)
 
     const executeMutation = async (entry: QueueEntry): Promise<{ itemUid?: string }> => {
       const { useEtebaseStore } = await import('@/app/stores/use-etebase-store')
@@ -123,7 +124,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
           err.message.includes('Conflict')
         )
         if (is409 && entry.type !== 'create') {
-          console.warn(
+          logger.warn(
             `[sync-store] Conflict on ${entry.type} ${entry.collectionType}/${entry.itemUid} — discarding local change (server wins)`,
           )
           // Refresh the collection to get server's version
@@ -170,7 +171,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
     const succeeded = results.filter((r) => r.success).length
     const failed = results.filter((r) => !r.success).length
-    console.log(`[sync-store] Queue replay done: ${succeeded} succeeded, ${failed} failed`)
+    logger.log(`[sync-store] Queue replay done: ${succeeded} succeeded, ${failed} failed`)
   },
 
   simulateSyncCycle: () => {
@@ -188,7 +189,10 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
       // First, run the SyncEngine poll to advance stokens
       if (etebase.syncEngine) {
-        try { await etebase.syncEngine.syncNow() } catch {}
+        try { await etebase.syncEngine.syncNow() } catch (err) {
+          logger.error('SyncStore', 'SyncEngine.syncNow() failed', err)
+          set({ syncStatus: 'error' })
+        }
       }
 
       // Then refresh all three collections from the server

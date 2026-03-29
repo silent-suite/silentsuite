@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { NOTIFICATION_LOOKAHEAD_MS, NOTIFICATION_MAX_FUTURE_MS, MS_PER_MINUTE } from '@/app/lib/constants'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 
@@ -117,9 +118,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     timersRef.current.clear()
 
     const now = Date.now()
-    const LOOKAHEAD_MS = 24 * 60 * 60 * 1000 // 24 hours
-    const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000
-    const range = { start: new Date(now), end: new Date(now + TWO_WEEKS_MS) }
+    const LOOKAHEAD_MS = NOTIFICATION_LOOKAHEAD_MS
+    const range = { start: new Date(now), end: new Date(now + NOTIFICATION_MAX_FUTURE_MS) }
 
     // Collect alarm data for service worker
     const swAlarmData: Array<{
@@ -245,7 +245,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         if ('periodicSync' in registration) {
           try {
             await (registration as any).periodicSync.register('check-alarms', {
-              minInterval: 60 * 1000, // Check every minute
+              minInterval: MS_PER_MINUTE, // Check every minute
             })
           } catch {
             // Periodic sync not available or permission denied

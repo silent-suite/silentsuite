@@ -11,6 +11,7 @@ export function PullToRefresh({ children }: { children: React.ReactNode }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [pullDistance, setPullDistance] = useState(0)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [ariaStatus, setAriaStatus] = useState('')
   const startY = useRef(0)
   const pulling = useRef(false)
   const simulateSyncCycle = useSyncStore((s) => s.simulateSyncCycle)
@@ -46,11 +47,15 @@ export function PullToRefresh({ children }: { children: React.ReactNode }) {
 
     if (pullDistance >= PULL_THRESHOLD) {
       setIsRefreshing(true)
+      setAriaStatus('Refreshing…')
       simulateSyncCycle()
       // Reset after a brief delay to show the animation
       setTimeout(() => {
         setIsRefreshing(false)
         setPullDistance(0)
+        setAriaStatus('Refresh complete')
+        // Clear the status after screen readers have time to announce it
+        setTimeout(() => setAriaStatus(''), 1500)
       }, 800)
     } else {
       setPullDistance(0)
@@ -77,6 +82,11 @@ export function PullToRefresh({ children }: { children: React.ReactNode }) {
 
   return (
     <div ref={containerRef} className="relative h-full overflow-y-auto">
+      {/* Screen reader announcement for pull-to-refresh state */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {ariaStatus}
+      </div>
+
       {/* Pull indicator */}
       {showIndicator && (
         <div

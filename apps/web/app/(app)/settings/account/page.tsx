@@ -4,9 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
-
-const BILLING_API_URL =
-  process.env.NEXT_PUBLIC_BILLING_API_URL ?? 'http://localhost:3736'
+import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 
 interface AccountDetails {
   id: string
@@ -55,7 +53,7 @@ export default function AccountPage() {
   const connectedServer = useMemo(() => {
     const stored = localStorage.getItem('silentsuite-server-url')
     if (isSelfHosted || isCustomServer(stored ?? undefined)) {
-      return stored ?? process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'Self-Hosted'
+      return stored ?? ETEBASE_SERVER_URL ?? 'Self-Hosted'
     }
     return 'SilentSuite Cloud'
   }, [])

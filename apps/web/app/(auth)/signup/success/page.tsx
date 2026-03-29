@@ -3,13 +3,14 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { CheckCircle } from 'lucide-react'
+import { MS_PER_DAY } from '@/app/lib/constants'
 import { Button } from '@silentsuite/ui'
 
 export default function SignupSuccessPage() {
   const router = useRouter()
 
   const trialEndDate = new Date(
-    Date.now() + 30 * 24 * 60 * 60 * 1000,
+    Date.now() + 30 * MS_PER_DAY,
   ).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'long',

@@ -20,12 +20,17 @@ export function Header() {
   const { user, logout } = useAuthStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuItemsRef = useRef<(HTMLAnchorElement | HTMLButtonElement | null)[]>([])
 
   const title = Object.entries(titles).find(([path]) =>
     pathname.startsWith(path)
   )?.[1] ?? 'SilentSuite'
 
-  // Update document title per page
+  // L-01: Page titles are set via useEffect rather than Next.js metadata API because
+  // this app uses a client-side layout with 'use client' throughout the (app) route group.
+  // The Header component already knows the current route via usePathname(), making this
+  // the natural place to manage document.title. Moving to the metadata API would require
+  // refactoring the entire layout hierarchy to support server components.
   useEffect(() => {
     document.title = title === 'SilentSuite' ? 'SilentSuite' : `${title} | SilentSuite`
   }, [title])
@@ -39,6 +44,34 @@ export function Header() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
+
+  // Auto-focus first menu item on open
+  useEffect(() => {
+    if (menuOpen) {
+      requestAnimationFrame(() => menuItemsRef.current[0]?.focus())
+    }
+  }, [menuOpen])
+
+  const handleMenuKeyDown = (e: React.KeyboardEvent) => {
+    const items = menuItemsRef.current.filter(Boolean) as HTMLElement[]
+    const idx = items.indexOf(document.activeElement as HTMLElement)
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      items[(idx + 1) % items.length]?.focus()
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      items[(idx - 1 + items.length) % items.length]?.focus()
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      items[0]?.focus()
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      items[items.length - 1]?.focus()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setMenuOpen(false)
+    }
+  }
 
   return (
     <header className="relative z-40 flex h-12 shrink-0 items-center justify-between border-b border-[rgb(var(--border))] bg-[rgb(var(--background))]/95 backdrop-blur-sm px-4">
@@ -64,8 +97,9 @@ export function Header() {
         <div ref={menuRef} className="relative">
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="no-min-size flex items-center gap-1 rounded-md px-2 py-1.5 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 transition-colors"
+            className="flex items-center gap-1 rounded-md px-2 py-1.5 min-h-[44px] md:min-h-0 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 transition-colors"
             aria-label="User menu"
+            aria-haspopup="true"
             aria-expanded={menuOpen}
           >
             <span className="hidden max-w-[140px] truncate text-xs text-[rgb(var(--muted))] sm:inline">
@@ -75,26 +109,37 @@ export function Header() {
           </button>
 
           {menuOpen && (
-            <div className="absolute right-0 top-full z-[100] mt-1 w-48 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] py-1 shadow-lg">
+            <div
+              className="absolute right-0 top-full z-[100] mt-1 w-48 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] py-1 shadow-lg"
+              role="menu"
+              aria-label="User menu"
+              onKeyDown={handleMenuKeyDown}
+            >
               <div className="border-b border-[rgb(var(--border))] px-3 py-2">
                 <p className="truncate text-xs text-[rgb(var(--muted))]">
                   {user?.email}
                 </p>
               </div>
               <Link
+                ref={(el) => { menuItemsRef.current[0] = el }}
                 href="/settings/account"
                 onClick={() => setMenuOpen(false)}
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors"
+                role="menuitem"
+                tabIndex={-1}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none transition-colors"
               >
                 <Settings className="h-4 w-4" />
                 Account settings
               </Link>
               <button
+                ref={(el) => { menuItemsRef.current[1] = el }}
                 onClick={() => {
                   setMenuOpen(false)
                   logout()
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors"
+                role="menuitem"
+                tabIndex={-1}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none transition-colors"
               >
                 <LogOut className="h-4 w-4" />
                 Log out

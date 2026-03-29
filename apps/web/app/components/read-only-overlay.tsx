@@ -23,17 +23,17 @@ export function ReadOnlyBanner() {
       <span className="flex-1">
         {title} Your data is safe and read-only.
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <Link
           href="/settings/subscription"
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
         >
           Choose a plan
-          <ExternalLink className="h-3 w-3" />
+          <ExternalLink className="h-3.5 w-3.5" />
         </Link>
         <Link
           href="/settings/export"
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[rgb(var(--muted))] transition-colors hover:bg-amber-500/20"
+          className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-[rgb(var(--muted))] transition-colors hover:bg-amber-500/20"
         >
           Export data
         </Link>

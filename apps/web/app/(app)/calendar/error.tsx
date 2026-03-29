@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import * as Sentry from '@sentry/nextjs'
 
 export default function CalendarError({
   error,
@@ -11,6 +12,7 @@ export default function CalendarError({
 }) {
   useEffect(() => {
     console.error('Calendar error boundary caught:', error)
+    Sentry.captureException(error)
   }, [error])
 
   return (
@@ -18,8 +20,13 @@ export default function CalendarError({
       <div className="max-w-md space-y-4 text-center">
         <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Calendar unavailable</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Failed to load your calendar. Please try again.
+          Failed to load your calendar. Check your connection and try again.
         </p>
+        {error.digest && (
+          <p className="text-xs text-[rgb(var(--muted))]">
+            Error ID: <code className="rounded bg-[rgb(var(--surface))] px-1 py-0.5 font-mono text-xs">{error.digest}</code>
+          </p>
+        )}
         {process.env.NODE_ENV === 'development' && (
           <pre className="mt-2 max-h-40 overflow-auto rounded bg-[rgb(var(--surface))] p-3 text-left text-xs text-red-400">
             {error.message}
@@ -31,6 +38,12 @@ export default function CalendarError({
         >
           Retry
         </button>
+        <p className="text-xs text-[rgb(var(--muted))]">
+          If this keeps happening, contact us at{' '}
+          <a href="mailto:info@silentsuite.io" className="text-emerald-500 hover:underline">
+            info@silentsuite.io
+          </a>
+        </p>
       </div>
     </div>
   )

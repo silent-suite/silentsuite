@@ -3,9 +3,18 @@
 import { useState } from 'react'
 import { CreditCard, Clock, X, Lock, Zap, Crown } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
-import StripePaymentForm from './stripe-payment-form'
+import dynamic from 'next/dynamic'
+import { BILLING_API_URL } from '@/app/lib/config'
 
-const BILLING_API_URL = process.env.NEXT_PUBLIC_BILLING_API_URL ?? 'http://localhost:3736'
+const StripePaymentForm = dynamic(() => import('./stripe-payment-form'), {
+  loading: () => (
+    <div className="flex flex-col items-center justify-center py-8">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+      <p className="mt-3 text-sm text-slate-400">Loading payment form...</p>
+    </div>
+  ),
+  ssr: false,
+})
 
 type BillingInterval = 'monthly' | 'annual'
 type TrialPath = '30day' | 'immediate'

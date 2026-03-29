@@ -91,8 +91,10 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
         return
       }
       setContacts(allContacts)
-    } catch {
-      setError('Failed to parse the file. Please make sure it is a valid .vcf file.')
+    } catch (err) {
+      console.error('[contact-import] Failed to parse VCF file:', err)
+      const detail = err instanceof Error ? `: ${err.message}` : ''
+      setError(`Failed to parse the file${detail}. Please make sure it is a valid .vcf file.`)
     }
   }, [])
 
@@ -129,8 +131,10 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
       const count = await importContacts(newContacts)
       setImportedCount(count)
       onImportComplete(count)
-    } catch {
-      setError('An error occurred while importing contacts. Please try again.')
+    } catch (err) {
+      console.error('[contact-import] Import failed:', err)
+      const detail = err instanceof Error ? `: ${err.message}` : ''
+      setError(`An error occurred while importing contacts${detail}. Please try again.`)
     } finally {
       setIsImporting(false)
     }

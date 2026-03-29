@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Shield, Menu, X, ExternalLink } from 'lucide-react'
@@ -48,6 +48,52 @@ export default function Header() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const pathname = usePathname()
   const isHome = pathname === '/'
+  const mobileMenuRef = useRef<HTMLDivElement>(null)
+  const hamburgerRef = useRef<HTMLButtonElement>(null)
+
+  // Escape to close mobile menu
+  useEffect(() => {
+    if (!mobileOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMobileOpen(false)
+        hamburgerRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [mobileOpen])
+
+  // Focus first link on open
+  useEffect(() => {
+    if (mobileOpen && mobileMenuRef.current) {
+      const first = mobileMenuRef.current.querySelector<HTMLElement>('a, button')
+      first?.focus()
+    }
+  }, [mobileOpen])
+
+  // Focus trap within mobile menu
+  const handleMobileMenuKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab' || !mobileMenuRef.current) return
+    const focusable = mobileMenuRef.current.querySelectorAll<HTMLElement>(
+      'a[href], button, input, textarea, select, [tabindex]:not([tabindex="-1"])'
+    )
+    if (focusable.length === 0) return
+    const first = focusable[0]!
+    const last = focusable[focusable.length - 1]!
+
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      }
+    } else {
+      if (document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+  }, [])
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50">
@@ -114,9 +160,11 @@ export default function Header() {
 
         {/* Mobile hamburger */}
         <button
+          ref={hamburgerRef}
           onClick={() => setMobileOpen(!mobileOpen)}
           className="md:hidden text-navy-300 hover:text-white transition-colors"
           aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={mobileOpen}
         >
           {mobileOpen ? (
             <X className="w-6 h-6" />
@@ -128,7 +176,12 @@ export default function Header() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="relative md:hidden bg-navy-950/95 backdrop-blur-md border-b border-navy-700/50">
+        <div
+          ref={mobileMenuRef}
+          className="relative md:hidden bg-navy-950/95 backdrop-blur-md border-b border-navy-700/50"
+          role="menu"
+          onKeyDown={handleMobileMenuKeyDown}
+        >
           <div className="max-w-6xl mx-auto px-6 py-6 flex flex-col gap-4">
             {navLinks.map(({ label, href, external }) => (
               <Link

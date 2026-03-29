@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { CheckCircle, XCircle, Clock, Loader2, MailOpen } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
+import { BILLING_API_URL } from '@/app/lib/config'
 
 type VerifyState = 'loading' | 'success' | 'expired' | 'invalid' | 'error'
 
@@ -28,8 +29,7 @@ export default function VerifyEmailPage() {
     // If we have a token but no redirect status, redirect to the billing API
     // which will verify and redirect back with ?verified=true or ?verified=expired
     if (token) {
-      const billingApi = process.env.NEXT_PUBLIC_BILLING_API_URL || 'https://api.silentsuite.io'
-      window.location.href = `${billingApi}/auth/verify-email?token=${encodeURIComponent(token)}`
+      window.location.href = `${BILLING_API_URL}/auth/verify-email?token=${encodeURIComponent(token)}`
       return
     }
 

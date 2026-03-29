@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "//": "ARCH-17: docs app (VitePress) participates in all turbo tasks. It only has build/dev/preview, so lint/test/type-check are no-ops for it. Filter with --filter=!@silentsuite/docs if it causes CI noise.",
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

@@ -2,6 +2,9 @@
 
 import { create } from 'zustand'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
+import { logger } from '@/app/lib/logger'
+import { BILLING_API_URL } from '@/app/lib/config'
+import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
 
 export interface User {
   isAdmin?: boolean
@@ -50,8 +53,7 @@ interface AuthState {
   clearError: () => void
 }
 
-const BILLING_API_URL =
-  process.env.NEXT_PUBLIC_BILLING_API_URL ?? 'http://localhost:3736'
+
 
 /** Sync the is_admin cookie so Next.js middleware can guard /admin routes server-side. */
 function syncAdminCookie(isAdmin: boolean) {
@@ -60,7 +62,7 @@ function syncAdminCookie(isAdmin: boolean) {
   // Self-hosted users are always admin — use a longer cookie lifetime (7 days).
   // SaaS users get 15 min and rely on session refresh to renew.
   const isSH = typeof localStorage !== 'undefined' && !!localStorage.getItem('silentsuite-server-url')
-  const maxAge = (isSelfHosted || isSH) ? 7 * 24 * 60 * 60 : 15 * 60
+  const maxAge = (isSelfHosted || isSH) ? COOKIE_MAX_AGE_SELF_HOSTED : COOKIE_MAX_AGE_HOSTED
   if (isAdmin) {
     document.cookie = `is_admin=true; path=/; max-age=${maxAge}; SameSite=Strict${secure}`
   } else {
@@ -106,7 +108,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             const data = await res.json()
             earlyAdopter = data.earlyAdopter === true
           }
-        } catch {}
+        } catch (err) {
+          logger.warn('[auth-store] Failed to check early adopter eligibility:', err)
+        }
       }
 
       // Mark signup as in progress so restoreSession won't authenticate mid-flow
@@ -143,14 +147,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Self-hosted: if user opted in, subscribe to newsletter on the SilentSuite API
       if (pending.wantsProductUpdates) {
         try {
-          const res = await fetch('https://api.silentsuite.io/newsletter/subscribe', {
+          const res = await fetch(`${BILLING_API_URL}/newsletter/subscribe`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: pending.email, source: 'self_hosted' }),
           })
-          if (!res.ok) console.warn('Newsletter subscribe failed:', res.status)
+          if (!res.ok) logger.warn('Newsletter subscribe failed:', res.status)
         } catch (err) {
-          console.warn('Newsletter subscribe failed:', err)
+          logger.warn('Newsletter subscribe failed:', err)
         }
       }
 
@@ -213,7 +217,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   completeSignup: () => {
     const pending = get().pendingSignup
     if (!pending?.provisionedUser) {
-      console.warn('completeSignup called without provisioned data')
+      logger.warn('completeSignup called without provisioned data')
       return
     }
     // Clear the signup-in-progress flag so restoreSession works normally
@@ -305,14 +309,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!isSelfHosted) {
       try {
         await fetch(`${BILLING_API_URL}/auth/session`, { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-      } catch {}
+      } catch (err) {
+        logger.warn('[auth-store] Failed to delete server session during logout:', err)
+      }
     }
 
     // Destroy Etebase store (stops SyncEngine, clears SDK objects)
     try {
       const { useEtebaseStore } = await import('@/app/stores/use-etebase-store')
       useEtebaseStore.getState().destroy()
-    } catch {}
+    } catch (err) {
+      logger.warn('[auth-store] Failed to destroy Etebase store during logout:', err)
+    }
 
     // Clear signup-in-progress flag
     if (typeof window !== 'undefined') {
@@ -352,7 +360,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       syncAdminCookie(isAdmin)
       set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false }, isAuthenticated: true })
       return true
-    } catch { syncAdminCookie(false); set({ user: null, isAuthenticated: false }); return false }
+    } catch (err) {
+      logger.warn('[auth-store] Session refresh failed:', err)
+      syncAdminCookie(false)
+      set({ user: null, isAuthenticated: false })
+      return false
+    }
   },
 
   restoreSession: async () => {
@@ -390,8 +403,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false })
       }
-    } catch {
+    } catch (err) {
       // Network error — billing API is unreachable.
+      logger.warn('[auth-store] Session restore failed (network):', err)
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
       const hasEtebaseSession = !!localStorage.getItem('etebase_session')
       if (hasEtebaseSession) {
@@ -415,8 +429,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
       if (res.ok) { const data = await res.json(); set({ subscriptionStatus: data.status }) }
-    } catch {
+    } catch (err) {
       // Network error — only enter degraded mode if there's no existing good status
+      logger.warn('[auth-store] fetchSubscription failed (network):', err)
       const current = get().subscriptionStatus
       if (!current) {
         set({ subscriptionStatus: 'billing_unavailable' })
@@ -445,7 +460,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         subscriptionStatus: subData.status,
       })
       return true
-    } catch {
+    } catch (err) {
+      logger.warn('[auth-store] retryBillingConnection failed:', err)
       return false
     }
   },

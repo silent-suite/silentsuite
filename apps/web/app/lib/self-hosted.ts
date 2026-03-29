@@ -8,14 +8,15 @@
  * they are a self-hoster connecting via the hosted web app. We detect this
  * and skip billing for that signup/login session.
  */
+import { ETEBASE_SERVER_URL } from '@/app/lib/config'
+
 export const isSelfHosted = process.env.NEXT_PUBLIC_SELF_HOSTED === 'true'
 
 /**
  * Check if a server URL is a custom (non-default) server.
  * This means the user is self-hosting and connecting through the hosted web app.
  */
-const DEFAULT_SERVER_URL =
-  process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'http://localhost:3735'
+const DEFAULT_SERVER_URL = ETEBASE_SERVER_URL
 
 export function isCustomServer(serverUrl?: string): boolean {
   if (!serverUrl || !serverUrl.trim()) return false

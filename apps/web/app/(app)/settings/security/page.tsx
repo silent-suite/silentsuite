@@ -9,6 +9,7 @@ import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
+import { BILLING_API_URL } from '@/app/lib/config'
 
 // ---------------------------------------------------------------------------
 // Validation (same rules as signup)
@@ -31,13 +32,6 @@ const passwordSchema = z
   })
 
 type PasswordFormData = z.infer<typeof passwordSchema>
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const BILLING_API_URL =
-  process.env.NEXT_PUBLIC_BILLING_API_URL ?? 'http://localhost:3736'
 
 // ---------------------------------------------------------------------------
 // Change Password Section

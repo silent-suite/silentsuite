@@ -48,8 +48,8 @@ function ToastItem({ toast }: { toast: ToastMessage }) {
   return (
     <div
       className={`flex items-center gap-2 rounded-lg border bg-slate-800 px-4 py-2.5 text-sm shadow-lg transition-opacity duration-300 ${variantStyles[toast.variant]} ${fadeOut ? 'opacity-0' : 'opacity-100'}`}
-      role="alert"
-      aria-live="assertive"
+      role={toast.variant === 'error' ? 'alert' : 'status'}
+      aria-live={toast.variant === 'error' ? 'assertive' : 'polite'}
     >
       <Icon className={`h-4 w-4 shrink-0 ${iconStyles[toast.variant]}`} />
       <span className="flex-1">{toast.message}</span>

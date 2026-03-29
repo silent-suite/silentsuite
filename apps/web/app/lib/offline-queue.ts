@@ -3,6 +3,7 @@
  * Catches failed Etebase mutations when offline, persists them,
  * and replays them in FIFO order when connectivity returns.
  */
+import { logger } from '@/app/lib/logger'
 
 type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts'
 type MutationType = 'create' | 'update' | 'delete'
@@ -68,7 +69,7 @@ function notifyListeners(): void {
   // Read count async then notify — fire and forget
   getPendingCount().then((count) => {
     for (const fn of listeners) {
-      try { fn(count) } catch {}
+      try { fn(count) } catch (err) { logger.warn('OfflineQueue', 'Listener callback failed', err) }
     }
   })
 }
@@ -309,7 +310,7 @@ export function onEnqueue(fn: EnqueueListener): () => void {
 
 function notifyEnqueueListeners(): void {
   for (const fn of enqueueListeners) {
-    try { fn() } catch {}
+    try { fn() } catch (err) { logger.warn('OfflineQueue', 'Enqueue listener failed', err) }
   }
 }
 
@@ -328,7 +329,7 @@ export async function _resetForTests(): Promise<void> {
     try {
       const db = await dbPromise
       db.close()
-    } catch {}
+    } catch (err) { logger.warn('OfflineQueue', 'Failed to close DB during test reset', err) }
   }
   dbPromise = null
   listeners.clear()

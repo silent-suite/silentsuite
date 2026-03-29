@@ -1,12 +1,14 @@
 'use client'
 
 import { create } from 'zustand'
+import { ETEBASE_SERVER_URL } from '@/app/lib/config'
 import type {
   CollectionType,
   SyncChangeEvent,
 } from '@silentsuite/core'
 import { enqueue, isOfflineError } from '@/app/lib/offline-queue'
 import { showErrorToast } from '@/app/stores/use-toast-store'
+import { logger } from '@/app/lib/logger'
 
 /**
  * Holds live Etebase SDK objects (Account, Collections, Items, SyncEngine).
@@ -17,8 +19,7 @@ import { showErrorToast } from '@/app/stores/use-toast-store'
 // We dynamically import Etebase types to avoid SSR issues with the etebase WASM module.
 // The actual Etebase SDK objects are stored as `any` in the store and typed at usage sites.
 
-const DEFAULT_ETEBASE_SERVER_URL =
-  process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'http://localhost:3735'
+const DEFAULT_ETEBASE_SERVER_URL = ETEBASE_SERVER_URL
 
 function isValidServerUrl(url: string): boolean {
   try {
@@ -147,7 +148,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   initialize: async () => {
     const savedSession = localStorage.getItem('etebase_session')
     if (!savedSession) {
-      console.debug('[etebase-store] No saved session, skipping initialization')
+      logger.debug('[etebase-store] No saved session, skipping initialization')
       return
     }
 
@@ -156,11 +157,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const core = await import('@silentsuite/core')
 
       // 1. Restore the Account
-      console.debug('[etebase-store] Restoring Etebase session...')
+      logger.debug('[etebase-store] Restoring Etebase session...')
       const serverUrl = getServerUrl()
       const account = await core.restoreSession(serverUrl, savedSession)
       set({ account })
-      console.debug('[etebase-store] Session restored')
+      logger.debug('[etebase-store] Session restored')
 
       // 2. Ensure collections exist (create if first login, fetch if returning)
       const collections: Record<CollectionTypeKey, any> = {
@@ -179,10 +180,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const existing = await core.listCollections(account, colType)
         if (existing.length > 0) {
           collections[key] = existing[0]
-          console.debug(`[etebase-store] Found existing ${key} collection: ${existing[0].uid}`)
+          logger.debug(`[etebase-store] Found existing ${key} collection: ${existing[0].uid}`)
         } else {
           collections[key] = await core.createCollection(account, colType, { name: defaultName })
-          console.debug(`[etebase-store] Created ${key} collection: ${collections[key].uid}`)
+          logger.debug(`[etebase-store] Created ${key} collection: ${collections[key].uid}`)
         }
       }
 
@@ -213,7 +214,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
 
       set({ itemCache, itemTypeMap })
-      console.debug(`[etebase-store] Loaded ${itemCache.size} items into cache`)
+      logger.debug(`[etebase-store] Loaded ${itemCache.size} items into cache`)
 
       // 4. Start SyncEngine
       const engine = new core.SyncEngine({
@@ -231,7 +232,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
       await engine.start(account)
       set({ syncEngine: engine, isInitialized: true })
-      console.debug('[etebase-store] SyncEngine started')
+      logger.debug('[etebase-store] SyncEngine started')
     } catch (err) {
       console.error('[etebase-store] Initialization failed:', err)
       // Don't clear the session -- the user might be offline
@@ -247,7 +248,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const { account, collections } = get()
     const collection = collections[type]
     if (!account || !collection) {
-      console.warn(`[etebase-store] Cannot create item: no account or ${type} collection`)
+      logger.warn(`[etebase-store] Cannot create item: no account or ${type} collection`)
       return null
     }
 
@@ -264,7 +265,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     } catch (err) {
       if (isOfflineError(err)) {
         const queueTempId = tempId ?? `pending-${Date.now()}`
-        console.warn(`[etebase-store] Offline — queuing create for ${type} (tempId: ${queueTempId})`)
+        logger.warn(`[etebase-store] Offline — queuing create for ${type} (tempId: ${queueTempId})`)
         try {
           await enqueue({ type: 'create', collectionType: type, content, tempId: queueTempId })
         } catch (queueErr) {
@@ -282,7 +283,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const { account, collections } = get()
     const collection = collections[type]
     if (!account || !collection) {
-      console.warn(`[etebase-store] Cannot create items: no account or ${type} collection`)
+      logger.warn(`[etebase-store] Cannot create items: no account or ${type} collection`)
       return contents.map(() => null)
     }
 
@@ -318,7 +319,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return uids
     } catch (err) {
       if (isOfflineError(err)) {
-        console.warn(`[etebase-store] Offline — queuing ${contents.length} creates for ${type}`)
+        logger.warn(`[etebase-store] Offline — queuing ${contents.length} creates for ${type}`)
         for (const { content, tempId } of contents) {
           try {
             await enqueue({ type: 'create', collectionType: type, content, tempId })
@@ -339,7 +340,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const collection = collections[type]
     const item = itemCache.get(itemUid)
     if (!account || !collection || !item) {
-      console.warn(`[etebase-store] Cannot update item ${itemUid}: missing account, collection, or item`)
+      logger.warn(`[etebase-store] Cannot update item ${itemUid}: missing account, collection, or item`)
       return
     }
 
@@ -351,7 +352,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ itemCache: newCache })
     } catch (err) {
       if (isOfflineError(err)) {
-        console.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
+        logger.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
         try {
           await enqueue({ type: 'update', collectionType: type, content, itemUid })
         } catch (queueErr) {
@@ -369,7 +370,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const collection = collections[type]
     const item = itemCache.get(itemUid)
     if (!account || !collection || !item) {
-      console.warn(`[etebase-store] Cannot delete item ${itemUid}: missing account, collection, or item`)
+      logger.warn(`[etebase-store] Cannot delete item ${itemUid}: missing account, collection, or item`)
       return
     }
 
@@ -383,7 +384,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ itemCache: newCache, itemTypeMap: newTypeMap })
     } catch (err) {
       if (isOfflineError(err)) {
-        console.warn(`[etebase-store] Offline — queuing delete for ${type}/${itemUid}`)
+        logger.warn(`[etebase-store] Offline — queuing delete for ${type}/${itemUid}`)
         try {
           await enqueue({ type: 'delete', collectionType: type, itemUid })
         } catch (queueErr) {
@@ -469,7 +470,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCollections[type] = freshCollection
       set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, collections: newCollections })
 
-      console.debug(`[etebase-store] Refreshed ${type}: ${results.length} items`)
+      logger.debug(`[etebase-store] Refreshed ${type}: ${results.length} items`)
       return results
     } catch (err) {
       console.error(`[etebase-store] Failed to refresh ${type}:`, err)
@@ -490,7 +491,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       isInitialized: false,
       syncEngine: null,
     })
-    console.debug('[etebase-store] Destroyed')
+    logger.debug('[etebase-store] Destroyed')
   },
 
   onSyncChange: (handler) => {

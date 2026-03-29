@@ -17,7 +17,17 @@ import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
-import StripePaymentForm from '@/app/components/stripe-payment-form'
+import dynamic from 'next/dynamic'
+
+const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-form'), {
+  loading: () => (
+    <div className="flex flex-col items-center justify-center py-8">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+      <p className="mt-3 text-sm text-slate-400">Loading payment form...</p>
+    </div>
+  ),
+  ssr: false,
+})
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,6 +209,11 @@ function StepCreateAccount({
     watch,
     formState: { errors, isValid },
   } = useForm<SignupFormData>({
+    // CQ-25: @hookform/resolvers v5 expects zod v3 types internally.
+    // Zod v4 changed its type exports (ZodType → ZodTypeAny, different generics),
+    // causing a type mismatch. The runtime works fine — only the types clash.
+    // Remove this cast once @hookform/resolvers ships native zod v4 support.
+    // Tracking: https://github.com/react-hook-form/resolvers/issues
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(signupSchema) as any,
     mode: 'onChange',
@@ -239,11 +254,13 @@ function StepCreateAccount({
             id="email"
             type="email"
             autoFocus
+            aria-invalid={!!errors.email}
+            aria-describedby={errors.email ? 'signup-email-error' : undefined}
             {...register('email')}
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.email && (
-            <p className="text-xs text-red-400">{errors.email.message}</p>
+            <p id="signup-email-error" role="alert" className="text-xs text-red-400">{errors.email.message}</p>
           )}
         </div>
 
@@ -257,11 +274,13 @@ function StepCreateAccount({
           <Input
             id="password"
             type="password"
+            aria-invalid={!!errors.password}
+            aria-describedby={errors.password ? 'signup-password-error' : undefined}
             {...register('password')}
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.password && (
-            <p className="text-xs text-red-400">{errors.password.message}</p>
+            <p id="signup-password-error" role="alert" className="text-xs text-red-400">{errors.password.message}</p>
           )}
           <PasswordStrength password={password} />
         </div>
@@ -276,11 +295,13 @@ function StepCreateAccount({
           <Input
             id="confirmPassword"
             type="password"
+            aria-invalid={!!errors.confirmPassword}
+            aria-describedby={errors.confirmPassword ? 'signup-confirm-password-error' : undefined}
             {...register('confirmPassword')}
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.confirmPassword && (
-            <p className="text-xs text-red-400">
+            <p id="signup-confirm-password-error" role="alert" className="text-xs text-red-400">
               {errors.confirmPassword.message}
             </p>
           )}
@@ -409,7 +430,7 @@ function StepChoosePlan({
     const priceLabel = interval === 'monthly' ? '\u20AC3.60/month' : '\u20AC3.00/month'
 
     return (
-      <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+      <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
         <div className="space-y-2 text-center">
           <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Add your payment method</h2>
           <p className="text-sm text-[rgb(var(--muted))]">
@@ -489,7 +510,7 @@ function StepChoosePlan({
 
   // --- Cards view (plan selection) ---
   return (
-    <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
+    <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300 motion-reduce:animate-none">
       <div className="space-y-2 text-center">
         <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
@@ -506,6 +527,7 @@ function StepChoosePlan({
         {/* Card A: 7 Day Free Trial — no card */}
         <button
           onClick={() => setSelectedTrial('7day')}
+          aria-label="7 Day Free Trial — full access, no credit card required"
           className={`group w-full rounded-xl border-2 p-5 text-left transition-all ${
             selectedTrial === '7day'
               ? 'border-emerald-500 bg-emerald-500/5'
@@ -535,6 +557,7 @@ function StepChoosePlan({
         {/* Card B: 30 Day Free Trial — credit card required */}
         <button
           onClick={() => setSelectedTrial('30day')}
+          aria-label={`30 Day Free Trial — ${interval === 'monthly' ? '€3.60/month' : '€3.00/month billed annually'}, credit card required, cancel anytime`}
           className={`group w-full rounded-xl border-2 p-6 text-left transition-all ${
             selectedTrial === '30day'
               ? 'border-emerald-500 bg-emerald-500/5'
@@ -787,14 +810,18 @@ function StepVaultAndRecovery({
   const [copied, setCopied] = useState(false)
   const [downloaded, setDownloaded] = useState(false)
 
-  // TODO: Replace with actual recovery key from Etebase
-  const recoveryKey = useRef(
-    Array.from({ length: 4 }, () =>
-      Array.from({ length: 4 }, () =>
-        'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]
+  // Generate a cryptographically secure recovery key (4 groups of 4 chars)
+  const recoveryKey = useRef<string | null>(null)
+  if (recoveryKey.current === null) {
+    const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    recoveryKey.current = Array.from({ length: 4 }, (_, g) =>
+      Array.from({ length: 4 }, (_, i) =>
+        charset[bytes[g * 4 + i]! % charset.length]!
       ).join('')
     ).join('-')
-  ).current
+  }
+  const recoveryKeyValue = recoveryKey.current
 
   useEffect(() => {
     if (phase !== 'creating') return
@@ -812,7 +839,7 @@ Account: ${email}
 Generated: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
 
 YOUR RECOVERY KEY:
-${recoveryKey}
+${recoveryKeyValue}
 
 IMPORTANT:
 - Store this key in a safe place
@@ -829,7 +856,7 @@ IMPORTANT:
     link.click()
     URL.revokeObjectURL(url)
     setDownloaded(true)
-  }, [recoveryKey, email])
+  }, [recoveryKeyValue, email])
 
   const handleDownloadPdf = useCallback(() => {
     // For now, use the same text download. Full PDF generation can be added later.
@@ -838,13 +865,13 @@ IMPORTANT:
 
   const handleCopy = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText(recoveryKey)
+      await navigator.clipboard.writeText(recoveryKeyValue)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch {
       // Fallback: select the text
     }
-  }, [recoveryKey])
+  }, [recoveryKeyValue])
 
   if (phase === 'creating') {
     return (
@@ -886,6 +913,20 @@ IMPORTANT:
             50% { transform: scale(1.15); opacity: 0; }
             100% { transform: scale(1); opacity: 0.3; }
           }
+          @media (prefers-reduced-motion: reduce) {
+            .vault-pulse,
+            .vault-lock,
+            .vault-ring {
+              animation: none;
+            }
+            .vault-lock {
+              opacity: 1;
+              transform: scale(1);
+            }
+            .vault-ring {
+              opacity: 0.3;
+            }
+          }
         `}</style>
       </div>
     )
@@ -923,7 +964,7 @@ IMPORTANT:
 
       {/* Key display */}
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 font-mono text-base tracking-wider text-[rgb(var(--foreground))] text-center select-all">
-        {recoveryKey}
+        {recoveryKeyValue}
       </div>
 
       {/* Actions */}

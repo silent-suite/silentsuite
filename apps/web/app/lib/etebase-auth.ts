@@ -1,5 +1,4 @@
-const ETEBASE_SERVER_URL =
-  process.env.NEXT_PUBLIC_ETEBASE_SERVER_URL ?? 'http://localhost:3735'
+import { ETEBASE_SERVER_URL } from '@/app/lib/config'
 
 interface EtebaseAuthResult {
   authToken: string

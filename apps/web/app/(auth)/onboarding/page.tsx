@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Calendar, CheckSquare, Users, Shield, Check, Lock, EyeOff, Sun, Moon, Monitor } from 'lucide-react'
 import { useTheme } from 'next-themes'
@@ -8,6 +8,9 @@ import { Button } from '@silentsuite/ui'
 import CalendarImport from '@/app/components/import/CalendarImport'
 import TaskImport from '@/app/components/import/TaskImport'
 import ContactImport from '@/app/components/import/ContactImport'
+import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useTaskStore } from '@/app/stores/use-task-store'
+import { useContactStore } from '@/app/stores/use-contact-store'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,7 +33,7 @@ const STEP_LABELS = ['Welcome', 'Theme', 'Calendar', 'Tasks', 'Contacts', 'Done'
 
 function WelcomeSlide({ onGetStarted }: { onGetStarted: () => void }) {
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in motion-reduce:animate-none">
       <div className="text-center space-y-3">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10">
           <Shield className="h-8 w-8 text-emerald-500" />
@@ -116,7 +119,7 @@ function ThemeChoiceSlide({ onNext }: { onNext: () => void }) {
   const selectedTheme = mounted ? theme : 'system'
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in motion-reduce:animate-none">
       <div className="text-center space-y-3">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10">
           <Sun className="h-8 w-8 text-emerald-500" />
@@ -197,7 +200,7 @@ function CompletionSlide({
   ]
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in motion-reduce:animate-none">
       {anyImported && (
         <div className="flex justify-center">
           <div className="celebration-check flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/10">
@@ -260,6 +263,13 @@ function CompletionSlide({
           60% { transform: scale(1.2); }
           100% { transform: scale(1); opacity: 1; }
         }
+        @media (prefers-reduced-motion: reduce) {
+          .celebration-check {
+            animation: none;
+            opacity: 1;
+            transform: none;
+          }
+        }
       `}</style>
     </div>
   )
@@ -298,11 +308,32 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(0)
   const [direction, setDirection] = useState<Direction>('left')
   const [isAnimating, setIsAnimating] = useState(false)
+
+  // Check for existing data in stores
+  const existingEvents = useCalendarStore((s) => s.events)
+  const existingTasks = useTaskStore((s) => s.tasks)
+  const existingContacts = useContactStore((s) => s.contacts)
+
+  const existingData = useMemo(() => ({
+    calendar: existingEvents.length,
+    tasks: existingTasks.length,
+    contacts: existingContacts.length,
+  }), [existingEvents.length, existingTasks.length, existingContacts.length])
+
   const [counts, setCounts] = useState<ImportCounts>({
     calendar: 0,
     tasks: 0,
     contacts: 0,
   })
+
+  // Pre-populate counts from existing data on mount
+  useEffect(() => {
+    setCounts((prev) => ({
+      calendar: existingData.calendar > 0 ? existingData.calendar : prev.calendar,
+      tasks: existingData.tasks > 0 ? existingData.tasks : prev.tasks,
+      contacts: existingData.contacts > 0 ? existingData.contacts : prev.contacts,
+    }))
+  }, [existingData])
 
   const touchStartX = useRef<number | null>(null)
   const touchStartY = useRef<number | null>(null)
@@ -422,9 +453,72 @@ export default function OnboardingPage() {
       <div className={`transition-slide ${slideClass}`}>
         {step === 0 && <WelcomeSlide onGetStarted={next} />}
         {step === 1 && <ThemeChoiceSlide onNext={next} />}
-        {step === 2 && <CalendarImport onImportComplete={handleCalendarImport} />}
-        {step === 3 && <TaskImport onImportComplete={handleTaskImport} />}
-        {step === 4 && <ContactImport onImportComplete={handleContactImport} />}
+        {step === 2 && (
+          existingData.calendar > 0 ? (
+            <div className="space-y-6 animate-fade-in">
+              <div className="text-center space-y-3">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10">
+                  <Calendar className="h-8 w-8 text-emerald-500" />
+                </div>
+                <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Calendar data found</h2>
+                <p className="text-sm text-[rgb(var(--muted))]">
+                  You already have {existingData.calendar} calendar event{existingData.calendar !== 1 ? 's' : ''} imported.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+                <Check className="h-4 w-4 text-emerald-500" />
+                <span className="text-sm text-emerald-400">Already imported</span>
+              </div>
+              <Button onClick={next} className="w-full">Continue</Button>
+            </div>
+          ) : (
+            <CalendarImport onImportComplete={handleCalendarImport} />
+          )
+        )}
+        {step === 3 && (
+          existingData.tasks > 0 ? (
+            <div className="space-y-6 animate-fade-in">
+              <div className="text-center space-y-3">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10">
+                  <CheckSquare className="h-8 w-8 text-emerald-500" />
+                </div>
+                <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Tasks data found</h2>
+                <p className="text-sm text-[rgb(var(--muted))]">
+                  You already have {existingData.tasks} task{existingData.tasks !== 1 ? 's' : ''} imported.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+                <Check className="h-4 w-4 text-emerald-500" />
+                <span className="text-sm text-emerald-400">Already imported</span>
+              </div>
+              <Button onClick={next} className="w-full">Continue</Button>
+            </div>
+          ) : (
+            <TaskImport onImportComplete={handleTaskImport} />
+          )
+        )}
+        {step === 4 && (
+          existingData.contacts > 0 ? (
+            <div className="space-y-6 animate-fade-in">
+              <div className="text-center space-y-3">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10">
+                  <Users className="h-8 w-8 text-emerald-500" />
+                </div>
+                <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Contacts data found</h2>
+                <p className="text-sm text-[rgb(var(--muted))]">
+                  You already have {existingData.contacts} contact{existingData.contacts !== 1 ? 's' : ''} imported.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3">
+                <Check className="h-4 w-4 text-emerald-500" />
+                <span className="text-sm text-emerald-400">Already imported</span>
+              </div>
+              <Button onClick={next} className="w-full">Continue</Button>
+            </div>
+          ) : (
+            <ContactImport onImportComplete={handleContactImport} />
+          )
+        )}
         {step === 5 && <CompletionSlide counts={counts} onFinish={finish} />}
       </div>
 
@@ -501,6 +595,20 @@ export default function OnboardingPage() {
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(8px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .transition-slide,
+          .slide-enter-left,
+          .slide-enter-right,
+          .slide-exit-left,
+          .slide-exit-right,
+          .animate-fade-in,
+          .celebration-check {
+            animation: none !important;
+            transition: none !important;
+            opacity: 1;
+            transform: none;
+          }
         }
       `}</style>
     </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { useEffect, useInsertionEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNextCalendarApp, ScheduleXCalendar } from '@schedule-x/react'
 import {
   createViewWeek,
@@ -16,7 +16,12 @@ import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 
 import '@schedule-x/theme-default/dist/index.css'
-import 'temporal-polyfill/global'
+
+// PERF-12: Only load Temporal polyfill when the native API is unavailable
+if (typeof globalThis.Temporal === 'undefined') {
+  // Side-effect import that patches globalThis.Temporal
+  require('temporal-polyfill/global')
+}
 
 const VIEW_MAP: Record<CalendarView, string> = {
   week: 'week',
@@ -302,6 +307,28 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   displayEventMapRef.current = displayEventMap
 
   const sxEvents = useMemo(() => toScheduleXEvents(displayEvents, calendarColors), [displayEvents, calendarColors])
+
+  // Inject calendar color styles via useInsertionEffect (avoids dangerouslySetInnerHTML)
+  useInsertionEffect(() => {
+    const styleId = 'sx-calendar-colors'
+    let style = document.getElementById(styleId) as HTMLStyleElement | null
+    if (!style) {
+      style = document.createElement('style')
+      style.id = styleId
+      document.head.appendChild(style)
+    }
+    style.textContent = Array.from(calendarColors.entries())
+      .map(([id, color]) => {
+        const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+        const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#10b981'
+        return `.${cls} { background-color: ${safeColor} !important; color: #fff !important; }`
+      })
+      .join('\n')
+    return () => {
+      style.remove()
+    }
+  }, [calendarColors])
+
   const selectedDate = useMemo(() => toPlainDate(currentDate), [currentDate])
 
   // Drag-to-move state
@@ -575,7 +602,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       }
     }
 
-    const interval = setInterval(checkSxRange, 300)
+    const interval = setInterval(checkSxRange, 1000)
     return () => clearInterval(interval)
   }, [calendar, setCurrentDate])
 
@@ -1345,12 +1372,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Dynamic calendar color styles */}
-        <style dangerouslySetInnerHTML={{ __html: Array.from(calendarColors.entries()).map(([id, color]) => {
-          const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
-          const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#10b981'
-          return `.${cls} { background-color: ${safeColor} !important; color: #fff !important; }`
-        }).join('\n') }} />
+        {/* Calendar color styles injected via useInsertionEffect above */}
         <ScheduleXCalendar calendarApp={calendar} />
         {dragSelection && (
           <div

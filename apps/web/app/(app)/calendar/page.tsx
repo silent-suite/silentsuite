@@ -207,7 +207,7 @@ export default function CalendarPage() {
               <ChevronRight className="h-5 w-5" />
             </button>
           </div>
-          <CalendarViewSwitcher />
+          {/* On mobile, only agenda view is shown — hide the view switcher */}
         </div>
         <h2 className="text-base font-semibold text-[rgb(var(--foreground))] px-1">{dateLabel}</h2>
       </div>
