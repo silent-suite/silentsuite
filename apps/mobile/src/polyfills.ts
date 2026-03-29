@@ -13,6 +13,6 @@
 import { Buffer } from 'buffer';
 
 // Make Buffer globally available (used by @silentsuite/core parsers)
-if (typeof globalThis.Buffer === 'undefined') {
-  (globalThis as any).Buffer = Buffer;
+if (typeof (globalThis as Record<string, unknown>).Buffer === 'undefined') {
+  (globalThis as Record<string, unknown>).Buffer = Buffer;
 }

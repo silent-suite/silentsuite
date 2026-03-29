@@ -218,7 +218,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           }
 
           // Collect alarm data for service worker (broader window for background checks)
-          if (alarmTime > now && alarmTime < now + TWO_WEEKS_MS) {
+          if (alarmTime > now && alarmTime < now + NOTIFICATION_MAX_FUTURE_MS) {
             swAlarmData.push({
               id: `${event.id}_${occStart.getTime()}_${alarm.trigger}`,
               title: event.title,

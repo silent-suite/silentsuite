@@ -214,7 +214,6 @@ function StepCreateAccount({
     // causing a type mismatch. The runtime works fine — only the types clash.
     // Remove this cast once @hookform/resolvers ships native zod v4 support.
     // Tracking: https://github.com/react-hook-form/resolvers/issues
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     resolver: zodResolver(signupSchema) as any,
     mode: 'onChange',
     defaultValues: initialData ?? undefined,

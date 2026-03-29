@@ -47,7 +47,7 @@ function ChangePasswordSection() {
     reset,
     formState: { errors, isSubmitting },
   } = useForm<PasswordFormData>({
-    resolver: zodResolver(passwordSchema),
+    resolver: zodResolver(passwordSchema) as any,
     mode: 'onBlur',
   })
 

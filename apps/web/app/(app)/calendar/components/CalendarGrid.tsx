@@ -17,11 +17,8 @@ import type { CalendarEvent, DateRange } from '@silentsuite/core'
 
 import '@schedule-x/theme-default/dist/index.css'
 
-// PERF-12: Only load Temporal polyfill when the native API is unavailable
-if (typeof globalThis.Temporal === 'undefined') {
-  // Side-effect import that patches globalThis.Temporal
-  require('temporal-polyfill/global')
-}
+// Temporal polyfill — patches globalThis.Temporal and registers types
+import 'temporal-polyfill/global'
 
 const VIEW_MAP: Record<CalendarView, string> = {
   week: 'week',
@@ -504,7 +501,6 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     if (!calendar) return
     const sxViewName = VIEW_MAP[currentView]
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const app = (calendar as any).$app
       if (!app?.calendarState) return
       isSyncingToSxRef.current = true
@@ -545,7 +541,6 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       if (isSyncingToSxRef.current) return
 
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const app = (calendar as any).$app
         if (!app?.calendarState) return
 

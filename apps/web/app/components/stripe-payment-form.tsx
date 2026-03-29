@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'
-import { loadStripe, type Stripe, type Appearance } from '@stripe/stripe-js/pure'
+import { loadStripe } from '@stripe/stripe-js/pure'
+import type { Stripe, Appearance } from '@stripe/stripe-js'
 import { useTheme } from 'next-themes'
 import { Button } from '@silentsuite/ui'
 

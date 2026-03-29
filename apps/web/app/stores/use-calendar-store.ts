@@ -504,7 +504,6 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
         parsed.state.currentDate = new Date(parsed.state.currentDate)
       }
       if (parsed?.state?.events) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         parsed.state.events = parsed.state.events.map((e: any) => ({
           ...e,
           startDate: new Date(e.startDate),

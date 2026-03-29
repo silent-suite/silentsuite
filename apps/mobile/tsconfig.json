@@ -3,11 +3,13 @@
   "compilerOptions": {
     "strict": true,
     "baseUrl": ".",
+    "types": ["node"],
     "paths": {
       "@/*": ["./src/*"],
       "@silentsuite/core": ["../../packages/core/src"],
       "@silentsuite/core/*": ["../../packages/core/src/*"]
     }
   },
-  "include": ["**/*.ts", "**/*.tsx", "../../packages/core/src/**/*.ts"]
+  "include": ["**/*.ts", "**/*.tsx", "../../packages/core/src/**/*.ts"],
+  "exclude": ["node_modules", "../../packages/core/src/**/*.test.ts"]
 }

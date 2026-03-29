@@ -10,12 +10,12 @@ export default function OfflinePage() {
       </div>
 
       <h1 className="mb-2 text-xl font-semibold text-[rgb(var(--foreground))]">
-        You're offline
+        You&apos;re offline
       </h1>
 
       <p className="mb-8 max-w-sm text-sm text-[rgb(var(--muted))]">
         Your changes are saved locally and will sync automatically when
-        you're back online.
+        you&apos;re back online.
       </p>
 
       <div className="flex items-center gap-2 text-xs text-[rgb(var(--muted))]">

@@ -28,13 +28,10 @@ export function GlobalAddButton() {
   const ref = useRef<HTMLDivElement>(null)
   const canWrite = useAuthStore((s) => s.canWrite())
 
-  // Hide on settings page
-  if (pathname.startsWith('/settings') || pathname.startsWith('/admin')) {
-    return null
-  }
-
   const primary = getPrimaryItem(pathname)
   const secondaryItems = items.filter((i) => i.key !== primary)
+
+  const isHidden = pathname.startsWith('/settings') || pathname.startsWith('/admin')
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -66,6 +63,10 @@ export function GlobalAddButton() {
     },
     [router],
   )
+
+  if (isHidden) {
+    return null
+  }
 
   return (
     <div ref={ref} className="fixed bottom-[76px] right-3 z-40 md:bottom-6 md:right-6">
