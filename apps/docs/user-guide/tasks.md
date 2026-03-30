@@ -2,13 +2,15 @@
 
 Your tasks are end-to-end encrypted. Only your devices can read them.
 
-<!-- TODO: Expand with specific UI walkthroughs once client apps are available -->
+## Task Lists
+
+Tasks are organized into task lists (also called collections). You can create multiple lists to separate work, personal, and other categories. Each list syncs independently across your devices.
 
 ## Create a Task
 
 1. Open the Tasks view.
 2. Tap or click "Add Task."
-3. Enter the task details (title, due date, priority, notes).
+3. Enter the task details: title, due date, priority, and notes.
 4. Save. The task is encrypted on your device and synced.
 
 ## Complete a Task
@@ -28,6 +30,6 @@ Your tasks are end-to-end encrypted. Only your devices can read them.
 2. Select delete.
 3. The deletion syncs across all your devices.
 
-## Task Lists
+## Standards
 
-<!-- TODO: Document task list/collection support -->
+Tasks use the VTODO standard (part of the iCalendar specification). This means they are compatible with other apps that support CalDAV tasks, including [Tasks.org](./apps/tasks-org.md) on Android and desktop apps via the [SilentSuite Bridge](./apps/dav-bridge.md).

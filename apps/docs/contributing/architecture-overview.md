@@ -9,15 +9,16 @@ SilentSuite is a privacy-focused productivity suite built on the [Etebase protoc
 ```
 Client Devices                    Server
 +------------------+         +------------------+
-|  Web / Mobile    |         |  Caddy (HTTPS)   |
+|  Web / Mobile    |         | Reverse Proxy    |
+|                  |         |     (HTTPS)      |
+|  Encrypt locally |         +--------+---------+
+|  using Etebase   |                  |
+|  protocol        |         +--------+---------+
+|                  | ------> |  Etebase Server  |
+|  Decrypt locally |         |  (encrypted sync)|
 |                  |         +--------+---------+
-|  Encrypt locally |                  |
-|  using Etebase   |         +--------+---------+
-|  protocol        | ------> |  Etebase Server  |
-|                  |         |  (encrypted sync)|
-|  Decrypt locally |         +--------+---------+
-|                  |                  |
-+------------------+         +--------+---------+
++------------------+                  |
+                             +--------+---------+
                              |  PostgreSQL      |
                              |  (stores blobs)  |
                              +------------------+
@@ -36,16 +37,20 @@ The repository is a pnpm monorepo managed by Turborepo:
 | `packages/` | Shared packages used across apps |
 | `self-host/` | Docker Compose configuration for self-hosting |
 | `deploy/` | Deployment scripts, init scripts, runbooks |
-| `docs/` | Documentation |
+| `apps/docs/` | Documentation |
+| `android/` | Android sync adapter (Kotlin) |
+| `bridge/` | CalDAV/CardDAV bridge daemon (Python) |
 
 ## Tech Stack
 
 | Component | Technology |
 |---|---|
-| **Frontend** | Next.js 15, React, Tailwind CSS |
-| **Server** | Etebase protocol (Python), Docker |
+| **Frontend** | Next.js 16, React, Tailwind CSS |
+| **Server** | Etebase protocol (Django 5.2), Docker |
+| **Billing API** | Fastify, Stripe |
+| **Bridge** | Python (CalDAV/CardDAV to Etebase translation) |
 | **Database** | PostgreSQL 16 |
-| **Reverse Proxy** | Caddy (automatic TLS) |
+| **Reverse Proxy** | nginx, Caddy, Traefik, or similar (TLS termination) |
 | **Encryption** | XChaCha20-Poly1305, Argon2 (via Etebase) |
 | **Monorepo** | pnpm workspaces, Turborepo |
 | **Hosting** | EU cloud infrastructure, Cloudflare Workers |

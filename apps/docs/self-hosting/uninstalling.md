@@ -21,7 +21,7 @@ To completely remove SilentSuite and all its data:
 docker compose down -v
 
 # Remove the Docker images
-docker rmi victorrds/etebase:latest postgres:16-alpine
+docker rmi ghcr.io/silent-suite/silentsuite-server:latest postgres:16-alpine
 
 # Remove the cloned repository
 cd ..

@@ -4,17 +4,20 @@ Set up SilentSuite and start syncing your calendar, contacts, and tasks with end
 
 ## 1. Create an Account
 
-<!-- TODO: Add specific steps once client apps are available -->
+1. Go to [app.silentsuite.io](https://app.silentsuite.io).
+2. Click **Sign Up**.
+3. Choose a plan. A 7-day free trial is available without a credit card.
+4. Enter your email and choose a strong password.
 
-Visit [silentsuite.io](https://silentsuite.io) to create your account. Your password is used to derive your encryption keys -- it never leaves your device.
+Your password is used to derive your encryption keys locally on your device. It never leaves your device, and the server never sees it.
 
-**Important:** Choose a strong password. Since all encryption is derived from your password, there is no way to recover your data if you forget it. SilentSuite cannot reset your password because the server never has access to your keys.
+**Important:** There is no password reset. Your encryption keys are derived from your password, so if you forget it, your data cannot be recovered. Use a password manager.
 
 ## 2. Set Up Your First Device
 
-<!-- TODO: Add platform-specific setup guides (Android, iOS, web) -->
+After creating your account, you can use SilentSuite immediately in the web app. Add calendar events, contacts, and tasks right from your browser.
 
-After creating your account, set up SilentSuite on your device. Your encryption keys are generated locally during setup.
+To sync with other apps and devices, see the [Apps & Integrations](./apps/index.md) page for setup guides covering Android, iOS (via EteSync), desktop apps, and more.
 
 ## 3. Add Your Data
 

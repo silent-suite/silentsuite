@@ -28,7 +28,7 @@ docker compose ps
 
 The `docker-compose.yml` uses the `latest` tag for both images by default:
 
-- `victorrds/etebase:latest` -- the SilentSuite sync server
+- `ghcr.io/silent-suite/silentsuite-server:latest` -- the SilentSuite sync server
 - `postgres:16-alpine` -- PostgreSQL database
 
 Running `docker compose pull` fetches the newest versions of these images.
@@ -39,10 +39,10 @@ For production deployments, you can pin specific image versions in `docker-compo
 
 ```yaml
 server:
-  image: victorrds/etebase:v0.15.0
+  image: ghcr.io/silent-suite/silentsuite-server:v0.15.0
 ```
 
-This prevents unexpected changes when pulling. Check the [Etebase Docker Hub page](https://hub.docker.com/r/victorrds/etebase) for available tags.
+This prevents unexpected changes when pulling. Check the [GitHub Container Registry](https://github.com/silent-suite/silentsuite/pkgs/container/silentsuite-server) for available tags.
 
 ## Data Safety
 

@@ -27,7 +27,7 @@ SilentSuite self-hosting runs two containers on a single Docker network. You pro
 
 | Service | Image | Role |
 |---|---|---|
-| **SilentSuite Server** | `victorrds/etebase` | Sync server built on the Etebase protocol. Handles encrypted data sync, user authentication, and the admin panel. All data is encrypted client-side; the server never sees plaintext. |
+| **SilentSuite Server** | `ghcr.io/silent-suite/silentsuite-server` | Sync server built on the Etebase protocol. Handles encrypted data sync, user authentication, and the admin panel. All data is encrypted client-side; the server never sees plaintext. |
 | **PostgreSQL** | `postgres:16-alpine` | Database. Stores encrypted sync data and user accounts. Only accessible within the Docker network. |
 
 ## Network and Security

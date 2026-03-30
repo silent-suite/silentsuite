@@ -13,8 +13,8 @@ Get a local SilentSuite development environment running. You should be able to g
 ## 1. Clone the Repository
 
 ```bash
-git clone https://github.com/silent-suite/silentsuite.io.git
-cd silentsuite.io
+git clone https://github.com/silent-suite/silentsuite.git
+cd silentsuite
 ```
 
 ## 2. Install Dependencies
@@ -42,10 +42,12 @@ silentsuite/
   apps/
     landing/         # Landing page and blog (Next.js)
     web/             # Main web application (Next.js)
+    docs/            # Documentation (you are here)
+  android/           # Kotlin Android sync adapter
+  bridge/            # CalDAV/CardDAV bridge daemon
   packages/          # Shared packages
   self-host/         # Self-hosting configuration (Docker Compose)
   deploy/            # Deployment scripts and configuration
-  docs/              # Documentation (you are here)
 ```
 
 ## Available Commands

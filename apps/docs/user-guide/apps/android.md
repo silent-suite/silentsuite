@@ -10,7 +10,7 @@ Once set up, your SilentSuite data syncs directly into Android's system calendar
 
 Download the **SilentSuite** Android app:
 
-- [GitHub (APK)](https://github.com/silent-suite/silentsuite-android/releases) -- download the latest release APK directly.
+- [GitHub (APK)](https://github.com/silent-suite/silentsuite/releases) -- download the latest release APK from the monorepo.
 
 ::: tip
 The SilentSuite Android app is a fork of the [EteSync Android app](https://github.com/etesync/android) with SilentSuite branding and `server.silentsuite.io` pre-configured as the default server. If you prefer, the original EteSync app from [Google Play](https://play.google.com/store/apps/details?id=com.etesync.syncadapter) or [F-Droid](https://f-droid.org/packages/com.etesync.syncadapter/) also works -- just enter the SilentSuite server URL manually.
@@ -43,9 +43,9 @@ For tasks, use:
 
 ## Source Code
 
-The SilentSuite Android app is open source:
+The SilentSuite Android app is open source. The source lives in the `android/` directory of the main monorepo:
 
-- [github.com/silent-suite/silentsuite-android](https://github.com/silent-suite/silentsuite-android)
+- [github.com/silent-suite/silentsuite/tree/main/android](https://github.com/silent-suite/silentsuite/tree/main/android)
 
 ## Troubleshooting
 

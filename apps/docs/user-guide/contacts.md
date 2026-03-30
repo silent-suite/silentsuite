@@ -2,8 +2,6 @@
 
 Your contacts are end-to-end encrypted. Only your devices can read them.
 
-<!-- TODO: Expand with specific UI walkthroughs once client apps are available -->
-
 ## Add a Contact
 
 1. Open the Contacts view.
@@ -23,10 +21,10 @@ Your contacts are end-to-end encrypted. Only your devices can read them.
 2. Select delete.
 3. The deletion syncs across all your devices.
 
-## Import Contacts
+## Import
 
-<!-- TODO: Document import functionality (vCard, CSV) -->
+You can import contacts from vCard (`.vcf`) and CSV files. This makes it straightforward to migrate from other services or consolidate contacts from multiple sources.
 
-## Export Contacts
+## Export
 
-<!-- TODO: Document export functionality -->
+Export your contacts at any time. Your data belongs to you, and you can take it with you.

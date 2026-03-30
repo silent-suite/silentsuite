@@ -2,12 +2,14 @@
 
 Your calendar events are end-to-end encrypted. Only your devices can read them.
 
-<!-- TODO: Expand with specific UI walkthroughs once client apps are available -->
+## Overview
+
+The web app at [app.silentsuite.io](https://app.silentsuite.io) provides day, week, and month views. The sidebar includes a mini calendar for quick navigation and a calendar list where you can toggle visibility of individual calendars.
 
 ## Create an Event
 
 1. Open the Calendar view.
-2. Tap or click the date and time for your event.
+2. Click or tap the date and time for your event.
 3. Enter the event details (title, location, notes, reminders).
 4. Save. The event is encrypted on your device and synced.
 
@@ -23,9 +25,13 @@ Your calendar events are end-to-end encrypted. Only your devices can read them.
 2. Select delete.
 3. The deletion syncs across all your devices.
 
+## Import
+
+You can import events from `.ics` files. This is useful for migrating from another calendar service or importing shared event files.
+
 ## Recurring Events
 
-<!-- TODO: Document recurring event support -->
+Recurring events are supported using the standard iCalendar recurrence rules.
 
 ## Sharing Events
 

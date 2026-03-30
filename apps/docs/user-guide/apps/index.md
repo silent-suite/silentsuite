@@ -19,7 +19,7 @@ These apps connect directly to your SilentSuite server with full end-to-end encr
 
 | App | Platform | Syncs |
 |---|---|---|
-| [EteSync for iOS](./ios.md) | iOS | Contacts, Calendars, Reminders |
+| [EteSync for iOS](./ios.md) (third-party) | iOS | Contacts, Calendars, Reminders |
 | [Tasks.org](./tasks-org.md) | Android | Tasks |
 | [GNOME Evolution](./evolution.md) | Linux (GNOME) | Contacts, Calendars, Tasks |
 | [GNOME Calendar, Contacts & To Do](./evolution.md) | Linux (GNOME) | Contacts, Calendars, Tasks |

@@ -43,16 +43,9 @@ The installer will:
 3. Optionally set up auto-start
 4. Open the browser for first-time login
 
-### Docker
-
-```bash
-docker run -d --name silentsuite-bridge \
-  -p 37358:37358 \
-  --restart=always \
-  silentsuite/bridge
-```
-
-Then open `http://localhost:37358/.web/` to log in.
+::: info
+The bridge install URLs are coming soon. The binary distribution pipeline is being finalized. Check back shortly or watch the [GitHub releases](https://github.com/silent-suite/silentsuite/releases) for updates.
+:::
 
 ## First-Time Setup
 

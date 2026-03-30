@@ -18,6 +18,7 @@ These have sensible defaults and rarely need changing:
 
 | Variable | Default | Description |
 |---|---|---|
+| `AUTO_UPDATE` | `false` | Set to `true` to automatically update the Etebase server on container restart. |
 | `DATABASE_NAME` | `silentsuite` | PostgreSQL database name. |
 | `DATABASE_USER` | `silentsuite` | PostgreSQL username. |
 

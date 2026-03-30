@@ -12,9 +12,12 @@ SilentSuite offers a hosted service with paid plans to fund development. Self-ho
 
 ### What platforms are supported?
 
-<!-- TODO: Update as client apps launch -->
+SilentSuite works across all major platforms:
 
-SilentSuite is in active development. Web, Android, and iOS clients are planned.
+- **Web:** The web app is live at [app.silentsuite.io](https://app.silentsuite.io).
+- **Android:** A dedicated Android sync adapter is available as an APK from [GitHub Releases](https://github.com/silent-suite/silentsuite/releases).
+- **iOS:** Use the third-party [EteSync for iOS](https://apps.apple.com/app/etesync/id1489574285) app from the App Store. Enter your SilentSuite server URL during setup.
+- **Desktop:** Use the [SilentSuite Bridge](./apps/dav-bridge.md) with any CalDAV/CardDAV app (Thunderbird, macOS Calendar, GNOME Calendar, and more).
 
 ## Privacy & Security
 
@@ -38,4 +41,4 @@ Yes. See the [Self-Hosting guide](/self-hosting/) for instructions. Self-hosting
 
 ### What do I need to self-host?
 
-A Linux server with Docker, 2 GB RAM, and a domain name. See [Requirements](/self-hosting/requirements) for full details.
+A Linux server with Docker, 1 GB RAM minimum, and a domain name. See [Requirements](/self-hosting/requirements) for full details.
