@@ -50,13 +50,6 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
-  const [cardholderName, setCardholderName] = useState('')
-  const { resolvedTheme } = useTheme()
-
-  const inputBg = resolvedTheme === 'light' ? 'bg-white' : 'bg-[rgb(15,23,42)]'
-  const inputText = resolvedTheme === 'light' ? 'text-slate-900' : 'text-slate-200'
-  const inputBorder = resolvedTheme === 'light' ? 'border-slate-300' : 'border-slate-700'
-  const placeholderColor = resolvedTheme === 'light' ? 'placeholder:text-slate-400' : 'placeholder:text-slate-500'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -65,21 +58,17 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
     setLoading(true)
     setError(null)
 
-    const billingDetails = cardholderName.trim()
-      ? { payment_method_data: { billing_details: { name: cardholderName.trim() } } }
-      : {}
-
     let result
     if (mode === 'setup') {
       result = await stripe.confirmSetup({
         elements,
-        confirmParams: { return_url: `${window.location.origin}/signup/success`, ...billingDetails },
+        confirmParams: { return_url: `${window.location.origin}/signup/success` },
         redirect: 'if_required',
       })
     } else {
       result = await stripe.confirmPayment({
         elements,
-        confirmParams: { return_url: `${window.location.origin}/signup/success`, ...billingDetails },
+        confirmParams: { return_url: `${window.location.origin}/signup/success` },
         redirect: 'if_required',
       })
     }
@@ -103,24 +92,11 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
         </div>
       )}
       <div className={ready ? '' : 'sr-only'}>
-        <div className="space-y-2 mb-3">
-          <label htmlFor="cardholder-name" className="block text-sm font-medium text-[rgb(var(--foreground))]/80">
-            Cardholder name
-          </label>
-          <input
-            id="cardholder-name"
-            type="text"
-            autoComplete="cc-name"
-            value={cardholderName}
-            onChange={(e) => setCardholderName(e.target.value)}
-            placeholder="Full name on card"
-            className={`w-full rounded-lg border ${inputBorder} ${inputBg} ${inputText} ${placeholderColor} px-3 py-2.5 text-sm outline-none transition-colors focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500`}
-          />
-        </div>
         <PaymentElement
           onReady={() => setReady(true)}
           options={{
-            layout: 'tabs',
+            layout: { type: 'tabs', defaultCollapsed: false },
+            fields: { billingDetails: { name: 'never' } },
             paymentMethodOrder: ['card'],
             wallets: { applePay: 'never', googlePay: 'never' },
           }}

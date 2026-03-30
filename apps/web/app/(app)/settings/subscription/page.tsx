@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { Crown, Star, Sparkles, AlertTriangle, Loader2, Check } from 'lucide-react'
+import { Crown, Loader2, Check } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import dynamic from 'next/dynamic'
 import { BILLING_API_URL } from '@/app/lib/config'
@@ -116,8 +116,8 @@ function CancelDialog({
 const REACTIVATION_PLANS = [
   { id: 'early_monthly', name: 'Early Adopter Monthly', price: '3.60', period: '/mo', description: 'Locked-in early adopter pricing', icon: Crown, earlyOnly: true },
   { id: 'early_annual', name: 'Early Adopter Annual', price: '36', period: '/yr', description: 'Save with annual billing', icon: Crown, badge: 'Best value', earlyOnly: true },
-  { id: 'standard_monthly', name: 'Standard Monthly', price: '4.80', period: '/mo', description: 'Full access, billed monthly', icon: Star, earlyOnly: false },
-  { id: 'standard_annual', name: 'Standard Annual', price: '48', period: '/yr', description: 'Save with annual billing', icon: Sparkles, badge: 'Best value', earlyOnly: false },
+  { id: 'standard_monthly', name: 'Standard Monthly', price: '4.80', period: '/mo', description: 'Full access, billed monthly', icon: Crown, earlyOnly: false },
+  { id: 'standard_annual', name: 'Standard Annual', price: '48', period: '/yr', description: 'Save with annual billing', icon: Crown, badge: 'Best value', earlyOnly: false },
 ] as const
 
 export default function SubscriptionPage() {
@@ -133,10 +133,10 @@ export default function SubscriptionPage() {
   const [showChangePlanDialog, setShowChangePlanDialog] = useState(false)
   const [changingPlan, setChangingPlan] = useState(false)
   const [changePlanSuccess, setChangePlanSuccess] = useState<{ plan: string; effectiveDate: string; prorated: boolean } | null>(null)
-  const [earlyAdopterForfeitConfirmed, setEarlyAdopterForfeitConfirmed] = useState(false)
   const [selectedChangePlan, setSelectedChangePlan] = useState<string | null>(null)
   const [changePlanError, setChangePlanError] = useState<string | null>(null)
   const [changePlanToast, setChangePlanToast] = useState<string | null>(null)
+  const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -200,15 +200,11 @@ export default function SubscriptionPage() {
     setChangingPlan(true)
     setChangePlanError(null)
     try {
-      const isEarlyAdopterPlan = data?.plan?.startsWith('early_')
       const res = await fetch(`${BILLING_API_URL}/subscription/change-plan`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          planId: newPlanId,
-          ...(isEarlyAdopterPlan && earlyAdopterForfeitConfirmed ? { confirmForfeit: true } : {}),
-        }),
+        body: JSON.stringify({ planId: newPlanId }),
       })
       if (res.ok) {
         const result = await res.json()
@@ -249,12 +245,8 @@ export default function SubscriptionPage() {
   const isCancelled = data.status === 'cancelled'
   const isActiveOrTrialing = data.status === 'active' || data.status === 'trialing'
   const accessUntilFormatted = data.renewalDate ? formatDate(data.renewalDate) : 'the end of your current period'
-  const isEarlyAdopterPlan = data.plan?.startsWith('early_')
-
-  // Filter reactivation plans: show early adopter plans only if user is an early adopter
-  const availablePlans = REACTIVATION_PLANS.filter(
-    (p) => !p.earlyOnly || data.earlyAdopter,
-  )
+  // Only show Early Adopter plans — Standard plans will be enabled later
+  const availablePlans = REACTIVATION_PLANS.filter((p) => p.earlyOnly)
 
   return (
     <div className="space-y-6">
@@ -353,7 +345,7 @@ export default function SubscriptionPage() {
       <div className="flex gap-3">
         {isActiveOrTrialing && !data.cancelAtPeriodEnd && (
           <>
-            <Button variant="outline" size="sm" onClick={() => { setShowChangePlanDialog(true); setChangePlanSuccess(null); setEarlyAdopterForfeitConfirmed(false); setSelectedChangePlan(null); setChangePlanError(null) }}>
+            <Button variant="outline" size="sm" onClick={() => { setShowChangePlanDialog(true); setChangePlanSuccess(null); setSelectedChangePlan(null); setChangePlanError(null) }}>
               Change plan
             </Button>
             <Button
@@ -403,44 +395,69 @@ export default function SubscriptionPage() {
             ) : (
               <>
                 <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
-                <div className="space-y-3">
-                  {availablePlans.map((plan) => {
-                    const Icon = plan.icon
-                    return (
-                      <div key={plan.id} className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 rounded-lg bg-[rgb(var(--border))] p-2">
-                              <Icon className="h-5 w-5 text-[rgb(var(--primary))]" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h3 className="font-medium text-white">{plan.name}</h3>
-                                {'badge' in plan && plan.badge && (
-                                  <span className="rounded-full bg-[rgb(var(--primary))]/10 px-2 py-0.5 text-xs font-medium text-[rgb(var(--primary))]">
-                                    {plan.badge}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="mt-0.5 text-sm text-[rgb(var(--muted))]">{plan.description}</p>
-                            </div>
+                {/* Billing interval toggle */}
+                <div className="flex items-center justify-center gap-1 rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-1">
+                  <button
+                    onClick={() => setBillingInterval('monthly')}
+                    className={`rounded-full min-h-[44px] px-4 py-2 text-sm font-medium transition-colors ${
+                      billingInterval === 'monthly'
+                        ? 'bg-emerald-600 text-white'
+                        : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+                    }`}
+                  >
+                    Monthly
+                  </button>
+                  <button
+                    onClick={() => setBillingInterval('annual')}
+                    className={`rounded-full min-h-[44px] px-4 py-2 text-sm font-medium transition-colors ${
+                      billingInterval === 'annual'
+                        ? 'bg-emerald-600 text-white'
+                        : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+                    }`}
+                  >
+                    Annual
+                  </button>
+                </div>
+                {/* Selected plan card */}
+                {(() => {
+                  const plan = billingInterval === 'monthly'
+                    ? availablePlans.find(p => p.id === 'early_monthly')!
+                    : availablePlans.find(p => p.id === 'early_annual')!
+                  const Icon = plan.icon
+                  return (
+                    <div className="rounded-lg border border-emerald-500/30 bg-[rgb(var(--surface))] p-5">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 rounded-lg bg-emerald-500/10 p-2">
+                            <Icon className="h-5 w-5 text-emerald-400" />
                           </div>
-                          <div className="text-right">
-                            <span className="text-2xl font-bold text-white">EUR {plan.price}</span>
-                            <span className="text-sm text-[rgb(var(--muted))]">{plan.period}</span>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-medium text-white">{plan.name}</h3>
+                              {'badge' in plan && plan.badge && (
+                                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                                  {plan.badge}
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-0.5 text-sm text-[rgb(var(--muted))]">{plan.description}</p>
                           </div>
                         </div>
-                        <Button
-                          onClick={() => handleReactivate(plan.id)}
-                          disabled={reactivating !== null}
-                          className="mt-4 w-full"
-                        >
-                          {reactivating === plan.id ? 'Setting up...' : 'Select plan'}
-                        </Button>
+                        <div className="text-right">
+                          <span className="text-2xl font-bold text-white">&euro;{plan.price}</span>
+                          <span className="text-sm text-[rgb(var(--muted))]">{plan.period}</span>
+                        </div>
                       </div>
-                    )
-                  })}
-                </div>
+                      <button
+                        onClick={() => handleReactivate(plan.id)}
+                        disabled={reactivating !== null}
+                        className="mt-5 w-full rounded-lg bg-emerald-600 px-6 py-3 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-500 disabled:opacity-50"
+                      >
+                        {reactivating === plan.id ? 'Setting up...' : 'Subscribe now'}
+                      </button>
+                    </div>
+                  )
+                })()}
                 <Button
                   variant="outline"
                   size="sm"
@@ -482,7 +499,6 @@ export default function SubscriptionPage() {
               (() => {
                 const targetPlan = REACTIVATION_PLANS.find(p => p.id === selectedChangePlan)!
                 const isAnnualSwitch = selectedChangePlan.endsWith('_annual')
-                const isLeavingEarlyAdopter = isEarlyAdopterPlan && selectedChangePlan.startsWith('standard_')
                 return (
                   <>
                     <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Confirm plan change</h2>
@@ -497,25 +513,6 @@ export default function SubscriptionPage() {
                           : `Your new plan takes effect at your next billing date${data.renewalDate ? ` (${formatDate(data.renewalDate)})` : ''}.`}
                       </p>
                     </div>
-                    {isLeavingEarlyAdopter && (
-                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 space-y-2">
-                        <div className="flex items-start gap-2">
-                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-                          <p className="text-sm text-amber-400">
-                            Switching to Standard will forfeit your Early Adopter rate. This cannot be undone.
-                          </p>
-                        </div>
-                        <label className="flex items-center gap-2 text-sm text-[rgb(var(--foreground))] cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={earlyAdopterForfeitConfirmed}
-                            onChange={(e) => setEarlyAdopterForfeitConfirmed(e.target.checked)}
-                            className="rounded border-[rgb(var(--border))]"
-                          />
-                          I understand and want to proceed
-                        </label>
-                      </div>
-                    )}
                     {changePlanError && (
                       <p className="text-xs text-red-400">{changePlanError}</p>
                     )}
@@ -523,15 +520,15 @@ export default function SubscriptionPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => { setSelectedChangePlan(null); setChangePlanError(null); setEarlyAdopterForfeitConfirmed(false) }}
+                        onClick={() => { setSelectedChangePlan(null); setChangePlanError(null) }}
                         disabled={changingPlan}
                       >
                         Back
                       </Button>
-                      <Button
-                        size="sm"
+                      <button
                         onClick={() => handleChangePlan(selectedChangePlan)}
-                        disabled={changingPlan || (isLeavingEarlyAdopter && !earlyAdopterForfeitConfirmed)}
+                        disabled={changingPlan}
+                        className="rounded-lg bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-500 disabled:opacity-50"
                       >
                         {changingPlan ? (
                           <span className="flex items-center gap-2">
@@ -541,70 +538,87 @@ export default function SubscriptionPage() {
                         ) : (
                           'Confirm switch'
                         )}
-                      </Button>
+                      </button>
                     </div>
                   </>
                 )
               })()
             ) : (
-              /* Plan selection step */
+              /* Plan selection step — monthly/annual toggle */
               <>
                 <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Change plan</h2>
-                <div className="grid gap-3">
-                  {availablePlans.map((plan) => {
-                    const Icon = plan.icon
-                    const isCurrent = plan.id === data.plan
-                    return (
-                      <button
-                        key={plan.id}
-                        disabled={isCurrent}
-                        onClick={() => { setSelectedChangePlan(plan.id); setChangePlanError(null); setEarlyAdopterForfeitConfirmed(false) }}
-                        className={`w-full rounded-lg border p-4 text-left transition-colors ${
-                          isCurrent
-                            ? 'border-emerald-500 bg-emerald-500/5 cursor-default'
-                            : 'border-[rgb(var(--border))] hover:border-[rgb(var(--primary))]/50 hover:bg-[rgb(var(--primary))]/5 cursor-pointer'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 rounded-lg bg-[rgb(var(--border))] p-2">
-                              <Icon className="h-5 w-5 text-[rgb(var(--primary))]" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h3 className="font-medium text-[rgb(var(--foreground))]">{plan.name}</h3>
-                                {isCurrent && (
-                                  <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
-                                    <Check className="h-3 w-3" /> Current
-                                  </span>
-                                )}
-                                {'badge' in plan && plan.badge && !isCurrent && (
-                                  <span className="rounded-full bg-[rgb(var(--primary))]/10 px-2 py-0.5 text-xs font-medium text-[rgb(var(--primary))]">
-                                    {plan.badge}
-                                  </span>
-                                )}
-                              </div>
-                              <p className="mt-0.5 text-sm text-[rgb(var(--muted))]">{plan.description}</p>
-                              {!isCurrent && (
-                                <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                                  {plan.id.endsWith('_annual')
-                                    ? 'Prorated charge applies immediately'
-                                    : 'Takes effect at next billing date'}
-                                </p>
+                {/* Billing interval toggle */}
+                <div className="flex items-center justify-center gap-1 rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-1">
+                  <button
+                    onClick={() => setBillingInterval('monthly')}
+                    className={`rounded-full min-h-[44px] px-4 py-2 text-sm font-medium transition-colors ${
+                      billingInterval === 'monthly'
+                        ? 'bg-emerald-600 text-white'
+                        : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+                    }`}
+                  >
+                    Monthly
+                  </button>
+                  <button
+                    onClick={() => setBillingInterval('annual')}
+                    className={`rounded-full min-h-[44px] px-4 py-2 text-sm font-medium transition-colors ${
+                      billingInterval === 'annual'
+                        ? 'bg-emerald-600 text-white'
+                        : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+                    }`}
+                  >
+                    Annual
+                  </button>
+                </div>
+                {/* Selected plan card */}
+                {(() => {
+                  const plan = billingInterval === 'monthly'
+                    ? availablePlans.find(p => p.id === 'early_monthly')!
+                    : availablePlans.find(p => p.id === 'early_annual')!
+                  const Icon = plan.icon
+                  const isCurrent = plan.id === data.plan
+                  return (
+                    <div className={`rounded-lg border p-5 ${isCurrent ? 'border-emerald-500 bg-emerald-500/5' : 'border-emerald-500/30 bg-[rgb(var(--surface))]'}`}>
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 rounded-lg bg-emerald-500/10 p-2">
+                            <Icon className="h-5 w-5 text-emerald-400" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-medium text-[rgb(var(--foreground))]">{plan.name}</h3>
+                              {isCurrent && (
+                                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                                  <Check className="h-3 w-3" /> Current
+                                </span>
+                              )}
+                              {'badge' in plan && plan.badge && !isCurrent && (
+                                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                                  {plan.badge}
+                                </span>
                               )}
                             </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <span className={`text-xl font-bold ${isCurrent ? 'text-emerald-400' : 'text-[rgb(var(--foreground))]'}`}>
-                              &euro;{plan.price}
-                            </span>
-                            <span className="text-sm text-[rgb(var(--muted))]">{plan.period}</span>
+                            <p className="mt-0.5 text-sm text-[rgb(var(--muted))]">{plan.description}</p>
                           </div>
                         </div>
-                      </button>
-                    )
-                  })}
-                </div>
+                        <div className="text-right shrink-0">
+                          <span className={`text-2xl font-bold ${isCurrent ? 'text-emerald-400' : 'text-[rgb(var(--foreground))]'}`}>
+                            &euro;{plan.price}
+                          </span>
+                          <span className="text-sm text-[rgb(var(--muted))]">{plan.period}</span>
+                        </div>
+                      </div>
+                      {!isCurrent && (
+                        <button
+                          onClick={() => { setSelectedChangePlan(plan.id); setChangePlanError(null) }}
+                          className="mt-5 w-full rounded-lg bg-emerald-600 px-6 py-3 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-500"
+                        >
+                          Switch to {billingInterval === 'annual' ? 'Annual' : 'Monthly'}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })()}
                 <Button
                   variant="outline"
                   size="sm"

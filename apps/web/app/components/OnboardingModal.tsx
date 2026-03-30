@@ -221,11 +221,23 @@ export function OnboardingModal() {
     const completed = localStorage.getItem('onboardingCompleted')
     if (completed) return
 
-    // If user already has synced data, skip onboarding
-    const hasData = events.length > 0 || contacts.length > 0 || tasks.length > 0
-    if (hasData) {
+    // If user already has synced data or has imported items into any store, skip onboarding
+    const totalItems = events.length + contacts.length + tasks.length
+    if (totalItems > 0) {
       localStorage.setItem('onboardingCompleted', 'true')
       return
+    }
+
+    // If user has been active for 7+ days, skip onboarding
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
+    const firstLogin = localStorage.getItem('firstLoginDate')
+    if (firstLogin) {
+      if (Date.now() - Number(firstLogin) > SEVEN_DAYS_MS) {
+        localStorage.setItem('onboardingCompleted', 'true')
+        return
+      }
+    } else {
+      localStorage.setItem('firstLoginDate', String(Date.now()))
     }
 
     setShow(true)

@@ -107,6 +107,25 @@ interface Health {
   timestamp: string
 }
 
+// ─── Admin Fetch (auto-refresh on 401) ────────────────────────────────
+async function adminFetch(url: string, options?: RequestInit): Promise<Response> {
+  const opts = { ...options, credentials: 'include' as const }
+  let res = await fetch(url, opts)
+  if (res.status === 401) {
+    // Try refreshing the token
+    const refreshRes = await fetch(`${BILLING_API_URL}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    })
+    if (refreshRes.ok) {
+      // Retry the original request
+      res = await fetch(url, opts)
+    }
+  }
+  return res
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 function formatUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400)
@@ -171,7 +190,7 @@ export default function AdminDashboard() {
 
     async function checkAdmin() {
       try {
-        const res = await fetch(`${BILLING_API_URL}/account`, { credentials: 'include' })
+        const res = await adminFetch(`${BILLING_API_URL}/account`)
         if (res.ok) {
           const data = await res.json()
           if (data.isAdmin) {
@@ -470,28 +489,43 @@ function SelfHostedHealthTab() {
 function OverviewTab() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
+  const [metricsError, setMetricsError] = useState<string | null>(null)
   const [events, setEvents] = useState<EventsPage | null>(null)
   const [eventsLoading, setEventsLoading] = useState(true)
+  const [eventsError, setEventsError] = useState<string | null>(null)
   const [eventsOffset, setEventsOffset] = useState(0)
   const eventsLimit = 20
 
   const fetchMetrics = useCallback(async () => {
+    setMetricsError(null)
     try {
-      const res = await fetch(`${BILLING_API_URL}/admin/metrics`, { credentials: 'include' })
-      if (res.ok) setMetrics(await res.json())
-    } catch { /* API unavailable */ }
+      const res = await adminFetch(`${BILLING_API_URL}/admin/metrics`)
+      if (res.ok) {
+        setMetrics(await res.json())
+      } else {
+        setMetricsError('Failed to load metrics')
+      }
+    } catch {
+      setMetricsError('Failed to load metrics — API unavailable')
+    }
     setMetricsLoading(false)
   }, [])
 
   const fetchEvents = useCallback(async (offset: number) => {
     setEventsLoading(true)
+    setEventsError(null)
     try {
-      const res = await fetch(
+      const res = await adminFetch(
         `${BILLING_API_URL}/admin/events?limit=${eventsLimit}&offset=${offset}`,
-        { credentials: 'include' },
       )
-      if (res.ok) setEvents(await res.json())
-    } catch { /* API unavailable */ }
+      if (res.ok) {
+        setEvents(await res.json())
+      } else {
+        setEventsError('Failed to load events')
+      }
+    } catch {
+      setEventsError('Failed to load events — API unavailable')
+    }
     setEventsLoading(false)
   }, [eventsLimit])
 
@@ -602,6 +636,8 @@ function OverviewTab() {
             ))}
           </div>
         </>
+      ) : metricsError ? (
+        <p className="text-sm text-red-400">{metricsError}</p>
       ) : (
         <p className="text-sm text-red-400">Failed to load metrics</p>
       )}
@@ -612,6 +648,10 @@ function OverviewTab() {
           <Activity className="h-4 w-4 text-[rgb(var(--muted))]" />
           <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Webhook Events</h2>
         </div>
+
+        {eventsError && (
+          <p className="text-sm text-red-400">{eventsError}</p>
+        )}
 
         {eventsLoading ? (
           <p className="text-sm text-[rgb(var(--muted))]">Loading events...</p>
@@ -696,9 +736,8 @@ function FailedPaymentsTab() {
       // Fetch all users and filter to past_due on the client side.
       // The billing API /admin/users endpoint returns paginated results —
       // fetch enough to capture all past_due users.
-      const res = await fetch(
+      const res = await adminFetch(
         `${BILLING_API_URL}/admin/users?limit=200&offset=0`,
-        { credentials: 'include' },
       )
       if (res.ok) {
         const data: UsersPage = await res.json()
@@ -830,22 +869,28 @@ function UserLookupTab() {
     return () => clearTimeout(timer)
   }, [tableFilter])
 
+  const [usersError, setUsersError] = useState<string | null>(null)
+
   const fetchUsers = useCallback(async (offset: number, search?: string) => {
     setUsersLoading(true)
+    setUsersError(null)
     try {
       const params = new URLSearchParams({
         limit: String(USERS_LIMIT),
         offset: String(offset),
       })
       if (search) params.set('search', search)
-      const res = await fetch(
+      const res = await adminFetch(
         `${BILLING_API_URL}/admin/users?${params}`,
-        { credentials: 'include' },
       )
       if (res.ok) {
         setUsersPage(await res.json())
+      } else {
+        setUsersError('Failed to load users')
       }
-    } catch { /* ignore */ }
+    } catch {
+      setUsersError('Failed to load users — API unavailable')
+    }
     setUsersLoading(false)
   }, [])
 
@@ -859,9 +904,8 @@ function UserLookupTab() {
     setLookupUser(null)
 
     try {
-      const res = await fetch(
+      const res = await adminFetch(
         `${BILLING_API_URL}/admin/users/${encodeURIComponent(searchEmail.trim())}`,
-        { credentials: 'include' },
       )
       if (res.ok) {
         setLookupUser(await res.json())
@@ -933,8 +977,8 @@ function UserLookupTab() {
             </div>
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Founding Member</p>
-              <p className={`text-sm font-medium ${lookupUser.foundingMember ? 'text-emerald-500' : 'text-[rgb(var(--muted))]'}`}>
-                {lookupUser.foundingMember ? 'Yes' : 'No'}
+              <p className={`text-sm font-medium ${(lookupUser.foundingMember || lookupUser.earlyAdopter) ? 'text-emerald-500' : 'text-[rgb(var(--muted))]'}`}>
+                {(lookupUser.foundingMember || lookupUser.earlyAdopter) ? 'Yes' : 'No'}
               </p>
             </div>
             <div>
@@ -978,6 +1022,10 @@ function UserLookupTab() {
           {/* Emails Sent */}
           {lookupUser.id && <EmailsSentSection userId={lookupUser.id} />}
         </div>
+      )}
+
+      {usersError && (
+        <p className="text-sm text-red-400">{usersError}</p>
       )}
 
       {/* All Users Table */}
@@ -1068,7 +1116,7 @@ function UserLookupTab() {
                       <span className="text-xs">{u.earlyAdopter === true ? '✅' : u.earlyAdopter === false ? '❌' : '—'}</span>
                     </td>
                     <td className="hidden px-4 py-2.5 sm:table-cell">
-                      {u.foundingMember ? (
+                      {(u.foundingMember || u.earlyAdopter) ? (
                         <span className="text-xs font-medium text-emerald-500">Yes</span>
                       ) : (
                         <span className="text-xs text-[rgb(var(--muted))]">No</span>
@@ -1133,9 +1181,8 @@ function EmailsSentSection({ userId }: { userId: string }) {
     setLoading(true)
     setEmailsError(null)
     try {
-      const res = await fetch(
+      const res = await adminFetch(
         `${BILLING_API_URL}/admin/users/${encodeURIComponent(userId)}/emails`,
-        { credentials: 'include' },
       )
       if (res.ok) {
         const data = await res.json()
@@ -1225,9 +1272,8 @@ function SubscribersTab() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(
+      const res = await adminFetch(
         `${BILLING_API_URL}/admin/contacts?limit=${SUBSCRIBERS_LIMIT}&offset=${offset}`,
-        { credentials: 'include' },
       )
       if (res.ok) {
         const data = await res.json()
@@ -1350,7 +1396,7 @@ function HealthTab() {
   const fetchHealth = useCallback(async () => {
     setHealthLoading(true)
     try {
-      const res = await fetch(`${BILLING_API_URL}/admin/health`, { credentials: 'include' })
+      const res = await adminFetch(`${BILLING_API_URL}/admin/health`)
       if (res.ok) {
         const data = await res.json()
         setHealth(data)
