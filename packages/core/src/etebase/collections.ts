@@ -69,6 +69,12 @@ export async function createItem(
   const collectionManager = account.getCollectionManager();
   const itemManager = collectionManager.getItemManager(collection);
   const item = await itemManager.create(meta ?? {}, content);
+  // Ensure meta.name is set for bridge/EteSync compatibility
+  const itemMeta = item.getMeta();
+  if (!itemMeta.name) {
+    itemMeta.name = item.uid;
+    item.setMeta(itemMeta);
+  }
   await itemManager.batch([item]);
   return item;
 }

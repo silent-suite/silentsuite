@@ -644,7 +644,19 @@ class Storage(BaseStorage):
             yield
 
             if mode == "w":
-                sync_thread.force_sync()
+                # Inline push: push dirty items directly while we hold the lock,
+                # avoiding lock contention with the async SyncThread.
+                try:
+                    for col in etesync.list():
+                        if etesync.collection_is_dirty(col.uid):
+                            logger.info("PUSH (inline): pushing dirty items for collection %s", col.uid)
+                            etesync.push_collection(col.uid)
+                    if etesync.collection_list_is_dirty():
+                        logger.info("PUSH (inline): pushing dirty collection list")
+                        etesync.push_collection_list()
+                except Exception as e:
+                    logger.warning("Inline push failed, will retry on next sync: %s", e)
+                    sync_thread.force_sync()
 
             self.etesync = None
             self.user = None

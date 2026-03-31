@@ -436,6 +436,37 @@ class Web(BaseWeb):
                 json.dumps(data).encode(),
             )
 
+        # Diagnostic dump of cached collections/items
+        if path == "/.web/api/dump":
+            from ..local_cache import models, db
+            dump = {}
+            try:
+                with db.database_proxy:
+                    for col in models.CollectionEntity.select():
+                        items = []
+                        for item in col.items:
+                            items.append({
+                                "uid": item.uid,
+                                "dirty": item.dirty,
+                                "new": item.new,
+                                "deleted": item.deleted,
+                            })
+                        dump[col.uid] = {
+                            "stoken": col.stoken,
+                            "local_stoken": col.local_stoken,
+                            "dirty": col.dirty,
+                            "new": col.new,
+                            "deleted": col.deleted,
+                            "items": items,
+                        }
+            except Exception as e:
+                dump = {"error": str(e)}
+            return (
+                200,
+                {"Content-Type": "application/json"},
+                json.dumps(dump, indent=2).encode(),
+            )
+
         return (404, {}, b"Not found")
 
     def post(self, environ, base_prefix, path, user):

@@ -223,19 +223,25 @@ class Etebase:
                 fetch_options = FetchOptions().stoken(stoken)
                 item_list = item_mgr.list(fetch_options)
 
-                for item in item_list.data:
+                items_data = list(item_list.data)
+                logger.info("PULL %s: fetched %d items (stoken=%s)", uid, len(items_data), stoken)
+
+                for item in items_data:
                     meta = item.meta
-                    if "name" not in meta:
+                    item_uid = meta.get("name") or item.uid
+                    if not item_uid:
+                        logger.warning("PULL %s: skipping item with no name or uid", uid)
                         continue
 
                     cache_item = models.ItemEntity.get_or_none(
-                        collection=cache_col, uid=meta["name"]
+                        collection=cache_col, uid=item_uid
                     )
                     if cache_item is None:
                         cache_item = models.ItemEntity(
                             collection=cache_col,
-                            uid=meta["name"],
+                            uid=item_uid,
                         )
+                        logger.info("PULL %s: new item %s", uid, item_uid)
                     cache_item.eb_item = item_mgr.cache_save(item)
                     cache_item.deleted = item.deleted
                     cache_item.save()
