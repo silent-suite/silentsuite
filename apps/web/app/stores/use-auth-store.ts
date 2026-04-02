@@ -30,6 +30,13 @@ interface PendingSignup {
   provisionedSubscriptionStatus?: string
 }
 
+/** Shape of the data persisted to localStorage for surviving Stripe 3DS redirects. */
+export interface RedirectSignupState {
+  pendingSignup: PendingSignup
+  selectedInterval: 'monthly' | 'annual'
+  savedAt: number
+}
+
 interface AuthState {
   user: User | null
   isAuthenticated: boolean
@@ -52,6 +59,21 @@ interface AuthState {
   retryBillingConnection: () => Promise<boolean>
   setUser: (user: User | null) => void
   clearError: () => void
+  /**
+   * Persist pendingSignup + billing interval to localStorage so the signup flow
+   * survives a full-page Stripe 3DS redirect.
+   *
+   * SECURITY: The etebaseAuthToken is stored in localStorage. This is the same
+   * XSS risk surface as the existing `etebase_session` key — acceptable given
+   * the current security posture. The data is cleared on first read.
+   */
+  saveSignupStateForRedirect: (selectedInterval: 'monthly' | 'annual') => void
+  /**
+   * Restore signup state saved before a Stripe 3DS redirect.
+   * Returns the saved data and removes it from localStorage (one-time use).
+   * Returns null if no data exists or if it is older than 10 minutes.
+   */
+  restoreSignupStateFromRedirect: () => RedirectSignupState | null
 }
 
 
@@ -473,4 +495,54 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   setUser: (user: User | null) => set({ user, isAuthenticated: user !== null }),
   clearError: () => set({ error: null }),
+
+  saveSignupStateForRedirect: (selectedInterval) => {
+    const pending = get().pendingSignup
+    if (!pending) {
+      logger.warn('[auth-store] saveSignupStateForRedirect: no pendingSignup to save')
+      return
+    }
+    const data: RedirectSignupState = {
+      pendingSignup: pending,
+      selectedInterval,
+      savedAt: Date.now(),
+    }
+    try {
+      localStorage.setItem('silentsuite-signup-redirect-state', JSON.stringify(data))
+    } catch (err) {
+      logger.warn('[auth-store] Failed to save signup redirect state:', err)
+    }
+  },
+
+  restoreSignupStateFromRedirect: () => {
+    try {
+      const raw = localStorage.getItem('silentsuite-signup-redirect-state')
+      if (!raw) return null
+      // Always remove immediately — one-time use
+      localStorage.removeItem('silentsuite-signup-redirect-state')
+      const data = JSON.parse(raw) as RedirectSignupState
+      // Basic shape validation — guard against corrupted or tampered localStorage data
+      if (!data.pendingSignup?.email || !data.pendingSignup?.etebaseAuthToken) {
+        logger.warn('[auth-store] Redirect signup state is malformed, discarding')
+        return null
+      }
+      // Reject if older than 10 minutes
+      const TEN_MINUTES = 10 * 60 * 1000
+      if (Date.now() - data.savedAt > TEN_MINUTES) {
+        logger.warn('[auth-store] Redirect signup state expired (>10 min old)')
+        return null
+      }
+      // Restore pendingSignup into the Zustand store and re-set the signup-in-progress
+      // flag so restoreSession() doesn't run concurrently and clobber the restored state.
+      set({ pendingSignup: data.pendingSignup })
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('silentsuite-signup-in-progress', 'true')
+      }
+      return data
+    } catch (err) {
+      logger.warn('[auth-store] Failed to restore signup redirect state:', err)
+      localStorage.removeItem('silentsuite-signup-redirect-state')
+      return null
+    }
+  },
 }))
