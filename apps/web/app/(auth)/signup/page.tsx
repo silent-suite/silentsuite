@@ -222,9 +222,9 @@ function StepCreateAccount({
   const password = watch('password', '')
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2 text-center">
-        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Create your account</h2>
+    <div className="space-y-4 sm:space-y-6">
+      <div className="space-y-1.5 sm:space-y-2 text-center">
+        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Create your account</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
           Start your encrypted workspace in seconds
         </p>
@@ -431,7 +431,7 @@ function StepChoosePlan({
     return (
       <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
         <div className="space-y-2 text-center">
-          <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Add your payment method</h2>
+          <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Add your payment method</h2>
           <p className="text-sm text-[rgb(var(--muted))]">
             Your card will not be charged for 30 days.
           </p>
@@ -509,9 +509,9 @@ function StepChoosePlan({
 
   // --- Cards view (plan selection) ---
   return (
-    <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300 motion-reduce:animate-none">
+    <div ref={contentRef} className="space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-left-4 duration-300 motion-reduce:animate-none">
       <div className="space-y-2 text-center">
-        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
+        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Choose your plan</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
           Early Adopter pricing
         </p>
@@ -522,12 +522,12 @@ function StepChoosePlan({
         <BillingToggle interval={interval} onChange={onIntervalChange} />
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4">
         {/* Card A: 7 Day Free Trial — no card */}
         <button
           onClick={() => setSelectedTrial('7day')}
           aria-label="7 Day Free Trial — full access, no credit card required"
-          className={`group w-full rounded-xl border-2 p-5 text-left transition-all ${
+          className={`group w-full rounded-xl border-2 p-4 sm:p-5 text-left transition-all ${
             selectedTrial === '7day'
               ? 'border-emerald-500 bg-emerald-500/5'
               : 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80'
@@ -557,19 +557,19 @@ function StepChoosePlan({
         <button
           onClick={() => setSelectedTrial('30day')}
           aria-label={`30 Day Free Trial — ${interval === 'monthly' ? '€3.60/month' : '€3.00/month billed annually'}, credit card required, cancel anytime`}
-          className={`group w-full rounded-xl border-2 p-6 text-left transition-all ${
+          className={`group w-full rounded-xl border-2 p-4 sm:p-6 text-left transition-all ${
             selectedTrial === '30day'
               ? 'border-emerald-500 bg-emerald-500/5'
               : 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80'
           }`}
         >
-          <div className="flex items-start gap-4">
-            <div className="rounded-xl bg-emerald-500/15 p-3 shrink-0">
-              <Crown className="h-6 w-6 text-emerald-400" />
+          <div className="flex items-start gap-3 sm:gap-4">
+            <div className="rounded-xl bg-emerald-500/15 p-2.5 sm:p-3 shrink-0">
+              <Crown className="h-5 w-5 sm:h-6 sm:w-6 text-emerald-400" />
             </div>
             <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">30 Day Free Trial</h3>
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <h3 className="text-base sm:text-lg font-semibold text-[rgb(var(--foreground))] whitespace-nowrap">30 Day Free Trial</h3>
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 uppercase tracking-wide">
                   Recommended
                 </span>
@@ -632,7 +632,7 @@ function StepChoosePlan({
       {/* Trust signals */}
       <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
         <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-        <span>Cancel anytime &middot; Your data stays encrypted &middot; Export anytime</span>
+        <span className="text-center">Cancel anytime · Your data stays encrypted · Export anytime</span>
       </div>
 
       {/* Back button — bottom-left */}
@@ -937,7 +937,7 @@ IMPORTANT:
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-emerald-500/30 bg-emerald-500/10">
           <Shield className="h-8 w-8 text-emerald-500" />
         </div>
-        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">
+        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">
           Save your recovery key
         </h2>
         <p className="text-sm text-[rgb(var(--muted))]">
@@ -1062,7 +1062,7 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
       </div>
 
       {/* Mobile: horizontal stepper on top */}
-      <div className="flex md:hidden items-center justify-center gap-2 mb-6">
+      <div className="flex md:hidden items-center justify-center gap-1 sm:gap-2 mb-4 sm:mb-6">
         {steps.map((step, i) => (
           <div key={step.key} className="flex items-center gap-1.5">
             <div className="flex items-center gap-1">
@@ -1093,7 +1093,7 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
             </div>
             {i < steps.length - 1 && (
               <div
-                className={`w-4 h-0.5 transition-colors ${
+                className={`w-3 sm:w-4 h-0.5 transition-colors ${
                   i < currentIndex ? 'bg-emerald-500' : 'bg-[rgb(var(--border))]'
                 }`}
               />

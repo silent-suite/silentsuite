@@ -66,7 +66,7 @@ export default function AuthLayout({
         <Shield className={`absolute bottom-[8%] right-[40%] h-6 w-6 ${isDark ? 'text-emerald-400/[0.08]' : 'text-emerald-500/[0.12]'} rotate-[-5deg]`} />
       </div>
 
-      <div className="relative z-10 w-full max-w-2xl px-4">
+      <div className="relative z-10 w-full max-w-2xl px-3 sm:px-4">
         {/* Theme toggle */}
         {mounted && (
           <div className="absolute top-4 right-4 sm:top-2 sm:right-0">
@@ -84,7 +84,7 @@ export default function AuthLayout({
           </div>
         )}
 
-        <div className="mb-8 flex flex-col items-center text-center">
+        <div className="mb-4 sm:mb-8 flex flex-col items-center text-center">
           <div className="flex items-center gap-2.5">
             <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
               isDark
@@ -97,7 +97,7 @@ export default function AuthLayout({
               SilentSuite
             </span>
           </div>
-          <div className="mt-3 flex items-center gap-1.5">
+          <div className="mt-2 sm:mt-3 flex items-center gap-1.5">
             <ShieldCheck className="h-4 w-4 text-emerald-500" aria-hidden="true" />
             <p className="text-sm font-medium text-emerald-500">
               End-to-End Encrypted Productivity
@@ -105,7 +105,7 @@ export default function AuthLayout({
           </div>
         </div>
         {/* Trust signals bar */}
-        <div className={`mb-6 flex flex-wrap items-center justify-center gap-4 sm:gap-6 text-xs transition-colors ${
+        <div className={`mb-3 sm:mb-6 flex flex-wrap items-center justify-center gap-3 sm:gap-6 text-xs transition-colors ${
           isDark ? 'text-navy-400' : 'text-gray-500'
         }`}>
           <div className="flex items-center gap-1.5">
@@ -122,7 +122,7 @@ export default function AuthLayout({
           </div>
         </div>
 
-        <div className={`rounded-xl border backdrop-blur-sm px-6 py-8 sm:px-8 shadow-2xl transition-colors ${
+        <div className={`rounded-xl border backdrop-blur-sm px-4 py-6 sm:px-8 sm:py-8 shadow-2xl transition-colors ${
           isDark
             ? 'border-navy-800 bg-navy-900/80'
             : 'border-gray-200 bg-white/80'
