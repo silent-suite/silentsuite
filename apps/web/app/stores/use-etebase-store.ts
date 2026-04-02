@@ -7,6 +7,7 @@ import type {
   SyncChangeEvent,
 } from '@silentsuite/core'
 import { enqueue, isOfflineError } from '@/app/lib/offline-queue'
+import { secureGet } from '@/app/lib/secure-storage'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
 
@@ -146,7 +147,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   syncEngine: null,
 
   initialize: async () => {
-    const savedSession = localStorage.getItem('etebase_session')
+    const savedSession = await secureGet('etebase_session')
     if (!savedSession) {
       logger.debug('[etebase-store] No saved session, skipping initialization')
       return

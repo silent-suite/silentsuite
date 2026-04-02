@@ -1,7 +1,6 @@
 'use client'
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
@@ -118,7 +117,7 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
   }
 }
 
-export const useCalendarStore = create<CalendarState & CalendarActions>()(persist((set, get) => ({
+export const useCalendarStore = create<CalendarState & CalendarActions>()((set, get) => ({
   events: [],
   isLoading: false,
   syncStatus: 'synced' as SyncStatus,
@@ -490,35 +489,6 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()(persis
   syncFromRemote: (remoteEvents: CalendarEvent[]) => {
     set({ events: remoteEvents, syncStatus: 'synced' })
   },
-}),
-{
-  name: "silentsuite-calendar",
-  partialize: (state) => ({ events: state.events }),
-  storage: {
-    getItem: (name) => {
-      const raw = localStorage.getItem(name)
-      if (!raw) return null
-      const parsed = JSON.parse(raw)
-      // Rehydrate currentDate from ISO string back to Date object
-      if (parsed?.state?.currentDate && typeof parsed.state.currentDate === 'string') {
-        parsed.state.currentDate = new Date(parsed.state.currentDate)
-      }
-      if (parsed?.state?.events) {
-        parsed.state.events = parsed.state.events.map((e: any) => ({
-          ...e,
-          startDate: new Date(e.startDate),
-          endDate: new Date(e.endDate),
-          created: new Date(e.created),
-          updated: new Date(e.updated),
-          alarms: e.alarms ?? [],
-        }))
-      }
-      return parsed
-    },
-    setItem: (name, value) => localStorage.setItem(name, JSON.stringify(value)),
-    removeItem: (name) => localStorage.removeItem(name),
-  },
-},
-))
+}))
 
 export type { CalendarView, NewCalendarEvent }

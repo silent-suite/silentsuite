@@ -8,8 +8,9 @@ import { z } from 'zod'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
-import { BILLING_API_URL } from '@/app/lib/config'
+import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 
 // ---------------------------------------------------------------------------
 // Validation (same rules as signup)
@@ -51,30 +52,78 @@ function ChangePasswordSection() {
     mode: 'onBlur',
   })
 
-  const onSubmit = async (_data: PasswordFormData) => {
+  const onSubmit = async (data: PasswordFormData) => {
     setSuccess(false)
     setApiError(null)
 
     try {
-      // TODO: Call Etebase.Account.changePassword() client-side once SDK is integrated
-      // For now this is mocked — the actual password change happens in Etebase
+      const core = await import('@silentsuite/core')
+      const { user } = useAuthStore.getState()
+      const email = user?.email
+      if (!email) {
+        throw new Error('Unable to determine your account email. Please sign in again.')
+      }
 
-      // Notify billing API to invalidate other sessions
+      const serverUrl =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('silentsuite-server-url') || ETEBASE_SERVER_URL
+          : ETEBASE_SERVER_URL
+
+      // 1. Verify the current password by attempting a login
+      let testAccount: Awaited<ReturnType<typeof core.logIn>> | null = null
+      try {
+        testAccount = await core.logIn(serverUrl, email, data.currentPassword)
+      } catch {
+        throw new Error('Current password is incorrect')
+      }
+
+      // Clean up the test session
+      try {
+        await core.logout(testAccount)
+      } catch {
+        // Non-critical — proceed even if cleanup fails
+      }
+
+      // 2. Change the Etebase password using the live account
+      const { account } = useEtebaseStore.getState()
+      if (!account) {
+        throw new Error('Etebase session not available. Please sign in again.')
+      }
+
+      try {
+        await core.changePassword(account, data.newPassword)
+      } catch {
+        throw new Error('Failed to change password. Please try again.')
+      }
+
+      // 3. Re-save the session after password change
+      const { secureSet } = await import('@/app/lib/secure-storage')
+      const newSession = await core.saveSession(account)
+      await secureSet('etebase_session', newSession)
+
+      // 4. Notify billing API to invalidate other sessions
+      let billingWarning = false
       if (!isSelfHosted) {
-        const res = await fetch(`${BILLING_API_URL}/account/password`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-          credentials: 'include',
-        })
+        try {
+          const res = await fetch(`${BILLING_API_URL}/account/password`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+            credentials: 'include',
+          })
 
-        if (!res.ok) {
-          const body = await res.json().catch(() => null)
-          throw new Error(body?.detail ?? 'Failed to update password')
+          if (!res.ok) {
+            billingWarning = true
+          }
+        } catch {
+          billingWarning = true
         }
       }
 
       setSuccess(true)
+      if (billingWarning) {
+        setApiError('Password changed, but other sessions may not have been signed out.')
+      }
       reset()
     } catch (err) {
       setApiError(err instanceof Error ? err.message : 'Something went wrong')

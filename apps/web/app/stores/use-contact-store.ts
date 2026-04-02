@@ -1,7 +1,6 @@
 'use client'
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 import type { Contact, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -39,7 +38,6 @@ interface ContactActions {
 }
 
 export const useContactStore = create<ContactState & ContactActions>()(
-  persist(
     (set, get) => ({
       contacts: [],
       isLoading: false,
@@ -221,28 +219,6 @@ export const useContactStore = create<ContactState & ContactActions>()(
         set({ contacts: remoteContacts, syncStatus: 'synced' })
       },
     }),
-    {
-      name: 'silentsuite-contacts',
-      partialize: (state) => ({ contacts: state.contacts }),
-      storage: {
-        getItem: (name) => {
-          const raw = localStorage.getItem(name)
-          if (!raw) return null
-          const parsed = JSON.parse(raw)
-          if (parsed?.state?.contacts) {
-            parsed.state.contacts = parsed.state.contacts.map((c: Record<string, unknown>) => ({
-              ...c,
-              created_at: new Date(c.created_at as string),
-              updated_at: new Date(c.updated_at as string),
-            }))
-          }
-          return parsed
-        },
-        setItem: (name, value) => localStorage.setItem(name, JSON.stringify(value)),
-        removeItem: (name) => localStorage.removeItem(name),
-      },
-    },
-  ),
 )
 
 export function getFilteredContacts(contacts: Contact[], query: string): Contact[] {

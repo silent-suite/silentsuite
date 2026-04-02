@@ -5,6 +5,7 @@ import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { logger } from '@/app/lib/logger'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
+import { secureGet, secureSet, secureRemove, secureClear, migrateFromLocalStorage } from '@/app/lib/secure-storage'
 
 export interface User {
   isAdmin?: boolean
@@ -95,8 +96,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const { etebaseSignUp } = await import('@/app/lib/etebase-auth')
       const { authToken, savedSession } = await etebaseSignUp(email, password, serverUrl)
-      // SECURITY: Etebase session in localStorage is XSS-vulnerable. Move to encrypted IndexedDB storage.
-      localStorage.setItem('etebase_session', savedSession)
+      await secureSet('etebase_session', savedSession)
 
       let earlyAdopter = false
       if (!isSelfHosted && !isCustomServer(serverUrl)) {
@@ -245,7 +245,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
       const { authToken, savedSession } = await etebaseLogIn(email, password, serverUrl)
-      localStorage.setItem('etebase_session', savedSession)
+      await secureSet('etebase_session', savedSession)
 
       if (isSelfHosted || isCustomServer(serverUrl)) {
         if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
@@ -328,11 +328,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     // Clear persisted data stores so next login starts fresh
-    localStorage.removeItem('etebase_session')
+    await secureClear()
     localStorage.removeItem('silentsuite-server-url')
+    // Legacy localStorage keys (no longer written, but clear in case of stale data)
     localStorage.removeItem('silentsuite-tasks')
     localStorage.removeItem('silentsuite-contacts')
     localStorage.removeItem('silentsuite-calendar')
+    localStorage.removeItem('etebase_session')
 
     syncAdminCookie(false)
     set({ user: null, isAuthenticated: false, error: null, subscriptionStatus: null })
@@ -341,7 +343,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   refreshSession: async () => {
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
-      const hasSession = !!localStorage.getItem('etebase_session')
+      const hasSession = !!(await secureGet('etebase_session'))
       if (hasSession) {
         syncAdminCookie(true)
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, subscriptionStatus: 'active' })
@@ -369,6 +371,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   restoreSession: async () => {
+    // Run one-time migration from localStorage to IndexedDB
+    await migrateFromLocalStorage()
+
     // If a signup is in progress (pendingSignup exists or flag in sessionStorage),
     // do NOT restore the session — the user must complete the signup flow first.
     const signupInProgress = typeof window !== 'undefined' && sessionStorage.getItem('silentsuite-signup-in-progress')
@@ -379,7 +384,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
-      const hasSession = !!localStorage.getItem('etebase_session')
+      const hasSession = !!(await secureGet('etebase_session'))
       if (hasSession) {
         syncAdminCookie(true)
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active' })
@@ -407,7 +412,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Network error — billing API is unreachable.
       logger.warn('[auth-store] Session restore failed (network):', err)
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
-      const hasEtebaseSession = !!localStorage.getItem('etebase_session')
+      const hasEtebaseSession = !!(await secureGet('etebase_session'))
       if (hasEtebaseSession) {
         set({
           user: { id: 'degraded', email: '', planId: 'unknown', isAdmin: false },
