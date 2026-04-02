@@ -88,7 +88,11 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInter
       onError?.(msg)
       setLoading(false)
     } else {
-      onSuccess()
+      try {
+        onSuccess()
+      } finally {
+        setLoading(false)
+      }
     }
   }
 

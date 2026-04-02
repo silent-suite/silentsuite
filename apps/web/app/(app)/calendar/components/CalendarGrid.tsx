@@ -12,6 +12,7 @@ import { useTheme } from 'next-themes'
 import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 
@@ -33,10 +34,17 @@ function toPlainDate(date: Date): Temporal.PlainDate {
   })
 }
 
-function toZonedDateTime(date: Date): Temporal.ZonedDateTime {
-  return Temporal.Instant.fromEpochMilliseconds(date.getTime()).toZonedDateTimeISO(
-    Temporal.Now.timeZoneId(),
-  )
+/** Format a JS Date as a local-time string for Schedule-X ("YYYY-MM-DD HH:mm").
+ * Schedule-X expects local wall-clock strings, not ZonedDateTime objects.
+ * Passing ZonedDateTime causes it to display UTC time instead of local time.
+ */
+function toScheduleXDateTime(date: Date): string {
+  const y = date.getFullYear()
+  const mo = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const h = String(date.getHours()).padStart(2, '0')
+  const mi = String(date.getMinutes()).padStart(2, '0')
+  return `${y}-${mo}-${d} ${h}:${mi}`
 }
 
 /** Expanded event used for display — may be a recurring instance */
@@ -148,8 +156,10 @@ function toScheduleXEvents(
     return {
       id: e.id,
       title: e.isRecurring ? `↻ ${e.title}` : e.title,
-      start: e.allDay ? toPlainDate(e.startDate) : toZonedDateTime(e.startDate),
-      end: e.allDay ? toPlainDate(e.endDate) : toZonedDateTime(e.endDate),
+      // Schedule-X accepts 'YYYY-MM-DD HH:mm' strings at runtime despite types
+      // requiring ZonedDateTime. Casting avoids a spurious type error.
+      start: (e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate)) as Temporal.ZonedDateTime | Temporal.PlainDate,
+      end: (e.allDay ? toPlainDate(e.endDate) : toScheduleXDateTime(e.endDate)) as Temporal.ZonedDateTime | Temporal.PlainDate,
       description: e.description || undefined,
       location: e.location || undefined,
       calendarId: e.calendarId ?? 'default',
@@ -273,6 +283,9 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const setCurrentView = useCalendarStore((s) => s.setCurrentView)
   const setCurrentDate = useCalendarStore((s) => s.setCurrentDate)
   const updateEvent = useCalendarStore((s) => s.updateEvent)
+
+  const timeFormat = usePreferencesStore((s) => s.timeFormat)
+  const use12h = timeFormat !== '24h'
 
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
@@ -440,6 +453,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   // Capture initial view so useNextCalendarApp config doesn't change on view switch
   const initialViewRef = useRef(VIEW_MAP[currentView])
   const initialDateRef = useRef(selectedDate)
+  // Capture time format at mount — Schedule-X locale can't change after init
+  const initialLocaleRef = useRef(timeFormat === '24h' ? 'en-GB' : 'en-US')
 
   // Memoize the event click handler
   const handleEventClick = useCallback(
@@ -473,7 +488,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     selectedDate: initialDateRef.current,
     defaultView: initialViewRef.current,
     isDark: resolvedTheme === 'dark',
-    locale: 'en-US',
+    locale: initialLocaleRef.current,
     firstDayOfWeek: 1, // Monday — must match getViewRange() and formatDateRange()
     dayBoundaries: { start: '06:00', end: '22:00' },
     weekOptions: {
@@ -684,11 +699,11 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       const timeLabel = `${clampedStart.toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true,
+        hour12: use12h,
       })} \u2013 ${clampedEnd.toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true,
+        hour12: use12h,
       })}`
 
       const de = displayEventMapRef.current.get(dragMoveStartRef.current.eventId)
@@ -704,7 +719,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         newEnd: clampedEnd,
       })
     },
-    [getDayColumnInfo, getTimeFromY, buildDateFromHour],
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, use12h],
   )
 
   /** Shared helper: complete drag-move drop */
@@ -945,11 +960,11 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         const timeLabel = `${origStart.toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
-          hour12: true,
+          hour12: use12h,
         })} \u2013 ${newEnd.toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
-          hour12: true,
+          hour12: use12h,
         })}`
 
         setDragResizePreview({
@@ -1091,7 +1106,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         endTime,
       })
     },
-    [getTimeFromY, buildDateFromHour, getDayColumnInfo, updateDragMovePosition, viewRange],
+    [getTimeFromY, buildDateFromHour, getDayColumnInfo, updateDragMovePosition, viewRange, use12h],
   )
 
   const handleMouseUp = useCallback(
@@ -1386,14 +1401,14 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
                   {dragSelection.startTime.toLocaleTimeString('en-US', {
                     hour: 'numeric',
                     minute: '2-digit',
-                    hour12: true,
+                    hour12: use12h,
                   })}
                 </span>
                 <span className="text-[11px] font-medium text-[rgb(var(--primary))] leading-none self-end">
                   {dragSelection.endTime.toLocaleTimeString('en-US', {
                     hour: 'numeric',
                     minute: '2-digit',
-                    hour12: true,
+                    hour12: use12h,
                   })}
                 </span>
               </>

@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { parseVCalendar, parseICalDateValue } from '@silentsuite/core'
+import { ExternalLink } from 'lucide-react'
 import type { VEvent } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
@@ -17,41 +18,48 @@ interface CalendarImportProps {
 const PLATFORM_INSTRUCTIONS = [
   {
     name: 'Google Calendar',
-    steps: 'Go to calendar.google.com → Settings → Import & Export → Export',
+    steps: 'Go to Settings → Import & Export → Export',
+    link: 'https://calendar.google.com/calendar/u/0/r/settings/export?pli=1',
   },
   {
     name: 'Apple Calendar',
     steps: 'Open Calendar app → File → Export',
+    link: undefined,
   },
   {
     name: 'Outlook',
     steps: 'Open Outlook → Calendar → Share → Export to .ics',
+    link: undefined,
   },
   {
     name: 'Other',
     steps: 'Export your calendar as .ics from any app',
+    link: undefined,
   },
 ]
 
-function formatICalDate(dtstart: string): string {
+function formatEventPreviewDate(dtstart: string, tzid?: string): string {
   if (!dtstart) return ''
-  // Handle YYYYMMDD format
+  // All-day: YYYYMMDD
   if (/^\d{8}$/.test(dtstart)) {
     const y = dtstart.slice(0, 4)
     const m = dtstart.slice(4, 6)
     const d = dtstart.slice(6, 8)
     return `${y}-${m}-${d}`
   }
-  // Handle YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSSZ
-  if (/^\d{8}T\d{6}/.test(dtstart)) {
-    const y = dtstart.slice(0, 4)
-    const m = dtstart.slice(4, 6)
-    const d = dtstart.slice(6, 8)
-    const hh = dtstart.slice(9, 11)
-    const mm = dtstart.slice(11, 13)
-    return `${y}-${m}-${d} ${hh}:${mm}`
+  // Timed: convert via parseICalDateValue so TZID is honoured
+  try {
+    const { date } = parseICalDateValue(dtstart, tzid)
+    return date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return dtstart
   }
-  return dtstart
 }
 
 
@@ -171,7 +179,20 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
               />
             </button>
             {openAccordion === platform.name && (
-              <p className="px-3 pb-2 text-xs text-[rgb(var(--muted))]">{platform.steps}</p>
+              <div className="px-3 pb-2">
+                <p className="text-xs text-[rgb(var(--muted))]">{platform.steps}</p>
+                {platform.link && (
+                  <a
+                    href={platform.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-xs text-emerald-500 hover:text-emerald-400 transition-colors"
+                  >
+                    Open export page
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </div>
             )}
           </div>
         ))}
@@ -199,7 +220,7 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
         <ImportPreview
           items={events.map((e) => ({
             title: e.summary || 'Untitled Event',
-            subtitle: formatICalDate(e.dtstart),
+            subtitle: formatEventPreviewDate(e.dtstart, e.dtstartParams?.['TZID']),
           }))}
           type="events"
           onImport={handleImport}

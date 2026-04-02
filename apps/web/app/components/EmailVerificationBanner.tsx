@@ -41,7 +41,7 @@ export function EmailVerificationBanner() {
   }
 
   return (
-    <div role="alert" className="flex items-center gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-200 text-sm">
+    <div role="alert" className="flex items-center gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-800 dark:text-amber-200 text-sm">
       <MailWarning className="w-4 h-4 text-amber-400 shrink-0" />
       <span className="flex-1 text-xs">
         {resent

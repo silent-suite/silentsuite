@@ -29,13 +29,16 @@ function formatICalDate(date: Date, allDay: boolean): string {
 }
 
 function formatICalDateTime(date: Date): string {
-  const y = date.getFullYear();
-  const mo = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const h = String(date.getHours()).padStart(2, '0');
-  const mi = String(date.getMinutes()).padStart(2, '0');
-  const s = String(date.getSeconds()).padStart(2, '0');
-  return `${y}${mo}${d}T${h}${mi}${s}`;
+  // Emit UTC with Z suffix so events have a timezone anchor across all sync
+  // clients and timezones. Floating-time (no Z, no TZID) would cause events
+  // to shift when viewed from a different timezone.
+  const y = date.getUTCFullYear();
+  const mo = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  const h = String(date.getUTCHours()).padStart(2, '0');
+  const mi = String(date.getUTCMinutes()).padStart(2, '0');
+  const s = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${y}${mo}${d}T${h}${mi}${s}Z`;
 }
 
 export function parseICalDateValue(value: string, tzid?: string): { date: Date; allDay: boolean } {

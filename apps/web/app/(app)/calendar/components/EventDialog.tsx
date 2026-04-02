@@ -11,6 +11,20 @@ import type { CalendarEvent, VAlarm } from '@silentsuite/core'
 import { buildAlarmTrigger, parseAlarmTriggerMinutes } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+
+// ---------------------------------------------------------------------------
+// Time formatting (respects user preference)
+// ---------------------------------------------------------------------------
+
+function makeFormatTime(hour12: boolean) {
+  return function formatTime(date: Date): string {
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12,
+    })
+  }
+}
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 
 // ---------------------------------------------------------------------------
@@ -38,13 +52,7 @@ interface EventDialogProps {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  })
-}
+// formatTime is created per-render via makeFormatTime — see below
 
 function formatTimeForInput(date: Date): string {
   const h = String(date.getHours()).padStart(2, '0')
@@ -91,6 +99,8 @@ export function EventDialog({
   const canWrite = useAuthStore((s) => s.canWrite())
   const notifications = useNotifications()
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
+  const timeFormat = usePreferencesStore((s) => s.timeFormat)
+  const formatTime = makeFormatTime(timeFormat !== '24h')
 
   // ---------------------------------------------------------------------------
   // Derive initial state
