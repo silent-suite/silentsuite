@@ -122,9 +122,11 @@ class Etebase:
 
     def sync(self):
         """Full bidirectional sync: push local changes, pull remote changes."""
+        logger.info("=== Starting full sync cycle ===")
         self.sync_collection_list()
         for collection in self.list():
             self.sync_collection(collection.uid)
+        logger.info("=== Full sync cycle complete ===")
 
     def sync_collection_list(self):
         """Sync the list of collections (push then pull)."""
@@ -222,17 +224,28 @@ class Etebase:
             while not done:
                 fetch_options = FetchOptions().stoken(stoken)
                 item_list = item_mgr.list(fetch_options)
-
                 items_data = list(item_list.data)
-                logger.info("PULL %s: fetched %d items (stoken=%s)", uid, len(items_data), stoken)
+
+                logger.info(
+                    "PULL %s: fetched %d items (stoken=%s)",
+                    uid[:8], len(items_data),
+                    str(stoken)[:16] if stoken else "None",
+                )
 
                 for item in items_data:
                     meta = item.meta
-                    item_uid = meta.get("name") or item.uid
-                    if not item_uid:
-                        logger.warning("PULL %s: skipping item with no name or uid", uid)
-                        continue
+                    logger.info(
+                        "PULL %s: item uid=%s meta=%s deleted=%s",
+                        uid[:8], item.uid[:16], dict(meta), item.deleted,
+                    )
+                    if "name" not in meta:
+                        logger.info(
+                            "PULL %s: item %s has no 'name' in meta — using item.uid as fallback",
+                            uid[:8], item.uid[:16],
+                        )
+                        meta["name"] = item.uid
 
+                    item_uid = meta["name"]
                     cache_item = models.ItemEntity.get_or_none(
                         collection=cache_col, uid=item_uid
                     )
@@ -241,7 +254,9 @@ class Etebase:
                             collection=cache_col,
                             uid=item_uid,
                         )
-                        logger.info("PULL %s: new item %s", uid, item_uid)
+                        logger.info("PULL %s: NEW item %s", uid[:8], item_uid)
+                    else:
+                        logger.info("PULL %s: UPDATE item %s", uid[:8], item_uid)
                     cache_item.eb_item = item_mgr.cache_save(item)
                     cache_item.deleted = item.deleted
                     cache_item.save()
@@ -274,15 +289,22 @@ class Etebase:
             item_mgr = col_mgr.get_item_manager(col)
 
             changed = list(self._collection_dirty_get(cache_col))
+            logger.info("PUSH %s: %d dirty/new items to push", uid[:8], len(changed))
+
+            if not changed:
+                return
 
             for chunk in batch(changed, CHUNK_PUSH):
                 chunk_items = list(map(lambda x: item_mgr.cache_load(x.eb_item), chunk))
+                logger.info("PUSH %s: uploading batch of %d items", uid[:8], len(chunk_items))
                 item_mgr.batch(chunk_items, None, None)
+                logger.info("PUSH %s: batch upload SUCCESS", uid[:8])
                 for cache_item, item in zip(chunk, chunk_items):
                     cache_item.eb_item = item_mgr.cache_save(item)
                     cache_item.dirty = False
                     cache_item.new = False
                     cache_item.save()
+                    logger.info("PUSH %s: cleared dirty/new for %s", uid[:8], cache_item.uid)
 
     # --- CRUD operations ---
 

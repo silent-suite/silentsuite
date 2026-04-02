@@ -629,6 +629,7 @@ class Storage(BaseStorage):
             return
 
         sync_thread = start_sync_thread(user)
+        logger.info("acquire_lock(%s, user=%s): pre-yield sync", mode, user)
         sync_thread.force_sync()
         try:
             sync_thread.wait_for_sync(20)
@@ -644,19 +645,18 @@ class Storage(BaseStorage):
             yield
 
             if mode == "w":
-                # Inline push: push dirty items directly while we hold the lock,
-                # avoiding lock contention with the async SyncThread.
+                # Push dirty items inline — the SyncThread can't acquire
+                # _get_etesync_lock while we hold it, so push here directly.
+                logger.info("acquire_lock(w): post-write — pushing inline")
                 try:
+                    etesync.push_collection_list()
                     for col in etesync.list():
                         if etesync.collection_is_dirty(col.uid):
-                            logger.info("PUSH (inline): pushing dirty items for collection %s", col.uid)
+                            logger.info("acquire_lock: pushing dirty collection %s", col.uid[:8])
                             etesync.push_collection(col.uid)
-                    if etesync.collection_list_is_dirty():
-                        logger.info("PUSH (inline): pushing dirty collection list")
-                        etesync.push_collection_list()
+                    logger.info("acquire_lock(w): inline push done")
                 except Exception as e:
-                    logger.warning("Inline push failed, will retry on next sync: %s", e)
-                    sync_thread.force_sync()
+                    logger.warning("acquire_lock(w): inline push FAILED: %s", e)
 
             self.etesync = None
             self.user = None
