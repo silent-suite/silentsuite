@@ -27,7 +27,6 @@ import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalCalendar
-import io.silentsuite.sync.ui.AccountsActivity
 import io.silentsuite.sync.utils.HintManager
 import io.silentsuite.sync.utils.LanguageUtils
 import io.silentsuite.sync.utils.NotificationUtils
@@ -154,7 +153,7 @@ class App : Application() {
         }
 
         if (fromVersion < 10) {
-            HintManager.setHintSeen(this, AccountsActivity.HINT_ACCOUNT_ADD, true)
+            HintManager.setHintSeen(this, "AddAccount", true)
         }
     }
 
