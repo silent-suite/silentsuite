@@ -9,6 +9,20 @@ const nextConfig = {
     unoptimized: true,
   },
   poweredByHeader: false,
+  async redirects() {
+    return [
+      {
+        source: '/bridge/install.sh',
+        destination: 'https://raw.githubusercontent.com/silent-suite/silentsuite/dev/bridge/install.sh',
+        permanent: false,
+      },
+      {
+        source: '/bridge/install.ps1',
+        destination: 'https://raw.githubusercontent.com/silent-suite/silentsuite/dev/bridge/install.ps1',
+        permanent: false,
+      },
+    ]
+  },
   async headers() {
     return [
       {
