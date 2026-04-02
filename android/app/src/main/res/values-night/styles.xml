@@ -2,6 +2,42 @@
 <!-- Dark theme overrides for SilentSuite -->
 <resources>
 
+    <!-- Dark mode info card background -->
+    <color name="infoColor">#0F2A3D</color>
+
+    <!-- Dark mode AppTheme overrides -->
+    <style name="AppTheme" parent="Theme.MaterialComponents.DayNight">
+        <item name="colorPrimary">@color/navy700</item>
+        <item name="colorPrimaryDark">@color/navy900</item>
+        <item name="colorPrimaryVariant">@color/navy600</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+
+        <item name="colorSecondary">@color/teal400</item>
+        <item name="colorSecondaryVariant">@color/teal500</item>
+        <item name="colorOnSecondary">@color/navy900</item>
+
+        <item name="colorError">@color/errorColor</item>
+        <item name="colorOnError">@android:color/white</item>
+
+        <item name="android:colorBackground">@color/navy900</item>
+        <item name="colorSurface">@color/navy700</item>
+        <item name="colorOnSurface">@android:color/white</item>
+
+        <!-- Dark mode text colors -->
+        <item name="android:textColorPrimary">@color/grey200</item>
+        <item name="android:textColorSecondary">@color/navy100</item>
+        <item name="android:textColorHint">@color/navy100</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+    </style>
+
+    <style name="AppTheme.Dialog.Alert" parent="Theme.AppCompat.DayNight.Dialog.Alert">
+        <item name="colorAccent">@color/teal400</item>
+    </style>
+
     <!-- stepper (wizard) - dark variant -->
     <style name="stepper_nav_bar">
         <item name="android:background">@color/navy800</item>
@@ -17,6 +53,12 @@
 
     <style name="tablayout" parent="Base.Widget.Design.TabLayout">
         <item name="android:background">@color/navy900</item>
+    </style>
+
+    <!-- Dark mode heading uses brighter teal -->
+    <style name="TextView.Heading" parent="AppTheme">
+        <item name="android:textSize">22sp</item>
+        <item name="android:textColor">@color/teal400</item>
     </style>
 
 </resources>

@@ -15,7 +15,6 @@ import android.content.Intent
 import android.content.SyncStatusObserver
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.view.Gravity
 import android.view.MenuItem
 import android.view.View
 import android.widget.TextView
@@ -33,12 +32,9 @@ import io.silentsuite.sync.Constants
 import io.silentsuite.sync.Constants.serviceUrl
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.setup.LoginActivity
-import io.silentsuite.sync.utils.HintManager
-import io.silentsuite.sync.utils.ShowcaseBuilder
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.navigation.NavigationView
 import com.google.android.material.snackbar.Snackbar
-import tourguide.tourguide.ToolTip
 
 class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelectedListener, SyncStatusObserver {
 
@@ -90,12 +86,6 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
 
         PermissionsActivity.requestAllPermissions(this)
 
-        if (!HintManager.getHintSeen(this, HINT_ACCOUNT_ADD)) {
-            ShowcaseBuilder.getBuilder(this)
-                    .setToolTip(ToolTip().setTitle(getString(R.string.tourguide_title)).setDescription(getString(R.string.accounts_showcase_add)).setGravity(Gravity.TOP or Gravity.LEFT))
-                    .playOn(fab)
-            HintManager.setHintSeen(this, HINT_ACCOUNT_ADD, true)
-        }
     }
 
     override fun onResume() {
@@ -228,9 +218,5 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
             val deniedString = denied.keys.joinToString(", ")
             Snackbar.make(findViewById(R.id.coordinator), getString(R.string.accounts_missing_permissions, deniedString), Snackbar.LENGTH_INDEFINITE).show()
         }
-    }
-
-    companion object {
-        val HINT_ACCOUNT_ADD = "AddAccount"
     }
 }

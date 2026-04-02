@@ -31,7 +31,8 @@
 
     <!-- Semantic colors -->
     <color name="errorColor">#EF4444</color>
-    <color name="infoColor">#0F2A3D</color>
+    <!-- Light mode: subtle tinted card background; dark mode override in values-night -->
+    <color name="infoColor">#E0EDF4</color>
 
     <!-- Legacy aliases (referenced by layouts/code) -->
     <color name="light_green500">@color/teal500</color>
@@ -49,7 +50,7 @@
     <color name="preference_fallback_accent_color">@color/teal500</color>
 
 
-    <!-- app theme -->
+    <!-- app theme (light mode defaults) -->
 
     <style name="AppTheme" parent="Theme.MaterialComponents.DayNight">
         <item name="colorPrimary">@color/navy700</item>
@@ -57,8 +58,8 @@
         <item name="colorPrimaryVariant">@color/navy600</item>
         <item name="colorOnPrimary">@android:color/white</item>
 
-        <item name="colorSecondary">@color/teal500</item>
-        <item name="colorSecondaryVariant">@color/teal400</item>
+        <item name="colorSecondary">@color/teal600</item>
+        <item name="colorSecondaryVariant">@color/teal700</item>
         <item name="colorOnSecondary">@android:color/white</item>
 
         <item name="colorError">@color/errorColor</item>
@@ -66,6 +67,12 @@
 
         <item name="android:colorBackground">@color/offwhite</item>
         <item name="colorSurface">@android:color/white</item>
+        <item name="colorOnSurface">@color/navy800</item>
+
+        <!-- Light mode text colors -->
+        <item name="android:textColorPrimary">@color/navy800</item>
+        <item name="android:textColorSecondary">@color/navy600</item>
+        <item name="android:textColorHint">@color/navy600</item>
     </style>
 
     <style name="AppTheme.NoActionBar">
@@ -77,7 +84,7 @@
     <!-- dialogs -->
 
     <style name="AppTheme.Dialog.Alert" parent="Theme.AppCompat.DayNight.Dialog.Alert">
-        <item name="colorAccent">@color/teal500</item>
+        <item name="colorAccent">@color/teal600</item>
     </style>
 
 
@@ -101,10 +108,10 @@
         <item name="android:backgroundDimEnabled">false</item>
     </style>
 
-    <!-- stepper (wizard) -->
+    <!-- stepper (wizard) — light mode -->
 
     <style name="stepper_nav_bar">
-        <item name="android:background">@android:color/white</item>
+        <item name="android:background">@color/offwhite</item>
         <item name="android:elevation">4dp</item>
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingBottom">8dp</item>
@@ -140,7 +147,7 @@
 
     <style name="TextView.Heading" parent="AppTheme">
         <item name="android:textSize">22sp</item>
-        <item name="android:textColor">@color/teal500</item>
+        <item name="android:textColor">@color/teal600</item>
     </style>
 
 </resources>

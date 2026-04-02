@@ -81,26 +81,7 @@ class StartupDialogFragment : DialogFragment() {
         private val ARGS_MODE = "mode"
 
         fun getStartupDialogs(context: Context): Array<StartupDialogFragment> {
-            val dialogs = LinkedList<StartupDialogFragment>()
-
-            if (BuildConfig.VERSION_NAME.contains("-alpha") || BuildConfig.VERSION_NAME.contains("-beta") || BuildConfig.VERSION_NAME.contains("-rc"))
-                dialogs.add(StartupDialogFragment.instantiate(Mode.DEVELOPMENT_VERSION))
-
-            // battery optimization whitelisting
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !HintManager.getHintSeen(context, HINT_BATTERY_OPTIMIZATIONS)) {
-                val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager?
-                if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(BuildConfig.APPLICATION_ID))
-                    dialogs.add(StartupDialogFragment.instantiate(Mode.BATTERY_OPTIMIZATIONS))
-            }
-
-            // Vendor specific bugs
-            val manu = Build.MANUFACTURER
-            if (!HintManager.getHintSeen(context, HINT_VENDOR_SPECIFIC_BUGS) && (manu.equals("Xiaomi", ignoreCase = true) || manu.equals("Huawei", ignoreCase = true)) && !Build.DISPLAY.contains("lineage")) {
-                dialogs.add(StartupDialogFragment.instantiate(Mode.VENDOR_SPECIFIC_BUGS))
-            }
-
-            Collections.reverse(dialogs)
-            return dialogs.toTypedArray()
+            return emptyArray()
         }
 
         fun instantiate(mode: Mode): StartupDialogFragment {

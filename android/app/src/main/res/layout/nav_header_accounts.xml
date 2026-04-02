@@ -5,16 +5,19 @@
               xmlns:tools="http://schemas.android.com/tools"
               android:layout_width="match_parent"
               android:layout_height="wrap_content"
-              android:background="@color/navy800"
+              android:background="@drawable/nav_header_bg"
               android:gravity="bottom"
               android:orientation="vertical"
-              android:padding="@dimen/activity_margin"
+              android:paddingStart="16dp"
+              android:paddingEnd="16dp"
+              android:paddingTop="32dp"
+              android:paddingBottom="16dp"
               android:theme="@style/ThemeOverlay.AppCompat.Dark">
 
     <ImageView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_marginBottom="8dp"
         android:src="@mipmap/ic_launcher"
         tools:ignore="ContentDescription"/>
 
@@ -22,15 +25,20 @@
         android:id="@+id/nav_user_email"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="@dimen/nav_header_vertical_spacing"
+        android:layout_marginTop="8dp"
         android:text="@string/app_name"
         android:textColor="@color/teal400"
-        android:textAppearance="@style/TextAppearance.AppCompat.Body1"/>
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:ellipsize="end"
+        android:maxLines="1"/>
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:textColor="@color/navy100"
+        android:layout_marginTop="2dp"
+        android:textColor="#B0BEC5"
+        android:textSize="12sp"
         android:text="@string/navigation_drawer_subtitle"/>
 
 </LinearLayout>

@@ -10,7 +10,7 @@
             android:title="@string/navigation_drawer_add_account"/>
         <item
             android:id="@+id/nav_logout"
-            android:icon="@drawable/ic_delete_dark"
+            android:icon="@drawable/ic_logout"
             android:title="@string/navigation_drawer_logout"/>
     </group>
 
@@ -21,7 +21,7 @@
             android:title="@string/navigation_drawer_settings"/>
         <item
             android:id="@+id/nav_theme"
-            android:icon="@drawable/ic_settings_dark"
+            android:icon="@drawable/ic_palette"
             android:title="@string/navigation_drawer_theme"/>
         <item
             android:id="@+id/nav_about"

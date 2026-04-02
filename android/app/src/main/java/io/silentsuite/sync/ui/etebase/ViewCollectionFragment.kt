@@ -1,6 +1,5 @@
 package io.silentsuite.sync.ui.etebase
 
-import android.content.DialogInterface
 import android.os.Bundle
 import android.view.*
 import android.widget.TextView
@@ -15,11 +14,7 @@ import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.ui.BaseActivity
-import io.silentsuite.sync.ui.WebViewActivity
-import io.silentsuite.sync.utils.HintManager
-import io.silentsuite.sync.utils.ShowcaseBuilder
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import tourguide.tourguide.ToolTip
 import java.util.*
 
 class ViewCollectionFragment : Fragment() {
@@ -44,23 +39,17 @@ class ViewCollectionFragment : Fragment() {
 
     private fun initUi(inflater: LayoutInflater, container: View, cachedCollection: CachedCollection) {
         val title = container.findViewById<TextView>(R.id.display_name)
-        if (!HintManager.getHintSeen(requireContext(), HINT_IMPORT)) {
-            val tourGuide = ShowcaseBuilder.getBuilder(requireActivity())
-                    .setToolTip(ToolTip().setTitle(getString(R.string.tourguide_title)).setDescription(getString(R.string.account_showcase_import)).setGravity(Gravity.BOTTOM))
-                    .setPointer(null)
-            tourGuide.mOverlay.setHoleRadius(0)
-            tourGuide.playOn(title)
-            HintManager.setHintSeen(requireContext(), HINT_IMPORT, true)
-        }
 
         val fab = container.findViewById<FloatingActionButton>(R.id.fab)
         fab?.setOnClickListener {
-            AlertDialog.Builder(requireContext())
-                    .setIcon(R.drawable.ic_info_dark)
-                    .setTitle(R.string.use_native_apps_title)
-                    .setMessage(R.string.use_native_apps_body)
-                    .setNegativeButton(R.string.navigation_drawer_guide, { _: DialogInterface, _: Int -> WebViewActivity.openUrl(requireContext(), Constants.helpUri) })
-                    .setPositiveButton(android.R.string.yes) { _, _ -> }.show()
+            if (cachedCollection.col.accessLevel != CollectionAccessLevel.ReadOnly) {
+                parentFragmentManager.commit {
+                    replace(R.id.fragment_container, ImportCollectionFragment())
+                    addToBackStack(null)
+                }
+            } else {
+                Toast.makeText(requireContext(), R.string.not_allowed_title, Toast.LENGTH_SHORT).show()
+            }
         }
 
         val col = cachedCollection.col
@@ -154,9 +143,5 @@ class ViewCollectionFragment : Fragment() {
             }
         }
         return super.onOptionsItemSelected(item)
-    }
-
-    companion object {
-        private val HINT_IMPORT = "Import"
     }
 }

@@ -49,8 +49,6 @@ import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.InvitationsActivity
-import io.silentsuite.sync.utils.HintManager
-import io.silentsuite.sync.utils.ShowcaseBuilder
 import io.silentsuite.sync.utils.packageInstalled
 import com.google.android.material.snackbar.Snackbar
 // Modified by Silent Suite - ACRA removed, will be replaced with Sentry in Phase 2
@@ -58,7 +56,6 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import tourguide.tourguide.ToolTip
 import java.util.logging.Level
 
 class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMenu.OnMenuItemClickListener, Refreshable {
@@ -149,12 +146,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         }
 
-        if (!HintManager.getHintSeen(this, HINT_VIEW_COLLECTION)) {
-            ShowcaseBuilder.getBuilder(this)
-                    .setToolTip(ToolTip().setTitle(getString(R.string.tourguide_title)).setDescription(getString(R.string.account_showcase_view_collection)))
-                    .playOn(tbCardDAV)
-            HintManager.setHintSeen(this, HINT_VIEW_COLLECTION, true)
-        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -605,7 +596,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     companion object {
         val EXTRA_ACCOUNT = "account"
-        private val HINT_VIEW_COLLECTION = "ViewCollection"
     }
 
 }
