@@ -7,210 +7,247 @@
   ~ http://www.gnu.org/licenses/gpl.html
   -->
 
-<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
-            xmlns:app="http://schemas.android.com/apk/res-auto"
-            xmlns:tools="http://schemas.android.com/tools"
+<androidx.drawerlayout.widget.DrawerLayout
+    android:id="@+id/drawer_layout"
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    tools:openDrawer="start">
+
+    <androidx.coordinatorlayout.widget.CoordinatorLayout
+        android:id="@+id/coordinator"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <com.google.android.material.appbar.AppBarLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <androidx.appcompat.widget.Toolbar
+                android:id="@+id/toolbar"
+                android:layout_width="match_parent"
+                android:layout_height="?attr/actionBarSize"
+                android:background="?attr/colorPrimary"
+                app:theme="@style/ThemeOverlay.AppCompat.ActionBar"/>
+
+        </com.google.android.material.appbar.AppBarLayout>
+
+        <ScrollView
+            android:id="@+id/parent"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:fitsSystemWindows="true">
+            app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-	<ScrollView android:id="@+id/parent"
-		    android:layout_width="match_parent"
-		    android:layout_height="match_parent">
+            <LinearLayout
+                android:orientation="vertical"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="@dimen/activity_margin">
 
-	    <LinearLayout android:orientation="vertical"
-			  android:layout_width="match_parent"
-			  android:layout_height="wrap_content"
-			  android:padding="@dimen/activity_margin">
+                <androidx.cardview.widget.CardView
+                    android:id="@+id/subscription_card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    app:cardUseCompatPadding="true"
+                    app:cardElevation="8dp">
 
-		<androidx.cardview.widget.CardView
-		    android:id="@+id/subscription_card"
-		    android:layout_width="match_parent"
-		    android:layout_height="wrap_content"
-		    android:layout_marginBottom="8dp"
-		    app:cardUseCompatPadding="true"
-		    app:cardElevation="8dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="16dp">
 
-		    <LinearLayout
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:orientation="vertical"
-			android:padding="16dp">
+                        <TextView
+                            android:id="@+id/subscription_plan"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textAppearance="?android:attr/textAppearanceMedium"
+                            android:textStyle="bold"
+                            tools:text="Personal Plan" />
 
-			<TextView
-			    android:id="@+id/subscription_plan"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:textAppearance="?android:attr/textAppearanceMedium"
-			    android:textStyle="bold"
-			    tools:text="Personal Plan" />
+                        <TextView
+                            android:id="@+id/subscription_status"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:textAppearance="?android:attr/textAppearanceSmall"
+                            tools:text="Active — renews Apr 13, 2026" />
 
-			<TextView
-			    android:id="@+id/subscription_status"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:layout_marginTop="4dp"
-			    android:textAppearance="?android:attr/textAppearanceSmall"
-			    tools:text="Active — renews Apr 13, 2026" />
+                        <TextView
+                            android:id="@+id/subscription_trial"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:textAppearance="?android:attr/textAppearanceSmall"
+                            android:textColor="?attr/colorAccent"
+                            android:visibility="gone"
+                            tools:text="14 days remaining in trial" />
 
-			<TextView
-			    android:id="@+id/subscription_trial"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:layout_marginTop="4dp"
-			    android:textAppearance="?android:attr/textAppearanceSmall"
-			    android:textColor="?attr/colorAccent"
-			    android:visibility="gone"
-			    tools:text="14 days remaining in trial" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/subscription_action"
+                            style="@style/Widget.MaterialComponents.Button.TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:text="@string/subscription_manage"
+                            android:visibility="gone" />
 
-			<com.google.android.material.button.MaterialButton
-			    android:id="@+id/subscription_action"
-			    style="@style/Widget.MaterialComponents.Button.TextButton"
-			    android:layout_width="wrap_content"
-			    android:layout_height="wrap_content"
-			    android:layout_marginTop="8dp"
-			    android:text="@string/subscription_manage"
-			    android:visibility="gone" />
+                    </LinearLayout>
 
-		    </LinearLayout>
+                </androidx.cardview.widget.CardView>
 
-		</androidx.cardview.widget.CardView>
+                <androidx.cardview.widget.CardView
+                    android:id="@+id/carddav"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="8dp"
+                    app:cardUseCompatPadding="true"
+                    app:cardElevation="8dp">
 
-		<androidx.cardview.widget.CardView
-		    android:id="@+id/carddav"
-		    android:layout_width="match_parent"
-		    android:layout_height="wrap_content"
-		    android:layout_marginBottom="8dp"
-		    app:cardUseCompatPadding="true"
-		    app:cardElevation="8dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
 
-		    <LinearLayout
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:orientation="vertical">
+                        <androidx.appcompat.widget.Toolbar
+                            android:id="@+id/carddav_menu"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:theme="@style/toolbar_theme"
+                            style="@style/toolbar_style"
+                            app:navigationIcon="@drawable/ic_people_light"
+                            app:title="@string/settings_carddav"
+                            android:elevation="2dp" tools:ignore="UnusedAttribute"/>
 
-			<androidx.appcompat.widget.Toolbar
-			    android:id="@+id/carddav_menu"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:theme="@style/toolbar_theme"
-			    style="@style/toolbar_style"
-			    app:navigationIcon="@drawable/ic_people_light"
-			    app:title="@string/settings_carddav"
-			    android:elevation="2dp" tools:ignore="UnusedAttribute"/>
+                        <ProgressBar
+                            android:id="@+id/carddav_refreshing"
+                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:visibility="gone"
+                            android:indeterminate="true"/>
 
-			<ProgressBar
-			    android:id="@+id/carddav_refreshing"
-			    style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:visibility="gone"
-			    android:indeterminate="true"/>
+                        <io.silentsuite.sync.ui.widget.MaximizedListView
+                            android:id="@+id/address_books"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:choiceMode="singleChoice"/>
 
-			<io.silentsuite.sync.ui.widget.MaximizedListView
-			    android:id="@+id/address_books"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:choiceMode="singleChoice"/>
+                    </LinearLayout>
 
-		    </LinearLayout>
+                </androidx.cardview.widget.CardView>
 
-		</androidx.cardview.widget.CardView>
+                <androidx.cardview.widget.CardView
+                    android:id="@+id/caldav"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:cardUseCompatPadding="true"
+                    app:cardElevation="8dp">
 
-		<androidx.cardview.widget.CardView
-		    android:id="@+id/caldav"
-		    android:layout_width="match_parent"
-		    android:layout_height="wrap_content"
-		    app:cardUseCompatPadding="true"
-		    app:cardElevation="8dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
 
-		    <LinearLayout
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:orientation="vertical">
+                        <androidx.appcompat.widget.Toolbar
+                            android:id="@+id/caldav_menu"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:theme="@style/toolbar_theme"
+                            style="@style/toolbar_style"
+                            app:navigationIcon="@drawable/ic_event_light"
+                            app:title="@string/settings_caldav"
+                            android:elevation="2dp" tools:ignore="UnusedAttribute"/>
 
-			<androidx.appcompat.widget.Toolbar
-			    android:id="@+id/caldav_menu"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:theme="@style/toolbar_theme"
-			    style="@style/toolbar_style"
-			    app:navigationIcon="@drawable/ic_event_light"
-			    app:title="@string/settings_caldav"
-			    android:elevation="2dp" tools:ignore="UnusedAttribute"/>
+                        <ProgressBar
+                            android:id="@+id/caldav_refreshing"
+                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:visibility="gone"
+                            android:indeterminate="true"/>
 
-			<ProgressBar
-			    android:id="@+id/caldav_refreshing"
-			    style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:visibility="gone"
-			    android:indeterminate="true"/>
+                        <io.silentsuite.sync.ui.widget.MaximizedListView
+                            android:id="@+id/calendars"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:choiceMode="multipleChoice"
+                            android:descendantFocusability="beforeDescendants"/>
 
-			<io.silentsuite.sync.ui.widget.MaximizedListView
-			    android:id="@+id/calendars"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:choiceMode="multipleChoice"
-			    android:descendantFocusability="beforeDescendants"/>
+                    </LinearLayout>
 
-		    </LinearLayout>
+                </androidx.cardview.widget.CardView>
 
-		</androidx.cardview.widget.CardView>
+                <androidx.cardview.widget.CardView
+                    android:id="@+id/taskdav"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    app:cardUseCompatPadding="true"
+                    app:cardElevation="8dp">
 
-		<androidx.cardview.widget.CardView
-		    android:id="@+id/taskdav"
-		    android:layout_width="match_parent"
-		    android:layout_height="wrap_content"
-		    app:cardUseCompatPadding="true"
-		    app:cardElevation="8dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical">
 
-		    <LinearLayout
-			android:layout_width="match_parent"
-			android:layout_height="wrap_content"
-			android:orientation="vertical">
+                        <androidx.appcompat.widget.Toolbar
+                            android:id="@+id/taskdav_menu"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:theme="@style/toolbar_theme"
+                            style="@style/toolbar_style"
+                            app:navigationIcon="@drawable/ic_task_light"
+                            app:title="@string/settings_taskdav"
+                            android:elevation="2dp" tools:ignore="UnusedAttribute"/>
 
-			<androidx.appcompat.widget.Toolbar
-			    android:id="@+id/taskdav_menu"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:theme="@style/toolbar_theme"
-			    style="@style/toolbar_style"
-			    app:navigationIcon="@drawable/ic_task_light"
-			    app:title="@string/settings_taskdav"
-			    android:elevation="2dp" tools:ignore="UnusedAttribute"/>
+                        <ProgressBar
+                            android:id="@+id/taskdav_refreshing"
+                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:indeterminate="true"
+                            android:visibility="gone" />
 
-			<ProgressBar
-			    android:id="@+id/taskdav_refreshing"
-			    style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:indeterminate="true"
-			    android:visibility="gone" />
+                        <TextView
+                            android:id="@+id/taskdav_opentasks_warning"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textAppearance="?android:attr/textAppearanceMedium"
+                            android:paddingTop="8dp"
+                            android:paddingBottom="8dp"
+                            android:paddingLeft="12dp"
+                            android:paddingRight="12dp"
+                            android:text="@string/account_tasks_not_showing"
+                            android:visibility="gone" />
 
-			<TextView
-			    android:id="@+id/taskdav_opentasks_warning"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:textAppearance="?android:attr/textAppearanceMedium"
-			    android:paddingTop="8dp"
-			    android:paddingBottom="8dp"
-			    android:paddingLeft="12dp"
-			    android:paddingRight="12dp"
-			    android:text="@string/account_tasks_not_showing"
-			    android:visibility="gone" />
+                        <io.silentsuite.sync.ui.widget.MaximizedListView
+                            android:id="@+id/tasklists"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:choiceMode="multipleChoice"
+                            android:descendantFocusability="beforeDescendants"/>
 
-			<io.silentsuite.sync.ui.widget.MaximizedListView
-			    android:id="@+id/tasklists"
-			    android:layout_width="match_parent"
-			    android:layout_height="wrap_content"
-			    android:choiceMode="multipleChoice"
-			    android:descendantFocusability="beforeDescendants"/>
+                    </LinearLayout>
 
-		    </LinearLayout>
+                </androidx.cardview.widget.CardView>
 
-		</androidx.cardview.widget.CardView>
-	    </LinearLayout>
-	</ScrollView>
+            </LinearLayout>
+        </ScrollView>
 
-</androidx.coordinatorlayout.widget.CoordinatorLayout>
+    </androidx.coordinatorlayout.widget.CoordinatorLayout>
+
+    <com.google.android.material.navigation.NavigationView
+        android:id="@+id/nav_view"
+        android:layout_width="wrap_content"
+        android:layout_height="match_parent"
+        android:layout_gravity="start"
+        android:fitsSystemWindows="true"
+        app:itemTextColor="?android:attr/textColorPrimary"
+        app:headerLayout="@layout/nav_header_accounts"
+        app:menu="@menu/activity_accounts_drawer"/>
+
+</androidx.drawerlayout.widget.DrawerLayout>
