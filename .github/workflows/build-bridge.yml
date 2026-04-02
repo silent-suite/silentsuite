@@ -103,6 +103,18 @@ jobs:
       # -----------------------------------------------------------------------
       # 5. Install bridge + PyInstaller (native builds)
       # -----------------------------------------------------------------------
+      # -----------------------------------------------------------------------
+      # 4b. Pre-install OpenSSL for macOS (etebase Rust build needs it)
+      # -----------------------------------------------------------------------
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install openssl@1.1
+          echo "OPENSSL_DIR=$(brew --prefix openssl@1.1)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@1.1)/lib" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@1.1)/include" >> $GITHUB_ENV
+
       - name: Install dependencies (native)
         if: "!matrix.qemu"
         working-directory: bridge
@@ -168,12 +180,17 @@ jobs:
               --workpath build/
             echo "=== Smoke test ==="
             dist/silentsuite-bridge --version
+            echo "=== Rename + checksum (inside container to avoid permission issues) ==="
+            mv dist/silentsuite-bridge dist/${{ matrix.asset-name }}
+            sha256sum dist/${{ matrix.asset-name }} > dist/${{ matrix.asset-name }}.sha256
+            cat dist/${{ matrix.asset-name }}.sha256
             echo "Smoke test passed."
 
       # -----------------------------------------------------------------------
-      # 9. Rename artifact to final asset name
+      # 9. Rename artifact to final asset name (skip for QEMU — done inside container)
       # -----------------------------------------------------------------------
       - name: Rename binary
+        if: "!matrix.qemu"
         shell: bash
         run: |
           SRC="bridge/dist/silentsuite-bridge${{ matrix.exe-suffix }}"
@@ -185,6 +202,7 @@ jobs:
       # 10. Compute SHA256
       # -----------------------------------------------------------------------
       - name: Compute SHA256
+        if: "!matrix.qemu"
         shell: bash
         working-directory: bridge/dist
         run: |
