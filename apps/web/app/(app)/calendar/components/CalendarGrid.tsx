@@ -34,17 +34,15 @@ function toPlainDate(date: Date): Temporal.PlainDate {
   })
 }
 
-/** Format a JS Date as a local-time string for Schedule-X ("YYYY-MM-DD HH:mm").
- * Schedule-X expects local wall-clock strings, not ZonedDateTime objects.
- * Passing ZonedDateTime causes it to display UTC time instead of local time.
+/** Convert a JS Date to a Temporal.ZonedDateTime in the local timezone.
+ * Schedule-X v4 requires a real ZonedDateTime — it calls .withTimeZone() on the
+ * stored value, so plain strings or casts will throw at runtime and events will
+ * silently not render.
  */
-function toScheduleXDateTime(date: Date): string {
-  const y = date.getFullYear()
-  const mo = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  const h = String(date.getHours()).padStart(2, '0')
-  const mi = String(date.getMinutes()).padStart(2, '0')
-  return `${y}-${mo}-${d} ${h}:${mi}`
+function toScheduleXDateTime(date: Date): Temporal.ZonedDateTime {
+  return Temporal.Instant.fromEpochMilliseconds(date.getTime()).toZonedDateTimeISO(
+    Temporal.Now.timeZoneId(),
+  )
 }
 
 /** Expanded event used for display — may be a recurring instance */
@@ -156,10 +154,8 @@ function toScheduleXEvents(
     return {
       id: e.id,
       title: e.isRecurring ? `↻ ${e.title}` : e.title,
-      // Schedule-X accepts 'YYYY-MM-DD HH:mm' strings at runtime despite types
-      // requiring ZonedDateTime. Casting avoids a spurious type error.
-      start: (e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate)) as Temporal.ZonedDateTime | Temporal.PlainDate,
-      end: (e.allDay ? toPlainDate(e.endDate) : toScheduleXDateTime(e.endDate)) as Temporal.ZonedDateTime | Temporal.PlainDate,
+      start: e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate),
+      end: e.allDay ? toPlainDate(e.endDate) : toScheduleXDateTime(e.endDate),
       description: e.description || undefined,
       location: e.location || undefined,
       calendarId: e.calendarId ?? 'default',
