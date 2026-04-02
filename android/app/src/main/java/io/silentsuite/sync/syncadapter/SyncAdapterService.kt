@@ -60,13 +60,6 @@ abstract class SyncAdapterService : Service() {
             notificationManager.cancel()
 
             // Check subscription status before allowing sync.
-            // Check if walled garden mode is active — skip sync adapter in that mode
-            val modePrefs = context.getSharedPreferences("app_mode", android.content.Context.MODE_PRIVATE)
-            if (modePrefs.getString("sync_mode", "bridge") == "walled") {
-                Logger.log.info("Sync skipped for $account: walled garden mode active")
-                return
-            }
-
             // Blocks sync when subscription is cancelled/expired (read-only mode).
             // Allows sync when billing API is unreachable (optimistic for dev/self-hosted).
             if (!BillingManager.getInstance().isSyncAllowed(context, account)) {

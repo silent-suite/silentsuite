@@ -8,6 +8,7 @@
 
 package io.silentsuite.sync.ui
 
+import android.accounts.AccountManager
 import android.content.ContentResolver
 import android.content.ContentResolver.SYNC_OBSERVER_TYPE_SETTINGS
 import android.content.Intent
@@ -17,12 +18,16 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.MenuItem
 import android.view.View
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.ActionBarDrawerToggle
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.GravityCompat
 import androidx.drawerlayout.widget.DrawerLayout
+import io.silentsuite.sync.App
 import io.silentsuite.sync.BuildConfig.DEBUG
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.Constants.serviceUrl
@@ -61,12 +66,11 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
         navigationView.setNavigationItemSelectedListener(this)
         navigationView.itemIconTintList = null
 
-        if (savedInstanceState == null && packageName != callingPackage) {
-            val ft = supportFragmentManager.beginTransaction()
-            for (fragment in StartupDialogFragment.getStartupDialogs(this))
-                ft.add(fragment, null)
-            ft.commit()
+        // Display the logged-in user's email in the nav header
+        updateNavHeader(navigationView)
 
+        if (savedInstanceState == null && packageName != callingPackage) {
+            // Startup info dialogs removed — users go straight to the main screen
             if (DEBUG) {
                 Toast.makeText(this, "Server: " + serviceUrl.toString(), Toast.LENGTH_SHORT).show()
             }
@@ -98,6 +102,10 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
         super.onResume()
         onStatusChanged(SYNC_OBSERVER_TYPE_SETTINGS)
         syncStatusObserver = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_SETTINGS, this)
+
+        // Refresh the nav header in case account changed
+        val navigationView = findViewById<View>(R.id.nav_view) as NavigationView
+        updateNavHeader(navigationView)
     }
 
     override fun onPause() {
@@ -105,6 +113,18 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
         if (syncStatusObserver != null) {
             ContentResolver.removeStatusChangeListener(syncStatusObserver)
             syncStatusObserver = null
+        }
+    }
+
+    private fun updateNavHeader(navigationView: NavigationView) {
+        val headerView = navigationView.getHeaderView(0)
+        val userEmailView = headerView?.findViewById<TextView>(R.id.nav_user_email)
+        val accountManager = AccountManager.get(this)
+        val accounts = accountManager.getAccountsByType(App.accountType)
+        if (accounts.isNotEmpty()) {
+            userEmailView?.text = accounts[0].name
+        } else {
+            userEmailView?.text = getString(R.string.app_name)
         }
     }
 
@@ -130,11 +150,64 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
             R.id.nav_website -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webUri))
             R.id.nav_webapp -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webAppUri))
             R.id.nav_guide -> startActivity(Intent(Intent.ACTION_VIEW, Constants.docsUri))
+            R.id.nav_add_account -> startActivity(Intent(this, LoginActivity::class.java))
+            R.id.nav_logout -> confirmLogout()
+            R.id.nav_theme -> showThemeDialog()
         }
 
         val drawer = findViewById<View>(R.id.drawer_layout) as DrawerLayout
         drawer.closeDrawer(GravityCompat.START)
         return true
+    }
+
+    private fun confirmLogout() {
+        val accountManager = AccountManager.get(this)
+        val accounts = accountManager.getAccountsByType(App.accountType)
+        if (accounts.isEmpty()) {
+            Toast.makeText(this, "No account to log out", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.account_delete_confirmation_title)
+            .setMessage(R.string.account_delete_confirmation_text)
+            .setPositiveButton(R.string.navigation_drawer_logout) { _, _ ->
+                for (account in accounts) {
+                    accountManager.removeAccountExplicitly(account)
+                }
+                // Return to login
+                val intent = Intent(this, LoginActivity::class.java)
+                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                finish()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showThemeDialog() {
+        val themes = arrayOf("Light", "Dark", "System default")
+        val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
+        val currentMode = prefs.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        val checkedItem = when (currentMode) {
+            AppCompatDelegate.MODE_NIGHT_NO -> 0
+            AppCompatDelegate.MODE_NIGHT_YES -> 1
+            else -> 2
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.navigation_drawer_theme)
+            .setSingleChoiceItems(themes, checkedItem) { dialog, which ->
+                val mode = when (which) {
+                    0 -> AppCompatDelegate.MODE_NIGHT_NO
+                    1 -> AppCompatDelegate.MODE_NIGHT_YES
+                    else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                }
+                prefs.edit().putInt("theme_mode", mode).apply()
+                AppCompatDelegate.setDefaultNightMode(mode)
+                dialog.dismiss()
+            }
+            .show()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {

@@ -79,55 +79,7 @@
 
     </androidx.cardview.widget.CardView>
 
-    <!-- Walled Garden card -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/mode_walled_card"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="4dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="20dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <RadioButton
-                    android:id="@+id/mode_walled_radio"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:checked="false" />
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/mode_walled_title"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-            </LinearLayout>
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="40dp"
-                android:layout_marginTop="4dp"
-                android:text="@string/mode_walled_description"
-                android:textSize="14sp"
-                android:lineSpacingMultiplier="1.2" />
-
-        </LinearLayout>
-
-    </androidx.cardview.widget.CardView>
 
     <Space
         android:layout_width="match_parent"

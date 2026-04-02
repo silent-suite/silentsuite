@@ -76,6 +76,9 @@
     <string name="navigation_drawer_website">silentsuite.io</string>
     <string name="navigation_drawer_webapp">app.silentsuite.io</string>
     <string name="navigation_drawer_guide">docs.silentsuite.io</string>
+    <string name="navigation_drawer_add_account">Add account</string>
+    <string name="navigation_drawer_logout">Log out</string>
+    <string name="navigation_drawer_theme">Theme</string>
     <string name="navigation_drawer_faq">FAQ</string>
     <string name="navigation_drawer_report_issue">Report issue</string>
     <string name="navigation_drawer_contact">Contact</string>
@@ -96,6 +99,7 @@
 
     <!-- AppSettingsActivity -->
     <string name="app_settings">Settings</string>
+    <string name="app_settings_theme">Theme</string>
     <string name="app_settings_user_interface">User interface</string>
     <string name="app_settings_notification_settings">Notification settings</string>
     <string name="app_settings_notification_settings_summary">Manage notification channels and their settings</string>
@@ -242,8 +246,7 @@
     <string name="mode_bridge_title">Bridge Mode</string>
     <string name="mode_bridge_description">Sync to your phone\'s calendar, contacts, and task apps. Use your favorite apps as usual.</string>
     <string name="mode_bridge_recommended">(Recommended)</string>
-    <string name="mode_walled_title">Walled Garden</string>
-    <string name="mode_walled_description">Keep everything inside SilentSuite. Access your data at app.silentsuite.io. Maximum privacy.</string>
+
     <string name="mode_continue">Continue</string>
 
     <!-- AddAccountActivity -->
@@ -476,4 +479,16 @@
     <string name="subscription_manage">Manage Subscription</string>
     <string name="subscription_reactivate">Reactivate</string>
     <string name="subscription_loading">Loading subscription status…</string>
+    <!-- Theme mode arrays -->
+    <string-array name="theme_mode_names">
+        <item>Light</item>
+        <item>Dark</item>
+        <item>System default</item>
+    </string-array>
+    <string-array name="theme_mode_values" translatable="false">
+        <item>1</item>
+        <item>2</item>
+        <item>-1</item>
+    </string-array>
+
 </resources>

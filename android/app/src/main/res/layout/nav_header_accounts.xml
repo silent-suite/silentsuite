@@ -19,6 +19,7 @@
         tools:ignore="ContentDescription"/>
 
     <TextView
+        android:id="@+id/nav_user_email"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/nav_header_vertical_spacing"

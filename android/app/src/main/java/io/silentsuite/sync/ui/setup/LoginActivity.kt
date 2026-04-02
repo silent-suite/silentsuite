@@ -28,9 +28,9 @@ class LoginActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
 
         if (savedInstanceState == null)
-        // first call, show welcome screen
+        // first call, show login screen directly (welcome dialog removed)
             supportFragmentManager.beginTransaction()
-                    .replace(android.R.id.content, WelcomeFragment())
+                    .replace(android.R.id.content, LoginCredentialsFragment())
                     .commit()
 
     }

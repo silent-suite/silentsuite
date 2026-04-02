@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark theme overrides for SilentSuite -->
+<resources>
+
+    <!-- stepper (wizard) - dark variant -->
+    <style name="stepper_nav_bar">
+        <item name="android:background">@color/navy800</item>
+        <item name="android:elevation">4dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+    </style>
+
+    <style name="toolbar_style" parent="Widget.AppCompat.Toolbar">
+        <item name="android:background">@color/navy900</item>
+        <item name="titleTextColor">@android:color/white</item>
+    </style>
+
+    <style name="tablayout" parent="Base.Widget.Design.TabLayout">
+        <item name="android:background">@color/navy900</item>
+    </style>
+
+</resources>
