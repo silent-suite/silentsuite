@@ -23,10 +23,20 @@ export default function AccountPage() {
   const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
   const notificationSound = usePreferencesStore((s) => s.notificationSound)
+  const defaultTimezone = usePreferencesStore((s) => s.defaultTimezone)
   const setTimeFormat = usePreferencesStore((s) => s.setTimeFormat)
   const setFirstDayOfWeek = usePreferencesStore((s) => s.setFirstDayOfWeek)
   const setDefaultReminder = usePreferencesStore((s) => s.setDefaultReminder)
   const setNotificationSound = usePreferencesStore((s) => s.setNotificationSound)
+  const setDefaultTimezone = usePreferencesStore((s) => s.setDefaultTimezone)
+
+  const allTimezones = useMemo(() => {
+    try {
+      return Intl.supportedValuesOf('timeZone')
+    } catch {
+      return ['UTC']
+    }
+  }, [])
 
   useEffect(() => {
     if (isSelfHosted) {
@@ -179,6 +189,20 @@ export default function AccountPage() {
                   <option value="30">30 minutes before</option>
                   <option value="60">1 hour before</option>
                   <option value="1440">1 day before</option>
+                </select>
+              </div>
+
+              {/* Default Timezone */}
+              <div className="space-y-2">
+                <p className="text-xs text-[rgb(var(--muted))]">Default timezone</p>
+                <select
+                  value={defaultTimezone}
+                  onChange={(e) => setDefaultTimezone(e.target.value)}
+                  className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  {allTimezones.map((tz) => (
+                    <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
+                  ))}
                 </select>
               </div>
 

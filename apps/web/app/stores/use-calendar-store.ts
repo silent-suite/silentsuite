@@ -20,6 +20,7 @@ interface NewCalendarEvent {
   recurrenceRule?: string | null
   alarms?: VAlarm[]
   calendarId?: string
+  timezone?: string
 }
 
 interface CalendarState {
@@ -142,6 +143,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       exceptions: [],
       alarms: newEvent.alarms ?? [],
       calendarId: newEvent.calendarId ?? 'default',
+      timezone: newEvent.timezone,
       created: now,
       updated: now,
     }
