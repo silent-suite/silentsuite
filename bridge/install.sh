@@ -67,7 +67,7 @@ detect_os() {
     case "$(uname -s)" in
         Linux*)  OS="linux" ;;
         Darwin*) OS="macos" ;;
-        MINGW*|MSYS*|CYGWIN*) error "Windows detected. Download the .exe from https://github.com/${REPO}/releases" ;;
+        MINGW*|MSYS*|CYGWIN*) error "Windows detected. Use PowerShell instead: irm silentsuite.io/bridge/install.ps1 | iex" ;;
         *)       error "Unsupported OS: $(uname -s)" ;;
     esac
 }
@@ -144,6 +144,12 @@ install_binary() {
 
     mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
+
+    # macOS: remove quarantine flag so Gatekeeper doesn't block the binary
+    if [ "$OS" = "macos" ]; then
+        xattr -d com.apple.quarantine "${INSTALL_DIR}/${BINARY_NAME}" 2>/dev/null || true
+    fi
+
     info "Installed to ${INSTALL_DIR}/${BINARY_NAME}"
 }
 
@@ -163,6 +169,15 @@ ensure_path() {
             fi
         fi
     done
+
+    # Fish shell support
+    FISH_CONFIG="$HOME/.config/fish/config.fish"
+    if [ -f "$FISH_CONFIG" ]; then
+        if ! grep -q "$INSTALL_DIR" "$FISH_CONFIG" 2>/dev/null; then
+            printf '\n# SilentSuite Bridge\nfish_add_path %s\n' "$INSTALL_DIR" >> "$FISH_CONFIG"
+            ADDED=true
+        fi
+    fi
 
     if [ "$ADDED" = true ]; then
         info "Added ${INSTALL_DIR} to PATH (restart your shell or run: export PATH=\"${INSTALL_DIR}:\$PATH\")"
@@ -188,6 +203,16 @@ main() {
     detect_os
     detect_arch
     info "Platform: ${OS}/${ARCH}"
+
+    # Check for existing installation
+    if [ -f "${INSTALL_DIR}/${BINARY_NAME}" ]; then
+        CURRENT_VERSION=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null || echo "unknown")
+        warn "Existing installation found: ${CURRENT_VERSION}"
+        if ! prompt_yn "Upgrade to latest version?"; then
+            info "Upgrade cancelled."
+            exit 0
+        fi
+    fi
 
     step "Downloading..."
     get_download_url
