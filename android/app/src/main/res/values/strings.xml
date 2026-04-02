@@ -76,6 +76,9 @@
     <string name="navigation_drawer_website">silentsuite.io</string>
     <string name="navigation_drawer_webapp">app.silentsuite.io</string>
     <string name="navigation_drawer_guide">docs.silentsuite.io</string>
+    <string name="navigation_drawer_website_label">Website</string>
+    <string name="navigation_drawer_webapp_label">Web App</string>
+    <string name="navigation_drawer_guide_label">Documentation</string>
     <string name="navigation_drawer_add_account">Add account</string>
     <string name="navigation_drawer_logout">Log out</string>
     <string name="navigation_drawer_theme">Theme</string>

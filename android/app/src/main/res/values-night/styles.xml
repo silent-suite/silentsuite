@@ -5,6 +5,10 @@
     <!-- Dark mode info card background -->
     <color name="infoColor">#0F2A3D</color>
 
+    <!-- Nav header colors (dark mode) -->
+    <color name="nav_header_email">@color/teal400</color>
+    <color name="nav_header_subtitle">#B0BEC5</color>
+
     <!-- Dark mode AppTheme overrides -->
     <style name="AppTheme" parent="Theme.MaterialComponents.DayNight">
         <item name="colorPrimary">@color/navy700</item>

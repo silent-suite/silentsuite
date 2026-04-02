@@ -44,6 +44,17 @@ class AccountsActivity : BaseActivity(), NavigationView.OnNavigationItemSelected
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // If no accounts exist, go straight to login/signup
+        val accountManager = AccountManager.get(this)
+        if (accountManager.getAccountsByType(App.accountType).isEmpty()) {
+            val intent = Intent(this, LoginActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            finish()
+            return
+        }
+
         setContentView(R.layout.activity_accounts)
 
         val toolbar = findViewById<View>(R.id.toolbar) as Toolbar

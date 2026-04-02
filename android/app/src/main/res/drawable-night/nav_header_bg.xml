@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dark mode: navy gradient header -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:startColor="@color/navy800"
+        android:endColor="@color/navy900"
+        android:angle="270" />
+</shape>

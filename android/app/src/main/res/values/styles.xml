@@ -31,6 +31,10 @@
 
     <!-- Semantic colors -->
     <color name="errorColor">#EF4444</color>
+
+    <!-- Nav header colors (light mode) -->
+    <color name="nav_header_email">@color/teal700</color>
+    <color name="nav_header_subtitle">@color/navy600</color>
     <!-- Light mode: subtle tinted card background; dark mode override in values-night -->
     <color name="infoColor">#E0EDF4</color>
 
