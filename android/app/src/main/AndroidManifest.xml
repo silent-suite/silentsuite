@@ -194,6 +194,12 @@
         <activity
             android:name=".ui.AccountsActivity"
             android:label="@string/app_name"
+            android:exported="false"
+            android:theme="@style/AppTheme.NoActionBar"/>
+
+        <activity
+            android:name=".ui.AccountActivity"
+            android:label="@string/app_name"
             android:exported="true"
             android:theme="@style/AppTheme.NoActionBar">
             <intent-filter>
@@ -207,7 +213,7 @@
             android:exported="false"
             android:label="@string/app_name"
             android:theme="@style/AppTheme.NoActionBar"
-            android:parentActivityName=".ui.AccountsActivity"/>
+            android:parentActivityName=".ui.AccountActivity"/>
 
         <activity
             android:name=".syncadapter.SyncNotification$NotificationHandlerActivity"
@@ -218,28 +224,23 @@
             android:name=".ui.AppSettingsActivity"
             android:exported="false"
             android:label="@string/app_settings"
-            android:parentActivityName=".ui.AccountsActivity"/>
+            android:parentActivityName=".ui.AccountActivity"/>
 
         <activity android:name=".ui.PermissionsActivity"
             android:exported="false"
                   android:label="@string/permissions_title"
-                  android:parentActivityName=".ui.AccountsActivity"/>
+                  android:parentActivityName=".ui.AccountActivity"/>
 
         <activity
             android:name=".ui.setup.LoginActivity"
             android:exported="false"
             android:label="@string/login_title"
-            android:parentActivityName=".ui.AccountsActivity">
+            android:parentActivityName=".ui.AccountActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".ui.AccountActivity"
-            android:exported="false"
-            android:parentActivityName=".ui.AccountsActivity">
-        </activity>
         <activity
             android:name=".ui.etebase.CollectionActivity"
             android:exported="false"
