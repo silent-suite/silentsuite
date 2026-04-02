@@ -275,8 +275,14 @@ jobs:
 
             ### Installation
 
+            **macOS / Linux:**
             ```sh
             curl -fsSL https://silentsuite.io/bridge/install.sh | sh
+            ```
+
+            **Windows (PowerShell):**
+            ```powershell
+            irm silentsuite.io/bridge/install.ps1 | iex
             ```
 
             Or download the binary for your platform below.
