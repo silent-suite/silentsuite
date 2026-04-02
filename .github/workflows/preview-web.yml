@@ -3,7 +3,7 @@ name: Preview Web App (feature branches + PRs)
 on:
   push:
     branches:
-      - develop
+      - dev
       - 'feature/**'
       - 'fix/**'
       - 'blog/**'
@@ -14,7 +14,7 @@ on:
       - 'pnpm-lock.yaml'
       - '.github/workflows/preview-web.yml'
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
     paths:
       - 'apps/web/**'
       - 'packages/**'
