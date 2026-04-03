@@ -110,15 +110,17 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # Use openssl@3 (openssl@1.1 is EOL and may lack ARM64 bottles).
-          # openssl-sys links against the headers/lib we point it to.
-          brew install openssl@3
-          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
-          # Prevent openssl-src from trying to vendor/build OpenSSL from source.
-          # The vendored openssl-src 111.10.2 doesn't support aarch64-apple-darwin.
-          # With this flag, openssl-sys uses the Homebrew-installed library instead.
+          # etebase-py uses openssl-sys 0.9.58 which only supports OpenSSL 1.x
+          # (can't parse OpenSSL 3's OPENSSL_VERSION_NUMBER macro format).
+          # On ARM64 runners there may be no pre-built bottle, so Homebrew
+          # compiles from source — that's fine in CI.
+          brew install openssl@1.1 || brew install openssl@1.1 --build-from-source
+          echo "OPENSSL_DIR=$(brew --prefix openssl@1.1)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@1.1)/lib" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@1.1)/include" >> $GITHUB_ENV
+          # Prevent openssl-src (vendored 111.10.2) from trying to build
+          # OpenSSL from source — it doesn't support aarch64-apple-darwin.
+          # Instead, openssl-sys links against the Homebrew library above.
           echo "OPENSSL_NO_VENDOR=1" >> $GITHUB_ENV
 
       - name: Install dependencies (native)
