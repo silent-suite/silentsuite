@@ -14,6 +14,9 @@ export interface CalendarEvent {
   exceptions: Date[];
   alarms: VAlarm[];
   calendarId?: string;
+  /** IANA timezone for this event (e.g. 'America/New_York'). When absent,
+   *  falls back to user default timezone, then local system timezone. */
+  timezone?: string;
   created: Date;
   updated: Date;
 }
@@ -28,14 +31,39 @@ function formatICalDate(date: Date, allDay: boolean): string {
   return formatICalDateTime(date);
 }
 
+/** Format a Date as a local wall-clock iCal datetime string (no Z suffix) for
+ * use with DTSTART;TZID=... properties. This preserves the local time in the
+ * given timezone rather than converting to UTC.
+ */
+function formatICalDateTimeLocal(date: Date, tzid: string): string {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tzid,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(date);
+  const p = (type: string) => parts.find((x) => x.type === type)?.value ?? '00';
+  const year = p('year');
+  const month = p('month');
+  const day = p('day');
+  const hour = p('hour') === '24' ? '00' : p('hour'); // midnight edge case
+  const minute = p('minute');
+  const second = p('second');
+  return `${year}${month}${day}T${hour}${minute}${second}`;
+}
+
 function formatICalDateTime(date: Date): string {
-  const y = date.getFullYear();
-  const mo = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const h = String(date.getHours()).padStart(2, '0');
-  const mi = String(date.getMinutes()).padStart(2, '0');
-  const s = String(date.getSeconds()).padStart(2, '0');
-  return `${y}${mo}${d}T${h}${mi}${s}`;
+  // Emit UTC with Z suffix so events have a timezone anchor across all sync
+  // clients and timezones. Floating-time (no Z, no TZID) would cause events
+  // to shift when viewed from a different timezone.
+  const y = date.getUTCFullYear();
+  const mo = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  const h = String(date.getUTCHours()).padStart(2, '0');
+  const mi = String(date.getUTCMinutes()).padStart(2, '0');
+  const s = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${y}${mo}${d}T${h}${mi}${s}Z`;
 }
 
 export function parseICalDateValue(value: string, tzid?: string): { date: Date; allDay: boolean } {
@@ -97,17 +125,25 @@ export function parseICalDateValue(value: string, tzid?: string): { date: Date; 
  * Convert a CalendarEvent to an iCalendar VEVENT string.
  */
 export function toVEvent(event: CalendarEvent): string {
+  const tzid = event.allDay ? undefined : event.timezone;
+
   const vevent: VEvent = {
     uid: event.uid,
-    dtstart: formatICalDate(event.startDate, event.allDay),
-    dtend: formatICalDate(event.endDate, event.allDay),
+    dtstart: tzid
+      ? formatICalDateTimeLocal(event.startDate, tzid)
+      : formatICalDate(event.startDate, event.allDay),
+    dtend: tzid
+      ? formatICalDateTimeLocal(event.endDate, tzid)
+      : formatICalDate(event.endDate, event.allDay),
     summary: event.title,
     description: event.description || undefined,
     location: event.location || undefined,
     rrule: event.recurrenceRule ?? undefined,
     exdate:
       event.exceptions.length > 0
-        ? event.exceptions.map((d) => formatICalDate(d, event.allDay))
+        ? event.exceptions.map((d) =>
+            tzid ? formatICalDateTimeLocal(d, tzid) : formatICalDate(d, event.allDay)
+          )
         : undefined,
     valarms: event.alarms.length > 0 ? event.alarms : undefined,
     created: formatICalDateTime(event.created),
@@ -117,6 +153,9 @@ export function toVEvent(event: CalendarEvent): string {
   if (event.allDay) {
     vevent.dtstartParams = { VALUE: 'DATE' };
     vevent.dtendParams = { VALUE: 'DATE' };
+  } else if (tzid) {
+    vevent.dtstartParams = { TZID: tzid };
+    vevent.dtendParams = { TZID: tzid };
   }
 
   return generateVEvent(vevent);
@@ -156,6 +195,8 @@ export function fromVEvent(veventStr: string): CalendarEvent {
     recurrenceRule: vevent.rrule ?? null,
     exceptions,
     alarms: vevent.valarms ?? [],
+    // Preserve the TZID from DTSTART so we can round-trip it correctly
+    timezone: startTzid ?? undefined,
     created: vevent.created ? parseICalDateValue(vevent.created).date : now,
     updated: vevent.lastModified ? parseICalDateValue(vevent.lastModified).date : now,
   };

@@ -192,6 +192,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to send email' }, { status: 502 })
     }
 
+    // Fire-and-forget: create contact record in billing so unconfirmed
+    // subscribers appear in the admin dashboard with doiConfirmed: false
+    const billingApiUrl = process.env.BILLING_API_URL || 'https://api.silentsuite.io'
+    fetch(`${billingApiUrl}/newsletter/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, source: 'newsletter' }),
+    }).catch((err) => {
+      console.error('Failed to create billing contact:', err)
+    })
+
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error('Newsletter API error:', err)

@@ -27,7 +27,6 @@ import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalCalendar
-import io.silentsuite.sync.ui.AccountsActivity
 import io.silentsuite.sync.utils.HintManager
 import io.silentsuite.sync.utils.LanguageUtils
 import io.silentsuite.sync.utils.NotificationUtils
@@ -58,6 +57,7 @@ class App : Application() {
         addressBooksAuthority = getString(R.string.address_books_authority)
 
         loadLanguage()
+        loadTheme()
 
         // don't block UI for some background checks
         applicationScope.launch(Dispatchers.IO) {
@@ -78,6 +78,12 @@ class App : Application() {
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
         // TODO(Phase2): Initialize Sentry crash reporting here
+    }
+
+    private fun loadTheme() {
+        val prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+        val mode = prefs.getInt("theme_mode", androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(mode)
     }
 
     private fun loadLanguage() {
@@ -147,7 +153,7 @@ class App : Application() {
         }
 
         if (fromVersion < 10) {
-            HintManager.setHintSeen(this, AccountsActivity.HINT_ACCOUNT_ADD, true)
+            HintManager.setHintSeen(this, "AddAccount", true)
         }
     }
 

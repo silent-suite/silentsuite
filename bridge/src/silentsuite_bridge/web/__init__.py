@@ -427,6 +427,42 @@ class Web(BaseWeb):
                 json.dumps(data).encode(),
             )
 
+        # Diagnostic: dump all cached items
+        if path == "/.web/api/dump":
+            from ..local_cache import models, db
+            try:
+                with db.database_proxy:
+                    result = {"collections": []}
+                    for col in models.CollectionEntity.select():
+                        items = []
+                        for item in col.items:
+                            items.append({
+                                "uid": item.uid,
+                                "dirty": item.dirty,
+                                "new": item.new,
+                                "deleted": item.deleted,
+                            })
+                        result["collections"].append({
+                            "uid": col.uid,
+                            "stoken": col.stoken[:20] if col.stoken else None,
+                            "local_stoken": col.local_stoken[:20] if col.local_stoken else None,
+                            "dirty": col.dirty,
+                            "deleted": col.deleted,
+                            "item_count": len(items),
+                            "items": items,
+                        })
+                return (
+                    200,
+                    {"Content-Type": "application/json"},
+                    json.dumps(result, indent=2).encode(),
+                )
+            except Exception as e:
+                return (
+                    500,
+                    {"Content-Type": "application/json"},
+                    json.dumps({"error": str(e)}).encode(),
+                )
+
         # API endpoint for current settings
         if path == "/.web/api/settings":
             data = {"syncInterval": config.SYNC_INTERVAL}

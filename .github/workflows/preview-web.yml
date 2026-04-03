@@ -3,7 +3,7 @@ name: Preview Web App (feature branches + PRs)
 on:
   push:
     branches:
-      - develop
+      - dev
       - 'feature/**'
       - 'fix/**'
       - 'blog/**'
@@ -14,7 +14,7 @@ on:
       - 'pnpm-lock.yaml'
       - '.github/workflows/preview-web.yml'
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
     paths:
       - 'apps/web/**'
       - 'packages/**'
@@ -61,7 +61,7 @@ jobs:
           build-args: |
             NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
             NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
-            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

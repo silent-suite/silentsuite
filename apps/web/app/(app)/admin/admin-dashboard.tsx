@@ -90,7 +90,8 @@ interface Subscriber {
   email: string
   source: string
   doiConfirmed: boolean
-  subscribedAt: string
+  wantsUpdates: boolean
+  createdAt: string
   unsubscribedAt: string | null
 }
 
@@ -1334,6 +1335,7 @@ function SubscribersTab() {
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Email</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Source</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">DOI Confirmed</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Updates</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Subscribed</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Unsubscribed</th>
               </tr>
@@ -1341,7 +1343,7 @@ function SubscribersTab() {
             <tbody>
               {subscribers.map((s) => (
                 <tr
-                  key={`${s.email}-${s.subscribedAt}`}
+                  key={`${s.email}-${s.createdAt}`}
                   className={`border-b border-[rgb(var(--border))] last:border-b-0 hover:bg-[rgb(var(--background))]/50 transition-colors ${s.unsubscribedAt ? 'opacity-60' : ''}`}
                 >
                   <td className="px-4 py-2.5 text-sm font-mono text-[rgb(var(--foreground))]">{s.email}</td>
@@ -1349,7 +1351,10 @@ function SubscribersTab() {
                   <td className="px-4 py-2.5 text-center">
                     <span className="text-xs">{s.doiConfirmed ? '✅' : '❌'}</span>
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{formatShortDate(s.subscribedAt)}</td>
+                  <td className="px-4 py-2.5 text-center">
+                    <span className="text-xs">{s.wantsUpdates ? '✅' : '❌'}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{formatShortDate(s.createdAt)}</td>
                   <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{s.unsubscribedAt ? formatShortDate(s.unsubscribedAt) : '—'}</td>
                 </tr>
               ))}

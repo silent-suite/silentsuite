@@ -1,7 +1,6 @@
 'use client'
 
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 import type { Task, Priority, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -32,7 +31,6 @@ interface TaskActions {
 }
 
 export const useTaskStore = create<TaskState & TaskActions>()(
-  persist(
     (set, get) => ({
       tasks: [],
       isLoading: false,
@@ -227,29 +225,6 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         set({ tasks: remoteTasks, syncStatus: 'synced' })
       },
     }),
-    {
-      name: 'silentsuite-tasks',
-      partialize: (state) => ({ tasks: state.tasks }),
-      storage: {
-        getItem: (name) => {
-          const raw = localStorage.getItem(name)
-          if (!raw) return null
-          const parsed = JSON.parse(raw)
-          if (parsed?.state?.tasks) {
-            parsed.state.tasks = parsed.state.tasks.map((t: Record<string, unknown>) => ({
-              ...t,
-              due_date: t.due_date ? new Date(t.due_date as string) : null,
-              created_at: new Date(t.created_at as string),
-              updated_at: new Date(t.updated_at as string),
-            }))
-          }
-          return parsed
-        },
-        setItem: (name, value) => localStorage.setItem(name, JSON.stringify(value)),
-        removeItem: (name) => localStorage.removeItem(name),
-      },
-    },
-  ),
 )
 
 export type { NewTask }

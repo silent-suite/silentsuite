@@ -11,6 +11,21 @@ import type { CalendarEvent, VAlarm } from '@silentsuite/core'
 import { buildAlarmTrigger, parseAlarmTriggerMinutes } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { Globe } from 'lucide-react'
+
+// ---------------------------------------------------------------------------
+// Time formatting (respects user preference)
+// ---------------------------------------------------------------------------
+
+function makeFormatTime(hour12: boolean) {
+  return function formatTime(date: Date): string {
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12,
+    })
+  }
+}
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 
 // ---------------------------------------------------------------------------
@@ -38,13 +53,7 @@ interface EventDialogProps {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  })
-}
+// formatTime is created per-render via makeFormatTime — see below
 
 function formatTimeForInput(date: Date): string {
   const h = String(date.getHours()).padStart(2, '0')
@@ -91,6 +100,9 @@ export function EventDialog({
   const canWrite = useAuthStore((s) => s.canWrite())
   const notifications = useNotifications()
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
+  const timeFormat = usePreferencesStore((s) => s.timeFormat)
+  const defaultTimezone = usePreferencesStore((s) => s.defaultTimezone)
+  const formatTime = makeFormatTime(timeFormat !== '24h')
 
   // ---------------------------------------------------------------------------
   // Derive initial state
@@ -131,6 +143,14 @@ export function EventDialog({
     }
     return defaultReminder !== 'none' ? [defaultReminder] : []
   })
+
+  // Timezone state — per-event override, defaults to user preference
+  const [timezone, setTimezone] = useState(
+    isEdit ? (event.timezone ?? defaultTimezone) : defaultTimezone,
+  )
+  const allTimezones = (() => {
+    try { return Intl.supportedValuesOf('timeZone') } catch { return ['UTC'] }
+  })()
 
   // Calendar selection
   const calendarLists = useCalendarListStore((s) => s.calendars)
@@ -236,6 +256,7 @@ export function EventDialog({
         if (newStart.getTime() !== event.startDate.getTime()) patch.startDate = newStart
         if (effectiveEnd.getTime() !== event.endDate.getTime()) patch.endDate = effectiveEnd
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
+        if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
 
         // Compare alarms
         const eventAlarms: VAlarm[] = alarms
@@ -274,6 +295,7 @@ export function EventDialog({
           endDate: effectiveEnd,
           allDay,
           recurrenceRule,
+          timezone,
           calendarId: selectedCalendarId,
           alarms: alarms
             .filter((a) => a !== 'none')
@@ -297,6 +319,8 @@ export function EventDialog({
     recurrenceRule,
     alarms,
     selectedCalendarId,
+    timezone,
+    defaultTimezone,
     saving,
     isEdit,
     isRecurring,
@@ -647,6 +671,24 @@ export function EventDialog({
                     <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} />
                   </div>
                 </div>
+
+                {/* Timezone row — hidden for all-day events */}
+                {!allDay && (
+                  <div className="flex items-center gap-3">
+                    <Globe className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                    <select
+                      value={timezone}
+                      onChange={(e) => setTimezone(e.target.value)}
+                      disabled={!canWrite}
+                      aria-label="Event timezone"
+                      className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                    >
+                      {allTimezones.map((tz) => (
+                        <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 {/* ---- Notifications section ---- */}
                 <div className="flex flex-col gap-2">

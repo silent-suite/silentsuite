@@ -3,29 +3,46 @@
 
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <item
-        android:id="@+id/nav_about"
-        android:icon="@drawable/ic_info_dark"
-        android:title="@string/navigation_drawer_about"/>
-    <item
-        android:id="@+id/nav_app_settings"
-        android:icon="@drawable/ic_settings_dark"
-        android:title="@string/navigation_drawer_settings"/>
+    <group android:id="@+id/nav_account_group" android:checkableBehavior="none">
+        <item
+            android:id="@+id/nav_add_account"
+            android:icon="@drawable/ic_add_light"
+            android:title="@string/navigation_drawer_add_account"/>
+        <item
+            android:id="@+id/nav_logout"
+            android:icon="@drawable/ic_logout"
+            android:title="@string/navigation_drawer_logout"/>
+    </group>
+
+    <group android:id="@+id/nav_main_group" android:checkableBehavior="none">
+        <item
+            android:id="@+id/nav_app_settings"
+            android:icon="@drawable/ic_settings_dark"
+            android:title="@string/navigation_drawer_settings"/>
+        <item
+            android:id="@+id/nav_theme"
+            android:icon="@drawable/ic_palette"
+            android:title="@string/navigation_drawer_theme"/>
+        <item
+            android:id="@+id/nav_about"
+            android:icon="@drawable/ic_info_dark"
+            android:title="@string/navigation_drawer_about"/>
+    </group>
 
     <item android:title="@string/navigation_drawer_external_links">
         <menu>
             <item
                 android:id="@+id/nav_website"
-                android:icon="@drawable/ic_home_dark"
-                android:title="@string/navigation_drawer_website"/>
+                android:icon="@drawable/ic_language"
+                android:title="@string/navigation_drawer_website_label"/>
             <item
                 android:id="@+id/nav_webapp"
-                android:icon="@drawable/ic_home_dark"
-                android:title="@string/navigation_drawer_webapp"/>
+                android:icon="@drawable/ic_devices"
+                android:title="@string/navigation_drawer_webapp_label"/>
             <item
                 android:id="@+id/nav_guide"
-                android:icon="@drawable/ic_help_dark"
-                android:title="@string/navigation_drawer_guide"/>
+                android:icon="@drawable/ic_menu_book"
+                android:title="@string/navigation_drawer_guide_label"/>
         </menu>
     </item>
 

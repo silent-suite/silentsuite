@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "silentsuite-docs-preview",
+  "compatibility_date": "2025-09-27",
+  "assets": {
+    "directory": ".vitepress/dist"
+  }
+  // Preview deployments — deploys to silentsuite-docs-preview.workers.dev
+}

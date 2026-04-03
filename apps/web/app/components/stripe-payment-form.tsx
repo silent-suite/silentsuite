@@ -6,6 +6,7 @@ import { loadStripe } from '@stripe/stripe-js/pure'
 import type { Stripe, Appearance } from '@stripe/stripe-js'
 import { useTheme } from 'next-themes'
 import { Button } from '@silentsuite/ui'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 
 const STRIPE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
@@ -42,9 +43,11 @@ interface PaymentFormProps {
   onError?: (error: string) => void
   submitLabel?: string
   mode?: 'setup' | 'payment'
+  /** Billing interval to persist before a potential 3DS redirect. */
+  selectedInterval?: 'monthly' | 'annual'
 }
 
-function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<PaymentFormProps, 'clientSecret'>) {
+function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInterval }: Omit<PaymentFormProps, 'clientSecret'>) {
   const stripe = useStripe()
   const elements = useElements()
   const [loading, setLoading] = useState(false)
@@ -57,6 +60,12 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
 
     setLoading(true)
     setError(null)
+
+    // Persist signup state to localStorage before confirmSetup so it survives
+    // a full-page 3DS redirect to the bank and back.
+    if (selectedInterval) {
+      useAuthStore.getState().saveSignupStateForRedirect(selectedInterval)
+    }
 
     let result
     if (mode === 'setup') {
@@ -79,7 +88,11 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode }: Omit<Paymen
       onError?.(msg)
       setLoading(false)
     } else {
-      onSuccess()
+      try {
+        onSuccess()
+      } finally {
+        setLoading(false)
+      }
     }
   }
 
@@ -196,6 +209,7 @@ export default function StripePaymentForm(props: PaymentFormProps) {
         onError={props.onError}
         submitLabel={props.submitLabel}
         mode={props.mode}
+        selectedInterval={props.selectedInterval}
       />
     </Elements>
   )

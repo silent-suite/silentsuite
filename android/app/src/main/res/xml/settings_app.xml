@@ -50,6 +50,13 @@
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/app_settings_user_interface">
+        <ListPreference
+            android:key="theme_mode"
+            android:title="@string/app_settings_theme"
+            android:entries="@array/theme_mode_names"
+            android:entryValues="@array/theme_mode_values"
+            android:defaultValue="-1" />
+
         <Preference
             android:key="notification_settings"
             android:title="@string/app_settings_notification_settings"

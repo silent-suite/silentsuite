@@ -29,7 +29,6 @@
                 android:layout_height="wrap_content"
                 android:text="@string/signup_trial_notice"
                 android:background="@color/infoColor"
-                android:textColor="@color/teal400"
                 android:padding="14dp"
                 android:layout_marginBottom="14dp"/>
 

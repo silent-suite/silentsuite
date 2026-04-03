@@ -12,6 +12,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.*
 import android.content.ContentResolver.SYNC_OBSERVER_TYPE_ACTIVE
+import android.content.ContentResolver.SYNC_OBSERVER_TYPE_SETTINGS
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -21,10 +22,15 @@ import android.provider.ContactsContract
 import android.text.TextUtils
 import android.view.*
 import android.widget.*
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
+import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
+import androidx.core.view.GravityCompat
+import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
@@ -49,19 +55,18 @@ import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.InvitationsActivity
-import io.silentsuite.sync.utils.HintManager
-import io.silentsuite.sync.utils.ShowcaseBuilder
+import io.silentsuite.sync.ui.setup.LoginActivity
 import io.silentsuite.sync.utils.packageInstalled
+import com.google.android.material.navigation.NavigationView
 import com.google.android.material.snackbar.Snackbar
 // Modified by Silent Suite - ACRA removed, will be replaced with Sentry in Phase 2
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import tourguide.tourguide.ToolTip
 import java.util.logging.Level
 
-class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMenu.OnMenuItemClickListener, Refreshable {
+class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMenu.OnMenuItemClickListener, Refreshable, NavigationView.OnNavigationItemSelectedListener, SyncStatusObserver {
     private val model: AccountInfoViewModel by viewModels()
 
     private lateinit var account: Account
@@ -74,6 +79,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     internal val openTasksPackage = "org.dmfs.tasks"
     internal val tasksOrgPackage = "org.tasks"
+
+    private var syncStatusSnackbar: Snackbar? = null
+    private var syncStatusObserver: Any? = null
+    private var accountListExpanded = false
 
     private val onItemClickListener = AdapterView.OnItemClickListener { parent, view, position, _ ->
         val list = parent as ListView
@@ -98,13 +107,68 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        account = requireNotNull(intent.getParcelableExtra(EXTRA_ACCOUNT)) { "AccountActivity requires EXTRA_ACCOUNT" }
+        // If no accounts exist, go straight to login/signup
+        val accountManager = AccountManager.get(this)
+        if (accountManager.getAccountsByType(App.accountType).isEmpty()) {
+            val intent = Intent(this, LoginActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            finish()
+            return
+        }
+
+        // Resolve account: from intent extra or ActiveAccountManager fallback
+        account = intent.getParcelableExtra(EXTRA_ACCOUNT)
+            ?: ActiveAccountManager.getActiveAccount(this)
+            ?: run {
+                // Safety net — should not happen since we checked above
+                val intent = Intent(this, LoginActivity::class.java)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                finish()
+                return
+            }
+
+        // Save as active account
+        ActiveAccountManager.setActiveAccount(this, account)
+
         title = account.name
         settings = AccountSettings(this, account)
 
         // TODO(Phase2): Set username in Sentry crash reporting context
 
         setContentView(R.layout.activity_account)
+
+        // Setup toolbar
+        val toolbar = findViewById<Toolbar>(R.id.toolbar)
+        setSupportActionBar(toolbar)
+
+        // Setup drawer
+        val drawer = findViewById<DrawerLayout>(R.id.drawer_layout)
+        val toggle = ActionBarDrawerToggle(
+            this, drawer, toolbar, R.string.navigation_drawer_open, R.string.navigation_drawer_close)
+        drawer.addDrawerListener(toggle)
+        toggle.syncState()
+
+        // Setup navigation view
+        val navigationView = findViewById<NavigationView>(R.id.nav_view)
+        navigationView.setNavigationItemSelectedListener(this)
+
+        // Setup nav header with account switcher
+        setupNavHeader(navigationView)
+
+        // Back press closes drawer first
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val drawerLayout = findViewById<DrawerLayout>(R.id.drawer_layout)
+                if (drawerLayout.isDrawerOpen(GravityCompat.START))
+                    drawerLayout.closeDrawer(GravityCompat.START)
+                else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
 
         val icMenu = ContextCompat.getDrawable(this, R.drawable.ic_menu_light)
 
@@ -149,11 +213,100 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         }
 
-        if (!HintManager.getHintSeen(this, HINT_VIEW_COLLECTION)) {
-            ShowcaseBuilder.getBuilder(this)
-                    .setToolTip(ToolTip().setTitle(getString(R.string.tourguide_title)).setDescription(getString(R.string.account_showcase_view_collection)))
-                    .playOn(tbCardDAV)
-            HintManager.setHintSeen(this, HINT_VIEW_COLLECTION, true)
+        PermissionsActivity.requestAllPermissions(this)
+    }
+
+    private fun setupNavHeader(navigationView: NavigationView) {
+        val headerView = navigationView.getHeaderView(0)
+        val userEmailView = headerView?.findViewById<TextView>(R.id.nav_user_email)
+        val dropdownArrow = headerView?.findViewById<ImageView>(R.id.nav_account_dropdown)
+        val accountListContainer = headerView?.findViewById<LinearLayout>(R.id.nav_account_list)
+        val accountHeader = headerView?.findViewById<LinearLayout>(R.id.nav_account_header)
+        val addAccountRow = headerView?.findViewById<LinearLayout>(R.id.nav_add_account_row)
+
+        // Display current account email
+        userEmailView?.text = account.name
+
+        val accountManager = AccountManager.get(this)
+        val accounts = accountManager.getAccountsByType(App.accountType)
+
+        // Show dropdown arrow only for multi-account users
+        if (accounts.size > 1) {
+            dropdownArrow?.visibility = View.VISIBLE
+
+            accountHeader?.setOnClickListener {
+                accountListExpanded = !accountListExpanded
+                accountListContainer?.visibility = if (accountListExpanded) View.VISIBLE else View.GONE
+                // Rotate arrow
+                dropdownArrow?.rotation = if (accountListExpanded) 180f else 0f
+            }
+
+            // Build account list rows
+            buildAccountList(accountListContainer, accounts)
+        }
+
+        // Add account row
+        addAccountRow?.setOnClickListener {
+            startActivity(Intent(this, LoginActivity::class.java))
+        }
+    }
+
+    private fun buildAccountList(container: LinearLayout?, accounts: Array<Account>) {
+        if (container == null) return
+
+        // Remove any previously added account rows (keep the divider and add-account row)
+        val addAccountRow = container.findViewById<LinearLayout>(R.id.nav_add_account_row)
+        val dividerIndex = 0  // The divider View is at index 0
+        // Remove all views except the last two (divider + add account row)
+        while (container.childCount > 2) {
+            container.removeViewAt(0)
+        }
+
+        for (acc in accounts) {
+            val row = LayoutInflater.from(this).inflate(android.R.layout.simple_list_item_1, container, false)
+            val textView = row.findViewById<TextView>(android.R.id.text1)
+            textView.text = acc.name
+            textView.textSize = 14f
+            textView.setTextColor(ContextCompat.getColor(this, android.R.color.black))
+            textView.setPadding(
+                resources.getDimensionPixelSize(R.dimen.activity_margin),
+                12, 16, 12
+            )
+
+            // Show checkmark for active account
+            if (acc.name == account.name) {
+                textView.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    0, 0, android.R.drawable.checkbox_on_background, 0)
+            }
+
+            row.setOnClickListener {
+                if (acc.name != account.name) {
+                    ActiveAccountManager.setActiveAccount(this, acc)
+                    // Recreate activity with new account
+                    val intent = Intent(this, AccountActivity::class.java)
+                    intent.putExtra(EXTRA_ACCOUNT, acc)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    finish()
+                }
+            }
+
+            // Insert before the divider (at position 0)
+            container.addView(row, container.childCount - 2)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        onStatusChanged(SYNC_OBSERVER_TYPE_SETTINGS)
+        syncStatusObserver = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_SETTINGS, this)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (syncStatusObserver != null) {
+            ContentResolver.removeStatusChangeListener(syncStatusObserver)
+            syncStatusObserver = null
         }
     }
 
@@ -233,6 +386,90 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         }
         return false
+    }
+
+    // NavigationView drawer item handling (moved from AccountsActivity)
+    override fun onNavigationItemSelected(item: MenuItem): Boolean {
+        when (item.itemId) {
+            R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
+            R.id.nav_app_settings -> startActivity(Intent(this, AppSettingsActivity::class.java))
+            R.id.nav_website -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webUri))
+            R.id.nav_webapp -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webAppUri))
+            R.id.nav_guide -> startActivity(Intent(Intent.ACTION_VIEW, Constants.docsUri))
+            R.id.nav_add_account -> startActivity(Intent(this, LoginActivity::class.java))
+            R.id.nav_logout -> confirmLogout()
+            R.id.nav_theme -> showThemeDialog()
+        }
+
+        val drawer = findViewById<DrawerLayout>(R.id.drawer_layout)
+        drawer.closeDrawer(GravityCompat.START)
+        return true
+    }
+
+    // SyncStatusObserver (moved from AccountsActivity)
+    override fun onStatusChanged(which: Int) {
+        runOnUiThread {
+            if (syncStatusSnackbar != null) {
+                syncStatusSnackbar!!.dismiss()
+                syncStatusSnackbar = null
+            }
+
+            if (!ContentResolver.getMasterSyncAutomatically()) {
+                syncStatusSnackbar = Snackbar.make(findViewById(R.id.coordinator), R.string.accounts_global_sync_disabled, Snackbar.LENGTH_INDEFINITE)
+                        .setAction(R.string.accounts_global_sync_enable) { ContentResolver.setMasterSyncAutomatically(true) }
+                syncStatusSnackbar!!.show()
+            }
+        }
+    }
+
+    private fun confirmLogout() {
+        val accountManager = AccountManager.get(this)
+        val accounts = accountManager.getAccountsByType(App.accountType)
+        if (accounts.isEmpty()) {
+            Toast.makeText(this, "No account to log out", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.account_delete_confirmation_title)
+            .setMessage(R.string.account_delete_confirmation_text)
+            .setPositiveButton(R.string.navigation_drawer_logout) { _, _ ->
+                for (acc in accounts) {
+                    accountManager.removeAccountExplicitly(acc)
+                }
+                // Return to login
+                val intent = Intent(this, LoginActivity::class.java)
+                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                finish()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showThemeDialog() {
+        val themes = arrayOf("Light", "Dark", "System default")
+        val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
+        val currentMode = prefs.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        val checkedItem = when (currentMode) {
+            AppCompatDelegate.MODE_NIGHT_NO -> 0
+            AppCompatDelegate.MODE_NIGHT_YES -> 1
+            else -> 2
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.navigation_drawer_theme)
+            .setSingleChoiceItems(themes, checkedItem) { dialog, which ->
+                val mode = when (which) {
+                    0 -> AppCompatDelegate.MODE_NIGHT_NO
+                    1 -> AppCompatDelegate.MODE_NIGHT_YES
+                    else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                }
+                prefs.edit().putInt("theme_mode", mode).apply()
+                AppCompatDelegate.setDefaultNightMode(mode)
+                dialog.dismiss()
+            }
+            .show()
     }
 
     /* LOADERS AND LOADED DATA */
@@ -523,10 +760,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     private fun requestSync() {
         requestSync(applicationContext, account)
-        Snackbar.make(findViewById(R.id.parent), R.string.account_synchronizing_now, Snackbar.LENGTH_LONG).show()
+        Snackbar.make(findViewById(R.id.coordinator), R.string.account_synchronizing_now, Snackbar.LENGTH_LONG).show()
     }
 
     private fun loadSubscriptionStatus() {
+        val subscriptionCard = findViewById<View>(R.id.subscription_card)
         val planView = findViewById<TextView>(R.id.subscription_plan)
         val statusView = findViewById<TextView>(R.id.subscription_status)
         val trialView = findViewById<TextView>(R.id.subscription_trial)
@@ -540,6 +778,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val status = withContext(Dispatchers.IO) {
                 BillingManager.getInstance().getSubscriptionStatus(this@AccountActivity, account)
             }
+
+            // Bug fix: hide subscription card entirely when status is unknown
+            if (status.isUnknown) {
+                subscriptionCard.visibility = View.GONE
+                return@launch
+            }
+
             updateSubscriptionUi(status, planView, statusView, trialView, actionButton)
         }
     }
@@ -596,16 +841,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(BillingManager.BILLING_MANAGE_URL)))
                 }
             }
-            status.isUnknown -> {
-                statusView.text = getString(R.string.subscription_status_unknown)
-                statusView.setTextColor(planView.currentTextColor)
-            }
         }
     }
 
     companion object {
         val EXTRA_ACCOUNT = "account"
-        private val HINT_VIEW_COLLECTION = "ViewCollection"
     }
 
 }

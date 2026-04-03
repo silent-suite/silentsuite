@@ -4,6 +4,18 @@ import { useAuthStore } from '../use-auth-store'
 // Mock fetch globally
 vi.stubGlobal('fetch', vi.fn())
 
+// In-memory store for secure storage mock
+let secureStore: Record<string, string> = {}
+
+// Mock secure storage (IndexedDB wrapper)
+vi.mock('@/app/lib/secure-storage', () => ({
+  secureGet: vi.fn(async (key: string) => secureStore[key] ?? null),
+  secureSet: vi.fn(async (key: string, value: string) => { secureStore[key] = value }),
+  secureRemove: vi.fn(async (key: string) => { delete secureStore[key] }),
+  secureClear: vi.fn(async () => { secureStore = {} }),
+  migrateFromLocalStorage: vi.fn(async () => {}),
+}))
+
 // Mock etebase-auth (dynamically imported by login)
 vi.mock('@/app/lib/etebase-auth', () => ({
   etebaseLogIn: vi.fn().mockResolvedValue({
@@ -40,6 +52,7 @@ describe('useAuthStore', () => {
   beforeEach(() => {
     resetStore()
     vi.mocked(fetch).mockReset()
+    secureStore = {}
     localStorage.clear()
     sessionStorage.clear()
   })
@@ -138,7 +151,7 @@ describe('useAuthStore', () => {
     })
 
     it('restoreSession enters degraded mode on network error with etebase session', async () => {
-      localStorage.setItem('etebase_session', 'fake-session-data')
+      secureStore['etebase_session'] = 'fake-session-data'
       vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
       await useAuthStore.getState().restoreSession()

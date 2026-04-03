@@ -23,6 +23,7 @@ import io.silentsuite.sync.*
 import io.silentsuite.sync.R
 import io.silentsuite.sync.utils.HintManager
 import io.silentsuite.sync.utils.LanguageUtils
+import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.snackbar.Snackbar
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -94,6 +95,27 @@ class AppSettingsActivity : BaseActivity() {
             } else {
                 prefEncryptionPassword.isEnabled = false
                 prefEncryptionPassword.summary = getString(R.string.settings_sync_summary_not_available)
+            }
+
+            // --- Theme ---
+            val prefTheme = findPreference("theme_mode") as ListPreference
+            val currentMode = settings.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+            prefTheme.value = currentMode.toString()
+            prefTheme.summary = when (currentMode) {
+                AppCompatDelegate.MODE_NIGHT_NO -> "Light"
+                AppCompatDelegate.MODE_NIGHT_YES -> "Dark"
+                else -> "System default"
+            }
+            prefTheme.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
+                val mode = (newValue as String).toInt()
+                settings.edit().putInt("theme_mode", mode).apply()
+                prefTheme.summary = when (mode) {
+                    AppCompatDelegate.MODE_NIGHT_NO -> "Light"
+                    AppCompatDelegate.MODE_NIGHT_YES -> "Dark"
+                    else -> "System default"
+                }
+                AppCompatDelegate.setDefaultNightMode(mode)
+                true
             }
 
             // --- UI settings ---

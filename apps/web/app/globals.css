@@ -153,9 +153,8 @@
   z-index: 5;
 }
 
-/* Add top padding to the time grid area so early events are not clipped */
-.sx-silentsuite-calendar .sx__week-grid .sx__time-grid-event:first-child,
-.sx-silentsuite-calendar .sx__time-grid-event {
+/* Add a small top margin to the first event in a column so it isn't clipped */
+.sx-silentsuite-calendar .sx__week-grid .sx__time-grid-event:first-child {
   margin-top: 2px;
 }
 
