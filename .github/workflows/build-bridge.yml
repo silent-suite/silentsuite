@@ -110,10 +110,16 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install openssl@1.1
-          echo "OPENSSL_DIR=$(brew --prefix openssl@1.1)" >> $GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@1.1)/lib" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@1.1)/include" >> $GITHUB_ENV
+          # Use openssl@3 (openssl@1.1 is EOL and may lack ARM64 bottles).
+          # openssl-sys links against the headers/lib we point it to.
+          brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@3)/lib" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
+          # Prevent openssl-src from trying to vendor/build OpenSSL from source.
+          # The vendored openssl-src 111.10.2 doesn't support aarch64-apple-darwin.
+          # With this flag, openssl-sys uses the Homebrew-installed library instead.
+          echo "OPENSSL_NO_VENDOR=1" >> $GITHUB_ENV
 
       - name: Install dependencies (native)
         if: "!matrix.qemu"
