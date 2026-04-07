@@ -49,12 +49,15 @@ jobs:
             exe-suffix: ""
             qemu: false
 
-          # macOS arm64 (Apple Silicon)
-          - runner: macos-14
-            os-label: macos-arm64
-            asset-name: silentsuite-bridge-macos-arm64
-            exe-suffix: ""
-            qemu: false
+          # macOS arm64 (Apple Silicon) — disabled: etebase-py 0.31.5
+          # fails to build on ARM64 (OUT_DIR / setuptools-rust issues with
+          # Rust 1.63 + cpython 0.7). Re-enable when etebase-py ships a
+          # pre-built ARM64 wheel or moves to PyO3.
+          # - runner: macos-14
+          #   os-label: macos-arm64
+          #   asset-name: silentsuite-bridge-macos-arm64
+          #   exe-suffix: ""
+          #   qemu: false
 
           # Windows x86_64
           - runner: windows-latest
@@ -110,10 +113,18 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install openssl@1.1
+          # etebase-py uses openssl-sys 0.9.58 which only supports OpenSSL 1.x
+          # (can't parse OpenSSL 3's OPENSSL_VERSION_NUMBER macro format).
+          # On ARM64 runners there may be no pre-built bottle, so Homebrew
+          # compiles from source — that's fine in CI.
+          brew install openssl@1.1 || brew install openssl@1.1 --build-from-source
           echo "OPENSSL_DIR=$(brew --prefix openssl@1.1)" >> $GITHUB_ENV
           echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@1.1)/lib" >> $GITHUB_ENV
           echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@1.1)/include" >> $GITHUB_ENV
+          # Prevent openssl-src (vendored 111.10.2) from trying to build
+          # OpenSSL from source — it doesn't support aarch64-apple-darwin.
+          # Instead, openssl-sys links against the Homebrew library above.
+          echo "OPENSSL_NO_VENDOR=1" >> $GITHUB_ENV
 
       - name: Install dependencies (native)
         if: "!matrix.qemu"
@@ -312,8 +323,9 @@ jobs:
             | `silentsuite-bridge-linux-x86_64` | Linux (x86_64) |
             | `silentsuite-bridge-linux-arm64` | Linux (ARM64 / Raspberry Pi) |
             | `silentsuite-bridge-macos-x86_64` | macOS (Intel) |
-            | `silentsuite-bridge-macos-arm64` | macOS (Apple Silicon) |
             | `silentsuite-bridge-windows-x86_64.exe` | Windows (x86_64) |
+
+            > **macOS Apple Silicon:** Run from source with Python (`pip install silentsuite-bridge`).
 
             ### Verify checksum
 
