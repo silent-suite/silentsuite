@@ -1,17 +1,29 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCalendarStore } from '../../stores/calendar-store';
 import { deleteEvent as syncDeleteEvent } from '../../services/sync-actions';
-import { colors } from '../../theme';
+import { useTheme } from '../../hooks/useTheme';
 import { Button } from '../../components/Button';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { useErrorToast } from '../../hooks/useErrorToast';
 
 export function EventDetailScreen({ navigation, route }: any) {
+  const { colors: theme } = useTheme();
   const { events } = useCalendarStore();
   const event = events.find((e) => e.id === route.params.eventId);
   const { error, showError, dismissError } = useErrorToast();
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background },
+    scroll: { flex: 1, padding: 16 },
+    title: { fontSize: 24, fontWeight: '700', color: theme.text, marginBottom: 24 },
+    infoRow: { marginBottom: 16 },
+    infoLabel: { fontSize: 12, fontWeight: '600', color: theme.textSecondary, textTransform: 'uppercase', marginBottom: 4 },
+    infoValue: { fontSize: 16, color: theme.text, lineHeight: 22 },
+    notFound: { color: theme.textSecondary, textAlign: 'center', marginTop: 40 },
+    footer: { padding: 16, borderTopWidth: 1, borderTopColor: theme.border },
+  }), [theme]);
 
   if (!event) {
     return (
@@ -91,14 +103,3 @@ export function EventDetailScreen({ navigation, route }: any) {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.navy },
-  scroll: { flex: 1, padding: 16 },
-  title: { fontSize: 24, fontWeight: '700', color: colors.white, marginBottom: 24 },
-  infoRow: { marginBottom: 16 },
-  infoLabel: { fontSize: 12, fontWeight: '600', color: colors.gray400, textTransform: 'uppercase', marginBottom: 4 },
-  infoValue: { fontSize: 16, color: colors.white, lineHeight: 22 },
-  notFound: { color: colors.gray500, textAlign: 'center', marginTop: 40 },
-  footer: { padding: 16, borderTopWidth: 1, borderTopColor: colors.gray700 },
-});

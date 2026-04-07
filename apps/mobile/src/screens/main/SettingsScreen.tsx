@@ -1,10 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, Alert, Switch, Platform } from 'react-native';
-import { colors } from '../../theme';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuthStore } from '../../stores/auth-store';
+import { useTheme } from '../../hooks/useTheme';
 import { isBridgeModeEnabled, enableBridgeMode, disableBridgeMode } from '../../services/bridge-mode';
+import type { SettingsStackParamList } from '../../navigation/types';
+
+type SettingsNavProp = NativeStackNavigationProp<SettingsStackParamList, 'SettingsHome'>;
 
 export function SettingsScreen() {
+  const { colors: theme } = useTheme();
+  const navigation = useNavigation<SettingsNavProp>();
   const { logout, user } = useAuthStore();
   const [bridgeMode, setBridgeMode] = useState(false);
   const [bridgeLoading, setBridgeLoading] = useState(false);
@@ -12,6 +19,29 @@ export function SettingsScreen() {
   useEffect(() => {
     isBridgeModeEnabled().then(setBridgeMode);
   }, []);
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background, padding: 16 },
+    section: { backgroundColor: theme.surface, borderRadius: 12, padding: 16, marginBottom: 16 },
+    sectionTitle: { fontSize: 12, fontWeight: '600', color: theme.textSecondary, textTransform: 'uppercase', marginBottom: 8 },
+    email: { fontSize: 16, color: theme.text },
+    toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    toggleLabel: { fontSize: 16, fontWeight: '500', color: theme.text },
+    toggleDescription: { fontSize: 13, color: theme.textSecondary, marginTop: 4, lineHeight: 18 },
+    logoutButton: { backgroundColor: 'rgba(239,68,68,0.15)', padding: 16, borderRadius: 12, alignItems: 'center' },
+    logoutText: { color: theme.error, fontSize: 16, fontWeight: '600' },
+    changePasswordRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+      borderTopWidth: 1,
+      borderTopColor: theme.border,
+      marginTop: 12,
+    },
+    changePasswordLabel: { fontSize: 16, fontWeight: '500', color: theme.text },
+    changePasswordChevron: { fontSize: 18, color: theme.textSecondary },
+  }), [theme]);
 
   const handleBridgeToggle = async (enabled: boolean) => {
     if (enabled) {
@@ -75,6 +105,13 @@ export function SettingsScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>
           <Text style={styles.email}>{user}</Text>
+          <Pressable
+            style={styles.changePasswordRow}
+            onPress={() => navigation.navigate('ChangePassword')}
+          >
+            <Text style={styles.changePasswordLabel}>Change Password</Text>
+            <Text style={styles.changePasswordChevron}>›</Text>
+          </Pressable>
         </View>
       ) : null}
 
@@ -95,7 +132,7 @@ export function SettingsScreen() {
             value={bridgeMode}
             onValueChange={handleBridgeToggle}
             disabled={bridgeLoading}
-            trackColor={{ true: colors.emerald }}
+            trackColor={{ true: theme.accent }}
           />
         </View>
       </View>
@@ -106,15 +143,3 @@ export function SettingsScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.navy, padding: 16 },
-  section: { backgroundColor: colors.navyLight, borderRadius: 12, padding: 16, marginBottom: 16 },
-  sectionTitle: { fontSize: 12, fontWeight: '600', color: colors.gray400, textTransform: 'uppercase', marginBottom: 8 },
-  email: { fontSize: 16, color: colors.white },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  toggleLabel: { fontSize: 16, fontWeight: '500', color: colors.white },
-  toggleDescription: { fontSize: 13, color: colors.gray400, marginTop: 4, lineHeight: 18 },
-  logoutButton: { backgroundColor: 'rgba(239,68,68,0.15)', padding: 16, borderRadius: 12, alignItems: 'center' },
-  logoutText: { color: colors.red500, fontSize: 16, fontWeight: '600' },
-});

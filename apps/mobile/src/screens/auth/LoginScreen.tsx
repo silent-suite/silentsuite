@@ -1,16 +1,30 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, TextInput, StyleSheet, ActivityIndicator, Linking, Pressable, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors } from '../../theme';
+import { useTheme } from '../../hooks/useTheme';
 import { Button } from '../../components/Button';
 import { useAuthStore } from '../../stores/auth-store';
 
 export function LoginScreen() {
+  const { colors: theme } = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const login = useAuthStore((s) => s.login);
   const isLoading = useAuthStore((s) => s.isLoading);
   const error = useAuthStore((s) => s.error);
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background },
+    inner: { flex: 1 },
+    content: { flex: 1, justifyContent: 'center', paddingHorizontal: 32 },
+    title: { fontSize: 28, fontWeight: '700', color: theme.text, textAlign: 'center', marginBottom: 8 },
+    subtitle: { fontSize: 14, color: theme.textSecondary, textAlign: 'center', marginBottom: 24 },
+    error: { backgroundColor: 'rgba(239,68,68,0.15)', color: theme.error, padding: 12, borderRadius: 8, marginBottom: 16, textAlign: 'center' },
+    input: { backgroundColor: theme.surface, color: theme.text, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 8, fontSize: 16, marginBottom: 12, borderWidth: 1, borderColor: theme.border },
+    spinner: { marginTop: 12 },
+    link: { marginTop: 16, alignItems: 'center' },
+    linkText: { color: theme.accent, fontSize: 14 },
+  }), [theme]);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) return;
@@ -29,7 +43,7 @@ export function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Email"
-            placeholderTextColor={colors.gray500}
+            placeholderTextColor={theme.textSecondary}
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
@@ -39,7 +53,7 @@ export function LoginScreen() {
           <TextInput
             style={styles.input}
             placeholder="Password"
-            placeholderTextColor={colors.gray500}
+            placeholderTextColor={theme.textSecondary}
             value={password}
             onChangeText={setPassword}
             secureTextEntry
@@ -51,7 +65,7 @@ export function LoginScreen() {
             onPress={handleLogin}
             disabled={isLoading}
           />
-          {isLoading && <ActivityIndicator style={styles.spinner} color={colors.emerald} />}
+          {isLoading && <ActivityIndicator style={styles.spinner} color={theme.accent} />}
 
           <Pressable onPress={() => Linking.openURL('https://app.silentsuite.io')} style={styles.link}>
             <Text style={styles.linkText}>Don't have an account? Sign up</Text>
@@ -65,16 +79,3 @@ export function LoginScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.navy },
-  inner: { flex: 1 },
-  content: { flex: 1, justifyContent: 'center', paddingHorizontal: 32 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.white, textAlign: 'center', marginBottom: 8 },
-  subtitle: { fontSize: 14, color: colors.gray400, textAlign: 'center', marginBottom: 24 },
-  error: { backgroundColor: 'rgba(239,68,68,0.15)', color: colors.red500, padding: 12, borderRadius: 8, marginBottom: 16, textAlign: 'center' },
-  input: { backgroundColor: colors.navyLight, color: colors.white, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 8, fontSize: 16, marginBottom: 12, borderWidth: 1, borderColor: colors.gray700 },
-  spinner: { marginTop: 12 },
-  link: { marginTop: 16, alignItems: 'center' },
-  linkText: { color: colors.emerald, fontSize: 14 },
-});

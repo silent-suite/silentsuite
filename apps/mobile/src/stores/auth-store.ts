@@ -20,6 +20,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   restoreSession: () => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -88,6 +89,46 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       etebaseSession: null,
       error: null,
     });
+  },
+
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    const { user, etebaseSession } = get();
+    if (!user) throw new Error('Not authenticated');
+    if (!etebaseSession) throw new Error('Session not available. Please sign in again.');
+
+    const core = await import('@silentsuite/core');
+
+    // 1. Verify current password by attempting a temporary login
+    let testAccount: Awaited<ReturnType<typeof core.logIn>> | null = null;
+    try {
+      testAccount = await core.logIn(ETEBASE_SERVER_URL, user, currentPassword);
+    } catch {
+      throw new Error('Current password is incorrect');
+    }
+
+    // Clean up the test session (non-critical)
+    try {
+      await core.logout(testAccount);
+    } catch {
+      // Ignore cleanup failure
+    }
+
+    // 2. Get the live account from the stored session
+    const account = await core.restoreSession(ETEBASE_SERVER_URL, etebaseSession);
+
+    // 3. Change the password
+    try {
+      await core.changePassword(account, newPassword);
+    } catch {
+      throw new Error('Failed to change password. Please try again.');
+    }
+
+    // 4. Re-save the session after password change
+    const newSession = await core.saveSession(account);
+    await SecureStore.setItemAsync(ETEBASE_SESSION_KEY, newSession);
+
+    // 5. Update the store
+    set({ etebaseSession: newSession });
   },
 
   restoreSession: async () => {

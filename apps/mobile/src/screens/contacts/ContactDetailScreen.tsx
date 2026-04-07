@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert, Linking, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useContactStore } from '../../stores/contact-store';
 import { deleteContact as syncDeleteContact } from '../../services/sync-actions';
-import { colors } from '../../theme';
+import { useTheme } from '../../hooks/useTheme';
 import { Button } from '../../components/Button';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { useErrorToast } from '../../hooks/useErrorToast';
@@ -13,9 +13,25 @@ function getInitials(name: string): string {
 }
 
 export function ContactDetailScreen({ navigation, route }: any) {
+  const { colors: theme } = useTheme();
   const { contacts } = useContactStore();
   const contact = contacts.find((c) => c.id === route.params.contactId);
   const { error, showError, dismissError } = useErrorToast();
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background },
+    scroll: { flex: 1, padding: 16 },
+    header: { alignItems: 'center', marginBottom: 24 },
+    avatarLarge: { width: 80, height: 80, borderRadius: 40, backgroundColor: theme.accent, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+    avatarText: { fontSize: 28, fontWeight: '700', color: theme.background },
+    name: { fontSize: 24, fontWeight: '700', color: theme.text },
+    org: { fontSize: 14, color: theme.textSecondary, marginTop: 4 },
+    fieldRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
+    fieldLabel: { fontSize: 12, fontWeight: '600', color: theme.textSecondary, textTransform: 'uppercase', marginBottom: 4 },
+    fieldValue: { fontSize: 16, color: theme.text },
+    notFound: { color: theme.textSecondary, textAlign: 'center', marginTop: 40 },
+    footer: { padding: 16, borderTopWidth: 1, borderTopColor: theme.border },
+  }), [theme]);
 
   if (!contact) {
     return <View style={styles.container}><Text style={styles.notFound}>Contact not found</Text></View>;
@@ -84,18 +100,3 @@ export function ContactDetailScreen({ navigation, route }: any) {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.navy },
-  scroll: { flex: 1, padding: 16 },
-  header: { alignItems: 'center', marginBottom: 24 },
-  avatarLarge: { width: 80, height: 80, borderRadius: 40, backgroundColor: colors.emerald, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
-  avatarText: { fontSize: 28, fontWeight: '700', color: colors.navy },
-  name: { fontSize: 24, fontWeight: '700', color: colors.white },
-  org: { fontSize: 14, color: colors.gray400, marginTop: 4 },
-  fieldRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.gray700 },
-  fieldLabel: { fontSize: 12, fontWeight: '600', color: colors.gray400, textTransform: 'uppercase', marginBottom: 4 },
-  fieldValue: { fontSize: 16, color: colors.white },
-  notFound: { color: colors.gray500, textAlign: 'center', marginTop: 40 },
-  footer: { padding: 16, borderTopWidth: 1, borderTopColor: colors.gray700 },
-});

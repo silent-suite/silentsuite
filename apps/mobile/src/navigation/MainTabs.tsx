@@ -11,19 +11,21 @@ import { TasksScreen } from '../screens/main/TasksScreen';
 import { TaskDetailScreen } from '../screens/tasks/TaskDetailScreen';
 import { TaskFormScreen } from '../screens/tasks/TaskFormScreen';
 import { SettingsScreen } from '../screens/main/SettingsScreen';
-import { colors } from '../theme';
+import { ChangePasswordScreen } from '../screens/settings/ChangePasswordScreen';
+import { useTheme } from '../hooks/useTheme';
 
 const Tab = createBottomTabNavigator();
 const CalStack = createNativeStackNavigator();
 const ConStack = createNativeStackNavigator();
 const TskStack = createNativeStackNavigator();
-
-const screenOpts = {
-  headerStyle: { backgroundColor: colors.navy },
-  headerTintColor: colors.white,
-};
+const SetStack = createNativeStackNavigator();
 
 function CalendarStack() {
+  const { colors: theme } = useTheme();
+  const screenOpts = {
+    headerStyle: { backgroundColor: theme.background },
+    headerTintColor: theme.text,
+  };
   return (
     <CalStack.Navigator screenOptions={screenOpts}>
       <CalStack.Screen name="CalendarHome" component={CalendarScreen} options={{ title: 'Calendar' }} />
@@ -34,6 +36,11 @@ function CalendarStack() {
 }
 
 function ContactsStack() {
+  const { colors: theme } = useTheme();
+  const screenOpts = {
+    headerStyle: { backgroundColor: theme.background },
+    headerTintColor: theme.text,
+  };
   return (
     <ConStack.Navigator screenOptions={screenOpts}>
       <ConStack.Screen name="ContactsHome" component={ContactsScreen} options={{ title: 'Contacts' }} />
@@ -44,6 +51,11 @@ function ContactsStack() {
 }
 
 function TasksStack() {
+  const { colors: theme } = useTheme();
+  const screenOpts = {
+    headerStyle: { backgroundColor: theme.background },
+    headerTintColor: theme.text,
+  };
   return (
     <TskStack.Navigator screenOptions={screenOpts}>
       <TskStack.Screen name="TasksHome" component={TasksScreen} options={{ title: 'Tasks' }} />
@@ -53,20 +65,39 @@ function TasksStack() {
   );
 }
 
+function SettingsStack() {
+  const { colors: theme } = useTheme();
+  const screenOpts = {
+    headerStyle: { backgroundColor: theme.background },
+    headerTintColor: theme.text,
+  };
+  return (
+    <SetStack.Navigator screenOptions={screenOpts}>
+      <SetStack.Screen name="SettingsHome" component={SettingsScreen} options={{ title: 'Settings' }} />
+      <SetStack.Screen name="ChangePassword" component={ChangePasswordScreen} options={{ title: 'Change Password' }} />
+    </SetStack.Navigator>
+  );
+}
+
 export function MainTabs() {
+  const { colors: theme } = useTheme();
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.emerald,
-        tabBarInactiveTintColor: colors.gray400,
-        tabBarStyle: { backgroundColor: colors.navy, borderTopColor: colors.navyLight },
+        tabBarActiveTintColor: theme.accent,
+        tabBarInactiveTintColor: theme.textSecondary,
+        tabBarStyle: { backgroundColor: theme.background, borderTopColor: theme.surface },
       }}
     >
       <Tab.Screen name="Calendar" component={CalendarStack} options={{ tabBarLabel: 'Calendar' }} />
       <Tab.Screen name="Contacts" component={ContactsStack} options={{ tabBarLabel: 'Contacts' }} />
       <Tab.Screen name="Tasks" component={TasksStack} options={{ tabBarLabel: 'Tasks' }} />
-      <Tab.Screen name="Settings" component={SettingsScreen} options={{ tabBarLabel: 'Settings', headerShown: true, headerStyle: { backgroundColor: colors.navy }, headerTintColor: colors.white }} />
+      <Tab.Screen
+        name="Settings"
+        component={SettingsStack}
+        options={{ tabBarLabel: 'Settings', headerShown: false }}
+      />
     </Tab.Navigator>
   );
 }

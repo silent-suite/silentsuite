@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTaskStore } from '../../stores/task-store';
 import { deleteTask as syncDeleteTask, toggleTaskComplete as syncToggleComplete } from '../../services/sync-actions';
-import { colors } from '../../theme';
+import { useTheme } from '../../hooks/useTheme';
 import { Button } from '../../components/Button';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { useErrorToast } from '../../hooks/useErrorToast';
@@ -11,9 +11,28 @@ import { useErrorToast } from '../../hooks/useErrorToast';
 const priorityColors: Record<string, string> = { low: '#9ca3af', medium: '#3b82f6', high: '#f97316', urgent: '#ef4444' };
 
 export function TaskDetailScreen({ navigation, route }: any) {
+  const { colors: theme } = useTheme();
   const { tasks } = useTaskStore();
   const task = tasks.find((t) => t.id === route.params.taskId);
   const { error, showError, dismissError } = useErrorToast();
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background },
+    scroll: { flex: 1, padding: 16 },
+    headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
+    title: { fontSize: 22, fontWeight: '700', color: theme.text, flex: 1, marginRight: 12 },
+    titleDone: { textDecorationLine: 'line-through', color: theme.textSecondary },
+    priorityBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+    priorityText: { fontSize: 12, fontWeight: '600', color: '#ffffff', textTransform: 'capitalize' },
+    statusRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
+    statusLabel: { fontSize: 14, color: theme.textSecondary },
+    statusValue: { fontSize: 14, fontWeight: '600' },
+    fieldRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
+    fieldLabel: { fontSize: 12, fontWeight: '600', color: theme.textSecondary, textTransform: 'uppercase', marginBottom: 4 },
+    fieldValue: { fontSize: 16, color: theme.text, lineHeight: 22 },
+    notFound: { color: theme.textSecondary, textAlign: 'center', marginTop: 40 },
+    footer: { padding: 16, borderTopWidth: 1, borderTopColor: theme.border },
+  }), [theme]);
 
   if (!task) return <View style={styles.container}><Text style={styles.notFound}>Task not found</Text></View>;
 
@@ -45,14 +64,14 @@ export function TaskDetailScreen({ navigation, route }: any) {
       <ScrollView style={styles.scroll}>
         <View style={styles.headerRow}>
           <Text style={[styles.title, task.completed && styles.titleDone]}>{task.title}</Text>
-          <View style={[styles.priorityBadge, { backgroundColor: priorityColors[task.priority] || colors.gray500 }]}>
+          <View style={[styles.priorityBadge, { backgroundColor: priorityColors[task.priority] || theme.textSecondary }]}>
             <Text style={styles.priorityText}>{task.priority}</Text>
           </View>
         </View>
 
         <View style={styles.statusRow}>
           <Text style={styles.statusLabel}>Status</Text>
-          <Text style={[styles.statusValue, { color: task.completed ? colors.emerald : colors.gray400 }]}>
+          <Text style={[styles.statusValue, { color: task.completed ? theme.accent : theme.textSecondary }]}>
             {task.completed ? 'Completed' : 'Pending'}
           </Text>
         </View>
@@ -82,21 +101,3 @@ export function TaskDetailScreen({ navigation, route }: any) {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.navy },
-  scroll: { flex: 1, padding: 16 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 },
-  title: { fontSize: 22, fontWeight: '700', color: colors.white, flex: 1, marginRight: 12 },
-  titleDone: { textDecorationLine: 'line-through', color: colors.gray500 },
-  priorityBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  priorityText: { fontSize: 12, fontWeight: '600', color: colors.white, textTransform: 'capitalize' },
-  statusRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.gray700 },
-  statusLabel: { fontSize: 14, color: colors.gray400 },
-  statusValue: { fontSize: 14, fontWeight: '600' },
-  fieldRow: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.gray700 },
-  fieldLabel: { fontSize: 12, fontWeight: '600', color: colors.gray400, textTransform: 'uppercase', marginBottom: 4 },
-  fieldValue: { fontSize: 16, color: colors.white, lineHeight: 22 },
-  notFound: { color: colors.gray500, textAlign: 'center', marginTop: 40 },
-  footer: { padding: 16, borderTopWidth: 1, borderTopColor: colors.gray700 },
-});

@@ -1,16 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, TextInput, StyleSheet, ScrollView, Switch, Pressable, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useCalendarStore } from '../../stores/calendar-store';
 import { createEvent as syncCreateEvent, updateEvent as syncUpdateEvent } from '../../services/sync-actions';
-import { colors } from '../../theme';
+import { useTheme } from '../../hooks/useTheme';
 import { Button } from '../../components/Button';
 import { ErrorBanner } from '../../components/ErrorBanner';
 import { useErrorToast } from '../../hooks/useErrorToast';
 import type { CalendarEvent } from '@silentsuite/core';
 
 export function EventFormScreen({ navigation, route }: any) {
+  const { colors: theme } = useTheme();
   const { events } = useCalendarStore();
   const editId = route.params?.eventId;
   const existing = editId ? events.find((e) => e.id === editId) : null;
@@ -25,6 +26,25 @@ export function EventFormScreen({ navigation, route }: any) {
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [recurrence, setRecurrence] = useState<string | null>(existing?.recurrenceRule || null);
   const { error, showError, dismissError } = useErrorToast();
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background },
+    scroll: { flex: 1 },
+    scrollContent: { padding: 16 },
+    titleInput: { fontSize: 22, fontWeight: '600', color: theme.text, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border, marginBottom: 16 },
+    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
+    dateRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: theme.border },
+    label: { fontSize: 16, color: theme.text },
+    dateText: { fontSize: 14, color: theme.accent },
+    input: { backgroundColor: theme.surface, color: theme.text, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 8, fontSize: 16, marginTop: 12 },
+    multiline: { minHeight: 100, textAlignVertical: 'top' },
+    recurrenceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+    recurrenceBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: theme.surface },
+    recurrenceBtnActive: { backgroundColor: theme.accent },
+    recurrenceText: { fontSize: 13, color: theme.textSecondary },
+    recurrenceTextActive: { color: theme.background, fontWeight: '600' },
+    footer: { padding: 16, borderTopWidth: 1, borderTopColor: theme.border },
+  }), [theme]);
 
   const handleSave = async () => {
     if (!title.trim()) return;
@@ -65,7 +85,7 @@ export function EventFormScreen({ navigation, route }: any) {
         <TextInput
           style={styles.titleInput}
           placeholder="Event title"
-          placeholderTextColor={colors.gray500}
+          placeholderTextColor={theme.textSecondary}
           value={title}
           onChangeText={setTitle}
           autoFocus
@@ -73,7 +93,7 @@ export function EventFormScreen({ navigation, route }: any) {
 
         <View style={styles.row}>
           <Text style={styles.label}>All day</Text>
-          <Switch value={allDay} onValueChange={setAllDay} trackColor={{ true: colors.emerald }} />
+          <Switch value={allDay} onValueChange={setAllDay} trackColor={{ true: theme.accent }} />
         </View>
 
         <Pressable style={styles.dateRow} onPress={() => setShowStartPicker(true)}>
@@ -122,7 +142,7 @@ export function EventFormScreen({ navigation, route }: any) {
         <TextInput
           style={styles.input}
           placeholder="Location"
-          placeholderTextColor={colors.gray500}
+          placeholderTextColor={theme.textSecondary}
           value={location}
           onChangeText={setLocation}
         />
@@ -130,7 +150,7 @@ export function EventFormScreen({ navigation, route }: any) {
         <TextInput
           style={[styles.input, styles.multiline]}
           placeholder="Description"
-          placeholderTextColor={colors.gray500}
+          placeholderTextColor={theme.textSecondary}
           value={description}
           onChangeText={setDescription}
           multiline
@@ -144,22 +164,3 @@ export function EventFormScreen({ navigation, route }: any) {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.navy },
-  scroll: { flex: 1 },
-  scrollContent: { padding: 16 },
-  titleInput: { fontSize: 22, fontWeight: '600', color: colors.white, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.gray700, marginBottom: 16 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
-  dateRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.gray700 },
-  label: { fontSize: 16, color: colors.white },
-  dateText: { fontSize: 14, color: colors.emerald },
-  input: { backgroundColor: colors.navyLight, color: colors.white, paddingHorizontal: 16, paddingVertical: 14, borderRadius: 8, fontSize: 16, marginTop: 12 },
-  multiline: { minHeight: 100, textAlignVertical: 'top' },
-  recurrenceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  recurrenceBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: '#243447' },
-  recurrenceBtnActive: { backgroundColor: '#34d399' },
-  recurrenceText: { fontSize: 13, color: '#9ca3af' },
-  recurrenceTextActive: { color: '#1B2838', fontWeight: '600' },
-  footer: { padding: 16, borderTopWidth: 1, borderTopColor: colors.gray700 },
-});

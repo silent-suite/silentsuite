@@ -4,13 +4,13 @@ import { Calendar } from 'react-native-calendars';
 import { useCalendarStore } from '../../stores/calendar-store';
 import { useSyncStore } from '../../stores/sync-store';
 import { triggerFullSync } from '../../providers/SyncProvider';
-import { colors } from '../../theme';
+import { useTheme } from '../../hooks/useTheme';
 import type { CalendarEvent } from '@silentsuite/core';
 
 export function CalendarScreen({ navigation }: any) {
+  const { colors: theme } = useTheme();
   const { events, selectedDate, setSelectedDate } = useCalendarStore();
   const syncStatus = useSyncStore((s) => s.status);
-  const [markedDates, setMarkedDates] = useState<Record<string, any>>({});
 
   const dateStr = selectedDate.toISOString().split('T')[0];
 
@@ -18,11 +18,11 @@ export function CalendarScreen({ navigation }: any) {
     const marks: Record<string, any> = {};
     for (const event of events) {
       const d = new Date(event.startDate).toISOString().split('T')[0];
-      marks[d] = { ...(marks[d] || {}), marked: true, dotColor: colors.emerald };
+      marks[d] = { ...(marks[d] || {}), marked: true, dotColor: theme.accent };
     }
-    marks[dateStr] = { ...(marks[dateStr] || {}), selected: true, selectedColor: colors.emerald };
+    marks[dateStr] = { ...(marks[dateStr] || {}), selected: true, selectedColor: theme.accent };
     return marks;
-  }, [events, dateStr]);
+  }, [events, dateStr, theme.accent]);
 
   const dayEvents = useMemo(() => {
     return events.filter((e) => {
@@ -30,6 +30,33 @@ export function CalendarScreen({ navigation }: any) {
       return d === dateStr;
     });
   }, [events, dateStr]);
+
+  const styles = useMemo(() => StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background },
+    list: { padding: 16 },
+    eventCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.surface, borderRadius: 12, padding: 16, marginBottom: 8, gap: 12 },
+    eventDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.accent },
+    eventTitle: { fontSize: 16, fontWeight: '600', color: theme.text },
+    eventTime: { fontSize: 13, color: theme.textSecondary, marginTop: 2 },
+    eventRecurrence: { fontSize: 11, color: theme.accent, marginTop: 2 },
+    empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    emptyText: { color: theme.textSecondary, fontSize: 14 },
+    fab: { position: 'absolute', bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28, backgroundColor: theme.accent, justifyContent: 'center', alignItems: 'center', elevation: 4 },
+    fabText: { fontSize: 28, color: theme.background, fontWeight: '600', marginTop: -2 },
+  }), [theme]);
+
+  const calendarTheme = useMemo(() => ({
+    backgroundColor: theme.background,
+    calendarBackground: theme.background,
+    textSectionTitleColor: theme.textSecondary,
+    dayTextColor: theme.text,
+    todayTextColor: theme.accent,
+    monthTextColor: theme.text,
+    arrowColor: theme.accent,
+    textDisabledColor: theme.border,
+    selectedDayBackgroundColor: theme.accent,
+    selectedDayTextColor: theme.background,
+  }), [theme]);
 
   const renderEvent = ({ item }: { item: CalendarEvent }) => (
     <Pressable
@@ -58,18 +85,7 @@ export function CalendarScreen({ navigation }: any) {
       <Calendar
         markedDates={markedDatesObj}
         onDayPress={(day: any) => setSelectedDate(new Date(day.dateString + 'T12:00:00'))}
-        theme={{
-          backgroundColor: colors.navy,
-          calendarBackground: colors.navy,
-          textSectionTitleColor: colors.gray400,
-          dayTextColor: colors.white,
-          todayTextColor: colors.emerald,
-          monthTextColor: colors.white,
-          arrowColor: colors.emerald,
-          textDisabledColor: colors.gray700,
-          selectedDayBackgroundColor: colors.emerald,
-          selectedDayTextColor: colors.navy,
-        }}
+        theme={calendarTheme}
       />
       {dayEvents.length === 0 ? (
         <ScrollView
@@ -78,7 +94,7 @@ export function CalendarScreen({ navigation }: any) {
             <RefreshControl
               refreshing={syncStatus === 'syncing'}
               onRefresh={triggerFullSync}
-              tintColor="#34d399"
+              tintColor={theme.accent}
             />
           }
         >
@@ -96,7 +112,7 @@ export function CalendarScreen({ navigation }: any) {
             <RefreshControl
               refreshing={syncStatus === 'syncing'}
               onRefresh={triggerFullSync}
-              tintColor="#34d399"
+              tintColor={theme.accent}
             />
           }
         />
@@ -110,17 +126,3 @@ export function CalendarScreen({ navigation }: any) {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.navy },
-  list: { padding: 16 },
-  eventCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.navyLight, borderRadius: 12, padding: 16, marginBottom: 8, gap: 12 },
-  eventDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.emerald },
-  eventTitle: { fontSize: 16, fontWeight: '600', color: colors.white },
-  eventTime: { fontSize: 13, color: colors.gray400, marginTop: 2 },
-  eventRecurrence: { fontSize: 11, color: '#34d399', marginTop: 2 },
-  empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyText: { color: colors.gray500, fontSize: 14 },
-  fab: { position: 'absolute', bottom: 24, right: 24, width: 56, height: 56, borderRadius: 28, backgroundColor: colors.emerald, justifyContent: 'center', alignItems: 'center', elevation: 4 },
-  fabText: { fontSize: 28, color: colors.navy, fontWeight: '600', marginTop: -2 },
-});

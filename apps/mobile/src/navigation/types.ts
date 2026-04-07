@@ -28,6 +28,11 @@ export type TasksStackParamList = {
   TaskForm: { taskId?: string } | undefined;
 };
 
+export type SettingsStackParamList = {
+  SettingsHome: undefined;
+  ChangePassword: undefined;
+};
+
 export type RootStackParamList = {
   Auth: undefined;
   Main: undefined;

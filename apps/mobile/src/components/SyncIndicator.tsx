@@ -1,14 +1,13 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSyncStore } from '../stores/sync-store';
-import { colors } from '../theme';
 
 const statusConfig = {
-  idle: { color: colors.gray500, label: '' },
+  idle: { color: '#6b7280', label: '' },
   syncing: { color: '#3b82f6', label: 'Syncing...' },
-  synced: { color: colors.emerald, label: 'Synced' },
+  synced: { color: '#34d399', label: 'Synced' },
   error: { color: '#ef4444', label: 'Sync error' },
-  offline: { color: colors.gray500, label: 'Offline' },
+  offline: { color: '#6b7280', label: 'Offline' },
 } as const;
 
 export function SyncIndicator() {
