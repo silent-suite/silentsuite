@@ -24,7 +24,7 @@
         <item name="colorOnError">@android:color/white</item>
 
         <item name="android:colorBackground">@color/navy900</item>
-        <item name="colorSurface">@color/navy700</item>
+        <item name="colorSurface">@color/navy600</item>
         <item name="colorOnSurface">@android:color/white</item>
 
         <!-- Dark mode text colors -->
