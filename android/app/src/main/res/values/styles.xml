@@ -41,7 +41,7 @@
     <!-- Legacy aliases (referenced by layouts/code) -->
     <color name="light_green500">@color/teal500</color>
     <color name="light_green700">@color/navy700</color>
-    <color name="orange400">@color/teal400</color>
+    <color name="orange400">@color/teal600</color>
     <color name="orangeA700">@color/teal500</color>
     <color name="primaryColor">@color/navy700</color>
     <color name="primaryLightColor">@color/navy600</color>
