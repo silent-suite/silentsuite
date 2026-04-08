@@ -77,6 +77,9 @@
         <item name="android:textColorPrimary">@color/navy800</item>
         <item name="android:textColorSecondary">@color/navy600</item>
         <item name="android:textColorHint">@color/navy600</item>
+
+        <!-- Force white text/icons on the dark ActionBar -->
+        <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
     </style>
 
     <style name="AppTheme.NoActionBar">

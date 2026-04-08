@@ -31,6 +31,9 @@
         <item name="android:textColorPrimary">@color/grey200</item>
         <item name="android:textColorSecondary">@color/navy100</item>
         <item name="android:textColorHint">@color/navy100</item>
+
+        <!-- Force white text/icons on the dark ActionBar -->
+        <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
     </style>
 
     <style name="AppTheme.NoActionBar">
@@ -51,12 +54,12 @@
     </style>
 
     <style name="toolbar_style" parent="Widget.AppCompat.Toolbar">
-        <item name="android:background">@color/navy900</item>
+        <item name="android:background">@color/navy700</item>
         <item name="titleTextColor">@android:color/white</item>
     </style>
 
     <style name="tablayout" parent="Base.Widget.Design.TabLayout">
-        <item name="android:background">@color/navy900</item>
+        <item name="android:background">@color/navy700</item>
     </style>
 
     <!-- Dark mode heading uses brighter teal -->
