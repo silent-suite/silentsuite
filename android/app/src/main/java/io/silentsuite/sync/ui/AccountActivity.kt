@@ -211,9 +211,22 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             model.observe(this) {
                 updateUi(it)
             }
+
+            // Kick off a sync automatically on first open so users don't have to
+            // hit the toolbar button — the existing progress bars surface it.
+            io.silentsuite.sync.syncadapter.requestSync(applicationContext, account)
         }
 
         PermissionsActivity.requestAllPermissions(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Refresh on foreground so returning to the app gives a fresh state.
+        // Guarded because onCreate has early-exit paths that skip account init.
+        if (::account.isInitialized) {
+            io.silentsuite.sync.syncadapter.requestSync(applicationContext, account)
+        }
     }
 
     private fun setupNavHeader(navigationView: NavigationView) {
@@ -321,13 +334,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             R.id.settings -> {
                 startActivity(Intent(this, AppSettingsActivity::class.java))
             }
-            R.id.delete_account -> AlertDialog.Builder(this@AccountActivity)
-                    .setIcon(R.drawable.ic_error_dark)
-                    .setTitle(R.string.account_delete_confirmation_title)
-                    .setMessage(R.string.account_delete_confirmation_text)
-                    .setNegativeButton(android.R.string.no, null)
-                    .setPositiveButton(android.R.string.yes) { _, _ -> deleteAccount() }
-                    .show()
             R.id.show_fingerprint -> {
                 val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
                 view.findViewById<View>(R.id.body).visibility = View.GONE
@@ -717,46 +723,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     /* USER ACTIONS */
-
-    private fun deleteAccount() {
-        val accountManager = AccountManager.get(this)
-        val settings = AccountSettings(this@AccountActivity, account)
-
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                EtebaseLocalCache.clearUserCache(this@AccountActivity, account.name)
-
-                try {
-                    val httpClient = HttpClient.Builder(this@AccountActivity).build()
-                    val etebase = EtebaseLocalCache.getEtebase(this@AccountActivity, httpClient.okHttpClient, settings)
-                    etebase.logout()
-                } catch(e: EtebaseException) {
-                    // Ignore failures for now
-                    Logger.log.warning(e.toString())
-                }
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= 22)
-            accountManager.removeAccount(account, this, { future ->
-                try {
-                    if (future.result.getBoolean(AccountManager.KEY_BOOLEAN_RESULT))
-                        finish()
-                } catch(e: Exception) {
-                    Logger.log.log(Level.SEVERE, "Couldn't remove account", e)
-                }
-            }, null)
-        else
-            accountManager.removeAccount(account, { future ->
-                try {
-                    if (future.result)
-                        finish()
-                } catch (e: Exception) {
-                    Logger.log.log(Level.SEVERE, "Couldn't remove account", e)
-                }
-            }, null)
-    }
-
 
     private fun requestSync() {
         requestSync(applicationContext, account)
