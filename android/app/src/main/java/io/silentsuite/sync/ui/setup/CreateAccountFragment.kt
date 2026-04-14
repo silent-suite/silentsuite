@@ -44,7 +44,9 @@ class CreateAccountFragment : DialogFragment() {
         val account = createAccount(config.userName, config)
         if (account != null) {
             activity.setResult(Activity.RESULT_OK)
-            startActivity(ModeSelectionActivity.newIntent(requireContext(), account))
+            // Pass the freshly-minted session through the intent as well — AccountManager.setUserData
+            // isn't always visible to the next activity's read on the first login.
+            startActivity(ModeSelectionActivity.newIntent(requireContext(), account, config.etebaseSession))
             activity.finish()
         }
     }

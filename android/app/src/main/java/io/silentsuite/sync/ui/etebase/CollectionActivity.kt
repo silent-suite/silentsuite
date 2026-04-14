@@ -91,13 +91,13 @@ class CollectionActivity() : BaseActivity() {
 class AccountViewModel : ViewModel() {
     private val holder = MutableLiveData<AccountHolder>()
 
-    fun loadAccount(context: Context, account: Account) {
+    fun loadAccount(context: Context, account: Account, sessionOverride: String? = null) {
         viewModelScope.launch {
             val accountHolder = withContext(Dispatchers.IO) {
                 val settings = AccountSettings(context, account)
                 val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
                 val httpClient = HttpClient.Builder(context).setForeground(true).build().okHttpClient
-                val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings)
+                val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings, sessionOverride)
                 val colMgr = etebase.collectionManager
                 AccountHolder(
                         account,

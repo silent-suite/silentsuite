@@ -38,13 +38,15 @@ class NewAccountWizardActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        account = requireNotNull(requireNotNull(intent.extras) { "NewAccountWizardActivity requires intent extras" }.getParcelable(EXTRA_ACCOUNT)) { "NewAccountWizardActivity requires EXTRA_ACCOUNT" }
+        val extras = requireNotNull(intent.extras) { "NewAccountWizardActivity requires intent extras" }
+        account = requireNotNull(extras.getParcelable(EXTRA_ACCOUNT)) { "NewAccountWizardActivity requires EXTRA_ACCOUNT" }
+        val etebaseSession = extras.getString(EXTRA_ETEBASE_SESSION)
 
         setContentView(R.layout.etebase_fragment_activity)
 
         if (savedInstanceState == null) {
             setTitle(R.string.account_wizard_collections_title)
-            model.loadAccount(this, account)
+            model.loadAccount(this, account, etebaseSession)
             supportFragmentManager.commit {
                 replace(R.id.fragment_container, WizardCheckFragment())
             }
@@ -53,10 +55,12 @@ class NewAccountWizardActivity : BaseActivity() {
 
     companion object {
         private val EXTRA_ACCOUNT = "account"
+        private val EXTRA_ETEBASE_SESSION = "etebaseSession"
 
-        fun newIntent(context: Context, account: Account): Intent {
+        fun newIntent(context: Context, account: Account, etebaseSession: String? = null): Intent {
             val intent = Intent(context, NewAccountWizardActivity::class.java)
             intent.putExtra(EXTRA_ACCOUNT, account)
+            if (etebaseSession != null) intent.putExtra(EXTRA_ETEBASE_SESSION, etebaseSession)
             return intent
         }
     }
