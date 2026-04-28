@@ -67,19 +67,28 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInter
       useAuthStore.getState().saveSignupStateForRedirect(selectedInterval)
     }
 
+    // PaymentElement is rendered with `fields.billingDetails.name = 'never'`,
+    // so Stripe requires the billing name be passed explicitly here or it throws
+    // an IntegrationError that bubbles out of the await and leaves the button stuck.
+    const billingName = useAuthStore.getState().pendingSignup?.email ?? 'Customer'
+    const confirmParams = {
+      return_url: `${window.location.origin}/signup/success`,
+      payment_method_data: { billing_details: { name: billingName } },
+    }
+
     let result
-    if (mode === 'setup') {
-      result = await stripe.confirmSetup({
-        elements,
-        confirmParams: { return_url: `${window.location.origin}/signup/success` },
-        redirect: 'if_required',
-      })
-    } else {
-      result = await stripe.confirmPayment({
-        elements,
-        confirmParams: { return_url: `${window.location.origin}/signup/success` },
-        redirect: 'if_required',
-      })
+    try {
+      if (mode === 'setup') {
+        result = await stripe.confirmSetup({ elements, confirmParams, redirect: 'if_required' })
+      } else {
+        result = await stripe.confirmPayment({ elements, confirmParams, redirect: 'if_required' })
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Payment failed'
+      setError(msg)
+      onError?.(msg)
+      setLoading(false)
+      return
     }
 
     if (result.error) {
