@@ -33,10 +33,14 @@
                 android:layout_marginBottom="14dp"/>
 
             <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                 android:id="@+id/email"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="14dp">
+                android:layout_marginBottom="14dp"
+                app:boxStrokeColor="@color/login_input_stroke"
+                app:boxStrokeWidth="1dp"
+                app:boxStrokeWidthFocused="2dp">
                 <com.google.android.material.textfield.TextInputEditText
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -46,10 +50,14 @@
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                 android:id="@+id/url_password"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:passwordToggleEnabled="true">
+                app:passwordToggleEnabled="true"
+                app:boxStrokeColor="@color/login_input_stroke"
+                app:boxStrokeWidth="1dp"
+                app:boxStrokeWidthFocused="2dp">
                 <com.google.android.material.textfield.TextInputEditText
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -81,8 +89,12 @@
                 android:layout_height="wrap_content">
 
                 <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content">
+                    android:layout_height="wrap_content"
+                    app:boxStrokeColor="@color/login_input_stroke"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="2dp">
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/custom_server"
                         android:layout_width="match_parent"

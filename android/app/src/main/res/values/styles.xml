@@ -41,7 +41,7 @@
     <!-- Legacy aliases (referenced by layouts/code) -->
     <color name="light_green500">@color/teal500</color>
     <color name="light_green700">@color/navy700</color>
-    <color name="orange400">@color/teal400</color>
+    <color name="orange400">@color/teal600</color>
     <color name="orangeA700">@color/teal500</color>
     <color name="primaryColor">@color/navy700</color>
     <color name="primaryLightColor">@color/navy600</color>
@@ -77,6 +77,9 @@
         <item name="android:textColorPrimary">@color/navy800</item>
         <item name="android:textColorSecondary">@color/navy600</item>
         <item name="android:textColorHint">@color/navy600</item>
+
+        <!-- Force white text/icons on the dark ActionBar -->
+        <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
     </style>
 
     <style name="AppTheme.NoActionBar">

@@ -267,7 +267,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val textView = row.findViewById<TextView>(android.R.id.text1)
             textView.text = acc.name
             textView.textSize = 14f
-            textView.setTextColor(ContextCompat.getColor(this, android.R.color.black))
+            val textColorAttr = android.R.attr.textColorPrimary
+            val typedValue = android.util.TypedValue()
+            theme.resolveAttribute(textColorAttr, typedValue, true)
+            textView.setTextColor(ContextCompat.getColor(this, typedValue.resourceId))
             textView.setPadding(
                 resources.getDimensionPixelSize(R.dimen.activity_margin),
                 12, 16, 12
