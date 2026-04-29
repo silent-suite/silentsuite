@@ -2,6 +2,7 @@ import { Shield } from 'lucide-react'
 
 const links = [
   { label: 'Blog', href: '/blog' },
+  { label: 'Screenshots', href: '/screenshots' },
   { label: 'Security', href: '/security' },
   { label: 'Privacy Policy', href: '/privacy' },
   { label: 'Terms', href: '/terms' },

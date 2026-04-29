@@ -1,4 +1,5 @@
 import Hero from './sections/Hero'
+import Showcase from './sections/Showcase'
 import Problem from './sections/Problem'
 import Features from './sections/Features'
 import Security from './sections/Security'
@@ -11,6 +12,7 @@ export default function Home() {
   return (
     <main>
       <Hero />
+      <Showcase />
       <Problem />
       <Features />
       <Security />

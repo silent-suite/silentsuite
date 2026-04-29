@@ -3,7 +3,62 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { Calendar, ArrowLeft, Clock } from 'lucide-react'
-import { getPost, getAllPosts } from '../posts'
+import { getPost, getAllPosts, type BlogPost } from '../posts'
+import { POST_FAQS } from '../faqs'
+
+const SITE_URL = 'https://silentsuite.io'
+
+function buildArticleJsonLd(post: BlogPost) {
+  const postUrl = `${SITE_URL}/blog/${post.slug}`
+  const imageUrl = post.coverImage
+    ? `${SITE_URL}${post.coverImage}`
+    : `${SITE_URL}/social/og-image-1200x630.png`
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: post.title,
+    description: post.description,
+    datePublished: post.date,
+    dateModified: post.date,
+    author: {
+      '@type': 'Person',
+      name: post.author,
+      url: SITE_URL,
+    },
+    publisher: {
+      '@type': 'Organization',
+      name: 'SilentSuite',
+      url: SITE_URL,
+      logo: {
+        '@type': 'ImageObject',
+        url: `${SITE_URL}/social/profile-400x400.png`,
+      },
+    },
+    image: imageUrl,
+    mainEntityOfPage: {
+      '@type': 'WebPage',
+      '@id': postUrl,
+    },
+    keywords: post.tags.join(', '),
+  }
+}
+
+function buildFaqJsonLd(slug: string) {
+  const faqs = POST_FAQS[slug]
+  if (!faqs || faqs.length === 0) return null
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqs.map((f) => ({
+      '@type': 'Question',
+      name: f.q,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: f.a,
+      },
+    })),
+  }
+}
 
 // Blog post content components -- one per slug
 import WhyWeAreBuildingSilentSuite from '../content/why-we-are-building-silentsuite'
@@ -78,8 +133,23 @@ export default async function BlogPost({
   const Content = contentMap[slug]
   if (!Content) notFound()
 
+  const articleSchema = buildArticleJsonLd(post)
+  const faqSchema = buildFaqJsonLd(slug)
+
   return (
     <main className="min-h-screen bg-navy-950 text-white pt-16">
+      <script
+        type="application/ld+json"
+        // Escape `<` to defuse any future content that might close the script tag.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(articleSchema).replace(/</g, '\\u003c') }}
+      />
+      {faqSchema ? (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema).replace(/</g, '\\u003c') }}
+        />
+      ) : null}
+
       {/* Hero cover */}
       <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-8">
         <div className="relative w-full rounded-2xl overflow-hidden border border-navy-700/50" style={{ aspectRatio: '16/9' }}>
