@@ -43,29 +43,28 @@ export const posts: BlogPost[] = [
     tags: ['privacy', 'comparison', 'encryption'],
     coverImage: '/blog/cover-silentsuite-vs-google-calendar.png',
   },
-  // --- DRAFTS (cover images ready in public/blog/, publish one at a time) ---
-  // {
-  //   slug: 'encrypted-calendar-sync-2026-comparing-options',
-  //   title: 'Encrypted Calendar Sync in 2026: Comparing Your Options',
-  //   description:
-  //     'There are now multiple services offering encrypted calendar sync. Most are incomplete, ecosystem-locked, or abandoned. We compare Proton, Tuta, EteSync, Nextcloud, and SilentSuite.',
-  //   date: '2026-03-20',
-  //   author: 'Tim Ross',
-  //   readingTime: '10 min read',
-  //   tags: ['privacy', 'encryption', 'comparison'],
-  //   coverImage: '/blog/cover-encrypted-calendar-sync-2026-comparing-options.png',
-  // },
-  // {
-  //   slug: 'self-hosting-vs-hosted-private-calendar',
-  //   title: 'Self-Hosting vs Hosted: Which Private Calendar Setup Is Right for You?',
-  //   description:
-  //     'Self-host everything is the default advice in privacy circles. But does it actually make your calendar more secure? We compare self-hosted CalDAV, hosted E2EE services, and the hybrid option.',
-  //   date: '2026-03-24',
-  //   author: 'Tim Ross',
-  //   readingTime: '8 min read',
-  //   tags: ['privacy', 'self-hosting', 'encryption'],
-  //   coverImage: '/blog/cover-self-hosting-vs-hosted-private-calendar.png',
-  // },
+  {
+    slug: 'encrypted-calendar-sync-2026-comparing-options',
+    title: 'Encrypted Calendar Sync in 2026: Comparing Your Options',
+    description:
+      'There are now multiple services offering encrypted calendar sync. Most are incomplete, ecosystem-locked, or abandoned. We compare Proton, Tuta, EteSync, Nextcloud, and SilentSuite.',
+    date: '2026-04-22',
+    author: 'Tim Ross',
+    readingTime: '10 min read',
+    tags: ['privacy', 'encryption', 'comparison'],
+    coverImage: '/blog/cover-encrypted-calendar-sync-2026-comparing-options.png',
+  },
+  {
+    slug: 'self-hosting-vs-hosted-private-calendar',
+    title: 'Self-Hosting vs Hosted: Which Private Calendar Setup Is Right for You?',
+    description:
+      'Self-host everything is the default advice in privacy circles. But does it actually make your calendar more secure? We compare self-hosted CalDAV, hosted E2EE services, and the hybrid option.',
+    date: '2026-04-29',
+    author: 'Tim Ross',
+    readingTime: '8 min read',
+    tags: ['privacy', 'self-hosting', 'encryption'],
+    coverImage: '/blog/cover-self-hosting-vs-hosted-private-calendar.png',
+  },
 ]
 
 export function getPost(slug: string): BlogPost | undefined {
