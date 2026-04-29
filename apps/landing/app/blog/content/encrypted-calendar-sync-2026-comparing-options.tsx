@@ -18,7 +18,7 @@ function BrandHeader({ logo, name, label }: { logo: LogoKey; name: string; label
 
 function cellClass(value: string): string {
   const v = value.trim().toLowerCase()
-  if (v === 'yes' || v.startsWith('yes ') || v === 'active') {
+  if (v === 'yes' || v === 'yes*' || v.startsWith('yes ') || v === 'active') {
     return 'bg-teal-400/15 text-teal-300 font-semibold'
   }
   if (v === 'no' || v === 'abandoned' || v === 'outdated') {
@@ -343,13 +343,13 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
               ['E2EE calendar', 'Yes', 'Yes', 'Yes', 'No', 'Yes'],
               ['E2EE contacts', 'Partial', 'Partial', 'Yes', 'No', 'Yes'],
               ['E2EE tasks', 'No', 'No', 'Yes', 'No', 'Yes'],
-              ['CalDAV support', 'No', 'No', 'Via bridge', 'Yes', 'Planned'],
-              ['Mobile apps', 'Yes', 'Yes', 'Outdated', 'Via 3rd party', 'In development'],
-              ['Web app', 'Yes', 'Yes', 'Outdated', 'Yes', 'In development'],
+              ['CalDAV support', 'No', 'No', 'Via bridge', 'Yes', 'Yes*'],
+              ['Mobile apps', 'Yes', 'Yes', 'Outdated', 'Via 3rd party', 'Yes*'],
+              ['Web app', 'Yes', 'Yes', 'Outdated', 'Yes', 'Yes'],
               ['Self-hostable', 'No', 'No', 'Yes', 'Yes', 'Yes'],
               ['Open source', 'Partial', 'Yes', 'Yes', 'Yes', 'Yes (AGPL-3.0)'],
               ['Status', 'Active', 'Active', 'Abandoned', 'Active', 'Active'],
-              ['Price', 'Free / from \u20ac4/mo', 'Free / from \u20ac3/mo', 'Was \u20ac2/mo', 'Self-host cost', 'TBD'],
+              ['Price', 'Free / from \u20ac4/mo', 'Free / from \u20ac3/mo', 'Was \u20ac2/mo', 'Self-host cost', 'From \u20ac3/mo'],
             ].map(([feature, ...values], rowIdx) => (
               <tr
                 key={feature}
@@ -379,6 +379,14 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
           &ldquo;Partial&rdquo; for Proton/Tuta contacts means encrypted
           contacts exist within their own apps, but there&apos;s no sync
           protocol you can use with external clients.
+        </em>
+      </p>
+
+      <p>
+        <em>
+          * SilentSuite: Android is native, CalDAV works through our standalone
+          bridge for Apple Calendar and Thunderbird, and iOS still works with
+          the original EteSync app since we share the Etebase protocol.
         </em>
       </p>
 
