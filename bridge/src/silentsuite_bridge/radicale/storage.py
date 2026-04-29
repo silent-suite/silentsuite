@@ -528,11 +528,19 @@ class Storage(BaseStorage):
             if self.user:
                 yield Collection(self, posixpath.join(path, self.user))
         elif len(attributes) == 1:
+            # Expose at most one collection per type. Multi-collection support was
+            # dropped 2026-04-12 — CalDAV/CardDAV clients see a single calendar,
+            # address book, and task list each.
+            seen_types: set = set()
             for journal in self.etesync.list():
-                if journal.col_type in config.COL_TYPES:
-                    yield Collection(
-                        self, posixpath.join(path, journal.uid)
-                    )
+                if journal.col_type not in config.COL_TYPES:
+                    continue
+                if journal.col_type in seen_types:
+                    continue
+                seen_types.add(journal.col_type)
+                yield Collection(
+                    self, posixpath.join(path, journal.uid)
+                )
         elif len(attributes) == 2:
             for href in collection._list():
                 yield collection._get(href)
