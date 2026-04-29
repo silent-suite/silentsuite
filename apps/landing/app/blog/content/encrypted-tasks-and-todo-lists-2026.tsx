@@ -1,25 +1,23 @@
-type Brand = 'todoist' | 'mstodo' | 'apple' | 'google' | 'etesync' | 'silentsuite'
+type LogoKey = 'todoist' | 'mstodo' | 'apple' | 'google' | 'etesync' | 'silentsuite'
 
-const brandColor: Record<Brand, string> = {
-  todoist: '#E44332',
-  mstodo: '#2564CF',
-  apple: '#A1A1A6',
-  google: '#4285F4',
-  etesync: '#64748B',
-  silentsuite: '#34d399',
+const logoExt: Record<LogoKey, string> = {
+  todoist: 'svg',
+  mstodo: 'svg',
+  apple: 'svg',
+  google: 'svg',
+  etesync: 'png',
+  silentsuite: 'svg',
 }
 
-function BrandHeader({ brand, label, sub }: { brand: Brand; label: string; sub?: string }) {
-  const color = brandColor[brand]
+function BrandHeader({ logo, label, sub }: { logo: LogoKey; label: string; sub?: string }) {
   return (
     <div className="flex items-center gap-4 mt-12 mb-4">
-      <div
-        className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 border"
-        style={{ backgroundColor: `${color}1A`, borderColor: `${color}66` }}
-      >
-        <span style={{ color }} className="text-lg font-bold">
-          {label[0]}
-        </span>
+      <div className="w-12 h-12 rounded-lg bg-white p-2 flex items-center justify-center flex-shrink-0">
+        <img
+          src={`/blog/logos/${logo}.${logoExt[logo]}`}
+          alt={`${label} logo`}
+          className="w-full h-full object-contain"
+        />
       </div>
       <div>
         <h2 className="!mt-0 !mb-0">{label}</h2>
@@ -29,19 +27,49 @@ function BrandHeader({ brand, label, sub }: { brand: Brand; label: string; sub?:
   )
 }
 
-function cellClass(value: string): string {
+function cellClass(value: string, invert = false): string {
   const v = value.trim().toLowerCase()
-  if (v === 'yes' || v === 'yes*' || v.startsWith('yes ') || v === 'active') {
-    return 'bg-teal-400/15 text-teal-300 font-semibold'
-  }
-  if (v === 'no' || v === 'abandoned' || v === 'outdated') {
-    return 'bg-red-500/15 text-red-300 font-semibold'
-  }
+  const isPositive = v === 'yes' || v === 'yes*' || v.startsWith('yes ') || v === 'active'
+  const isNegative = v === 'no' || v === 'abandoned' || v === 'outdated'
+
+  // For rows where "No" is the privacy-good answer (e.g. "Server can read your tasks"),
+  // flip the colour mapping.
+  const good = invert ? isNegative : isPositive
+  const bad = invert ? isPositive : isNegative
+
+  if (good) return 'bg-teal-400/15 text-teal-300 font-semibold'
+  if (bad) return 'bg-red-500/15 text-red-300 font-semibold'
   if (v === 'partial' || v.startsWith('via ') || v === 'limited' || v === 'planned') {
     return 'bg-amber-500/15 text-amber-300 font-semibold'
   }
   return 'text-navy-300'
 }
+
+interface Row {
+  feature: string
+  invert?: boolean
+  values: string[]
+}
+
+const columns: { logo: LogoKey; label: string }[] = [
+  { logo: 'todoist', label: 'Todoist' },
+  { logo: 'mstodo', label: 'MS To Do' },
+  { logo: 'apple', label: 'Apple Reminders' },
+  { logo: 'google', label: 'Google Tasks' },
+  { logo: 'etesync', label: 'EteSync' },
+  { logo: 'silentsuite', label: 'SilentSuite' },
+]
+
+const rows: Row[] = [
+  { feature: 'E2EE tasks', values: ['No', 'No', 'Partial', 'No', 'Yes', 'Yes'] },
+  { feature: 'Server can read your tasks', invert: true, values: ['Yes', 'Yes', 'Partial', 'Yes', 'No', 'No'] },
+  { feature: 'Cross-platform', values: ['Yes', 'Yes', 'No', 'Yes', 'Yes', 'Yes'] },
+  { feature: 'Open source', values: ['No', 'No', 'No', 'No', 'Yes', 'Yes'] },
+  { feature: 'Self-hostable', values: ['No', 'No', 'No', 'No', 'Yes', 'Yes'] },
+  { feature: 'CalDAV / standard sync', values: ['No', 'No', 'No', 'No', 'Via bridge', 'Yes*'] },
+  { feature: 'Status', values: ['Active', 'Active', 'Active', 'Active', 'Abandoned', 'Active'] },
+  { feature: 'Price', values: ['Free / from $5/mo', 'Free', 'Bundled with iCloud', 'Free', 'Was €2/mo', 'From €3/mo'] },
+]
 
 export default function EncryptedTasksAndTodoLists2026() {
   return (
@@ -95,7 +123,7 @@ export default function EncryptedTasksAndTodoLists2026() {
         plus whoever issues a subpoena.&rdquo;
       </p>
 
-      <BrandHeader brand="todoist" label="Todoist" sub="Doist, Czech Republic / global" />
+      <BrandHeader logo="todoist" label="Todoist" sub="Doist, Czech Republic / global" />
 
       <p>
         <a href="https://todoist.com/" target="_blank" rel="noopener noreferrer">
@@ -118,7 +146,7 @@ export default function EncryptedTasksAndTodoLists2026() {
         don&apos;t put it in Todoist either.
       </p>
 
-      <BrandHeader brand="mstodo" label="Microsoft To Do" sub="Microsoft, USA" />
+      <BrandHeader logo="mstodo" label="Microsoft To Do" sub="Microsoft, USA" />
 
       <p>
         <a
@@ -143,7 +171,7 @@ export default function EncryptedTasksAndTodoLists2026() {
         reach.
       </p>
 
-      <BrandHeader brand="apple" label="Apple Reminders" sub="Apple, USA" />
+      <BrandHeader logo="apple" label="Apple Reminders" sub="Apple, USA" />
 
       <p>
         <a
@@ -175,7 +203,7 @@ export default function EncryptedTasksAndTodoLists2026() {
         Apple&apos;s reminders.
       </p>
 
-      <BrandHeader brand="google" label="Google Tasks" sub="Google, USA" />
+      <BrandHeader logo="google" label="Google Tasks" sub="Google, USA" />
 
       <p>
         <a
@@ -194,7 +222,7 @@ export default function EncryptedTasksAndTodoLists2026() {
         absolutely visible to Google.
       </p>
 
-      <BrandHeader brand="etesync" label="EteSync" sub="Stalled, but still running" />
+      <BrandHeader logo="etesync" label="EteSync" sub="Stalled, but still running" />
 
       <p>
         <a
@@ -220,7 +248,7 @@ export default function EncryptedTasksAndTodoLists2026() {
         .
       </p>
 
-      <BrandHeader brand="silentsuite" label="SilentSuite" sub="Maintained continuation of Etebase" />
+      <BrandHeader logo="silentsuite" label="SilentSuite" sub="Maintained continuation of Etebase" />
 
       <div className="my-8 p-6 sm:p-8 rounded-2xl border border-teal-400/30 bg-gradient-to-br from-teal-400/10 to-navy-900/40 not-prose">
         <div className="flex items-start gap-4 mb-4">
@@ -296,28 +324,18 @@ export default function EncryptedTasksAndTodoLists2026() {
               <th className="text-left p-3 font-semibold text-navy-300 border-b border-navy-700">
                 &nbsp;
               </th>
-              {[
-                { key: 'todoist', label: 'Todoist' },
-                { key: 'mstodo', label: 'MS To Do' },
-                { key: 'apple', label: 'Apple Reminders' },
-                { key: 'google', label: 'Google Tasks' },
-                { key: 'etesync', label: 'EteSync' },
-                { key: 'silentsuite', label: 'SilentSuite' },
-              ].map(({ key, label }) => (
+              {columns.map(({ logo, label }) => (
                 <th
-                  key={key}
+                  key={logo}
                   className="text-center p-3 border-b border-navy-700"
                 >
                   <div className="flex flex-col items-center gap-1.5">
-                    <div
-                      className="w-9 h-9 rounded-md flex items-center justify-center text-base font-bold border"
-                      style={{
-                        backgroundColor: `${brandColor[key as Brand]}1A`,
-                        borderColor: `${brandColor[key as Brand]}66`,
-                        color: brandColor[key as Brand],
-                      }}
-                    >
-                      {label[0]}
+                    <div className="w-9 h-9 rounded-md bg-white p-1.5 flex items-center justify-center">
+                      <img
+                        src={`/blog/logos/${logo}.${logoExt[logo]}`}
+                        alt={`${label} logo`}
+                        className="w-full h-full object-contain"
+                      />
                     </div>
                     <span className="text-xs font-semibold text-white whitespace-nowrap">
                       {label}
@@ -328,16 +346,7 @@ export default function EncryptedTasksAndTodoLists2026() {
             </tr>
           </thead>
           <tbody>
-            {[
-              ['E2EE tasks', 'No', 'No', 'Partial', 'No', 'Yes', 'Yes'],
-              ['Server can read your tasks', 'Yes', 'Yes', 'Partial', 'Yes', 'No', 'No'],
-              ['Cross-platform', 'Yes', 'Yes', 'No', 'Yes', 'Yes', 'Yes'],
-              ['Open source', 'No', 'No', 'No', 'No', 'Yes', 'Yes'],
-              ['Self-hostable', 'No', 'No', 'No', 'No', 'Yes', 'Yes'],
-              ['CalDAV / standard sync', 'No', 'No', 'No', 'No', 'Via bridge', 'Yes*'],
-              ['Status', 'Active', 'Active', 'Active', 'Active', 'Abandoned', 'Active'],
-              ['Price', 'Free / from $5/mo', 'Free', 'Bundled with iCloud', 'Free', 'Was €2/mo', 'From €3/mo'],
-            ].map(([feature, ...values], rowIdx) => (
+            {rows.map(({ feature, invert, values }, rowIdx) => (
               <tr
                 key={feature}
                 className={rowIdx % 2 === 0 ? 'bg-navy-900/20' : 'bg-transparent'}
@@ -348,7 +357,7 @@ export default function EncryptedTasksAndTodoLists2026() {
                 {values.map((val, i) => (
                   <td
                     key={i}
-                    className={`text-center p-3 border-t border-navy-700/50 ${cellClass(val)}`}
+                    className={`text-center p-3 border-t border-navy-700/50 ${cellClass(val, invert)}`}
                   >
                     {val}
                   </td>

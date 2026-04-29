@@ -102,7 +102,7 @@ export const posts: BlogPost[] = [
     slug: 'walled-gardens-vs-system-integration-encrypted-pim',
     title: 'Walled Gardens vs System Integration: The Encrypted-PIM Trade-off',
     description:
-      'Proton and Tuta give you E2EE inside their own apps. SilentSuite and EteSync give you E2EE that plugs into Apple Calendar, Thunderbird, and DAVx5 through a CalDAV bridge. Both are valid, but which fits you?',
+      'Proton\'s walled garden is a deliberate privacy choice: no app on your phone gets contact-list access. System integration via CalDAV/CardDAV trades that surface area for convenience. The right call depends on whether you trust your OS and your app set.',
     date: '2026-05-27',
     author: 'Tim Ross',
     readingTime: '5 min read',

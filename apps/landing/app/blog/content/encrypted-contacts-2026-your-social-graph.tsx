@@ -1,26 +1,24 @@
-type Brand = 'google' | 'apple' | 'proton' | 'tuta' | 'nextcloud' | 'etesync' | 'silentsuite'
+type LogoKey = 'google' | 'apple' | 'proton' | 'tuta' | 'nextcloud' | 'etesync' | 'silentsuite'
 
-const brandColor: Record<Brand, string> = {
-  google: '#4285F4',
-  apple: '#A1A1A6',
-  proton: '#6D28D9',
-  tuta: '#DC2626',
-  nextcloud: '#0284C7',
-  etesync: '#64748B',
-  silentsuite: '#34d399',
+const logoExt: Record<LogoKey, string> = {
+  google: 'svg',
+  apple: 'svg',
+  proton: 'svg',
+  tuta: 'svg',
+  nextcloud: 'svg',
+  etesync: 'png',
+  silentsuite: 'svg',
 }
 
-function BrandHeader({ brand, label, sub }: { brand: Brand; label: string; sub?: string }) {
-  const color = brandColor[brand]
+function BrandHeader({ logo, label, sub }: { logo: LogoKey; label: string; sub?: string }) {
   return (
     <div className="flex items-center gap-4 mt-12 mb-4">
-      <div
-        className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 border"
-        style={{ backgroundColor: `${color}1A`, borderColor: `${color}66` }}
-      >
-        <span style={{ color }} className="text-lg font-bold">
-          {label[0]}
-        </span>
+      <div className="w-12 h-12 rounded-lg bg-white p-2 flex items-center justify-center flex-shrink-0">
+        <img
+          src={`/blog/logos/${logo}.${logoExt[logo]}`}
+          alt={`${label} logo`}
+          className="w-full h-full object-contain"
+        />
       </div>
       <div>
         <h2 className="!mt-0 !mb-0">{label}</h2>
@@ -30,19 +28,50 @@ function BrandHeader({ brand, label, sub }: { brand: Brand; label: string; sub?:
   )
 }
 
-function cellClass(value: string): string {
+function cellClass(value: string, invert = false): string {
   const v = value.trim().toLowerCase()
-  if (v === 'yes' || v === 'yes*' || v.startsWith('yes ') || v === 'active') {
-    return 'bg-teal-400/15 text-teal-300 font-semibold'
-  }
-  if (v === 'no' || v === 'abandoned' || v === 'outdated') {
-    return 'bg-red-500/15 text-red-300 font-semibold'
-  }
+  const isPositive = v === 'yes' || v === 'yes*' || v.startsWith('yes ') || v === 'active'
+  const isNegative = v === 'no' || v === 'abandoned' || v === 'outdated'
+
+  // For rows where "No" is the privacy-good answer (e.g. "Names readable to server"),
+  // flip the colour mapping.
+  const good = invert ? isNegative : isPositive
+  const bad = invert ? isPositive : isNegative
+
+  if (good) return 'bg-teal-400/15 text-teal-300 font-semibold'
+  if (bad) return 'bg-red-500/15 text-red-300 font-semibold'
   if (v === 'partial' || v.startsWith('via ') || v === 'limited' || v === 'planned') {
     return 'bg-amber-500/15 text-amber-300 font-semibold'
   }
   return 'text-navy-300'
 }
+
+interface Row {
+  feature: string
+  invert?: boolean
+  values: string[]
+}
+
+const columns: { logo: LogoKey; label: string }[] = [
+  { logo: 'google', label: 'Google' },
+  { logo: 'apple', label: 'iCloud' },
+  { logo: 'proton', label: 'Proton' },
+  { logo: 'tuta', label: 'Tuta' },
+  { logo: 'nextcloud', label: 'Nextcloud' },
+  { logo: 'etesync', label: 'EteSync' },
+  { logo: 'silentsuite', label: 'SilentSuite' },
+]
+
+const rows: Row[] = [
+  { feature: 'E2EE all fields', values: ['No', 'Partial', 'Partial', 'Yes', 'No', 'Yes', 'Yes'] },
+  { feature: 'Names readable to server', invert: true, values: ['Yes', 'Partial', 'Yes', 'No', 'Yes', 'No', 'No'] },
+  { feature: 'CardDAV support', values: ['No', 'Partial', 'No', 'No', 'Yes', 'Via bridge', 'Yes*'] },
+  { feature: 'Cross-platform', values: ['Yes', 'Limited', 'Limited', 'Limited', 'Yes', 'Yes', 'Yes'] },
+  { feature: 'Open source', values: ['No', 'No', 'Partial', 'Yes', 'Yes', 'Yes', 'Yes'] },
+  { feature: 'Self-hostable', values: ['No', 'No', 'No', 'No', 'Yes', 'Yes', 'Yes'] },
+  { feature: 'Status', values: ['Active', 'Active', 'Active', 'Active', 'Active', 'Abandoned', 'Active'] },
+  { feature: 'Price', values: ['Free', 'Bundled with iCloud', 'Free / from €4/mo', 'Free / from €3/mo', 'Self-host cost', 'Was €2/mo', 'From €3/mo'] },
+]
 
 export default function EncryptedContacts2026YourSocialGraph() {
   return (
@@ -104,7 +133,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
         And almost nobody encrypts it.
       </p>
 
-      <BrandHeader brand="google" label="Google Contacts" sub="Google, USA" />
+      <BrandHeader logo="google" label="Google Contacts" sub="Google, USA" />
 
       <p>
         <a
@@ -128,7 +157,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
         machine-readable processing.
       </p>
 
-      <BrandHeader brand="apple" label="iCloud Contacts" sub="Apple, USA" />
+      <BrandHeader logo="apple" label="iCloud Contacts" sub="Apple, USA" />
 
       <p>
         <a
@@ -158,7 +187,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
         endpoint, because Apple has to decrypt to serve those clients.
       </p>
 
-      <BrandHeader brand="proton" label="Proton Contacts" sub="Proton, Switzerland" />
+      <BrandHeader logo="proton" label="Proton Contacts" sub="Proton, Switzerland" />
 
       <p>
         <a
@@ -182,7 +211,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
         the notes you wrote about them.
       </p>
 
-      <BrandHeader brand="tuta" label="Tuta Contacts" sub="Tuta, Germany" />
+      <BrandHeader logo="tuta" label="Tuta Contacts" sub="Tuta, Germany" />
 
       <p>
         <a
@@ -199,7 +228,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
         is fine. If you don&apos;t, the data is functionally trapped.
       </p>
 
-      <BrandHeader brand="nextcloud" label="Nextcloud Contacts" sub="Self-hosted CardDAV" />
+      <BrandHeader logo="nextcloud" label="Nextcloud Contacts" sub="Self-hosted CardDAV" />
 
       <p>
         <a
@@ -223,7 +252,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
         else&apos;s server, which is a different threat model entirely.
       </p>
 
-      <BrandHeader brand="etesync" label="EteSync" sub="The encrypted option that stalled" />
+      <BrandHeader logo="etesync" label="EteSync" sub="The encrypted option that stalled" />
 
       <p>
         EteSync was, until recently, the only mainstream service offering
@@ -249,7 +278,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
         .
       </p>
 
-      <BrandHeader brand="silentsuite" label="SilentSuite Contacts" sub="Maintained Etebase, EU-hosted" />
+      <BrandHeader logo="silentsuite" label="SilentSuite Contacts" sub="Maintained Etebase, EU-hosted" />
 
       <div className="my-8 p-6 sm:p-8 rounded-2xl border border-teal-400/30 bg-gradient-to-br from-teal-400/10 to-navy-900/40 not-prose">
         <div className="flex items-start gap-4 mb-4">
@@ -329,29 +358,18 @@ export default function EncryptedContacts2026YourSocialGraph() {
               <th className="text-left p-3 font-semibold text-navy-300 border-b border-navy-700">
                 &nbsp;
               </th>
-              {[
-                { key: 'google', label: 'Google' },
-                { key: 'apple', label: 'iCloud' },
-                { key: 'proton', label: 'Proton' },
-                { key: 'tuta', label: 'Tuta' },
-                { key: 'nextcloud', label: 'Nextcloud' },
-                { key: 'etesync', label: 'EteSync' },
-                { key: 'silentsuite', label: 'SilentSuite' },
-              ].map(({ key, label }) => (
+              {columns.map(({ logo, label }) => (
                 <th
-                  key={key}
+                  key={logo}
                   className="text-center p-3 border-b border-navy-700"
                 >
                   <div className="flex flex-col items-center gap-1.5">
-                    <div
-                      className="w-9 h-9 rounded-md flex items-center justify-center text-base font-bold border"
-                      style={{
-                        backgroundColor: `${brandColor[key as Brand]}1A`,
-                        borderColor: `${brandColor[key as Brand]}66`,
-                        color: brandColor[key as Brand],
-                      }}
-                    >
-                      {label[0]}
+                    <div className="w-9 h-9 rounded-md bg-white p-1.5 flex items-center justify-center">
+                      <img
+                        src={`/blog/logos/${logo}.${logoExt[logo]}`}
+                        alt={`${label} logo`}
+                        className="w-full h-full object-contain"
+                      />
                     </div>
                     <span className="text-xs font-semibold text-white whitespace-nowrap">
                       {label}
@@ -362,16 +380,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
             </tr>
           </thead>
           <tbody>
-            {[
-              ['E2EE all fields', 'No', 'Partial', 'Partial', 'Yes', 'No', 'Yes', 'Yes'],
-              ['Names readable to server', 'Yes', 'Partial', 'Yes', 'No', 'Yes', 'No', 'No'],
-              ['CardDAV support', 'No', 'Partial', 'No', 'No', 'Yes', 'Via bridge', 'Yes*'],
-              ['Cross-platform', 'Yes', 'Limited', 'Limited', 'Limited', 'Yes', 'Yes', 'Yes'],
-              ['Open source', 'No', 'No', 'Partial', 'Yes', 'Yes', 'Yes', 'Yes'],
-              ['Self-hostable', 'No', 'No', 'No', 'No', 'Yes', 'Yes', 'Yes'],
-              ['Status', 'Active', 'Active', 'Active', 'Active', 'Active', 'Abandoned', 'Active'],
-              ['Price', 'Free', 'Bundled with iCloud', 'Free / from €4/mo', 'Free / from €3/mo', 'Self-host cost', 'Was €2/mo', 'From €3/mo'],
-            ].map(([feature, ...values], rowIdx) => (
+            {rows.map(({ feature, invert, values }, rowIdx) => (
               <tr
                 key={feature}
                 className={rowIdx % 2 === 0 ? 'bg-navy-900/20' : 'bg-transparent'}
@@ -382,7 +391,7 @@ export default function EncryptedContacts2026YourSocialGraph() {
                 {values.map((val, i) => (
                   <td
                     key={i}
-                    className={`text-center p-3 border-t border-navy-700/50 ${cellClass(val)}`}
+                    className={`text-center p-3 border-t border-navy-700/50 ${cellClass(val, invert)}`}
                   >
                     {val}
                   </td>

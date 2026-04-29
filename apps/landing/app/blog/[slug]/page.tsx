@@ -83,21 +83,28 @@ export default async function BlogPost({
       {/* Hero cover */}
       <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-8">
         <div className="relative w-full rounded-2xl overflow-hidden border border-navy-700/50" style={{ aspectRatio: '16/9' }}>
-          {/* Cover image */}
+          {/* Cover image — kept near full strength so the cover graphic is actually visible. */}
           {post.coverImage ? (
             <Image
               src={post.coverImage}
               alt={post.title}
               fill
-              className="object-cover opacity-60"
+              className="object-cover opacity-90"
               priority
             />
           ) : (
             <div className="absolute inset-0 bg-gradient-to-br from-navy-900 to-navy-950" />
           )}
 
-          {/* Dark overlay */}
-          <div className="absolute inset-0 bg-black/30" />
+          {/* Title-legibility overlay: darker behind the centered title, lighter at edges
+              so the cover artwork still reads. */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(ellipse at center, rgba(10, 16, 24, 0.78) 0%, rgba(10, 16, 24, 0.5) 45%, rgba(10, 16, 24, 0.18) 85%)',
+            }}
+          />
 
           {/* Content overlay */}
           <div className="relative z-10 flex flex-col items-center justify-center h-full px-6 sm:px-12 py-10 text-center">

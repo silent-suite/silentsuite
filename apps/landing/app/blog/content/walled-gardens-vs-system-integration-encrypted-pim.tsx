@@ -2,222 +2,211 @@ export default function WalledGardensVsSystemIntegrationEncryptedPim() {
   return (
     <>
       <p>
-        SilentSuite is an open-source, end-to-end encrypted alternative to
-        Google Calendar, Contacts, and Tasks, built on the{' '}
-        <a
-          href="https://www.etebase.com/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Etebase protocol
-        </a>
-        . What sets it apart from Proton and Tuta isn&apos;t the encryption,
-        which is real in all three. It&apos;s the integration model. Proton
-        and Tuta give you E2EE inside their own apps. SilentSuite gives you
-        E2EE that plugs into Apple Calendar, Thunderbird, DAVx5, and the
-        rest of the standards-based ecosystem through a CalDAV/CardDAV
-        bridge. From &euro;3/mo, AGPL-3.0, EU-hosted.
+        The honest summary first: Proton&apos;s walled garden is a deliberate
+        privacy choice, not a missing feature. By refusing to expose
+        CalDAV/CardDAV, Proton makes sure no other app on your phone or
+        laptop can read your encrypted calendar or contacts. SilentSuite
+        gives you both shapes. The webapp is a walled garden in exactly the
+        same sense. The standalone bridge opens the door to Apple Calendar,
+        Thunderbird, and DAVx5 if you decide your operating system and the
+        apps on it are trusted enough to see the plaintext. From &euro;3/mo,
+        AGPL-3.0, EU-hosted.
       </p>
 
       <p>
-        That&apos;s a real architectural trade-off, and we want to walk
-        through it honestly. Both models are valid. They suit different
-        people for different reasons.
+        This post walks through the trade-off the way we actually think
+        about it. There is no universally correct answer. There is an answer
+        that fits your device, your threat model, and the apps you live in.
       </p>
 
-      <h2>What is a walled garden in privacy software?</h2>
+      <h2>What does &ldquo;walled garden&rdquo; actually buy you?</h2>
 
       <p>
-        A walled garden is a service where the apps, the protocol, and the
-        servers are all controlled by one provider. Inside the garden,
-        things work beautifully and consistently because the provider owns
-        every layer. Outside the garden, things either don&apos;t work or
-        work poorly, because the provider doesn&apos;t expose standard
-        interfaces.
-      </p>
-
-      <p>
-        Apple&apos;s ecosystem is the canonical walled garden: iMessage
-        only works between iPhones, AirDrop only between Apple devices,
-        FaceTime only between Apple accounts. Inside the garden, the
-        experience is polished. Outside, it&apos;s SMS or nothing.
+        In privacy software, a walled garden is a service whose data only
+        ever appears inside the provider&apos;s own apps. There is no
+        CalDAV, no CardDAV, no IMAP, no API for third-party clients. You
+        read your calendar in Proton Calendar. You read your contacts in
+        Proton Mail. Nothing else on your machine can.
       </p>
 
       <p>
-        Privacy companies often adopt the walled-garden pattern too. Proton
-        and Tuta both encrypt their email, calendar, and contacts well, but
-        only inside their own apps. There&apos;s no IMAP for encrypted
-        email, no CalDAV for encrypted calendar, no CardDAV for encrypted
-        contacts. The encryption is real. The lock-in is also real.
-      </p>
-
-      <h2>Is Proton a walled garden?</h2>
-
-      <p>
-        For Proton Calendar and Proton Contacts, yes. There&apos;s no CalDAV
-        endpoint, no CardDAV endpoint, no way to surface your encrypted
-        calendar in Apple Calendar or Thunderbird, no way to export your
-        contacts to a third-party address book without losing the
-        encryption boundary.
+        That sounds like lock-in. It is also a real privacy property.
+        On a typical phone, your address book is the most-requested
+        permission on the whole device. Every messaging app, every social
+        app, every &ldquo;sign up with phone number&rdquo; flow asks for it.
+        Every advertising SDK that ships inside an app you barely think
+        about asks for it. The moment your contacts live in the system
+        contacts provider, those apps can read them.
       </p>
 
       <p>
-        For Proton Mail, the answer is more nuanced. Proton offers an{' '}
-        <a
-          href="https://proton.me/mail/bridge"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          IMAP bridge
-        </a>{' '}
-        for paid users. The bridge runs locally, decrypts on your machine,
-        and exposes your encrypted mailbox over standard IMAP/SMTP to clients
-        like Thunderbird or Apple Mail. That&apos;s the same architectural
-        idea SilentSuite uses for CalDAV and CardDAV: a local bridge that
-        decrypts on the client and exposes a standards-compliant endpoint to
-        the rest of your tools.
+        Proton looked at that picture and decided not to plug into it. Their
+        encrypted contacts only ever appear inside Proton&apos;s own apps,
+        which they wrote, which they audit. No third-party SDK gets a
+        chance. That is the upside of the walled garden, and it is the main
+        reason Proton has chosen not to build a CalDAV/CardDAV bridge for
+        calendar and contacts the way they did for email.
       </p>
 
       <p>
-        It&apos;s telling that Proton built a bridge for email but not for
-        calendar or contacts. Those products are still walled.
+        For a meaningful share of users this is the better privacy posture.
+        End-to-end encryption protects data on the network and on the
+        server. It does not protect data on a device that has 80 installed
+        apps, half of which would happily read your address book if asked.
+        A walled garden does.
       </p>
 
-      <h2>What is the system-integration model?</h2>
+      <h2>What does system integration actually cost?</h2>
 
       <p>
-        The opposite of a walled garden is a service that works through
-        open protocols, so your data shows up in the apps you already use.
-        For PIM (personal information management), that means CalDAV for
-        calendars and tasks, and CardDAV for contacts.
-      </p>
-
-      <p>
-        Both protocols were standardized roughly 15 to 20 years ago. They
-        run on top of HTTP, they&apos;re supported natively by Apple
-        Calendar, iOS Contacts, Thunderbird, and through{' '}
-        <a
-          href="https://www.davx5.com/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          DAVx5
-        </a>{' '}
-        on Android. If you can speak CalDAV, you can show up as a calendar
-        in macOS Calendar.app. If you can speak CardDAV, you can show up as
-        an address book in iOS Contacts.
+        System integration via CalDAV (calendars and tasks) and CardDAV
+        (contacts) is the opposite shape. Your encrypted PIM data is
+        decrypted by a local bridge and exposed to the operating system as
+        a standard calendar or address book. From there, any app on the
+        system that has the relevant permission can read it.
       </p>
 
       <p>
-        The catch with the system-integration model is that vanilla CalDAV
-        and CardDAV aren&apos;t end-to-end encrypted. The server has to
-        parse vCards and iCalendar events to support search, recurrence
-        expansion, and the merge logic those protocols expect. Plaintext on
-        the server is the default.
+        On a typical iPhone or stock Android phone, that surface is wide.
+        Granting contacts permission to one app gives that app access to
+        every contact on the device, including the encrypted ones from
+        SilentSuite that the bridge has just made visible. Granting
+        calendar permission has the same effect. The encryption boundary
+        between you and your sync provider is intact. The boundary between
+        your contacts and the apps you have installed is whatever the
+        operating system enforces.
       </p>
 
       <p>
-        SilentSuite (and EteSync before it) sidestep this by syncing at a
-        different layer: encrypted blobs over the Etebase protocol, with a
-        local bridge that decrypts the blobs and re-exposes them as
-        standards-compliant CalDAV/CardDAV to Apple Calendar, Thunderbird,
-        and DAVx5. You get the integration benefits of an open protocol
-        without giving the server any of the data in plaintext.
+        That is not a bug in the bridge model. It is the explicit
+        trade-off. You get the encrypted data inside the apps you already
+        use, including the dialer that calls someone when you tap their
+        number, the calendar that reminds you about a meeting, the maps app
+        that resolves an address. Convenience comes back. Some surface area
+        comes with it.
       </p>
 
-      <h2>When walled gardens win</h2>
+      <h2>When walled gardens are the right call</h2>
 
       <p>
-        Walled gardens are the right choice in several real scenarios:
+        Pick the walled garden when you cannot personally vouch for every
+        app on your device, and when system-level convenience is not worth
+        the spread. Concrete cases:
       </p>
 
       <ul>
         <li>
-          <strong>You want one bill and one app for everything.</strong>{' '}
-          Proton Unlimited bundles email, calendar, contacts, drive, VPN, and
-          a password manager into one subscription. If you don&apos;t need
-          your data in any other app, that&apos;s genuinely simpler.
+          <strong>Stock Android with the usual app sprawl.</strong> Phones
+          come pre-loaded with apps from the manufacturer, the carrier, and
+          a long tail of third-party SDKs embedded in apps you did install.
+          Granting contacts permission is rarely a single decision;
+          it&apos;s a decision you keep making, often for apps you forgot
+          about.
         </li>
         <li>
-          <strong>You don&apos;t want to think about clients.</strong>{' '}
-          Proton&apos;s and Tuta&apos;s mobile apps are well-designed,
-          install in one tap, and require no configuration. A bridge or
-          DAVx5 setup is more steps.
+          <strong>iOS for non-technical users.</strong> Apple&apos;s
+          permission model is good, but the path of least resistance is
+          still to tap &ldquo;Allow.&rdquo; If you don&apos;t want to make
+          a permissions decision every time an app asks, walling the data
+          off entirely is a stronger guarantee than careful clicking.
         </li>
         <li>
-          <strong>You&apos;re already inside the ecosystem.</strong> If
-          you&apos;re a Proton Mail customer, Proton Calendar is the
-          path-of-least-resistance choice. Adding a separate calendar service
-          when you already have one bundled is a hard sell.
+          <strong>Windows or macOS with a lot of installed software.</strong>{' '}
+          The contacts and calendar APIs on both desktop OSes are reachable
+          by any app the user runs. Office, Adobe, browser extensions,
+          random utilities. A walled garden keeps your encrypted data out
+          of all of that.
         </li>
         <li>
-          <strong>The integrations you&apos;d want don&apos;t exist
-          anyway.</strong> If you live entirely on a phone and never use a
-          desktop calendar or email client, the integration argument is
-          theoretical. You don&apos;t actually have other apps to plug into.
+          <strong>Anyone whose threat model includes the device itself.</strong>{' '}
+          If the laptop or phone is shared, managed by an employer,
+          inherited from a partner, or sometimes used by a child, the
+          fewer paths to the data, the better.
         </li>
       </ul>
 
       <p>
-        We don&apos;t argue against walled gardens in general. They are a
-        legitimate trade-off, and for a meaningful share of users they
-        produce a better day-to-day experience.
+        The privacy point is sharp: the only data that cannot leak through
+        an app permission is data that the OS doesn&apos;t have. Walled
+        gardens are the cleanest way to get that.
       </p>
 
-      <h2>When system integration wins</h2>
+      <h2>When system integration is the right call</h2>
 
       <p>
-        The system-integration model wins when any of the following are true:
+        Pick system integration when you trust the operating system and you
+        trust the apps that have permission to read the system address book
+        or calendar. That is a real, achievable threat model in 2026,
+        especially on a few specific platforms:
       </p>
 
       <ul>
         <li>
-          <strong>You already have a calendar app you like.</strong> Apple
-          Calendar on macOS, Thunderbird, Fantastical, Outlook (yes, even
-          Outlook). If your encrypted service supports CalDAV, you keep your
-          favorite client and gain the encryption.
+          <strong>GrapheneOS, CalyxOS, or another hardened Android.</strong>{' '}
+          You picked the OS specifically to control the app surface. You
+          install very little, you grant permissions deliberately, and the
+          OS itself isn&apos;t mining your contacts on Google&apos;s behalf.
+          On these phones, putting your encrypted contacts into the system
+          contacts provider via DAVx5 gets you the convenience back without
+          the spread.
         </li>
         <li>
-          <strong>You use multiple devices from different ecosystems.</strong>{' '}
-          A Linux laptop, an iPhone, an Android tablet, a NAS at home.
-          Standard protocols mean you don&apos;t have to install a
-          provider-specific app on each.
+          <strong>Linux desktops where you control the package set.</strong>{' '}
+          Thunderbird, Evolution, KDE Kontact, GNOME Calendar. The number of
+          apps that can read your CalDAV/CardDAV data is bounded by what
+          you installed. If you trust that set, the bridge model is a
+          better fit than browsing to a webapp every time you want to look
+          up a number.
         </li>
         <li>
-          <strong>You want your data accessible from automation.</strong>{' '}
-          Home Assistant, scripts, calendar widgets, scheduling tools. CalDAV
-          is everywhere; proprietary calendar APIs are not.
+          <strong>Locked-down macOS where you actually use the
+          permission prompts.</strong> If you reflexively decline calendar
+          and contacts access for new apps, and only grant it to known good
+          ones, you&apos;ve approximated the same posture by hand.
         </li>
         <li>
-          <strong>You&apos;re cautious about lock-in.</strong> If your
-          encrypted service shuts down or raises prices, a CalDAV-compatible
-          calendar can be re-pointed at a different CalDAV-compatible server
-          without exporting and re-importing.
-        </li>
-        <li>
-          <strong>You self-host or want the option.</strong> Open protocols
-          are what make it possible to run your own server and still use
-          mainstream client apps. Walled gardens make this practically
-          impossible.
+          <strong>Anyone who needs phone-level integration for daily
+          life.</strong> Tap a contact and call them. Get a calendar
+          notification on your watch. Have your maps app surface the
+          address of your next meeting. These are not luxuries for many
+          people; they are the workflow. Losing them is a real cost, not
+          just an aesthetic preference.
         </li>
       </ul>
 
-      <h2>How SilentSuite fits both shapes</h2>
+      <p>
+        The convenience point is sharp the other way: in a walled garden,
+        copying a phone number from your contacts app to your dialer is a
+        manual step. Pasting an event from your calendar app into your
+        meeting prep is a manual step. Multiplied across a day, it adds up
+        to noticeable friction. For users on a trusted OS, paying that
+        friction is the wrong trade.
+      </p>
+
+      <h2>How SilentSuite supports both</h2>
 
       <p>
-        SilentSuite is closer to the system-integration end of the spectrum,
-        but we ship our own apps as well. The Android app is native. The
-        web client is native. Tasks, contacts, and calendar live in one
-        product with one account.
+        SilentSuite is the same encrypted service either way. What
+        changes is where you decrypt it.
       </p>
 
       <p>
-        At the same time, the standalone CalDAV/CardDAV bridge means you
-        can put SilentSuite calendars and contacts inside Apple Calendar,
-        iOS Contacts, Thunderbird, Outlook, or any DAV-compatible client.
+        <strong>Walled-garden mode:</strong> use the SilentSuite web app and
+        the SilentSuite Android app only. Don&apos;t install the bridge,
+        don&apos;t add the CalDAV/CardDAV endpoint to the system OS. Your
+        encrypted calendar, contacts, and tasks live inside SilentSuite&apos;s
+        own apps and nowhere else. No other app on the device gets a path
+        to them. This is the closest equivalent to Proton&apos;s posture
+        for users who want it.
+      </p>
+
+      <p>
+        <strong>System-integration mode:</strong> install the standalone
+        CalDAV/CardDAV bridge. The bridge runs on your machine, holds your
+        decryption key locally, and exposes a standards-compliant endpoint
+        that Apple Calendar, Thunderbird, Outlook, or DAVx5 can read.
         Your encrypted PIM data appears alongside any other calendars and
-        address books you have. The bridge runs locally, decrypts under
-        your key, and exposes the standard protocol to the system app.
+        address books you have, in the apps you already use.
       </p>
 
       <div className="not-prose my-10 p-6 sm:p-8 rounded-2xl border border-teal-400/30 bg-gradient-to-br from-teal-400/10 to-navy-900/40">
@@ -227,7 +216,7 @@ export default function WalledGardensVsSystemIntegrationEncryptedPim() {
         <div className="text-sm text-navy-300 mb-6">
           Sync runs over Etebase ciphertext. The local bridge decrypts on
           your machine and serves CalDAV / CardDAV to whichever client app
-          you already use.
+          you trust enough to give the data to.
         </div>
         <div className="flex items-center justify-between gap-3 sm:gap-6">
           <div className="flex flex-col items-center text-center flex-1 min-w-0">
@@ -335,72 +324,93 @@ export default function WalledGardensVsSystemIntegrationEncryptedPim() {
       </div>
 
       <p>
-        It&apos;s more architectural complexity than a walled garden, but
-        it&apos;s also the only architecture that gives you both real E2EE
-        and the freedom to keep using the apps you like.
+        You can mix the two on different devices. Run system integration on
+        your GrapheneOS phone where you control the app surface, and stick
+        to the SilentSuite webapp on a work laptop you don&apos;t fully
+        trust. The encrypted store is the same in both places. Where the
+        plaintext appears is a per-device decision.
       </p>
 
       <h2>Doesn&apos;t the bridge break the encryption story?</h2>
 
       <p>
-        No. The bridge runs on your device. It holds your decryption key.
-        It never sends plaintext over the network. The connection between
-        the bridge and your client app (Apple Calendar, Thunderbird) is
-        local, on the same machine. Plaintext exists only on devices you
-        already control.
+        No. The bridge runs on your device and holds your decryption key
+        locally. It never sends plaintext over the network. The connection
+        between the bridge and your client app (Apple Calendar, Thunderbird)
+        is on the same machine. Encrypted at rest on the server, encrypted
+        in transit, decrypted only on the device that has the key. That
+        story is intact.
       </p>
 
       <p>
-        The threat model is the same as any other software running on your
-        machine: if your machine is compromised, your calendar can be read,
-        which would also be true if you used Proton&apos;s desktop app or
-        Apple Calendar with iCloud. Encryption protects data at rest on
-        servers you don&apos;t control. It cannot protect against an
-        attacker on the device that holds the key. That isn&apos;t a unique
-        property of the bridge model. It&apos;s true everywhere.
+        What does change is who on that device can read the plaintext. With
+        the walled-garden mode, only SilentSuite&apos;s own apps can. With
+        the bridge, every app that has permission to the system address
+        book or calendar can. That is the surface the bridge opens, and it
+        is the surface a walled garden closes.
       </p>
 
       <h2>So which should you pick?</h2>
 
       <p>
-        Walled garden if simplicity beats flexibility for you, and you live
-        comfortably inside one provider&apos;s app for everything. Proton
-        and Tuta are both reasonable choices and we&apos;d recommend them
-        over a plaintext alternative any day.
+        Pick the walled garden if you don&apos;t fully trust every app on
+        your device, or if you specifically want your contacts and calendar
+        out of the system surface where ad SDKs and other apps can reach
+        them. Proton and Tuta are both reasonable choices in this category;
+        SilentSuite&apos;s webapp-only mode is another.
       </p>
 
       <p>
-        System integration if you want your encrypted PIM data to coexist
-        with the rest of your tools, if you might switch ecosystems later,
-        if you self-host or want to, or if you simply prefer Apple Calendar
-        to a service-specific calendar app. SilentSuite is built for this
-        side of the trade-off.
+        Pick system integration if you run a hardened OS, control your app
+        set, and want your encrypted PIM data to flow naturally into the
+        rest of your tools. SilentSuite is built specifically to support
+        this side of the trade-off without compromising the encryption
+        boundary on the server.
+      </p>
+
+      <p>
+        Encryption protects data on the wire and on the server. The
+        walled-garden vs system-integration choice protects data on the
+        device. Both decisions matter. Pick them deliberately.
       </p>
 
       <h2>FAQ</h2>
 
       <p>
-        <strong>What&apos;s the difference between Proton and SilentSuite?</strong>
+        <strong>Why did Proton not build a CalDAV bridge?</strong>
         <br />
-        Proton is a bundled, walled-garden privacy suite (mail, calendar,
-        contacts, drive, VPN). SilentSuite is a focused PIM service
-        (calendar, contacts, tasks) that works inside the apps you already
-        use through CalDAV and CardDAV. Both are end-to-end encrypted.
+        Because exposing your encrypted contacts and calendar to the
+        operating system would let any app with permission read them.
+        Proton built an IMAP bridge for email because email is already
+        widely shared, but kept calendar and contacts walled off as a
+        deliberate privacy property. We think this framing is the most
+        honest one.
       </p>
 
       <p>
-        <strong>Can I use SilentSuite in Apple Calendar?</strong>
+        <strong>Can I use SilentSuite as a walled garden, like Proton?</strong>
         <br />
-        Yes, through our standalone CalDAV bridge. Same model as Proton
-        Mail&apos;s IMAP bridge, applied to calendar and contacts.
+        Yes. Use the SilentSuite web app and Android app only. Don&apos;t
+        install the bridge and don&apos;t configure CalDAV/CardDAV in your
+        OS. Your encrypted PIM data stays inside SilentSuite&apos;s own apps.
       </p>
 
       <p>
-        <strong>
-          Is the bridge open source?
-        </strong>
+        <strong>Is system integration safe on GrapheneOS?</strong>
         <br />
-        Yes. The server, clients, and bridge are all under AGPL-3.0.
+        Yes, in the sense that GrapheneOS gives you the tools to make it
+        safe. You install only the apps you actually want, you grant
+        contacts and calendar permission deliberately, and the OS itself
+        does not phone home with your data. On stock Android the same setup
+        is harder to defend.
+      </p>
+
+      <p>
+        <strong>Can I mix the two modes on different devices?</strong>
+        <br />
+        Yes. The encrypted store is one. Where you decrypt it is a
+        per-device choice. Bridge on your trusted Linux laptop and
+        GrapheneOS phone, webapp-only on your work machine.
       </p>
 
       <p>
@@ -412,25 +422,17 @@ export default function WalledGardensVsSystemIntegrationEncryptedPim() {
         yourself.
       </p>
 
-      <p>
-        <strong>Why didn&apos;t Proton build a calendar bridge?</strong>
-        <br />
-        We don&apos;t know. They built one for email, so the engineering
-        capability clearly exists. Calendar and contacts may simply not be
-        a priority for them right now. The walled-garden choice is partly a
-        product strategy decision, not just a technical limitation.
-      </p>
-
       <hr />
 
       <p>
-        Encryption alone isn&apos;t the differentiator anymore. The shape of
-        the integration is. If you want encrypted PIM that lives inside the
-        apps you already trust,{' '}
-        <a href="https://app.silentsuite.io/signup">try SilentSuite</a>. If
-        you want everything bundled inside one provider&apos;s apps, Proton
-        and Tuta are reasonable choices. Both options are better than the
-        plaintext default that almost everyone is still on.
+        Encryption alone is not the differentiator anymore. The shape of
+        the integration is. Some users want their encrypted PIM nailed
+        shut inside one provider&apos;s apps; some want it flowing through
+        the rest of their trusted tools.{' '}
+        <a href="https://app.silentsuite.io/signup">Try SilentSuite</a>{' '}
+        and pick the mode that fits your device. Proton and Tuta are
+        reasonable choices for the walled-garden side. Both options are
+        better than the plaintext default that almost everyone is still on.
       </p>
     </>
   )
