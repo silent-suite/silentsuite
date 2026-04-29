@@ -2,11 +2,11 @@ name: CI Server
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, dev]
     paths:
       - 'server/**'
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev]
     paths:
       - 'server/**'
 

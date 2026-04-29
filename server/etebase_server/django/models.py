@@ -95,6 +95,9 @@ class CollectionItem(models.Model):
 
     @cached_property
     def content(self) -> "CollectionItemRevision":
+        prefetched = getattr(self, "_prefetched_current_revisions", None)
+        if prefetched is not None:
+            return prefetched[0]
         return self.revisions.filter(current=True)[0]
 
     @property
