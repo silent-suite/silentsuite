@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#0A1018"/>
+      <stop offset="100%" stop-color="#1B2838"/>
+    </linearGradient>
+    <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#253549" stroke-width="0.5" opacity="0.3"/>
+    </pattern>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect width="1600" height="900" fill="url(#grid)"/>
+
+  <!-- Soft teal glow behind the encrypted card -->
+  <ellipse cx="1140" cy="450" rx="380" ry="320" fill="#34d399" opacity="0.08"/>
+
+  <!-- Vertical divider -->
+  <line x1="800" y1="120" x2="800" y2="780" stroke="#253549" stroke-width="1" opacity="0.6" stroke-dasharray="4 8"/>
+
+  <!-- =================================================== -->
+  <!-- LEFT: Plaintext task list (server can read)         -->
+  <!-- =================================================== -->
+  <text x="400" y="170" font-family="Inter, sans-serif" font-size="20" font-weight="600" fill="#94a3b8" text-anchor="middle" letter-spacing="2">
+    PLAINTEXT
+  </text>
+  <text x="400" y="200" font-family="Inter, sans-serif" font-size="13" fill="#64748B" text-anchor="middle" opacity="0.85">
+    Server reads everything
+  </text>
+
+  <g transform="translate(140, 240)">
+    <rect width="520" height="500" rx="18" fill="#1B2838" stroke="#334155" stroke-width="1.5"/>
+
+    <!-- Header -->
+    <rect x="0" y="0" width="520" height="56" rx="18" fill="#253549"/>
+    <rect x="0" y="38" width="520" height="18" fill="#253549"/>
+    <rect x="24" y="20" width="180" height="16" rx="3" fill="#94a3b8" opacity="0.4"/>
+    <circle cx="490" cy="28" r="6" fill="#94a3b8" opacity="0.4"/>
+
+    <!-- Task rows: visible to anyone with DB access -->
+    <g font-family="Inter, sans-serif" font-size="15" fill="#cbd5e1">
+      <!-- Row 1 -->
+      <circle cx="38" cy="100" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="60" y="106">Call doctor about MRI results</text>
+
+      <!-- Row 2 -->
+      <circle cx="38" cy="142" r="8" fill="#94a3b8" opacity="0.6"/>
+      <line x1="60" y1="142" x2="280" y2="142" stroke="#94a3b8" stroke-width="1" opacity="0.6"/>
+      <text x="60" y="148" opacity="0.55">Renew the passport</text>
+
+      <!-- Row 3 -->
+      <circle cx="38" cy="184" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="60" y="190">Cancel gym before contract auto-renew</text>
+
+      <!-- Row 4 -->
+      <circle cx="38" cy="226" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="60" y="232">Send divorce paperwork to lawyer</text>
+
+      <!-- Row 5 -->
+      <circle cx="38" cy="268" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="60" y="274">Pay tax bill by Friday</text>
+
+      <!-- Row 6 -->
+      <circle cx="38" cy="310" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="60" y="316">Therapy follow-up next Tuesday</text>
+
+      <!-- Row 7 -->
+      <circle cx="38" cy="352" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="60" y="358">Look up dosage for new medication</text>
+
+      <!-- Row 8 -->
+      <circle cx="38" cy="394" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="60" y="400">Reply to recruiter about Berlin role</text>
+
+      <!-- Row 9 (faded) -->
+      <circle cx="38" cy="436" r="8" fill="none" stroke="#94a3b8" stroke-width="1.5" opacity="0.5"/>
+      <text x="60" y="442" opacity="0.5">Buy birthday gift for Sarah</text>
+    </g>
+
+    <!-- "Server" tag -->
+    <g transform="translate(380, 460)">
+      <rect width="118" height="24" rx="6" fill="#F87171" opacity="0.18"/>
+      <text x="59" y="16" font-family="Inter, sans-serif" font-size="11" fill="#F87171" text-anchor="middle" font-weight="600">SERVER READS</text>
+    </g>
+  </g>
+
+  <!-- =================================================== -->
+  <!-- RIGHT: Encrypted task list (server can't read)      -->
+  <!-- =================================================== -->
+  <text x="1200" y="170" font-family="Inter, sans-serif" font-size="20" font-weight="600" fill="#34d399" text-anchor="middle" letter-spacing="2">
+    END-TO-END ENCRYPTED
+  </text>
+  <text x="1200" y="200" font-family="Inter, sans-serif" font-size="13" fill="#34d399" text-anchor="middle" opacity="0.7">
+    Server stores ciphertext only
+  </text>
+
+  <g transform="translate(940, 240)">
+    <rect width="520" height="500" rx="18" fill="#1B2838" stroke="#34d399" stroke-width="2"/>
+
+    <!-- Header -->
+    <rect x="0" y="0" width="520" height="56" rx="18" fill="#253549"/>
+    <rect x="0" y="38" width="520" height="18" fill="#253549"/>
+
+    <!-- Lock icon in header -->
+    <g transform="translate(20, 14)">
+      <rect x="0" y="9" width="22" height="16" rx="3" fill="none" stroke="#34d399" stroke-width="1.8"/>
+      <path d="M4 9 V6 a7 7 0 0 1 14 0 V9" fill="none" stroke="#34d399" stroke-width="1.8"/>
+    </g>
+    <rect x="56" y="20" width="140" height="16" rx="3" fill="#34d399" opacity="0.45"/>
+    <circle cx="490" cy="28" r="6" fill="#34d399" opacity="0.6"/>
+
+    <!-- Encrypted task rows: ciphertext blobs -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" fill="#34d399" opacity="0.9">
+      <!-- Row 1 -->
+      <circle cx="38" cy="100" r="8" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.6"/>
+      <rect x="56" y="92" width="380" height="16" rx="3" fill="#34d399" opacity="0.18"/>
+      <text x="64" y="105">aG9wZSBub2JvZHkgcmVhZHMgdGhpcw==</text>
+
+      <!-- Row 2 -->
+      <circle cx="38" cy="142" r="8" fill="#34d399" opacity="0.5"/>
+      <rect x="56" y="134" width="320" height="16" rx="3" fill="#34d399" opacity="0.18"/>
+      <text x="64" y="147" opacity="0.7">xK8mP2qZv5RnT4wBeY7fHcDgL9j2</text>
+
+      <!-- Row 3 -->
+      <circle cx="38" cy="184" r="8" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.6"/>
+      <rect x="56" y="176" width="400" height="16" rx="3" fill="#34d399" opacity="0.18"/>
+      <text x="64" y="189">8R9vL2nZx5MwPq7fY3kJgC1bD6tH4eW</text>
+
+      <!-- Row 4 -->
+      <circle cx="38" cy="226" r="8" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.6"/>
+      <rect x="56" y="218" width="360" height="16" rx="3" fill="#34d399" opacity="0.18"/>
+      <text x="64" y="231">nW4hJ7kZyQrP3sT6cFmL9dV2bX1aE</text>
+
+      <!-- Row 5 -->
+      <circle cx="38" cy="268" r="8" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.6"/>
+      <rect x="56" y="260" width="340" height="16" rx="3" fill="#34d399" opacity="0.18"/>
+      <text x="64" y="273">qP7nM3vL8sR5wB2yX9hZ1dT6kG4cA</text>
+
+      <!-- Row 6 -->
+      <circle cx="38" cy="310" r="8" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.6"/>
+      <rect x="56" y="302" width="380" height="16" rx="3" fill="#34d399" opacity="0.18"/>
+      <text x="64" y="315">yT2pK9mN6qF3sJ7vR1xC8wL5hZ4bD</text>
+
+      <!-- Row 7 -->
+      <circle cx="38" cy="352" r="8" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.6"/>
+      <rect x="56" y="344" width="360" height="16" rx="3" fill="#34d399" opacity="0.18"/>
+      <text x="64" y="357">fH3jK7mP9qS2vT4xB6wY1cR8dL5nA</text>
+
+      <!-- Row 8 -->
+      <circle cx="38" cy="394" r="8" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.6"/>
+      <rect x="56" y="386" width="320" height="16" rx="3" fill="#34d399" opacity="0.18"/>
+      <text x="64" y="399">eR5tY7uI3oP2aS6dF8gH1jK4lZ9xC</text>
+
+      <!-- Row 9 -->
+      <circle cx="38" cy="436" r="8" fill="none" stroke="#34d399" stroke-width="1.5" opacity="0.45"/>
+      <rect x="56" y="428" width="280" height="16" rx="3" fill="#34d399" opacity="0.15"/>
+      <text x="64" y="441" opacity="0.6">mB7vN4qP1sT5wY8xC3dF6gH9jK2lZ</text>
+    </g>
+
+    <!-- "SilentSuite" tag -->
+    <g transform="translate(380, 460)">
+      <rect width="118" height="24" rx="6" fill="#34d399" opacity="0.2"/>
+      <text x="59" y="16" font-family="Inter, sans-serif" font-size="11" fill="#34d399" text-anchor="middle" font-weight="600">CIPHERTEXT</text>
+    </g>
+  </g>
+</svg>

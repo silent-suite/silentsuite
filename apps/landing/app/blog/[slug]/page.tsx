@@ -11,6 +11,10 @@ import WhoCanReadYourCalendar from '../content/who-can-read-your-calendar'
 import SilentSuiteVsGoogleCalendar from '../content/silentsuite-vs-google-calendar'
 import EncryptedCalendarSync2026ComparingOptions from '../content/encrypted-calendar-sync-2026-comparing-options'
 import SelfHostingVsHostedPrivateCalendar from '../content/self-hosting-vs-hosted-private-calendar'
+import LookingForAnEteSyncAlternative from '../content/looking-for-an-etesync-alternative'
+import EncryptedTasksAndTodoLists2026 from '../content/encrypted-tasks-and-todo-lists-2026'
+import EncryptedContacts2026YourSocialGraph from '../content/encrypted-contacts-2026-your-social-graph'
+import WalledGardensVsSystemIntegrationEncryptedPim from '../content/walled-gardens-vs-system-integration-encrypted-pim'
 
 const contentMap: Record<string, React.ComponentType> = {
   'why-we-are-building-silentsuite': WhyWeAreBuildingSilentSuite,
@@ -18,6 +22,10 @@ const contentMap: Record<string, React.ComponentType> = {
   'silentsuite-vs-google-calendar': SilentSuiteVsGoogleCalendar,
   'encrypted-calendar-sync-2026-comparing-options': EncryptedCalendarSync2026ComparingOptions,
   'self-hosting-vs-hosted-private-calendar': SelfHostingVsHostedPrivateCalendar,
+  'looking-for-an-etesync-alternative': LookingForAnEteSyncAlternative,
+  'encrypted-tasks-and-todo-lists-2026': EncryptedTasksAndTodoLists2026,
+  'encrypted-contacts-2026-your-social-graph': EncryptedContacts2026YourSocialGraph,
+  'walled-gardens-vs-system-integration-encrypted-pim': WalledGardensVsSystemIntegrationEncryptedPim,
 }
 
 // Generate static params for all blog posts

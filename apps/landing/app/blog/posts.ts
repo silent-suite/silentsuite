@@ -65,6 +65,50 @@ export const posts: BlogPost[] = [
     tags: ['privacy', 'self-hosting', 'encryption'],
     coverImage: '/blog/cover-self-hosting-vs-hosted-private-calendar.png',
   },
+  {
+    slug: 'looking-for-an-etesync-alternative',
+    title: 'Looking for an EteSync Alternative? Here\'s What We Built',
+    description:
+      'EteSync proved encrypted calendar, contacts, and tasks sync was possible, then went quiet. SilentSuite is the maintained continuation, built on the same Etebase protocol. Here is what changed, what stayed, and how to migrate.',
+    date: '2026-05-06',
+    author: 'Tim Ross',
+    readingTime: '5 min read',
+    tags: ['privacy', 'encryption', 'etesync'],
+    coverImage: '/blog/cover-looking-for-an-etesync-alternative.png',
+  },
+  {
+    slug: 'encrypted-tasks-and-todo-lists-2026',
+    title: 'Encrypted To-Do Lists in 2026: Who Can Read Your Tasks?',
+    description:
+      'Your task list is more sensitive than you think. Almost no popular to-do app encrypts it end-to-end. We compare Todoist, Microsoft To Do, Apple Reminders, Google Tasks, EteSync, and SilentSuite.',
+    date: '2026-05-13',
+    author: 'Tim Ross',
+    readingTime: '5 min read',
+    tags: ['privacy', 'encryption', 'comparison', 'tasks'],
+    coverImage: '/blog/cover-encrypted-tasks-and-todo-lists-2026.png',
+  },
+  {
+    slug: 'encrypted-contacts-2026-your-social-graph',
+    title: 'Encrypted Contacts in 2026: Your Address Book Is a Social Graph',
+    description:
+      'Your contacts list is the most concentrated piece of social intelligence you carry. Almost nobody encrypts it. We compare Google, iCloud, Proton, Tuta, Nextcloud, EteSync, and SilentSuite on what the server can actually read.',
+    date: '2026-05-20',
+    author: 'Tim Ross',
+    readingTime: '6 min read',
+    tags: ['privacy', 'encryption', 'comparison', 'contacts'],
+    coverImage: '/blog/cover-encrypted-contacts-2026-your-social-graph.png',
+  },
+  {
+    slug: 'walled-gardens-vs-system-integration-encrypted-pim',
+    title: 'Walled Gardens vs System Integration: The Encrypted-PIM Trade-off',
+    description:
+      'Proton and Tuta give you E2EE inside their own apps. SilentSuite and EteSync give you E2EE that plugs into Apple Calendar, Thunderbird, and DAVx5 through a CalDAV bridge. Both are valid, but which fits you?',
+    date: '2026-05-27',
+    author: 'Tim Ross',
+    readingTime: '5 min read',
+    tags: ['privacy', 'encryption', 'caldav', 'comparison'],
+    coverImage: '/blog/cover-walled-gardens-vs-system-integration-encrypted-pim.png',
+  },
 ]
 
 export function getPost(slug: string): BlogPost | undefined {
