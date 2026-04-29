@@ -34,6 +34,7 @@ export class SyncEngine {
   private statusHandlers: Set<StatusChangeHandler> = new Set();
   private reconnectAttempt = 0;
   private isDestroyed = false;
+  private paused = false;
 
   readonly options: Required<SyncEngineOptions>;
 
@@ -125,7 +126,7 @@ export class SyncEngine {
    * Manually trigger a sync cycle.
    */
   async syncNow(): Promise<void> {
-    if (!this.account || this.isDestroyed) return;
+    if (!this.account || this.isDestroyed || this.paused) return;
     this.setStatus('syncing');
     try {
       await this.syncAll();
@@ -134,6 +135,40 @@ export class SyncEngine {
     } catch (err) {
       this.handleSyncError(err);
     }
+  }
+
+  /**
+   * Pause the polling loop. Use during local-heavy work like a large import
+   * so the 30s poll doesn't fire `itemManager.list` (which decrypts results
+   * on the main thread) while the import is encrypting items on the same
+   * thread. Reversible via `resume()`. No-op if already paused or destroyed.
+   */
+  pause(): void {
+    if (this.isDestroyed || this.paused) return;
+    this.paused = true;
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+  }
+
+  /**
+   * Resume polling after `pause()`. Re-arms the poll timer so the next
+   * sync cycle fires after `pollIntervalMs`. No-op if not paused or destroyed.
+   */
+  resume(): void {
+    if (this.isDestroyed || !this.paused) return;
+    this.paused = false;
+    if (this.account) {
+      this.schedulePoll();
+    }
+  }
+
+  /**
+   * Whether polling is currently paused.
+   */
+  isPaused(): boolean {
+    return this.paused;
   }
 
   // ── Internal ──
@@ -241,7 +276,7 @@ export class SyncEngine {
   }
 
   private schedulePoll(): void {
-    if (this.isDestroyed) return;
+    if (this.isDestroyed || this.paused) return;
 
     this.pollTimer = setTimeout(() => {
       this.syncNow()
