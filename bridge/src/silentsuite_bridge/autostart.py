@@ -102,6 +102,28 @@ def install_autostart_linux():
     print("Service enabled and started.")
     print("Check status: systemctl --user status silentsuite-bridge")
 
+    # systemd user units don't survive reboot unless the user has lingering enabled.
+    # Try it non-interactively with sudo -n; if that needs a password we just tell
+    # the user how to run it themselves. This is best-effort — the service still
+    # works for the current session either way.
+    linger_check = subprocess.run(
+        ["loginctl", "show-user", os.environ.get("USER", ""), "--property=Linger"],
+        check=False, capture_output=True,
+    )
+    if b"Linger=yes" in linger_check.stdout:
+        return
+    user = os.environ.get("USER", "")
+    r = subprocess.run(
+        ["sudo", "-n", "loginctl", "enable-linger", user],
+        check=False, capture_output=True,
+    )
+    if r.returncode == 0:
+        print(f"Enabled linger for {user} so the bridge survives logout/reboot.")
+    else:
+        print("")
+        print("Note: to keep the bridge running after logout/reboot, run:")
+        print(f"  sudo loginctl enable-linger {user}")
+
 
 def remove_autostart_linux():
     """Remove systemd user service."""

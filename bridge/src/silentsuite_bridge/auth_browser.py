@@ -397,8 +397,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                 &#11088; Bookmark <a href="DASHBOARD_URL">DASHBOARD_URL</a> to find these details later
             </div>
             <div class="next-step">
-                <strong>Next step:</strong> You can close this tab. Start the bridge with <code>./silentsuite-bridge</code> to begin syncing.<br>
-                The dashboard will be at <code>DASHBOARD_URL</code>
+                You're signed in. You can close this tab &mdash; the bridge is already running in the background and will keep syncing on its own.
             </div>
         </div>
 
