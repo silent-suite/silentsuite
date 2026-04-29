@@ -607,23 +607,23 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
 
             synchronized(etebaseLocalCache) {
-                return etebaseLocalCache.collectionList(colMgr).map {
-                    val meta = it.meta
-                    val collectionType = it.collectionType
+                // Surface at most one collection per type — multi-collection support was
+                // dropped in the 2026-04-12 triage. The sync adapter still caches every
+                // collection locally so nothing is lost for users with prior extras.
+                return etebaseLocalCache.collectionList(colMgr)
+                    .filter { it.collectionType == strType }
+                    .take(1)
+                    .map {
+                        val meta = it.meta
+                        val accessLevel = it.col.accessLevel
+                        val isReadOnly = accessLevel == CollectionAccessLevel.ReadOnly
+                        val isAdmin = accessLevel == CollectionAccessLevel.Admin
 
-                    if (strType != collectionType) {
-                        return@map null
+                        val metaColor = meta.color
+                        val color = if (!metaColor.isNullOrBlank()) LocalCalendar.parseColor(metaColor) else null
+                        CollectionListItemInfo(it.col.uid, type, meta.name!!, meta.description
+                                ?: "", color, isReadOnly, isAdmin)
                     }
-
-                    val accessLevel = it.col.accessLevel
-                    val isReadOnly = accessLevel == CollectionAccessLevel.ReadOnly
-                    val isAdmin = accessLevel == CollectionAccessLevel.Admin
-
-                    val metaColor = meta.color
-                    val color = if (!metaColor.isNullOrBlank()) LocalCalendar.parseColor(metaColor) else null
-                    CollectionListItemInfo(it.col.uid, type, meta.name!!, meta.description
-                            ?: "", color, isReadOnly, isAdmin)
-                }.filterNotNull()
             }
         }
 
