@@ -13,6 +13,9 @@ import {
   X,
 } from 'lucide-react'
 import { MobileAppDialog } from '@/app/components/MobileAppDialog'
+import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useContactStore } from '@/app/stores/use-contact-store'
+import { useTaskStore } from '@/app/stores/use-task-store'
 
 interface ChecklistItem {
   id: string
@@ -28,6 +31,31 @@ export function OnboardingChecklist() {
   const [dismissed, setDismissed] = useState(false)
   const [completedItems, setCompletedItems] = useState<Set<string>>(new Set())
   const [mobileDialogOpen, setMobileDialogOpen] = useState(false)
+
+  const hasEvents = useCalendarStore((s) => s.events.length > 0)
+  const hasContacts = useContactStore((s) => s.contacts.length > 0)
+  const hasTasks = useTaskStore((s) => s.tasks.length > 0)
+
+  // Auto-complete import steps once the corresponding store has data, so the
+  // checklist doesn't linger after a user imports via the normal flow.
+  useEffect(() => {
+    const toAdd: string[] = []
+    if (hasEvents) toAdd.push('import-calendar')
+    if (hasContacts) toAdd.push('import-contacts')
+    if (hasTasks) toAdd.push('import-tasks')
+    if (toAdd.length === 0) return
+    setCompletedItems((prev) => {
+      let changed = false
+      const next = new Set(prev)
+      for (const id of toAdd) {
+        if (!next.has(id)) {
+          next.add(id)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [hasEvents, hasContacts, hasTasks])
 
   // Load completed items from localStorage
   useEffect(() => {
