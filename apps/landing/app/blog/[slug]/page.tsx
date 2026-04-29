@@ -9,15 +9,23 @@ import { getPost, getAllPosts } from '../posts'
 import WhyWeAreBuildingSilentSuite from '../content/why-we-are-building-silentsuite'
 import WhoCanReadYourCalendar from '../content/who-can-read-your-calendar'
 import SilentSuiteVsGoogleCalendar from '../content/silentsuite-vs-google-calendar'
-// import EncryptedCalendarSync2026ComparingOptions from '../content/encrypted-calendar-sync-2026-comparing-options'
-// import SelfHostingVsHostedPrivateCalendar from '../content/self-hosting-vs-hosted-private-calendar'
+import EncryptedCalendarSync2026ComparingOptions from '../content/encrypted-calendar-sync-2026-comparing-options'
+import SelfHostingVsHostedPrivateCalendar from '../content/self-hosting-vs-hosted-private-calendar'
+import LookingForAnEteSyncAlternative from '../content/looking-for-an-etesync-alternative'
+import EncryptedTasksAndTodoLists2026 from '../content/encrypted-tasks-and-todo-lists-2026'
+import EncryptedContacts2026YourSocialGraph from '../content/encrypted-contacts-2026-your-social-graph'
+import WalledGardensVsSystemIntegrationEncryptedPim from '../content/walled-gardens-vs-system-integration-encrypted-pim'
 
 const contentMap: Record<string, React.ComponentType> = {
   'why-we-are-building-silentsuite': WhyWeAreBuildingSilentSuite,
   'who-can-read-your-calendar': WhoCanReadYourCalendar,
   'silentsuite-vs-google-calendar': SilentSuiteVsGoogleCalendar,
-  // 'encrypted-calendar-sync-2026-comparing-options': EncryptedCalendarSync2026ComparingOptions,
-  // 'self-hosting-vs-hosted-private-calendar': SelfHostingVsHostedPrivateCalendar,
+  'encrypted-calendar-sync-2026-comparing-options': EncryptedCalendarSync2026ComparingOptions,
+  'self-hosting-vs-hosted-private-calendar': SelfHostingVsHostedPrivateCalendar,
+  'looking-for-an-etesync-alternative': LookingForAnEteSyncAlternative,
+  'encrypted-tasks-and-todo-lists-2026': EncryptedTasksAndTodoLists2026,
+  'encrypted-contacts-2026-your-social-graph': EncryptedContacts2026YourSocialGraph,
+  'walled-gardens-vs-system-integration-encrypted-pim': WalledGardensVsSystemIntegrationEncryptedPim,
 }
 
 // Generate static params for all blog posts
@@ -75,21 +83,28 @@ export default async function BlogPost({
       {/* Hero cover */}
       <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-8">
         <div className="relative w-full rounded-2xl overflow-hidden border border-navy-700/50" style={{ aspectRatio: '16/9' }}>
-          {/* Cover image */}
+          {/* Cover image — kept near full strength so the cover graphic is actually visible. */}
           {post.coverImage ? (
             <Image
               src={post.coverImage}
               alt={post.title}
               fill
-              className="object-cover opacity-60"
+              className="object-cover opacity-90"
               priority
             />
           ) : (
             <div className="absolute inset-0 bg-gradient-to-br from-navy-900 to-navy-950" />
           )}
 
-          {/* Dark overlay */}
-          <div className="absolute inset-0 bg-black/30" />
+          {/* Title-legibility overlay: darker behind the centered title, lighter at edges
+              so the cover artwork still reads. */}
+          <div
+            className="absolute inset-0"
+            style={{
+              background:
+                'radial-gradient(ellipse at center, rgba(10, 16, 24, 0.78) 0%, rgba(10, 16, 24, 0.5) 45%, rgba(10, 16, 24, 0.18) 85%)',
+            }}
+          />
 
           {/* Content overlay */}
           <div className="relative z-10 flex flex-col items-center justify-center h-full px-6 sm:px-12 py-10 text-center">

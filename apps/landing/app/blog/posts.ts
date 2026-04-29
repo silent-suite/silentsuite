@@ -17,7 +17,7 @@ export const posts: BlogPost[] = [
       'Your calendar knows more about you than your diary. Every doctor\'s appointment, every meeting, every relationship. Synced to servers that can read it all. We\'re building something better.',
     date: '2026-03-12',
     author: 'Tim Ross',
-    readingTime: '8 min read',
+    readingTime: '6 min read',
     tags: ['privacy', 'encryption', 'announcement'],
     coverImage: '/blog/cover-why-we-are-building-silentsuite.png',
   },
@@ -28,7 +28,7 @@ export const posts: BlogPost[] = [
       'Your calendar reveals more about you than your email. We compared Google, Apple, Microsoft, Proton, Tuta, Nextcloud, and SilentSuite on encryption, key ownership, and openness.',
     date: '2026-03-17',
     author: 'Tim Ross',
-    readingTime: '7 min read',
+    readingTime: '5 min read',
     tags: ['privacy', 'encryption', 'comparison'],
     coverImage: '/blog/cover-who-can-read-your-calendar.png',
   },
@@ -39,33 +39,76 @@ export const posts: BlogPost[] = [
       'Every event you create in Google Calendar is processed in plaintext on Google\'s servers. We break down what Google sees, what "encrypted at rest" really means, and how zero-knowledge encryption changes things.',
     date: '2026-03-21',
     author: 'Tim Ross',
-    readingTime: '5 min read',
+    readingTime: '4 min read',
     tags: ['privacy', 'comparison', 'encryption'],
     coverImage: '/blog/cover-silentsuite-vs-google-calendar.png',
   },
-  // --- DRAFTS (cover images ready in public/blog/, publish one at a time) ---
-  // {
-  //   slug: 'encrypted-calendar-sync-2026-comparing-options',
-  //   title: 'Encrypted Calendar Sync in 2026: Comparing Your Options',
-  //   description:
-  //     'There are now multiple services offering encrypted calendar sync. Most are incomplete, ecosystem-locked, or abandoned. We compare Proton, Tuta, EteSync, Nextcloud, and SilentSuite.',
-  //   date: '2026-03-20',
-  //   author: 'Tim Ross',
-  //   readingTime: '10 min read',
-  //   tags: ['privacy', 'encryption', 'comparison'],
-  //   coverImage: '/blog/cover-encrypted-calendar-sync-2026-comparing-options.png',
-  // },
-  // {
-  //   slug: 'self-hosting-vs-hosted-private-calendar',
-  //   title: 'Self-Hosting vs Hosted: Which Private Calendar Setup Is Right for You?',
-  //   description:
-  //     'Self-host everything is the default advice in privacy circles. But does it actually make your calendar more secure? We compare self-hosted CalDAV, hosted E2EE services, and the hybrid option.',
-  //   date: '2026-03-24',
-  //   author: 'Tim Ross',
-  //   readingTime: '8 min read',
-  //   tags: ['privacy', 'self-hosting', 'encryption'],
-  //   coverImage: '/blog/cover-self-hosting-vs-hosted-private-calendar.png',
-  // },
+  {
+    slug: 'encrypted-calendar-sync-2026-comparing-options',
+    title: 'Encrypted Calendar Sync in 2026: Comparing Your Options',
+    description:
+      'There are now multiple services offering encrypted calendar sync. Most are incomplete, ecosystem-locked, or abandoned. We compare Proton, Tuta, EteSync, Nextcloud, and SilentSuite.',
+    date: '2026-04-22',
+    author: 'Tim Ross',
+    readingTime: '7 min read',
+    tags: ['privacy', 'encryption', 'comparison'],
+    coverImage: '/blog/cover-encrypted-calendar-sync-2026-comparing-options.png',
+  },
+  {
+    slug: 'self-hosting-vs-hosted-private-calendar',
+    title: 'Self-Hosting vs Hosted: Which Private Calendar Setup Is Right for You?',
+    description:
+      'Self-host everything is the default advice in privacy circles. But does it actually make your calendar more secure? We compare self-hosted CalDAV, hosted E2EE services, and the hybrid option.',
+    date: '2026-04-29',
+    author: 'Tim Ross',
+    readingTime: '6 min read',
+    tags: ['privacy', 'self-hosting', 'encryption'],
+    coverImage: '/blog/cover-self-hosting-vs-hosted-private-calendar.png',
+  },
+  {
+    slug: 'looking-for-an-etesync-alternative',
+    title: 'Looking for an EteSync Alternative? Here\'s What We Built',
+    description:
+      'EteSync proved encrypted calendar, contacts, and tasks sync was possible, then went quiet. SilentSuite is the maintained continuation, built on the same Etebase protocol. Here is what changed, what stayed, and how to migrate.',
+    date: '2026-05-06',
+    author: 'Tim Ross',
+    readingTime: '5 min read',
+    tags: ['privacy', 'encryption', 'etesync'],
+    coverImage: '/blog/cover-looking-for-an-etesync-alternative.png',
+  },
+  {
+    slug: 'encrypted-tasks-and-todo-lists-2026',
+    title: 'Encrypted To-Do Lists in 2026: Who Can Read Your Tasks?',
+    description:
+      'Your task list is more sensitive than you think. Almost no popular to-do app encrypts it end-to-end. We compare Todoist, Microsoft To Do, Apple Reminders, Google Tasks, EteSync, and SilentSuite.',
+    date: '2026-05-13',
+    author: 'Tim Ross',
+    readingTime: '5 min read',
+    tags: ['privacy', 'encryption', 'comparison', 'tasks'],
+    coverImage: '/blog/cover-encrypted-tasks-and-todo-lists-2026.png',
+  },
+  {
+    slug: 'encrypted-contacts-2026-your-social-graph',
+    title: 'Encrypted Contacts in 2026: Your Address Book Is a Social Graph',
+    description:
+      'Your contacts list is the most concentrated piece of social intelligence you carry. Almost nobody encrypts it. We compare Google, iCloud, Proton, Tuta, Nextcloud, EteSync, and SilentSuite on what the server can actually read.',
+    date: '2026-05-20',
+    author: 'Tim Ross',
+    readingTime: '6 min read',
+    tags: ['privacy', 'encryption', 'comparison', 'contacts'],
+    coverImage: '/blog/cover-encrypted-contacts-2026-your-social-graph.png',
+  },
+  {
+    slug: 'walled-gardens-vs-system-integration-encrypted-pim',
+    title: 'Walled Gardens vs System Integration: The Encrypted-PIM Trade-off',
+    description:
+      'Proton\'s walled garden is a deliberate privacy choice: no app on your phone gets contact-list access. System integration via CalDAV/CardDAV trades that surface area for convenience. The right call depends on whether you trust your OS and your app set.',
+    date: '2026-05-27',
+    author: 'Tim Ross',
+    readingTime: '5 min read',
+    tags: ['privacy', 'encryption', 'caldav', 'comparison'],
+    coverImage: '/blog/cover-walled-gardens-vs-system-integration-encrypted-pim.png',
+  },
 ]
 
 export function getPost(slug: string): BlogPost | undefined {

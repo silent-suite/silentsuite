@@ -121,6 +121,94 @@ export default function SelfHostingVsHostedPrivateCalendar() {
         </p>
       </blockquote>
 
+      <div className="not-prose grid sm:grid-cols-2 gap-4 my-10">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#fbbf24"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-5 h-5"
+                aria-hidden="true"
+              >
+                <rect x="2" y="3" width="20" height="6" rx="1" />
+                <rect x="2" y="15" width="20" height="6" rx="1" />
+                <line x1="6" y1="6" x2="6.01" y2="6" />
+                <line x1="6" y1="18" x2="6.01" y2="18" />
+              </svg>
+            </div>
+            <div>
+              <div className="text-white font-bold">Self-hosted Nextcloud</div>
+              <div className="text-xs text-navy-400">
+                Your server, plaintext data
+              </div>
+            </div>
+          </div>
+          <div className="text-sm space-y-2 text-navy-300">
+            <div>
+              Server sees:{' '}
+              <span className="text-amber-300 font-semibold">
+                events in plaintext
+              </span>
+            </div>
+            <div>
+              If breached:{' '}
+              <span className="text-amber-300 font-semibold">
+                events readable
+              </span>
+            </div>
+            <div>
+              Trust model: trust yourself to never make a security mistake
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-teal-400/30 bg-teal-400/5 p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-lg bg-teal-400/15 border border-teal-400/30 flex items-center justify-center flex-shrink-0">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#34d399"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-5 h-5"
+                aria-hidden="true"
+              >
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            </div>
+            <div>
+              <div className="text-white font-bold">Hosted E2EE</div>
+              <div className="text-xs text-navy-400">
+                Our server, ciphertext only
+              </div>
+            </div>
+          </div>
+          <div className="text-sm space-y-2 text-navy-300">
+            <div>
+              Server sees:{' '}
+              <span className="text-teal-300 font-semibold">
+                encrypted blobs
+              </span>
+            </div>
+            <div>
+              If breached:{' '}
+              <span className="text-teal-300 font-semibold">
+                no usable data
+              </span>
+            </div>
+            <div>Trust model: trust the math, not the operator</div>
+          </div>
+        </div>
+      </div>
+
       <h2>The hosted path with end-to-end encryption</h2>
 
       <p>
@@ -190,6 +278,82 @@ export default function SelfHostingVsHostedPrivateCalendar() {
         maintenance. The self-hosted option exists for people who want the extra
         control, not because the hosted version is less secure.
       </p>
+
+      <div className="not-prose my-10 p-6 sm:p-8 rounded-2xl border border-teal-400/30 bg-gradient-to-br from-teal-400/10 to-navy-900/40">
+        <div className="text-white font-bold text-lg mb-1">
+          The hybrid setup: E2EE plus your own server
+        </div>
+        <div className="text-sm text-navy-300 mb-6">
+          Encryption happens on your device. Your server only ever holds
+          ciphertext. Even if the box is breached, the events are unreadable.
+        </div>
+        <div className="flex items-center justify-between gap-3 sm:gap-6">
+          <div className="flex flex-col items-center text-center flex-1 min-w-0">
+            <div className="w-14 h-14 rounded-lg bg-teal-400/10 border border-teal-400/30 flex items-center justify-center mb-2">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#34d399"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-7 h-7"
+                aria-hidden="true"
+              >
+                <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                <line x1="12" y1="18" x2="12.01" y2="18" />
+              </svg>
+            </div>
+            <div className="text-white text-xs font-semibold">Your device</div>
+            <div className="text-navy-400 text-[11px] mt-0.5">
+              encrypts events
+            </div>
+          </div>
+
+          <div className="flex flex-col items-center gap-1 flex-shrink-0">
+            <div className="text-teal-300 text-[11px] font-semibold tracking-wide uppercase">
+              ciphertext
+            </div>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#34d399"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-8 h-8"
+              aria-hidden="true"
+            >
+              <line x1="5" y1="12" x2="19" y2="12" />
+              <polyline points="12 5 19 12 12 19" />
+            </svg>
+          </div>
+
+          <div className="flex flex-col items-center text-center flex-1 min-w-0">
+            <div className="w-14 h-14 rounded-lg bg-teal-400/10 border border-teal-400/30 flex items-center justify-center mb-2">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#34d399"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="w-7 h-7"
+                aria-hidden="true"
+              >
+                <rect x="2" y="3" width="20" height="6" rx="1" />
+                <rect x="2" y="15" width="20" height="6" rx="1" />
+                <line x1="6" y1="6" x2="6.01" y2="6" />
+                <line x1="6" y1="18" x2="6.01" y2="18" />
+              </svg>
+            </div>
+            <div className="text-white text-xs font-semibold">Your server</div>
+            <div className="text-navy-400 text-[11px] mt-0.5">
+              stores ciphertext only
+            </div>
+          </div>
+        </div>
+      </div>
 
       <h2>Cost comparison</h2>
 

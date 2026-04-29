@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#0A1018"/>
+      <stop offset="100%" stop-color="#1B2838"/>
+    </linearGradient>
+    <pattern id="grid" width="50" height="50" patternUnits="userSpaceOnUse">
+      <path d="M 50 0 L 0 0 0 50" fill="none" stroke="#253549" stroke-width="0.5" opacity="0.3"/>
+    </pattern>
+    <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#34d399" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <rect width="1600" height="900" fill="url(#grid)"/>
+
+  <!-- Soft glow behind the SilentSuite card -->
+  <ellipse cx="1140" cy="450" rx="380" ry="320" fill="#34d399" opacity="0.08"/>
+
+  <!-- =================================================== -->
+  <!-- LEFT: EteSync (stalled, faded, dashed)             -->
+  <!-- =================================================== -->
+  <g transform="translate(180, 260)" opacity="0.5">
+    <rect width="440" height="380" rx="18" fill="#1B2838" stroke="#64748B" stroke-width="1.5" stroke-dasharray="10 6"/>
+
+    <!-- Header bar -->
+    <rect x="0" y="0" width="440" height="56" rx="18" fill="#253549"/>
+    <rect x="0" y="38" width="440" height="18" fill="#253549"/>
+
+    <!-- "E" logo placeholder -->
+    <circle cx="36" cy="28" r="18" fill="none" stroke="#64748B" stroke-width="1.5" opacity="0.6"/>
+    <text x="36" y="35" font-family="Inter, sans-serif" font-size="18" font-weight="600" fill="#64748B" text-anchor="middle">E</text>
+    <rect x="68" y="20" width="160" height="18" rx="4" fill="#64748B" opacity="0.35"/>
+
+    <!-- Status row: stalled -->
+    <rect x="24" y="84" width="120" height="28" rx="6" fill="#64748B" opacity="0.18"/>
+    <text x="84" y="103" font-family="Inter, sans-serif" font-size="12" fill="#64748B" text-anchor="middle" opacity="0.85">Stalled</text>
+
+    <!-- Faded feature rows -->
+    <g opacity="0.6">
+      <rect x="24" y="140" width="180" height="12" rx="3" fill="#64748B" opacity="0.3"/>
+      <rect x="24" y="170" width="220" height="12" rx="3" fill="#64748B" opacity="0.3"/>
+      <rect x="24" y="200" width="160" height="12" rx="3" fill="#64748B" opacity="0.3"/>
+      <rect x="24" y="230" width="200" height="12" rx="3" fill="#64748B" opacity="0.3"/>
+    </g>
+
+    <!-- "Last update" -->
+    <rect x="24" y="280" width="280" height="14" rx="3" fill="#64748B" opacity="0.18"/>
+    <rect x="24" y="304" width="200" height="14" rx="3" fill="#64748B" opacity="0.18"/>
+
+    <!-- Strike-through gives the "abandoned" feel -->
+    <line x1="0" y1="190" x2="440" y2="190" stroke="#64748B" stroke-width="1.5" opacity="0.25"/>
+  </g>
+
+  <!-- Faded label below left card -->
+  <text x="400" y="700" font-family="Inter, sans-serif" font-size="22" font-weight="500" fill="#64748B" text-anchor="middle" opacity="0.7" letter-spacing="2">
+    THE ORIGINAL
+  </text>
+
+  <!-- =================================================== -->
+  <!-- CENTER: Connecting arrow (continuation)             -->
+  <!-- =================================================== -->
+  <g transform="translate(680, 440)">
+    <!-- Etebase protocol pill, on the arrow -->
+    <rect x="-90" y="-22" width="180" height="44" rx="22" fill="#1B2838" stroke="#34d399" stroke-width="1.5"/>
+    <text x="0" y="6" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#34d399" text-anchor="middle" letter-spacing="1">
+      Etebase protocol
+    </text>
+
+    <!-- Long arrow line -->
+    <line x1="-180" y1="0" x2="-100" y2="0" stroke="#34d399" stroke-width="2" opacity="0.6"/>
+    <line x1="100" y1="0" x2="220" y2="0" stroke="#34d399" stroke-width="2" opacity="0.85"/>
+
+    <!-- Arrow head -->
+    <polyline points="200,-12 224,0 200,12" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+  </g>
+
+  <!-- =================================================== -->
+  <!-- RIGHT: SilentSuite (active, teal, energetic)        -->
+  <!-- =================================================== -->
+  <g transform="translate(980, 260)" opacity="0.95">
+    <rect width="440" height="380" rx="18" fill="#1B2838" stroke="#34d399" stroke-width="2"/>
+
+    <!-- Header bar -->
+    <rect x="0" y="0" width="440" height="56" rx="18" fill="#253549"/>
+    <rect x="0" y="38" width="440" height="18" fill="#253549"/>
+
+    <!-- Shield icon -->
+    <g transform="translate(20, 12)">
+      <path d="M22 4C18 6.5 15 7 13 7v9c0 4.5 3.5 7.5 9 8.5 5.5-1 9-4 9-8.5V7c-2.5 0-5.5-.5-9-3z" fill="none" stroke="#34d399" stroke-width="2" opacity="0.9"/>
+      <path d="M18 16l3 3 6-6" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <rect x="68" y="20" width="200" height="18" rx="4" fill="#34d399" opacity="0.55"/>
+
+    <!-- Active status -->
+    <rect x="24" y="84" width="100" height="28" rx="6" fill="#34d399" opacity="0.2"/>
+    <text x="74" y="103" font-family="Inter, sans-serif" font-size="12" fill="#34d399" text-anchor="middle" font-weight="600">Active</text>
+
+    <!-- Feature rows with checks -->
+    <g>
+      <rect x="24" y="140" width="20" height="20" rx="4" fill="#34d399" opacity="0.35"/>
+      <text x="34" y="156" font-family="Inter, sans-serif" font-size="14" fill="#34d399" text-anchor="middle" font-weight="600">&#10003;</text>
+      <rect x="56" y="146" width="220" height="10" rx="3" fill="#34d399" opacity="0.32"/>
+
+      <rect x="24" y="174" width="20" height="20" rx="4" fill="#34d399" opacity="0.35"/>
+      <text x="34" y="190" font-family="Inter, sans-serif" font-size="14" fill="#34d399" text-anchor="middle" font-weight="600">&#10003;</text>
+      <rect x="56" y="180" width="180" height="10" rx="3" fill="#34d399" opacity="0.32"/>
+
+      <rect x="24" y="208" width="20" height="20" rx="4" fill="#34d399" opacity="0.35"/>
+      <text x="34" y="224" font-family="Inter, sans-serif" font-size="14" fill="#34d399" text-anchor="middle" font-weight="600">&#10003;</text>
+      <rect x="56" y="214" width="240" height="10" rx="3" fill="#34d399" opacity="0.32"/>
+
+      <rect x="24" y="242" width="20" height="20" rx="4" fill="#34d399" opacity="0.35"/>
+      <text x="34" y="258" font-family="Inter, sans-serif" font-size="14" fill="#34d399" text-anchor="middle" font-weight="600">&#10003;</text>
+      <rect x="56" y="248" width="200" height="10" rx="3" fill="#34d399" opacity="0.32"/>
+    </g>
+
+    <!-- Tag pills at bottom -->
+    <g transform="translate(24, 290)">
+      <rect x="0" y="0" width="86" height="26" rx="13" fill="#34d399" opacity="0.12" stroke="#34d399" stroke-opacity="0.25"/>
+      <text x="43" y="17" font-family="Inter, sans-serif" font-size="11" fill="#34d399" text-anchor="middle" font-weight="500">E2EE</text>
+
+      <rect x="96" y="0" width="106" height="26" rx="13" fill="#34d399" opacity="0.12" stroke="#34d399" stroke-opacity="0.25"/>
+      <text x="149" y="17" font-family="Inter, sans-serif" font-size="11" fill="#34d399" text-anchor="middle" font-weight="500">AGPL-3.0</text>
+
+      <rect x="212" y="0" width="118" height="26" rx="13" fill="#34d399" opacity="0.12" stroke="#34d399" stroke-opacity="0.25"/>
+      <text x="271" y="17" font-family="Inter, sans-serif" font-size="11" fill="#34d399" text-anchor="middle" font-weight="500">EU-hosted</text>
+    </g>
+  </g>
+
+  <!-- Active label below right card -->
+  <text x="1200" y="700" font-family="Inter, sans-serif" font-size="22" font-weight="600" fill="#34d399" text-anchor="middle" letter-spacing="2">
+    THE CONTINUATION
+  </text>
+</svg>

@@ -1,3 +1,40 @@
+type LogoKey = 'proton' | 'tuta' | 'nextcloud' | 'etesync' | 'silentsuite'
+
+function BrandHeader({ logo, name, label }: { logo: LogoKey; name: string; label: string }) {
+  const ext = logo === 'etesync' ? 'png' : 'svg'
+  return (
+    <div className="flex items-center gap-4 mt-12 mb-4">
+      <div className="w-12 h-12 rounded-lg bg-white p-2 flex items-center justify-center flex-shrink-0">
+        <img
+          src={`/blog/logos/${logo}.${ext}`}
+          alt={`${name} logo`}
+          className="w-full h-full object-contain"
+        />
+      </div>
+      <h2 className="!mt-0 !mb-0">{label}</h2>
+    </div>
+  )
+}
+
+function cellClass(value: string): string {
+  const v = value.trim().toLowerCase()
+  if (v === 'yes' || v === 'yes*' || v.startsWith('yes ') || v === 'active') {
+    return 'bg-teal-400/15 text-teal-300 font-semibold'
+  }
+  if (v === 'no' || v === 'abandoned' || v === 'outdated') {
+    return 'bg-red-500/15 text-red-300 font-semibold'
+  }
+  if (
+    v === 'partial' ||
+    v.startsWith('via ') ||
+    v === 'in development' ||
+    v === 'planned'
+  ) {
+    return 'bg-amber-500/15 text-amber-300 font-semibold'
+  }
+  return 'text-navy-300'
+}
+
 export default function EncryptedCalendarSync2026ComparingOptions() {
   return (
     <>
@@ -21,7 +58,7 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
         clear-eyed look at what exists, what works, and what doesn&apos;t.
       </p>
 
-      <h2>Proton Calendar</h2>
+      <BrandHeader logo="proton" name="Proton" label="Proton Calendar" />
 
       <p>
         <a
@@ -52,7 +89,7 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
         fine. If you don&apos;t, you&apos;ll hit walls quickly.
       </p>
 
-      <h2>Tuta Calendar</h2>
+      <BrandHeader logo="tuta" name="Tuta" label="Tuta Calendar" />
 
       <p>
         <a
@@ -81,7 +118,7 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
         add-on to email rather than a first-class product.
       </p>
 
-      <h2>EteSync</h2>
+      <BrandHeader logo="etesync" name="EteSync" label="EteSync" />
 
       <p>
         <a
@@ -120,7 +157,7 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
         that below.
       </p>
 
-      <h2>Nextcloud with E2EE</h2>
+      <BrandHeader logo="nextcloud" name="Nextcloud" label="Nextcloud with E2EE" />
 
       <p>
         Nextcloud is the go-to self-hosted solution for a lot of
@@ -130,19 +167,35 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
       </p>
 
       <p>
-        But here&apos;s the thing people get wrong about Nextcloud and
+        Here&apos;s the nuance people often miss about Nextcloud and
         encryption: Nextcloud does offer end-to-end encryption for{' '}
         <em>files</em>. It does <strong>not</strong> offer E2EE for calendar
-        or contacts data. Your events are stored in plaintext on your
-        Nextcloud server. If someone compromises that server, they read your
-        calendar. Full stop.
+        or contacts data. Your events are stored in plaintext in the database
+        on whichever server runs Nextcloud.
       </p>
 
       <p>
-        This is not a criticism of Nextcloud. They&apos;re solving a different
-        problem and doing it well. But we see people assume that
+        If you self-host Nextcloud yourself, on a box only you can access,
+        that&apos;s actually a pretty solid privacy story. Nobody else has the
+        keys to the building, so nobody else gets to read the events sitting in
+        the database. For a lot of people, that&apos;s good enough.
+      </p>
+
+      <p>
+        Where it gets shakier is the hosted Nextcloud route, where a third
+        party runs the server for you. Now &ldquo;in plaintext on the
+        server&rdquo; means in plaintext on{' '}
+        <em>their</em> server. A breach, a rogue admin, a misconfigured backup,
+        or a legal request, and your calendar is readable. The CalDAV protocol
+        and the underlying database simply weren&apos;t designed for E2EE.
+      </p>
+
+      <p>
+        This isn&apos;t a criticism of Nextcloud. They&apos;re solving a
+        different problem and doing it well. But we see people assume that
         &ldquo;Nextcloud + E2EE&rdquo; means everything is encrypted, and
-        that&apos;s simply not the case for PIM data.
+        that&apos;s only true if you also happen to control the server it runs
+        on.
       </p>
 
       <h2>Skiff: a cautionary tale</h2>
@@ -169,7 +222,51 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
         trust.
       </p>
 
-      <h2>SilentSuite</h2>
+      <BrandHeader logo="silentsuite" name="SilentSuite" label="SilentSuite" />
+
+      <div className="my-8 p-6 sm:p-8 rounded-2xl border border-teal-400/30 bg-gradient-to-br from-teal-400/10 to-navy-900/40 not-prose">
+        <div className="flex items-start gap-4 mb-4">
+          <div className="w-14 h-14 rounded-xl bg-teal-400/10 border border-teal-400/30 flex items-center justify-center flex-shrink-0">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#34d399"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-7 h-7"
+              aria-hidden="true"
+            >
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+            </svg>
+          </div>
+          <div>
+            <div className="text-white font-bold text-xl leading-tight">
+              SilentSuite
+            </div>
+            <div className="text-navy-300 text-sm mt-1">
+              End-to-end encrypted calendar, contacts, and tasks. Built on the
+              Etebase protocol.
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {[
+            'E2EE by default',
+            'Open source (AGPL-3.0)',
+            'Self-hostable',
+            'EU-hosted',
+            'No tracking',
+          ].map((tag) => (
+            <span
+              key={tag}
+              className="text-xs px-3 py-1 rounded-full bg-teal-400/10 text-teal-300 border border-teal-400/30"
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      </div>
 
       <p>
         This is what we&apos;re building. We should be transparent about our
@@ -207,16 +304,38 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
         If we&apos;ve gotten something wrong, let us know.
       </p>
 
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9em' }}>
-          <thead>
-            <tr style={{ borderBottom: '2px solid rgba(255,255,255,0.2)' }}>
-              <th style={{ textAlign: 'left', padding: '8px 12px' }}>&nbsp;</th>
-              <th style={{ textAlign: 'center', padding: '8px 12px' }}>Proton Calendar</th>
-              <th style={{ textAlign: 'center', padding: '8px 12px' }}>Tuta Calendar</th>
-              <th style={{ textAlign: 'center', padding: '8px 12px' }}>EteSync</th>
-              <th style={{ textAlign: 'center', padding: '8px 12px' }}>Nextcloud</th>
-              <th style={{ textAlign: 'center', padding: '8px 12px' }}>SilentSuite</th>
+      <div className="not-prose overflow-x-auto my-6 rounded-xl border border-navy-700/60">
+        <table className="w-full text-sm border-collapse">
+          <thead className="bg-navy-900/60">
+            <tr>
+              <th className="text-left p-3 font-semibold text-navy-300 border-b border-navy-700">
+                &nbsp;
+              </th>
+              {[
+                { logo: 'proton', label: 'Proton', ext: 'svg' },
+                { logo: 'tuta', label: 'Tuta', ext: 'svg' },
+                { logo: 'etesync', label: 'EteSync', ext: 'png' },
+                { logo: 'nextcloud', label: 'Nextcloud', ext: 'svg' },
+                { logo: 'silentsuite', label: 'SilentSuite', ext: 'svg' },
+              ].map(({ logo, label, ext }) => (
+                <th
+                  key={logo}
+                  className="text-center p-3 border-b border-navy-700"
+                >
+                  <div className="flex flex-col items-center gap-1.5">
+                    <div className="w-9 h-9 rounded-md bg-white p-1.5 flex items-center justify-center">
+                      <img
+                        src={`/blog/logos/${logo}.${ext}`}
+                        alt={`${label} logo`}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-white">
+                      {label}
+                    </span>
+                  </div>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -224,24 +343,31 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
               ['E2EE calendar', 'Yes', 'Yes', 'Yes', 'No', 'Yes'],
               ['E2EE contacts', 'Partial', 'Partial', 'Yes', 'No', 'Yes'],
               ['E2EE tasks', 'No', 'No', 'Yes', 'No', 'Yes'],
-              ['CalDAV support', 'No', 'No', 'Via bridge', 'Yes', 'Planned'],
-              ['Mobile apps', 'Yes', 'Yes', 'Outdated', 'Via 3rd party', 'In development'],
-              ['Web app', 'Yes', 'Yes', 'Outdated', 'Yes', 'In development'],
+              ['CalDAV support', 'No', 'No', 'Via bridge', 'Yes', 'Yes*'],
+              ['Mobile apps', 'Yes', 'Yes', 'Outdated', 'Via 3rd party', 'Yes*'],
+              ['Web app', 'Yes', 'Yes', 'Outdated', 'Yes', 'Yes'],
               ['Self-hostable', 'No', 'No', 'Yes', 'Yes', 'Yes'],
               ['Open source', 'Partial', 'Yes', 'Yes', 'Yes', 'Yes (AGPL-3.0)'],
               ['Status', 'Active', 'Active', 'Abandoned', 'Active', 'Active'],
-              ['Price', 'Free / from \u20ac4/mo', 'Free / from \u20ac3/mo', 'Was \u20ac2/mo', 'Self-host cost', 'TBD'],
-            ].map(([feature, proton, tuta, etesync, nextcloud, silent]) => (
+              ['Price', 'Free / from \u20ac4/mo', 'Free / from \u20ac3/mo', 'Was \u20ac2/mo', 'Self-host cost', 'From \u20ac3/mo'],
+            ].map(([feature, ...values], rowIdx) => (
               <tr
                 key={feature}
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}
+                className={
+                  rowIdx % 2 === 0 ? 'bg-navy-900/20' : 'bg-transparent'
+                }
               >
-                <td style={{ padding: '8px 12px', fontWeight: 600 }}>{feature}</td>
-                <td style={{ textAlign: 'center', padding: '8px 12px' }}>{proton}</td>
-                <td style={{ textAlign: 'center', padding: '8px 12px' }}>{tuta}</td>
-                <td style={{ textAlign: 'center', padding: '8px 12px' }}>{etesync}</td>
-                <td style={{ textAlign: 'center', padding: '8px 12px' }}>{nextcloud}</td>
-                <td style={{ textAlign: 'center', padding: '8px 12px' }}>{silent}</td>
+                <td className="p-3 font-semibold text-white border-t border-navy-700/50">
+                  {feature}
+                </td>
+                {values.map((val, i) => (
+                  <td
+                    key={i}
+                    className={`text-center p-3 border-t border-navy-700/50 ${cellClass(val)}`}
+                  >
+                    {val}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
@@ -253,6 +379,14 @@ export default function EncryptedCalendarSync2026ComparingOptions() {
           &ldquo;Partial&rdquo; for Proton/Tuta contacts means encrypted
           contacts exist within their own apps, but there&apos;s no sync
           protocol you can use with external clients.
+        </em>
+      </p>
+
+      <p>
+        <em>
+          * SilentSuite: Android is native, CalDAV works through our standalone
+          bridge for Apple Calendar and Thunderbird, and iOS still works with
+          the original EteSync app since we share the Etebase protocol.
         </em>
       </p>
 
