@@ -29,15 +29,17 @@ interface CalendarEvent {
   calendar: 'Personal' | 'Work' | 'Family'
 }
 
+// All events are at least 1h tall (36px) so the title + time line render
+// without clipping inside the grid cells.
 const EVENTS: CalendarEvent[] = [
-  { day: 0, startHour: 9, endHour: 9.5, title: 'Team Standup', calendar: 'Work' },
-  { day: 1, startHour: 11, endHour: 11.5, title: '1:1 with Alex', calendar: 'Work' },
-  { day: 1, startHour: 12.5, endHour: 13.5, title: 'Lunch · Sarah', calendar: 'Personal' },
-  { day: 2, startHour: 9, endHour: 9.5, title: 'Team Standup', calendar: 'Work' },
+  { day: 0, startHour: 9,  endHour: 10,   title: 'Team Standup',       calendar: 'Work' },
+  { day: 1, startHour: 11, endHour: 12,   title: '1:1 with Alex',      calendar: 'Work' },
+  { day: 1, startHour: 12.5, endHour: 13.5, title: 'Lunch · Sarah',    calendar: 'Personal' },
+  { day: 2, startHour: 9,  endHour: 10,   title: 'Team Standup',       calendar: 'Work' },
   { day: 2, startHour: 14, endHour: 15.5, title: 'Q1 Planning Review', calendar: 'Work' },
-  { day: 3, startHour: 10, endHour: 10.5, title: 'Coffee with Sarah', calendar: 'Personal' },
-  { day: 3, startHour: 16, endHour: 16.5, title: 'Family call', calendar: 'Family' },
-  { day: 4, startHour: 16, endHour: 17, title: 'Demo Day', calendar: 'Work' },
+  { day: 3, startHour: 10, endHour: 11,   title: 'Coffee with Sarah',  calendar: 'Personal' },
+  { day: 3, startHour: 16, endHour: 17,   title: 'Family call',        calendar: 'Family' },
+  { day: 4, startHour: 16, endHour: 17,   title: 'Demo Day',           calendar: 'Work' },
 ]
 
 const CAL_COLOR: Record<CalendarEvent['calendar'], string> = {
@@ -268,8 +270,8 @@ export function MockCalendarMobile() {
           label="Today · 4 events"
           accent="text-teal-400"
           items={[
-            { time: '09:00', title: 'Team Standup', dur: '30m', cal: 'Work', color: '#34d399' },
-            { time: '11:00', title: '1:1 with Alex', dur: '30m', cal: 'Work', color: '#34d399' },
+            { time: '09:00', title: 'Team Standup', dur: '1h', cal: 'Work', color: '#34d399' },
+            { time: '11:00', title: '1:1 with Alex', dur: '1h', cal: 'Work', color: '#34d399' },
             { time: '12:30', title: 'Lunch · Sarah', dur: '1h', cal: 'Personal', color: '#f59e0b' },
             { time: '14:00', title: 'Q1 Planning Review', dur: '1h 30m', cal: 'Work', color: '#34d399' },
           ]}
@@ -278,8 +280,8 @@ export function MockCalendarMobile() {
           label="Tomorrow"
           accent="text-navy-400"
           items={[
-            { time: '10:00', title: 'Coffee with Sarah', dur: '30m', cal: 'Personal', color: '#f59e0b' },
-            { time: '16:00', title: 'Family call', dur: '30m', cal: 'Family', color: '#60a5fa' },
+            { time: '10:00', title: 'Coffee with Sarah', dur: '1h', cal: 'Personal', color: '#f59e0b' },
+            { time: '16:00', title: 'Family call', dur: '1h', cal: 'Family', color: '#60a5fa' },
           ]}
         />
       </div>

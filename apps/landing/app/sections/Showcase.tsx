@@ -79,7 +79,7 @@ export default function Showcase() {
 
         {/* Composed scene: browser frame with phone overlap */}
         <div className="relative max-w-5xl mx-auto">
-          <BrowserFrame variant="safari" url={current.url}>
+          <BrowserFrame variant="minimal" url={current.url}>
             {tab === 'calendar' ? <MockCalendarDesktop /> : null}
             {tab === 'contacts' ? <MockContactsDesktop /> : null}
             {tab === 'tasks' ? <MockTasksDesktop /> : null}
