@@ -1,6 +1,6 @@
 import dataclasses
 
-from django.db.models import QuerySet
+from django.db.models import Prefetch, QuerySet
 from django.utils import timezone
 from fastapi import Depends
 from fastapi.security import APIKeyHeader
@@ -78,11 +78,36 @@ def get_collection(collection_uid: str, queryset: QuerySet = Depends(get_collect
     return get_object_or_404(queryset, uid=collection_uid)
 
 
-@django_db_cleanup_decorator
-def get_item_queryset(collection: models.Collection = Depends(get_collection)) -> QuerySet:
-    default_item_queryset: QuerySet = models.CollectionItem.objects.all()
-    queryset = default_item_queryset.filter(
+def build_item_queryset(collection: models.Collection) -> QuerySet:
+    """Queryset for items in a collection, with the per-item revision +
+    chunk graph prefetched.
+
+    Serializing this queryset is the hot read path for sync polls and import
+    refresh. Per-item access to `obj.content` (current revision) and the
+    chunk graph below it must avoid an N+1 — see `test_item_list_queryset.py`
+    and the 2026-03-25 revert (commit 4d7893f3) for why we are deliberate
+    about the relation names.
+
+    `to_attr` puts the filtered current revisions on `_prefetched_current_revisions`
+    so `CollectionItem.content` can read it without a separate filter query.
+    """
+    current_revisions = models.CollectionItemRevision.objects.filter(current=True).prefetch_related(
+        Prefetch(
+            "chunks_relation",
+            queryset=models.RevisionChunkRelation.objects.select_related("chunk"),
+        )
+    )
+    return models.CollectionItem.objects.filter(
         collection__pk=collection.pk, revisions__current=True
+    ).prefetch_related(
+        Prefetch(
+            "revisions",
+            queryset=current_revisions,
+            to_attr="_prefetched_current_revisions",
+        )
     )
 
-    return queryset
+
+@django_db_cleanup_decorator
+def get_item_queryset(collection: models.Collection = Depends(get_collection)) -> QuerySet:
+    return build_item_queryset(collection)
