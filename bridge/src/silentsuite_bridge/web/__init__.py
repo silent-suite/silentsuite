@@ -243,6 +243,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <option value="3600">1 hr</option>
             </select>
             <span id="syncIntervalStatus" style="font-size:12px;color:#555;"></span>
+            <span id="syncProgress" style="font-size:12px;color:#888;margin-left:auto;"></span>
         </div>
         <script>
             (function() {
@@ -269,6 +270,26 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     .then(function() { st.textContent = 'Saved'; setTimeout(function() { st.textContent = ''; }, 2000); })
                     .catch(function() { st.textContent = 'Error'; });
             }
+            // Live sync-status pill. Polls /api/progress every 2s so users see
+            // a running sync without waiting for the 30s full-page refresh.
+            function pollProgress() {
+                fetch('/.web/api/progress').then(function(r) { return r.json(); }).then(function(p) {
+                    var el = document.getElementById('syncProgress');
+                    if (!el) return;
+                    if (p.is_syncing) {
+                        var elapsed = p.sync_started_at ? Math.max(0, Math.round(Date.now() / 1000 - p.sync_started_at)) : null;
+                        el.textContent = 'Syncing\u2026' + (elapsed != null ? ' (' + elapsed + 's)' : '');
+                        el.style.color = '#4ade80';
+                    } else if (p.last_sync_duration != null) {
+                        el.textContent = 'Last sync: ' + p.last_sync_duration.toFixed(1) + 's';
+                        el.style.color = '#888';
+                    } else {
+                        el.textContent = '';
+                    }
+                }).catch(function() { /* ignore — next poll retries */ });
+            }
+            pollProgress();
+            setInterval(pollProgress, 2000);
         </script>
 
         <div class="status-card log-section">
@@ -420,6 +441,30 @@ class Web(BaseWeb):
             data = {
                 "status": _bridge_status,
                 "log": list(_sync_log)[:20],
+            }
+            return (
+                200,
+                {"Content-Type": "application/json"},
+                json.dumps(data).encode(),
+            )
+
+        # Live sync progress — polled by the dashboard while a sync is running.
+        if path == "/.web/api/progress":
+            from ..radicale.storage import _sync_threads
+            is_syncing = False
+            sync_started_at = None
+            last_sync_duration = None
+            for thread in _sync_threads.values():
+                if getattr(thread, "is_syncing", False):
+                    is_syncing = True
+                    sync_started_at = getattr(thread, "sync_started_at", None)
+                if getattr(thread, "last_sync_duration", None) is not None:
+                    last_sync_duration = thread.last_sync_duration
+            data = {
+                "is_syncing": is_syncing,
+                "sync_started_at": sync_started_at,
+                "last_sync_duration": last_sync_duration,
+                "collections": _bridge_status.get("collections", {}),
             }
             return (
                 200,
