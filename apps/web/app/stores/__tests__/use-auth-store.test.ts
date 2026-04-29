@@ -231,4 +231,44 @@ describe('useAuthStore', () => {
       expect(result).toBe(false)
     })
   })
+
+  // --- Stripe redirect signup state (issue #20) ---
+
+  describe('signup redirect state storage', () => {
+    const pending = {
+      email: 'user@example.com',
+      etebaseAuthToken: 'auth-token-abc',
+    }
+
+    it('saves redirect state to sessionStorage, not localStorage', () => {
+      useAuthStore.setState({ pendingSignup: pending })
+      useAuthStore.getState().saveSignupStateForRedirect('monthly')
+
+      expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).not.toBeNull()
+      expect(localStorage.getItem('silentsuite-signup-redirect-state')).toBeNull()
+    })
+
+    it('restores from sessionStorage and clears the key', () => {
+      useAuthStore.setState({ pendingSignup: pending })
+      useAuthStore.getState().saveSignupStateForRedirect('annual')
+
+      const restored = useAuthStore.getState().restoreSignupStateFromRedirect()
+
+      expect(restored?.selectedInterval).toBe('annual')
+      expect(restored?.pendingSignup.email).toBe('user@example.com')
+      expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).toBeNull()
+    })
+
+    it('ignores legacy localStorage entries left behind by older builds', () => {
+      // Simulate a tab that saved redirect state under the old localStorage key.
+      localStorage.setItem(
+        'silentsuite-signup-redirect-state',
+        JSON.stringify({ pendingSignup: pending, selectedInterval: 'monthly', savedAt: Date.now() }),
+      )
+
+      const restored = useAuthStore.getState().restoreSignupStateFromRedirect()
+
+      expect(restored).toBeNull()
+    })
+  })
 })
