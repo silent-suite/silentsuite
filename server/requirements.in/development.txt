@@ -4,3 +4,5 @@ pywatchman
 ruff
 mypy
 django-stubs
+pytest
+pytest-django
