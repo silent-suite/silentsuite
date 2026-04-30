@@ -6,7 +6,7 @@ End-to-end encrypted synchronization for calendar, contacts, and tasks. Your sch
 
 Built on the [Etebase protocol](https://www.etebase.com/). Open source. EU-hosted.
 
-[Website](https://silentsuite.io) | [Blog](https://silentsuite.io/blog) | [Waitlist](https://silentsuite.io/#waitlist)
+[Website](https://silentsuite.io) | [Blog](https://silentsuite.io/blog)
 
 ## What is SilentSuite?
 
@@ -30,28 +30,25 @@ Your Device          SilentSuite Server          Your Other Device
 
 All encryption and decryption happens on your devices. The server stores and syncs encrypted blobs. We can't read your data, even if compelled to.
 
-## Status
+## Features
 
-SilentSuite is in active development.
-
-- [x] Etebase server deployed and running
-- [x] Real E2E encrypted sync verified between devices
-- [x] Landing page live at [silentsuite.io](https://silentsuite.io)
-- [x] Waitlist open (GDPR-compliant double opt-in)
-- [x] Blog with RSS feed
-- [ ] Client apps (Android, web, iOS)
-- [ ] CalDAV bridge for existing calendar apps
-- [ ] Family plans
+- **Web app** -- full calendar, contacts, and task management at [app.silentsuite.io](https://app.silentsuite.io)
+- **Android app** -- native sync adapter that integrates with your system calendar and contacts
+- **CalDAV/CardDAV bridge** -- use Thunderbird, GNOME Calendar, or any standards-compliant client
+- **Self-hosting** -- run your own server and keep everything on your infrastructure
+- **Stripe billing** -- hosted plans with free trial, or self-host for free
 
 ## Tech stack
 
 | Component | Technology |
 |-----------|-----------|
-| Server | Python, Etebase protocol, Docker |
-| Landing page | Next.js 15, Tailwind CSS, Cloudflare Workers |
-| Hosting | EU cloud infrastructure |
+| Web app | Next.js 16, TypeScript, Zustand, Tailwind CSS |
+| Android | Kotlin, Etebase SDK (Rust JNI) |
+| CalDAV bridge | Python, Radicale |
+| Server | Django, Etebase protocol, PostgreSQL |
+| Billing API | Fastify, Drizzle ORM, Stripe |
+| Landing page | Next.js, Cloudflare Workers |
 | Encryption | Etebase protocol (XChaCha20-Poly1305, Argon2) |
-| License | AGPL-3.0 (server + apps) |
 
 ## Principles
 
@@ -61,39 +58,67 @@ SilentSuite is in active development.
 4. **EU-hosted, GDPR-compliant.** Your encrypted data stays in the EU. GDPR as a baseline, not a checkbox.
 5. **Sustainable business.** Paid hosted service funds development. No data monetisation. We can't -- it's encrypted.
 
-## Repository Structure
+## Repository structure
 
 | Directory | Description |
 |-----------|-------------|
 | `apps/web/` | Next.js web app (app.silentsuite.io) |
+<<<<<<< ours
 | `apps/docs/` | Documentation site (docs.silentsuite.io) |
 | `packages/core/` | Shared core library |
 | `packages/ui/` | Shared UI components |
 | `packages/config/` | Shared configuration |
+=======
+| `apps/landing/` | Marketing site (silentsuite.io) |
+| `apps/docs/` | Documentation site |
+>>>>>>> theirs
 | `android/` | Android sync adapter (Kotlin) |
 | `bridge/` | CalDAV/CardDAV bridge (Python) |
-| `server/` | Etebase sync server (Python/Django) |
-| `self-host/` | Self-hosting Docker configs and scripts |
-
-## Documentation
-
-Full documentation is available in the [`docs/`](./docs/) directory:
-
-- **[User Guide](./docs/user-guide/)** -- how-to guides for calendar, contacts, tasks, and encryption
-- **[Self-Hosting](./docs/self-hosting/)** -- deploy and manage SilentSuite on your own infrastructure
-- **[Contributing](./docs/contributing/)** -- set up a dev environment and contribute to SilentSuite
+| `server/` | Etebase sync server (Django) |
+| `silentsuite-billing/` | Billing API (Fastify/Stripe) |
+| `packages/core/` | Shared parsers and types |
+| `packages/ui/` | Shared UI components |
+| `self-host/` | Self-hosting installer and scripts |
 
 ## Self-hosting
 
-The server can be self-hosted. See the [Self-Hosting guide](./docs/self-hosting/) for complete instructions.
+Run SilentSuite on your own infrastructure. The installer handles Docker, PostgreSQL, and nginx configuration.
 
-See `deploy/RUNBOOK.md` in this repo for additional server administration details.
+```bash
+curl -fsSL https://silentsuite.io/bridge/install.sh | bash
+```
+
+See the [Self-Hosting guide](./docs/self-hosting/) for complete instructions.
 
 ## Development
 
+<<<<<<< ours
 This repository contains the open-source pieces of SilentSuite: the encrypted sync server, the web client (with end-to-end crypto), the Android sync adapter, and the CalDAV/CardDAV bridge. See the [Contributing guide](./docs/contributing/) for setup instructions.
 
 The marketing site (silentsuite.io) and the billing/accounts API live in a separate, private repository — they don't bear any cryptographic responsibilities, and keeping marketing copy out of an AGPL repo is intentional.
+=======
+This is a pnpm monorepo with Turborepo for build orchestration.
+
+```bash
+# Install dependencies
+pnpm install
+
+# Run the web app locally
+pnpm --filter web dev
+
+# Run the landing page locally
+pnpm --filter landing dev
+
+# Run all packages in dev mode
+pnpm dev
+```
+>>>>>>> theirs
+
+The Android app is built separately with Gradle. The bridge and server are Python projects with their own dependency management. See each directory's README for component-specific setup.
+
+## Contributing
+
+See the [Contributing guide](./docs/contributing/) for full setup instructions and development conventions.
 
 ## Links
 
@@ -108,4 +133,4 @@ The marketing site (silentsuite.io) and the billing/accounts API live in a separ
 
 ## License
 
-AGPL-3.0
+[AGPL-3.0](./LICENSE)

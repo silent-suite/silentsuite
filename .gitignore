@@ -21,6 +21,7 @@ dist/
 .env.test.local
 .env.production.local
 **/.env
+!**/.env.example
 
 # Logs
 npm-debug.log*
@@ -36,6 +37,7 @@ yarn-error.log*
 
 # Misc
 .DS_Store
+Thumbs.db
 *.pem
 .vercel
 package-lock.json
@@ -44,6 +46,11 @@ tsconfig.tsbuildinfo
 # IDE / tools
 .opencode/
 .claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+.worktreeinclude
 
 # Syncthing
 .stversions/
@@ -58,6 +65,7 @@ _bmad-output/
 _audit/
 memory/
 deploy/
+docs/project-history/
 
 # Private sibling repos cloned into the working tree (separate remotes)
 silentsuite-billing/
