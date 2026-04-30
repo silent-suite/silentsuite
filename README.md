@@ -66,9 +66,7 @@ SilentSuite is in active development.
 | Directory | Description |
 |-----------|-------------|
 | `apps/web/` | Next.js web app (app.silentsuite.io) |
-| `apps/mobile/` | React Native mobile app |
-| `apps/landing/` | Marketing site (silentsuite.io) |
-| `apps/docs/` | Documentation site |
+| `apps/docs/` | Documentation site (docs.silentsuite.io) |
 | `packages/core/` | Shared core library |
 | `packages/ui/` | Shared UI components |
 | `packages/config/` | Shared configuration |
@@ -93,18 +91,9 @@ See `deploy/RUNBOOK.md` in this repo for additional server administration detail
 
 ## Development
 
-This repository contains the SilentSuite landing page and blog. See the [Contributing guide](./docs/contributing/) for full setup instructions.
+This repository contains the open-source pieces of SilentSuite: the encrypted sync server, the web client (with end-to-end crypto), the Android sync adapter, and the CalDAV/CardDAV bridge. See the [Contributing guide](./docs/contributing/) for setup instructions.
 
-```bash
-# Install dependencies
-pnpm install
-
-# Run locally
-pnpm dev
-
-# Build and deploy
-npx opennextjs-cloudflare build && npx wrangler deploy --keep-vars
-```
+The marketing site (silentsuite.io) and the billing/accounts API live in a separate, private repository — they don't bear any cryptographic responsibilities, and keeping marketing copy out of an AGPL repo is intentional.
 
 ## Links
 

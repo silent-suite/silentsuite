@@ -59,5 +59,9 @@ _audit/
 memory/
 deploy/
 
+# Private sibling repos cloned into the working tree (separate remotes)
+silentsuite-billing/
+silentsuite-internal/
+
 # Turborepo
 .turbo/
