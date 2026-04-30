@@ -55,6 +55,25 @@ def get_millis():
     return int(round(time.time() * 1000))
 
 
+def _extract_uid(vobject_item):
+    """Extract UID from a vobject item.
+
+    For VCALENDAR/VCARD containers, the UID lives on the child component
+    (VEVENT, VTODO, VJOURNAL, VCARD), not the parent.
+    """
+    try:
+        return vobject_item.uid.value if hasattr(vobject_item.uid, 'value') else vobject_item.uid
+    except AttributeError:
+        pass
+    # Try child components
+    for child in vobject_item.components():
+        try:
+            return child.uid.value if hasattr(child.uid, 'value') else child.uid
+        except AttributeError:
+            continue
+    raise StorageException("No UID found in vobject item")
+
+
 class StorageException(Exception):
     pass
 
