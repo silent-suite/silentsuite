@@ -448,6 +448,7 @@ class Web(BaseWeb):
                 json.dumps(data).encode(),
             )
 
+<<<<<<< ours
         # Live sync progress — polled by the dashboard while a sync is running.
         if path == "/.web/api/progress":
             from ..radicale.storage import _sync_threads
@@ -472,6 +473,8 @@ class Web(BaseWeb):
                 json.dumps(data).encode(),
             )
 
+=======
+>>>>>>> theirs
         # Diagnostic: dump all cached items
         if path == "/.web/api/dump":
             from ..local_cache import models, db
