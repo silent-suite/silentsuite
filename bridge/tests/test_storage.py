@@ -164,13 +164,23 @@ class TestAcquireLockForcesSync:
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
-    def test_acquire_lock_write_forces_sync_after(self, mock_start, mock_etesync_ctx):
-        """Write mode should force_sync both before AND after the block."""
+    def test_acquire_lock_write_pushes_inline_after_yield(self, mock_start, mock_etesync_ctx):
+        """Write mode: pull via force_sync on entry, then push INLINE on
+        exit — not a second force_sync. The SyncThread can't acquire the
+        etesync lock while we hold it (storage.py:665-677), so push runs
+        directly here. The previous version of this test asserted
+        force_sync.call_count == 2 against an older "request another sync"
+        contract; it had been red since the inline-push refactor.
+        """
         mock_thread = MagicMock()
         mock_thread.wait_for_sync.return_value = True
         mock_start.return_value = mock_thread
 
         mock_etesync = MagicMock()
+        # No dirty collections to iterate — keeps the test focused on
+        # "is push_collection_list called?" without faking per-collection
+        # push paths.
+        mock_etesync.list.return_value = []
         mock_etesync_ctx.return_value.__enter__ = MagicMock(
             return_value=(mock_etesync, False)
         )
@@ -184,8 +194,10 @@ class TestAcquireLockForcesSync:
         with storage.acquire_lock("w", user="test@example.com"):
             pass
 
-        # force_sync called on entry + on exit for write mode
-        assert mock_thread.force_sync.call_count == 2
+        # Pre-yield: one force_sync() to pull the latest server state.
+        assert mock_thread.force_sync.call_count == 1
+        # Post-yield: inline push of the collection list (write mode only).
+        mock_etesync.push_collection_list.assert_called_once()
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
