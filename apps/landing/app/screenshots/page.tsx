@@ -1,14 +1,15 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { ArrowLeft, Smartphone, Monitor, Network, ImageIcon } from 'lucide-react'
+import { ArrowLeft, Smartphone, Monitor, Network } from 'lucide-react'
 
 export const metadata: Metadata = {
   title: 'Screenshots · SilentSuite',
   description:
-    'Real screenshots of SilentSuite — encrypted calendar, contacts, and tasks on Android, in the webapp, and via the CalDAV/CardDAV bridge in Apple Calendar and Thunderbird.',
+    'Real screenshots of SilentSuite — encrypted calendar, contacts, and tasks in the webapp on desktop and mobile, and integrated into Android via the CalDAV/CardDAV bridge.',
 }
 
 interface Shot {
+  src: string
   caption: string
   detail?: string
 }
@@ -18,48 +19,55 @@ interface Group {
   label: string
   blurb: string
   icon: typeof Monitor
+  aspect: string
   shots: Shot[]
 }
 
 const GROUPS: Group[] = [
   {
-    id: 'webapp',
-    label: 'Webapp',
+    id: 'webapp-desktop',
+    label: 'Webapp on desktop',
     icon: Monitor,
+    aspect: 'aspect-[2558/1311]',
     blurb:
-      'app.silentsuite.io — your encrypted calendar, contacts, and tasks in any modern browser. Works as a PWA on desktop and tablet.',
+      'app.silentsuite.io — your encrypted calendar, contacts, and tasks in any modern browser. Works as a PWA on desktop and tablet. Dark and light themes shown side by side.',
     shots: [
-      { caption: 'Calendar — week view', detail: 'Schedule-X grid with multi-calendar colour coding.' },
-      { caption: 'Contacts — list and detail', detail: 'Two-column split with full vCard fields encrypted.' },
-      { caption: 'Tasks — priority and due dates', detail: 'Quick-add bar, recurring tasks, sub-task support.' },
-      { caption: 'Settings — devices and sessions' },
+      { src: '/screenshots/webapp-calendar-dark.webp', caption: 'Calendar — week view, dark' },
+      { src: '/screenshots/webapp-calendar-light.webp', caption: 'Calendar — week view, light' },
+      { src: '/screenshots/webapp-contacts-dark.webp', caption: 'Contacts — detail view, dark' },
+      { src: '/screenshots/webapp-contacts-light.webp', caption: 'Contacts — detail view, light' },
+      { src: '/screenshots/webapp-tasks-dark.webp', caption: 'Tasks — full list, dark' },
+      { src: '/screenshots/webapp-tasks-light.webp', caption: 'Tasks — full list, light' },
     ],
   },
   {
-    id: 'android',
-    label: 'Android',
+    id: 'webapp-mobile',
+    label: 'Webapp on mobile',
     icon: Smartphone,
+    aspect: 'aspect-[912/1868]',
     blurb:
-      'Native Android app. Bottom-nav layout, agenda calendar, full offline support. Available on F-Droid and as a direct APK.',
+      'Same encrypted webapp, in any mobile browser. Bottom-tab layout, agenda calendar, full keyboard support. Add to home screen for a native-feeling PWA.',
     shots: [
-      { caption: 'Calendar — agenda view' },
-      { caption: 'Contact detail' },
-      { caption: 'Tasks list' },
-      { caption: 'Settings — sync status' },
+      { src: '/screenshots/webapp-mobile-calendar-dark.webp', caption: 'Calendar — agenda view, dark' },
+      { src: '/screenshots/webapp-mobile-calendar-light.webp', caption: 'Calendar — agenda view, light' },
+      { src: '/screenshots/webapp-mobile-contacts-dark.webp', caption: 'Contacts — list, dark' },
+      { src: '/screenshots/webapp-mobile-contacts-light.webp', caption: 'Contacts — list, light' },
+      { src: '/screenshots/webapp-mobile-tasks-dark.webp', caption: 'Tasks — list, dark' },
+      { src: '/screenshots/webapp-mobile-tasks-light.webp', caption: 'Tasks — list, light' },
     ],
   },
   {
-    id: 'bridge',
-    label: 'Bridge — Apple Calendar / Thunderbird / DAVx5',
+    id: 'android-bridge',
+    label: 'Mobile Android bridge',
     icon: Network,
+    aspect: 'aspect-[912/2048]',
     blurb:
-      'Standalone bridge app exposes your encrypted SilentSuite data to any CalDAV/CardDAV client. Plaintext only ever exists on devices you already control.',
+      'The Android bridge app exposes your encrypted SilentSuite data to Android system apps via CalDAV/CardDAV. Plaintext only ever exists on devices you already control.',
     shots: [
-      { caption: 'Bridge — first-run setup' },
-      { caption: 'Apple Calendar — SilentSuite events alongside iCloud' },
-      { caption: 'Apple Contacts — encrypted address book in the system app' },
-      { caption: 'Thunderbird — calendar and contacts' },
-      { caption: 'DAVx5 on Android — system-level integration' },
+      { src: '/screenshots/android-bridge-main-dark.webp', caption: 'Bridge — accounts overview, dark' },
+      { src: '/screenshots/android-bridge-main-light.webp', caption: 'Bridge — accounts overview, light' },
+      { src: '/screenshots/android-bridge-menu-dark.webp', caption: 'Bridge — side menu, dark' },
+      { src: '/screenshots/android-bridge-menu-light.webp', caption: 'Bridge — side menu, light' },
     ],
   },
 ]
@@ -80,14 +88,14 @@ export default function ScreenshotsPage() {
             What it actually looks like.
           </h1>
           <p className="text-lg text-navy-300 max-w-2xl">
-            Real screenshots from the production SilentSuite apps and from the
-            CalDAV/CardDAV bridge integrating with Apple Calendar, Thunderbird,
-            and DAVx5.
+            Real screenshots from the production SilentSuite apps — the
+            webapp on desktop and mobile, and the Android bridge that integrates
+            your encrypted data into Android system apps via CalDAV and CardDAV.
           </p>
         </div>
 
         <div className="space-y-20">
-          {GROUPS.map(({ id, label, icon: Icon, blurb, shots }) => (
+          {GROUPS.map(({ id, label, icon: Icon, blurb, shots, aspect }) => (
             <section key={id} id={id}>
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-9 h-9 rounded-lg bg-teal-400/10 border border-teal-400/30 flex items-center justify-center">
@@ -98,16 +106,19 @@ export default function ScreenshotsPage() {
               <p className="text-navy-300 max-w-2xl mb-8">{blurb}</p>
 
               <div className="grid sm:grid-cols-2 gap-6">
-                {shots.map((s, i) => (
+                {shots.map((s) => (
                   <figure
-                    key={i}
+                    key={s.src}
                     className="rounded-xl border border-white/10 bg-navy-900/40 overflow-hidden"
                   >
-                    <div className="aspect-[16/10] bg-navy-900 flex items-center justify-center text-navy-500 border-b border-white/5">
-                      <div className="flex flex-col items-center gap-2 text-center px-4">
-                        <ImageIcon className="w-8 h-8 opacity-40" />
-                        <span className="text-xs">Screenshot pending</span>
-                      </div>
+                    <div className={`${aspect} bg-navy-900 border-b border-white/5 overflow-hidden`}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={s.src}
+                        alt={s.caption}
+                        loading="lazy"
+                        className="w-full h-full object-cover object-top"
+                      />
                     </div>
                     <figcaption className="px-4 py-3">
                       <div className="text-sm text-white">{s.caption}</div>
