@@ -20,6 +20,7 @@ interface Group {
   blurb: string
   icon: typeof Monitor
   aspect: string
+  gridCols: string
   shots: Shot[]
 }
 
@@ -29,8 +30,9 @@ const GROUPS: Group[] = [
     label: 'Webapp on desktop',
     icon: Monitor,
     aspect: 'aspect-[2558/1311]',
+    gridCols: 'grid-cols-1',
     blurb:
-      'app.silentsuite.io — your encrypted calendar, contacts, and tasks in any modern browser. Works as a PWA on desktop and tablet. Dark and light themes shown side by side.',
+      'app.silentsuite.io — your encrypted calendar, contacts, and tasks in any modern browser. Works as a PWA on desktop and tablet.',
     shots: [
       { src: '/screenshots/webapp-calendar-dark.webp', caption: 'Calendar — week view, dark' },
       { src: '/screenshots/webapp-calendar-light.webp', caption: 'Calendar — week view, light' },
@@ -44,7 +46,8 @@ const GROUPS: Group[] = [
     id: 'webapp-mobile',
     label: 'Webapp on mobile',
     icon: Smartphone,
-    aspect: 'aspect-[912/1868]',
+    aspect: 'aspect-[912/1723]',
+    gridCols: 'grid-cols-1 sm:grid-cols-2',
     blurb:
       'Same encrypted webapp, in any mobile browser. Bottom-tab layout, agenda calendar, full keyboard support. Add to home screen for a native-feeling PWA.',
     shots: [
@@ -60,7 +63,8 @@ const GROUPS: Group[] = [
     id: 'android-bridge',
     label: 'Mobile Android bridge',
     icon: Network,
-    aspect: 'aspect-[912/2048]',
+    aspect: 'aspect-[912/1903]',
+    gridCols: 'grid-cols-1 sm:grid-cols-2',
     blurb:
       'The Android bridge app exposes your encrypted SilentSuite data to Android system apps via CalDAV/CardDAV. Plaintext only ever exists on devices you already control.',
     shots: [
@@ -95,7 +99,7 @@ export default function ScreenshotsPage() {
         </div>
 
         <div className="space-y-20">
-          {GROUPS.map(({ id, label, icon: Icon, blurb, shots, aspect }) => (
+          {GROUPS.map(({ id, label, icon: Icon, blurb, shots, aspect, gridCols }) => (
             <section key={id} id={id}>
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-9 h-9 rounded-lg bg-teal-400/10 border border-teal-400/30 flex items-center justify-center">
@@ -105,7 +109,7 @@ export default function ScreenshotsPage() {
               </div>
               <p className="text-navy-300 max-w-2xl mb-8">{blurb}</p>
 
-              <div className="grid sm:grid-cols-2 gap-6">
+              <div className={`grid ${gridCols} gap-6`}>
                 {shots.map((s) => (
                   <figure
                     key={s.src}
