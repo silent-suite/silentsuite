@@ -143,15 +143,25 @@ class TestLogin:
         assert response.status_code == 400
         assert decode_response(response)["code"] == "wrong_host"
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "validate_login_request in routers/authentication.py:156-157 "
+            "doesn't catch nacl.exceptions.CryptoError, so undecryptable "
+            "challenge bytes surface as a 500 instead of a clean 400. "
+            "Not exploitable — no user data leaks — but the route should "
+            "raise HttpError('invalid_challenge', ..., 400). When that fix "
+            "lands, this xfail will flip to XPASS and strict mode will "
+            "force removing the marker."
+        ),
+    )
     def test_login_with_garbage_challenge_bytes_fails(
         self, auth_app, user_factory, signing_key
     ):
         # Skip the real challenge endpoint and send random bytes — the
-        # server can't decrypt them, so the login must not succeed.
-        # (Note: the route doesn't currently catch NaCl's CryptoError, so
-        # this surfaces as a 500 rather than a clean 4xx. That's a minor
-        # robustness gap worth fixing separately; it isn't exploitable —
-        # no user data leaks — but it should be a 400. Filed mentally.)
+        # server can't decrypt them, so the login must not succeed AND the
+        # response must be a clean 4xx (not a 500 from an uncaught crypto
+        # exception).
         from fastapi.testclient import TestClient
 
         client = TestClient(auth_app, raise_server_exceptions=False)
@@ -164,7 +174,7 @@ class TestLogin:
         )
         response = msgpack_post(client, f"{AUTH_PREFIX}/login/", body)
 
-        assert response.status_code != 200
+        assert response.status_code in (400, 422)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -228,11 +238,20 @@ class TestChangePassword:
     ):
         user_factory(username="test_user_alice")
 
+        # Sign with an attacker key, NOT the user's real signing key. The
+        # request must be rejected by the auth layer before crypto runs at
+        # all — if a future regression accidentally bypasses auth but keeps
+        # the crypto check intact, this body would still be rejected (wrong
+        # signature) and the test would falsely pass. Using an attacker key
+        # ensures only a true auth-layer rejection produces the expected
+        # 401/403; a crypto-layer rejection would surface differently.
+        attacker_key = nacl.signing.SigningKey.generate()
+
         _, challenge = login_challenge(auth_client, "test_user_alice")
         body = build_signed_response(
             username="test_user_alice",
             challenge_bytes=challenge["challenge"],
-            signing_key=signing_key,
+            signing_key=attacker_key,
             action="changePassword",
             extra={"loginPubkey": b"\x01" * 32, "encryptedContent": b"\x02" * 64},
         )

@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import hmac as hmac_mod
 import os
+import secrets as secrets_mod
 from unittest.mock import MagicMock
 
 import pytest
@@ -142,26 +143,39 @@ class TestPbkdf2RoundTrip:
     def test_password_comparison_uses_constant_time_compare(
         self, auth, creds_file, monkeypatch
     ):
-        # The auth path uses hmac.compare_digest specifically to avoid
-        # timing-side-channel password recovery. If a future refactor
-        # accidentally swapped to `==`, this test would fail loudly.
+        # The auth path must use a constant-time compare (hmac.compare_digest
+        # OR the equivalent-and-safe secrets.compare_digest) to avoid timing
+        # side-channel password recovery. If a future refactor accidentally
+        # swaps to plain `==`, neither spy fires and the test fails loudly.
         _seed_pbkdf2_user(creds_file)
 
-        calls: list[tuple[str, str]] = []
-        real_compare = hmac_mod.compare_digest
+        calls: list[tuple[str, tuple]] = []
+        real_hmac_compare = hmac_mod.compare_digest
+        real_secrets_compare = secrets_mod.compare_digest
 
-        def spy(a, b):
-            calls.append((a, b))
-            return real_compare(a, b)
+        def hmac_spy(a, b):
+            calls.append(("hmac", (a, b)))
+            return real_hmac_compare(a, b)
+
+        def secrets_spy(a, b):
+            calls.append(("secrets", (a, b)))
+            return real_secrets_compare(a, b)
 
         monkeypatch.setattr(
-            "silentsuite_bridge.radicale.auth.hmac.compare_digest", spy
+            "silentsuite_bridge.radicale.auth.hmac.compare_digest", hmac_spy
         )
+        # secrets.compare_digest may not be imported by the auth module today,
+        # but patching it defensively means a refactor that switches to it
+        # still satisfies this test instead of silently bypassing the check.
+        monkeypatch.setattr(secrets_mod, "compare_digest", secrets_spy)
 
         result = auth.login(USERNAME, PASSWORD)
 
         assert result == USERNAME
-        assert len(calls) == 1, "expected exactly one constant-time compare per login"
+        assert len(calls) == 1, (
+            "expected exactly one constant-time compare per login "
+            f"(hmac.compare_digest or secrets.compare_digest); got {calls!r}"
+        )
 
 
 class TestLegacySha256Upgrade:
