@@ -133,6 +133,7 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
           recurrenceRule: event.rrule ?? null,
           alarms: event.valarms ?? [],
           calendarId: selectedCalendarId,
+          timezone: isAllDay ? undefined : startTzid,
         }
       })
       const count = await importEvents(newEvents)

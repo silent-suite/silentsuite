@@ -158,28 +158,22 @@ function mapPriorityToStore(icalPriority?: number): Priority {
   return 'low'
 }
 
+// Date-only on import: the Task model has no timezone field, so a TZID-bearing
+// or UTC datetime would otherwise be parsed in the importer's local zone and
+// land on the wrong instant. Take the wall-clock date from the source value.
+// Full TZID parity for VTODO is tracked in #66.
 function parseICalDate(d: string): Date | null {
   if (!d) return null
-  if (/^\d{8}$/.test(d)) {
-    return new Date(
-      parseInt(d.slice(0, 4)),
-      parseInt(d.slice(4, 6)) - 1,
-      parseInt(d.slice(6, 8)),
-    )
+  const digits = d.replace(/[^0-9]/g, '')
+  if (digits.length < 8) {
+    const parsed = new Date(d)
+    return isNaN(parsed.getTime()) ? null : parsed
   }
-  if (/^\d{8}T\d{6}/.test(d)) {
-    const isUtc = d.endsWith('Z')
-    const y = parseInt(d.slice(0, 4))
-    const mo = parseInt(d.slice(4, 6)) - 1
-    const day = parseInt(d.slice(6, 8))
-    const h = parseInt(d.slice(9, 11))
-    const mi = parseInt(d.slice(11, 13))
-    const s = parseInt(d.slice(13, 15))
-    if (isUtc) return new Date(Date.UTC(y, mo, day, h, mi, s))
-    return new Date(y, mo, day, h, mi, s)
-  }
-  const parsed = new Date(d)
-  return isNaN(parsed.getTime()) ? null : parsed
+  return new Date(
+    parseInt(digits.slice(0, 4)),
+    parseInt(digits.slice(4, 6)) - 1,
+    parseInt(digits.slice(6, 8)),
+  )
 }
 
 export default function TaskImport({ onImportComplete }: TaskImportProps) {
