@@ -111,7 +111,7 @@ SilentSuite is in active development.
 - [x] Etebase server deployed and running
 - [x] Real E2E encrypted sync verified between devices
 - [x] Web app live at [app.silentsuite.io](https://app.silentsuite.io)
-- [x] CalDAV / CardDAV bridge (read-write)
+- [x] CalDAV / CardDAV bridge
 - [x] Landing page live at [silentsuite.io](https://silentsuite.io)
 - [x] Waitlist open (GDPR-compliant double opt-in)
 - [x] Blog with RSS feed
@@ -124,11 +124,11 @@ SilentSuite is in active development.
 | Component | Technology |
 |-----------|-----------|
 | Sync server | Python, Etebase protocol, Docker |
-| Web app | Next.js 15, React, Tailwind CSS, libsodium |
-| Docs site | Next.js, Cloudflare Workers |
-| CalDAV / CardDAV bridge | Python, radicale-style adapters |
+| Web app | Next.js 15, React, Tailwind CSS |
+| Docs site | VitePress, Vue, Cloudflare Workers |
+| CalDAV / CardDAV bridge | Python, Radicale |
 | Android adapter | Kotlin |
-| Encryption | Etebase protocol (XChaCha20-Poly1305, Argon2id) |
+| Encryption | Etebase protocol (XChaCha20-Poly1305, Argon2 via libsodium) |
 | Hosting | EU cloud infrastructure |
 | License | AGPL-3.0 (server + apps) |
 
