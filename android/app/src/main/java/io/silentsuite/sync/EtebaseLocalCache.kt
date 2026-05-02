@@ -117,9 +117,19 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
         }
 
         // FIXME: If we ever cache this we need to cache bust on changePassword
-        fun getEtebase(context: Context, httpClient: OkHttpClient, settings: AccountSettings): Account {
+        fun getEtebase(
+            context: Context,
+            httpClient: OkHttpClient,
+            settings: AccountSettings,
+            sessionOverride: String? = null,
+        ): Account {
             val client = Client.create(httpClient, settings.uri?.toString())
-            val session = requireNotNull(settings.etebaseSession) { "Etebase session is null for account" }
+            // On first login AccountManager.setUserData hasn't always landed by the time
+            // the next activity reads it back, so accept an in-memory override from the
+            // caller and fall back to the persisted value only if one wasn't supplied.
+            val session = sessionOverride
+                ?: settings.etebaseSession
+                ?: throw IllegalStateException("Etebase session is null for account ${settings.account.name}")
             return Account.restore(client, session, null)
         }
     }

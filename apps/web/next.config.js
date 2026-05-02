@@ -30,7 +30,6 @@ const nextConfig = {
     config.resolve.alias = {
       ...config.resolve.alias,
       etebase: resolveEtebase(),
-      'argon2-webworker': path.resolve(__dirname, 'app/lib/argon2-shim.js'),
     }
     return config
   },

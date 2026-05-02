@@ -288,35 +288,100 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return contents.map(() => null)
     }
 
+    // Pause the sync engine for the duration of the import. The local-crypto
+    // phase below blocks the main thread; without this, a 30s poll firing
+    // mid-import would also decrypt freshly-imported items on the same thread,
+    // freezing the UI long enough for the user to refresh and abort the import.
+    const { syncEngine } = get()
+    syncEngine?.pause()
+
     try {
       const core = await import('@silentsuite/core')
       const collectionManager = account.getCollectionManager()
       const itemManager = collectionManager.getItemManager(collection)
 
-      // Create all item objects locally
+      // Create all item objects locally. Yield to the event loop every
+      // YIELD_EVERY items so the UI stays responsive during 1000+ item imports.
+      const YIELD_EVERY = 25
       const items: any[] = []
-      for (const { content } of contents) {
-        const item = await itemManager.create({}, content)
+      for (let i = 0; i < contents.length; i++) {
+        const item = await itemManager.create({}, contents[i]!.content)
         items.push(item)
+        if (i > 0 && i % YIELD_EVERY === 0) {
+          await new Promise((r) => setTimeout(r, 0))
+        }
       }
 
-      // Upload in batches of 50 to avoid oversized requests
-      const BATCH_SIZE = 50
+      // Smaller batches finish each request faster, so a single slow batch is
+      // less likely to cross a Cloudflare/proxy gateway timeout. Combined with
+      // retry-with-backoff, this turns a transient batch failure from
+      // "import aborted, ~100 items stuck" into "1-3s pause, then resume".
+      const BATCH_SIZE = 20
+      const MAX_BATCH_RETRIES = 3
+      let lastSuccessfulItemIndex = -1
+      let permanentFailure: unknown = null
+
       for (let i = 0; i < items.length; i += BATCH_SIZE) {
         const batch = items.slice(i, i + BATCH_SIZE)
-        await itemManager.batch(batch)
+        let attempt = 0
+        let succeeded = false
+
+        while (attempt < MAX_BATCH_RETRIES) {
+          try {
+            await itemManager.batch(batch)
+            succeeded = true
+            lastSuccessfulItemIndex = i + batch.length - 1
+            break
+          } catch (err) {
+            // Offline errors are handled by the outer catch + offline queue —
+            // bubble out instead of retrying on a known-down network.
+            if (isOfflineError(err)) throw err
+            attempt++
+            if (attempt >= MAX_BATCH_RETRIES) {
+              permanentFailure = err
+              break
+            }
+            const backoffMs = 1000 * 2 ** (attempt - 1) // 1s, 2s, 4s
+            logger.warn(
+              `[etebase-store] Batch ${i / BATCH_SIZE + 1} failed (attempt ${attempt}/${MAX_BATCH_RETRIES}), retrying in ${backoffMs}ms:`,
+              err,
+            )
+            await new Promise((r) => setTimeout(r, backoffMs))
+          }
+        }
+
+        if (!succeeded) break
       }
 
-      // Update cache with all items at once
+      // Update cache with whatever made it to the server. Items past
+      // lastSuccessfulItemIndex never got an ack, so we can't claim them.
       const itemCache = new Map(get().itemCache)
       const itemTypeMap = new Map(get().itemTypeMap)
       const uids: (string | null)[] = []
-      for (const item of items) {
-        itemCache.set(item.uid, item)
-        itemTypeMap.set(item.uid, type)
-        uids.push(item.uid)
+      for (let i = 0; i < items.length; i++) {
+        if (i <= lastSuccessfulItemIndex) {
+          const item = items[i]
+          itemCache.set(item.uid, item)
+          itemTypeMap.set(item.uid, type)
+          uids.push(item.uid)
+        } else {
+          uids.push(null)
+        }
       }
       set({ itemCache, itemTypeMap })
+
+      if (permanentFailure) {
+        const succeeded = lastSuccessfulItemIndex + 1
+        const total = items.length
+        const noun = type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : 'contacts'
+        console.error(`[etebase-store] Batch import failed after retries (${succeeded}/${total} ${noun} imported):`, permanentFailure)
+        if (succeeded > 0) {
+          showErrorToast(`Imported ${succeeded} of ${total} ${noun}. Please try again to import the rest.`)
+        } else {
+          showErrorToast(`Failed to import ${noun}. Please try again.`)
+        }
+      }
+
       return uids
     } catch (err) {
       if (isOfflineError(err)) {
@@ -333,6 +398,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         showErrorToast(`Failed to import ${type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : 'contacts'}. Please try again.`)
       }
       return contents.map(() => null)
+    } finally {
+      syncEngine?.resume()
     }
   },
 

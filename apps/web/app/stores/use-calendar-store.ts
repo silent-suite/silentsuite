@@ -452,6 +452,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         exceptions: [],
         alarms: ne.alarms ?? [],
         calendarId: ne.calendarId ?? 'default',
+        timezone: ne.timezone,
         created: now,
         updated: now,
       }

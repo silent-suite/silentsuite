@@ -1,0 +1,21 @@
+name: Task
+description: A discrete piece of work to do.
+labels: []
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What does "done" look like? Be concrete.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this matters, links to related work, constraints.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Implementation notes
+      description: Suggested approach, files to touch, gotchas.

@@ -139,14 +139,16 @@ def _initial_status_check():
     try:
         with etesync_for_user(user) as (etesync, _):
             etesync.sync()
+            # Dashboard mirrors what the bridge actually exposes — one collection
+            # per type — even if the server has more (multi-collection was dropped).
             collections = {"calendars": 0, "contacts": 0, "tasks": 0}
             for col in etesync.list():
-                if col.col_type == "etebase.vevent":
-                    collections["calendars"] += 1
-                elif col.col_type == "etebase.vcard":
-                    collections["contacts"] += 1
-                elif col.col_type == "etebase.vtodo":
-                    collections["tasks"] += 1
+                if col.col_type == "etebase.vevent" and collections["calendars"] == 0:
+                    collections["calendars"] = 1
+                elif col.col_type == "etebase.vcard" and collections["contacts"] == 0:
+                    collections["contacts"] = 1
+                elif col.col_type == "etebase.vtodo" and collections["tasks"] == 0:
+                    collections["tasks"] = 1
             update_status("connected", collections=collections)
             log_sync_event("info", f"Initial sync complete for {user}")
             logger.info(

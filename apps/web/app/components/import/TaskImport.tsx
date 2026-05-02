@@ -7,6 +7,7 @@ import type { VTodo } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
+import { parseICalDate } from './import-mappers'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import type { Priority } from '@silentsuite/core'
@@ -156,30 +157,6 @@ function mapPriorityToStore(icalPriority?: number): Priority {
   if (icalPriority <= 4) return 'high'
   if (icalPriority <= 6) return 'medium'
   return 'low'
-}
-
-function parseICalDate(d: string): Date | null {
-  if (!d) return null
-  if (/^\d{8}$/.test(d)) {
-    return new Date(
-      parseInt(d.slice(0, 4)),
-      parseInt(d.slice(4, 6)) - 1,
-      parseInt(d.slice(6, 8)),
-    )
-  }
-  if (/^\d{8}T\d{6}/.test(d)) {
-    const isUtc = d.endsWith('Z')
-    const y = parseInt(d.slice(0, 4))
-    const mo = parseInt(d.slice(4, 6)) - 1
-    const day = parseInt(d.slice(6, 8))
-    const h = parseInt(d.slice(9, 11))
-    const mi = parseInt(d.slice(11, 13))
-    const s = parseInt(d.slice(13, 15))
-    if (isUtc) return new Date(Date.UTC(y, mo, day, h, mi, s))
-    return new Date(y, mo, day, h, mi, s)
-  }
-  const parsed = new Date(d)
-  return isNaN(parsed.getTime()) ? null : parsed
 }
 
 export default function TaskImport({ onImportComplete }: TaskImportProps) {

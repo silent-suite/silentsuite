@@ -32,7 +32,6 @@ The repository is a pnpm monorepo managed by Turborepo:
 
 | Directory | Purpose |
 |---|---|
-| `apps/landing/` | Marketing site and blog (Next.js, deployed to Cloudflare Workers) |
 | `apps/web/` | Main web application (Next.js) |
 | `packages/` | Shared packages used across apps |
 | `self-host/` | Docker Compose configuration for self-hosting |

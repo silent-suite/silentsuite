@@ -56,6 +56,11 @@ class SyncThread(threading.Thread):
         self.last_sync = None
         self._exception = None
         self.interval = config.SYNC_INTERVAL
+        # Progress tracking — etebase-py doesn't expose per-item hooks, so we
+        # can only report "a sync is in flight" plus the last sync's duration.
+        self.is_syncing = False
+        self.sync_started_at = None
+        self.last_sync_duration = None
 
     def force_sync(self):
         self._force_sync.set()
@@ -89,7 +94,11 @@ class SyncThread(threading.Thread):
                 with etesync_for_user(self.user) as (etesync, _):
                     self.last_sync = time.time()
                     self._done_syncing.clear()
+                    self.is_syncing = True
+                    self.sync_started_at = self.last_sync
                     etesync.sync()
+                    self.last_sync_duration = time.time() - self.sync_started_at
+                    self.is_syncing = False
                     logger.debug("Sync completed for user %s", self.user)
 
                     # Update dashboard status with collection counts
@@ -112,6 +121,7 @@ class SyncThread(threading.Thread):
                 update_status("error", error=str(e))
                 log_sync_event("error", f"Sync failed: {e}")
             finally:
+                self.is_syncing = False
                 was_re_requested = self._force_sync.is_set()
                 self._force_sync.clear()
                 self._done_syncing.set()
@@ -528,11 +538,19 @@ class Storage(BaseStorage):
             if self.user:
                 yield Collection(self, posixpath.join(path, self.user))
         elif len(attributes) == 1:
+            # Expose at most one collection per type. Multi-collection support was
+            # dropped 2026-04-12 — CalDAV/CardDAV clients see a single calendar,
+            # address book, and task list each.
+            seen_types: set = set()
             for journal in self.etesync.list():
-                if journal.col_type in config.COL_TYPES:
-                    yield Collection(
-                        self, posixpath.join(path, journal.uid)
-                    )
+                if journal.col_type not in config.COL_TYPES:
+                    continue
+                if journal.col_type in seen_types:
+                    continue
+                seen_types.add(journal.col_type)
+                yield Collection(
+                    self, posixpath.join(path, journal.uid)
+                )
         elif len(attributes) == 2:
             for href in collection._list():
                 yield collection._get(href)

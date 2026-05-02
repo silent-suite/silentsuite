@@ -70,7 +70,11 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInter
     // PaymentElement is rendered with `fields.billingDetails.name = 'never'`,
     // so Stripe requires the billing name be passed explicitly here or it throws
     // an IntegrationError that bubbles out of the await and leaves the button stuck.
-    const billingName = useAuthStore.getState().pendingSignup?.email ?? 'Customer'
+    // Fall back to user.email on /settings/subscription and the add-card banner
+    // where pendingSignup is null. Use `||` not `??` because degraded/self-hosted
+    // states set user.email to '', and we'd rather land on 'Customer' than ''.
+    const authState = useAuthStore.getState()
+    const billingName = authState.pendingSignup?.email || authState.user?.email || 'Customer'
     const confirmParams = {
       return_url: `${window.location.origin}/signup/success`,
       payment_method_data: { billing_details: { name: billingName } },

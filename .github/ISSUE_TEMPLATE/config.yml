@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security disclosure
+    url: mailto:info@silentsuite.io
+    about: Report security or privacy issues privately, not via a public issue.

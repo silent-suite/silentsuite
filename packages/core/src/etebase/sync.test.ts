@@ -565,4 +565,95 @@ describe('SyncEngine', () => {
       engine.stop();
     });
   });
+
+  // ── Pause / resume ──
+
+  describe('pause and resume', () => {
+    it('does not poll while paused', async () => {
+      const { account, mockItemManager } = createMockAccount();
+      const engine = new SyncEngine(defaultOptions({ pollIntervalMs: 1_000 }));
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+      expect(mockItemManager.list).toHaveBeenCalledTimes(1);
+
+      engine.pause();
+      expect(engine.isPaused()).toBe(true);
+
+      // Advance well past several poll intervals — no new list calls
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(mockItemManager.list).toHaveBeenCalledTimes(1);
+    });
+
+    it('syncNow is a no-op while paused', async () => {
+      const { account, mockItemManager } = createMockAccount();
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+      mockItemManager.list.mockClear();
+
+      engine.pause();
+      await engine.syncNow();
+
+      expect(mockItemManager.list).not.toHaveBeenCalled();
+    });
+
+    it('resumes polling on resume()', async () => {
+      const { account, mockItemManager } = createMockAccount();
+      const engine = new SyncEngine(defaultOptions({ pollIntervalMs: 1_000 }));
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+      engine.pause();
+      mockItemManager.list.mockClear();
+
+      engine.resume();
+      expect(engine.isPaused()).toBe(false);
+
+      // Next poll interval should fire
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(mockItemManager.list).toHaveBeenCalledTimes(1);
+
+      engine.stop();
+    });
+
+    it('pause is idempotent and resume is a no-op when not paused', async () => {
+      const { account } = createMockAccount();
+      const engine = new SyncEngine(defaultOptions());
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      engine.pause();
+      engine.pause(); // no-op
+      expect(engine.isPaused()).toBe(true);
+
+      engine.resume();
+      engine.resume(); // no-op
+      expect(engine.isPaused()).toBe(false);
+
+      engine.stop();
+    });
+
+    it('pause does not change reported status', async () => {
+      const { account } = createMockAccount();
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+      expect(engine.getStatus()).toBe('synced');
+
+      engine.pause();
+      // We deliberately do NOT flip status to 'offline' on pause — the user
+      // is still online, we're just deferring polls.
+      expect(engine.getStatus()).toBe('synced');
+
+      engine.stop();
+    });
+  });
 });

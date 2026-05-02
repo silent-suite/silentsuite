@@ -15,13 +15,15 @@ class ModeSelectionActivity : BaseActivity() {
 
     companion object {
         private const val EXTRA_ACCOUNT = "account"
+        private const val EXTRA_ETEBASE_SESSION = "etebaseSession"
         const val PREF_NAME = "app_mode"
         const val KEY_MODE = "sync_mode"
         const val MODE_BRIDGE = "bridge"
 
-        fun newIntent(context: Context, account: Account): Intent {
+        fun newIntent(context: Context, account: Account, etebaseSession: String? = null): Intent {
             val intent = Intent(context, ModeSelectionActivity::class.java)
             intent.putExtra(EXTRA_ACCOUNT, account)
+            if (etebaseSession != null) intent.putExtra(EXTRA_ETEBASE_SESSION, etebaseSession)
             return intent
         }
     }
@@ -30,6 +32,7 @@ class ModeSelectionActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
 
         val account = requireNotNull(intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)) { "ModeSelectionActivity requires EXTRA_ACCOUNT" }
+        val etebaseSession = intent.getStringExtra(EXTRA_ETEBASE_SESSION)
 
         // Always use bridge mode (walled garden removed)
         getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -37,7 +40,7 @@ class ModeSelectionActivity : BaseActivity() {
             .putString(KEY_MODE, MODE_BRIDGE)
             .apply()
 
-        startActivity(NewAccountWizardActivity.newIntent(this, account))
+        startActivity(NewAccountWizardActivity.newIntent(this, account, etebaseSession))
         finish()
     }
 }
