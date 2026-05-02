@@ -8,6 +8,7 @@ import type { VEvent } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
+import { vEventToImportEvent } from './import-mappers'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 
@@ -115,27 +116,7 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
   const handleImport = useCallback(async () => {
     setIsImporting(true)
     try {
-      const newEvents = events.map((event) => {
-        const startTzid = event.dtstartParams?.['TZID']
-        const endTzid = event.dtendParams?.['TZID'] ?? startTzid
-        const { date: start, allDay: isAllDay } = parseICalDateValue(event.dtstart, startTzid)
-        const end = event.dtend
-          ? parseICalDateValue(event.dtend, endTzid).date
-          : new Date(start.getTime() + 60 * 60 * 1000)
-
-        return {
-          title: event.summary || 'Untitled Event',
-          description: event.description ?? '',
-          location: event.location ?? '',
-          startDate: start,
-          endDate: end,
-          allDay: isAllDay,
-          recurrenceRule: event.rrule ?? null,
-          alarms: event.valarms ?? [],
-          calendarId: selectedCalendarId,
-          timezone: isAllDay ? undefined : startTzid,
-        }
-      })
+      const newEvents = events.map((event) => vEventToImportEvent(event, selectedCalendarId))
       const count = await importEvents(newEvents)
       setImportedCount(count)
       onImportComplete(count)

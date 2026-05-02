@@ -7,6 +7,7 @@ import type { VTodo } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
+import { parseICalDate } from './import-mappers'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import type { Priority } from '@silentsuite/core'
@@ -156,24 +157,6 @@ function mapPriorityToStore(icalPriority?: number): Priority {
   if (icalPriority <= 4) return 'high'
   if (icalPriority <= 6) return 'medium'
   return 'low'
-}
-
-// Date-only on import: the Task model has no timezone field, so a TZID-bearing
-// or UTC datetime would otherwise be parsed in the importer's local zone and
-// land on the wrong instant. Take the wall-clock date from the source value.
-// Full TZID parity for VTODO is tracked in #66.
-function parseICalDate(d: string): Date | null {
-  if (!d) return null
-  const digits = d.replace(/[^0-9]/g, '')
-  if (digits.length < 8) {
-    const parsed = new Date(d)
-    return isNaN(parsed.getTime()) ? null : parsed
-  }
-  return new Date(
-    parseInt(digits.slice(0, 4)),
-    parseInt(digits.slice(4, 6)) - 1,
-    parseInt(digits.slice(6, 8)),
-  )
 }
 
 export default function TaskImport({ onImportComplete }: TaskImportProps) {
