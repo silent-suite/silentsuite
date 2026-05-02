@@ -16,7 +16,7 @@ End-to-end encrypted calendar, contacts, and tasks. Your schedule and relationsh
 <br />
 
 <a href="https://silentsuite.io">
-  <img src="https://silentsuite.io/social/og-image-1200x630.png" alt="SilentSuite — Private Sync, By Design. Calendar, Contacts, Tasks, E2EE." width="800" />
+  <img src="./.github/assets/showcase-calendar.png" alt="SilentSuite calendar — desktop and mobile mockup" width="100%" />
 </a>
 
 </div>
