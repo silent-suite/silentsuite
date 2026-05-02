@@ -13,6 +13,12 @@ End-to-end encrypted calendar, contacts, and tasks. Your schedule and relationsh
 
 [Website](https://silentsuite.io) · [Blog](https://silentsuite.io/blog) · [Docs](https://docs.silentsuite.io) · [Waitlist](https://silentsuite.io/#waitlist)
 
+<br />
+
+<a href="https://silentsuite.io">
+  <img src="https://silentsuite.io/social/og-image-1200x630.png" alt="SilentSuite — Private Sync, By Design. Calendar, Contacts, Tasks, E2EE." width="800" />
+</a>
+
 </div>
 
 ---
