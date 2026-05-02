@@ -437,14 +437,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             .setTitle(R.string.account_delete_confirmation_title)
             .setMessage(R.string.account_delete_confirmation_text)
             .setPositiveButton(R.string.navigation_drawer_logout) { _, _ ->
-                for (acc in accounts) {
-                    accountManager.removeAccountExplicitly(acc)
+                lifecycleScope.launch {
+                    for (acc in accounts) {
+                        teardownAccountState(acc)
+                    }
+                    for (acc in accounts) {
+                        accountManager.removeAccountExplicitly(acc)
+                    }
+                    val intent = Intent(this@AccountActivity, LoginActivity::class.java)
+                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(intent)
+                    finish()
                 }
-                // Return to login
-                val intent = Intent(this, LoginActivity::class.java)
-                intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(intent)
-                finish()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -723,41 +727,50 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     private fun deleteAccount() {
         val accountManager = AccountManager.get(this)
-        val settings = AccountSettings(this@AccountActivity, account)
 
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                EtebaseLocalCache.clearUserCache(this@AccountActivity, account.name)
+            teardownAccountState(account)
 
-                try {
-                    val httpClient = HttpClient.Builder(this@AccountActivity).build()
-                    val etebase = EtebaseLocalCache.getEtebase(this@AccountActivity, httpClient.okHttpClient, settings)
-                    etebase.logout()
-                } catch(e: EtebaseException) {
-                    // Ignore failures for now
-                    Logger.log.warning(e.toString())
-                }
-            }
+            if (Build.VERSION.SDK_INT >= 22)
+                accountManager.removeAccount(account, this@AccountActivity, { future ->
+                    try {
+                        if (future.result.getBoolean(AccountManager.KEY_BOOLEAN_RESULT))
+                            finish()
+                    } catch(e: Exception) {
+                        Logger.log.log(Level.SEVERE, "Couldn't remove account", e)
+                    }
+                }, null)
+            else
+                accountManager.removeAccount(account, { future ->
+                    try {
+                        if (future.result)
+                            finish()
+                    } catch (e: Exception) {
+                        Logger.log.log(Level.SEVERE, "Couldn't remove account", e)
+                    }
+                }, null)
         }
+    }
 
-        if (Build.VERSION.SDK_INT >= 22)
-            accountManager.removeAccount(account, this, { future ->
-                try {
-                    if (future.result.getBoolean(AccountManager.KEY_BOOLEAN_RESULT))
-                        finish()
-                } catch(e: Exception) {
-                    Logger.log.log(Level.SEVERE, "Couldn't remove account", e)
-                }
-            }, null)
-        else
-            accountManager.removeAccount(account, { future ->
-                try {
-                    if (future.result)
-                        finish()
-                } catch (e: Exception) {
-                    Logger.log.log(Level.SEVERE, "Couldn't remove account", e)
-                }
-            }, null)
+    // Tear down per-account client state before the Android account is removed.
+    // Must run while AccountManager still has the user data, since AccountSettings
+    // (and the etebase session) are read from it. Both deleteAccount() and
+    // confirmLogout() must call this — leaving the Etebase FS cache behind causes
+    // stale stokens on re-login, which makes incremental sync miss historical items.
+    private suspend fun teardownAccountState(account: Account) = withContext(Dispatchers.IO) {
+        EtebaseLocalCache.clearUserCache(this@AccountActivity, account.name)
+
+        try {
+            val settings = AccountSettings(this@AccountActivity, account)
+            HttpClient.Builder(this@AccountActivity).build().use { httpClient ->
+                val etebase = EtebaseLocalCache.getEtebase(this@AccountActivity, httpClient.okHttpClient, settings)
+                etebase.logout()
+            }
+        } catch (e: EtebaseException) {
+            Logger.log.warning("Server logout failed for ${account.name}: $e")
+        } catch (e: Exception) {
+            Logger.log.warning("Account teardown failed for ${account.name}: $e")
+        }
     }
 
 
