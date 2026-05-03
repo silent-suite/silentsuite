@@ -47,17 +47,32 @@ curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-
 
 The installer will:
 1. Check that Docker and Docker Compose are installed
-2. Create a `silentsuite-server/` directory
-3. Download the Docker Compose configuration
-4. Ask for your domain name
-5. Generate secure random passwords
-6. Write the `.env` file
-7. Pull Docker images and start the containers
-8. Wait for health checks to pass
+2. Resolve which SilentSuite version to install (latest umbrella release, or `main` if none has been cut yet)
+3. Create a `silentsuite-server/` directory
+4. Download the Docker Compose configuration *from the release tag*, so the compose, helper scripts, and pinned image digest all come from one known-good matrix
+5. Ask for your domain name
+6. Generate secure random passwords
+7. Write the `.env` file
+8. Pull Docker images and start the containers
+9. Wait for health checks to pass
 
 The first user to sign up in the SilentSuite app becomes the server admin.
 
 Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
+
+### Installing a specific version
+
+To pin to a specific SilentSuite release rather than the latest:
+
+```bash
+# Curl-pipe style (env var):
+curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | SILENTSUITE_VERSION=v0.1.0-beta bash
+
+# Locally cloned style (CLI flag):
+bash install.sh --version v0.1.0-beta
+```
+
+When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `verify.sh`, and `success.html` from the requested tag's archive — the entire self-host config moves together as one release.
 
 ## Manual Setup
 

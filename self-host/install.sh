@@ -6,9 +6,59 @@ set -euo pipefail
 # Sets up the SilentSuite sync server with PostgreSQL.
 # Can be run standalone via:
 #   curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
+#
+# Pin to a specific release:
+#   curl -fsSL .../install.sh | SILENTSUITE_VERSION=v0.1.0-beta bash
+# Or, when running locally:
+#   bash install.sh --version v0.1.0-beta
 
-GITHUB_RAW_BASE="https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host"
+REPO="silent-suite/silentsuite"
 INSTALL_DIR="${SILENTSUITE_DIR:-silentsuite-server}"
+REQUESTED_VERSION=""
+
+# ── Parse arguments ───────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: install.sh [--version <tag>]
+
+  --version <tag>   Install a specific SilentSuite release (e.g. v0.1.0-beta).
+                    Default: the latest umbrella release on GitHub, falling
+                    back to the 'main' branch if no umbrella release exists.
+  -h, --help        Show this message and exit.
+
+Environment:
+  SILENTSUITE_DIR       Install directory (default: silentsuite-server).
+  SILENTSUITE_VERSION   Same as --version. Useful for the curl-pipe pattern:
+                        curl -fsSL .../install.sh | SILENTSUITE_VERSION=v0.1.0-beta bash
+                        (CLI --version takes precedence over the env var.)
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version)
+      if [ $# -lt 2 ]; then
+        echo "ERROR: --version requires an argument (e.g. --version v0.1.0-beta)" >&2
+        exit 1
+      fi
+      REQUESTED_VERSION="$2"
+      shift 2
+      ;;
+    --version=*)
+      REQUESTED_VERSION="${1#--version=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: Unknown argument '$1'. Run with --help for usage." >&2
+      exit 1
+      ;;
+  esac
+done
 
 echo "============================================"
 echo "  SilentSuite Self-Hosted Installer"
@@ -39,6 +89,73 @@ fi
 
 echo "Prerequisites OK: docker, $COMPOSE, openssl, curl"
 echo ""
+
+# ── Resolve target version ────────────────────────────────────────────
+#
+# Precedence: --version flag > SILENTSUITE_VERSION env > latest umbrella
+# release on GitHub > 'main' branch (development tip, fallback when no
+# umbrella release exists yet).
+
+resolve_version() {
+  if [ -n "$REQUESTED_VERSION" ]; then
+    echo "$REQUESTED_VERSION"
+    return 0
+  fi
+  if [ -n "${SILENTSUITE_VERSION:-}" ]; then
+    echo "$SILENTSUITE_VERSION"
+    return 0
+  fi
+
+  # Walk the releases list newest-first and pick the first tag that is
+  # neither component-prefixed (bridge-vX, android-vX, server-vX, web-vX)
+  # nor component-suffixed (vX-bridge, vX-android, ...). Mirrors the
+  # filtering convention used by bridge/install.sh — both installers walk
+  # the same release stream, applying the filter that's right for them.
+  local releases tag
+  releases=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null || true)
+  if [ -z "$releases" ]; then
+    echo "main"
+    return 0
+  fi
+
+  tag=$(echo "$releases" \
+    | grep -E '"tag_name":' \
+    | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' \
+    | grep -vE '^(bridge|android|server|web)-|-(bridge|android|server|web)$' \
+    | head -1)
+
+  if [ -z "$tag" ]; then
+    echo "main"
+  else
+    echo "$tag"
+  fi
+}
+
+verify_ref_exists() {
+  # Skip the check for branches — we treat 'main' / 'dev' as always-valid.
+  case "$1" in
+    main|dev) return 0 ;;
+  esac
+  curl -fsI "https://raw.githubusercontent.com/${REPO}/$1/self-host/docker-compose.yml" >/dev/null 2>&1
+}
+
+VERSION=$(resolve_version)
+if ! verify_ref_exists "$VERSION"; then
+  echo "ERROR: Version '$VERSION' does not exist or has no self-host config." >&2
+  echo "       Check available releases at https://github.com/${REPO}/releases" >&2
+  exit 1
+fi
+
+if [ "$VERSION" = "main" ]; then
+  echo "WARNING: No SilentSuite umbrella release found yet — installing from 'main'"
+  echo "         (development tip). Once a release is cut, this default switches"
+  echo "         automatically. To pin explicitly: --version vX.Y.Z."
+else
+  echo "Installing SilentSuite version: $VERSION"
+fi
+echo ""
+
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}/self-host"
 
 # ── Set up install directory ──────────────────────────────────────────
 
