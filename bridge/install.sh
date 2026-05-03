@@ -88,7 +88,7 @@ detect_arch() {
 # past them to the most recent release that actually has a bridge asset
 # (bridge-vX.Y.Z prefix going forward, or the legacy vX.Y.Z-bridge suffix).
 get_download_url() {
-    RELEASE_URL="https://api.github.com/repos/${REPO}/releases?per_page=30"
+    RELEASE_URL="https://api.github.com/repos/${REPO}/releases?per_page=100"
     ASSET_NAME="${BINARY_NAME}-${OS}-${ARCH}"
 
     # Trailing `"` anchors the match to the binary itself, not its `.sha256` sidecar.

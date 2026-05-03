@@ -57,7 +57,7 @@ if (Test-Path $ExePath) {
 # legacy vX.Y.Z-bridge suffix).
 Write-Step "Downloading latest release..."
 $AssetName = "$BinaryName-windows-x86_64.exe"
-$ReleaseUrl = "https://api.github.com/repos/$Repo/releases?per_page=30"
+$ReleaseUrl = "https://api.github.com/repos/$Repo/releases?per_page=100"
 
 try {
     $Releases = Invoke-RestMethod -Uri $ReleaseUrl -Headers @{ "User-Agent" = "SilentSuite-Installer" }
