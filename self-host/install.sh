@@ -38,8 +38,8 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     --version)
-      if [ $# -lt 2 ]; then
-        echo "ERROR: --version requires an argument (e.g. --version v0.1.0-beta)" >&2
+      if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#-}" != "$2" ]; then
+        echo "ERROR: --version requires a non-empty tag (e.g. --version v0.1.0-beta)" >&2
         exit 1
       fi
       REQUESTED_VERSION="$2"
@@ -47,6 +47,10 @@ while [ $# -gt 0 ]; do
       ;;
     --version=*)
       REQUESTED_VERSION="${1#--version=}"
+      if [ -z "$REQUESTED_VERSION" ]; then
+        echo "ERROR: --version requires a non-empty tag (e.g. --version=v0.1.0-beta)" >&2
+        exit 1
+      fi
       shift
       ;;
     -h|--help)
