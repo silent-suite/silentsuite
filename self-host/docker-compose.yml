@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.9-alpine
     container_name: silentsuite-postgres
     restart: unless-stopped
     expose:
@@ -23,7 +23,11 @@ services:
       - silentsuite
 
   server:
-    image: victorrds/etebase:latest
+    # Pinned to a specific manifest digest. To upgrade, re-run install.sh,
+    # which fetches the latest compose (will become release-tag-pinned once
+    # the installer's --version flag lands). Editing this digest by hand
+    # decouples the compose from the rest of the release matrix.
+    image: ghcr.io/silent-suite/silentsuite-server@sha256:6689b5d873cfe5844ca38de74e458fd382ce106916bb5dfa1027786eb6bc4ac8
     container_name: silentsuite-server
     restart: unless-stopped
     ports:
@@ -32,24 +36,17 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      SERVER: http
-      # AUTO_UPDATE: set to "true" to enable automatic Etebase server updates on container restart.
-      # Disabled by default for stability — opt in when you're ready to accept upstream changes.
-      AUTO_UPDATE: "false"
-      AUTO_SIGNUP: "true"
-      DB_ENGINE: postgres
-      DATABASE_NAME: ${DATABASE_NAME:-silentsuite}
-      DATABASE_USER: ${DATABASE_USER:-silentsuite}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      DATABASE_HOST: postgres
-      DATABASE_PORT: "5432"
-      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost}
+      # Django /admin/ superuser. Created on first boot if both are set and the
+      # user does not already exist; otherwise the entrypoint silently skips.
       SUPER_USER: ${SUPER_USER:-admin}
       SUPER_PASS: ${SUPER_PASS}
+      # Open registration toggle. "true" blocks new signups (use after the
+      # operator's admin account is registered). Default "false" allows signup.
+      ETEBASE_DISABLE_SIGNUP: ${ETEBASE_DISABLE_SIGNUP:-false}
     volumes:
       - server_data:/data
-      - ./success.html:/etebase/etebase_server/templates/success.html:ro
-      - ./etebase-server.ini:/data/etebase-server.ini
+      - ./success.html:/app/etebase_server/templates/success.html:ro
+      - ./etebase-server.ini:/etc/etebase-server/etebase-server.ini:ro
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:3735/')\""]
       interval: 30s

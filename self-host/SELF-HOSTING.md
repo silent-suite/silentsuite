@@ -29,8 +29,8 @@ You provide your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) to
 
 | Service | Image | Role |
 |---------|-------|------|
-| **SilentSuite Server** | `victorrds/etebase` | Sync server (Etebase protocol). All data is E2E encrypted. |
-| **PostgreSQL** | `postgres:16-alpine` | Database for encrypted sync data and user accounts. |
+| **SilentSuite Server** | `ghcr.io/silent-suite/silentsuite-server` (pinned per release) | Sync server (Etebase protocol). All data is E2E encrypted. |
+| **PostgreSQL** | `postgres:16.9-alpine` | Database for encrypted sync data and user accounts. |
 
 ## Prerequisites
 
@@ -66,23 +66,40 @@ Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
    mkdir silentsuite-server && cd silentsuite-server
    curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/docker-compose.yml -o docker-compose.yml
    curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/.env.example -o .env
+   curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/success.html -o success.html
    ```
 
-2. **Create the environment file:**
-   ```bash
-   cp .env.example .env
-   ```
-
-3. **Generate passwords:**
+2. **Generate passwords:**
    ```bash
    openssl rand -base64 32 | tr -d '/+='   # use for DATABASE_PASSWORD
    openssl rand -base64 16 | tr -d '/+='   # use for SUPER_PASS
    ```
 
-4. **Edit `.env`:**
+3. **Edit `.env`:**
    - `DATABASE_PASSWORD` -- the generated database password
    - `SUPER_PASS` -- the generated admin password
-   - `ALLOWED_HOSTS` -- your domain, e.g., `sync.example.com,localhost`
+
+4. **Create `etebase-server.ini`** (server-side configuration; mounted into the container). Replace `YOUR_DATABASE_PASSWORD` with the value you set in `.env`, and `sync.example.com` with your domain:
+   ```ini
+   [global]
+   secret_file = /data/secret.txt
+   debug = false
+   media_root = /data/media
+   static_root = /data/static
+
+   [allowed_hosts]
+   allowed_host1 = sync.example.com
+   allowed_host2 = localhost
+
+   [database]
+   engine = django.db.backends.postgresql
+   name = silentsuite
+   user = silentsuite
+   password = YOUR_DATABASE_PASSWORD
+   host = postgres
+   port = 5432
+   ```
+   Save with `chmod 644` so the container's `etebase` user can read it via the bind mount.
 
 5. **Start the stack:**
    ```bash
@@ -163,15 +180,16 @@ Once your server is running and your reverse proxy is configured:
 
 ## Updating
 
+The server image is pinned to a specific manifest digest per SilentSuite release, so a `docker compose pull` won't fetch a newer SilentSuite version on its own. To upgrade across versions, re-run the installer — it'll download the release-pinned `docker-compose.yml`:
+
 ```bash
-./update.sh
+curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
 ```
 
-Or manually:
+Within a single pinned release, `./update.sh` re-pulls the pinned images and recreates the containers (useful after host-level changes):
 
 ```bash
-docker compose pull
-docker compose up -d
+./update.sh
 ```
 
 ## Health Checks
@@ -233,7 +251,7 @@ docker compose logs postgres
 ```
 
 ### Server returns 400 Bad Request
-Your domain is not in `ALLOWED_HOSTS`. Update `.env` and recreate:
+Your domain is not in `etebase-server.ini`'s `[allowed_hosts]` section. Edit the file (under `[allowed_hosts]`, add `allowed_hostN = your.domain`) and recreate:
 ```bash
 docker compose up -d --force-recreate server
 ```
