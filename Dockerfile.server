@@ -30,8 +30,9 @@ RUN addgroup -S etebase && adduser -S etebase -G etebase
 # Copy application code
 COPY server/ /app
 
-# Create data directories
+# Create data directories and ensure entrypoint is executable
 RUN mkdir -p /data /data/media /data/static && \
+    chmod +x /app/docker/entrypoint.sh && \
     chown -R etebase:etebase /app /data
 
 WORKDIR /app
@@ -41,7 +42,4 @@ USER etebase
 
 EXPOSE 3735
 
-CMD ["uvicorn", "etebase_server.asgi:application", \
-     "--host", "0.0.0.0", "--port", "3735", \
-     "--workers", "2", "--proxy-headers", \
-     "--forwarded-allow-ips", "*"]
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
