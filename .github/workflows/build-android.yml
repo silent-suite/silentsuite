@@ -53,10 +53,11 @@ jobs:
       - name: Build signed release APK
         env:
           KSTOREPWD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           ./gradlew assembleRelease --no-daemon \
             -PsigningStoreLocation="$KEYSTORE_PATH" \
-            -PsigningKeyAlias="${{ secrets.ANDROID_KEY_ALIAS }}"
+            -PsigningKeyAlias="$KEY_ALIAS"
 
       - name: Verify APK signature
         run: |
@@ -72,4 +73,4 @@ jobs:
 
       - name: Cleanup keystore
         if: always()
-        run: rm -f "$KEYSTORE_PATH" 2>/dev/null || true
+        run: rm -rf "$RUNNER_TEMP/keystore"
