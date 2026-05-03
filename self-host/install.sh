@@ -6,9 +6,63 @@ set -euo pipefail
 # Sets up the SilentSuite sync server with PostgreSQL.
 # Can be run standalone via:
 #   curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
+#
+# Pin to a specific release:
+#   curl -fsSL .../install.sh | SILENTSUITE_VERSION=v0.1.0-beta bash
+# Or, when running locally:
+#   bash install.sh --version v0.1.0-beta
 
-GITHUB_RAW_BASE="https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host"
+REPO="silent-suite/silentsuite"
 INSTALL_DIR="${SILENTSUITE_DIR:-silentsuite-server}"
+REQUESTED_VERSION=""
+
+# ── Parse arguments ───────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: install.sh [--version <tag>]
+
+  --version <tag>   Install a specific SilentSuite release (e.g. v0.1.0-beta).
+                    Default: the latest umbrella release on GitHub, falling
+                    back to the 'main' branch if no umbrella release exists.
+  -h, --help        Show this message and exit.
+
+Environment:
+  SILENTSUITE_DIR       Install directory (default: silentsuite-server).
+  SILENTSUITE_VERSION   Same as --version. Useful for the curl-pipe pattern:
+                        curl -fsSL .../install.sh | SILENTSUITE_VERSION=v0.1.0-beta bash
+                        (CLI --version takes precedence over the env var.)
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --version)
+      if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#-}" != "$2" ]; then
+        echo "ERROR: --version requires a non-empty tag (e.g. --version v0.1.0-beta)" >&2
+        exit 1
+      fi
+      REQUESTED_VERSION="$2"
+      shift 2
+      ;;
+    --version=*)
+      REQUESTED_VERSION="${1#--version=}"
+      if [ -z "$REQUESTED_VERSION" ]; then
+        echo "ERROR: --version requires a non-empty tag (e.g. --version=v0.1.0-beta)" >&2
+        exit 1
+      fi
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "ERROR: Unknown argument '$1'. Run with --help for usage." >&2
+      exit 1
+      ;;
+  esac
+done
 
 echo "============================================"
 echo "  SilentSuite Self-Hosted Installer"
@@ -40,12 +94,82 @@ fi
 echo "Prerequisites OK: docker, $COMPOSE, openssl, curl"
 echo ""
 
+# ── Resolve target version ────────────────────────────────────────────
+#
+# Precedence: --version flag > SILENTSUITE_VERSION env > latest umbrella
+# release on GitHub > 'main' branch (development tip, fallback when no
+# umbrella release exists yet).
+
+resolve_version() {
+  if [ -n "$REQUESTED_VERSION" ]; then
+    echo "$REQUESTED_VERSION"
+    return 0
+  fi
+  if [ -n "${SILENTSUITE_VERSION:-}" ]; then
+    echo "$SILENTSUITE_VERSION"
+    return 0
+  fi
+
+  # Walk the releases list newest-first and pick the first tag that is
+  # neither component-prefixed (bridge-vX, android-vX, server-vX, web-vX)
+  # nor component-suffixed (vX-bridge, vX-android, ...). Mirrors the
+  # filtering convention used by bridge/install.sh — both installers walk
+  # the same release stream, applying the filter that's right for them.
+  local releases tag
+  releases=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null || true)
+  if [ -z "$releases" ]; then
+    echo "main"
+    return 0
+  fi
+
+  tag=$(echo "$releases" \
+    | grep -E '"tag_name":' \
+    | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' \
+    | grep -vE '^(bridge|android|server|web)-|-(bridge|android|server|web)$' \
+    | head -1)
+
+  if [ -z "$tag" ]; then
+    echo "main"
+  else
+    echo "$tag"
+  fi
+}
+
+verify_ref_exists() {
+  # Skip the check for branches — we treat 'main' / 'dev' as always-valid.
+  case "$1" in
+    main|dev) return 0 ;;
+  esac
+  curl -fsI "https://raw.githubusercontent.com/${REPO}/$1/self-host/docker-compose.yml" >/dev/null 2>&1
+}
+
+VERSION=$(resolve_version)
+if ! verify_ref_exists "$VERSION"; then
+  echo "ERROR: Version '$VERSION' does not exist or has no self-host config." >&2
+  echo "       Check available releases at https://github.com/${REPO}/releases" >&2
+  exit 1
+fi
+
+if [ "$VERSION" = "main" ]; then
+  echo "WARNING: No SilentSuite umbrella release found yet — installing from 'main'"
+  echo "         (development tip). Once a release is cut, this default switches"
+  echo "         automatically. To pin explicitly: --version vX.Y.Z."
+else
+  echo "Installing SilentSuite version: $VERSION"
+fi
+echo ""
+
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/${REPO}/${VERSION}/self-host"
+
 # ── Set up install directory ──────────────────────────────────────────
 
 if [ ! -d "$INSTALL_DIR" ]; then
   echo "Creating install directory: $INSTALL_DIR"
   mkdir -p "$INSTALL_DIR"
 fi
+# 0750 keeps secrets in .env and etebase-server.ini out of reach of other
+# local users on shared hosts — the install dir is a single-operator surface.
+chmod 750 "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
 # ── Download docker-compose.yml ───────────────────────────────────────
@@ -55,7 +179,7 @@ curl -fsSL "$GITHUB_RAW_BASE/docker-compose.yml" -o docker-compose.yml
 
 # ── Download helper scripts ───────────────────────────────────────────
 
-for script in update.sh verify.sh; do
+for script in update.sh verify.sh close-signups.sh; do
   echo "Downloading $script..."
   curl -fsSL "$GITHUB_RAW_BASE/$script" -o "$script"
   chmod +x "$script"
@@ -135,9 +259,9 @@ DATABASE_PASSWORD=$DATABASE_PASSWORD
 SUPER_USER=admin
 SUPER_PASS=$SUPER_PASS
 
-# Comma-separated list of hostnames the server will accept.
-# Must include your domain. Add localhost if you also want local access.
-ALLOWED_HOSTS=$DOMAIN,localhost
+# Open registration toggle. "false" allows new signups (default; needed for
+# the first admin to register). Flip to "true" once the admin is registered.
+ETEBASE_DISABLE_SIGNUP=false
 EOF
 
 chmod 600 .env
@@ -171,27 +295,32 @@ cat > etebase-server.ini <<INIEOF
 ; SilentSuite / Etebase server configuration
 ; Generated by install.sh on $(date -u +"%Y-%m-%d %H:%M UTC")
 ;
-; This file is mounted into the container and takes precedence over
-; environment variables. Edit it and restart to apply changes:
+; This file is mounted into the container at
+; /etc/etebase-server/etebase-server.ini. Edit it and restart to apply:
 ;   docker compose restart server
 
 [global]
 secret_file = /data/secret.txt
 debug = false
+media_root = /data/media
+static_root = /data/static
 
 [allowed_hosts]
 allowed_host1 = $DOMAIN
 allowed_host2 = localhost
 
 [database]
-engine = postgres
+engine = django.db.backends.postgresql
 name = silentsuite
 user = silentsuite
 password = $DATABASE_PASSWORD
 host = postgres
 port = 5432
 INIEOF
-chmod 600 etebase-server.ini
+# 0644 (not 0600) so the etebase user inside the container — which has a
+# different UID from the host operator — can still read this file via the
+# bind mount. The file already lives in an operator-owned install directory.
+chmod 644 etebase-server.ini
 echo "Generated etebase-server.ini"
 
 echo "Wrote .env (permissions: 600)"
@@ -271,6 +400,7 @@ echo "  3. Open https://app.silentsuite.io (or the mobile app)"
 echo "  4. On the signup page, expand 'Advanced Settings'"
 echo "  5. Enter https://$DOMAIN as the server URL"
 echo "  6. Create your account — you'll be the admin!"
+echo "  7. Immediately run ./close-signups.sh to block further registration."
 echo ""
 echo "  Configuration files:"
 echo "    .env                — environment variables"
@@ -279,3 +409,36 @@ echo ""
 echo "  To change the domain or other settings, edit etebase-server.ini"
 echo "  and restart: docker compose restart server"
 echo ""
+
+# ── Loud security warning ─────────────────────────────────────────────
+#
+# Open registration is on by default so the operator's first account can be
+# created via the app. After that registration the operator should immediately
+# close signups, otherwise anyone who finds the server URL can create an
+# account on the box. This banner is the last thing the installer prints so
+# it's the freshest thing in the operator's mind.
+
+if [ -t 1 ]; then
+  C_RED=$'\033[1;31m'
+  C_YELLOW=$'\033[1;33m'
+  C_RESET=$'\033[0m'
+else
+  C_RED=''; C_YELLOW=''; C_RESET=''
+fi
+
+cat <<EOF
+
+${C_RED}┌─────────────────────────────────────────────────────────────────────┐
+│  SECURITY: open registration is currently ENABLED.                  │
+└─────────────────────────────────────────────────────────────────────┘${C_RESET}
+
+  Anyone who reaches https://$DOMAIN/ before you do can grab an account
+  on this server. To stop that:
+
+    ${C_YELLOW}1. Sign up your own account at https://$DOMAIN/ now (step 6 above).${C_RESET}
+    ${C_YELLOW}2. Run ${C_RESET}./close-signups.sh${C_YELLOW} from this directory.${C_RESET}
+
+  ./close-signups.sh sets ETEBASE_DISABLE_SIGNUP=true in .env and recreates
+  the server container — new registrations get blocked at the API layer.
+
+EOF

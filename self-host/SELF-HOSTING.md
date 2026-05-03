@@ -29,8 +29,8 @@ You provide your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) to
 
 | Service | Image | Role |
 |---------|-------|------|
-| **SilentSuite Server** | `victorrds/etebase` | Sync server (Etebase protocol). All data is E2E encrypted. |
-| **PostgreSQL** | `postgres:16-alpine` | Database for encrypted sync data and user accounts. |
+| **SilentSuite Server** | `ghcr.io/silent-suite/silentsuite-server` (pinned per release) | Sync server (Etebase protocol). All data is E2E encrypted. |
+| **PostgreSQL** | `postgres:16.9-alpine` | Database for encrypted sync data and user accounts. |
 
 ## Prerequisites
 
@@ -47,17 +47,32 @@ curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-
 
 The installer will:
 1. Check that Docker and Docker Compose are installed
-2. Create a `silentsuite-server/` directory
-3. Download the Docker Compose configuration
-4. Ask for your domain name
-5. Generate secure random passwords
-6. Write the `.env` file
-7. Pull Docker images and start the containers
-8. Wait for health checks to pass
+2. Resolve which SilentSuite version to install (latest umbrella release, or `main` if none has been cut yet)
+3. Create a `silentsuite-server/` directory
+4. Download the Docker Compose configuration *from the release tag*, so the compose, helper scripts, and pinned image digest all come from one known-good matrix
+5. Ask for your domain name
+6. Generate secure random passwords
+7. Write the `.env` file
+8. Pull Docker images and start the containers
+9. Wait for health checks to pass
 
 The first user to sign up in the SilentSuite app becomes the server admin.
 
 Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
+
+### Installing a specific version
+
+To pin to a specific SilentSuite release rather than the latest:
+
+```bash
+# Curl-pipe style (env var):
+curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | SILENTSUITE_VERSION=v0.1.0-beta bash
+
+# Locally cloned style (CLI flag):
+bash install.sh --version v0.1.0-beta
+```
+
+When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `verify.sh`, and `success.html` from the requested tag's archive — the entire self-host config moves together as one release.
 
 ## Manual Setup
 
@@ -66,23 +81,40 @@ Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
    mkdir silentsuite-server && cd silentsuite-server
    curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/docker-compose.yml -o docker-compose.yml
    curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/.env.example -o .env
+   curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/success.html -o success.html
    ```
 
-2. **Create the environment file:**
-   ```bash
-   cp .env.example .env
-   ```
-
-3. **Generate passwords:**
+2. **Generate passwords:**
    ```bash
    openssl rand -base64 32 | tr -d '/+='   # use for DATABASE_PASSWORD
    openssl rand -base64 16 | tr -d '/+='   # use for SUPER_PASS
    ```
 
-4. **Edit `.env`:**
+3. **Edit `.env`:**
    - `DATABASE_PASSWORD` -- the generated database password
    - `SUPER_PASS` -- the generated admin password
-   - `ALLOWED_HOSTS` -- your domain, e.g., `sync.example.com,localhost`
+
+4. **Create `etebase-server.ini`** (server-side configuration; mounted into the container). Replace `YOUR_DATABASE_PASSWORD` with the value you set in `.env`, and `sync.example.com` with your domain:
+   ```ini
+   [global]
+   secret_file = /data/secret.txt
+   debug = false
+   media_root = /data/media
+   static_root = /data/static
+
+   [allowed_hosts]
+   allowed_host1 = sync.example.com
+   allowed_host2 = localhost
+
+   [database]
+   engine = django.db.backends.postgresql
+   name = silentsuite
+   user = silentsuite
+   password = YOUR_DATABASE_PASSWORD
+   host = postgres
+   port = 5432
+   ```
+   Save with `chmod 644` so the container's `etebase` user can read it via the bind mount.
 
 5. **Start the stack:**
    ```bash
@@ -160,18 +192,33 @@ Once your server is running and your reverse proxy is configured:
 2. On the signup page, expand **Advanced Settings**
 3. Enter `https://sync.example.com` (your domain) as the server URL
 4. Create your account and start syncing
+5. **Run `./close-signups.sh`** from your install directory — see below.
+
+## Closing Open Signups
+
+The server ships with `ETEBASE_DISABLE_SIGNUP=false` so your first account can be created from the SilentSuite app. **The window between server-up and admin-registered is unsafe** — anyone who reaches your server URL during that gap can grab an account.
+
+Once your admin account is registered, close signups:
+
+```bash
+cd silentsuite-server
+./close-signups.sh
+```
+
+The script flips `ETEBASE_DISABLE_SIGNUP=true` in `.env` and recreates the server container. New registrations are blocked at the API layer thereafter. To re-open (e.g. to add another user), edit `.env`, set `ETEBASE_DISABLE_SIGNUP=false`, and run `docker compose up -d --force-recreate server`.
 
 ## Updating
 
+The server image is pinned to a specific manifest digest per SilentSuite release, so a `docker compose pull` won't fetch a newer SilentSuite version on its own. To upgrade across versions, re-run the installer — it'll download the release-pinned `docker-compose.yml`:
+
 ```bash
-./update.sh
+curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
 ```
 
-Or manually:
+Within a single pinned release, `./update.sh` re-pulls the pinned images and recreates the containers (useful after host-level changes):
 
 ```bash
-docker compose pull
-docker compose up -d
+./update.sh
 ```
 
 ## Health Checks
@@ -233,7 +280,7 @@ docker compose logs postgres
 ```
 
 ### Server returns 400 Bad Request
-Your domain is not in `ALLOWED_HOSTS`. Update `.env` and recreate:
+Your domain is not in `etebase-server.ini`'s `[allowed_hosts]` section. Edit the file (under `[allowed_hosts]`, add `allowed_hostN = your.domain`) and recreate:
 ```bash
 docker compose up -d --force-recreate server
 ```
