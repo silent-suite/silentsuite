@@ -91,7 +91,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: SilentSuite ${{ github.ref_name }}
           draft: true
-          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
           fail_on_unmatched_files: true
           files: |
             android/app/build/outputs/apk/release/silentsuite-android-${{ github.ref_name }}.apk

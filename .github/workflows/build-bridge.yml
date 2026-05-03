@@ -301,6 +301,5 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: SilentSuite ${{ steps.tag.outputs.tag }}
           draft: true
-          prerelease: ${{ contains(steps.tag.outputs.tag, 'alpha') || contains(steps.tag.outputs.tag, 'beta') || contains(steps.tag.outputs.tag, 'rc') }}
           fail_on_unmatched_files: true
           files: flat/*
