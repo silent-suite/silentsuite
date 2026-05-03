@@ -82,18 +82,24 @@ detect_arch() {
 }
 
 # --- Get latest release URL ---
+# Fetches the releases list (sorted newest-first) and picks the first matching
+# asset across all releases. This survives the umbrella-vs-component split:
+# umbrella releases (e.g. v0.1.0-beta) won't carry bridge binaries, so we walk
+# past them to the most recent release that actually has a bridge asset
+# (bridge-vX.Y.Z prefix going forward, or the legacy vX.Y.Z-bridge suffix).
 get_download_url() {
-    RELEASE_URL="https://api.github.com/repos/${REPO}/releases/latest"
+    RELEASE_URL="https://api.github.com/repos/${REPO}/releases?per_page=30"
     ASSET_NAME="${BINARY_NAME}-${OS}-${ARCH}"
 
+    # Trailing `"` anchors the match to the binary itself, not its `.sha256` sidecar.
     if command -v curl >/dev/null 2>&1; then
         DOWNLOAD_URL=$(curl -fsSL "$RELEASE_URL" 2>/dev/null | \
-            grep "browser_download_url.*${ASSET_NAME}" | \
+            grep "browser_download_url.*${ASSET_NAME}\"" | \
             head -1 | \
             cut -d '"' -f 4)
     elif command -v wget >/dev/null 2>&1; then
         DOWNLOAD_URL=$(wget -qO- "$RELEASE_URL" 2>/dev/null | \
-            grep "browser_download_url.*${ASSET_NAME}" | \
+            grep "browser_download_url.*${ASSET_NAME}\"" | \
             head -1 | \
             cut -d '"' -f 4)
     else

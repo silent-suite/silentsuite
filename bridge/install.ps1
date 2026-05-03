@@ -50,19 +50,33 @@ if (Test-Path $ExePath) {
 }
 
 # --- Download latest release ---
+# Fetches the releases list (sorted newest-first) and walks until we find one
+# that carries the bridge asset. Umbrella releases (e.g. v0.1.0-beta) won't
+# have bridge binaries, so we skip past them to the most recent release that
+# actually has a bridge asset (bridge-vX.Y.Z prefix going forward, or the
+# legacy vX.Y.Z-bridge suffix).
 Write-Step "Downloading latest release..."
 $AssetName = "$BinaryName-windows-x86_64.exe"
-$ReleaseUrl = "https://api.github.com/repos/$Repo/releases/latest"
+$ReleaseUrl = "https://api.github.com/repos/$Repo/releases?per_page=30"
 
 try {
-    $Release = Invoke-RestMethod -Uri $ReleaseUrl -Headers @{ "User-Agent" = "SilentSuite-Installer" }
+    $Releases = Invoke-RestMethod -Uri $ReleaseUrl -Headers @{ "User-Agent" = "SilentSuite-Installer" }
 } catch {
     Write-Err "Failed to fetch release info from GitHub: $_"
 }
 
-$Asset = $Release.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
+$Release = $null
+$Asset = $null
+foreach ($r in $Releases) {
+    $candidate = $r.assets | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
+    if ($candidate) {
+        $Release = $r
+        $Asset = $candidate
+        break
+    }
+}
 if (-not $Asset) {
-    Write-Err "No asset found matching $AssetName. Check https://github.com/$Repo/releases"
+    Write-Err "No asset found matching $AssetName across recent releases. Check https://github.com/$Repo/releases"
 }
 
 # Create install directory
