@@ -16,10 +16,15 @@ else
   exit 1
 fi
 
-echo "Pulling latest images..."
+# The compose file pins the server image to a specific manifest digest, so
+# `docker compose pull` is a no-op for cross-version upgrades. To move to a
+# new SilentSuite version, re-run install.sh — it fetches the release-pinned
+# compose. This script just ensures the pinned images are present and the
+# stack is recreated against them.
+echo "Pulling pinned images..."
 $COMPOSE pull
 
-echo "Recreating containers with updated images..."
+echo "Recreating containers..."
 $COMPOSE up -d
 
 echo ""
