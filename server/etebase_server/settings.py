@@ -205,6 +205,12 @@ if "DJANGO_STATIC_ROOT" in os.environ:
 if "DJANGO_MEDIA_ROOT" in os.environ:
     MEDIA_ROOT = os.environ["DJANGO_MEDIA_ROOT"]
 
+# Self-host operators flip this on (via close-signups.sh) once their admin
+# is registered. Replaces the etebase-server.ini-only path so the toggle is
+# runtime-driven without an image rebuild.
+if os.environ.get("ETEBASE_DISABLE_SIGNUP", "").lower() in ("true", "1", "yes"):
+    ETEBASE_CREATE_USER_FUNC = "etebase_server.django.utils.create_user_blocked"
+
 # Make an `etebase_server_settings` module available to override settings.
 try:
     from etebase_server_settings import *  # noqa: F403
