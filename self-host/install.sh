@@ -179,7 +179,7 @@ curl -fsSL "$GITHUB_RAW_BASE/docker-compose.yml" -o docker-compose.yml
 
 # ── Download helper scripts ───────────────────────────────────────────
 
-for script in update.sh verify.sh; do
+for script in update.sh verify.sh close-signups.sh; do
   echo "Downloading $script..."
   curl -fsSL "$GITHUB_RAW_BASE/$script" -o "$script"
   chmod +x "$script"
@@ -400,6 +400,7 @@ echo "  3. Open https://app.silentsuite.io (or the mobile app)"
 echo "  4. On the signup page, expand 'Advanced Settings'"
 echo "  5. Enter https://$DOMAIN as the server URL"
 echo "  6. Create your account — you'll be the admin!"
+echo "  7. Immediately run ./close-signups.sh to block further registration."
 echo ""
 echo "  Configuration files:"
 echo "    .env                — environment variables"
@@ -408,3 +409,36 @@ echo ""
 echo "  To change the domain or other settings, edit etebase-server.ini"
 echo "  and restart: docker compose restart server"
 echo ""
+
+# ── Loud security warning ─────────────────────────────────────────────
+#
+# Open registration is on by default so the operator's first account can be
+# created via the app. After that registration the operator should immediately
+# close signups, otherwise anyone who finds the server URL can create an
+# account on the box. This banner is the last thing the installer prints so
+# it's the freshest thing in the operator's mind.
+
+if [ -t 1 ]; then
+  C_RED=$'\033[1;31m'
+  C_YELLOW=$'\033[1;33m'
+  C_RESET=$'\033[0m'
+else
+  C_RED=''; C_YELLOW=''; C_RESET=''
+fi
+
+cat <<EOF
+
+${C_RED}┌─────────────────────────────────────────────────────────────────────┐
+│  SECURITY: open registration is currently ENABLED.                  │
+└─────────────────────────────────────────────────────────────────────┘${C_RESET}
+
+  Anyone who reaches https://$DOMAIN/ before you do can grab an account
+  on this server. To stop that:
+
+    ${C_YELLOW}1. Sign up your own account at https://$DOMAIN/ now (step 6 above).${C_RESET}
+    ${C_YELLOW}2. Run ${C_RESET}./close-signups.sh${C_YELLOW} from this directory.${C_RESET}
+
+  ./close-signups.sh sets ETEBASE_DISABLE_SIGNUP=true in .env and recreates
+  the server container — new registrations get blocked at the API layer.
+
+EOF

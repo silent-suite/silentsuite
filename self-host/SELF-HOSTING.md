@@ -192,6 +192,20 @@ Once your server is running and your reverse proxy is configured:
 2. On the signup page, expand **Advanced Settings**
 3. Enter `https://sync.example.com` (your domain) as the server URL
 4. Create your account and start syncing
+5. **Run `./close-signups.sh`** from your install directory — see below.
+
+## Closing Open Signups
+
+The server ships with `ETEBASE_DISABLE_SIGNUP=false` so your first account can be created from the SilentSuite app. **The window between server-up and admin-registered is unsafe** — anyone who reaches your server URL during that gap can grab an account.
+
+Once your admin account is registered, close signups:
+
+```bash
+cd silentsuite-server
+./close-signups.sh
+```
+
+The script flips `ETEBASE_DISABLE_SIGNUP=true` in `.env` and recreates the server container. New registrations are blocked at the API layer thereafter. To re-open (e.g. to add another user), edit `.env`, set `ETEBASE_DISABLE_SIGNUP=false`, and run `docker compose up -d --force-recreate server`.
 
 ## Updating
 
