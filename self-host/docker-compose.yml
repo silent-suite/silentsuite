@@ -23,10 +23,10 @@ services:
       - silentsuite
 
   server:
-    # Pinned to a specific manifest digest per umbrella release. To upgrade
-    # across SilentSuite versions, re-run install.sh — it fetches the
-    # release-pinned compose. Editing this digest by hand bypasses release
-    # coupling and is not supported.
+    # Pinned to a specific manifest digest. To upgrade, re-run install.sh,
+    # which fetches the latest compose (will become release-tag-pinned once
+    # the installer's --version flag lands). Editing this digest by hand
+    # decouples the compose from the rest of the release matrix.
     image: ghcr.io/silent-suite/silentsuite-server@sha256:6689b5d873cfe5844ca38de74e458fd382ce106916bb5dfa1027786eb6bc4ac8
     container_name: silentsuite-server
     restart: unless-stopped

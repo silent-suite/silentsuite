@@ -46,6 +46,9 @@ if [ ! -d "$INSTALL_DIR" ]; then
   echo "Creating install directory: $INSTALL_DIR"
   mkdir -p "$INSTALL_DIR"
 fi
+# 0750 keeps secrets in .env and etebase-server.ini out of reach of other
+# local users on shared hosts — the install dir is a single-operator surface.
+chmod 750 "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
 # ── Download docker-compose.yml ───────────────────────────────────────

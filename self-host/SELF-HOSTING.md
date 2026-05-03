@@ -79,7 +79,7 @@ Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
    - `DATABASE_PASSWORD` -- the generated database password
    - `SUPER_PASS` -- the generated admin password
 
-4. **Create `etebase-server.ini`** (server-side configuration; mounted into the container):
+4. **Create `etebase-server.ini`** (server-side configuration; mounted into the container). Replace `YOUR_DATABASE_PASSWORD` with the value you set in `.env`, and `sync.example.com` with your domain:
    ```ini
    [global]
    secret_file = /data/secret.txt
@@ -99,7 +99,7 @@ Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
    host = postgres
    port = 5432
    ```
-   Save with `chmod 644` so the container's `etebase` user can read it.
+   Save with `chmod 644` so the container's `etebase` user can read it via the bind mount.
 
 5. **Start the stack:**
    ```bash
