@@ -3,6 +3,8 @@ name: Build Android APK
 on:
   push:
     branches: [dev, main]
+    tags:
+      - 'v*'
     paths:
       - 'android/**'
       - '.github/workflows/build-android.yml'
@@ -16,6 +18,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: android
@@ -70,6 +74,17 @@ jobs:
           name: silentsuite-release-${{ github.sha }}
           path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30
+
+      - name: Attach APK to umbrella GitHub Release (tag push only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: SilentSuite ${{ github.ref_name }}
+          draft: true
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          fail_on_unmatched_files: true
+          files: android/app/build/outputs/apk/release/*.apk
 
       - name: Cleanup keystore
         if: always()

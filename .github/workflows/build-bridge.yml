@@ -3,7 +3,7 @@ name: Build Bridge Binaries
 on:
   push:
     tags:
-      - "v*-bridge"
+      - "v*"
   workflow_dispatch:
     inputs:
       create_release:
@@ -289,47 +289,18 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Release tag: $TAG"
 
-      # Create the release and upload all binaries + checksums
-      - name: Create GitHub Release
+      # Create / append to the umbrella GitHub Release.
+      # We deliberately do NOT set body/body_path here — the release notes
+      # live in the umbrella release notes the operator pastes at publish
+      # time. softprops/action-gh-release is idempotent: first workflow to
+      # run creates the draft release, subsequent runs append assets without
+      # clobbering an existing body.
+      - name: Attach bridge binaries to umbrella GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: SilentSuite Bridge ${{ steps.tag.outputs.tag }}
-          draft: false
+          name: SilentSuite ${{ steps.tag.outputs.tag }}
+          draft: true
           prerelease: ${{ contains(steps.tag.outputs.tag, 'alpha') || contains(steps.tag.outputs.tag, 'beta') || contains(steps.tag.outputs.tag, 'rc') }}
-          body: |
-            ## SilentSuite Bridge ${{ steps.tag.outputs.tag }}
-
-            Local CalDAV/CardDAV ↔ Etebase bridge daemon.
-
-            ### Installation
-
-            **macOS / Linux:**
-            ```sh
-            curl -fsSL https://silentsuite.io/bridge/install.sh | sh
-            ```
-
-            **Windows (PowerShell):**
-            ```powershell
-            irm silentsuite.io/bridge/install.ps1 | iex
-            ```
-
-            Or download the binary for your platform below.
-
-            ### Supported Platforms
-
-            | Binary | Platform |
-            |--------|----------|
-            | `silentsuite-bridge-linux-x86_64` | Linux (x86_64) |
-            | `silentsuite-bridge-linux-arm64` | Linux (ARM64 / Raspberry Pi) |
-            | `silentsuite-bridge-macos-x86_64` | macOS (Intel) |
-            | `silentsuite-bridge-windows-x86_64.exe` | Windows (x86_64) |
-
-            > **macOS Apple Silicon:** Run from source with Python (`pip install silentsuite-bridge`).
-
-            ### Verify checksum
-
-            ```sh
-            sha256sum -c SHA256SUMS.txt
-            ```
+          fail_on_unmatched_files: true
           files: flat/*
