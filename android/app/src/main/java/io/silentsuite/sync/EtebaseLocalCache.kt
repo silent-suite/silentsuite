@@ -5,12 +5,20 @@ import com.etebase.client.*
 import com.etebase.client.Collection
 import com.etebase.client.exceptions.EtebaseException
 import com.etebase.client.exceptions.UrlParseException
+import io.silentsuite.sync.log.Logger
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.*
 
 class EtebaseLocalCache private constructor(context: Context, username: String) {
-    private val fsCache: FileSystemCache = FileSystemCache.create(context.filesDir.absolutePath, username)
+    // Issue #119: log the resolved filesDir + username before the JNI FileSystemCache.create
+    // call. Native errors here don't propagate as EtebaseException, so without this breadcrumb
+    // a mangled username (e.g. one containing '@' or '.') is invisible from logcat alone.
+    private val fsCache: FileSystemCache = run {
+        val filesDirPath = context.filesDir.absolutePath
+        Logger.log.info("FileSystemCache.create filesDir=$filesDirPath username=$username")
+        FileSystemCache.create(filesDirPath, username)
+    }
     private val filesDir: File = File(context.filesDir, username)
     private val colsDir: File = File(filesDir, "cols")
 
@@ -129,7 +137,29 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
             // caller and fall back to the persisted value only if one wasn't supplied.
             val session = sessionOverride
                 ?: settings.etebaseSession
-                ?: throw IllegalStateException("Etebase session is null for account ${settings.account.name}")
+                ?: run {
+                    // Issue #119: distinguish "userData not yet flushed" (sessionOverride was
+                    // not provided AND persisted session is missing) from "session genuinely
+                    // missing." Logging the userData keys also surfaces partial-state account
+                    // collisions where the Android account row exists but setUserData hasn't
+                    // landed yet.
+                    // AccountSettings's key constants are private; keep this list in sync with
+                    // AccountSettings.companion. Logging only the *names* of keys present (not
+                    // values) avoids leaking session tokens or URIs into the log file.
+                    val accountManager = android.accounts.AccountManager.get(context)
+                    val userDataKeys = listOf(
+                        "version",
+                        "uri",
+                        "user_name",
+                        "etebase_session",
+                    ).filter { accountManager.getUserData(settings.account, it) != null }
+                    Logger.log.severe(
+                        "Etebase session is null: account=${settings.account.name} " +
+                                "sessionOverrideProvided=${sessionOverride != null} " +
+                                "userDataKeys=$userDataKeys"
+                    )
+                    throw IllegalStateException("Etebase session is null for account ${settings.account.name}")
+                }
             return Account.restore(client, session, null)
         }
     }
