@@ -23,6 +23,11 @@ import {
   TrendingUp,
   Mail,
   Loader2,
+  Database,
+  Zap,
+  CheckCircle2,
+  XCircle,
+  ArrowRight,
 } from 'lucide-react'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 
@@ -159,6 +164,40 @@ function daysSince(iso: string): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
 }
 
+function relativeTime(from: number | null, now: number): string {
+  if (from == null) return '—'
+  const seconds = Math.max(0, Math.round((now - from) / 1000))
+  if (seconds < 5) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+// Re-renders every 5s so "Updated Xs ago" labels stay live.
+function useNowTick(intervalMs = 5000): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs])
+  return now
+}
+
+function FreshnessPill({ fetchedAt, ok = true, now }: { fetchedAt: number | null; ok?: boolean; now: number }) {
+  const label = relativeTime(fetchedAt, now)
+  const stale = fetchedAt != null && now - fetchedAt > 5 * 60_000
+  const tone = !ok ? 'text-red-400' : stale ? 'text-amber-500' : 'text-[rgb(var(--muted))]'
+  return (
+    <span className={`inline-flex items-center gap-1 text-[10px] font-medium ${tone}`}>
+      <Clock className="h-2.5 w-2.5" />
+      {label}
+    </span>
+  )
+}
+
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { bg: string; text: string; label: string }> = {
     active: { bg: 'bg-emerald-500/10', text: 'text-emerald-500', label: 'Active' },
@@ -258,7 +297,7 @@ export default function AdminDashboard() {
         ))}
       </div>
 
-      {activeTab === 'overview' && (isSelfHosted ? <SelfHostedOverviewTab /> : <OverviewTab />)}
+      {activeTab === 'overview' && (isSelfHosted ? <SelfHostedOverviewTab /> : <OverviewTab onNavigate={setActiveTab} />)}
       {activeTab === 'payments' && !isSelfHosted && <FailedPaymentsTab />}
       {activeTab === 'users' && (isSelfHosted ? <SelfHostedUsersTab /> : <UserLookupTab />)}
       {activeTab === 'subscribers' && !isSelfHosted && <SubscribersTab />}
@@ -272,8 +311,48 @@ export default function AdminDashboard() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function SelfHostedOverviewTab() {
+  const now = useNowTick()
+  const [etebaseStatus, setEtebaseStatus] = useState<'checking' | 'ok' | 'error'>('checking')
+  const [etebaseAt, setEtebaseAt] = useState<number | null>(null)
+
+  const pingEtebase = useCallback(async () => {
+    setEtebaseStatus('checking')
+    try {
+      const res = await fetch(ETEBASE_SERVER_URL, { method: 'GET', mode: 'no-cors' })
+      setEtebaseStatus(res.ok || res.type === 'opaque' ? 'ok' : 'error')
+    } catch {
+      setEtebaseStatus('error')
+    }
+    setEtebaseAt(Date.now())
+  }, [])
+
+  useEffect(() => { pingEtebase() }, [pingEtebase])
+
+  const ok = etebaseStatus === 'ok'
+
   return (
     <div className="space-y-6">
+      {/* Status bar */}
+      <div className="flex flex-col gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${ok ? 'bg-emerald-500' : etebaseStatus === 'checking' ? 'bg-[rgb(var(--muted))] animate-pulse' : 'bg-red-400'}`}
+            />
+            <span className={`text-xs font-medium ${ok ? 'text-emerald-500' : etebaseStatus === 'checking' ? 'text-[rgb(var(--muted))]' : 'text-red-400'}`}>
+              {ok ? 'Etebase reachable' : etebaseStatus === 'checking' ? 'Checking…' : 'Etebase unreachable'}
+            </span>
+          </div>
+          <FreshnessPill fetchedAt={etebaseAt} ok={ok} now={now} />
+        </div>
+        <button
+          onClick={pingEtebase}
+          className="flex items-center gap-1.5 self-start rounded-md border border-[rgb(var(--border))] px-3 py-1.5 text-xs text-[rgb(var(--muted))] hover:border-[rgb(var(--primary))] hover:text-[rgb(var(--foreground))] transition-colors sm:self-auto"
+        >
+          <RefreshCw className={`h-3 w-3 ${etebaseStatus === 'checking' ? 'animate-spin' : ''}`} /> Re-check
+        </button>
+      </div>
+
       {/* Instance Info Card */}
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
         <div className="flex items-center gap-3 mb-4">
@@ -486,16 +565,33 @@ function SelfHostedHealthTab() {
 // SaaS Tabs
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// ─── Overview Tab ─────────────────────────────────────────────────────
-function OverviewTab() {
+// ─── Overview Tab — single-pane landing for all admin signals ─────────
+function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  const now = useNowTick()
+
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [metricsLoading, setMetricsLoading] = useState(true)
   const [metricsError, setMetricsError] = useState<string | null>(null)
-  const [events, setEvents] = useState<EventsPage | null>(null)
-  const [eventsLoading, setEventsLoading] = useState(true)
+  const [metricsAt, setMetricsAt] = useState<number | null>(null)
+
+  const [health, setHealth] = useState<Health | null>(null)
+  const [healthError, setHealthError] = useState<string | null>(null)
+  const [healthAt, setHealthAt] = useState<number | null>(null)
+
+  const [events, setEvents] = useState<WebhookEvent[]>([])
+  const [eventsTotal, setEventsTotal] = useState<number>(0)
   const [eventsError, setEventsError] = useState<string | null>(null)
-  const [eventsOffset, setEventsOffset] = useState(0)
-  const eventsLimit = 20
+  const [eventsAt, setEventsAt] = useState<number | null>(null)
+
+  const [recentSignups, setRecentSignups] = useState<UserListItem[]>([])
+  const [recentTotal, setRecentTotal] = useState<number>(0)
+  const [recentError, setRecentError] = useState<string | null>(null)
+  const [recentAt, setRecentAt] = useState<number | null>(null)
+
+  const [contacts, setContacts] = useState<Subscriber[]>([])
+  const [contactsTotal, setContactsTotal] = useState<number>(0)
+  const [contactsError, setContactsError] = useState<string | null>(null)
+  const [contactsAt, setContactsAt] = useState<number | null>(null)
 
   const fetchMetrics = useCallback(async () => {
     setMetricsError(null)
@@ -503,43 +599,156 @@ function OverviewTab() {
       const res = await adminFetch(`${BILLING_API_URL}/admin/metrics`)
       if (res.ok) {
         setMetrics(await res.json())
+        setMetricsAt(Date.now())
       } else {
         setMetricsError('Failed to load metrics')
       }
     } catch {
-      setMetricsError('Failed to load metrics — API unavailable')
+      setMetricsError('API unavailable')
     }
     setMetricsLoading(false)
   }, [])
 
-  const fetchEvents = useCallback(async (offset: number) => {
-    setEventsLoading(true)
+  const fetchHealth = useCallback(async () => {
+    setHealthError(null)
+    try {
+      const res = await adminFetch(`${BILLING_API_URL}/admin/health`)
+      if (res.ok) {
+        setHealth(await res.json())
+        setHealthAt(Date.now())
+      } else {
+        setHealthError('Failed to load health')
+      }
+    } catch {
+      setHealthError('API unavailable')
+    }
+  }, [])
+
+  const fetchEvents = useCallback(async () => {
     setEventsError(null)
     try {
-      const res = await adminFetch(
-        `${BILLING_API_URL}/admin/events?limit=${eventsLimit}&offset=${offset}`,
-      )
+      const res = await adminFetch(`${BILLING_API_URL}/admin/events?limit=5&offset=0`)
       if (res.ok) {
-        setEvents(await res.json())
+        const data: EventsPage = await res.json()
+        setEvents(data.events)
+        setEventsTotal(data.total)
+        setEventsAt(Date.now())
       } else {
         setEventsError('Failed to load events')
       }
     } catch {
-      setEventsError('Failed to load events — API unavailable')
+      setEventsError('API unavailable')
     }
-    setEventsLoading(false)
-  }, [eventsLimit])
+  }, [])
 
-  useEffect(() => { fetchMetrics() }, [fetchMetrics])
-  useEffect(() => { fetchEvents(eventsOffset) }, [fetchEvents, eventsOffset])
+  const fetchRecentSignups = useCallback(async () => {
+    setRecentError(null)
+    try {
+      const res = await adminFetch(`${BILLING_API_URL}/admin/users?limit=5&offset=0`)
+      if (res.ok) {
+        const data: UsersPage = await res.json()
+        setRecentSignups(data.users)
+        setRecentTotal(data.total)
+        setRecentAt(Date.now())
+      } else {
+        setRecentError('Failed to load users')
+      }
+    } catch {
+      setRecentError('API unavailable')
+    }
+  }, [])
+
+  const fetchContacts = useCallback(async () => {
+    setContactsError(null)
+    try {
+      const res = await adminFetch(`${BILLING_API_URL}/admin/contacts?limit=5&offset=0`)
+      if (res.ok) {
+        const data = await res.json()
+        setContacts(data.contacts ?? [])
+        setContactsTotal(typeof data.total === 'number' ? data.total : (data.contacts?.length ?? 0))
+        setContactsAt(Date.now())
+      } else {
+        setContactsError('Failed to load contacts')
+      }
+    } catch {
+      setContactsError('API unavailable')
+    }
+  }, [])
+
+  const refreshAll = useCallback(() => {
+    fetchMetrics()
+    fetchHealth()
+    fetchEvents()
+    fetchRecentSignups()
+    fetchContacts()
+  }, [fetchMetrics, fetchHealth, fetchEvents, fetchRecentSignups, fetchContacts])
+
+  useEffect(() => { refreshAll() }, [refreshAll])
 
   const totalUsers = metrics
     ? metrics.subscribers.active + metrics.subscribers.trialing + metrics.subscribers.past_due + metrics.subscribers.cancelled + metrics.subscribers.none
     : 0
 
+  const dbOk = health?.database === 'ok'
+  const apiUp = !!health || !!metrics
+  const pastDue = metrics?.subscribers.past_due ?? 0
+
   return (
     <div className="space-y-6">
-      {/* Quick Stats Cards */}
+      {/* System Status Bar */}
+      <div className="flex flex-col gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-2.5 w-2.5 rounded-full ${apiUp ? 'bg-emerald-500' : 'bg-red-400'} ${apiUp ? '' : 'animate-pulse'}`}
+              title={apiUp ? 'API up' : 'API unreachable'}
+            />
+            <span className={`text-xs font-medium ${apiUp ? 'text-emerald-500' : 'text-red-400'}`}>
+              {apiUp ? 'API up' : 'API unreachable'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Database className={`h-3.5 w-3.5 ${health == null ? 'text-[rgb(var(--muted))]' : dbOk ? 'text-emerald-500' : 'text-red-400'}`} />
+            <span className="text-xs text-[rgb(var(--muted))]">
+              DB <span className={health == null ? 'text-[rgb(var(--muted))]' : dbOk ? 'text-emerald-500' : 'text-red-400'}>
+                {health == null ? '…' : dbOk ? 'connected' : 'error'}
+              </span>
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Zap className="h-3.5 w-3.5 text-[rgb(var(--muted))]" />
+            <span className="text-xs text-[rgb(var(--muted))]">
+              Uptime <span className="text-[rgb(var(--foreground))]">{health ? formatUptime(health.uptime) : '—'}</span>
+            </span>
+          </div>
+          <FreshnessPill fetchedAt={healthAt} ok={dbOk && !healthError} now={now} />
+        </div>
+        <button
+          onClick={refreshAll}
+          className="flex items-center gap-1.5 self-start rounded-md border border-[rgb(var(--border))] px-3 py-1.5 text-xs text-[rgb(var(--muted))] hover:border-[rgb(var(--primary))] hover:text-[rgb(var(--foreground))] transition-colors sm:self-auto"
+        >
+          <RefreshCw className="h-3 w-3" /> Refresh all
+        </button>
+      </div>
+
+      {/* Past-due banner — only when there's something to act on */}
+      {pastDue > 0 && (
+        <button
+          onClick={() => onNavigate('payments')}
+          className="flex w-full items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-left transition-colors hover:border-amber-500/60"
+        >
+          <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-amber-500">
+              {pastDue} past-due {pastDue === 1 ? 'subscriber' : 'subscribers'}
+            </p>
+            <p className="text-xs text-amber-500/80">Payment failed — likely needs follow-up</p>
+          </div>
+          <ArrowRight className="h-4 w-4 text-amber-500" />
+        </button>
+      )}
+
+      {/* KPI tiles */}
       {metricsLoading ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -550,176 +759,420 @@ function OverviewTab() {
           ))}
         </div>
       ) : metrics ? (
-        <>
-          {/* Quick Stats Row */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
-              <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-[rgb(var(--muted))]" />
-                <p className="text-xs text-[rgb(var(--muted))]">Total Users</p>
-              </div>
-              <p className="mt-1 text-2xl font-bold text-[rgb(var(--foreground))]">{totalUsers}</p>
-            </div>
-            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="h-4 w-4 text-emerald-500" />
-                <p className="text-xs text-[rgb(var(--muted))]">Active Subscribers</p>
-              </div>
-              <p className="mt-1 text-2xl font-bold text-emerald-500">{metrics.subscribers.active}</p>
-            </div>
-            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
-              <div className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4 text-[rgb(var(--primary))]" />
-                <p className="text-xs text-[rgb(var(--muted))]">MRR</p>
-              </div>
-              <p className="mt-1 text-2xl font-bold text-[rgb(var(--foreground))]">${metrics.mrr.toFixed(2)}</p>
-            </div>
-            <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
-              <div className="flex items-center gap-2">
-                <UserPlus className="h-4 w-4 text-blue-400" />
-                <p className="text-xs text-[rgb(var(--muted))]">Signups Today</p>
-              </div>
-              <p className="mt-1 text-2xl font-bold text-[rgb(var(--foreground))]">{metrics.signups.today}</p>
-            </div>
-          </div>
-
-          {/* MRR Card with Subscriber Breakdown */}
-          <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10">
-                <CreditCard className="h-5 w-5 text-[rgb(var(--primary))]" />
-              </div>
-              <div>
-                <p className="text-xs text-[rgb(var(--muted))]">Monthly Recurring Revenue</p>
-                <p className="text-2xl font-bold text-[rgb(var(--foreground))]">
-                  ${metrics.mrr.toFixed(2)}
-                </p>
-              </div>
-            </div>
-
-            {/* Subscriber breakdown */}
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-              {([
-                { label: 'Active', value: metrics.subscribers.active, color: 'text-emerald-500', bg: 'bg-emerald-500' },
-                { label: 'Trialing', value: metrics.subscribers.trialing, color: 'text-blue-400', bg: 'bg-blue-400' },
-                { label: 'Past Due', value: metrics.subscribers.past_due, color: 'text-amber-500', bg: 'bg-amber-500' },
-                { label: 'Cancelled', value: metrics.subscribers.cancelled, color: 'text-red-400', bg: 'bg-red-400' },
-                { label: 'No Plan', value: metrics.subscribers.none, color: 'text-[rgb(var(--muted))]', bg: 'bg-[rgb(var(--muted))]' },
-              ] as const).map(({ label, value, color, bg }) => (
-                <div key={label} className="flex items-center gap-3 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2">
-                  <div className={`h-2 w-2 rounded-full ${bg}`} />
-                  <div>
-                    <p className="text-xs text-[rgb(var(--muted))]">{label}</p>
-                    <p className={`text-lg font-semibold ${color}`}>{value}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Signups */}
-          <div className="grid grid-cols-3 gap-3">
-            {([
-              { label: 'Signups Today', value: metrics.signups.today },
-              { label: 'This Week', value: metrics.signups.thisWeek },
-              { label: 'This Month', value: metrics.signups.thisMonth },
-            ] as const).map(({ label, value }) => (
-              <div
-                key={label}
-                className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4"
-              >
-                <div className="flex items-center gap-2">
-                  <UserPlus className="h-4 w-4 text-[rgb(var(--muted))]" />
-                  <p className="text-xs text-[rgb(var(--muted))]">{label}</p>
-                </div>
-                <p className="mt-1 text-xl font-semibold text-[rgb(var(--foreground))]">{value}</p>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : metricsError ? (
-        <p className="text-sm text-red-400">{metricsError}</p>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiTile
+            label="Total Users"
+            value={totalUsers}
+            icon={<Users className="h-4 w-4 text-[rgb(var(--muted))]" />}
+            onDrill={() => onNavigate('users')}
+            fetchedAt={metricsAt}
+            now={now}
+          />
+          <KpiTile
+            label="Active Subscribers"
+            value={metrics.subscribers.active}
+            valueClass="text-emerald-500"
+            icon={<TrendingUp className="h-4 w-4 text-emerald-500" />}
+            onDrill={() => onNavigate('users')}
+            fetchedAt={metricsAt}
+            now={now}
+          />
+          <KpiTile
+            label="MRR"
+            value={`€${metrics.mrr.toFixed(2)}`}
+            icon={<DollarSign className="h-4 w-4 text-[rgb(var(--primary))]" />}
+            fetchedAt={metricsAt}
+            now={now}
+          />
+          <KpiTile
+            label="Signups Today"
+            value={metrics.signups.today}
+            icon={<UserPlus className="h-4 w-4 text-blue-400" />}
+            fetchedAt={metricsAt}
+            now={now}
+          />
+        </div>
       ) : (
-        <p className="text-sm text-red-400">Failed to load metrics</p>
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-400">
+          {metricsError ?? 'Failed to load metrics'}
+        </div>
       )}
 
-      {/* Event Log */}
-      <div className="space-y-3">
+      {/* Subscriber funnel + signup velocity */}
+      {metrics && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {/* Subscriber breakdown */}
+          <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CreditCard className="h-4 w-4 text-[rgb(var(--primary))]" />
+                <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Subscriber breakdown</h2>
+              </div>
+              <FreshnessPill fetchedAt={metricsAt} now={now} />
+            </div>
+
+            <SubscriberBars subs={metrics.subscribers} />
+          </div>
+
+          {/* Signup velocity */}
+          <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <UserPlus className="h-4 w-4 text-blue-400" />
+                <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Signup velocity</h2>
+              </div>
+              <FreshnessPill fetchedAt={metricsAt} now={now} />
+            </div>
+            <SignupBars signups={metrics.signups} />
+          </div>
+        </div>
+      )}
+
+      {/* Recent activity: webhook events + recent signups */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RecentEventsCard
+          events={events}
+          total={eventsTotal}
+          error={eventsError}
+          fetchedAt={eventsAt}
+          now={now}
+          onRefresh={fetchEvents}
+        />
+        <RecentSignupsCard
+          users={recentSignups}
+          total={recentTotal}
+          error={recentError}
+          fetchedAt={recentAt}
+          now={now}
+          onRefresh={fetchRecentSignups}
+          onDrill={() => onNavigate('users')}
+        />
+      </div>
+
+      {/* Contacts / newsletter */}
+      <RecentContactsCard
+        contacts={contacts}
+        total={contactsTotal}
+        error={contactsError}
+        fetchedAt={contactsAt}
+        now={now}
+        onRefresh={fetchContacts}
+        onDrill={() => onNavigate('subscribers')}
+      />
+    </div>
+  )
+}
+
+// ─── Overview helper components ──────────────────────────────────────
+
+function KpiTile({
+  label,
+  value,
+  icon,
+  valueClass,
+  onDrill,
+  fetchedAt,
+  now,
+}: {
+  label: string
+  value: string | number
+  icon: React.ReactNode
+  valueClass?: string
+  onDrill?: () => void
+  fetchedAt: number | null
+  now: number
+}) {
+  const inner = (
+    <>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          {icon}
+          <p className="text-xs text-[rgb(var(--muted))]">{label}</p>
+        </div>
+        <FreshnessPill fetchedAt={fetchedAt} now={now} />
+      </div>
+      <p className={`mt-1 text-2xl font-bold ${valueClass ?? 'text-[rgb(var(--foreground))]'}`}>{value}</p>
+    </>
+  )
+  const cls = 'block rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 text-left transition-colors'
+  if (onDrill) {
+    return (
+      <button onClick={onDrill} className={`${cls} hover:border-[rgb(var(--primary))]`}>
+        {inner}
+      </button>
+    )
+  }
+  return <div className={cls}>{inner}</div>
+}
+
+function SubscriberBars({ subs }: { subs: Metrics['subscribers'] }) {
+  const total = subs.active + subs.trialing + subs.past_due + subs.cancelled + subs.none
+  const rows = [
+    { label: 'Active', value: subs.active, bar: 'bg-emerald-500', text: 'text-emerald-500' },
+    { label: 'Trialing', value: subs.trialing, bar: 'bg-blue-400', text: 'text-blue-400' },
+    { label: 'Past due', value: subs.past_due, bar: 'bg-amber-500', text: 'text-amber-500' },
+    { label: 'Cancelled', value: subs.cancelled, bar: 'bg-red-400', text: 'text-red-400' },
+    { label: 'No plan', value: subs.none, bar: 'bg-[rgb(var(--muted))]', text: 'text-[rgb(var(--muted))]' },
+  ]
+  return (
+    <div className="space-y-2.5">
+      {rows.map(({ label, value, bar, text }) => {
+        const pct = total === 0 ? 0 : Math.round((value / total) * 100)
+        return (
+          <div key={label}>
+            <div className="mb-1 flex items-baseline justify-between text-xs">
+              <span className="text-[rgb(var(--muted))]">{label}</span>
+              <span className={`font-semibold ${text}`}>
+                {value} <span className="text-[rgb(var(--muted))] font-normal">({pct}%)</span>
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-[rgb(var(--background))]">
+              <div className={`h-full rounded-full ${bar}`} style={{ width: `${total === 0 ? 0 : Math.max(2, pct)}%` }} />
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SignupBars({ signups }: { signups: Metrics['signups'] }) {
+  const max = Math.max(signups.today, signups.thisWeek, signups.thisMonth, 1)
+  const rows = [
+    { label: 'Today', value: signups.today },
+    { label: 'This week', value: signups.thisWeek },
+    { label: 'This month', value: signups.thisMonth },
+  ]
+  return (
+    <div className="space-y-3">
+      {rows.map(({ label, value }) => {
+        const pct = Math.round((value / max) * 100)
+        return (
+          <div key={label}>
+            <div className="mb-1 flex items-baseline justify-between text-xs">
+              <span className="text-[rgb(var(--muted))]">{label}</span>
+              <span className="font-semibold text-[rgb(var(--foreground))]">{value}</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-[rgb(var(--background))]">
+              <div
+                className="h-full rounded-full bg-blue-400"
+                style={{ width: `${value === 0 ? 0 : Math.max(4, pct)}%` }}
+              />
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function RecentEventsCard({
+  events,
+  total,
+  error,
+  fetchedAt,
+  now,
+  onRefresh,
+}: {
+  events: WebhookEvent[]
+  total: number
+  error: string | null
+  fetchedAt: number | null
+  now: number
+  onRefresh: () => void
+}) {
+  return (
+    <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
+      <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-[rgb(var(--muted))]" />
-          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Webhook Events</h2>
+          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Recent webhook events</h2>
+          <span className="text-xs text-[rgb(var(--muted))]">({total} total)</span>
         </div>
-
-        {eventsError && (
-          <p className="text-sm text-red-400">{eventsError}</p>
-        )}
-
-        {eventsLoading ? (
-          <p className="text-sm text-[rgb(var(--muted))]">Loading events...</p>
-        ) : events && events.events.length > 0 ? (
-          <>
-            <div className="overflow-x-auto rounded-lg border border-[rgb(var(--border))]">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
-                    <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Type</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Stripe Event</th>
-                    <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Processed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {events.events.map((event) => {
-                    const isFailed = event.eventType.includes('payment_failed') || event.eventType.includes('charge.failed')
-                    return (
-                      <tr
-                        key={event.id}
-                        className={`border-b border-[rgb(var(--border))] last:border-0 ${
-                          isFailed ? 'bg-red-500/5' : ''
-                        }`}
-                      >
-                        <td className={`px-4 py-2 font-mono text-xs ${isFailed ? 'text-red-400 font-medium' : 'text-[rgb(var(--foreground))]'}`}>
-                          {event.eventType}
-                        </td>
-                        <td className="px-4 py-2 font-mono text-xs text-[rgb(var(--muted))]">
-                          {event.stripeEventId.slice(0, 24)}...
-                        </td>
-                        <td className="px-4 py-2 text-xs text-[rgb(var(--muted))]">
-                          {formatDate(event.processedAt)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination */}
-            <div className="flex items-center justify-between text-xs text-[rgb(var(--muted))]">
-              <span>
-                Showing {eventsOffset + 1}–{Math.min(eventsOffset + eventsLimit, events.total)} of {events.total}
-              </span>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setEventsOffset(Math.max(0, eventsOffset - eventsLimit))}
-                  disabled={eventsOffset === 0}
-                  className="flex items-center gap-1 rounded px-2 py-1 hover:bg-[rgb(var(--surface))] disabled:opacity-30"
-                >
-                  <ChevronLeft className="h-3 w-3" /> Prev
-                </button>
-                <button
-                  onClick={() => setEventsOffset(eventsOffset + eventsLimit)}
-                  disabled={eventsOffset + eventsLimit >= events.total}
-                  className="flex items-center gap-1 rounded px-2 py-1 hover:bg-[rgb(var(--surface))] disabled:opacity-30"
-                >
-                  Next <ChevronRight className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          </>
-        ) : (
-          <p className="text-sm text-[rgb(var(--muted))]">No webhook events recorded</p>
-        )}
+        <div className="flex items-center gap-2">
+          <FreshnessPill fetchedAt={fetchedAt} ok={!error} now={now} />
+          <button
+            onClick={onRefresh}
+            className="rounded p-1 text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]"
+            aria-label="Refresh events"
+          >
+            <RefreshCw className="h-3 w-3" />
+          </button>
+        </div>
       </div>
+
+      {error ? (
+        <p className="text-sm text-red-400">{error}</p>
+      ) : fetchedAt == null ? (
+        <p className="text-sm text-[rgb(var(--muted))]">Loading…</p>
+      ) : events.length === 0 ? (
+        <p className="text-sm text-[rgb(var(--muted))]">No webhook events yet</p>
+      ) : (
+        <ul className="divide-y divide-[rgb(var(--border))]">
+          {events.map((event) => {
+            const isFailed = event.eventType.includes('payment_failed') || event.eventType.includes('charge.failed')
+            return (
+              <li key={event.id} className="flex items-center justify-between gap-3 py-2 text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  {isFailed ? (
+                    <XCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                  ) : (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500/80" />
+                  )}
+                  <span className={`font-mono truncate ${isFailed ? 'text-red-400 font-medium' : 'text-[rgb(var(--foreground))]'}`}>
+                    {event.eventType}
+                  </span>
+                </div>
+                <span className="shrink-0 text-[rgb(var(--muted))]">{relativeTime(new Date(event.processedAt).getTime(), now)}</span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function RecentSignupsCard({
+  users,
+  total,
+  error,
+  fetchedAt,
+  now,
+  onRefresh,
+  onDrill,
+}: {
+  users: UserListItem[]
+  total: number
+  error: string | null
+  fetchedAt: number | null
+  now: number
+  onRefresh: () => void
+  onDrill: () => void
+}) {
+  return (
+    <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <UserPlus className="h-4 w-4 text-blue-400" />
+          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Recent signups</h2>
+          <span className="text-xs text-[rgb(var(--muted))]">({total} total)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <FreshnessPill fetchedAt={fetchedAt} ok={!error} now={now} />
+          <button
+            onClick={onRefresh}
+            className="rounded p-1 text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]"
+            aria-label="Refresh signups"
+          >
+            <RefreshCw className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+
+      {error ? (
+        <p className="text-sm text-red-400">{error}</p>
+      ) : fetchedAt == null ? (
+        <p className="text-sm text-[rgb(var(--muted))]">Loading…</p>
+      ) : users.length === 0 ? (
+        <p className="text-sm text-[rgb(var(--muted))]">No users yet</p>
+      ) : (
+        <>
+          <ul className="divide-y divide-[rgb(var(--border))]">
+            {users.map((u) => (
+              <li key={u.id} className="flex items-center justify-between gap-3 py-2 text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <StatusBadge status={u.subscriptionStatus} />
+                  <span className="font-mono truncate text-[rgb(var(--foreground))]">{u.email}</span>
+                </div>
+                <span className="shrink-0 text-[rgb(var(--muted))]">{relativeTime(new Date(u.createdAt).getTime(), now)}</span>
+              </li>
+            ))}
+          </ul>
+          <button
+            onClick={onDrill}
+            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-[rgb(var(--primary))] hover:underline"
+          >
+            View all users <ArrowRight className="h-3 w-3" />
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+function RecentContactsCard({
+  contacts,
+  total,
+  error,
+  fetchedAt,
+  now,
+  onRefresh,
+  onDrill,
+}: {
+  contacts: Subscriber[]
+  total: number
+  error: string | null
+  fetchedAt: number | null
+  now: number
+  onRefresh: () => void
+  onDrill: () => void
+}) {
+  return (
+    <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Mail className="h-4 w-4 text-[rgb(var(--muted))]" />
+          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Newsletter / contact submissions</h2>
+          <span className="text-xs text-[rgb(var(--muted))]">({total} total)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <FreshnessPill fetchedAt={fetchedAt} ok={!error} now={now} />
+          <button
+            onClick={onRefresh}
+            className="rounded p-1 text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]"
+            aria-label="Refresh contacts"
+          >
+            <RefreshCw className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+
+      {error ? (
+        <p className="text-sm text-red-400">{error}</p>
+      ) : fetchedAt == null ? (
+        <p className="text-sm text-[rgb(var(--muted))]">Loading…</p>
+      ) : contacts.length === 0 ? (
+        <p className="text-sm text-[rgb(var(--muted))]">No contacts yet</p>
+      ) : (
+        <>
+          <ul className="divide-y divide-[rgb(var(--border))]">
+            {contacts.map((c) => (
+              <li
+                key={`${c.email}-${c.createdAt}`}
+                className={`flex items-center justify-between gap-3 py-2 text-xs ${c.unsubscribedAt ? 'opacity-60' : ''}`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono truncate text-[rgb(var(--foreground))]">{c.email}</span>
+                  <span className="shrink-0 rounded-sm bg-[rgb(var(--background))] px-1.5 py-0.5 text-[10px] text-[rgb(var(--muted))] capitalize">
+                    {c.source}
+                  </span>
+                  {c.doiConfirmed && (
+                    <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" aria-label="Double opt-in confirmed" />
+                  )}
+                </div>
+                <span className="shrink-0 text-[rgb(var(--muted))]">{relativeTime(new Date(c.createdAt).getTime(), now)}</span>
+              </li>
+            ))}
+          </ul>
+          <button
+            onClick={onDrill}
+            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-[rgb(var(--primary))] hover:underline"
+          >
+            View all subscribers <ArrowRight className="h-3 w-3" />
+          </button>
+        </>
+      )}
     </div>
   )
 }
