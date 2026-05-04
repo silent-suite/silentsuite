@@ -29,6 +29,13 @@ const PRIORITY_COLORS: Record<Priority, string> = {
   urgent: 'bg-red-100 text-red-800 dark:bg-red-500/30 dark:text-red-300',
 }
 
+const PRIORITY_DOT_COLORS: Record<Priority, string> = {
+  low: 'bg-emerald-500 dark:bg-emerald-400',
+  medium: 'bg-amber-500 dark:bg-amber-400',
+  high: 'bg-orange-500 dark:bg-orange-400',
+  urgent: 'bg-red-500 dark:bg-red-400',
+}
+
 const PRIORITY_LABELS: Record<Priority, string> = {
   low: 'Low',
   medium: 'Medium',
@@ -445,7 +452,7 @@ function PrioritySelector({
                 p === value ? 'font-medium' : ''
               }`}
             >
-              <span className={`inline-block h-2 w-2 rounded-full ${PRIORITY_COLORS[p].split(' ')[0]}`} />
+              <span className={`inline-block h-2 w-2 rounded-full ${PRIORITY_DOT_COLORS[p]}`} />
               <span className="text-[rgb(var(--foreground))]">{PRIORITY_LABELS[p]}</span>
             </button>
           ))}
