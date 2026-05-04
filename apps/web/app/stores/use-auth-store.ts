@@ -13,6 +13,13 @@ export interface User {
   email: string
   planId: string
   emailVerified?: boolean
+  /**
+   * ISO timestamp of when the user completed (or was assumed to have completed)
+   * onboarding. NULL means the user has not yet been onboarded and should see
+   * the OnboardingModal. Hydrated from the billing API in /auth/refresh,
+   * /account, and the response of POST /account/onboarded.
+   */
+  onboardedAt?: string | null
 }
 
 interface PendingSignup {
@@ -57,6 +64,16 @@ interface AuthState {
   restoreSession: () => Promise<void>
   fetchSubscription: () => Promise<void>
   retryBillingConnection: () => Promise<boolean>
+  /**
+   * Mark the current user as onboarded. POSTs to the billing API
+   * (idempotent), then updates the local user state with the returned
+   * timestamp. Self-hosted users skip the network call and just set a
+   * local timestamp. Network failures are logged and swallowed: leaving
+   * onboardedAt null means the popup will retry next session, which is
+   * the correct degraded behaviour. Returns true on success, false if
+   * the network call failed.
+   */
+  markOnboarded: () => Promise<boolean>
   setUser: (user: User | null) => void
   clearError: () => void
   /**
@@ -253,6 +270,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         email: pending.email,
         planId: pending.provisionedUser.planId,
         isAdmin: pending.provisionedUser.isAdmin,
+        // A brand-new account is by definition not onboarded yet — the
+        // OnboardingModal needs onboardedAt === null to fire on first login.
+        onboardedAt: null,
       },
       isAuthenticated: true,
       isLoading: false,
@@ -272,7 +292,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
         syncAdminCookie(true)
         set({
-          user: { id: 'self-hosted', email, planId: 'self-hosted', isAdmin: true },
+          user: { id: 'self-hosted', email, planId: 'self-hosted', isAdmin: true, onboardedAt: null },
           isAuthenticated: true,
           isLoading: false,
           subscriptionStatus: 'active',
@@ -304,7 +324,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin)
       set({
-        user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false },
+        user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, onboardedAt: data.onboardedAt ?? null },
         isAuthenticated: true,
         isLoading: false,
       })
@@ -367,7 +387,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const hasSession = !!(await secureGet('etebase_session'))
       if (hasSession) {
         syncAdminCookie(true)
-        set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, subscriptionStatus: 'active' })
+        set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, subscriptionStatus: 'active' })
         return true
       }
       syncAdminCookie(false)
@@ -381,7 +401,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const data = await res.json()
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin)
-      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false }, isAuthenticated: true })
+      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true })
       return true
     } catch (err) {
       logger.warn('[auth-store] Session refresh failed:', err)
@@ -408,7 +428,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const hasSession = !!(await secureGet('etebase_session'))
       if (hasSession) {
         syncAdminCookie(true)
-        set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active' })
+        set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active' })
       } else {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false })
@@ -423,7 +443,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         const data = await res.json()
         const isAdmin = data.isAdmin === true
         syncAdminCookie(isAdmin)
-        set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false }, isAuthenticated: true, isLoading: false })
+        set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, isLoading: false })
       } else {
         // HTTP error (401/403 etc.) — billing responded, auth is invalid
         syncAdminCookie(false)
@@ -435,8 +455,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
       const hasEtebaseSession = !!(await secureGet('etebase_session'))
       if (hasEtebaseSession) {
+        // Degraded users get a non-null onboardedAt so they don't get the
+        // popup pushed at them while billing is down — they may already be
+        // onboarded, we just can't tell. Better to err on the quiet side.
         set({
-          user: { id: 'degraded', email: '', planId: 'unknown', isAdmin: false },
+          user: { id: 'degraded', email: '', planId: 'unknown', isAdmin: false, onboardedAt: new Date().toISOString() },
           isAuthenticated: true,
           isLoading: false,
           subscriptionStatus: 'billing_unavailable',
@@ -481,13 +504,64 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const isAdmin = refreshData.isAdmin === true
       syncAdminCookie(isAdmin)
       set({
-        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin, emailVerified: refreshData.emailVerified ?? false },
+        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin, emailVerified: refreshData.emailVerified ?? false, onboardedAt: refreshData.onboardedAt ?? null },
         isAuthenticated: true,
         subscriptionStatus: subData.status,
       })
       return true
     } catch (err) {
       logger.warn('[auth-store] retryBillingConnection failed:', err)
+      return false
+    }
+  },
+
+  markOnboarded: async () => {
+    const current = get().user
+    if (!current) {
+      // Defensive: nothing to update against. Caller should only invoke
+      // this from a path that already has an authenticated user, but a
+      // race during logout could land us here.
+      return false
+    }
+
+    // Already onboarded — nothing to do, treat as success so callers can
+    // chain UI dismissal without worrying about the state.
+    if (current.onboardedAt) return true
+
+    // Self-hosted has no billing API to call. Just stamp locally so the
+    // modal hides for the rest of the session and doesn't reappear on
+    // restoreSession (which also sets onboardedAt: null for self-hosted —
+    // the localStorage flash-suppressor in the modal covers that case).
+    const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
+    if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined) || current.id === 'self-hosted') {
+      set({ user: { ...current, onboardedAt: new Date().toISOString() } })
+      return true
+    }
+
+    try {
+      const res = await fetch(`${BILLING_API_URL}/account/onboarded`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      })
+      if (!res.ok) {
+        // Don't update local state on failure: leaving onboardedAt null
+        // means the modal will re-appear next session, which is the
+        // correct degraded behaviour. A localStorage hint in the modal
+        // suppresses the flash within this session.
+        logger.warn('[auth-store] markOnboarded failed:', res.status)
+        return false
+      }
+      const data = await res.json()
+      // Re-read user inside the success path — it may have changed during
+      // the await (logout race). Only patch if the same user is still
+      // signed in.
+      const after = get().user
+      if (!after || after.id !== current.id) return false
+      set({ user: { ...after, onboardedAt: data.onboardedAt ?? new Date().toISOString() } })
+      return true
+    } catch (err) {
+      logger.warn('[auth-store] markOnboarded network error:', err)
       return false
     }
   },
