@@ -12,17 +12,25 @@ import { buildAlarmTrigger, parseAlarmTriggerMinutes } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { Globe } from 'lucide-react'
+import {
+  formatDateForInputInZone,
+  formatTimeForInputInZone,
+  instantFromWallClock,
+  resolveUserTimezone,
+  shortTimezoneLabel,
+} from '@/app/lib/tz'
 
 // ---------------------------------------------------------------------------
 // Time formatting (respects user preference)
 // ---------------------------------------------------------------------------
 
-function makeFormatTime(hour12: boolean) {
+function makeFormatTime(hour12: boolean, tz: string) {
   return function formatTime(date: Date): string {
     return date.toLocaleTimeString('en-US', {
       hour: 'numeric',
       minute: '2-digit',
       hour12,
+      timeZone: tz,
     })
   }
 }
@@ -55,25 +63,35 @@ interface EventDialogProps {
 
 // formatTime is created per-render via makeFormatTime — see below
 
-function formatTimeForInput(date: Date): string {
-  const h = String(date.getHours()).padStart(2, '0')
-  const m = String(date.getMinutes()).padStart(2, '0')
-  return `${h}:${m}`
+/** All-day events have undefined event.timezone and are stored as local-midnight
+ * Date objects, so their wall-clock components are read in browser-local. Timed
+ * events use the event's TZ (or user default) to read/write wall-clock components. */
+function formatTimeForInput(date: Date, tz: string | undefined): string {
+  if (!tz) {
+    const h = String(date.getHours()).padStart(2, '0')
+    const m = String(date.getMinutes()).padStart(2, '0')
+    return `${h}:${m}`
+  }
+  return formatTimeForInputInZone(date, tz)
 }
 
-function formatDateForInput(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
+function formatDateForInput(date: Date, tz: string | undefined): string {
+  if (!tz) {
+    const y = date.getFullYear()
+    const m = String(date.getMonth() + 1).padStart(2, '0')
+    const d = String(date.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  return formatDateForInputInZone(date, tz)
 }
 
-function formatDateForDisplay(date: Date): string {
+function formatDateForDisplay(date: Date, tz: string | undefined): string {
   return date.toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     year: 'numeric',
+    ...(tz ? { timeZone: tz } : {}),
   })
 }
 
@@ -101,8 +119,9 @@ export function EventDialog({
   const notifications = useNotifications()
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
   const timeFormat = usePreferencesStore((s) => s.timeFormat)
-  const defaultTimezone = usePreferencesStore((s) => s.defaultTimezone)
-  const formatTime = makeFormatTime(timeFormat !== '24h')
+  const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
+  const userTz = resolveUserTimezone(defaultTimezonePref)
+  const defaultTimezone = userTz
 
   // ---------------------------------------------------------------------------
   // Derive initial state
@@ -117,6 +136,15 @@ export function EventDialog({
     ? event.endDate
     : (initialEndDate ?? new Date(defaultStart.getTime() + 30 * 60 * 1000))
 
+  // Initial all-day flag — needed before form state so we can pick the right
+  // TZ for formatting the initial date/time strings.
+  const initialIsAllDay = isEdit ? event.allDay : initialAllDay
+  const initialFormTz: string | undefined = initialIsAllDay
+    ? undefined
+    : isEdit
+      ? (event.timezone ?? userTz)
+      : userTz
+
   // ---------------------------------------------------------------------------
   // Form state
   // ---------------------------------------------------------------------------
@@ -124,11 +152,11 @@ export function EventDialog({
   const [title, setTitle] = useState(isEdit ? event.title : '')
   const [location, setLocation] = useState(isEdit ? (event.location || '') : '')
   const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
-  const [allDay, setAllDay] = useState(isEdit ? event.allDay : initialAllDay)
-  const [startDate, setStartDate] = useState(formatDateForInput(defaultStart))
-  const [startTime, setStartTime] = useState(formatTimeForInput(defaultStart))
-  const [endDate, setEndDate] = useState(formatDateForInput(defaultEnd))
-  const [endTime, setEndTime] = useState(formatTimeForInput(defaultEnd))
+  const [allDay, setAllDay] = useState(initialIsAllDay)
+  const [startDate, setStartDate] = useState(formatDateForInput(defaultStart, initialFormTz))
+  const [startTime, setStartTime] = useState(formatTimeForInput(defaultStart, initialFormTz))
+  const [endDate, setEndDate] = useState(formatDateForInput(defaultEnd, initialFormTz))
+  const [endTime, setEndTime] = useState(formatTimeForInput(defaultEnd, initialFormTz))
   const [recurrenceRule, setRecurrenceRule] = useState<string | null>(
     isEdit ? event.recurrenceRule : null,
   )
@@ -148,6 +176,10 @@ export function EventDialog({
   const [timezone, setTimezone] = useState(
     isEdit ? (event.timezone ?? defaultTimezone) : defaultTimezone,
   )
+  // Active TZ for form fields and subtitle: undefined for all-day (local-midnight)
+  // semantics, otherwise the picker's value.
+  const formTz: string | undefined = allDay ? undefined : timezone
+  const formatTime = makeFormatTime(timeFormat !== '24h', formTz ?? userTz)
   const allTimezones = (() => {
     try { return Intl.supportedValuesOf('timeZone') } catch { return ['UTC'] }
   })()
@@ -212,22 +244,22 @@ export function EventDialog({
   const buildStartDate = useCallback((): Date => {
     const [y, m, d] = startDate.split('-').map(Number)
     if (allDay) {
-      const dt = new Date(y, m - 1, d, 0, 0, 0, 0)
-      return dt
+      // All-day events stored as browser-local midnight; matches how the
+      // import path and core ical parser handle DATE-only DTSTART.
+      return new Date(y, m - 1, d, 0, 0, 0, 0)
     }
     const [h, min] = startTime.split(':').map(Number)
-    return new Date(y, m - 1, d, h, min, 0, 0)
-  }, [startDate, startTime, allDay])
+    return instantFromWallClock(y, m, d, h, min, timezone)
+  }, [startDate, startTime, allDay, timezone])
 
   const buildEndDate = useCallback((): Date => {
     const [y, m, d] = endDate.split('-').map(Number)
     if (allDay) {
-      const dt = new Date(y, m - 1, d, 23, 59, 59, 0)
-      return dt
+      return new Date(y, m - 1, d, 23, 59, 59, 0)
     }
     const [h, min] = endTime.split(':').map(Number)
-    return new Date(y, m - 1, d, h, min, 0, 0)
-  }, [endDate, endTime, allDay])
+    return instantFromWallClock(y, m, d, h, min, timezone)
+  }, [endDate, endTime, allDay, timezone])
 
   // ---------------------------------------------------------------------------
   // Save handler
@@ -405,11 +437,13 @@ export function EventDialog({
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value
       setStartTime(value)
-      // Auto-adjust end time to 30 min after start if on same day
+      // Auto-adjust end time to 30 min after start if on same day. Pure HH:MM
+      // arithmetic via a synthetic local Date; format back as browser-local
+      // since we only need the wall-clock string back.
       if (startDate === endDate) {
         const [h, m] = value.split(':').map(Number)
         const newEnd = new Date(2000, 0, 1, h, m + 30)
-        setEndTime(formatTimeForInput(newEnd))
+        setEndTime(formatTimeForInput(newEnd, undefined))
       }
     },
     [startDate, endDate],
@@ -449,16 +483,16 @@ export function EventDialog({
 
   const subtitle = (() => {
     if (allDay) {
-      const sd = formatDateForDisplay(buildStartDate())
-      const ed = formatDateForDisplay(buildEndDate())
+      const sd = formatDateForDisplay(buildStartDate(), undefined)
+      const ed = formatDateForDisplay(buildEndDate(), undefined)
       return startDate === endDate ? sd : `${sd} – ${ed}`
     }
     const s = buildStartDate()
     const e = buildEndDate()
     if (startDate === endDate) {
-      return `${formatDateForDisplay(s)}, ${formatTime(s)} – ${formatTime(e)}`
+      return `${formatDateForDisplay(s, formTz)}, ${formatTime(s)} – ${formatTime(e)}`
     }
-    return `${formatDateForDisplay(s)}, ${formatTime(s)} – ${formatDateForDisplay(e)}, ${formatTime(e)}`
+    return `${formatDateForDisplay(s, formTz)}, ${formatTime(s)} – ${formatDateForDisplay(e, formTz)}, ${formatTime(e)}`
   })()
 
   // ---------------------------------------------------------------------------
@@ -674,19 +708,26 @@ export function EventDialog({
 
                 {/* Timezone row — hidden for all-day events */}
                 {!allDay && (
-                  <div className="flex items-center gap-3">
-                    <Globe className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-                    <select
-                      value={timezone}
-                      onChange={(e) => setTimezone(e.target.value)}
-                      disabled={!canWrite}
-                      aria-label="Event timezone"
-                      className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
-                    >
-                      {allTimezones.map((tz) => (
-                        <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
-                      ))}
-                    </select>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-3">
+                      <Globe className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                      <select
+                        value={timezone}
+                        onChange={(e) => setTimezone(e.target.value)}
+                        disabled={!canWrite}
+                        aria-label="Event timezone"
+                        className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                      >
+                        {allTimezones.map((tz) => (
+                          <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {timezone !== userTz && (
+                      <span className="ml-7 text-[11px] text-[rgb(var(--muted))]">
+                        Event anchored in {shortTimezoneLabel(timezone, buildStartDate())}; your calendar shows {shortTimezoneLabel(userTz, buildStartDate())}.
+                      </span>
+                    )}
                   </div>
                 )}
 

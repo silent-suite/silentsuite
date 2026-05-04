@@ -15,6 +15,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
+import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 
 import '@schedule-x/theme-default/dist/index.css'
 
@@ -34,15 +35,13 @@ function toPlainDate(date: Date): Temporal.PlainDate {
   })
 }
 
-/** Convert a JS Date to a Temporal.ZonedDateTime in the local timezone.
+/** Convert a JS Date to a Temporal.ZonedDateTime in the given timezone.
  * Schedule-X v4 requires a real ZonedDateTime — it calls .withTimeZone() on the
- * stored value, so plain strings or casts will throw at runtime and events will
- * silently not render.
+ * stored value to convert into the calendar's configured timezone, so the input
+ * zone here is effectively a label; what matters is the underlying instant.
  */
-function toScheduleXDateTime(date: Date): Temporal.ZonedDateTime {
-  return Temporal.Instant.fromEpochMilliseconds(date.getTime()).toZonedDateTimeISO(
-    Temporal.Now.timeZoneId(),
-  )
+function toScheduleXDateTime(date: Date, tz: string): Temporal.ZonedDateTime {
+  return Temporal.Instant.fromEpochMilliseconds(date.getTime()).toZonedDateTimeISO(tz)
 }
 
 /** Expanded event used for display — may be a recurring instance */
@@ -148,14 +147,15 @@ function expandEventsForRange(
 function toScheduleXEvents(
   displayEvents: DisplayEvent[],
   calendarColors: Map<string, string>,
+  userTz: string,
 ): CalendarEventExternal[] {
   return displayEvents.map((e) => {
     const color = calendarColors.get(e.calendarId ?? 'default') ?? '#10b981'
     return {
       id: e.id,
       title: e.isRecurring ? `↻ ${e.title}` : e.title,
-      start: e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate),
-      end: e.allDay ? toPlainDate(e.endDate) : toScheduleXDateTime(e.endDate),
+      start: e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
+      end: e.allDay ? toPlainDate(e.endDate) : toScheduleXDateTime(e.endDate, userTz),
       description: e.description || undefined,
       location: e.location || undefined,
       calendarId: e.calendarId ?? 'default',
@@ -282,6 +282,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
 
   const timeFormat = usePreferencesStore((s) => s.timeFormat)
   const use12h = timeFormat !== '24h'
+  const defaultTimezone = usePreferencesStore((s) => s.defaultTimezone)
+  const userTz = useMemo(() => resolveUserTimezone(defaultTimezone), [defaultTimezone])
 
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
@@ -312,7 +314,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const displayEventMapRef = useRef(displayEventMap)
   displayEventMapRef.current = displayEventMap
 
-  const sxEvents = useMemo(() => toScheduleXEvents(displayEvents, calendarColors), [displayEvents, calendarColors])
+  const sxEvents = useMemo(() => toScheduleXEvents(displayEvents, calendarColors, userTz), [displayEvents, calendarColors, userTz])
 
   // Inject calendar color styles via useInsertionEffect (avoids dangerouslySetInnerHTML)
   useInsertionEffect(() => {
@@ -451,6 +453,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const initialDateRef = useRef(selectedDate)
   // Capture time format at mount — Schedule-X locale can't change after init
   const initialLocaleRef = useRef(timeFormat === '24h' ? 'en-GB' : 'en-US')
+  // Capture initial timezone for Schedule-X config (changes are pushed via signal below)
+  const initialTimezoneRef = useRef(userTz)
 
   // Memoize the event click handler
   const handleEventClick = useCallback(
@@ -487,6 +491,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     locale: initialLocaleRef.current,
     firstDayOfWeek: 1, // Monday — must match getViewRange() and formatDateRange()
     dayBoundaries: { start: '06:00', end: '22:00' },
+    timezone: initialTimezoneRef.current,
     weekOptions: {
       gridHeight: 800,
       eventWidth: 95,
@@ -498,6 +503,21 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       onClickDate: handleClickDate,
     },
   })
+
+  // Push timezone changes to the Schedule-X config signal so the grid re-renders
+  // when the user updates their preference in Settings without a full page reload.
+  useEffect(() => {
+    if (!calendar) return
+    try {
+      const app = (calendar as any).$app
+      const tzSignal = app?.config?.timezone
+      if (tzSignal && tzSignal.value !== userTz) {
+        tzSignal.value = userTz
+      }
+    } catch {
+      // Schedule-X internals may not be ready
+    }
+  }, [calendar, userTz])
 
   // Sync view AND date changes from store → Schedule-X via internal API.
   // CalendarApp has NO public navigation methods. We access the private $app
@@ -656,14 +676,25 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     [viewRange],
   )
 
-  /** Build a Date from a day + fractional hour */
-  const buildDateFromHour = useCallback((day: Date, hour: number): Date => {
-    const d = new Date(day.getFullYear(), day.getMonth(), day.getDate())
-    const h = Math.floor(hour)
-    const m = Math.round((hour - h) * 60)
-    d.setHours(h, m, 0, 0)
-    return d
-  }, [])
+  /** Build a Date from a day + fractional hour, interpreting the wall-clock in userTz.
+   * `day` carries the user's clicked day as browser-local Y/M/D (constructed from
+   * viewRange.start). We treat those Y/M/D as the wall-clock day in userTz so the
+   * resulting instant aligns with the rendered grid regardless of browser TZ. */
+  const buildDateFromHour = useCallback(
+    (day: Date, hour: number): Date => {
+      const h = Math.floor(hour)
+      const m = Math.round((hour - h) * 60)
+      return instantFromWallClock(
+        day.getFullYear(),
+        day.getMonth() + 1,
+        day.getDate(),
+        h,
+        m,
+        userTz,
+      )
+    },
+    [userTz],
+  )
 
   /** Shared helper: compute drag-move preview from cursor coordinates */
   const updateDragMovePosition = useCallback(
@@ -696,10 +727,12 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         hour: 'numeric',
         minute: '2-digit',
         hour12: use12h,
+        timeZone: userTz,
       })} \u2013 ${clampedEnd.toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
         hour12: use12h,
+        timeZone: userTz,
       })}`
 
       const de = displayEventMapRef.current.get(dragMoveStartRef.current.eventId)
@@ -715,7 +748,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         newEnd: clampedEnd,
       })
     },
-    [getDayColumnInfo, getTimeFromY, buildDateFromHour, use12h],
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, use12h, userTz],
   )
 
   /** Shared helper: complete drag-move drop */
@@ -957,10 +990,12 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
           hour: 'numeric',
           minute: '2-digit',
           hour12: use12h,
+          timeZone: userTz,
         })} \u2013 ${newEnd.toLocaleTimeString('en-US', {
           hour: 'numeric',
           minute: '2-digit',
           hour12: use12h,
+          timeZone: userTz,
         })}`
 
         setDragResizePreview({
@@ -1102,7 +1137,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         endTime,
       })
     },
-    [getTimeFromY, buildDateFromHour, getDayColumnInfo, updateDragMovePosition, viewRange, use12h],
+    [getTimeFromY, buildDateFromHour, getDayColumnInfo, updateDragMovePosition, viewRange, use12h, userTz],
   )
 
   const handleMouseUp = useCallback(
@@ -1398,6 +1433,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
                     hour: 'numeric',
                     minute: '2-digit',
                     hour12: use12h,
+                    timeZone: userTz,
                   })}
                 </span>
                 <span className="text-[11px] font-medium text-[rgb(var(--primary))] leading-none self-end">
@@ -1405,6 +1441,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
                     hour: 'numeric',
                     minute: '2-digit',
                     hour12: use12h,
+                    timeZone: userTz,
                   })}
                 </span>
               </>
