@@ -23,10 +23,10 @@ const PRIORITY_ORDER: Record<Priority, number> = {
 }
 
 const PRIORITY_COLORS: Record<Priority, string> = {
-  low: 'bg-emerald-500/30 text-emerald-300',
-  medium: 'bg-amber-500/30 text-amber-300',
-  high: 'bg-orange-500/30 text-orange-300',
-  urgent: 'bg-red-500/30 text-red-300',
+  low: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/30 dark:text-emerald-300',
+  medium: 'bg-amber-100 text-amber-800 dark:bg-amber-500/30 dark:text-amber-300',
+  high: 'bg-orange-100 text-orange-800 dark:bg-orange-500/30 dark:text-orange-300',
+  urgent: 'bg-red-100 text-red-800 dark:bg-red-500/30 dark:text-red-300',
 }
 
 const PRIORITY_LABELS: Record<Priority, string> = {
@@ -132,10 +132,10 @@ function TaskQuickAdd() {
 // ── TaskDialog (full task creation/edit form) ──
 
 const PRIORITY_BUTTON_ACTIVE: Record<Priority, string> = {
-  low: 'bg-emerald-500/30 text-emerald-300',
-  medium: 'bg-amber-500/30 text-amber-300',
-  high: 'bg-orange-500/30 text-orange-300',
-  urgent: 'bg-red-500/30 text-red-300',
+  low: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/30 dark:text-emerald-300',
+  medium: 'bg-amber-100 text-amber-800 dark:bg-amber-500/30 dark:text-amber-300',
+  high: 'bg-orange-100 text-orange-800 dark:bg-orange-500/30 dark:text-orange-300',
+  urgent: 'bg-red-100 text-red-800 dark:bg-red-500/30 dark:text-red-300',
 }
 
 function TaskDialog({
