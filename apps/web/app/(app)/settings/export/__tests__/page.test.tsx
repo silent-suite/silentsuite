@@ -98,6 +98,9 @@ vi.mock('lucide-react', () => ({
   Download: ({ className }: { className?: string }) => (
     <svg data-testid="download-icon" className={className} />
   ),
+  Loader2: ({ className }: { className?: string }) => (
+    <svg data-testid="loader-icon" className={className} />
+  ),
 }))
 
 // Mock jszip
