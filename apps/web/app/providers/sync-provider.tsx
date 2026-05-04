@@ -8,6 +8,12 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import {
+  getItemsByType as cacheGetItemsByType,
+  replaceItemsForType as cacheReplaceItemsForType,
+  isCacheEnabled as isLocalCacheEnabled,
+  type CachedItem,
+} from '@/app/lib/data-cache'
 
 /**
  * SyncProvider orchestrates:
@@ -49,6 +55,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       try {
         setSyncStatus('syncing')
 
+        // Cache-first hydration: when the feature flag is on, paint the UI
+        // from IndexedDB before the network sync starts. This is best-effort
+        // — failures are logged and the normal init path proceeds.
+        if (isLocalCacheEnabled()) {
+          await hydrateFromCache()
+        }
+
         // Restore session, create/fetch collections, load items, start SyncEngine
         await etebaseInitialize()
 
@@ -71,8 +84,92 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    /**
+     * Cache-first paint. Reads decrypted item content out of IndexedDB and
+     * pushes it into the domain stores so the UI renders from cache before
+     * the network sync settles. The subsequent etebaseInitialize() +
+     * loadItemsIntoStores() pass overwrites with server data, which is the
+     * source of truth.
+     *
+     * Cheap (~10-50ms for a typical vault) and fully off the network path.
+     * Failures here are non-fatal; we just skip the optimistic paint.
+     */
+    async function hydrateFromCache() {
+      try {
+        const [taskItems, contactItems, eventItems, core] = await Promise.all([
+          cacheGetItemsByType('tasks'),
+          cacheGetItemsByType('contacts'),
+          cacheGetItemsByType('calendar'),
+          import('@silentsuite/core'),
+        ])
+
+        if (taskItems.length > 0) {
+          try {
+            const tasks = taskItems.map((it) => {
+              const task = core.deserializeTask(it.content)
+              return { ...task, id: it.itemUid, uid: it.itemUid }
+            })
+            useTaskStore.getState().syncFromRemote(tasks)
+            logger.log(`[sync-provider] Hydrated ${tasks.length} tasks from cache`)
+          } catch (err) {
+            logger.warn('[sync-provider] Failed to hydrate tasks from cache', err)
+          }
+        }
+
+        if (contactItems.length > 0) {
+          try {
+            const contacts = contactItems.map((it) => {
+              const contact = core.deserializeContact(it.content)
+              return { ...contact, id: it.itemUid, uid: it.itemUid }
+            })
+            useContactStore.getState().syncFromRemote(contacts)
+            logger.log(`[sync-provider] Hydrated ${contacts.length} contacts from cache`)
+          } catch (err) {
+            logger.warn('[sync-provider] Failed to hydrate contacts from cache', err)
+          }
+        }
+
+        if (eventItems.length > 0) {
+          try {
+            const events = eventItems.map((it) => {
+              const event = core.deserializeCalendarEvent(it.content)
+              return { ...event, id: it.itemUid, uid: it.itemUid }
+            })
+            useCalendarStore.getState().syncFromRemote(events)
+            logger.log(`[sync-provider] Hydrated ${events.length} events from cache`)
+          } catch (err) {
+            logger.warn('[sync-provider] Failed to hydrate calendar events from cache', err)
+          }
+        }
+      } catch (err) {
+        logger.warn('[sync-provider] Cache hydration failed', err)
+      }
+    }
+
     async function loadItemsIntoStores() {
       const etebase = useEtebaseStore.getState()
+      const cacheEnabled = isLocalCacheEnabled()
+
+      async function mirrorToCache(
+        type: 'tasks' | 'contacts' | 'calendar',
+        items: { uid: string; content: string }[],
+      ) {
+        if (!cacheEnabled || items.length === 0) return
+        const collectionUid = useEtebaseStore.getState().collections[type]?.uid
+        if (!collectionUid) return
+        const records: CachedItem[] = items.map((it) => ({
+          itemUid: it.uid,
+          collectionType: type,
+          collectionUid,
+          content: it.content,
+          lastModified: Date.now(),
+        }))
+        try {
+          await cacheReplaceItemsForType(type, records)
+        } catch (err) {
+          logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, err)
+        }
+      }
 
       // Load tasks
       try {
@@ -87,6 +184,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           })
           useTaskStore.getState().syncFromRemote(tasks)
           logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
+          await mirrorToCache('tasks', taskItems)
         }
       } catch (err) {
         Sentry.captureException(err)
@@ -104,6 +202,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           })
           useContactStore.getState().syncFromRemote(contacts)
           logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
+          await mirrorToCache('contacts', contactItems)
         }
       } catch (err) {
         Sentry.captureException(err)
@@ -121,6 +220,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           })
           useCalendarStore.getState().syncFromRemote(events)
           logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
+          await mirrorToCache('calendar', eventItems)
         }
       } catch (err) {
         Sentry.captureException(err)
