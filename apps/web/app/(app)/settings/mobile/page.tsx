@@ -8,8 +8,6 @@ const INSTALL_DOCS_URL = 'https://docs.silentsuite.io/user-guide/apps/android'
 const RELEASES_URL = 'https://github.com/silent-suite/silentsuite/releases/latest'
 
 export default function MobileSettingsPage() {
-  const docsUrl = INSTALL_DOCS_URL
-
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -64,7 +62,7 @@ export default function MobileSettingsPage() {
 
         <div className="flex flex-col gap-2">
           <a
-            href={docsUrl}
+            href={INSTALL_DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2.5 text-sm font-medium text-white hover:bg-[rgb(var(--primary-hover))] transition-colors"
