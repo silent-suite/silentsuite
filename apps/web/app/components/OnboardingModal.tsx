@@ -1,15 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Calendar, CheckSquare, Users, Shield, Check, Lock, EyeOff, Sun, Moon, Monitor, X } from 'lucide-react'
+import { Shield, Check, Lock, EyeOff, Sun, Moon, Monitor, X } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { Button } from '@silentsuite/ui'
 import CalendarImport from '@/app/components/import/CalendarImport'
 import TaskImport from '@/app/components/import/TaskImport'
 import ContactImport from '@/app/components/import/ContactImport'
-import { useCalendarStore } from '@/app/stores/use-calendar-store'
-import { useContactStore } from '@/app/stores/use-contact-store'
-import { useTaskStore } from '@/app/stores/use-task-store'
+import { useAuthStore } from '@/app/stores/use-auth-store'
 
 interface ImportCounts {
   calendar: number
@@ -213,35 +211,34 @@ export function OnboardingModal() {
   const [counts, setCounts] = useState<ImportCounts>({ calendar: 0, tasks: 0, contacts: 0 })
   const backdropRef = useRef<HTMLDivElement>(null)
 
-  const events = useCalendarStore((s) => s.events)
-  const contacts = useContactStore((s) => s.contacts)
-  const tasks = useTaskStore((s) => s.tasks)
+  // Server-side onboardedAt is the authoritative gate (issue #113). The
+  // localStorage 'onboardingCompleted' flag remains as a synchronous
+  // flash-suppressor: if it's present we never show the modal, even if
+  // the user object hasn't loaded yet. Once user.onboardedAt resolves,
+  // the server is the source of truth.
+  const user = useAuthStore((s) => s.user)
+  const markOnboarded = useAuthStore((s) => s.markOnboarded)
 
   useEffect(() => {
-    const completed = localStorage.getItem('onboardingCompleted')
-    if (completed) return
+    // Flash-suppressor: if a previous dismissal flagged completion in
+    // localStorage, never re-show. Server-side onboardedAt remains the
+    // real gate, but the localStorage hint stops the modal flickering on
+    // top of an already-onboarded user before the auth store hydrates.
+    if (localStorage.getItem('onboardingCompleted')) return
 
-    // If user already has synced data or has imported items into any store, skip onboarding
-    const totalItems = events.length + contacts.length + tasks.length
-    if (totalItems > 0) {
+    // No user yet — wait for auth hydration before deciding.
+    if (!user) return
+
+    // Server says onboarded — record the hint for fast suppression on
+    // future loads and don't show.
+    if (user.onboardedAt) {
       localStorage.setItem('onboardingCompleted', 'true')
       return
     }
 
-    // If user has been active for 7+ days, skip onboarding
-    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
-    const firstLogin = localStorage.getItem('firstLoginDate')
-    if (firstLogin) {
-      if (Date.now() - Number(firstLogin) > SEVEN_DAYS_MS) {
-        localStorage.setItem('onboardingCompleted', 'true')
-        return
-      }
-    } else {
-      localStorage.setItem('firstLoginDate', String(Date.now()))
-    }
-
+    // user.onboardedAt === null → fresh user, show the modal.
     setShow(true)
-  }, [events.length, contacts.length, tasks.length])
+  }, [user])
 
   const goTo = useCallback(
     (nextStep: number, dir: Direction) => {
@@ -259,15 +256,21 @@ export function OnboardingModal() {
   const next = useCallback(() => goTo(step + 1, 'left'), [goTo, step])
   const back = useCallback(() => goTo(step - 1, 'right'), [goTo, step])
 
-  const finish = useCallback(() => {
+  // Dismissal handler shared by finish, skipAll, the X button and the
+  // backdrop click. Fires markOnboarded() at the auth store (which POSTs
+  // /account/onboarded — fire-and-forget; on failure user.onboardedAt
+  // stays null and the modal will retry next session) and stamps the
+  // localStorage flash-suppression hint synchronously so the modal stays
+  // gone for the rest of this session even if the network call is in
+  // flight or fails.
+  const dismiss = useCallback(() => {
+    void markOnboarded()
     localStorage.setItem('onboardingCompleted', 'true')
     setShow(false)
-  }, [])
+  }, [markOnboarded])
 
-  const skipAll = useCallback(() => {
-    localStorage.setItem('onboardingCompleted', 'true')
-    setShow(false)
-  }, [])
+  const finish = dismiss
+  const skipAll = dismiss
 
   const handleCalendarImport = useCallback((count: number) => {
     setCounts((prev) => ({ ...prev, calendar: count }))
