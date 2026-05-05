@@ -25,7 +25,7 @@ export function MobileAppDialog({ open, onClose }: MobileAppDialogProps) {
 
   // Generate a simple QR-code-like placeholder using CSS
   // In production, you'd use a QR code library or pre-generated image
-  const downloadUrl = 'https://docs.silentsuite.io/mobile'
+  const downloadUrl = 'https://docs.silentsuite.io/user-guide/apps/android'
 
   return (
     <>

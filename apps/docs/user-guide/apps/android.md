@@ -8,9 +8,26 @@ Once set up, your SilentSuite data syncs directly into Android's system calendar
 
 ## Install
 
-Download the **SilentSuite** Android app:
+Choose one of the install options below. Both deliver the same APK from the same GitHub release.
 
-- [GitHub (APK)](https://github.com/silent-suite/silentsuite/releases) -- download the latest release APK from the monorepo.
+### Option 1: Obtainium (recommended)
+
+[Obtainium](https://github.com/ImranR98/Obtainium) is an open-source Android app that installs and auto-updates apps directly from their GitHub releases -- no Google Play, no tracking, no account needed.
+
+1. Install Obtainium from [GitHub Releases](https://github.com/ImranR98/Obtainium/releases) or [F-Droid](https://f-droid.org/packages/dev.imranr.obtainium.fdroid/).
+2. In Obtainium, tap **Add App** and paste this URL:
+   ```
+   https://github.com/silent-suite/silentsuite
+   ```
+3. Obtainium will detect the latest SilentSuite release and install the APK. It will notify you whenever a new release is published.
+
+### Option 2: Direct APK download
+
+Grab the latest APK directly from GitHub Releases:
+
+- [github.com/silent-suite/silentsuite/releases/latest](https://github.com/silent-suite/silentsuite/releases/latest)
+
+Look for the asset named `silentsuite-android-vX.Y.Z-beta.apk` and install it. You'll need to allow installation from unknown sources the first time.
 
 ::: tip
 The SilentSuite Android app is a fork of the [EteSync Android app](https://github.com/etesync/android) with SilentSuite branding and `server.silentsuite.io` pre-configured as the default server. If you prefer, the original EteSync app from [Google Play](https://play.google.com/store/apps/details?id=com.etesync.syncadapter) or [F-Droid](https://f-droid.org/packages/com.etesync.syncadapter/) also works -- just enter the SilentSuite server URL manually.
