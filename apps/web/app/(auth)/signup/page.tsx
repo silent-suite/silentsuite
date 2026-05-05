@@ -18,7 +18,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import dynamic from 'next/dynamic'
-import { StepVaultAndRecovery } from './components/step-vault-and-recovery'
+import { StepCreateVault } from './components/step-create-vault'
 
 const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-form'), {
   loading: () => (
@@ -1072,7 +1072,7 @@ export default function SignupPage() {
           />
         )}
         {step === 'vault' && (
-          <StepVaultAndRecovery email={email} onComplete={handleVaultComplete} />
+          <StepCreateVault email={email} onComplete={handleVaultComplete} />
         )}
       </div>
       {/* Build version indicator */}

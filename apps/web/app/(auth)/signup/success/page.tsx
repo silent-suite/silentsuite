@@ -6,7 +6,7 @@ import { CheckCircle, AlertTriangle, Lock } from 'lucide-react'
 import { MS_PER_DAY } from '@/app/lib/constants'
 import { Button } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
-import { StepVaultAndRecovery } from '../components/step-vault-and-recovery'
+import { StepCreateVault } from '../components/step-create-vault'
 
 // ---------------------------------------------------------------------------
 // Inner component that reads searchParams (must be inside <Suspense>)
@@ -77,11 +77,11 @@ function SignupSuccessInner() {
           <CheckCircle className="h-5 w-5 text-emerald-500 shrink-0" />
           <div>
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">Card verified successfully</p>
-            <p className="text-xs text-[rgb(var(--muted))]">One last step — save your recovery key.</p>
+            <p className="text-xs text-[rgb(var(--muted))]">One last step — set up your vault.</p>
           </div>
         </div>
 
-        <StepVaultAndRecovery
+        <StepCreateVault
           email={restoredEmail}
           onComplete={handleVaultComplete}
         />
