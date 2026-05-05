@@ -4,14 +4,17 @@ A walkthrough of creating your account and getting your first event syncing acro
 
 ## 1. Create an Account
 
-Go to [app.silentsuite.io](https://app.silentsuite.io/signup). The signup flow is four steps:
+Go to [app.silentsuite.io](https://app.silentsuite.io/signup). For the hosted service the signup flow is three steps:
 
 1. **Account** — email and password.
-2. **Plan** — pick Monthly or Annual (Annual saves 17%) and choose either *Subscribe now* or the *30-day free trial*. The trial requires a card to start, but you are not charged until day 30 and can cancel any time before then.
-3. **Vault & Recovery** — your encryption keys are derived from your password on this device. Store the password somewhere safe; without it, your data cannot be recovered. SilentSuite has no way to reset it because the server never sees your keys.
-4. **Verify your email** — open the link sent to the address you registered with. Until verified, an inline banner stays visible across the app.
+2. **Plan** — pick Monthly or Annual (Annual saves 17%) and choose your trial:
+   - **7-day free trial** — full access, no credit card required.
+   - **30-day free trial** — card secures the trial; you're not charged until day 30 and can cancel any time before then.
+3. **Setup** — your encryption keys are derived from your password on this device. Store the password somewhere safe; without it, your data cannot be recovered. SilentSuite has no way to reset it because the server never sees your keys.
 
-Self-hosting your own server? Expand **Advanced Settings** on the signup page and enter your server URL before submitting. See the [Self-Hosting guide](../self-hosting/) for the server side of that.
+After signup, an inline **Verify your email** banner stays at the top of the app until you click the link sent to your registered address. (No banner on self-hosted accounts.)
+
+Self-hosting your own server? Expand **Advanced Settings** on the signup page and enter your server URL before submitting. The flow becomes four steps (Account → Self-Hosting → Admin Setup → Setup) and skips the plan / billing entirely. See the [Self-Hosting guide](../self-hosting/) for the server side of that.
 
 ## 2. Add Your First Event
 

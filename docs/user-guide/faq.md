@@ -30,7 +30,7 @@ On the roadmap, not yet shipped:
 
 ### Is SilentSuite free?
 
-The hosted service has paid plans (Monthly or Annual; 30-day free trial available). Self-hosting is free and includes every feature with no subscription. See [Self-Hosting](../self-hosting/).
+The hosted service has paid plans (Monthly or Annual). Two free trials are offered at signup: a **7-day trial with no credit card required**, and a **30-day card-secured trial** (you're not charged until day 30 and can cancel any time before then). Self-hosting is free and includes every feature with no subscription. See [Self-Hosting](../self-hosting/).
 
 ## Privacy & Security
 

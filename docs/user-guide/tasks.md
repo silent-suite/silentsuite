@@ -8,7 +8,7 @@ Your tasks live at [app.silentsuite.io/tasks](https://app.silentsuite.io/tasks).
 2. Fill in:
    - Title (required)
    - Due date — a calendar day, or a specific date+time
-   - Priority — low / medium / high
+   - Priority — low / medium / high / urgent
    - Notes
 3. Save. The task is serialized to iCalendar (`VTODO`), encrypted, and synced.
 

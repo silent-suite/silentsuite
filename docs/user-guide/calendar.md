@@ -31,12 +31,14 @@ This matches the behaviour you'd expect from any CalDAV-compliant client.
 
 ## Views
 
+The view switcher in the calendar header offers two views:
+
 | View | Best for |
 |---|---|
 | **Week** | Day-by-day planning, dragging events across days |
 | **Month** | Glance overview |
-| **Agenda** | Linear list of upcoming events (mobile-friendly) |
-| **Mini calendar** | Sidebar quick-jump |
+
+On narrow viewports the calendar automatically renders as a vertical **agenda list** of upcoming events. A **mini calendar** in the sidebar acts as a quick-jump date picker.
 
 ## Timezones
 
