@@ -566,6 +566,189 @@ describe('SyncEngine', () => {
     });
   });
 
+  // ── Stoken persistence hooks ──
+
+  describe('stoken seeding and persistence', () => {
+    it('seeds the stoken via setStoken before start so the first list passes it through', async () => {
+      const { account, mockItemManager } = createMockAccount();
+
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+      engine.setStoken('col-1', 'stk-persisted');
+
+      // @ts-expect-error - mock account doesn't fully implement Etebase.Account
+      await engine.start(account);
+
+      expect(mockItemManager.list).toHaveBeenCalledWith(
+        expect.objectContaining({ stoken: 'stk-persisted' }),
+      );
+
+      engine.stop();
+    });
+
+    it('setStoken on an unknown collection is a no-op', () => {
+      const engine = new SyncEngine(defaultOptions());
+      // No tracked collection — should not throw.
+      expect(() => engine.setStoken('nope', 'stk')).not.toThrow();
+      expect(engine.getStoken('nope')).toBeNull();
+    });
+
+    it('getStoken reflects the latest server-returned stoken', async () => {
+      const items = [createMockItem('item-1')];
+      const { account } = createMockAccount(createMockListResponse(items, 'stk-after-sync'));
+
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      expect(engine.getStoken('col-1')).toBe('stk-after-sync');
+
+      engine.stop();
+    });
+
+    it('emits onStokenAdvance when the server returns a new stoken', async () => {
+      const items = [createMockItem('item-1')];
+      const { account } = createMockAccount(createMockListResponse(items, 'stk-advanced'));
+
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      const advances: { collectionUid: string; stoken: string | null }[] = [];
+      engine.onStokenAdvance((event) => {
+        advances.push({ collectionUid: event.collectionUid, stoken: event.stoken });
+      });
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      expect(advances).toHaveLength(1);
+      expect(advances[0]!.collectionUid).toBe('col-1');
+      expect(advances[0]!.stoken).toBe('stk-advanced');
+
+      engine.stop();
+    });
+
+    it('does not emit onStokenAdvance when the stoken is unchanged', async () => {
+      const { account, mockItemManager } = createMockAccount();
+      // Both calls return the same stoken
+      mockItemManager.list.mockResolvedValue(createMockListResponse([], 'stk-same'));
+
+      const engine = new SyncEngine(defaultOptions({ pollIntervalMs: 60_000 }));
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+      // Pre-seed with the same stoken so the first response doesn't count as advance.
+      engine.setStoken('col-1', 'stk-same');
+
+      const advances: { stoken: string | null }[] = [];
+      engine.onStokenAdvance((event) => advances.push({ stoken: event.stoken }));
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      expect(advances).toHaveLength(0);
+
+      engine.stop();
+    });
+
+    it('falls back to a full fetch when the server rejects a stale stoken', async () => {
+      const { account, mockItemManager } = createMockAccount();
+      const listMock = mockItemManager.list;
+      listMock.mockReset();
+      // First call (with stoken=stale) rejects; second call (with no stoken) succeeds.
+      listMock
+        .mockRejectedValueOnce(new Error('invalid sync token (stoken)'))
+        .mockResolvedValueOnce(createMockListResponse([createMockItem('item-1')], 'stk-fresh'));
+
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+      engine.setStoken('col-1', 'stk-stale');
+
+      const advances: { stoken: string | null }[] = [];
+      engine.onStokenAdvance((event) => advances.push({ stoken: event.stoken }));
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      // Two list calls: stale stoken, then no stoken
+      expect(listMock).toHaveBeenCalledTimes(2);
+      expect(listMock.mock.calls[0]![0]).toEqual({ stoken: 'stk-stale' });
+      expect(listMock.mock.calls[1]![0]).toEqual({ stoken: undefined });
+
+      // Engine should converge on the fresh stoken
+      expect(engine.getStoken('col-1')).toBe('stk-fresh');
+
+      // We expect at least two stoken advances: clear-to-null (fallback)
+      // followed by the new stoken from the successful refetch.
+      expect(advances.length).toBeGreaterThanOrEqual(2);
+      expect(advances[0]!.stoken).toBeNull();
+      expect(advances[advances.length - 1]!.stoken).toBe('stk-fresh');
+
+      engine.stop();
+    });
+
+    it('does not swallow non-stoken errors in syncCollection', async () => {
+      const { account, mockItemManager } = createMockAccount();
+      mockItemManager.list.mockRejectedValue(new Error('connection refused'));
+
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+      engine.setStoken('col-1', 'stk-x');
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      // Promise.allSettled at the syncAll level swallows it as a logged
+      // rejection — but the original error must NOT have been re-tried
+      // as a stoken-stale fallback (only one list call).
+      expect(mockItemManager.list).toHaveBeenCalledTimes(1);
+      // Stoken should remain unchanged on a non-stale error.
+      expect(engine.getStoken('col-1')).toBe('stk-x');
+
+      engine.stop();
+    });
+
+    it('allows unsubscribing from stoken advance events', async () => {
+      const items = [createMockItem('item-1')];
+      const { account } = createMockAccount(createMockListResponse(items, 'stk-x'));
+
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      const advances: unknown[] = [];
+      const unsub = engine.onStokenAdvance((e) => advances.push(e));
+      unsub();
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      expect(advances).toHaveLength(0);
+
+      engine.stop();
+    });
+
+    it('does not break when a stoken-advance handler throws', async () => {
+      const items = [createMockItem('item-1')];
+      const { account } = createMockAccount(createMockListResponse(items, 'stk-x'));
+
+      const engine = new SyncEngine(defaultOptions());
+      engine.trackCollection(COLLECTION_TYPE_CALENDAR, 'col-1');
+
+      const received: unknown[] = [];
+      engine.onStokenAdvance(() => {
+        throw new Error('handler boom');
+      });
+      engine.onStokenAdvance((e) => received.push(e));
+
+      // @ts-expect-error - mock
+      await engine.start(account);
+
+      expect(received).toHaveLength(1);
+
+      engine.stop();
+    });
+  });
+
   // ── Pause / resume ──
 
   describe('pause and resume', () => {

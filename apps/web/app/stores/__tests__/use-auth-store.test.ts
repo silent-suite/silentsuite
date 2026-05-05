@@ -4,6 +4,15 @@ import { useAuthStore } from '../use-auth-store'
 // Mock fetch globally
 vi.stubGlobal('fetch', vi.fn())
 
+// Mock data-cache (used on logout). We use vi.hoisted so the mock fn is
+// declared before vi.mock factory runs (vi.mock is hoisted to the top).
+const { dataCacheClearAll } = vi.hoisted(() => {
+  return { dataCacheClearAll: vi.fn(async () => {}) }
+})
+vi.mock('@/app/lib/data-cache', () => ({
+  clearAll: dataCacheClearAll,
+}))
+
 // In-memory store for secure storage mock
 let secureStore: Record<string, string> = {}
 
@@ -52,6 +61,7 @@ describe('useAuthStore', () => {
   beforeEach(() => {
     resetStore()
     vi.mocked(fetch).mockReset()
+    dataCacheClearAll.mockClear()
     secureStore = {}
     localStorage.clear()
     sessionStorage.clear()
@@ -255,6 +265,33 @@ describe('useAuthStore', () => {
     })
 
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+
+    await useAuthStore.getState().logout()
+
+    const state = useAuthStore.getState()
+    expect(state.user).toBeNull()
+    expect(state.isAuthenticated).toBe(false)
+  })
+
+  it('logout wipes the local data cache', async () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+
+    await useAuthStore.getState().logout()
+
+    expect(dataCacheClearAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('logout still completes when the data-cache wipe throws', async () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+    dataCacheClearAll.mockRejectedValueOnce(new Error('idb went sideways'))
 
     await useAuthStore.getState().logout()
 

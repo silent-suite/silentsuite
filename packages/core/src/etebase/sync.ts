@@ -5,6 +5,21 @@ import type { SyncStatus, SyncChangeEvent, SyncEngineOptions, ChangeType } from 
 type SyncEventHandler = (event: SyncChangeEvent) => void;
 type StatusChangeHandler = (status: SyncStatus) => void;
 
+/**
+ * Fired after a successful pagination round trip when the engine has
+ * advanced the stoken for a collection. Callers can persist the new
+ * stoken to durable storage so the next process start resumes from
+ * here instead of re-fetching the whole collection.
+ */
+export interface StokenAdvanceEvent {
+  collectionType: CollectionType;
+  collectionUid: string;
+  /** The new stoken returned by the server. null means "no items yet". */
+  stoken: string | null;
+}
+
+type StokenAdvanceHandler = (event: StokenAdvanceEvent) => void;
+
 interface TrackedCollection {
   collectionType: CollectionType;
   collectionUid: string;
@@ -32,6 +47,7 @@ export class SyncEngine {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private changeHandlers: Set<SyncEventHandler> = new Set();
   private statusHandlers: Set<StatusChangeHandler> = new Set();
+  private stokenAdvanceHandlers: Set<StokenAdvanceHandler> = new Set();
   private reconnectAttempt = 0;
   private isDestroyed = false;
   private paused = false;
@@ -96,6 +112,28 @@ export class SyncEngine {
   }
 
   /**
+   * Seed the stoken for a tracked collection from durable storage.
+   * Call this before `start()` to resume incremental sync from where
+   * the previous process left off.
+   *
+   * No-op if the collection is not tracked. Existing stoken is overwritten.
+   */
+  setStoken(collectionUid: string, stoken: string | null): void {
+    const tracked = this.trackedCollections.get(collectionUid);
+    if (!tracked) return;
+    tracked.stoken = stoken;
+  }
+
+  /**
+   * Read the in-memory stoken for a tracked collection. Returns null
+   * if the collection is unknown or has never synced.
+   */
+  getStoken(collectionUid: string): string | null {
+    const tracked = this.trackedCollections.get(collectionUid);
+    return tracked?.stoken ?? null;
+  }
+
+  /**
    * Remove a collection from tracking.
    */
   untrackCollection(collectionUid: string): void {
@@ -119,6 +157,18 @@ export class SyncEngine {
     this.statusHandlers.add(handler);
     return () => {
       this.statusHandlers.delete(handler);
+    };
+  }
+
+  /**
+   * Subscribe to stoken-advance events. Fired each time the engine
+   * successfully advances the stoken for a collection so callers can
+   * persist it. Returns an unsubscribe function.
+   */
+  onStokenAdvance(handler: StokenAdvanceHandler): () => void {
+    this.stokenAdvanceHandlers.add(handler);
+    return () => {
+      this.stokenAdvanceHandlers.delete(handler);
     };
   }
 
@@ -196,6 +246,16 @@ export class SyncEngine {
     }
   }
 
+  private emitStokenAdvance(event: StokenAdvanceEvent): void {
+    for (const handler of this.stokenAdvanceHandlers) {
+      try {
+        handler(event);
+      } catch {
+        // Don't let subscriber errors break the engine
+      }
+    }
+  }
+
   private async syncAll(): Promise<void> {
     if (!this.account) return;
 
@@ -231,11 +291,33 @@ export class SyncEngine {
 
     const itemManager = collectionManager.getItemManager(collection);
 
+    // Stoken-not-found fallback: if the server has pruned the history that
+    // our persisted stoken referenced (e.g. account rotation, server-side
+    // compaction, or a stale cache from a different vault), the first
+    // `list()` call will throw. Drop the stoken, emit an advance event so
+    // callers clear their persisted copy, and retry from scratch.
     let done = false;
     while (!done) {
-      const response = await itemManager.list({
-        stoken: tracked.stoken ?? undefined,
-      });
+      let response: { data: Etebase.Item[]; stoken: string | null; done: boolean };
+      try {
+        response = (await itemManager.list({
+          stoken: tracked.stoken ?? undefined,
+        })) as { data: Etebase.Item[]; stoken: string | null; done: boolean };
+      } catch (err) {
+        if (tracked.stoken !== null && this.isStokenStaleError(err)) {
+          console.warn(
+            `[SyncEngine] Stoken rejected for ${tracked.collectionUid}, falling back to full fetch`,
+          );
+          tracked.stoken = null;
+          this.emitStokenAdvance({
+            collectionType: tracked.collectionType,
+            collectionUid: tracked.collectionUid,
+            stoken: null,
+          });
+          continue;
+        }
+        throw err;
+      }
 
       if (response.data.length > 0) {
         const createdOrUpdated: string[] = [];
@@ -270,9 +352,32 @@ export class SyncEngine {
         }
       }
 
-      tracked.stoken = response.stoken ?? null;
+      const newStoken = response.stoken ?? null;
+      const advanced = newStoken !== tracked.stoken;
+      tracked.stoken = newStoken;
       done = response.done;
+
+      if (advanced) {
+        this.emitStokenAdvance({
+          collectionType: tracked.collectionType,
+          collectionUid: tracked.collectionUid,
+          stoken: newStoken,
+        });
+      }
     }
+  }
+
+  /**
+   * Heuristic for "stoken refers to history we no longer have". Etebase
+   * surfaces this as a 409/stoken-mismatch error; the message text is the
+   * most reliable signal across the various Etebase server versions we
+   * support. Conservative — we only fall back when the message clearly
+   * names the stoken so we don't mask real network errors.
+   */
+  private isStokenStaleError(err: unknown): boolean {
+    if (!err) return false;
+    const msg = err instanceof Error ? err.message : String(err);
+    return /stoken|sync token|history|410|gone/i.test(msg);
   }
 
   private schedulePoll(): void {

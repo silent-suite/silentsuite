@@ -10,6 +10,18 @@ import { enqueue, isOfflineError } from '@/app/lib/offline-queue'
 import { secureGet } from '@/app/lib/secure-storage'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
+import {
+  ensureFingerprint as cacheEnsureFingerprint,
+  getStoken as cacheGetStoken,
+  setStoken as cacheSetStoken,
+  putItems as cachePutItems,
+  putItem as cachePutItem,
+  deleteItem as cacheDeleteItem,
+  replaceItemsForType as cacheReplaceItemsForType,
+  isCacheEnabled as isLocalCacheEnabled,
+  type CachedItem,
+  type CollectionTypeKey as CacheCollectionTypeKey,
+} from '@/app/lib/data-cache'
 
 /**
  * Holds live Etebase SDK objects (Account, Collections, Items, SyncEngine).
@@ -62,6 +74,28 @@ function collectionTypeToKey(ct: string): CollectionTypeKey | null {
   if (ct === COLLECTION_TYPE_TASKS) return 'tasks'
   if (ct === COLLECTION_TYPE_CONTACTS) return 'contacts'
   return null
+}
+
+/**
+ * Best-effort cache write. Decodes the item content (already decrypted by
+ * the Etebase SDK at this point) and stores it under the item UID. Failures
+ * are swallowed inside data-cache; we never block on cache writes.
+ */
+async function writeItemToCache(
+  type: CollectionTypeKey,
+  collectionUid: string,
+  itemUid: string,
+  content: string,
+): Promise<void> {
+  if (!isLocalCacheEnabled()) return
+  const record: CachedItem = {
+    itemUid,
+    collectionType: type,
+    collectionUid,
+    content,
+    lastModified: Date.now(),
+  }
+  await cachePutItem(record)
 }
 
 interface EtebaseState {
@@ -164,6 +198,19 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ account })
       logger.debug('[etebase-store] Session restored')
 
+      // Local-cache fingerprint check: if a different account previously
+      // hydrated this browser, wipe before reseeding. Belt-and-braces against
+      // the Android-style stale-cache contamination bug.
+      const cacheEnabled = isLocalCacheEnabled()
+      if (cacheEnabled) {
+        try {
+          const username = (account as any)?.user?.username ?? 'unknown'
+          await cacheEnsureFingerprint(String(username))
+        } catch (err) {
+          logger.warn('[etebase-store] Cache fingerprint check failed', err)
+        }
+      }
+
       // 2. Ensure collections exist (create if first login, fetch if returning)
       const collections: Record<CollectionTypeKey, any> = {
         calendar: null,
@@ -231,6 +278,32 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       }
 
+      // Seed persisted stokens before starting so the first sync round
+      // pulls only deltas instead of refetching the whole vault. Wire the
+      // advance handler so subsequent stoken updates are persisted too.
+      if (cacheEnabled) {
+        for (const [key, colType] of typeMap) {
+          const collection = collections[key]
+          if (!collection) continue
+          try {
+            const stoken = await cacheGetStoken(key as CacheCollectionTypeKey)
+            if (stoken) {
+              engine.setStoken(collection.uid, stoken)
+              logger.debug(`[etebase-store] Seeded ${key} stoken from cache`)
+            }
+          } catch (err) {
+            logger.warn(`[etebase-store] Failed to seed ${key} stoken`, err)
+          }
+        }
+
+        engine.onStokenAdvance((event: { collectionType: string; collectionUid: string; stoken: string | null }) => {
+          const key = collectionTypeToKey(event.collectionType)
+          if (!key) return
+          // Fire-and-forget — persistence failures are logged inside the cache module.
+          void cacheSetStoken(key, event.collectionUid, event.stoken)
+        })
+      }
+
       await engine.start(account)
       set({ syncEngine: engine, isInitialized: true })
       logger.debug('[etebase-store] SyncEngine started')
@@ -262,6 +335,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       itemCache.set(item.uid, item)
       itemTypeMap.set(item.uid, type)
       set({ itemCache, itemTypeMap })
+      // Write through to the local persistence cache so a reload paints it.
+      void writeItemToCache(type, collection.uid, item.uid, content)
       return item.uid
     } catch (err) {
       if (isOfflineError(err)) {
@@ -358,17 +433,31 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const itemCache = new Map(get().itemCache)
       const itemTypeMap = new Map(get().itemTypeMap)
       const uids: (string | null)[] = []
+      const cachedRecords: CachedItem[] = []
       for (let i = 0; i < items.length; i++) {
         if (i <= lastSuccessfulItemIndex) {
           const item = items[i]
           itemCache.set(item.uid, item)
           itemTypeMap.set(item.uid, type)
           uids.push(item.uid)
+          const original = contents[i]
+          if (original) {
+            cachedRecords.push({
+              itemUid: item.uid,
+              collectionType: type,
+              collectionUid: collection.uid,
+              content: original.content,
+              lastModified: Date.now(),
+            })
+          }
         } else {
           uids.push(null)
         }
       }
       set({ itemCache, itemTypeMap })
+      if (isLocalCacheEnabled() && cachedRecords.length > 0) {
+        void cachePutItems(cachedRecords)
+      }
 
       if (permanentFailure) {
         const succeeded = lastSuccessfulItemIndex + 1
@@ -418,6 +507,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const newCache = new Map(get().itemCache)
       newCache.set(itemUid, updated)
       set({ itemCache: newCache })
+      void writeItemToCache(type, collection.uid, itemUid, content)
     } catch (err) {
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
@@ -450,6 +540,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCache.delete(itemUid)
       newTypeMap.delete(itemUid)
       set({ itemCache: newCache, itemTypeMap: newTypeMap })
+      if (isLocalCacheEnabled()) {
+        void cacheDeleteItem(itemUid)
+      }
     } catch (err) {
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing delete for ${type}/${itemUid}`)
@@ -537,6 +630,19 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const newCollections = { ...get().collections }
       newCollections[type] = freshCollection
       set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, collections: newCollections })
+
+      // Mirror the refresh into the local cache. Use replace-style write so
+      // items deleted upstream are also dropped from disk.
+      if (isLocalCacheEnabled()) {
+        const cached: CachedItem[] = results.map((r) => ({
+          itemUid: r.uid,
+          collectionType: type,
+          collectionUid: freshCollection.uid,
+          content: r.content,
+          lastModified: Date.now(),
+        }))
+        void cacheReplaceItemsForType(type, cached)
+      }
 
       logger.debug(`[etebase-store] Refreshed ${type}: ${results.length} items`)
       return results

@@ -6,6 +6,7 @@ import { logger } from '@/app/lib/logger'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
 import { secureGet, secureSet, secureRemove, secureClear, migrateFromLocalStorage } from '@/app/lib/secure-storage'
+import { clearAll as clearLocalDataCache } from '@/app/lib/data-cache'
 
 export interface User {
   isAdmin?: boolean
@@ -361,6 +362,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       useEtebaseStore.getState().destroy()
     } catch (err) {
       logger.warn('[auth-store] Failed to destroy Etebase store during logout:', err)
+    }
+
+    // Clear the local data cache (decrypted iCal/vCard/vTodo on disk).
+    // Runs unconditionally — even if the feature flag was just turned off,
+    // any cache left from a previous session must not survive logout.
+    // Order matters: clear before invalidating session state, so a
+    // background read can't repopulate from a still-live store.
+    try {
+      await clearLocalDataCache()
+    } catch (err) {
+      logger.warn('[auth-store] Failed to clear local data cache during logout:', err)
     }
 
     // Clear signup-in-progress flag
