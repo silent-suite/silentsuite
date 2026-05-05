@@ -178,13 +178,7 @@ export default function ExportPage() {
       )
 
       downloadFile(blob, 'silentsuite-export.zip', 'application/zip')
-
-      const totalSkipped = eventsResult.skipped + tasksResult.skipped + contactsResult.skipped
-      if (totalSkipped > 0) {
-        showWarningToast(
-          `${totalSkipped} item${totalSkipped === 1 ? '' : 's'} were skipped because they couldn't be serialized — see browser console for details.`,
-        )
-      }
+      reportSkipped('item', eventsResult.skipped + tasksResult.skipped + contactsResult.skipped)
     } catch (err) {
       reportError('ZIP build', err)
     } finally {

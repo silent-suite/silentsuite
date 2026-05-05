@@ -250,12 +250,10 @@ describe('ExportPage', () => {
     )
   })
 
-  it('shows an error toast (with detail) when serialization itself fails fatally', () => {
-    // Force `serializeAll` to throw at a level we can't recover from — by
-    // making the mocked serializer throw a non-Error object that the loop
-    // handles gracefully isn't enough; instead, throw from inside the test
-    // by stubbing `toVEvent` to throw on the first call AND rejecting
-    // recovery by making the DOM blob construction fail.
+  it('shows an error toast (with detail) when the download path fails', () => {
+    // Simulate a real-world failure mode: blob URL creation blocked by a
+    // privacy-hardened browser context. Fires after `serializeAll` succeeds,
+    // exercising the outer try/catch in `exportCalendar`.
     const originalCreateObjectURL = URL.createObjectURL
     ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementationOnce(
       () => {
