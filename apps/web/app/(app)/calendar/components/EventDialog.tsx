@@ -19,6 +19,7 @@ import {
   resolveUserTimezone,
   shortTimezoneLabel,
 } from '@/app/lib/tz'
+import { inclusiveAllDayEndDate } from '../lib/all-day'
 
 // ---------------------------------------------------------------------------
 // Time formatting (respects user preference)
@@ -136,7 +137,7 @@ export function EventDialog({
   // (exclusive — the day *after* the last day of the event). The form picker shows
   // the inclusive last day, so subtract one day before formatting.
   const defaultEnd = isEdit
-    ? (event.allDay ? new Date(event.endDate.getTime() - 86_400_000) : event.endDate)
+    ? (event.allDay ? inclusiveAllDayEndDate(event.endDate) : event.endDate)
     : (initialEndDate ?? new Date(defaultStart.getTime() + 30 * 60 * 1000))
 
   // Initial all-day flag — needed before form state so we can pick the right
@@ -491,8 +492,7 @@ export function EventDialog({
     if (allDay) {
       const sd = formatDateForDisplay(buildStartDate(), undefined)
       // buildEndDate returns iCal-exclusive next-day midnight; subtract a day for human display.
-      const inclusiveEnd = new Date(buildEndDate().getTime() - 86_400_000)
-      const ed = formatDateForDisplay(inclusiveEnd, undefined)
+      const ed = formatDateForDisplay(inclusiveAllDayEndDate(buildEndDate()), undefined)
       return startDate === endDate ? sd : `${sd} – ${ed}`
     }
     const s = buildStartDate()

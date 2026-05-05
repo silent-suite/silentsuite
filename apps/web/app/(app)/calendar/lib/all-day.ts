@@ -28,3 +28,17 @@ export function toAllDayEndPlainDate(startDate: Date, endDate: Date): Temporal.P
   const endPd = dateToPlainDate(endDate).subtract({ days: 1 })
   return Temporal.PlainDate.compare(endPd, startPd) < 0 ? startPd : endPd
 }
+
+/** Convert an iCal-exclusive all-day end Date (next-day local-midnight) into a Date
+ * representing the inclusive last day at local-midnight.
+ *
+ * Use Temporal arithmetic rather than `getTime() - 86_400_000`: across a spring-forward
+ * boundary the previous calendar day has only 23 hours, and ms subtraction lands the
+ * result at 23:00 local on the day before that — wrong calendar day. Used by the
+ * EventDialog form-load and subtitle paths so they round-trip consistently with the
+ * `buildEndDate` save path.
+ */
+export function inclusiveAllDayEndDate(exclusiveEndDate: Date): Date {
+  const pd = dateToPlainDate(exclusiveEndDate).subtract({ days: 1 })
+  return new Date(pd.year, pd.month - 1, pd.day, 0, 0, 0, 0)
+}

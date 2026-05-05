@@ -97,8 +97,13 @@ function expandEventsForRange(
 
   for (const event of events) {
     if (!event.recurrenceRule) {
-      // Non-recurring: include if it falls within range
-      if (event.endDate >= range.start && event.startDate <= range.end) {
+      // Non-recurring: include if it overlaps the range. For all-day events,
+      // endDate is iCal-exclusive (next-day midnight) so use strict `>` to avoid
+      // matching events whose visual last day is just before range.start.
+      const overlapsRangeStart = event.allDay
+        ? event.endDate > range.start
+        : event.endDate >= range.start
+      if (overlapsRangeStart && event.startDate <= range.end) {
         result.push({
           id: event.id,
           masterId: event.id,
