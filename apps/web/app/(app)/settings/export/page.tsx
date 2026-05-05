@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Button } from '@silentsuite/ui'
-import { toVEvent, toVTodo, toVCard } from '@silentsuite/core'
+import { toVEvent, toVTodo, toVCard, type CalendarEvent, type Task, type Contact } from '@silentsuite/core'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
@@ -15,14 +15,15 @@ import JSZip from 'jszip'
 
 /**
  * Above this combined item count we surface a "this may take a minute" warning
- * before kicking off the ZIP export. The previous in-memory implementation was
- * known to silently fail at ~2000 events; 1000 is a conservative early warning.
+ * before kicking off the ZIP export.
  */
 const LARGE_EXPORT_THRESHOLD = 1000
 
-function downloadFile(content: string | Blob, filename: string, mimeType: string) {
+function downloadFile(content: string | Blob | Uint8Array, filename: string, mimeType: string) {
   const blob =
-    content instanceof Blob ? content : new Blob([content], { type: mimeType })
+    content instanceof Blob
+      ? content
+      : new Blob([content as BlobPart], { type: mimeType })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -41,6 +42,51 @@ function buildCalendarIcs(vcomponents: string[]): string {
   ].join('\r\n')
 }
 
+/** Serialize each item independently and skip the ones that throw, so a single
+ * malformed event doesn't take the whole export down silently. Returns the
+ * successfully-serialized payload plus a count of skipped items, which we
+ * surface in a warning toast.
+ */
+function serializeAll<T>(items: T[], serialize: (item: T) => string): { vcomponents: string[]; skipped: number } {
+  const vcomponents: string[] = []
+  let skipped = 0
+  for (const item of items) {
+    try {
+      vcomponents.push(serialize(item))
+    } catch (err) {
+      skipped++
+      console.warn('[export] Skipped item that failed to serialize:', err, item)
+    }
+  }
+  return { vcomponents, skipped }
+}
+
+function serializeEvents(events: CalendarEvent[]) {
+  return serializeAll(events, toVEvent)
+}
+
+function serializeTasks(tasks: Task[]) {
+  return serializeAll(tasks, toVTodo)
+}
+
+function serializeContacts(contacts: Contact[]) {
+  return serializeAll(contacts, toVCard)
+}
+
+function reportSkipped(label: string, skipped: number) {
+  if (skipped > 0) {
+    showWarningToast(
+      `${skipped} ${label}${skipped === 1 ? '' : 's'} were skipped because they couldn't be serialized — see browser console for details.`,
+    )
+  }
+}
+
+function reportError(label: string, err: unknown) {
+  console.error(`[export] ${label} failed:`, err)
+  const detail = err instanceof Error ? `: ${err.message}` : ''
+  showErrorToast(`${label} failed${detail}. See browser console for details.`)
+}
+
 export default function ExportPage() {
   const tasks = useTaskStore((s) => s.tasks)
   const contacts = useContactStore((s) => s.contacts)
@@ -50,21 +96,36 @@ export default function ExportPage() {
   const [exportProgress, setExportProgress] = useState(0)
 
   function exportCalendar() {
-    const vevents = events.map((e) => toVEvent(e))
-    const ics = buildCalendarIcs(vevents)
-    downloadFile(ics, 'silentsuite-calendar.ics', 'text/calendar')
+    try {
+      const { vcomponents, skipped } = serializeEvents(events)
+      const ics = buildCalendarIcs(vcomponents)
+      downloadFile(ics, 'silentsuite-calendar.ics', 'text/calendar')
+      reportSkipped('event', skipped)
+    } catch (err) {
+      reportError('Calendar export', err)
+    }
   }
 
   function exportTasks() {
-    const vtodos = tasks.map((t) => toVTodo(t))
-    const ics = buildCalendarIcs(vtodos)
-    downloadFile(ics, 'silentsuite-tasks.ics', 'text/calendar')
+    try {
+      const { vcomponents, skipped } = serializeTasks(tasks)
+      const ics = buildCalendarIcs(vcomponents)
+      downloadFile(ics, 'silentsuite-tasks.ics', 'text/calendar')
+      reportSkipped('task', skipped)
+    } catch (err) {
+      reportError('Tasks export', err)
+    }
   }
 
   function exportContacts() {
-    const vcards = contacts.map((c) => toVCard(c))
-    const vcf = vcards.join('\n')
-    downloadFile(vcf, 'silentsuite-contacts.vcf', 'text/vcard')
+    try {
+      const { vcomponents, skipped } = serializeContacts(contacts)
+      const vcf = vcomponents.join('\n')
+      downloadFile(vcf, 'silentsuite-contacts.vcf', 'text/vcard')
+      reportSkipped('contact', skipped)
+    } catch (err) {
+      reportError('Contacts export', err)
+    }
   }
 
   async function exportAll() {
@@ -83,23 +144,30 @@ export default function ExportPage() {
 
     try {
       const zip = new JSZip()
+      const enc = new TextEncoder()
 
-      const vevents = events.map((e) => toVEvent(e))
-      zip.file('silentsuite-calendar.ics', buildCalendarIcs(vevents))
+      const eventsResult = serializeEvents(events)
+      const tasksResult = serializeTasks(tasks)
+      const contactsResult = serializeContacts(contacts)
 
-      const vtodos = tasks.map((t) => toVTodo(t))
-      zip.file('silentsuite-tasks.ics', buildCalendarIcs(vtodos))
-
-      const vcards = contacts.map((c) => toVCard(c))
-      zip.file('silentsuite-contacts.vcf', vcards.join('\n'))
+      // Pre-encode payloads as UTF-8 byte arrays before handing to JSZip. JSZip's
+      // string path runs the entire file through DEFLATE in a synchronous loop
+      // before the async pump kicks in — for multi-megabyte ICS strings this
+      // can blow the call stack ("RangeError: Maximum call stack size exceeded")
+      // or stall the main thread for tens of seconds. Uint8Array input bypasses
+      // the string-tokenization step. Combined with `compression: 'STORE'` (no
+      // DEFLATE — text payloads are already small and the ZIP framing is the
+      // value here, not the savings), this makes the build robust at scale.
+      zip.file('silentsuite-calendar.ics', enc.encode(buildCalendarIcs(eventsResult.vcomponents)))
+      zip.file('silentsuite-tasks.ics', enc.encode(buildCalendarIcs(tasksResult.vcomponents)))
+      zip.file('silentsuite-contacts.vcf', enc.encode(contactsResult.vcomponents.join('\n')))
 
       // Throttle progress updates: only re-render when the integer percent
-      // changes. JSZip can fire onUpdate hundreds of times per second on
-      // large archives, which would otherwise spam React renders.
+      // changes. JSZip can fire onUpdate hundreds of times per second.
       let lastReportedPercent = -1
 
       const blob = await zip.generateAsync(
-        { type: 'blob', streamFiles: true },
+        { type: 'blob', compression: 'STORE', streamFiles: true },
         (metadata) => {
           const percent = Math.floor(metadata.percent)
           if (percent !== lastReportedPercent) {
@@ -110,13 +178,15 @@ export default function ExportPage() {
       )
 
       downloadFile(blob, 'silentsuite-export.zip', 'application/zip')
+
+      const totalSkipped = eventsResult.skipped + tasksResult.skipped + contactsResult.skipped
+      if (totalSkipped > 0) {
+        showWarningToast(
+          `${totalSkipped} item${totalSkipped === 1 ? '' : 's'} were skipped because they couldn't be serialized — see browser console for details.`,
+        )
+      }
     } catch (err) {
-      // Log enough detail for a useful bug report. The original bug was that
-      // generateAsync rejected silently with no console output at all.
-      console.error('[export] Failed to build ZIP archive:', err)
-      showErrorToast(
-        'Failed to build ZIP. Try exporting calendar, tasks, and contacts separately.',
-      )
+      reportError('ZIP build', err)
     } finally {
       setIsExportingAll(false)
       setExportProgress(0)
