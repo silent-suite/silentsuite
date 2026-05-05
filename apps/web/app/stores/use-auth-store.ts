@@ -409,16 +409,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     try {
       const res = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-      if (!res.ok) { syncAdminCookie(false); set({ user: null, isAuthenticated: false }); return false }
+      // Only treat the session as invalid on explicit auth failures. A 5xx
+      // response or network blip would otherwise log out e.g. an unverified
+      // user when the verify-banner re-checks on tab focus (see
+      // EmailVerificationBanner).
+      if (res.status === 401 || res.status === 403) {
+        syncAdminCookie(false)
+        set({ user: null, isAuthenticated: false })
+        return false
+      }
+      if (!res.ok) {
+        logger.warn('[auth-store] Session refresh got non-OK response, leaving session intact:', res.status)
+        return false
+      }
       const data = await res.json()
       const isAdmin = data.isAdmin === true
       syncAdminCookie(isAdmin)
       set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true })
       return true
     } catch (err) {
-      logger.warn('[auth-store] Session refresh failed:', err)
-      syncAdminCookie(false)
-      set({ user: null, isAuthenticated: false })
+      logger.warn('[auth-store] Session refresh failed (network), leaving session intact:', err)
       return false
     }
   },

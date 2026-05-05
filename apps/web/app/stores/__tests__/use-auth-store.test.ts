@@ -445,6 +445,67 @@ describe('useAuthStore', () => {
     })
   })
 
+  // --- refreshSession non-destructive on transient errors ---
+  // Regression: the EmailVerificationBanner re-checks the session on every
+  // tab focus while the user is unverified. A transient billing 5xx or a
+  // network blip used to null the session, silently logging out users who
+  // had only alt-tabbed away.
+
+  describe('refreshSession on transient errors', () => {
+    function loggedIn() {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'x@y.com', planId: 'pro', emailVerified: false, onboardedAt: null },
+        isAuthenticated: true,
+      })
+    }
+
+    it('leaves the session intact on a 5xx response', async () => {
+      loggedIn()
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 502 } as Response)
+
+      const result = await useAuthStore.getState().refreshSession()
+
+      expect(result).toBe(false)
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(true)
+      expect(state.user).not.toBeNull()
+    })
+
+    it('leaves the session intact on a network error', async () => {
+      loggedIn()
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      const result = await useAuthStore.getState().refreshSession()
+
+      expect(result).toBe(false)
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(true)
+      expect(state.user).not.toBeNull()
+    })
+
+    it('nulls the session on 401 (auth genuinely invalid)', async () => {
+      loggedIn()
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response)
+
+      const result = await useAuthStore.getState().refreshSession()
+
+      expect(result).toBe(false)
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.user).toBeNull()
+    })
+
+    it('nulls the session on 403', async () => {
+      loggedIn()
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 403 } as Response)
+
+      const result = await useAuthStore.getState().refreshSession()
+
+      expect(result).toBe(false)
+      expect(useAuthStore.getState().user).toBeNull()
+    })
+  })
+
   // --- Stripe redirect signup state (issue #20) ---
 
   describe('signup redirect state storage', () => {
