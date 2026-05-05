@@ -14,7 +14,6 @@ import android.content.*
 import android.content.ContentResolver.SYNC_OBSERVER_TYPE_ACTIVE
 import android.content.ContentResolver.SYNC_OBSERVER_TYPE_SETTINGS
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.CalendarContract
@@ -319,36 +318,26 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        when (item.itemId) {
-            R.id.sync_now -> requestSync()
-            R.id.settings -> {
-                startActivity(Intent(this, AppSettingsActivity::class.java))
+        return when (item.itemId) {
+            R.id.sync_now -> {
+                requestSync()
+                true
             }
-            R.id.delete_account -> AlertDialog.Builder(this@AccountActivity)
-                    .setIcon(R.drawable.ic_error_dark)
-                    .setTitle(R.string.account_delete_confirmation_title)
-                    .setMessage(R.string.account_delete_confirmation_text)
-                    .setNegativeButton(android.R.string.no, null)
-                    .setPositiveButton(android.R.string.yes) { _, _ -> deleteAccount() }
-                    .show()
-            R.id.show_fingerprint -> {
-                val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
-                view.findViewById<View>(R.id.body).visibility = View.GONE
-                (view.findViewById<View>(R.id.fingerprint) as TextView).text = formattedFingerprint
-                val dialog = AlertDialog.Builder(this@AccountActivity)
-                        .setIcon(R.drawable.ic_fingerprint_dark)
-                        .setTitle(R.string.show_fingperprint_title)
-                        .setView(view)
-                        .setPositiveButton(android.R.string.yes) { _, _ -> }.create()
-                dialog.show()
-            }
-            R.id.invitations -> {
-                val intent = InvitationsActivity.newIntent(this, account)
-                startActivity(intent)
-            }
-            else -> return super.onOptionsItemSelected(item)
+            else -> super.onOptionsItemSelected(item)
         }
-        return true
+    }
+
+    private fun showFingerprintDialog() {
+        val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
+        view.findViewById<View>(R.id.body).visibility = View.GONE
+        (view.findViewById<View>(R.id.fingerprint) as TextView).text = formattedFingerprint
+        AlertDialog.Builder(this@AccountActivity)
+                .setIcon(R.drawable.ic_fingerprint_dark)
+                .setTitle(R.string.show_fingperprint_title)
+                .setView(view)
+                .setPositiveButton(android.R.string.yes) { _, _ -> }
+                .create()
+                .show()
     }
 
     fun installPackage(packagename: String) {
@@ -396,6 +385,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         when (item.itemId) {
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
             R.id.nav_app_settings -> startActivity(Intent(this, AppSettingsActivity::class.java))
+            R.id.nav_invitations -> startActivity(InvitationsActivity.newIntent(this, account))
+            R.id.nav_show_fingerprint -> showFingerprintDialog()
             R.id.nav_website -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webUri))
             R.id.nav_webapp -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webAppUri))
             R.id.nav_guide -> startActivity(Intent(Intent.ACTION_VIEW, Constants.docsUri))
@@ -735,38 +726,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     /* USER ACTIONS */
 
-    private fun deleteAccount() {
-        val accountManager = AccountManager.get(this)
-
-        lifecycleScope.launch {
-            teardownAccountState(account)
-
-            if (Build.VERSION.SDK_INT >= 22)
-                accountManager.removeAccount(account, this@AccountActivity, { future ->
-                    try {
-                        if (future.result.getBoolean(AccountManager.KEY_BOOLEAN_RESULT))
-                            finish()
-                    } catch(e: Exception) {
-                        Logger.log.log(Level.SEVERE, "Couldn't remove account", e)
-                    }
-                }, null)
-            else
-                accountManager.removeAccount(account, { future ->
-                    try {
-                        if (future.result)
-                            finish()
-                    } catch (e: Exception) {
-                        Logger.log.log(Level.SEVERE, "Couldn't remove account", e)
-                    }
-                }, null)
-        }
-    }
-
     // Tear down per-account client state before the Android account is removed.
     // Must run while AccountManager still has the user data, since AccountSettings
-    // (and the etebase session) are read from it. Both deleteAccount() and
-    // confirmLogout() must call this — leaving the Etebase FS cache behind causes
-    // stale stokens on re-login, which makes incremental sync miss historical items.
+    // (and the etebase session) are read from it. confirmLogout() must call this —
+    // leaving the Etebase FS cache behind causes stale stokens on re-login, which
+    // makes incremental sync miss historical items.
     private suspend fun teardownAccountState(account: Account) = withContext(Dispatchers.IO) {
         EtebaseLocalCache.clearUserCache(this@AccountActivity, account.name)
 

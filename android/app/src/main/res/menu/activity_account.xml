@@ -15,22 +15,4 @@
           android:title="@string/account_synchronize_now"
           app:showAsAction="always"/>
 
-    <item android:id="@+id/settings"
-          android:icon="@drawable/ic_settings_dark"
-          android:title="@string/account_settings"
-          app:showAsAction="ifRoom"/>
-
-    <item android:id="@+id/show_fingerprint"
-        android:icon="@drawable/ic_fingerprint_dark"
-        android:title="@string/account_show_fingerprint"
-        app:showAsAction="ifRoom"/>
-
-    <item android:id="@+id/invitations"
-        android:title="@string/invitations_title"
-        app:showAsAction="never"/>
-
-    <item android:id="@+id/delete_account"
-          android:title="@string/account_delete"
-          app:showAsAction="never"/>
-
 </menu>
