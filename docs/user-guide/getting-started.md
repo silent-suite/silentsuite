@@ -1,31 +1,65 @@
 # Getting Started
 
-Set up SilentSuite and start syncing your calendar, contacts, and tasks with end-to-end encryption.
+A walkthrough of creating your account and getting your first event syncing across two devices.
 
 ## 1. Create an Account
 
-<!-- TODO: Add specific steps once client apps are available -->
+Go to [app.silentsuite.io](https://app.silentsuite.io/signup). The signup flow is four steps:
 
-Visit [silentsuite.io](https://silentsuite.io) to create your account. Your password is used to derive your encryption keys -- it never leaves your device.
+1. **Account** — email and password.
+2. **Plan** — pick Monthly or Annual (Annual saves 17%) and choose either *Subscribe now* or the *30-day free trial*. The trial requires a card to start, but you are not charged until day 30 and can cancel any time before then.
+3. **Vault & Recovery** — your encryption keys are derived from your password on this device. Store the password somewhere safe; without it, your data cannot be recovered. SilentSuite has no way to reset it because the server never sees your keys.
+4. **Verify your email** — open the link sent to the address you registered with. Until verified, an inline banner stays visible across the app.
 
-**Important:** Choose a strong password. Since all encryption is derived from your password, there is no way to recover your data if you forget it. SilentSuite cannot reset your password because the server never has access to your keys.
+Self-hosting your own server? Expand **Advanced Settings** on the signup page and enter your server URL before submitting. See the [Self-Hosting guide](../self-hosting/) for the server side of that.
 
-## 2. Set Up Your First Device
+## 2. Add Your First Event
 
-<!-- TODO: Add platform-specific setup guides (Android, iOS, web) -->
+After signup you land on the calendar. Click any cell or tap the **+** button to create an event:
 
-After creating your account, set up SilentSuite on your device. Your encryption keys are generated locally during setup.
+- Title, location, description, all-day, start/end with timezone, reminders (`VALARM`), recurrence rule
+- Save — the event is encrypted in your browser before it leaves the page
 
-## 3. Add Your Data
+See [Calendar](./calendar.md), [Contacts](./contacts.md), and [Tasks](./tasks.md) for what each section covers.
 
-Once set up, you can start adding:
+## 3. Add a Second Device
 
-- **Calendar events** -- see [Calendar](./calendar.md)
-- **Contacts** -- see [Contacts](./contacts.md)
-- **Tasks** -- see [Tasks](./tasks.md)
+Your data is only useful if you can read it on the device you're carrying. Three supported surfaces, all talking to the same encrypted account:
 
-All data is encrypted on your device before syncing.
+### Web (any device with a browser)
 
-## 4. Add More Devices
+Open [app.silentsuite.io](https://app.silentsuite.io/login) on the second device and log in with the same email and password. The web app is an offline-first PWA — you can install it to your home screen or dock from your browser's "install app" menu.
 
-To sync across multiple devices, sign in with the same account on each device. Your encryption keys are derived from your password on each device independently -- the server never sees them.
+### Android
+
+In **Settings → Mobile** there's a QR code that links to the latest signed APK on GitHub Releases. Scan it from your phone or download manually. Sideload, open the app, log in. The Android app supports a custom server URL in advanced settings if you self-host.
+
+> Currently distributed as a sideloadable APK. Google Play and F-Droid listings are on the roadmap.
+
+### Desktop (CalDAV / CardDAV via the bridge)
+
+If you'd rather use Thunderbird, Apple Calendar, GNOME Calendar, Evolution, or any other standard CalDAV/CardDAV client, install the **SilentSuite bridge**. It runs a local DAV daemon on `localhost:37358` that translates between your client and the encrypted Etebase backend.
+
+Install commands are in **Settings → Desktop** in the web app.
+
+> The bridge keeps plaintext on `localhost` only — every byte that leaves your machine is encrypted by the bridge first.
+
+### iOS
+
+There's no SilentSuite iOS app yet (on the roadmap). In the meantime, the [EteSync iOS app](https://www.etesync.com/) speaks the same Etebase protocol and works against your SilentSuite account.
+
+## 4. Confirm Sync Works
+
+Create an event on device A. Within a few seconds it should appear on device B. If it doesn't:
+
+- Check that both devices are signed in to the **same** account
+- Check that both devices report a successful sync in their status indicator
+- See the [FAQ](./faq.md) for common issues
+
+That's the success state for setup. From here, see the per-section guides:
+
+- [Calendar](./calendar.md) — events, recurrence, timezones, import/export
+- [Contacts](./contacts.md) — vCard CRUD and import/export
+- [Tasks](./tasks.md) — priorities, due dates, ICS task export
+- [How Encryption Works](./encryption-explained.md) — what the server can and can't see
+- [FAQ](./faq.md) — anything we get asked twice
