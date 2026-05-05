@@ -19,6 +19,7 @@ import {
   resolveUserTimezone,
   shortTimezoneLabel,
 } from '@/app/lib/tz'
+import { inclusiveAllDayEndDate } from '../lib/all-day'
 
 // ---------------------------------------------------------------------------
 // Time formatting (respects user preference)
@@ -132,8 +133,11 @@ export function EventDialog({
   const effectiveInstanceDate = instanceDate ?? event?.startDate ?? new Date()
 
   const defaultStart = isEdit ? event.startDate : (initialStartDate ?? new Date())
+  // For all-day events, `event.endDate` follows iCal DTEND;VALUE=DATE convention
+  // (exclusive — the day *after* the last day of the event). The form picker shows
+  // the inclusive last day, so subtract one day before formatting.
   const defaultEnd = isEdit
-    ? event.endDate
+    ? (event.allDay ? inclusiveAllDayEndDate(event.endDate) : event.endDate)
     : (initialEndDate ?? new Date(defaultStart.getTime() + 30 * 60 * 1000))
 
   // Initial all-day flag — needed before form state so we can pick the right
@@ -255,7 +259,10 @@ export function EventDialog({
   const buildEndDate = useCallback((): Date => {
     const [y, m, d] = endDate.split('-').map(Number)
     if (allDay) {
-      return new Date(y, m - 1, d, 23, 59, 59, 0)
+      // RFC 5545: VALUE=DATE DTEND is exclusive — i.e. the day after the last day
+      // of the event. Stored as the next day's local-midnight to match how the
+      // ical parser surfaces DTEND for events synced from upstream.
+      return new Date(y, m - 1, d + 1, 0, 0, 0, 0)
     }
     const [h, min] = endTime.split(':').map(Number)
     return instantFromWallClock(y, m, d, h, min, timezone)
@@ -484,7 +491,8 @@ export function EventDialog({
   const subtitle = (() => {
     if (allDay) {
       const sd = formatDateForDisplay(buildStartDate(), undefined)
-      const ed = formatDateForDisplay(buildEndDate(), undefined)
+      // buildEndDate returns iCal-exclusive next-day midnight; subtract a day for human display.
+      const ed = formatDateForDisplay(inclusiveAllDayEndDate(buildEndDate()), undefined)
       return startDate === endDate ? sd : `${sd} – ${ed}`
     }
     const s = buildStartDate()

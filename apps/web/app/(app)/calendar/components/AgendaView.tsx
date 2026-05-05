@@ -37,8 +37,12 @@ export function AgendaView({ events, currentDate, onEventClick }: AgendaViewProp
         const start = e.startDate instanceof Date ? e.startDate : new Date(e.startDate)
         const end = e.endDate instanceof Date ? e.endDate : new Date(e.endDate)
 
-        // Event overlaps with current day if it starts before day ends AND ends after day starts
-        return start <= currentDayEnd && end >= currentDayStart
+        // Event overlaps with current day if it starts before day ends AND ends after day starts.
+        // For all-day events, endDate follows iCal DTEND;VALUE=DATE convention (exclusive — the
+        // day *after* the last day of the event), so use `>` rather than `>=` to avoid bleeding
+        // a single-day event onto the morning of the next day.
+        const endComparison = e.allDay ? end > currentDayStart : end >= currentDayStart
+        return start <= currentDayEnd && endComparison
       })
       .sort((a, b) => {
         if (a.allDay && !b.allDay) return -1
