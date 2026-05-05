@@ -20,6 +20,14 @@
             android:icon="@drawable/ic_settings_dark"
             android:title="@string/navigation_drawer_settings"/>
         <item
+            android:id="@+id/nav_invitations"
+            android:icon="@drawable/ic_people_light"
+            android:title="@string/invitations_title"/>
+        <item
+            android:id="@+id/nav_show_fingerprint"
+            android:icon="@drawable/ic_fingerprint_dark"
+            android:title="@string/account_show_fingerprint"/>
+        <item
             android:id="@+id/nav_theme"
             android:icon="@drawable/ic_palette"
             android:title="@string/navigation_drawer_theme"/>
