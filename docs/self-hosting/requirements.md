@@ -10,7 +10,8 @@ Before you begin, make sure you have the following.
 | **Docker** | Docker Engine 24+ with Docker Compose v2 (the `docker compose` plugin, not the legacy `docker-compose` binary). |
 | **Domain name** | A domain you control, with the ability to create DNS A records. |
 | **Server resources** | Minimum 1 GB RAM, 10 GB disk. More is better if you expect multiple users. |
-| **Open ports** | Ports 80 and 443 must be reachable from the internet (required for Let's Encrypt certificate provisioning). |
+| **Reverse proxy** | A reverse proxy you control (Caddy, nginx, Traefik, Cloudflare Tunnel) to terminate TLS in front of the SilentSuite server. The stack itself does not include one. |
+| **Open ports** | Whichever ports your reverse proxy needs reachable from the internet — typically 443 (and 80 for ACME HTTP-01 challenges if your proxy provisions Let's Encrypt certificates). |
 
 ## Verify Docker Is Installed
 
@@ -31,7 +32,7 @@ If your server IP is `203.0.113.50` and your chosen domain is `sync.example.com`
 |---|---|---|
 | A | `sync.example.com` | `203.0.113.50` |
 
-**Important:** DNS changes can take minutes to hours to propagate. Caddy will fail to obtain TLS certificates if the record does not resolve to your server. Verify propagation before proceeding:
+**Important:** DNS changes can take minutes to hours to propagate. Whatever reverse proxy you use will fail to obtain TLS certificates if the record does not resolve to your server. Verify propagation before proceeding:
 
 ```bash
 dig +short sync.example.com
