@@ -468,6 +468,26 @@ describe('DST timezone conversion (two-pass offset)', () => {
     expect(event.startDate.getUTCMinutes()).toBe(0);
   });
 
+  it('returns the same UTC instant regardless of runtime TZ for TZID values', () => {
+    // Regression for #109: parseICalDateValue used `new Date(y, m, ...)` which
+    // interprets in the runtime's local TZ, causing the parsed instant to drift
+    // by the runtime's UTC offset whenever it wasn't UTC. Vitest defaults to
+    // TZ=UTC so the bug was invisible — this test pins the expected absolute
+    // UTC instant so any reintroduction of the local-time math will fail.
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:tzid-stability',
+      'DTSTART;TZID=Europe/Vienna:20250604T100000', // 10:00 Vienna in CEST = 08:00 UTC
+      'DTEND;TZID=Europe/Vienna:20250604T110000',   // 11:00 Vienna in CEST = 09:00 UTC
+      'SUMMARY:Vienna 10am',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = fromVEvent(ical);
+    expect(event.startDate.toISOString()).toBe('2025-06-04T08:00:00.000Z');
+    expect(event.endDate.toISOString()).toBe('2025-06-04T09:00:00.000Z');
+  });
+
   it('uses local time when no TZID is provided', () => {
     // No TZID and no Z → local time interpretation
     const ical = [

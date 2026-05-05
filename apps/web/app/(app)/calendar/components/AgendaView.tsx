@@ -4,6 +4,8 @@ import { useMemo } from 'react'
 import { Clock, MapPin } from 'lucide-react'
 import { CalendarEmptyState } from '@/app/components/empty-state'
 import type { CalendarEvent } from '@silentsuite/core'
+import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { resolveUserTimezone, shortTimezoneLabel } from '@/app/lib/tz'
 
 interface AgendaViewProps {
   events: CalendarEvent[]
@@ -11,8 +13,8 @@ interface AgendaViewProps {
   onEventClick?: (eventId: string) => void
 }
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+function formatTime(date: Date, tz: string): string {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: tz })
 }
 
 function isSameDay(a: Date, b: Date): boolean {
@@ -24,6 +26,8 @@ function isSameDay(a: Date, b: Date): boolean {
 }
 
 export function AgendaView({ events, currentDate, onEventClick }: AgendaViewProps) {
+  const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
+  const userTz = resolveUserTimezone(defaultTimezonePref)
   const dayEvents = useMemo(() => {
     const currentDayStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate())
     const currentDayEnd = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), 23, 59, 59, 999)
@@ -68,8 +72,13 @@ export function AgendaView({ events, currentDate, onEventClick }: AgendaViewProp
                 <div className="mt-1 flex items-center gap-1 text-xs text-[rgb(var(--muted))]">
                   <Clock className="h-3 w-3" />
                   <span>
-                    {formatTime(event.startDate)} – {formatTime(event.endDate)}
+                    {formatTime(event.startDate, userTz)} – {formatTime(event.endDate, userTz)}
                   </span>
+                  {event.timezone && event.timezone !== userTz && (
+                    <span className="ml-1 rounded bg-[rgb(var(--surface-muted))] px-1 py-0.5 text-[10px] font-medium text-[rgb(var(--muted))]">
+                      {shortTimezoneLabel(event.timezone, event.startDate)}
+                    </span>
+                  )}
                 </div>
               )}
               {event.allDay && (
