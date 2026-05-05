@@ -26,6 +26,7 @@ import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.requestSync
+import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.BaseActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
@@ -54,6 +55,19 @@ class NewAccountWizardActivity : BaseActivity() {
                 replace(R.id.fragment_container, WizardCheckFragment())
             }
         }
+    }
+
+    // Issue #119: by the time this wizard finishes, LoginActivity, CreateAccountFragment,
+    // and ModeSelectionActivity have all already finish()ed up the back stack. Without an
+    // explicit relaunch, the task is left empty and the user is dropped to the home screen
+    // — indistinguishable from a crash. Re-launching AccountActivity (the LAUNCHER) keeps
+    // the user inside the app on the just-created account.
+    override fun finish() {
+        startActivity(
+            Intent(this, AccountActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        super.finish()
     }
 
     companion object {
