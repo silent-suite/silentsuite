@@ -161,24 +161,23 @@ function BillingToggle({
 }
 
 // ---------------------------------------------------------------------------
-// Price display helper
+// Price display helper — used inline in the trial subhead, intentionally
+// modest in size so it doesn't dominate the "30-day free trial" headline.
 // ---------------------------------------------------------------------------
 
 function PriceDisplay({ interval }: { interval: BillingInterval }) {
   if (interval === 'monthly') {
     return (
-      <div className="flex items-baseline gap-1">
-        <span className="text-2xl font-bold text-[rgb(var(--foreground))]">&euro;3.60</span>
-        <span className="text-sm text-[rgb(var(--muted))]">/month</span>
-      </div>
+      <span className="text-sm text-[rgb(var(--muted))]">
+        Then <span className="font-semibold text-[rgb(var(--foreground))]">&euro;3.60/month</span>. Cancel anytime before day 30, no charge.
+      </span>
     )
   }
   return (
-    <div className="flex items-baseline gap-1">
-      <span className="text-2xl font-bold text-[rgb(var(--foreground))]">&euro;3.00</span>
-      <span className="text-sm text-[rgb(var(--muted))]">/month</span>
-      <span className="ml-2 text-xs font-medium text-emerald-400">&middot; Save 17%</span>
-    </div>
+    <span className="text-sm text-[rgb(var(--muted))]">
+      Then <span className="font-semibold text-[rgb(var(--foreground))]">&euro;3.00/month</span> billed annually. Cancel anytime before day 30, no charge.
+      <span className="ml-1 text-xs font-medium text-emerald-400">Save 17%</span>
+    </span>
   )
 }
 
@@ -450,7 +449,7 @@ function StepChoosePlan({
             <span className="text-sm text-[rgb(var(--foreground))]">{priceLabel}</span>
           </div>
           <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-            30-day free trial included. Cancel anytime before.
+            Card secures your trial &mdash; no charge until day 30. Cancel anytime before.
           </p>
           <div className="mt-2 flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
             <Lock className="h-3 w-3 text-emerald-500" />
@@ -557,10 +556,10 @@ function StepChoosePlan({
           </div>
         </button>
 
-        {/* Card B: 30 Day Free Trial — credit card required */}
+        {/* Card B: 30 Day Free Trial — card secures the trial, no charge for 30 days */}
         <button
           onClick={() => setSelectedTrial('30day')}
-          aria-label={`30 Day Free Trial — ${interval === 'monthly' ? '€3.60/month' : '€3.00/month billed annually'}, credit card required, cancel anytime`}
+          aria-label={`30-day free trial — then ${interval === 'monthly' ? '€3.60/month' : '€3.00/month billed annually'}, cancel anytime before day 30 with no charge`}
           className={`group w-full rounded-xl border-2 p-4 sm:p-6 text-left transition-all ${
             selectedTrial === '30day'
               ? 'border-emerald-500 bg-emerald-500/5'
@@ -573,14 +572,14 @@ function StepChoosePlan({
             </div>
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <h3 className="text-base sm:text-lg font-semibold text-[rgb(var(--foreground))] whitespace-nowrap">30 Day Free Trial</h3>
+                <h3 className="text-xl sm:text-2xl font-bold text-[rgb(var(--foreground))] leading-tight">30-day free trial</h3>
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 uppercase tracking-wide">
                   Recommended
                 </span>
               </div>
-              <div className="mt-2">
+              <p className="mt-1.5 leading-snug">
                 <PriceDisplay interval={interval} />
-              </div>
+              </p>
               <ul className="mt-3 space-y-1.5">
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
@@ -588,11 +587,7 @@ function StepChoosePlan({
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  Credit card required
-                </li>
-                <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                  <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  Cancel anytime
+                  Card secures your trial &mdash; no charge until day 30
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
