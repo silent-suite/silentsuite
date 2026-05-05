@@ -1,23 +1,23 @@
 # User Guide
 
-How-to guides for using SilentSuite -- your private, end-to-end encrypted sync for calendar, contacts, and tasks.
+How to use SilentSuite — your end-to-end encrypted sync for calendar, contacts, and tasks. Everything in this guide is grounded in what's actually shipped in [v0.1.0-beta](https://github.com/silent-suite/silentsuite/releases/tag/v0.1.0-beta).
 
 ---
 
 | Guide | Description |
 |---|---|
-| [Getting Started](./getting-started.md) | Create an account and set up your first device |
-| [Calendar](./calendar.md) | How to manage your encrypted calendar |
-| [Contacts](./contacts.md) | How to manage your encrypted contacts |
-| [Tasks](./tasks.md) | How to manage your encrypted tasks |
-| [How Encryption Works](./encryption-explained.md) | Understand what's encrypted, how, and why it matters |
-| [FAQ](./faq.md) | Frequently asked questions |
+| [Getting Started](./getting-started.md) | Sign up, pick a plan, install on a second device, confirm sync |
+| [Calendar](./calendar.md) | Events, recurrence, timezones, ICS import/export |
+| [Contacts](./contacts.md) | Contact CRUD, vCard import/export |
+| [Tasks](./tasks.md) | Tasks, priorities, due dates, ICS task export |
+| [How Encryption Works](./encryption-explained.md) | What's encrypted, how, and what the server can and can't see |
+| [FAQ](./faq.md) | Common questions |
 
 ---
 
 ## How SilentSuite Works
 
-All your data -- events, contacts, tasks -- is encrypted on your device before it leaves. The server only ever stores and syncs encrypted blobs. Nobody, including the SilentSuite team, can read your data.
+All your data — events, contacts, tasks — is encrypted on your device before it leaves. The server only ever stores and syncs ciphertext. Nobody, including the SilentSuite team, can read your data.
 
 ```
 Your Device          SilentSuite Server          Your Other Device
@@ -28,3 +28,10 @@ Your Device          SilentSuite Server          Your Other Device
     |                      |                          |
     |   Server never has the keys. Never sees plaintext.
 ```
+
+## Where to Use SilentSuite
+
+- **Web** — [app.silentsuite.io](https://app.silentsuite.io) (offline-first PWA, installable to any desktop or mobile home screen)
+- **Android** — signed APK, sideloadable. QR-code download in *Settings → Mobile* once you're signed in
+- **Desktop (CalDAV / CardDAV)** — the SilentSuite bridge runs a local DAV daemon for Thunderbird, Apple Calendar, Evolution, GNOME Calendar, etc. Install commands in *Settings → Desktop*
+- **iOS** — no native app yet; the [EteSync iOS app](https://www.etesync.com/) works against your SilentSuite account in the meantime
