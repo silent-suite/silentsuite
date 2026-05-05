@@ -16,6 +16,7 @@ import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
+import { toAllDayEndPlainDate } from '../lib/all-day'
 
 import '@schedule-x/theme-default/dist/index.css'
 
@@ -155,7 +156,9 @@ function toScheduleXEvents(
       id: e.id,
       title: e.isRecurring ? `↻ ${e.title}` : e.title,
       start: e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
-      end: e.allDay ? toPlainDate(e.endDate) : toScheduleXDateTime(e.endDate, userTz),
+      end: e.allDay
+        ? toAllDayEndPlainDate(e.startDate, e.endDate)
+        : toScheduleXDateTime(e.endDate, userTz),
       description: e.description || undefined,
       location: e.location || undefined,
       calendarId: e.calendarId ?? 'default',
