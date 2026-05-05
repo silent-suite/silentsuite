@@ -1,19 +1,52 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { MailWarning, Loader2 } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
 import { BILLING_API_URL } from '@/app/lib/config'
 
+// Minimum gap between focus-triggered refreshes. Cheap guard against burst
+// refreshes when the tab visibility flickers (e.g. fast alt-tab) or when
+// React strict mode double-invokes the effect in dev.
+const REFRESH_THROTTLE_MS = 5_000
+
 export function EmailVerificationBanner() {
   const user = useAuthStore((s) => s.user)
+  const refreshSession = useAuthStore((s) => s.refreshSession)
   const [resending, setResending] = useState(false)
   const [resent, setResent] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const lastRefreshRef = useRef(0)
+
+  const shouldShow = !isSelfHosted && user && user.emailVerified === false
+
+  // When the banner is mounted (i.e. the user is signed in but unverified),
+  // re-check the session whenever the tab regains focus. This handles the
+  // common path of "user clicks the verify link in a new tab → comes back
+  // here" — without this, the banner sticks until a hard reload because
+  // refreshSession() otherwise only runs once on initial app mount.
+  useEffect(() => {
+    if (!shouldShow) return
+
+    const maybeRefresh = () => {
+      if (document.visibilityState !== 'visible') return
+      const now = Date.now()
+      if (now - lastRefreshRef.current < REFRESH_THROTTLE_MS) return
+      lastRefreshRef.current = now
+      void refreshSession()
+    }
+
+    document.addEventListener('visibilitychange', maybeRefresh)
+    window.addEventListener('focus', maybeRefresh)
+    return () => {
+      document.removeEventListener('visibilitychange', maybeRefresh)
+      window.removeEventListener('focus', maybeRefresh)
+    }
+  }, [shouldShow, refreshSession])
 
   // Don't show for self-hosted, unauthenticated, or already verified
-  if (isSelfHosted || !user || user.emailVerified !== false) {
+  if (!shouldShow) {
     return null
   }
 
