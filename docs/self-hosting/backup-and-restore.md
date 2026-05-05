@@ -24,7 +24,7 @@ docker exec silentsuite-postgres pg_dump -U silentsuite silentsuite > backup-$(d
 
 ```bash
 docker run --rm \
-  -v silentsuite_server_data:/data \
+  -v self-host_server_data:/data \
   -v $(pwd)/backups:/backup \
   alpine tar czf /backup/server-data-$(date +%Y%m%d-%H%M%S).tar.gz -C /data .
 ```

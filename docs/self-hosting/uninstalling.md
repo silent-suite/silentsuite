@@ -7,21 +7,22 @@ How to remove SilentSuite from your server.
 To completely remove SilentSuite and all its data:
 
 ```bash
-# Stop and remove all containers
+# Stop and remove the containers
+cd silentsuite-server
 docker compose down
 
 # Remove all data volumes (THIS DELETES ALL DATA)
-docker volume rm self-host_pgdata self-host_etebase_data self-host_caddy_data self-host_caddy_config
+docker volume rm self-host_pgdata self-host_server_data
 
 # Remove the Docker images
-docker rmi victorrds/etebase:latest
-docker rmi postgres:16-alpine
-docker rmi caddy:2-alpine
+docker image rm $(docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(ghcr\.io/silent-suite/silentsuite-server|postgres):' )
 
-# Remove the cloned repository
+# Remove the install directory
 cd ..
-rm -rf silentsuite
+rm -rf silentsuite-server
 ```
+
+If you set up a reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) yourself, that's outside the SilentSuite stack — remove its config and any certificates it provisioned separately.
 
 ## Stop Without Deleting Data
 
