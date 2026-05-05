@@ -9,6 +9,7 @@ const allTabs = [
   { label: 'Subscription', href: '/settings/subscription' },
   { label: 'Security', href: '/settings/security' },
   { label: 'Mobile', href: '/settings/mobile' },
+  { label: 'Desktop', href: '/settings/desktop' },
   { label: 'Import', href: '/settings/import' },
   { label: 'Export', href: '/settings/export' },
 ]
