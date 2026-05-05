@@ -99,8 +99,15 @@ export function parseICalDateValue(value: string, tzid?: string): { date: Date; 
         });
         const parts = formatter.formatToParts(new Date(utcMs));
         const p = (type: string) => parseInt(parts.find((x) => x.type === type)?.value ?? '0', 10);
-        const localDate = new Date(p('year'), p('month') - 1, p('day'), p('hour'), p('minute'), p('second'));
-        return localDate.getTime() - utcMs;
+        // Use Date.UTC, not `new Date(...)` — the latter interprets in the
+        // runtime's local TZ, which makes this whole calculation dependent on
+        // the browser/server's TZ (returning 0 when browser TZ matches tzid,
+        // and arbitrary wrong offsets otherwise). Date.UTC always returns
+        // the UTC ms for the given wall-clock components, so the diff
+        // measures purely the tzid's offset from UTC at this instant.
+        const hour = p('hour') === 24 ? 0 : p('hour'); // Intl midnight edge case
+        const localUtcMs = Date.UTC(p('year'), p('month') - 1, p('day'), hour, p('minute'), p('second'));
+        return localUtcMs - utcMs;
       }
 
       // Two-pass approach: the first offset may be wrong when a DST

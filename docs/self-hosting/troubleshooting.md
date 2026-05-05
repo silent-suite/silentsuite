@@ -16,11 +16,11 @@ All services should show `Up (healthy)`. If a service shows `Up (unhealthy)` or 
 # All services
 docker compose logs
 
-# Specific service (postgres, server, caddy)
+# Specific service (postgres, server)
 docker compose logs server
 
 # Follow logs in real time
-docker compose logs -f caddy
+docker compose logs -f server
 
 # Last 100 lines
 docker compose logs --tail 100 server
@@ -49,13 +49,14 @@ docker compose logs server
 
 ### SSL Certificate Errors
 
-**Symptom:** Browser shows certificate warnings, or Caddy logs show ACME errors.
+**Symptom:** Browser shows certificate warnings, or your reverse proxy logs ACME errors.
 
-**Causes and fixes:**
+TLS is your reverse proxy's responsibility — these are not SilentSuite-server problems. Common causes:
 
 - **DNS not resolving:** Verify your DNS record points to your server with `dig +short your-domain.com`.
-- **Ports blocked:** Caddy needs ports 80 and 443 open for the ACME HTTP-01 challenge. Check your firewall: `sudo ufw status` or `sudo iptables -L -n`.
+- **Ports blocked:** Your reverse proxy needs the relevant ports open (typically 80 for the ACME HTTP-01 challenge and 443 for HTTPS). Check your firewall: `sudo ufw status` or `sudo iptables -L -n`.
 - **Rate limiting:** Let's Encrypt has [rate limits](https://letsencrypt.org/docs/rate-limits/). If you have hit them, wait before retrying.
+- **Wrong upstream:** Confirm the proxy is forwarding to `127.0.0.1:3735` and that the SilentSuite server container is healthy (`docker compose ps`).
 
 ### Database Connection Errors
 

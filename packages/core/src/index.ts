@@ -43,6 +43,7 @@ export type { CollectionMeta, ItemListResponse } from './etebase/collections.js'
 
 // Sync engine
 export { SyncEngine } from './etebase/sync.js';
+export type { StokenAdvanceEvent } from './etebase/sync.js';
 
 // Calendar event model
 export {

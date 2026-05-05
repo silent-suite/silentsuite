@@ -24,12 +24,16 @@ import io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
 import io.silentsuite.sync.R
+import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.requestSync
+import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.BaseActivity
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class NewAccountWizardActivity : BaseActivity() {
     private lateinit var account: Account
@@ -51,6 +55,19 @@ class NewAccountWizardActivity : BaseActivity() {
                 replace(R.id.fragment_container, WizardCheckFragment())
             }
         }
+    }
+
+    // Issue #119: by the time this wizard finishes, LoginActivity, CreateAccountFragment,
+    // and ModeSelectionActivity have all already finish()ed up the back stack. Without an
+    // explicit relaunch, the task is left empty and the user is dropped to the home screen
+    // — indistinguishable from a crash. Re-launching AccountActivity (the LAUNCHER) keeps
+    // the user inside the app on the just-created account.
+    override fun finish() {
+        startActivity(
+            Intent(this, AccountActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        super.finish()
     }
 
     companion object {
@@ -206,7 +223,14 @@ class WizardFragment : Fragment() {
                     requestSync(requireContext(), accountHolder.account)
                 }
                 activity?.finish()
-            } catch (e: EtebaseException) {
+            } catch (e: Exception) {
+                // Cooperate with structured concurrency — never swallow cancellation.
+                if (e is CancellationException) throw e
+                // Issue #119: previously only EtebaseException was caught, so JNI/IO/IllegalState
+                // failures from the very first FS-cache write escaped the coroutine and crashed
+                // the app via the default uncaught-exception handler. Log first so the next
+                // logcat capture pinpoints the failure class even if the dialog is dismissed.
+                Logger.log.severe("createCollections failed: ${e.javaClass.name}: ${e.message}")
                 reportErrorHelper(requireContext(), e)
             } finally {
                 loadingModel.setLoading(false)
@@ -218,8 +242,21 @@ class WizardFragment : Fragment() {
         val etebaseLocalCache = accountHolder.etebaseLocalCache
         val colMgr = accountHolder.colMgr
         colMgr.upload(col)
-        synchronized(etebaseLocalCache) {
-            etebaseLocalCache.collectionSet(colMgr, col)
+        try {
+            synchronized(etebaseLocalCache) {
+                etebaseLocalCache.collectionSet(colMgr, col)
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            // Issue #119: this is the very first on-disk Etebase write per username. If the
+            // per-username cols/<colUid>/items directory creation fails, surface enough detail
+            // to disambiguate the cause before the exception propagates up to createCollections.
+            val colsPath = File(File(requireContext().filesDir, accountHolder.account.name), "cols").absolutePath
+            Logger.log.severe(
+                "etebaseLocalCache.collectionSet failed for colUid=${col.uid} path=$colsPath: " +
+                        "${e.javaClass.name}: ${e.message}"
+            )
+            throw e
         }
     }
 }

@@ -4,6 +4,15 @@ import { useAuthStore } from '../use-auth-store'
 // Mock fetch globally
 vi.stubGlobal('fetch', vi.fn())
 
+// Mock data-cache (used on logout). We use vi.hoisted so the mock fn is
+// declared before vi.mock factory runs (vi.mock is hoisted to the top).
+const { dataCacheClearAll } = vi.hoisted(() => {
+  return { dataCacheClearAll: vi.fn(async () => {}) }
+})
+vi.mock('@/app/lib/data-cache', () => ({
+  clearAll: dataCacheClearAll,
+}))
+
 // In-memory store for secure storage mock
 let secureStore: Record<string, string> = {}
 
@@ -52,6 +61,7 @@ describe('useAuthStore', () => {
   beforeEach(() => {
     resetStore()
     vi.mocked(fetch).mockReset()
+    dataCacheClearAll.mockClear()
     secureStore = {}
     localStorage.clear()
     sessionStorage.clear()
@@ -74,6 +84,179 @@ describe('useAuthStore', () => {
     expect(state.isLoading).toBe(false)
   })
 
+  // --- onboardedAt hydration (issue #113) ---
+
+  describe('onboardedAt hydration', () => {
+    it('login hydrates onboardedAt from token-exchange response', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'user-1',
+          email: 'a@b.com',
+          planId: 'pro',
+          isAdmin: false,
+          onboardedAt: '2025-01-01T00:00:00.000Z',
+        }),
+      } as Response)
+
+      await useAuthStore.getState().login('a@b.com', 'pw')
+
+      expect(useAuthStore.getState().user!.onboardedAt).toBe('2025-01-01T00:00:00.000Z')
+    })
+
+    it('login defaults onboardedAt to null when omitted', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'user-1', email: 'a@b.com', planId: 'pro', isAdmin: false }),
+      } as Response)
+
+      await useAuthStore.getState().login('a@b.com', 'pw')
+
+      expect(useAuthStore.getState().user!.onboardedAt).toBeNull()
+    })
+
+    it('refreshSession hydrates onboardedAt', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'u1',
+          email: 'x@y.com',
+          planId: 'free',
+          isAdmin: false,
+          onboardedAt: '2024-12-01T00:00:00.000Z',
+        }),
+      } as Response)
+
+      await useAuthStore.getState().refreshSession()
+
+      expect(useAuthStore.getState().user!.onboardedAt).toBe('2024-12-01T00:00:00.000Z')
+    })
+
+    it('restoreSession hydrates onboardedAt', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'u1',
+          email: 'x@y.com',
+          planId: 'free',
+          isAdmin: false,
+          onboardedAt: null,
+        }),
+      } as Response)
+
+      await useAuthStore.getState().restoreSession()
+
+      expect(useAuthStore.getState().user!.onboardedAt).toBeNull()
+    })
+
+    it('completeSignup sets onboardedAt to null for fresh accounts', () => {
+      useAuthStore.setState({
+        pendingSignup: {
+          email: 'new@user.com',
+          etebaseAuthToken: 'tok',
+          provisionedUser: { id: 'new-1', planId: 'pro', isAdmin: false },
+          provisionedSubscriptionStatus: 'trialing',
+        },
+      })
+
+      useAuthStore.getState().completeSignup()
+
+      expect(useAuthStore.getState().user!.onboardedAt).toBeNull()
+    })
+  })
+
+  // --- markOnboarded action (issue #113) ---
+
+  describe('markOnboarded', () => {
+    it('POSTs to /account/onboarded and updates user.onboardedAt on success', async () => {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'x@y.com', planId: 'pro', onboardedAt: null },
+        isAuthenticated: true,
+      })
+
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ onboardedAt: '2026-05-04T12:00:00.000Z' }),
+      } as Response)
+
+      const result = await useAuthStore.getState().markOnboarded()
+
+      expect(result).toBe(true)
+      expect(useAuthStore.getState().user!.onboardedAt).toBe('2026-05-04T12:00:00.000Z')
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/account/onboarded'),
+        expect.objectContaining({ method: 'POST', credentials: 'include' }),
+      )
+    })
+
+    it('returns false and leaves onboardedAt null on network failure', async () => {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'x@y.com', planId: 'pro', onboardedAt: null },
+        isAuthenticated: true,
+      })
+
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      const result = await useAuthStore.getState().markOnboarded()
+
+      expect(result).toBe(false)
+      // onboardedAt stays null so the modal will retry next session.
+      expect(useAuthStore.getState().user!.onboardedAt).toBeNull()
+    })
+
+    it('returns false and leaves onboardedAt null on non-OK response', async () => {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'x@y.com', planId: 'pro', onboardedAt: null },
+        isAuthenticated: true,
+      })
+
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 500 } as Response)
+
+      const result = await useAuthStore.getState().markOnboarded()
+
+      expect(result).toBe(false)
+      expect(useAuthStore.getState().user!.onboardedAt).toBeNull()
+    })
+
+    it('is idempotent: returns true without a network call when already onboarded', async () => {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'x@y.com', planId: 'pro', onboardedAt: '2025-01-01T00:00:00.000Z' },
+        isAuthenticated: true,
+      })
+
+      const result = await useAuthStore.getState().markOnboarded()
+
+      expect(result).toBe(true)
+      expect(fetch).not.toHaveBeenCalled()
+      // Existing timestamp untouched.
+      expect(useAuthStore.getState().user!.onboardedAt).toBe('2025-01-01T00:00:00.000Z')
+    })
+
+    it('returns false when there is no user to mark', async () => {
+      useAuthStore.setState({ user: null, isAuthenticated: false })
+
+      const result = await useAuthStore.getState().markOnboarded()
+
+      expect(result).toBe(false)
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('skips network for self-hosted user and stamps onboardedAt locally', async () => {
+      useAuthStore.setState({
+        user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null },
+        isAuthenticated: true,
+      })
+
+      const result = await useAuthStore.getState().markOnboarded()
+
+      expect(result).toBe(true)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(useAuthStore.getState().user!.onboardedAt).toEqual(expect.any(String))
+    })
+  })
+
   it('logout clears state', async () => {
     // Set up logged-in state
     useAuthStore.setState({
@@ -82,6 +265,33 @@ describe('useAuthStore', () => {
     })
 
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+
+    await useAuthStore.getState().logout()
+
+    const state = useAuthStore.getState()
+    expect(state.user).toBeNull()
+    expect(state.isAuthenticated).toBe(false)
+  })
+
+  it('logout wipes the local data cache', async () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+
+    await useAuthStore.getState().logout()
+
+    expect(dataCacheClearAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('logout still completes when the data-cache wipe throws', async () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+    dataCacheClearAll.mockRejectedValueOnce(new Error('idb went sideways'))
 
     await useAuthStore.getState().logout()
 
@@ -159,7 +369,10 @@ describe('useAuthStore', () => {
       const state = useAuthStore.getState()
       expect(state.isAuthenticated).toBe(true)
       expect(state.subscriptionStatus).toBe('billing_unavailable')
-      expect(state.user).toEqual({ id: 'degraded', email: '', planId: 'unknown', isAdmin: false })
+      // Degraded users get a non-null onboardedAt so we don't pop the
+      // OnboardingModal at users while billing is unreachable.
+      expect(state.user).toMatchObject({ id: 'degraded', email: '', planId: 'unknown', isAdmin: false })
+      expect(state.user!.onboardedAt).toEqual(expect.any(String))
     })
 
     it('restoreSession does not enter degraded mode on network error without etebase session', async () => {
@@ -229,6 +442,67 @@ describe('useAuthStore', () => {
       const result = await useAuthStore.getState().retryBillingConnection()
 
       expect(result).toBe(false)
+    })
+  })
+
+  // --- refreshSession non-destructive on transient errors ---
+  // Regression: the EmailVerificationBanner re-checks the session on every
+  // tab focus while the user is unverified. A transient billing 5xx or a
+  // network blip used to null the session, silently logging out users who
+  // had only alt-tabbed away.
+
+  describe('refreshSession on transient errors', () => {
+    function loggedIn() {
+      useAuthStore.setState({
+        user: { id: 'u1', email: 'x@y.com', planId: 'pro', emailVerified: false, onboardedAt: null },
+        isAuthenticated: true,
+      })
+    }
+
+    it('leaves the session intact on a 5xx response', async () => {
+      loggedIn()
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 502 } as Response)
+
+      const result = await useAuthStore.getState().refreshSession()
+
+      expect(result).toBe(false)
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(true)
+      expect(state.user).not.toBeNull()
+    })
+
+    it('leaves the session intact on a network error', async () => {
+      loggedIn()
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      const result = await useAuthStore.getState().refreshSession()
+
+      expect(result).toBe(false)
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(true)
+      expect(state.user).not.toBeNull()
+    })
+
+    it('nulls the session on 401 (auth genuinely invalid)', async () => {
+      loggedIn()
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response)
+
+      const result = await useAuthStore.getState().refreshSession()
+
+      expect(result).toBe(false)
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.user).toBeNull()
+    })
+
+    it('nulls the session on 403', async () => {
+      loggedIn()
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 403 } as Response)
+
+      const result = await useAuthStore.getState().refreshSession()
+
+      expect(result).toBe(false)
+      expect(useAuthStore.getState().user).toBeNull()
     })
   })
 

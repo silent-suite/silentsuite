@@ -634,16 +634,26 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private fun doLoad(): AccountActivity.AccountInfo {
             val info = AccountActivity.AccountInfo()
             val settings: AccountSettings
+            val etebaseLocalCache: EtebaseLocalCache
+            val colMgr: CollectionManager
             try {
                 settings = AccountSettings(context, account)
+                etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
+                val httpClient = HttpClient.Builder(context).build().okHttpClient
+                // Issue #119: getEtebase throws IllegalStateException when userData hasn't yet
+                // propagated (first-login race) or when the persisted session is genuinely
+                // missing. Previously this propagated to viewModelScope.launch and crashed the
+                // app via the default uncaught-exception handler. Return an empty AccountInfo
+                // so the UI shows nothing rather than dying.
+                val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings)
+                colMgr = etebase.collectionManager
             } catch (e: InvalidAccountException) {
                 return info
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Logger.log.log(Level.SEVERE, "AccountInfoViewModel.doLoad failed for ${account.name}", e)
+                return info
             }
-
-            val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
-            val httpClient = HttpClient.Builder(context).build().okHttpClient
-            val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings)
-            val colMgr = etebase.collectionManager
 
             info.carddav = AccountInfo.ServiceInfo()
             info.carddav!!.refreshing = ContentResolver.isSyncActive(account, App.addressBooksAuthority)

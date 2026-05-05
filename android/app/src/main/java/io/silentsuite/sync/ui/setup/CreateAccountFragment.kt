@@ -48,6 +48,14 @@ class CreateAccountFragment : DialogFragment() {
             // isn't always visible to the next activity's read on the first login.
             startActivity(ModeSelectionActivity.newIntent(requireContext(), account, config.etebaseSession))
             activity.finish()
+        } else {
+            // Issue #119: addAccountExplicitly returned false (e.g. partial-state collision
+            // with a previously removed account row that AccountManager hasn't fully
+            // garbage-collected). Previously this branch silently no-op'd, leaving the user
+            // staring at a frozen "setting up encryption" progress dialog. Log the failure
+            // and dismiss the dialog so the operator notices and the user can retry.
+            Logger.log.log(Level.SEVERE, "addAccountExplicitly returned false for ${config.userName}")
+            dismissAllowingStateLoss()
         }
     }
 

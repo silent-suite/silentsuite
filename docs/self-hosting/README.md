@@ -26,4 +26,4 @@ Deploy and manage SilentSuite on your own infrastructure. Self-hosting gives you
 - **Custom domain** -- run the suite on your own domain with automatic HTTPS.
 - **All features unlocked** -- every feature, no subscription required.
 
-The self-hosted stack runs four services via Docker Compose: PostgreSQL, Etebase (encrypted sync), a Next.js web frontend, and Caddy as a reverse proxy with automatic TLS.
+The self-hosted stack runs two containers via Docker Compose: PostgreSQL and the SilentSuite sync server. You provide your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) for TLS termination. Users connect from [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile apps by entering your server URL in **Advanced Settings**.
