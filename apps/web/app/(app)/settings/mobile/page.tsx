@@ -4,16 +4,10 @@ import { Smartphone, ExternalLink, Monitor } from 'lucide-react'
 import Link from 'next/link'
 import { QRCodeSVG } from 'qrcode.react'
 
-// TODO: make this version-dynamic at build time (see issue #116) — currently
-// the version-pinned filename will break when the umbrella tag bumps past
-// v0.1.0-beta. Tracked as the "approach 2" follow-up in #116.
-const APK_DOWNLOAD_URL =
-  'https://github.com/silent-suite/silentsuite/releases/latest/download/silentsuite-android-v0.1.0-beta.apk'
+const INSTALL_DOCS_URL = 'https://docs.silentsuite.io/user-guide/apps/android'
 const RELEASES_URL = 'https://github.com/silent-suite/silentsuite/releases/latest'
 
 export default function MobileSettingsPage() {
-  const docsUrl = 'https://docs.silentsuite.io/mobile'
-
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -30,18 +24,18 @@ export default function MobileSettingsPage() {
         <div className="flex flex-col items-center gap-4">
           <div className="flex h-48 w-48 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-3">
             <QRCodeSVG
-              value={APK_DOWNLOAD_URL}
+              value={INSTALL_DOCS_URL}
               size={168}
               level="M"
               marginSize={0}
-              aria-label="QR code linking to the latest SilentSuite Android APK"
+              aria-label="QR code linking to the SilentSuite Android install guide"
             />
           </div>
           <p className="text-sm text-[rgb(var(--foreground))] font-medium">
             Scan with your phone camera
           </p>
           <p className="text-xs text-[rgb(var(--muted))] text-center">
-            The QR code links to the latest SilentSuite Android APK.
+            The QR code opens the install guide with options for Obtainium (auto-updates) or a direct APK download.
           </p>
           <a
             href={RELEASES_URL}
@@ -49,7 +43,7 @@ export default function MobileSettingsPage() {
             rel="noopener noreferrer"
             className="text-xs text-[rgb(var(--primary))] hover:underline"
           >
-            Or download manually from GitHub Releases
+            Or jump straight to GitHub Releases
           </a>
         </div>
       </div>
@@ -68,7 +62,7 @@ export default function MobileSettingsPage() {
 
         <div className="flex flex-col gap-2">
           <a
-            href={docsUrl}
+            href={INSTALL_DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center justify-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2.5 text-sm font-medium text-white hover:bg-[rgb(var(--primary-hover))] transition-colors"

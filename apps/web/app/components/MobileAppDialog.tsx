@@ -25,7 +25,7 @@ export function MobileAppDialog({ open, onClose }: MobileAppDialogProps) {
 
   // Generate a simple QR-code-like placeholder using CSS
   // In production, you'd use a QR code library or pre-generated image
-  const downloadUrl = 'https://docs.silentsuite.io/mobile'
+  const installGuideUrl = 'https://docs.silentsuite.io/user-guide/apps/android'
 
   return (
     <>
@@ -85,7 +85,7 @@ export function MobileAppDialog({ open, onClose }: MobileAppDialogProps) {
             {/* Links */}
             <div className="space-y-2">
               <a
-                href={downloadUrl}
+                href={installGuideUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2.5 text-sm font-medium text-white hover:bg-[rgb(var(--primary-hover))] transition-colors"
