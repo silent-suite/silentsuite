@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+import { toVEvent } from '@silentsuite/core'
+import { showErrorToast, showWarningToast } from '@/app/stores/use-toast-store'
 import ExportPage from '../page'
+
+vi.mock('@/app/stores/use-toast-store', () => ({
+  showErrorToast: vi.fn(),
+  showWarningToast: vi.fn(),
+}))
 
 // Mock stores
 vi.mock('@/app/stores/use-task-store', () => ({
@@ -225,5 +232,45 @@ describe('ExportPage', () => {
     const blobCall = (URL.createObjectURL as ReturnType<typeof vi.fn>).mock
       .calls[0][0] as Blob
     expect(blobCall.type).toBe('text/vcard')
+  })
+
+  it('skips events that fail to serialize and shows a warning toast', () => {
+    vi.mocked(toVEvent).mockImplementationOnce(() => {
+      throw new Error('boom — malformed event')
+    })
+
+    render(<ExportPage />)
+    fireEvent.click(screen.getByText(/Export Calendar/))
+
+    expect(URL.createObjectURL).toHaveBeenCalled()
+    expect(clickedLink).not.toBeNull()
+    expect(clickedLink!.download).toBe('silentsuite-calendar.ics')
+    expect(showWarningToast).toHaveBeenCalledWith(
+      expect.stringContaining('1 event'),
+    )
+  })
+
+  it('shows an error toast (with detail) when the download path fails', () => {
+    // Simulate a real-world failure mode: blob URL creation blocked by a
+    // privacy-hardened browser context. Fires after `serializeAll` succeeds,
+    // exercising the outer try/catch in `exportCalendar`.
+    const originalCreateObjectURL = URL.createObjectURL
+    ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => {
+        throw new Error('blob URL creation blocked')
+      },
+    )
+
+    render(<ExportPage />)
+    fireEvent.click(screen.getByText(/Export Calendar/))
+
+    expect(showErrorToast).toHaveBeenCalledWith(
+      expect.stringContaining('Calendar export failed'),
+    )
+
+    // restore the spy for downstream tests in this describe block
+    ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementation(
+      originalCreateObjectURL as () => string,
+    )
   })
 })

@@ -16,6 +16,7 @@ import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
+import { toAllDayEndPlainDate } from '../lib/all-day'
 
 import '@schedule-x/theme-default/dist/index.css'
 
@@ -96,8 +97,13 @@ function expandEventsForRange(
 
   for (const event of events) {
     if (!event.recurrenceRule) {
-      // Non-recurring: include if it falls within range
-      if (event.endDate >= range.start && event.startDate <= range.end) {
+      // Non-recurring: include if it overlaps the range. For all-day events,
+      // endDate is iCal-exclusive (next-day midnight) so use strict `>` to avoid
+      // matching events whose visual last day is just before range.start.
+      const overlapsRangeStart = event.allDay
+        ? event.endDate > range.start
+        : event.endDate >= range.start
+      if (overlapsRangeStart && event.startDate <= range.end) {
         result.push({
           id: event.id,
           masterId: event.id,
@@ -155,7 +161,9 @@ function toScheduleXEvents(
       id: e.id,
       title: e.isRecurring ? `↻ ${e.title}` : e.title,
       start: e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
-      end: e.allDay ? toPlainDate(e.endDate) : toScheduleXDateTime(e.endDate, userTz),
+      end: e.allDay
+        ? toAllDayEndPlainDate(e.startDate, e.endDate)
+        : toScheduleXDateTime(e.endDate, userTz),
       description: e.description || undefined,
       location: e.location || undefined,
       calendarId: e.calendarId ?? 'default',

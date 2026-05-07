@@ -2,10 +2,11 @@
 # SilentSuite server container entrypoint.
 #
 # Responsibilities (each step is idempotent and safe on every container start):
-#   1. Apply Django migrations.
-#   2. Optionally create a Django /admin/ superuser when SUPER_USER and
+#   1. Collect Django static assets for /admin/ into the configured STATIC_ROOT.
+#   2. Apply Django migrations.
+#   3. Optionally create a Django /admin/ superuser when SUPER_USER and
 #      SUPER_PASS are both set and the user does not already exist.
-#   3. Exec uvicorn.
+#   4. Exec uvicorn.
 #
 # Self-host operators read configuration from /etc/etebase-server/etebase-server.ini
 # (or wherever ETEBASE_EASY_CONFIG_PATH points). The SaaS deployment leaves
@@ -20,6 +21,9 @@ cd /app
 if [ "$#" -gt 0 ]; then
     exec "$@"
 fi
+
+echo "[entrypoint] collecting static assets..."
+python manage.py collectstatic --noinput --verbosity 0
 
 echo "[entrypoint] applying database migrations..."
 python manage.py migrate --noinput

@@ -176,8 +176,6 @@ function ChangePasswordSection() {
   )
 }
 
-// TODO: Implement actual account recovery mechanism
-
 // ---------------------------------------------------------------------------
 // Delete Account Section
 // ---------------------------------------------------------------------------
