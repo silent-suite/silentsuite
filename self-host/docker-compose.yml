@@ -27,7 +27,7 @@ services:
     # which fetches the latest compose (will become release-tag-pinned once
     # the installer's --version flag lands). Editing this digest by hand
     # decouples the compose from the rest of the release matrix.
-    image: ghcr.io/silent-suite/silentsuite-server@sha256:6689b5d873cfe5844ca38de74e458fd382ce106916bb5dfa1027786eb6bc4ac8
+    image: ghcr.io/silent-suite/silentsuite-server@sha256:6d45c6750c5913bf0ab43eec8b85be2213c133eb8bd7c50e9aeb3fee80194509
     container_name: silentsuite-server
     restart: unless-stopped
     ports:
