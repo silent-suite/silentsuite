@@ -5,6 +5,32 @@ import { usePathname } from 'next/navigation'
 
 const PLAUSIBLE_EVENT_ENDPOINT = 'https://plausible.silentsuite.io/api/event'
 const PLAUSIBLE_DOMAIN = 'app.silentsuite.io'
+const MARKETING_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term']
+
+function signupAnalyticsUrl() {
+  const current = new URL(window.location.href)
+  const sanitized = new URL(`${current.origin}${current.pathname}`)
+
+  if (current.pathname === '/signup') {
+    for (const param of MARKETING_PARAMS) {
+      const value = current.searchParams.get(param)
+      if (value) sanitized.searchParams.set(param, value)
+    }
+  }
+
+  return sanitized.toString()
+}
+
+function sanitizedReferrer() {
+  if (!document.referrer) return undefined
+
+  try {
+    const referrer = new URL(document.referrer)
+    return `${referrer.origin}${referrer.pathname}`
+  } catch {
+    return undefined
+  }
+}
 
 export function SignupAnalytics() {
   const pathname = usePathname()
@@ -15,8 +41,8 @@ export function SignupAnalytics() {
     const payload = JSON.stringify({
       domain: PLAUSIBLE_DOMAIN,
       name: 'pageview',
-      url: window.location.href,
-      referrer: document.referrer || undefined,
+      url: signupAnalyticsUrl(),
+      referrer: sanitizedReferrer(),
     })
 
     if (navigator.sendBeacon) {
