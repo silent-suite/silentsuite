@@ -611,8 +611,9 @@ function StepChoosePlan({
           <Input
             id="beta-promo-code"
             value={promoCode}
-            onChange={(event) => setPromoCode(event.target.value)}
+            onChange={(event) => setPromoCode(event.target.value.toUpperCase().replace(/\s/g, '').slice(0, 64))}
             placeholder="Enter code if you have one"
+            maxLength={64}
             autoCapitalize="characters"
             autoComplete="off"
             disabled={provisioning}
