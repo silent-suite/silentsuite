@@ -56,7 +56,7 @@ interface AuthState {
   isReadOnly: () => boolean
   canWrite: () => boolean
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
-  signup: (planId: string, trialPath: string) => Promise<string | null>
+  signup: (planId: string, trialPath: string, promoCode?: string) => Promise<string | null>
   /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
   completeSignup: () => void
   login: (email: string, password: string, serverUrl?: string) => Promise<void>
@@ -178,7 +178,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signup: async (planId: string, trialPath: string) => {
+  signup: async (planId: string, trialPath: string, promoCode?: string) => {
     if (isSelfHosted || planId === 'self-hosted') {
       const pending = get().pendingSignup
       if (!pending) throw new Error('No pending signup')
@@ -224,6 +224,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           etebaseSessionToken: pending.etebaseAuthToken,
           planId,
           trialPath,
+          ...(promoCode?.trim() ? { promoCode: promoCode.trim() } : {}),
           wantsProductUpdates: pending.wantsProductUpdates,
         }),
         credentials: 'include',

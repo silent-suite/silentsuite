@@ -84,6 +84,60 @@ describe('useAuthStore', () => {
     expect(state.isLoading).toBe(false)
   })
 
+  it('signup sends a trimmed promo code when provided', async () => {
+    useAuthStore.setState({
+      pendingSignup: {
+        email: 'promo@example.com',
+        etebaseAuthToken: 'etebase-token',
+        wantsProductUpdates: true,
+      },
+    })
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: 'user-1', isAdmin: false, clientSecret: 'cs_test' }),
+    } as Response)
+
+    await useAuthStore.getState().signup('early_monthly', '30day', '  beta196  ')
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/auth/provision'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          etebaseSessionToken: 'etebase-token',
+          planId: 'early_monthly',
+          trialPath: '30day',
+          promoCode: 'beta196',
+          wantsProductUpdates: true,
+        }),
+      }),
+    )
+  })
+
+  it('signup omits an empty promo code', async () => {
+    useAuthStore.setState({
+      pendingSignup: {
+        email: 'promo@example.com',
+        etebaseAuthToken: 'etebase-token',
+      },
+    })
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ id: 'user-1', isAdmin: false, clientSecret: 'cs_test' }),
+    } as Response)
+
+    await useAuthStore.getState().signup('early_monthly', '30day', '   ')
+
+    const [, init] = vi.mocked(fetch).mock.calls[0]
+    expect(JSON.parse(init?.body as string)).toEqual({
+      etebaseSessionToken: 'etebase-token',
+      planId: 'early_monthly',
+      trialPath: '30day',
+    })
+  })
+
   // --- onboardedAt hydration (issue #113) ---
 
   describe('onboardedAt hydration', () => {
