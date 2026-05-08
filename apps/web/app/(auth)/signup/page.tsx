@@ -400,7 +400,7 @@ function StepChoosePlan({
   interval: BillingInterval
   onIntervalChange: (interval: BillingInterval) => void
   onSelectFree: () => void
-  onSelectPaid: () => void
+  onSelectPaid: (promoCode?: string) => void
   planView: PlanView
   onBack: () => void
   clientSecret: string | null
@@ -412,14 +412,15 @@ function StepChoosePlan({
 }) {
   const contentRef = useRef<HTMLDivElement>(null)
   const [selectedTrial, setSelectedTrial] = useState<TrialPath>('30day')
+  const [promoCode, setPromoCode] = useState('')
 
   const handleContinue = useCallback(() => {
     if (selectedTrial === '7day') {
       onSelectFree()
     } else {
-      onSelectPaid()
+      onSelectPaid(promoCode)
     }
-  }, [selectedTrial, onSelectFree, onSelectPaid])
+  }, [selectedTrial, onSelectFree, onSelectPaid, promoCode])
 
   useEffect(() => {
     // Scroll to top of page on step transitions, not just the element
@@ -598,6 +599,30 @@ function StepChoosePlan({
           </div>
         </button>
       </div>
+
+      {selectedTrial === '30day' && (
+        <div className="space-y-2">
+          <label
+            htmlFor="beta-promo-code"
+            className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
+          >
+            Beta promo code <span className="text-[rgb(var(--muted))]">(optional)</span>
+          </label>
+          <Input
+            id="beta-promo-code"
+            value={promoCode}
+            onChange={(event) => setPromoCode(event.target.value)}
+            placeholder="Enter code if you have one"
+            autoCapitalize="characters"
+            autoComplete="off"
+            disabled={provisioning}
+            className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
+          />
+          <p className="text-xs text-[rgb(var(--muted))]">
+            Applied securely by Stripe before your trial starts.
+          </p>
+        </div>
+      )}
 
       {/* Continue button */}
       <Button
@@ -991,13 +1016,13 @@ export default function SignupPage() {
     }
   }, [signup, selectedInterval])
 
-  const handleSelectPaid = useCallback(async () => {
+  const handleSelectPaid = useCallback(async (promoCode?: string) => {
     setProvisionError(null)
     setProvisioning(true)
     setPlanView('payment')
     try {
       const planId: PlanId = selectedInterval === 'monthly' ? 'early_monthly' : 'early_annual'
-      const secret = await signup(planId, '30day')
+      const secret = await signup(planId, '30day', promoCode)
       if (secret) {
         setClientSecret(secret)
       }
