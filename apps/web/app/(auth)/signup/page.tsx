@@ -422,6 +422,8 @@ function StepChoosePlan({
     }
   }, [selectedTrial, onSelectFree, onSelectPaid, promoCode])
 
+  const hasEnteredPromoCode = promoCode.trim().length > 0
+
   useEffect(() => {
     // Scroll to top of page on step transitions, not just the element
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -430,13 +432,16 @@ function StepChoosePlan({
   // --- Payment sub-step ---
   if (planView === 'payment') {
     const priceLabel = interval === 'monthly' ? '\u20AC3.60/month' : '\u20AC3.00/month'
+    const hasAcceptedPromoCode = hasEnteredPromoCode && !!clientSecret && !provisioning && !provisionError
 
     return (
       <div ref={contentRef} className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
         <div className="space-y-2 text-center">
           <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Add your payment method</h2>
           <p className="text-sm text-[rgb(var(--muted))]">
-            Your card will not be charged for 30 days.
+            {hasAcceptedPromoCode
+              ? 'Your beta code gives you 3 months free. Your card is only billed after the promo period.'
+              : 'Your card will not be charged for 30 days.'}
           </p>
         </div>
 
@@ -450,7 +455,9 @@ function StepChoosePlan({
             <span className="text-sm text-[rgb(var(--foreground))]">{priceLabel}</span>
           </div>
           <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-            Card secures your trial &mdash; no charge until day 30. Cancel anytime before.
+            {hasAcceptedPromoCode
+              ? 'Promo code accepted: 100% off for 3 months. Cancel before billing starts.'
+              : 'Card secures your trial - no charge until day 30. Cancel anytime before.'}
           </p>
           <div className="mt-2 flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
             <Lock className="h-3 w-3 text-emerald-500" />
@@ -473,7 +480,7 @@ function StepChoosePlan({
             <StripePaymentForm
               clientSecret={clientSecret}
               onSuccess={onPaymentComplete}
-              submitLabel="Start 30-day free trial"
+              submitLabel={hasAcceptedPromoCode ? 'Save card and start 3 months free' : 'Start 30-day free trial'}
               mode="setup"
               selectedInterval={selectedInterval}
             />
@@ -606,13 +613,13 @@ function StepChoosePlan({
             htmlFor="beta-promo-code"
             className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
           >
-            Beta promo code <span className="text-[rgb(var(--muted))]">(optional)</span>
+            Add promo code <span className="text-[rgb(var(--muted))]">(optional)</span>
           </label>
           <Input
             id="beta-promo-code"
             value={promoCode}
             onChange={(event) => setPromoCode(event.target.value.toUpperCase().replace(/\s/g, '').slice(0, 64))}
-            placeholder="Enter code if you have one"
+            placeholder="Enter promo code"
             maxLength={64}
             autoCapitalize="characters"
             autoComplete="off"
@@ -620,7 +627,9 @@ function StepChoosePlan({
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           <p className="text-xs text-[rgb(var(--muted))]">
-            Applied securely by Stripe before your trial starts.
+            {hasEnteredPromoCode
+              ? 'If valid, Stripe applies 100% off for the first 3 months before billing begins.'
+              : 'Applied securely by Stripe before your trial starts.'}
           </p>
         </div>
       )}
