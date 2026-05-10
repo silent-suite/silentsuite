@@ -1,0 +1,1 @@
+Removes Android Gradle dependency metadata from release APK signing blocks for F-Droid compatibility.
