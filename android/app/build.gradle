@@ -20,8 +20,8 @@ android {
         minSdkVersion 21
         targetSdkVersion 34
 
-        versionCode 2
-        versionName "0.1.3-beta"
+        versionCode 3
+        versionName "0.1.4-beta"
 
         buildConfigField "boolean", "customCerts", "true"
     }
@@ -67,6 +67,11 @@ android {
         jniLibs {
             useLegacyPackaging = false
         }
+    }
+
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 
 
