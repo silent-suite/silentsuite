@@ -1,0 +1,1 @@
+Renames the Android package to io.silentsuite.android and aligns the Android version with v0.1.3-beta. If you installed a previous beta APK, re-add your SilentSuite account after installing this build.
