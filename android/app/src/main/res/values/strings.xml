@@ -11,10 +11,10 @@
 
     <!-- common strings -->
     <string name="app_name">SilentSuite</string>
-    <string name="account_type" translatable="false">io.silentsuite.sync</string>
-    <string name="account_type_address_book" translatable="false">io.silentsuite.sync.address_book</string>
+    <string name="account_type" translatable="false">io.silentsuite.android</string>
+    <string name="account_type_address_book" translatable="false">io.silentsuite.android.address_book</string>
     <string name="account_title_address_book">SilentSuite Address book</string>
-    <string name="address_books_authority" translatable="false">io.silentsuite.sync.addressbooks</string>
+    <string name="address_books_authority" translatable="false">io.silentsuite.android.addressbooks</string>
     <string name="address_books_authority_title">Address books</string>
     <string name="help">Help</string>
     <string name="manage_accounts">Manage accounts</string>
@@ -394,7 +394,7 @@
     <string name="exception_show_details">Show details</string>
 
     <!-- sync errors and DebugInfoActivity -->
-    <string name="authority_log_provider" translatable="false">io.silentsuite.sync.log</string>
+    <string name="authority_log_provider" translatable="false">io.silentsuite.android.log</string>
     <string name="debug_info_title">Debug info</string>
     <string name="debug_info_more_data_shared">Clicking share will send developers the data below, as well as some additional debug information, attached. Please note that it may contain some private information.</string>
     <string name="sync_error_permissions">SilentSuite permissions</string>
