@@ -1,0 +1,3 @@
+First F-Droid build of SilentSuite.
+
+End-to-end encrypted sync for calendar, contacts, and tasks via the Etebase protocol. Pair with a managed account at app.silentsuite.io or self-host the server.
