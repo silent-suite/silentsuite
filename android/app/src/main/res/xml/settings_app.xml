@@ -131,7 +131,7 @@
             android:title="@string/app_settings_show_debug_info"
             android:summary="@string/app_settings_show_debug_info_details">
             <intent
-                android:targetPackage="io.silentsuite.sync"
+                android:targetPackage="io.silentsuite.android"
                 android:targetClass="io.silentsuite.sync.ui.DebugInfoActivity"/>
         </Preference>
 
