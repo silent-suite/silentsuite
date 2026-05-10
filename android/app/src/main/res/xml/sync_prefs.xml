@@ -11,7 +11,7 @@
     
     <PreferenceScreen android:title="@string/manage_accounts">
         <intent
-            android:targetPackage="io.silentsuite.sync"
+            android:targetPackage="io.silentsuite.android"
             android:targetClass="io.silentsuite.sync.ui.AccountsActivity"
             android:action="ACTION_VIEW" />
     </PreferenceScreen>

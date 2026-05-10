@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK and AAB
 
 on:
   push:
@@ -54,12 +54,12 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/keystore/silentsuite-release.jks"
           echo "KEYSTORE_PATH=$RUNNER_TEMP/keystore/silentsuite-release.jks" >> "$GITHUB_ENV"
 
-      - name: Build signed release APK
+      - name: Build signed release APK and AAB
         env:
           KSTOREPWD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
-          ./gradlew assembleRelease --no-daemon \
+          ./gradlew assembleRelease bundleRelease --no-daemon \
             -PsigningStoreLocation="$KEYSTORE_PATH" \
             -PsigningKeyAlias="$KEY_ALIAS"
 
@@ -68,23 +68,33 @@ jobs:
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BUILD_TOOLS/apksigner" verify --print-certs app/build/outputs/apk/release/*.apk
 
-      - name: Upload signed release APK
+      - name: Verify AAB signature
+        run: jarsigner -verify -certs -verbose app/build/outputs/bundle/release/*.aab
+
+      - name: Upload signed release APK and AAB
         uses: actions/upload-artifact@v4
         with:
           name: silentsuite-release-${{ github.sha }}
-          path: android/app/build/outputs/apk/release/*.apk
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/bundle/release/*.aab
           retention-days: 30
 
-      - name: Rename APK for release (tag push only)
+      - name: Rename Android artifacts for release (tag push only)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           mv app/build/outputs/apk/release/app-release.apk \
              "app/build/outputs/apk/release/silentsuite-android-${{ github.ref_name }}.apk"
+          mv app/build/outputs/bundle/release/app-release.aab \
+             "app/build/outputs/bundle/release/silentsuite-android-${{ github.ref_name }}.aab"
           cd app/build/outputs/apk/release
           sha256sum "silentsuite-android-${{ github.ref_name }}.apk" \
             > "silentsuite-android-${{ github.ref_name }}.apk.sha256"
+          cd ../../bundle/release
+          sha256sum "silentsuite-android-${{ github.ref_name }}.aab" \
+            > "silentsuite-android-${{ github.ref_name }}.aab.sha256"
 
-      - name: Attach APK + checksum to umbrella GitHub Release (tag push only)
+      - name: Attach Android artifacts to umbrella GitHub Release (tag push only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
@@ -95,6 +105,8 @@ jobs:
           files: |
             android/app/build/outputs/apk/release/silentsuite-android-${{ github.ref_name }}.apk
             android/app/build/outputs/apk/release/silentsuite-android-${{ github.ref_name }}.apk.sha256
+            android/app/build/outputs/bundle/release/silentsuite-android-${{ github.ref_name }}.aab
+            android/app/build/outputs/bundle/release/silentsuite-android-${{ github.ref_name }}.aab.sha256
 
       - name: Cleanup keystore
         if: always()
