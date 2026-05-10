@@ -8,8 +8,7 @@ End-to-end encrypted calendar, contacts, and tasks. Your schedule and relationsh
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](./LICENSE)
 [![Stars](https://img.shields.io/github/stars/silent-suite/silentsuite?style=flat&logo=github)](https://github.com/silent-suite/silentsuite/stargazers)
-[![Last commit](https://img.shields.io/github/last-commit/silent-suite/silentsuite/dev?logo=git&logoColor=white)](https://github.com/silent-suite/silentsuite/commits/dev)
-[![Mastodon](https://img.shields.io/badge/Mastodon-@silentsuiteio-6364FF?logo=mastodon&logoColor=white)](https://infosec.exchange/@silentsuiteio)
+[![Release](https://img.shields.io/github/v/release/silent-suite/silentsuite?logo=github&label=release)](https://github.com/silent-suite/silentsuite/releases)
 
 [Website](https://silentsuite.io) · [Blog](https://silentsuite.io/blog) · [Docs](https://docs.silentsuite.io) · [Waitlist](https://silentsuite.io/#waitlist)
 
@@ -21,32 +20,26 @@ End-to-end encrypted calendar, contacts, and tasks. Your schedule and relationsh
 
 </div>
 
+> **Try it now:** Join the waitlist at [silentsuite.io](https://silentsuite.io/#waitlist) or self-host with `docker compose up -d` — see [Quick start](#quick-start) below.
+
 ---
-
-## Contents
-
-- [What is SilentSuite?](#what-is-silentsuite)
-- [Why SilentSuite?](#why-silentsuite)
-- [How it works](#how-it-works)
-- [Quick start](#quick-start)
-- [Status](#status)
-- [Tech stack](#tech-stack)
-- [Repository structure](#repository-structure)
-- [Documentation](#documentation)
-- [Self-hosting](#self-hosting)
-- [Principles](#principles)
-- [Contributing](#contributing)
-- [Contributors](#contributors)
-- [Links](#links)
-- [License](#license)
 
 ## What is SilentSuite?
 
 SilentSuite is an end-to-end encrypted alternative to Google Calendar, iCloud, and other cloud sync services. Every event, contact, and task is encrypted on your device before it touches our server. The server only ever stores ciphertext — we cannot read your data, and neither can anyone we are compelled to hand it to.
 
-- **Calendar** — events encrypted before they leave your device
-- **Contacts** — your relationships, visible only to you
-- **Tasks** — your to-dos, nobody else's business
+- 📅 **Calendar** — events encrypted before they leave your device
+- 👥 **Contacts** — your relationships, visible only to you
+- ✅ **Tasks** — your to-dos, nobody else's business
+
+| Feature | Web app | CalDAV/CardDAV bridge | Android | iOS |
+|---|:---:|:---:|:---:|:---:|
+| Calendar | ✓ | ✓ | ✓ | ✓ ¹ |
+| Contacts | ✓ | ✓ | ✓ | ✓ ¹ |
+| Tasks | ✓ | — | 🔄 | 🔄 |
+| End-to-end encryption | ✓ | ✓ | ✓ | ✓ ¹ |
+
+¹ Via the open-source [EteSync app](https://github.com/etesync/ios) on iOS.
 
 Built on the open [Etebase protocol](https://www.etebase.com/). Open source, EU-hosted, GDPR-baseline.
 
@@ -75,6 +68,19 @@ Your Device          SilentSuite Server          Your Other Device
 ```
 
 All encryption and decryption happens on your devices. The server stores and syncs encrypted blobs. Even with full server access, an attacker — or a court order — gets ciphertext and nothing else.
+
+## Security & encryption
+
+**Zero-knowledge by architecture.** Your plaintext never touches our servers — there is no opt-in or toggle because encryption is how the system works, not an optional layer on top.
+
+**How it integrates with your devices:**
+
+- **Web app** — encryption runs in-browser via [libetebase](https://github.com/etesync/libetebase) (WASM). Keys are derived from your password (Argon2) and held in memory only while you're signed in.
+- **CalDAV / CardDAV bridge** — the bridge decrypts data locally and exposes it to standard calendar apps (Apple Calendar, Thunderbird, DAVx⁵) over localhost. The bridge never sends plaintext to the server.
+- **Android** — the [SilentSuite sync adapter](./android/) uses the native Etebase library (libsodium). Encryption happens before any network call.
+- **iOS** — the [EteSync app](https://github.com/etesync/ios) provides the same zero-knowledge sync via the Etebase protocol.
+
+**Cryptographic primitives:** XChaCha20-Poly1305 authenticated encryption, Argon2id key derivation, via [libsodium](https://libsodium.org/). The full protocol is [open source and auditable](https://www.etebase.com/).
 
 ## Quick start
 
@@ -163,10 +169,6 @@ The marketing site (silentsuite.io) and the billing / accounts API live in a sep
 
 Hosted at [docs.silentsuite.io](https://docs.silentsuite.io).
 
-## Self-hosting
-
-The sync server is self-hostable. See the [Self-Hosting guide](./docs/self-hosting/) for the full walkthrough.
-
 ## Principles
 
 1. **Encryption is the architecture, not a feature.** No toggles, no opt-in. Everything is encrypted by default.
@@ -187,16 +189,16 @@ Security issues: please email <info@silentsuite.io> rather than opening a public
 
 ## Links
 
-- **Website:** [silentsuite.io](https://silentsuite.io)
-- **Blog:** [silentsuite.io/blog](https://silentsuite.io/blog) ([RSS](https://silentsuite.io/blog/feed.xml))
-- **Docs:** [docs.silentsuite.io](https://docs.silentsuite.io)
-- **Status:** [status.silentsuite.io](https://status.silentsuite.io)
-- **Mastodon:** [@silentsuiteio@infosec.exchange](https://infosec.exchange/@silentsuiteio)
-- **X:** [@silentsuiteio](https://x.com/silentsuiteio)
-- **Reddit:** [u/silentsuiteio](https://reddit.com/user/silentsuiteio)
-- **Email:** info@silentsuite.io
+- 🌐 **Website:** [silentsuite.io](https://silentsuite.io)
+- 📝 **Blog:** [silentsuite.io/blog](https://silentsuite.io/blog) ([RSS](https://silentsuite.io/blog/feed.xml))
+- 📖 **Docs:** [docs.silentsuite.io](https://docs.silentsuite.io)
+- 🟢 **Status:** [status.silentsuite.io](https://status.silentsuite.io)
+- 🐦 **X:** [@silentsuiteio](https://x.com/silentsuiteio)
+- 📧 **Email:** info@silentsuite.io
 
 ## Star history
+
+⭐ If you find SilentSuite useful, star this repo to follow releases and support the project!
 
 <a href="https://star-history.com/#silent-suite/silentsuite&Date">
   <picture>
