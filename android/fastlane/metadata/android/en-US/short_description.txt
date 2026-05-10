@@ -1,1 +1,1 @@
-Secure, private and end-to-end encrypted calendar, contacts and tasks sync
+Zero-knowledge calendar, contacts, and tasks sync for Android
