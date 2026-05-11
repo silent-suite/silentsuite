@@ -20,7 +20,7 @@ android {
         minSdkVersion 21
         targetSdkVersion 35
 
-        versionCode 3
+        versionCode 4
         versionName "0.1.4-beta"
 
         buildConfigField "boolean", "customCerts", "true"
