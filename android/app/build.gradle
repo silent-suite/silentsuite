@@ -18,7 +18,7 @@ android {
         applicationId "io.silentsuite.android"
 
         minSdkVersion 21
-        targetSdkVersion 34
+        targetSdkVersion 35
 
         versionCode 3
         versionName "0.1.4-beta"
