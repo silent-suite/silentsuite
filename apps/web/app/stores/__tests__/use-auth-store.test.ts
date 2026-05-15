@@ -138,6 +138,35 @@ describe('useAuthStore', () => {
     })
   })
 
+  it('signup returns crypto checkout details without authenticating', async () => {
+    useAuthStore.setState({
+      pendingSignup: {
+        email: 'crypto@example.com',
+        etebaseAuthToken: 'etebase-token',
+      },
+    })
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'user-1',
+        isAdmin: false,
+        clientSecret: null,
+        cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/inv-123',
+        cryptoInvoiceId: 'inv-123',
+      }),
+    } as Response)
+
+    const result = await useAuthStore.getState().signup('early_annual', 'crypto_annual')
+
+    expect(result).toEqual({
+      clientSecret: null,
+      cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/inv-123',
+      cryptoInvoiceId: 'inv-123',
+    })
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+  })
+
   // --- onboardedAt hydration (issue #113) ---
 
   describe('onboardedAt hydration', () => {

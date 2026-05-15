@@ -20,6 +20,9 @@ import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
 
+const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED === 'true'
+const BTCPAY_CHECKOUT_ORIGIN = 'https://btcpay.silentsuite.io'
+
 const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-form'), {
   loading: () => (
     <div className="flex flex-col items-center justify-center py-8">
@@ -35,7 +38,7 @@ const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-
 // ---------------------------------------------------------------------------
 
 type PlanId = 'early_monthly' | 'early_annual'
-type TrialPath = '7day' | '30day'
+type TrialPath = '7day' | '30day' | 'crypto_annual'
 type BillingInterval = 'monthly' | 'annual'
 
 const PLAN_PRICES: Record<PlanId, { monthly: number; annual: number; annualPerMonth: number }> = {
@@ -388,6 +391,7 @@ function StepChoosePlan({
   onIntervalChange,
   onSelectFree,
   onSelectPaid,
+  onSelectCrypto,
   planView,
   onBack,
   clientSecret,
@@ -401,6 +405,7 @@ function StepChoosePlan({
   onIntervalChange: (interval: BillingInterval) => void
   onSelectFree: () => void
   onSelectPaid: (promoCode?: string) => void
+  onSelectCrypto: () => void
   planView: PlanView
   onBack: () => void
   clientSecret: string | null
@@ -417,10 +422,12 @@ function StepChoosePlan({
   const handleContinue = useCallback(() => {
     if (selectedTrial === '7day') {
       onSelectFree()
+    } else if (selectedTrial === 'crypto_annual') {
+      onSelectCrypto()
     } else {
       onSelectPaid(promoCode)
     }
-  }, [selectedTrial, onSelectFree, onSelectPaid, promoCode])
+  }, [selectedTrial, onSelectFree, onSelectPaid, onSelectCrypto, promoCode])
 
   const hasEnteredPromoCode = promoCode.trim().length > 0
 
@@ -605,6 +612,45 @@ function StepChoosePlan({
             </div>
           </div>
         </button>
+
+        {interval === 'annual' && CRYPTO_CHECKOUT_ENABLED && (
+          <button
+            onClick={() => setSelectedTrial('crypto_annual')}
+            aria-label="Annual prepaid crypto checkout through BTCPay"
+            className={`group w-full rounded-xl border-2 p-4 sm:p-5 text-left transition-all ${
+              selectedTrial === 'crypto_annual'
+                ? 'border-amber-500 bg-amber-500/5'
+                : 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-amber-500/10 p-2.5 shrink-0">
+                <Crown className="h-5 w-5 text-amber-400" />
+              </div>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold text-[rgb(var(--foreground))]">Annual crypto prepaid</h3>
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+                    BTCPay
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                  Pay once with Bitcoin for &euro;32.40/year. App access starts only after the invoice settles.
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                    <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                    No card and no recurring crypto billing
+                  </li>
+                  <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
+                    <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                    One year of prepaid access after BTCPay settlement
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </button>
+        )}
       </div>
 
       {selectedTrial === '30day' && (
@@ -1032,9 +1078,9 @@ export default function SignupPage() {
     setPlanView('payment')
     try {
       const planId: PlanId = selectedInterval === 'monthly' ? 'early_monthly' : 'early_annual'
-      const secret = await signup(planId, '30day', promoCode)
-      if (secret) {
-        setClientSecret(secret)
+      const result = await signup(planId, '30day', promoCode)
+      if (result.clientSecret) {
+        setClientSecret(result.clientSecret)
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to set up your account'
@@ -1044,6 +1090,30 @@ export default function SignupPage() {
       setProvisioning(false)
     }
   }, [signup, selectedInterval])
+
+  const handleSelectCrypto = useCallback(async () => {
+    setProvisionError(null)
+    setProvisioning(true)
+    try {
+      const result = await signup('early_annual', 'crypto_annual')
+      if (!result.cryptoCheckoutUrl) {
+        throw new Error('Crypto checkout did not return a payment URL.')
+      }
+      const checkoutUrl = new URL(result.cryptoCheckoutUrl)
+      if (checkoutUrl.origin !== BTCPAY_CHECKOUT_ORIGIN || checkoutUrl.protocol !== 'https:') {
+        throw new Error('Crypto checkout returned an unexpected payment URL.')
+      }
+      if (result.cryptoInvoiceId) {
+        sessionStorage.setItem('silentsuite-pending-crypto-invoice', result.cryptoInvoiceId)
+      }
+      window.location.href = checkoutUrl.toString()
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
+      setProvisionError(message)
+    } finally {
+      setProvisioning(false)
+    }
+  }, [signup])
 
   const handlePlanBack = useCallback(() => {
     if (planView === 'payment') {
@@ -1096,6 +1166,7 @@ export default function SignupPage() {
             onIntervalChange={setSelectedInterval}
             onSelectFree={handleSelectFree}
             onSelectPaid={handleSelectPaid}
+            onSelectCrypto={handleSelectCrypto}
             planView={planView}
             onBack={handlePlanBack}
             clientSecret={clientSecret}
