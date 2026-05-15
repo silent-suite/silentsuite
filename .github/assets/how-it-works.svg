@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <linearGradient id="deviceGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+    <linearGradient id="serverGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#6b7280"/>
+      <stop offset="100%" stop-color="#4b5563"/>
+    </linearGradient>
+    <linearGradient id="lockGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="116%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="260" rx="12" fill="#f8fafc"/>
+
+  <!-- Left device -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="60" width="160" height="140" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
+    <rect x="40" y="60" width="160" height="36" rx="12" fill="url(#deviceGrad)"/>
+    <rect x="40" y="84" width="160" height="12" fill="url(#deviceGrad)"/>
+    <text x="120" y="83" text-anchor="middle" fill="white" font-size="13" font-weight="600">Your Device</text>
+    <!-- Lock icon -->
+    <rect x="76" y="114" width="24" height="18" rx="4" fill="url(#lockGrad)"/>
+    <path d="M82 114 V108 A6 6 0 0 1 94 108 V114" fill="none" stroke="url(#lockGrad)" stroke-width="2.5" stroke-linecap="round"/>
+    <text x="120" y="148" text-anchor="middle" fill="#334155" font-size="11">Encrypt locally</text>
+    <text x="120" y="164" text-anchor="middle" fill="#64748b" font-size="10">with your key</text>
+    <!-- App icons -->
+    <rect x="56" y="174" width="16" height="16" rx="3" fill="#e0e7ff"/>
+    <rect x="76" y="174" width="16" height="16" rx="3" fill="#fce7f3"/>
+    <rect x="96" y="174" width="16" height="16" rx="3" fill="#d1fae5"/>
+    <rect x="116" y="174" width="16" height="16" rx="3" fill="#fef3c7"/>
+    <rect x="136" y="174" width="16" height="16" rx="3" fill="#e0e7ff"/>
+    <rect x="156" y="174" width="16" height="16" rx="3" fill="#fce7f3"/>
+    <text x="120" y="206" text-anchor="middle" fill="#94a3b8" font-size="9">Calendar · Contacts · Tasks</text>
+  </g>
+
+  <!-- Arrow left → center (encrypted) -->
+  <line x1="210" y1="130" x2="290" y2="130" stroke="#6366f1" stroke-width="2.5" stroke-dasharray="6 3"/>
+  <polygon points="288,125 298,130 288,135" fill="#6366f1"/>
+  <rect x="222" y="110" width="72" height="18" rx="9" fill="#ede9fe"/>
+  <text x="258" y="123" text-anchor="middle" fill="#6366f1" font-size="9" font-weight="600">ciphertext</text>
+
+  <!-- Center server -->
+  <g filter="url(#shadow)">
+    <rect x="300" y="60" width="200" height="140" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
+    <rect x="300" y="60" width="200" height="36" rx="12" fill="url(#serverGrad)"/>
+    <rect x="300" y="84" width="200" height="12" fill="url(#serverGrad)"/>
+    <text x="400" y="83" text-anchor="middle" fill="white" font-size="13" font-weight="600">SilentSuite Server</text>
+    <!-- Server rack lines -->
+    <rect x="340" y="112" width="120" height="12" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.5"/>
+    <rect x="340" y="128" width="120" height="12" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.5"/>
+    <rect x="340" y="144" width="120" height="12" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.5"/>
+    <!-- Ciphertext blocks -->
+    <text x="400" y="122" text-anchor="middle" fill="#94a3b8" font-size="8" font-family="monospace">a7f3...b2c1</text>
+    <text x="400" y="138" text-anchor="middle" fill="#94a3b8" font-size="8" font-family="monospace">9e2d...4f8a</text>
+    <text x="400" y="154" text-anchor="middle" fill="#94a3b8" font-size="8" font-family="monospace">c1b8...e3d7</text>
+    <!-- Shield / no-peek -->
+    <text x="400" y="182" text-anchor="middle" fill="#6b7280" font-size="11" font-weight="500">Stores &amp; syncs only</text>
+    <text x="400" y="196" text-anchor="middle" fill="#6b7280" font-size="11" font-weight="500">encrypted blobs</text>
+  </g>
+
+  <!-- Arrow center → right (encrypted) -->
+  <line x1="510" y1="130" x2="590" y2="130" stroke="#6366f1" stroke-width="2.5" stroke-dasharray="6 3"/>
+  <polygon points="588,125 598,130 588,135" fill="#6366f1"/>
+  <rect x="522" y="110" width="72" height="18" rx="9" fill="#ede9fe"/>
+  <text x="558" y="123" text-anchor="middle" fill="#6366f1" font-size="9" font-weight="600">ciphertext</text>
+
+  <!-- Right device -->
+  <g filter="url(#shadow)">
+    <rect x="600" y="60" width="160" height="140" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
+    <rect x="600" y="60" width="160" height="36" rx="12" fill="url(#deviceGrad)"/>
+    <rect x="600" y="84" width="160" height="12" fill="url(#deviceGrad)"/>
+    <text x="680" y="83" text-anchor="middle" fill="white" font-size="13" font-weight="600">Your Device</text>
+    <!-- Unlock icon -->
+    <rect x="636" y="114" width="24" height="18" rx="4" fill="#10b981"/>
+    <path d="M642 114 V108 A6 6 0 0 1 654 108 V114" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="653" cy="110" r="2" fill="white"/>
+    <text x="680" y="148" text-anchor="middle" fill="#334155" font-size="11">Decrypt locally</text>
+    <text x="680" y="164" text-anchor="middle" fill="#64748b" font-size="10">with your key</text>
+    <!-- App icons -->
+    <rect x="616" y="174" width="16" height="16" rx="3" fill="#e0e7ff"/>
+    <rect x="636" y="174" width="16" height="16" rx="3" fill="#fce7f3"/>
+    <rect x="656" y="174" width="16" height="16" rx="3" fill="#d1fae5"/>
+    <rect x="676" y="174" width="16" height="16" rx="3" fill="#fef3c7"/>
+    <rect x="696" y="174" width="16" height="16" rx="3" fill="#e0e7ff"/>
+    <rect x="716" y="174" width="16" height="16" rx="3" fill="#fce7f3"/>
+    <text x="680" y="206" text-anchor="middle" fill="#94a3b8" font-size="9">Calendar · Contacts · Tasks</text>
+  </g>
+
+  <!-- Bottom callout -->
+  <text x="400" y="240" text-anchor="middle" fill="#4f46e5" font-size="12" font-weight="600">The server never has your keys. It never sees your plaintext.</text>
+</svg>
