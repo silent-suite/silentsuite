@@ -1,99 +1,117 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 260" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 280" font-family="'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif">
   <defs>
-    <linearGradient id="deviceGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="100%" stop-color="#4f46e5"/>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#f0fdf4"/>
     </linearGradient>
-    <linearGradient id="serverGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#6b7280"/>
-      <stop offset="100%" stop-color="#4b5563"/>
+    <linearGradient id="navyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#455B7A"/>
+      <stop offset="100%" stop-color="#253549"/>
     </linearGradient>
-    <linearGradient id="lockGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#f59e0b"/>
-      <stop offset="100%" stop-color="#d97706"/>
+    <linearGradient id="tealGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#10b981"/>
     </linearGradient>
-    <filter id="shadow" x="-4%" y="-4%" width="108%" height="116%">
-      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-opacity="0.12"/>
+    <linearGradient id="screenGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#eff6ff"/>
+      <stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+    <filter id="shadow" x="-6%" y="-6%" width="112%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-opacity="0.10"/>
+    </filter>
+    <filter id="softShadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/>
     </filter>
   </defs>
 
   <!-- Background -->
-  <rect width="800" height="260" rx="12" fill="#f8fafc"/>
+  <rect width="820" height="280" rx="16" fill="url(#bgGrad)"/>
 
-  <!-- Left device -->
+  <!-- ====== LEFT DEVICE (laptop) ====== -->
   <g filter="url(#shadow)">
-    <rect x="40" y="60" width="160" height="140" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
-    <rect x="40" y="60" width="160" height="36" rx="12" fill="url(#deviceGrad)"/>
-    <rect x="40" y="84" width="160" height="12" fill="url(#deviceGrad)"/>
-    <text x="120" y="83" text-anchor="middle" fill="white" font-size="13" font-weight="600">Your Device</text>
-    <!-- Lock icon -->
-    <rect x="76" y="114" width="24" height="18" rx="4" fill="url(#lockGrad)"/>
-    <path d="M82 114 V108 A6 6 0 0 1 94 108 V114" fill="none" stroke="url(#lockGrad)" stroke-width="2.5" stroke-linecap="round"/>
-    <text x="120" y="148" text-anchor="middle" fill="#334155" font-size="11">Encrypt locally</text>
-    <text x="120" y="164" text-anchor="middle" fill="#64748b" font-size="10">with your key</text>
-    <!-- App icons -->
-    <rect x="56" y="174" width="16" height="16" rx="3" fill="#e0e7ff"/>
-    <rect x="76" y="174" width="16" height="16" rx="3" fill="#fce7f3"/>
-    <rect x="96" y="174" width="16" height="16" rx="3" fill="#d1fae5"/>
-    <rect x="116" y="174" width="16" height="16" rx="3" fill="#fef3c7"/>
-    <rect x="136" y="174" width="16" height="16" rx="3" fill="#e0e7ff"/>
-    <rect x="156" y="174" width="16" height="16" rx="3" fill="#fce7f3"/>
-    <text x="120" y="206" text-anchor="middle" fill="#94a3b8" font-size="9">Calendar · Contacts · Tasks</text>
+    <!-- Screen bezel -->
+    <rect x="30" y="52" width="200" height="130" rx="10" fill="url(#navyGrad)"/>
+    <!-- Screen -->
+    <rect x="38" y="60" width="184" height="106" rx="6" fill="url(#screenGrad)"/>
+    <!-- Lock icon centered on screen -->
+    <rect x="115" y="88" width="30" height="24" rx="5" fill="url(#tealGrad)"/>
+    <path d="M122 88 V80 A8 8 0 0 1 138 80 V88" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="130" cy="99" r="3" fill="white"/>
+    <!-- Small calendar dots on screen -->
+    <rect x="50" y="126" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
+    <rect x="74" y="126" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
+    <rect x="98" y="126" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
+    <rect x="50" y="136" width="40" height="6" rx="2" fill="#bbf7d0" opacity="0.6"/>
+    <rect x="94" y="136" width="40" height="6" rx="2" fill="#bbf7d0" opacity="0.6"/>
+    <!-- Keyboard base -->
+    <path d="M20 182 L230 182 L220 196 L30 196 Z" fill="#e2e8f0"/>
+    <rect x="85" y="182" width="80" height="5" rx="2" fill="#cbd5e1"/>
+  </g>
+  <text x="130" y="218" text-anchor="middle" fill="#253549" font-size="13" font-weight="600">Your Device</text>
+  <text x="130" y="234" text-anchor="middle" fill="#10b981" font-size="11" font-weight="500">🔑 Encrypt locally</text>
+
+  <!-- ====== ENCRYPTED ARROW LEFT → CENTER ====== -->
+  <g>
+    <line x1="245" y1="130" x2="315" y2="130" stroke="#10b981" stroke-width="2.5" stroke-dasharray="7 4"/>
+    <polygon points="313,124 325,130 313,136" fill="#10b981"/>
+    <!-- Ciphertext label -->
+    <rect x="253" y="106" width="66" height="20" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="1"/>
+    <text x="286" y="120" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="600" font-family="monospace">cipher­text</text>
   </g>
 
-  <!-- Arrow left → center (encrypted) -->
-  <line x1="210" y1="130" x2="290" y2="130" stroke="#6366f1" stroke-width="2.5" stroke-dasharray="6 3"/>
-  <polygon points="288,125 298,130 288,135" fill="#6366f1"/>
-  <rect x="222" y="110" width="72" height="18" rx="9" fill="#ede9fe"/>
-  <text x="258" y="123" text-anchor="middle" fill="#6366f1" font-size="9" font-weight="600">ciphertext</text>
-
-  <!-- Center server -->
+  <!-- ====== CENTER SERVER ====== -->
   <g filter="url(#shadow)">
-    <rect x="300" y="60" width="200" height="140" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
-    <rect x="300" y="60" width="200" height="36" rx="12" fill="url(#serverGrad)"/>
-    <rect x="300" y="84" width="200" height="12" fill="url(#serverGrad)"/>
-    <text x="400" y="83" text-anchor="middle" fill="white" font-size="13" font-weight="600">SilentSuite Server</text>
+    <rect x="330" y="45" width="160" height="170" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
+    <!-- Header bar -->
+    <rect x="330" y="45" width="160" height="38" rx="12" fill="url(#navyGrad)"/>
+    <rect x="330" y="71" width="160" height="12" fill="url(#navyGrad)"/>
+    <text x="410" y="70" text-anchor="middle" fill="white" font-size="12" font-weight="600">🖥️ Server</text>
     <!-- Server rack lines -->
-    <rect x="340" y="112" width="120" height="12" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.5"/>
-    <rect x="340" y="128" width="120" height="12" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.5"/>
-    <rect x="340" y="144" width="120" height="12" rx="3" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.5"/>
-    <!-- Ciphertext blocks -->
-    <text x="400" y="122" text-anchor="middle" fill="#94a3b8" font-size="8" font-family="monospace">a7f3...b2c1</text>
-    <text x="400" y="138" text-anchor="middle" fill="#94a3b8" font-size="8" font-family="monospace">9e2d...4f8a</text>
-    <text x="400" y="154" text-anchor="middle" fill="#94a3b8" font-size="8" font-family="monospace">c1b8...e3d7</text>
-    <!-- Shield / no-peek -->
-    <text x="400" y="182" text-anchor="middle" fill="#6b7280" font-size="11" font-weight="500">Stores &amp; syncs only</text>
-    <text x="400" y="196" text-anchor="middle" fill="#6b7280" font-size="11" font-weight="500">encrypted blobs</text>
+    <rect x="350" y="98" width="120" height="16" rx="4" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.7"/>
+    <rect x="350" y="118" width="120" height="16" rx="4" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.7"/>
+    <rect x="350" y="138" width="120" height="16" rx="4" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.7"/>
+    <rect x="350" y="158" width="120" height="16" rx="4" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.7"/>
+    <!-- Ciphertext content -->
+    <text x="410" y="111" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">a7f3…b2c1</text>
+    <text x="410" y="131" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">9e2d…4f8a</text>
+    <text x="410" y="151" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">c1b8…e3d7</text>
+    <text x="410" y="171" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">5f9a…d2c4</text>
+    <!-- No-key badge -->
+    <rect x="370" y="190" width="80" height="18" rx="9" fill="#fef2f2" stroke="#fca5a5" stroke-width="0.7"/>
+    <text x="410" y="203" text-anchor="middle" fill="#dc2626" font-size="8.5" font-weight="600">🚫 No keys</text>
   </g>
 
-  <!-- Arrow center → right (encrypted) -->
-  <line x1="510" y1="130" x2="590" y2="130" stroke="#6366f1" stroke-width="2.5" stroke-dasharray="6 3"/>
-  <polygon points="588,125 598,130 588,135" fill="#6366f1"/>
-  <rect x="522" y="110" width="72" height="18" rx="9" fill="#ede9fe"/>
-  <text x="558" y="123" text-anchor="middle" fill="#6366f1" font-size="9" font-weight="600">ciphertext</text>
+  <!-- ====== ENCRYPTED ARROW CENTER → RIGHT ====== -->
+  <g>
+    <line x1="505" y1="130" x2="575" y2="130" stroke="#10b981" stroke-width="2.5" stroke-dasharray="7 4"/>
+    <polygon points="573,124 585,130 573,136" fill="#10b981"/>
+    <rect x="513" y="106" width="66" height="20" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="1"/>
+    <text x="546" y="120" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="600" font-family="monospace">cipher­text</text>
+  </g>
 
-  <!-- Right device -->
+  <!-- ====== RIGHT DEVICE (phone) ====== -->
   <g filter="url(#shadow)">
-    <rect x="600" y="60" width="160" height="140" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
-    <rect x="600" y="60" width="160" height="36" rx="12" fill="url(#deviceGrad)"/>
-    <rect x="600" y="84" width="160" height="12" fill="url(#deviceGrad)"/>
-    <text x="680" y="83" text-anchor="middle" fill="white" font-size="13" font-weight="600">Your Device</text>
+    <!-- Phone body -->
+    <rect x="595" y="52" width="110" height="195" rx="16" fill="url(#navyGrad)"/>
+    <!-- Screen -->
+    <rect x="603" y="68" width="94" height="155" rx="10" fill="url(#screenGrad)"/>
+    <!-- Notch -->
+    <rect x="633" y="58" width="34" height="8" rx="4" fill="#1B2838"/>
     <!-- Unlock icon -->
-    <rect x="636" y="114" width="24" height="18" rx="4" fill="#10b981"/>
-    <path d="M642 114 V108 A6 6 0 0 1 654 108 V114" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round"/>
-    <circle cx="653" cy="110" r="2" fill="white"/>
-    <text x="680" y="148" text-anchor="middle" fill="#334155" font-size="11">Decrypt locally</text>
-    <text x="680" y="164" text-anchor="middle" fill="#64748b" font-size="10">with your key</text>
-    <!-- App icons -->
-    <rect x="616" y="174" width="16" height="16" rx="3" fill="#e0e7ff"/>
-    <rect x="636" y="174" width="16" height="16" rx="3" fill="#fce7f3"/>
-    <rect x="656" y="174" width="16" height="16" rx="3" fill="#d1fae5"/>
-    <rect x="676" y="174" width="16" height="16" rx="3" fill="#fef3c7"/>
-    <rect x="696" y="174" width="16" height="16" rx="3" fill="#e0e7ff"/>
-    <rect x="716" y="174" width="16" height="16" rx="3" fill="#fce7f3"/>
-    <text x="680" y="206" text-anchor="middle" fill="#94a3b8" font-size="9">Calendar · Contacts · Tasks</text>
+    <rect x="630" y="96" width="30" height="24" rx="5" fill="url(#tealGrad)"/>
+    <path d="M652 96 V88 A8 8 0 0 1 668 88 V96" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="645" cy="95" r="2.5" fill="white"/>
+    <!-- Small calendar dots -->
+    <rect x="612" y="136" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
+    <rect x="636" y="136" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
+    <rect x="612" y="148" width="40" height="6" rx="2" fill="#bbf7d0" opacity="0.6"/>
+    <!-- Home indicator -->
+    <rect x="633" y="218" width="34" height="4" rx="2" fill="#94a3b8"/>
   </g>
+  <text x="650" y="237" text-anchor="middle" fill="#10b981" font-size="11" font-weight="500">🔓 Decrypt locally</text>
+  <text x="650" y="252" text-anchor="middle" fill="#253549" font-size="9" opacity="0.5">with your key</text>
 
-  <!-- Bottom callout -->
-  <text x="400" y="240" text-anchor="middle" fill="#4f46e5" font-size="12" font-weight="600">The server never has your keys. It never sees your plaintext.</text>
+  <!-- ====== BOTTOM CALLOUT ====== -->
+  <rect x="200" y="262" width="420" height="14" rx="7" fill="#ecfdf5"/>
+  <text x="410" y="274" text-anchor="middle" fill="#059669" font-size="11.5" font-weight="600">🔒 The server never has your keys — it never sees your plaintext.</text>
 </svg>
