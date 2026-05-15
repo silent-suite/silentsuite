@@ -1116,6 +1116,11 @@ export default function SignupPage() {
       if (result.cryptoInvoiceLookupToken) {
         sessionStorage.setItem('silentsuite-pending-crypto-token', result.cryptoInvoiceLookupToken)
       }
+      if (returnTo) {
+        sessionStorage.setItem('silentsuite-pending-crypto-return-to', returnTo)
+      } else {
+        sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
+      }
       window.location.href = checkoutUrl.toString()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
@@ -1123,7 +1128,7 @@ export default function SignupPage() {
     } finally {
       setProvisioning(false)
     }
-  }, [signup])
+  }, [returnTo, signup])
 
   const handlePlanBack = useCallback(() => {
     if (planView === 'payment') {
