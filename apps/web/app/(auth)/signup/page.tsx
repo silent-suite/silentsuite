@@ -17,6 +17,7 @@ import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
+import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
 
@@ -1006,7 +1007,13 @@ export default function SignupPage() {
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
   const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
+  const [returnTo, setReturnTo] = useState<string | null>(null)
+  const [showReturnFallback, setShowReturnFallback] = useState(false)
   const formDataRef = useRef<SignupFormData | null>(null)
+
+  useEffect(() => {
+    setReturnTo(normalizeSignupReturnTo(new URLSearchParams(window.location.search).get('return_to')))
+  }, [])
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
     formDataRef.current = data
@@ -1109,6 +1116,11 @@ export default function SignupPage() {
       if (result.cryptoInvoiceLookupToken) {
         sessionStorage.setItem('silentsuite-pending-crypto-token', result.cryptoInvoiceLookupToken)
       }
+      if (returnTo) {
+        sessionStorage.setItem('silentsuite-pending-crypto-return-to', returnTo)
+      } else {
+        sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
+      }
       window.location.href = checkoutUrl.toString()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
@@ -1116,7 +1128,7 @@ export default function SignupPage() {
     } finally {
       setProvisioning(false)
     }
-  }, [signup])
+  }, [returnTo, signup])
 
   const handlePlanBack = useCallback(() => {
     if (planView === 'payment') {
@@ -1134,8 +1146,16 @@ export default function SignupPage() {
   const handleVaultComplete = useCallback(() => {
     // Finalize authentication — only NOW does the user become authenticated.
     completeSignup()
+    if (returnTo) {
+      setShowReturnFallback(false)
+      window.location.href = returnTo
+      window.setTimeout(() => {
+        if (document.visibilityState === 'visible') setShowReturnFallback(true)
+      }, 2000)
+      return
+    }
     router.push('/')
-  }, [completeSignup, router])
+  }, [completeSignup, returnTo, router])
 
   const email = formDataRef.current?.email || ''
 
@@ -1181,7 +1201,17 @@ export default function SignupPage() {
           />
         )}
         {step === 'vault' && (
-          <StepCreateVault email={email} onComplete={handleVaultComplete} />
+          <>
+            <StepCreateVault email={email} onComplete={handleVaultComplete} />
+            {showReturnFallback && returnTo && (
+              <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
+                <p className="font-medium">Browser did not reopen the Android app automatically.</p>
+                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+                  Tap here to return to Android
+                </a>
+              </div>
+            )}
+          </>
         )}
       </div>
       {/* Build version indicator */}

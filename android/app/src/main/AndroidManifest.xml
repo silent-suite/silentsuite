@@ -242,6 +242,18 @@
         </activity>
 
         <activity
+            android:name=".ui.setup.SignupReturnActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Transparent">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="silentsuite" android:host="signup-complete" />
+            </intent-filter>
+        </activity>
+
+        <activity
             android:name=".ui.etebase.CollectionActivity"
             android:exported="false"
             />

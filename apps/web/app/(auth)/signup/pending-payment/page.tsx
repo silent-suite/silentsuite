@@ -4,24 +4,30 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { BILLING_API_URL } from '@/app/lib/config'
+import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 
 type PaymentState = 'pending' | 'settled' | 'expired' | 'timeout' | 'unknown'
 
 function clearPendingCryptoSignup() {
   sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
   sessionStorage.removeItem('silentsuite-pending-crypto-token')
+  sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
   sessionStorage.removeItem('silentsuite-signup-in-progress')
 }
 
 export default function PendingPaymentPage() {
   const [invoiceId, setInvoiceId] = useState<string | null>(null)
+  const [returnTo, setReturnTo] = useState<string | null>(null)
+  const [showReturnFallback, setShowReturnFallback] = useState(false)
   const [state, setState] = useState<PaymentState>('pending')
   const [pollNonce, setPollNonce] = useState(0)
 
   useEffect(() => {
     const id = sessionStorage.getItem('silentsuite-pending-crypto-invoice')
     const lookupToken = sessionStorage.getItem('silentsuite-pending-crypto-token')
+    const storedReturnTo = normalizeSignupReturnTo(sessionStorage.getItem('silentsuite-pending-crypto-return-to'))
     setInvoiceId(id)
+    setReturnTo(storedReturnTo)
     if (!id || !lookupToken) {
       setState('unknown')
       clearPendingCryptoSignup()
@@ -82,6 +88,18 @@ export default function PendingPaymentPage() {
     }
   }, [pollNonce])
 
+  function handleSettledContinue() {
+    if (returnTo) {
+      setShowReturnFallback(false)
+      window.location.href = returnTo
+      window.setTimeout(() => {
+        if (document.visibilityState === 'visible') setShowReturnFallback(true)
+      }, 2000)
+      return
+    }
+    window.location.href = '/'
+  }
+
   const isWaiting = state === 'pending'
   const title = state === 'settled'
     ? 'Payment settled'
@@ -126,9 +144,19 @@ export default function PendingPaymentPage() {
       )}
       <div className="space-y-3">
         {state === 'settled' ? (
-          <Link href="/" className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
-            Open SilentSuite
-          </Link>
+          <>
+            <button type="button" onClick={handleSettledContinue} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
+              {returnTo ? 'Return to Android app' : 'Open SilentSuite'}
+            </button>
+            {showReturnFallback && returnTo && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
+                <p className="font-medium">Browser did not reopen the Android app automatically.</p>
+                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+                  Tap here to return to Android
+                </a>
+              </div>
+            )}
+          </>
         ) : state === 'timeout' ? (
           <>
             <button type="button" onClick={() => { setState('pending'); setPollNonce((value) => value + 1) }} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
