@@ -7,6 +7,8 @@ import { BILLING_API_URL } from '@/app/lib/config'
 
 type PaymentState = 'pending' | 'settled' | 'expired' | 'timeout' | 'unknown'
 
+const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
+
 function clearPendingCryptoSignup() {
   sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
   sessionStorage.removeItem('silentsuite-pending-crypto-token')
@@ -17,17 +19,13 @@ export default function PendingPaymentPage() {
   const [invoiceId, setInvoiceId] = useState<string | null>(null)
   const [state, setState] = useState<PaymentState>('pending')
   const [pollNonce, setPollNonce] = useState(0)
+  const [restarting, setRestarting] = useState(false)
+  const [restartError, setRestartError] = useState<string | null>(null)
 
   useEffect(() => {
-    const id = sessionStorage.getItem('silentsuite-pending-crypto-invoice')
-    const lookupToken = sessionStorage.getItem('silentsuite-pending-crypto-token')
+    let id = sessionStorage.getItem('silentsuite-pending-crypto-invoice')
+    let invoiceLookupToken = sessionStorage.getItem('silentsuite-pending-crypto-token')
     setInvoiceId(id)
-    if (!id || !lookupToken) {
-      setState('unknown')
-      clearPendingCryptoSignup()
-      return
-    }
-    const invoiceLookupToken = lookupToken
 
     let cancelled = false
     let timer: number | undefined
@@ -35,16 +33,31 @@ export default function PendingPaymentPage() {
     async function poll() {
       attempts += 1
       try {
-        const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${id}`, {
+        const hasLocalLookup = id && invoiceLookupToken
+        const headers: Record<string, string> = { 'X-Requested-With': 'XMLHttpRequest' }
+        if (invoiceLookupToken) headers['X-Invoice-Lookup-Token'] = invoiceLookupToken
+        const res = await fetch(hasLocalLookup
+          ? `${BILLING_API_URL}/subscription/crypto/invoice/${id}`
+          : `${BILLING_API_URL}/subscription/crypto/invoice/latest`, {
           credentials: 'include',
-          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': invoiceLookupToken },
+          headers,
         })
         if (!res.ok) {
+          if (!hasLocalLookup) {
+            setState('unknown')
+            sessionStorage.removeItem('silentsuite-signup-in-progress')
+            return
+          }
           scheduleNextPoll()
           return
         }
         const data = await res.json()
         if (cancelled) return
+        if (typeof data.invoiceId === 'string') {
+          id = data.invoiceId
+          setInvoiceId(data.invoiceId)
+          sessionStorage.setItem('silentsuite-pending-crypto-invoice', data.invoiceId)
+        }
         if (data.status === 'settled') {
           setState('settled')
           clearPendingCryptoSignup()
@@ -57,6 +70,11 @@ export default function PendingPaymentPage() {
         }
       } catch {
         if (!cancelled) {
+          if (!id || !invoiceLookupToken) {
+            setState('unknown')
+            sessionStorage.removeItem('silentsuite-signup-in-progress')
+            return
+          }
           setState('pending')
           scheduleNextPoll()
         }
@@ -96,12 +114,44 @@ export default function PendingPaymentPage() {
   const description = state === 'settled'
     ? 'Your annual prepaid access is active. Review the vault warning below, then continue into SilentSuite.'
     : state === 'expired'
-      ? 'The invoice expired or was marked invalid. Start signup again or choose the free trial.'
+      ? 'The invoice expired or was marked invalid. You can start a new Bitcoin invoice without creating another account.'
       : state === 'timeout'
-        ? 'Settlement is taking longer than expected. You can check again manually or start over.'
+        ? 'Settlement is taking longer than expected. You can check again manually or start a new Bitcoin invoice.'
         : state === 'unknown'
-          ? 'This browser no longer has the invoice details needed to poll BTCPay.'
+          ? 'This browser no longer has the invoice details needed to poll BTCPay. If your billing session is still active, you can start a new Bitcoin invoice.'
           : 'Crypto payments can take a little time to settle. Your app access stays locked until the BTCPay webhook activates the account.'
+
+  async function restartBitcoinCheckout() {
+    setRestarting(true)
+    setRestartError(null)
+    try {
+      const res = await fetch(`${BILLING_API_URL}/subscription/crypto/checkout`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({
+          planId: 'early_annual',
+          returnUrl: `${window.location.origin}/signup/pending-payment`,
+        }),
+      })
+      if (!res.ok) throw new Error('Could not start a new Bitcoin invoice. Please log in or contact support.')
+      const data = await res.json()
+      if (!data.checkoutUrl || !data.invoiceId || !data.invoiceLookupToken) {
+        throw new Error('Bitcoin checkout did not return a complete payment session.')
+      }
+      const checkoutUrl = new URL(data.checkoutUrl)
+      if (checkoutUrl.origin !== BTCPAY_CHECKOUT_ORIGIN || checkoutUrl.protocol !== 'https:') {
+        throw new Error('Bitcoin checkout returned an unexpected payment URL.')
+      }
+      sessionStorage.setItem('silentsuite-pending-crypto-invoice', data.invoiceId)
+      sessionStorage.setItem('silentsuite-pending-crypto-token', data.invoiceLookupToken)
+      sessionStorage.setItem('silentsuite-signup-in-progress', 'true')
+      window.location.href = checkoutUrl.toString()
+    } catch (err) {
+      setRestartError(err instanceof Error ? err.message : 'Could not start a new Bitcoin invoice.')
+      setRestarting(false)
+    }
+  }
 
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center space-y-6 text-center">
@@ -134,18 +184,21 @@ export default function PendingPaymentPage() {
             <button type="button" onClick={() => { setState('pending'); setPollNonce((value) => value + 1) }} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
               Check again
             </button>
-            <Link href="/signup" onClick={clearPendingCryptoSignup} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
-              Start over
-            </Link>
+            <button type="button" onClick={restartBitcoinCheckout} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100 disabled:cursor-not-allowed disabled:opacity-60">
+              {restarting ? 'Starting new invoice...' : 'Start new Bitcoin invoice'}
+            </button>
           </>
         ) : state === 'expired' || state === 'unknown' ? (
-          <Link href="/signup" onClick={clearPendingCryptoSignup} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
-            Start over
-          </Link>
+          <button type="button" onClick={restartBitcoinCheckout} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600 disabled:cursor-not-allowed disabled:opacity-60">
+            {restarting ? 'Starting new invoice...' : 'Start new Bitcoin invoice'}
+          </button>
         ) : (
           <Link href="/login" className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
             Go to login
           </Link>
+        )}
+        {restartError && (
+          <p className="text-xs text-red-400">{restartError}</p>
         )}
       </div>
     </div>
