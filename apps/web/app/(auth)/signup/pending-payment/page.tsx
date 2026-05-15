@@ -13,8 +13,9 @@ export default function PendingPaymentPage() {
 
   useEffect(() => {
     const id = sessionStorage.getItem('silentsuite-pending-crypto-invoice')
+    const lookupToken = sessionStorage.getItem('silentsuite-pending-crypto-token')
     setInvoiceId(id)
-    if (!id) {
+    if (!id || !lookupToken) {
       setState('unknown')
       return
     }
@@ -24,7 +25,7 @@ export default function PendingPaymentPage() {
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${id}`, {
           credentials: 'include',
-          headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': lookupToken },
         })
         if (!res.ok) return
         const data = await res.json()
@@ -32,6 +33,8 @@ export default function PendingPaymentPage() {
         if (data.status === 'settled') {
           setState('settled')
           sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
+          sessionStorage.removeItem('silentsuite-pending-crypto-token')
+          sessionStorage.removeItem('silentsuite-signup-in-progress')
         } else if (data.status === 'expired' || data.status === 'invalid') {
           setState('expired')
         } else {
@@ -76,8 +79,8 @@ export default function PendingPaymentPage() {
             Open SilentSuite
           </Link>
         ) : (
-          <Link href="/signup" className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
-            Back to signup
+          <Link href="/login" className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
+            Go to login
           </Link>
         )}
       </div>

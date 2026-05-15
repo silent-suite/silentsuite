@@ -42,6 +42,7 @@ interface SignupResult {
   clientSecret: string | null
   cryptoCheckoutUrl: string | null
   cryptoInvoiceId: string | null
+  cryptoInvoiceLookupToken: string | null
 }
 
 /** Shape of the data persisted to sessionStorage for surviving Stripe 3DS redirects. */
@@ -213,7 +214,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         },
         isLoading: false,
       })
-      return { clientSecret: null, cryptoCheckoutUrl: null, cryptoInvoiceId: null }
+      return { clientSecret: null, cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null }
     }
 
     const pending = get().pendingSignup
@@ -248,7 +249,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         pendingSignup: {
           ...pending,
           provisionedUser: { id: data.id, planId, isAdmin },
-          provisionedSubscriptionStatus: 'trialing',
+            provisionedSubscriptionStatus: data.provisioningStatus ?? 'trialing',
         },
         isLoading: false,
       })
@@ -256,6 +257,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         clientSecret: (data.clientSecret as string | null) ?? null,
         cryptoCheckoutUrl: (data.cryptoCheckoutUrl as string | null) ?? null,
         cryptoInvoiceId: (data.cryptoInvoiceId as string | null) ?? null,
+        cryptoInvoiceLookupToken: (data.cryptoInvoiceLookupToken as string | null) ?? null,
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Signup failed'

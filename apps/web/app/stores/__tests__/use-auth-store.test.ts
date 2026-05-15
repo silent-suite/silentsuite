@@ -154,6 +154,7 @@ describe('useAuthStore', () => {
         clientSecret: null,
         cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/inv-123',
         cryptoInvoiceId: 'inv-123',
+        cryptoInvoiceLookupToken: 'lookup-token',
       }),
     } as Response)
 
@@ -163,6 +164,7 @@ describe('useAuthStore', () => {
       clientSecret: null,
       cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/inv-123',
       cryptoInvoiceId: 'inv-123',
+      cryptoInvoiceLookupToken: 'lookup-token',
     })
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
   })

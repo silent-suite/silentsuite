@@ -1106,6 +1106,9 @@ export default function SignupPage() {
       if (result.cryptoInvoiceId) {
         sessionStorage.setItem('silentsuite-pending-crypto-invoice', result.cryptoInvoiceId)
       }
+      if (result.cryptoInvoiceLookupToken) {
+        sessionStorage.setItem('silentsuite-pending-crypto-token', result.cryptoInvoiceLookupToken)
+      }
       window.location.href = checkoutUrl.toString()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
