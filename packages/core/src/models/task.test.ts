@@ -109,6 +109,7 @@ describe('completed vs incomplete tasks', () => {
 
     expect(vtodo).toContain('STATUS:COMPLETED');
     expect(vtodo).toContain('COMPLETED:');
+    expect(vtodo).toContain('PERCENT-COMPLETE:100');
   });
 
   it('serializes an incomplete task with STATUS:NEEDS-ACTION', () => {
@@ -117,6 +118,7 @@ describe('completed vs incomplete tasks', () => {
 
     expect(vtodo).toContain('STATUS:NEEDS-ACTION');
     expect(vtodo).not.toContain('COMPLETED:');
+    expect(vtodo).toContain('PERCENT-COMPLETE:0');
   });
 
   it('roundtrips a completed task', () => {
@@ -133,6 +135,74 @@ describe('completed vs incomplete tasks', () => {
     const restored = fromVTodo(vtodo);
 
     expect(restored.completed).toBe(false);
+  });
+
+  it('treats PERCENT-COMPLETE:100 as completed for tasks.org compatibility', () => {
+    const task = fromVTodo([
+      'BEGIN:VTODO',
+      'UID:percent-complete-task',
+      'SUMMARY:Done elsewhere',
+      'STATUS:NEEDS-ACTION',
+      'PERCENT-COMPLETE:100',
+      'END:VTODO',
+    ].join('\r\n'));
+
+    expect(task.completed).toBe(true);
+  });
+
+  it('does not treat partial PERCENT-COMPLETE values as completed', () => {
+    const task = fromVTodo([
+      'BEGIN:VTODO',
+      'UID:partial-progress-task',
+      'SUMMARY:In progress',
+      'PERCENT-COMPLETE:50',
+      'END:VTODO',
+    ].join('\r\n'));
+
+    expect(task.completed).toBe(false);
+  });
+
+  it('treats a COMPLETED timestamp as completed for client compatibility', () => {
+    const task = fromVTodo([
+      'BEGIN:VTODO',
+      'UID:completed-date-task',
+      'SUMMARY:Done elsewhere',
+      'COMPLETED:20260310T120000',
+      'END:VTODO',
+    ].join('\r\n'));
+
+    expect(task.completed).toBe(true);
+  });
+
+  it('does not let a COMPLETED timestamp override an explicit incomplete status', () => {
+    const task = fromVTodo([
+      'BEGIN:VTODO',
+      'UID:stale-completed-date-task',
+      'SUMMARY:Marked incomplete elsewhere',
+      'STATUS:NEEDS-ACTION',
+      'COMPLETED:20260310T120000',
+      'END:VTODO',
+    ].join('\r\n'));
+
+    expect(task.completed).toBe(false);
+  });
+
+  it('normalizes tasks.org-style completion on re-serialize', () => {
+    const task = fromVTodo([
+      'BEGIN:VTODO',
+      'UID:tasks-org-completed-task',
+      'SUMMARY:Done in tasks.org',
+      'STATUS:NEEDS-ACTION',
+      'PERCENT-COMPLETE:100',
+      'END:VTODO',
+    ].join('\r\n'));
+
+    const vtodo = toVTodo(task);
+
+    expect(task.completed).toBe(true);
+    expect(vtodo).toContain('STATUS:COMPLETED');
+    expect(vtodo).toContain('COMPLETED:');
+    expect(vtodo).toContain('PERCENT-COMPLETE:100');
   });
 });
 
