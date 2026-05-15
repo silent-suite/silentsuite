@@ -17,8 +17,10 @@ import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
+import { BILLING_API_URL } from '@/app/lib/config'
 import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
+import { QRCodeSVG } from 'qrcode.react'
 
 const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED === 'true'
 const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
@@ -40,6 +42,22 @@ const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-
 type PlanId = 'early_monthly' | 'early_annual'
 type TrialPath = '7day' | '30day'
 type BillingInterval = 'monthly' | 'annual'
+
+type CryptoPaymentMethod = {
+  id: string
+  label: string
+  qrValue: string | null
+  address: string | null
+  paymentLink: string | null
+  amountDue: string | null
+  cryptoCode: string | null
+}
+
+type CryptoPaymentSession = {
+  invoiceId: string
+  lookupToken: string
+  checkoutUrl: string
+}
 
 const PLAN_PRICES: Record<PlanId, { monthly: number; annual: number; annualPerMonth: number }> = {
   early_monthly: { monthly: 3.60, annual: 36, annualPerMonth: 3 },
@@ -384,7 +402,168 @@ function StepCreateAccount({
 // Step 2: Choose your plan (2-card selection + inline payment sub-step)
 // ---------------------------------------------------------------------------
 
-type PlanView = 'cards' | 'method' | 'payment'
+type PlanView = 'cards' | 'method' | 'payment' | 'crypto'
+
+function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession; onBack: () => void }) {
+  const [paymentMethods, setPaymentMethods] = useState<CryptoPaymentMethod[]>([])
+  const [selectedMethodId, setSelectedMethodId] = useState<string | null>(null)
+  const [status, setStatus] = useState<'loading' | 'pending' | 'settled' | 'expired' | 'error'>('loading')
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPaymentMethods() {
+      try {
+        const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}/payment-methods`, {
+          credentials: 'include',
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': session.lookupToken },
+        })
+        if (!res.ok) throw new Error('Could not load Bitcoin payment details.')
+        const data = await res.json()
+        if (cancelled) return
+        const methods = Array.isArray(data.paymentMethods) ? data.paymentMethods as CryptoPaymentMethod[] : []
+        setPaymentMethods(methods)
+        setSelectedMethodId(methods[0]?.id ?? null)
+        setStatus('pending')
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Could not load Bitcoin payment details.')
+          setStatus('error')
+        }
+      }
+    }
+
+    loadPaymentMethods()
+    return () => { cancelled = true }
+  }, [session.invoiceId, session.lookupToken])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | undefined
+
+    async function poll() {
+      try {
+        const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}`, {
+          credentials: 'include',
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': session.lookupToken },
+        })
+        if (!res.ok) throw new Error('Could not check Bitcoin payment status.')
+        const data = await res.json()
+        if (cancelled) return
+        if (data.status === 'settled') {
+          setStatus('settled')
+          sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
+          sessionStorage.removeItem('silentsuite-pending-crypto-token')
+          sessionStorage.removeItem('silentsuite-signup-in-progress')
+          return
+        }
+        if (data.status === 'expired' || data.status === 'invalid') {
+          setStatus('expired')
+          return
+        }
+        timer = window.setTimeout(poll, 10_000)
+      } catch {
+        if (!cancelled) timer = window.setTimeout(poll, 15_000)
+      }
+    }
+
+    poll()
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [session.invoiceId, session.lookupToken])
+
+  const selectedMethod = paymentMethods.find((method) => method.id === selectedMethodId) ?? paymentMethods[0]
+  const qrValue = selectedMethod?.qrValue ?? selectedMethod?.paymentLink ?? selectedMethod?.address ?? ''
+
+  return (
+    <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
+      <div className="space-y-2 text-center">
+        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Pay with Bitcoin</h2>
+        <p className="text-sm text-[rgb(var(--muted))]">
+          Scan the QR code or copy the payment details. SilentSuite unlocks after BTCPay settlement confirms.
+        </p>
+      </div>
+
+      {status === 'settled' ? (
+        <div className="space-y-4 text-center">
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
+            Payment settled. Your annual access is active.
+          </div>
+          <Link href="/" className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
+            Open SilentSuite
+          </Link>
+        </div>
+      ) : status === 'expired' ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+          This Bitcoin invoice expired. Go back and start a new Bitcoin invoice.
+        </div>
+      ) : status === 'error' ? (
+        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-400">
+          {error ?? 'Could not load Bitcoin payment details.'}
+        </div>
+      ) : selectedMethod && qrValue ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            {paymentMethods.map((method) => (
+              <button
+                key={method.id}
+                type="button"
+                onClick={() => setSelectedMethodId(method.id)}
+                className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  selectedMethod.id === method.id
+                    ? 'border-amber-500 bg-amber-500/10 text-amber-200'
+                    : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+                }`}
+              >
+                {method.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-[rgb(var(--border))] bg-white p-4">
+            <QRCodeSVG value={qrValue} size={240} className="mx-auto h-auto max-w-full" />
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 text-left">
+            {selectedMethod.amountDue && (
+              <p className="text-sm text-[rgb(var(--foreground))]">
+                Amount due: <span className="font-medium">{selectedMethod.amountDue} {selectedMethod.cryptoCode ?? 'BTC'}</span>
+              </p>
+            )}
+            <p className="break-all text-xs text-[rgb(var(--muted))]">{selectedMethod.address ?? qrValue}</p>
+            <button
+              type="button"
+              onClick={() => navigator.clipboard.writeText(qrValue)}
+              className="text-xs text-emerald-400 hover:text-emerald-300"
+            >
+              Copy payment details
+            </button>
+          </div>
+
+          <Link href={session.checkoutUrl} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
+            Open in BTCPay instead
+          </Link>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center py-8">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
+          <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading Bitcoin payment details...</p>
+        </div>
+      )}
+
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to payment methods
+      </button>
+    </div>
+  )
+}
 
 function StepChoosePlan({
   interval,
@@ -401,6 +580,7 @@ function StepChoosePlan({
   onClearError,
   onPaymentComplete,
   selectedInterval,
+  cryptoPaymentSession,
 }: {
   interval: BillingInterval
   onIntervalChange: (interval: BillingInterval) => void
@@ -416,11 +596,21 @@ function StepChoosePlan({
   onClearError: () => void
   onPaymentComplete: () => void
   selectedInterval: BillingInterval
+  cryptoPaymentSession: CryptoPaymentSession | null
 }) {
   const contentRef = useRef<HTMLDivElement>(null)
   const [selectedTrial, setSelectedTrial] = useState<TrialPath>('30day')
   const [paymentMethodError, setPaymentMethodError] = useState<string | null>(null)
   const [promoCode, setPromoCode] = useState('')
+
+  if (planView === 'crypto' && cryptoPaymentSession) {
+    return (
+      <CryptoPaymentPanel
+        session={cryptoPaymentSession}
+        onBack={onBack}
+      />
+    )
+  }
 
   const handleContinue = useCallback(() => {
     if (selectedTrial === '7day') {
@@ -1073,6 +1263,7 @@ export default function SignupPage() {
   }, [step])
   const [selectedInterval, setSelectedInterval] = useState<BillingInterval>('annual')
   const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [cryptoPaymentSession, setCryptoPaymentSession] = useState<CryptoPaymentSession | null>(null)
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisioning, setProvisioning] = useState(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
@@ -1185,7 +1376,15 @@ export default function SignupPage() {
       if (result.cryptoInvoiceLookupToken) {
         sessionStorage.setItem('silentsuite-pending-crypto-token', result.cryptoInvoiceLookupToken)
       }
-      window.location.href = checkoutUrl.toString()
+      if (!result.cryptoInvoiceId || !result.cryptoInvoiceLookupToken) {
+        throw new Error('Crypto checkout did not return a complete payment session.')
+      }
+      setCryptoPaymentSession({
+        invoiceId: result.cryptoInvoiceId,
+        lookupToken: result.cryptoInvoiceLookupToken,
+        checkoutUrl: checkoutUrl.toString(),
+      })
+      setPlanView('crypto')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
       setProvisionError(message)
@@ -1195,7 +1394,9 @@ export default function SignupPage() {
   }, [signup, selectedInterval])
 
   const handlePlanBack = useCallback(() => {
-    if (planView === 'payment') {
+    if (planView === 'crypto') {
+      setPlanView('method')
+    } else if (planView === 'payment') {
       setPlanView('method')
     } else if (planView === 'method') {
       setPlanView('cards')
@@ -1257,6 +1458,7 @@ export default function SignupPage() {
             onClearError={() => setProvisionError(null)}
             onPaymentComplete={handlePaymentComplete}
             selectedInterval={selectedInterval}
+            cryptoPaymentSession={cryptoPaymentSession}
           />
         )}
         {step === 'vault' && (
