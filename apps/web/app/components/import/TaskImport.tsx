@@ -14,6 +14,7 @@ import type { Priority } from '@silentsuite/core'
 
 interface TaskImportProps {
   onImportComplete: (count: number) => void
+  heading?: string
 }
 
 const PLATFORM_INSTRUCTIONS = [
@@ -159,7 +160,7 @@ function mapPriorityToStore(icalPriority?: number): Priority {
   return 'low'
 }
 
-export default function TaskImport({ onImportComplete }: TaskImportProps) {
+export default function TaskImport({ onImportComplete, heading }: TaskImportProps) {
   const [tasks, setTasks] = useState<VTodo[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
@@ -234,6 +235,11 @@ export default function TaskImport({ onImportComplete }: TaskImportProps) {
 
   return (
     <div className="space-y-4">
+      {heading && (
+        <h2 className="text-lg font-semibold leading-tight text-[rgb(var(--foreground))]">
+          {heading}
+        </h2>
+      )}
       <div className="space-y-1 rounded-lg bg-[rgb(var(--surface))]/50 p-1">
         {PLATFORM_INSTRUCTIONS.map((platform) => (
           <div key={platform.name}>

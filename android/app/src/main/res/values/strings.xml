@@ -270,6 +270,7 @@
     <string name="login_password_required">Password required</string>
     <string name="login_login">Log In</string>
     <string name="login_signup">Sign Up</string>
+    <string name="login_signup_prompt">Don\'t have an account? Sign up</string>
     <string name="login_finish">Finish</string>
     <string name="login_back">Back</string>
     <string name="login_enter_service_details">Sign in to SilentSuite</string>
