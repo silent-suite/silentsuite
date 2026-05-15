@@ -255,7 +255,9 @@ export default function SubscriptionPage() {
       })
       if (!res.ok) {
         const body = await res.json().catch(() => null)
-        throw new Error(body?.detail ?? 'Crypto checkout is not available yet.')
+        throw new Error(res.status >= 500 || res.status === 404
+          ? 'Crypto checkout is not available yet.'
+          : body?.detail ?? 'Crypto checkout is not available yet.')
       }
       const invoice = await res.json() as CryptoCheckoutResponse
       const checkoutUrl = new URL(invoice.checkoutUrl)
