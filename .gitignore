@@ -65,3 +65,4 @@ silentsuite-internal/
 
 # Turborepo
 .turbo/
+**/public/fallback-*.js.map

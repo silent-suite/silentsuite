@@ -17,7 +17,7 @@ Your schedule and relationships — visible only to you.
 <br />
 
 <a href="https://silentsuite.io">
-  <img src="./.github/assets/showcase-calendar.png" alt="SilentSuite calendar — desktop and mobile mockup" width="100%" />
+  <img src="./.github/assets/showcase-calendar.png" alt="SilentSuite calendar — desktop and mobile mockup" width="100%" style="border-radius:12px" />
 </a>
 
 </div>
@@ -58,18 +58,6 @@ Built on the open [Etebase protocol](https://www.etebase.com/). Open source, EU-
 🚧 **Coming soon:**
 - Native Android and iOS apps
 - Family plans
-
-## Why SilentSuite?
-
-| | Google / Apple / Microsoft | Other "encrypted" calendars | **SilentSuite** |
-|---|:-:|:-:|:-:|
-| E2E encrypted by default | ✗ | partial | **✓** |
-| Open-source server + client | ✗ | mixed | **✓** |
-| Works with native CalDAV / CardDAV apps | ✓ | mostly ✗ | **✓** |
-| Self-hostable | ✗ | mixed | **✓** |
-| EU-hosted / GDPR-baseline | varies | varies | **✓** |
-| No data monetisation | ✗ | varies | **✓** |
-| Standard, exportable data format | ✓ | mixed | **✓** |
 
 ## How it works
 
