@@ -14,6 +14,7 @@ import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 
 interface CalendarImportProps {
   onImportComplete: (count: number) => void
+  heading?: string
 }
 
 const PLATFORM_INSTRUCTIONS = [
@@ -64,7 +65,7 @@ function formatEventPreviewDate(dtstart: string, tzid?: string): string {
 }
 
 
-export default function CalendarImport({ onImportComplete }: CalendarImportProps) {
+export default function CalendarImport({ onImportComplete, heading }: CalendarImportProps) {
   const [events, setEvents] = useState<VEvent[]>([])
   const [error, setError] = useState<string | null>(null)
   const [todoWarning, setTodoWarning] = useState<string | null>(null)
@@ -142,6 +143,11 @@ export default function CalendarImport({ onImportComplete }: CalendarImportProps
 
   return (
     <div className="space-y-4">
+      {heading && (
+        <h2 className="text-lg font-semibold leading-tight text-[rgb(var(--foreground))]">
+          {heading}
+        </h2>
+      )}
       {/* Platform instructions */}
       <div className="space-y-1 rounded-lg bg-[rgb(var(--surface))]/50 p-1">
         {PLATFORM_INSTRUCTIONS.map((platform) => (

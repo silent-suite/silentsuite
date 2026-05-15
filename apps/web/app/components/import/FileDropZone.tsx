@@ -59,7 +59,7 @@ export default function FileDropZone({ accept, onFiles, multiple = true }: FileD
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`flex w-full cursor-pointer flex-col items-center gap-3 rounded-lg border-2 border-dashed p-8 transition-colors ${
+        className={`flex w-full cursor-pointer flex-col items-center gap-3 rounded-lg border-2 border-dashed p-5 transition-colors sm:p-8 ${
           isDragOver
             ? 'border-[rgb(var(--primary))] bg-[rgb(var(--primary))]/10'
             : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))]/50 hover:border-[rgb(var(--muted))]/50 hover:bg-[rgb(var(--surface))]'
