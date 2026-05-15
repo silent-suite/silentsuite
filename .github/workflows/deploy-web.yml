@@ -51,6 +51,7 @@ jobs:
             NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
             NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
