@@ -55,8 +55,11 @@ class LoginCredentialsFragment : Fragment() {
 
         val createAccount = v.findViewById<View>(R.id.create_account) as TextView
         createAccount.setOnClickListener {
-            // Open web app for account creation — SilentSuite registration happens at app.silentsuite.io
-            startActivity(Intent(Intent.ACTION_VIEW, Constants.webAppUri.buildUpon().appendEncodedPath("signup").build()))
+            val signupUri = Constants.webAppUri.buildUpon()
+                .appendEncodedPath("signup")
+                .appendQueryParameter("return_to", Constants.signupCompleteReturnUri.toString())
+                .build()
+            startActivity(Intent(Intent.ACTION_VIEW, signupUri))
         }
 
         val login = v.findViewById<View>(R.id.login) as Button

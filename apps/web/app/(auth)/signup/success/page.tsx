@@ -6,6 +6,7 @@ import { CheckCircle, AlertTriangle, Lock } from 'lucide-react'
 import { MS_PER_DAY } from '@/app/lib/constants'
 import { Button } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { StepCreateVault } from '../components/step-create-vault'
 
 // ---------------------------------------------------------------------------
@@ -23,6 +24,7 @@ function SignupSuccessInner() {
 
   const redirectStatus = searchParams.get('redirect_status')
   const setupIntent = searchParams.get('setup_intent')
+  const returnTo = normalizeSignupReturnTo(searchParams.get('return_to'))
   const isStripeRedirect = !!(setupIntent && redirectStatus)
 
   const [state, setState] = useState<RedirectState>(isStripeRedirect ? 'loading' : 'none')
@@ -55,8 +57,21 @@ function SignupSuccessInner() {
 
   const handleVaultComplete = useCallback(() => {
     completeSignup()
+    if (returnTo) {
+      window.location.href = returnTo
+      return
+    }
     router.push('/')
-  }, [completeSignup, router])
+  }, [completeSignup, returnTo, router])
+
+  const handleSuccessContinue = useCallback(() => {
+    completeSignup()
+    if (returnTo) {
+      window.location.href = returnTo
+      return
+    }
+    router.push('/')
+  }, [completeSignup, returnTo, router])
 
   // --- Stripe 3DS redirect: loading ---
   if (state === 'loading') {
@@ -159,8 +174,8 @@ function SignupSuccessInner() {
         </p>
       </div>
 
-      <Button onClick={() => router.push('/')} className="w-full">
-        Set up your workspace
+      <Button onClick={handleSuccessContinue} className="w-full">
+        {returnTo ? 'Return to Android app' : 'Set up your workspace'}
       </Button>
     </div>
   )

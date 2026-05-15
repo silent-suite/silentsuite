@@ -17,6 +17,7 @@ import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
+import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
 
@@ -1006,7 +1007,12 @@ export default function SignupPage() {
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
   const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
+  const [returnTo, setReturnTo] = useState<string | null>(null)
   const formDataRef = useRef<SignupFormData | null>(null)
+
+  useEffect(() => {
+    setReturnTo(normalizeSignupReturnTo(new URLSearchParams(window.location.search).get('return_to')))
+  }, [])
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
     formDataRef.current = data
@@ -1134,8 +1140,12 @@ export default function SignupPage() {
   const handleVaultComplete = useCallback(() => {
     // Finalize authentication — only NOW does the user become authenticated.
     completeSignup()
+    if (returnTo) {
+      window.location.href = returnTo
+      return
+    }
     router.push('/')
-  }, [completeSignup, router])
+  }, [completeSignup, returnTo, router])
 
   const email = formDataRef.current?.email || ''
 

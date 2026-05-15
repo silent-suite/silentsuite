@@ -380,9 +380,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         return false
     }
 
+    private fun scrollToSection(sectionId: Int) {
+        val scrollView = findViewById<ScrollView>(R.id.parent) ?: return
+        val section = findViewById<View>(sectionId) ?: return
+        scrollView.post { scrollView.smoothScrollTo(0, section.top) }
+    }
+
     // NavigationView drawer item handling (moved from AccountsActivity)
     override fun onNavigationItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
+            R.id.nav_calendar -> scrollToSection(R.id.caldav)
+            R.id.nav_tasks -> scrollToSection(R.id.taskdav)
+            R.id.nav_contacts -> scrollToSection(R.id.carddav)
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
             R.id.nav_app_settings -> startActivity(Intent(this, AppSettingsActivity::class.java))
             R.id.nav_invitations -> startActivity(InvitationsActivity.newIntent(this, account))

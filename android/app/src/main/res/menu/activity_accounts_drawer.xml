@@ -16,6 +16,18 @@
 
     <group android:id="@+id/nav_main_group" android:checkableBehavior="none">
         <item
+            android:id="@+id/nav_calendar"
+            android:icon="@drawable/ic_event_light"
+            android:title="@string/navigation_drawer_calendar"/>
+        <item
+            android:id="@+id/nav_tasks"
+            android:icon="@drawable/ic_task_light"
+            android:title="@string/navigation_drawer_tasks"/>
+        <item
+            android:id="@+id/nav_contacts"
+            android:icon="@drawable/ic_people_light"
+            android:title="@string/navigation_drawer_contacts"/>
+        <item
             android:id="@+id/nav_app_settings"
             android:icon="@drawable/ic_settings_dark"
             android:title="@string/navigation_drawer_settings"/>
