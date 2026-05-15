@@ -16,11 +16,18 @@ const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-
   ssr: false,
 })
 
+const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED === 'true'
+const BTCPAY_CHECKOUT_ORIGIN = 'https://btcpay.silentsuite.io'
+
+interface CryptoCheckoutResponse {
+  checkoutUrl: string
+}
+
 interface SubscriptionData {
   plan: string | null
   planLabel: string
   billingInterval: 'monthly' | 'annual'
-  status: 'none' | 'trialing' | 'active' | 'past_due' | 'cancelled'
+  status: 'none' | 'trialing' | 'active' | 'past_due' | 'cancelled' | 'expired'
   renewalDate: string | null
   trial: {
     active: boolean
@@ -37,6 +44,7 @@ const STATUS_STYLES: Record<string, string> = {
   trialing: 'bg-amber-500/20 text-amber-400',
   past_due: 'bg-red-500/20 text-red-400',
   cancelled: 'bg-neutral-500/20 text-neutral-400',
+  expired: 'bg-neutral-500/20 text-neutral-400',
   none: 'bg-neutral-500/20 text-neutral-400',
 }
 
@@ -45,6 +53,7 @@ const STATUS_LABELS: Record<string, string> = {
   trialing: 'Trialing',
   past_due: 'Past Due',
   cancelled: 'Cancelled',
+  expired: 'Expired',
   none: 'No Subscription',
 }
 
@@ -137,6 +146,8 @@ export default function SubscriptionPage() {
   const [changePlanError, setChangePlanError] = useState<string | null>(null)
   const [changePlanToast, setChangePlanToast] = useState<string | null>(null)
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
+  const [cryptoCheckoutLoading, setCryptoCheckoutLoading] = useState(false)
+  const [cryptoCheckoutError, setCryptoCheckoutError] = useState<string | null>(null)
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -226,6 +237,39 @@ export default function SubscriptionPage() {
     }
   }
 
+  async function handleCryptoCheckout(planId: string) {
+    setCryptoCheckoutLoading(true)
+    setCryptoCheckoutError(null)
+    try {
+      const res = await fetch(`${BILLING_API_URL}/subscription/crypto/checkout`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({
+          planId,
+          returnUrl: `${window.location.origin}/settings/subscription`,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.detail ?? 'Crypto checkout is not available yet.')
+      }
+      const invoice = await res.json() as CryptoCheckoutResponse
+      const checkoutUrl = new URL(invoice.checkoutUrl)
+      if (checkoutUrl.origin !== BTCPAY_CHECKOUT_ORIGIN || checkoutUrl.protocol !== 'https:') {
+        throw new Error('Crypto checkout returned an unexpected payment URL.')
+      }
+      window.location.href = checkoutUrl.toString()
+    } catch (err) {
+      setCryptoCheckoutError(err instanceof Error ? err.message : 'Unable to start crypto checkout.')
+    } finally {
+      setCryptoCheckoutLoading(false)
+    }
+  }
+
   if (loading) return <LoadingSkeleton />
 
   if (!data) {
@@ -242,7 +286,7 @@ export default function SubscriptionPage() {
     data.trial.daysRemaining != null &&
     data.trial.daysRemaining <= 7
 
-  const isCancelled = data.status === 'cancelled'
+  const isCancelled = data.status === 'cancelled' || data.status === 'expired'
   const isActiveOrTrialing = data.status === 'active' || data.status === 'trialing'
   const accessUntilFormatted = data.renewalDate ? formatDate(data.renewalDate) : 'the end of your current period'
   // Only show Early Adopter plans — Standard plans will be enabled later
@@ -359,7 +403,7 @@ export default function SubscriptionPage() {
           </>
         )}
         {(isCancelled || data.status === 'none' || data.cancelAtPeriodEnd) && (
-          <Button size="sm" onClick={() => setShowPlanSelection(true)}>
+          <Button size="sm" onClick={() => { setCryptoCheckoutError(null); setShowPlanSelection(true) }}>
             Reactivate
           </Button>
         )}
@@ -424,6 +468,7 @@ export default function SubscriptionPage() {
                     ? availablePlans.find(p => p.id === 'early_monthly')!
                     : availablePlans.find(p => p.id === 'early_annual')!
                   const Icon = plan.icon
+                  const cryptoAnnualPrice = (Number(plan.price) * 0.9).toFixed(2)
                   return (
                     <div className="rounded-lg border border-emerald-500/30 bg-[rgb(var(--surface))] p-5">
                       <div className="flex items-start justify-between">
@@ -453,8 +498,28 @@ export default function SubscriptionPage() {
                         disabled={reactivating !== null}
                         className="mt-5 w-full rounded-lg bg-emerald-600 px-6 py-3 text-base font-semibold text-white shadow-lg shadow-emerald-600/25 transition-colors hover:bg-emerald-500 disabled:opacity-50"
                       >
-                        {reactivating === plan.id ? 'Setting up...' : 'Subscribe now'}
+                        {reactivating === plan.id ? 'Setting up...' : 'Subscribe by card'}
                       </button>
+                      {billingInterval === 'annual' && CRYPTO_CHECKOUT_ENABLED && (
+                        <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-[rgb(var(--foreground))]">Pay annual with crypto</p>
+                              <p className="text-xs text-[rgb(var(--muted))]">Prepaid once via BTCPay: &euro;{cryptoAnnualPrice}/year.</p>
+                            </div>
+                            <button
+                              onClick={() => handleCryptoCheckout(plan.id)}
+                              disabled={cryptoCheckoutLoading || reactivating !== null}
+                              className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
+                            >
+                              {cryptoCheckoutLoading ? 'Opening...' : 'Pay crypto'}
+                            </button>
+                          </div>
+                          {cryptoCheckoutError && (
+                            <p className="mt-2 text-xs text-red-400">{cryptoCheckoutError}</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )
                 })()}
