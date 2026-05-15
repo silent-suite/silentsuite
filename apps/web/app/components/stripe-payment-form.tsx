@@ -7,6 +7,7 @@ import type { Stripe, Appearance } from '@stripe/stripe-js'
 import { useTheme } from 'next-themes'
 import { Button } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { signupSuccessUrl } from '@/app/lib/signup-return'
 
 const STRIPE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
@@ -75,8 +76,9 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInter
     // states set user.email to '', and we'd rather land on 'Customer' than ''.
     const authState = useAuthStore.getState()
     const billingName = authState.pendingSignup?.email || authState.user?.email || 'Customer'
+    const currentReturnTo = new URLSearchParams(window.location.search).get('return_to')
     const confirmParams = {
-      return_url: `${window.location.origin}/signup/success`,
+      return_url: signupSuccessUrl(window.location.origin, currentReturnTo),
       payment_method_data: { billing_details: { name: billingName } },
     }
 
