@@ -25,7 +25,7 @@
             android:title="@string/navigation_drawer_tasks"/>
         <item
             android:id="@+id/nav_contacts"
-            android:icon="@drawable/ic_people_light"
+            android:icon="@drawable/ic_account_dark"
             android:title="@string/navigation_drawer_contacts"/>
         <item
             android:id="@+id/nav_app_settings"

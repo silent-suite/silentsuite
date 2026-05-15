@@ -29,6 +29,7 @@ function SignupSuccessInner() {
 
   const [state, setState] = useState<RedirectState>(isStripeRedirect ? 'loading' : 'none')
   const [restoredEmail, setRestoredEmail] = useState<string>('')
+  const [showReturnFallback, setShowReturnFallback] = useState(false)
 
   useEffect(() => {
     if (!isStripeRedirect) return
@@ -58,7 +59,11 @@ function SignupSuccessInner() {
   const handleVaultComplete = useCallback(() => {
     completeSignup()
     if (returnTo) {
+      setShowReturnFallback(false)
       window.location.href = returnTo
+      window.setTimeout(() => {
+        if (document.visibilityState === 'visible') setShowReturnFallback(true)
+      }, 2000)
       return
     }
     router.push('/')
@@ -67,7 +72,11 @@ function SignupSuccessInner() {
   const handleSuccessContinue = useCallback(() => {
     completeSignup()
     if (returnTo) {
+      setShowReturnFallback(false)
       window.location.href = returnTo
+      window.setTimeout(() => {
+        if (document.visibilityState === 'visible') setShowReturnFallback(true)
+      }, 2000)
       return
     }
     router.push('/')
@@ -100,6 +109,14 @@ function SignupSuccessInner() {
           email={restoredEmail}
           onComplete={handleVaultComplete}
         />
+        {showReturnFallback && returnTo && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
+            <p className="font-medium">Browser did not reopen the Android app automatically.</p>
+            <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+              Tap here to return to Android
+            </a>
+          </div>
+        )}
       </div>
     )
   }
@@ -177,6 +194,14 @@ function SignupSuccessInner() {
       <Button onClick={handleSuccessContinue} className="w-full">
         {returnTo ? 'Return to Android app' : 'Set up your workspace'}
       </Button>
+      {showReturnFallback && returnTo && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
+          <p className="font-medium">Browser did not reopen the Android app automatically.</p>
+          <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+            Tap here to return to Android
+          </a>
+        </div>
+      )}
     </div>
   )
 }

@@ -1008,6 +1008,7 @@ export default function SignupPage() {
   const [planView, setPlanView] = useState<PlanView>('cards')
   const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
   const [returnTo, setReturnTo] = useState<string | null>(null)
+  const [showReturnFallback, setShowReturnFallback] = useState(false)
   const formDataRef = useRef<SignupFormData | null>(null)
 
   useEffect(() => {
@@ -1141,7 +1142,11 @@ export default function SignupPage() {
     // Finalize authentication — only NOW does the user become authenticated.
     completeSignup()
     if (returnTo) {
+      setShowReturnFallback(false)
       window.location.href = returnTo
+      window.setTimeout(() => {
+        if (document.visibilityState === 'visible') setShowReturnFallback(true)
+      }, 2000)
       return
     }
     router.push('/')
@@ -1191,7 +1196,17 @@ export default function SignupPage() {
           />
         )}
         {step === 'vault' && (
-          <StepCreateVault email={email} onComplete={handleVaultComplete} />
+          <>
+            <StepCreateVault email={email} onComplete={handleVaultComplete} />
+            {showReturnFallback && returnTo && (
+              <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
+                <p className="font-medium">Browser did not reopen the Android app automatically.</p>
+                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+                  Tap here to return to Android
+                </a>
+              </div>
+            )}
+          </>
         )}
       </div>
       {/* Build version indicator */}
