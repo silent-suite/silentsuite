@@ -2,14 +2,21 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Check, Loader2 } from 'lucide-react'
+import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { BILLING_API_URL } from '@/app/lib/config'
 
-type PaymentState = 'pending' | 'settled' | 'expired' | 'unknown'
+type PaymentState = 'pending' | 'settled' | 'expired' | 'timeout' | 'unknown'
+
+function clearPendingCryptoSignup() {
+  sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
+  sessionStorage.removeItem('silentsuite-pending-crypto-token')
+  sessionStorage.removeItem('silentsuite-signup-in-progress')
+}
 
 export default function PendingPaymentPage() {
   const [invoiceId, setInvoiceId] = useState<string | null>(null)
   const [state, setState] = useState<PaymentState>('pending')
+  const [pollNonce, setPollNonce] = useState(0)
 
   useEffect(() => {
     const id = sessionStorage.getItem('silentsuite-pending-crypto-invoice')
@@ -17,67 +24,123 @@ export default function PendingPaymentPage() {
     setInvoiceId(id)
     if (!id || !lookupToken) {
       setState('unknown')
+      clearPendingCryptoSignup()
       return
     }
     const invoiceLookupToken = lookupToken
 
     let cancelled = false
+    let timer: number | undefined
+    let attempts = 0
     async function poll() {
+      attempts += 1
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${id}`, {
           credentials: 'include',
           headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': invoiceLookupToken },
         })
-        if (!res.ok) return
+        if (!res.ok) {
+          scheduleNextPoll()
+          return
+        }
         const data = await res.json()
         if (cancelled) return
         if (data.status === 'settled') {
           setState('settled')
-          sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
-          sessionStorage.removeItem('silentsuite-pending-crypto-token')
-          sessionStorage.removeItem('silentsuite-signup-in-progress')
+          clearPendingCryptoSignup()
         } else if (data.status === 'expired' || data.status === 'invalid') {
           setState('expired')
+          clearPendingCryptoSignup()
         } else {
           setState('pending')
+          scheduleNextPoll()
         }
       } catch {
-        if (!cancelled) setState('pending')
+        if (!cancelled) {
+          setState('pending')
+          scheduleNextPoll()
+        }
       }
     }
 
+    function scheduleNextPoll() {
+      if (cancelled || attempts >= 180) {
+        if (!cancelled) {
+          setState('timeout')
+          sessionStorage.removeItem('silentsuite-signup-in-progress')
+        }
+        return
+      }
+      const delay = attempts < 30 ? 10_000 : 30_000
+      timer = window.setTimeout(poll, delay)
+    }
+
     poll()
-    const timer = window.setInterval(poll, 10_000)
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      if (timer) window.clearTimeout(timer)
     }
-  }, [])
+  }, [pollNonce])
+
+  const isWaiting = state === 'pending'
+  const title = state === 'settled'
+    ? 'Payment settled'
+    : state === 'expired'
+      ? 'Invoice not completed'
+      : state === 'timeout'
+        ? 'Still waiting for settlement'
+        : state === 'unknown'
+          ? 'Payment session not found'
+          : 'Waiting for BTCPay settlement'
+
+  const description = state === 'settled'
+    ? 'Your annual prepaid access is active. Review the vault warning below, then continue into SilentSuite.'
+    : state === 'expired'
+      ? 'The invoice expired or was marked invalid. Start signup again or choose the free trial.'
+      : state === 'timeout'
+        ? 'Settlement is taking longer than expected. You can check again manually or start over.'
+        : state === 'unknown'
+          ? 'This browser no longer has the invoice details needed to poll BTCPay.'
+          : 'Crypto payments can take a little time to settle. Your app access stays locked until the BTCPay webhook activates the account.'
 
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center space-y-6 text-center">
       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10">
-        {state === 'settled' ? <Check className="h-7 w-7 text-emerald-400" /> : <Loader2 className="h-7 w-7 animate-spin text-amber-300" />}
+        {state === 'settled' ? <Check className="h-7 w-7 text-emerald-400" /> : isWaiting ? <Loader2 className="h-7 w-7 animate-spin text-amber-300" /> : <AlertTriangle className="h-7 w-7 text-amber-300" />}
       </div>
       <div className="space-y-2">
         <h1 className="text-xl font-semibold text-[rgb(var(--foreground))]">
-          {state === 'settled' ? 'Payment settled' : state === 'expired' ? 'Invoice not completed' : 'Waiting for BTCPay settlement'}
+          {title}
         </h1>
         <p className="text-sm text-[rgb(var(--muted))]">
-          {state === 'settled'
-            ? 'Your annual prepaid access is active. You can now continue into SilentSuite.'
-            : state === 'expired'
-              ? 'The invoice expired or was marked invalid. Please start signup again or choose the free trial.'
-              : 'Crypto payments can take a little time to settle. Your app access stays locked until the BTCPay webhook activates the account.'}
+          {description}
         </p>
       </div>
       {invoiceId && state !== 'settled' && (
         <p className="text-xs text-[rgb(var(--muted))]">Invoice: {invoiceId}</p>
       )}
+      {state === 'settled' && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-left text-xs text-[rgb(var(--muted))]">
+          SilentSuite cannot recover your password or decrypt your vault for you. Keep your password safe before adding important data.
+        </div>
+      )}
       <div className="space-y-3">
         {state === 'settled' ? (
           <Link href="/" className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
             Open SilentSuite
+          </Link>
+        ) : state === 'timeout' ? (
+          <>
+            <button type="button" onClick={() => { setState('pending'); setPollNonce((value) => value + 1) }} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
+              Check again
+            </button>
+            <Link href="/signup" onClick={clearPendingCryptoSignup} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
+              Start over
+            </Link>
+          </>
+        ) : state === 'expired' || state === 'unknown' ? (
+          <Link href="/signup" onClick={clearPendingCryptoSignup} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
+            Start over
           </Link>
         ) : (
           <Link href="/login" className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
