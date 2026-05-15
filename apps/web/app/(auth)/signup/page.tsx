@@ -604,15 +604,6 @@ function StepChoosePlan({
   const [paymentMethodError, setPaymentMethodError] = useState<string | null>(null)
   const [promoCode, setPromoCode] = useState('')
 
-  if (planView === 'crypto' && cryptoPaymentSession) {
-    return (
-      <CryptoPaymentPanel
-        session={cryptoPaymentSession}
-        onBack={onBack}
-      />
-    )
-  }
-
   const handleContinue = useCallback(() => {
     if (selectedTrial === '7day') {
       onSelectFree()
@@ -645,6 +636,15 @@ function StepChoosePlan({
   }, [planView])
 
   // --- Payment sub-step ---
+  if (planView === 'crypto' && cryptoPaymentSession) {
+    return (
+      <CryptoPaymentPanel
+        session={cryptoPaymentSession}
+        onBack={onBack}
+      />
+    )
+  }
+
   if (planView === 'method') {
     const annualBitcoinAvailable = interval === 'annual' && CRYPTO_CHECKOUT_ENABLED
     return (
