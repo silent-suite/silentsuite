@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="./.github/assets/logo-shield.svg" alt="SilentSuite" width="120" />
-
 # SilentSuite
 
 **Privacy by Architecture.**
@@ -139,6 +137,16 @@ Security issues: please email <info@silentsuite.io> rather than opening a public
 - 📖 **Docs:** [docs.silentsuite.io](https://docs.silentsuite.io)
 - 🐦 **X:** [@silentsuiteio](https://x.com/silentsuiteio)
 - 📧 **Email:** info@silentsuite.io
+
+## Star history
+
+<a href="https://star-history.com/#silent-suite/silentsuite&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date" />
+    <img alt="Star history chart" src="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date" />
+  </picture>
+</a>
 
 ---
 
