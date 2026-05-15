@@ -19,13 +19,14 @@ export default function PendingPaymentPage() {
       setState('unknown')
       return
     }
+    const invoiceLookupToken = lookupToken
 
     let cancelled = false
     async function poll() {
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${id}`, {
           credentials: 'include',
-          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': lookupToken },
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': invoiceLookupToken },
         })
         if (!res.ok) return
         const data = await res.json()
