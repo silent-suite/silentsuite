@@ -1,12 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 280" font-family="'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 280" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif">
   <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#f8fafc"/>
       <stop offset="100%" stop-color="#f0fdf4"/>
     </linearGradient>
+    <linearGradient id="bgGradDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0f1a14"/>
+    </linearGradient>
     <linearGradient id="navyGrad" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#455B7A"/>
       <stop offset="100%" stop-color="#253549"/>
+    </linearGradient>
+    <linearGradient id="navyGradDark" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#677FA3"/>
+      <stop offset="100%" stop-color="#455B7A"/>
     </linearGradient>
     <linearGradient id="tealGrad" x1="0%" y1="0%" x2="0%" y2="100%">
       <stop offset="0%" stop-color="#34d399"/>
@@ -16,102 +24,140 @@
       <stop offset="0%" stop-color="#eff6ff"/>
       <stop offset="100%" stop-color="#dbeafe"/>
     </linearGradient>
+    <linearGradient id="screenGradDark" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#1e3a5f"/>
+    </linearGradient>
     <filter id="shadow" x="-6%" y="-6%" width="112%" height="120%">
       <feDropShadow dx="0" dy="3" stdDeviation="6" flood-opacity="0.10"/>
     </filter>
-    <filter id="softShadow" x="-4%" y="-4%" width="108%" height="112%">
-      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.08"/>
+    <filter id="shadowDark" x="-6%" y="-6%" width="112%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-opacity="0.25"/>
     </filter>
   </defs>
 
+  <style>
+    .bg { fill: url(#bgGrad); }
+    .device-fill { fill: url(#navyGrad); }
+    .screen-fill { fill: url(#screenGrad); }
+    .server-body { fill: white; stroke: #e2e8f0; }
+    .server-header { fill: url(#navyGrad); }
+    .server-row { fill: #f1f5f9; stroke: #e2e8f0; }
+    .cipher-text { fill: #94a3b8; }
+    .no-keys-bg { fill: #fef2f2; stroke: #fca5a5; }
+    .no-keys-text { fill: #dc2626; }
+    .label-main { fill: #253549; }
+    .label-teal { fill: #10b981; }
+    .label-muted { fill: #253549; opacity: 0.5; }
+    .callout-bg { fill: #ecfdf5; }
+    .callout-text { fill: #059669; }
+    .dot-cal { fill: #c7d2fe; opacity: 0.7; }
+    .dot-task { fill: #bbf7d0; opacity: 0.6; }
+    .keyboard { fill: #e2e8f0; }
+    .keyboard-track { fill: #cbd5e1; }
+    .home-indicator { fill: #94a3b8; }
+
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: url(#bgGradDark); }
+      .device-fill { fill: url(#navyGradDark); }
+      .screen-fill { fill: url(#screenGradDark); }
+      .server-body { fill: #1f2937; stroke: #374151; }
+      .server-header { fill: url(#navyGradDark); }
+      .server-row { fill: #1f2937; stroke: #374151; }
+      .cipher-text { fill: #6b7280; }
+      .no-keys-bg { fill: #450a0a; stroke: #991b1b; }
+      .no-keys-text { fill: #fca5a5; }
+      .label-main { fill: #e2e8f0; }
+      .label-teal { fill: #34d399; }
+      .label-muted { fill: #e2e8f0; opacity: 0.5; }
+      .callout-bg { fill: #064e3b; }
+      .callout-text { fill: #34d399; }
+      .dot-cal { fill: #3b4f7a; opacity: 0.7; }
+      .dot-task { fill: #2d5a3d; opacity: 0.6; }
+      .keyboard { fill: #374151; }
+      .keyboard-track { fill: #4b5563; }
+      .home-indicator { fill: #6b7280; }
+    }
+  </style>
+
   <!-- Background -->
-  <rect width="820" height="280" rx="16" fill="url(#bgGrad)"/>
+  <rect class="bg" width="820" height="280" rx="16"/>
 
   <!-- ====== LEFT DEVICE (laptop) ====== -->
   <g filter="url(#shadow)">
-    <!-- Screen bezel -->
-    <rect x="30" y="52" width="200" height="130" rx="10" fill="url(#navyGrad)"/>
-    <!-- Screen -->
-    <rect x="38" y="60" width="184" height="106" rx="6" fill="url(#screenGrad)"/>
-    <!-- Lock icon centered on screen -->
+    <rect class="device-fill" x="30" y="52" width="200" height="130" rx="10"/>
+    <rect class="screen-fill" x="38" y="60" width="184" height="106" rx="6"/>
+    <!-- Lock icon -->
     <rect x="115" y="88" width="30" height="24" rx="5" fill="url(#tealGrad)"/>
     <path d="M122 88 V80 A8 8 0 0 1 138 80 V88" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round"/>
     <circle cx="130" cy="99" r="3" fill="white"/>
-    <!-- Small calendar dots on screen -->
-    <rect x="50" y="126" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
-    <rect x="74" y="126" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
-    <rect x="98" y="126" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
-    <rect x="50" y="136" width="40" height="6" rx="2" fill="#bbf7d0" opacity="0.6"/>
-    <rect x="94" y="136" width="40" height="6" rx="2" fill="#bbf7d0" opacity="0.6"/>
-    <!-- Keyboard base -->
-    <path d="M20 182 L230 182 L220 196 L30 196 Z" fill="#e2e8f0"/>
-    <rect x="85" y="182" width="80" height="5" rx="2" fill="#cbd5e1"/>
+    <!-- Calendar dots -->
+    <rect class="dot-cal" x="50" y="126" width="20" height="6" rx="2"/>
+    <rect class="dot-cal" x="74" y="126" width="20" height="6" rx="2"/>
+    <rect class="dot-cal" x="98" y="126" width="20" height="6" rx="2"/>
+    <rect class="dot-task" x="50" y="136" width="40" height="6" rx="2"/>
+    <rect class="dot-task" x="94" y="136" width="40" height="6" rx="2"/>
+    <!-- Keyboard -->
+    <path class="keyboard" d="M20 182 L230 182 L220 196 L30 196 Z"/>
+    <rect class="keyboard-track" x="85" y="182" width="80" height="5" rx="2"/>
   </g>
-  <text x="130" y="218" text-anchor="middle" fill="#253549" font-size="13" font-weight="600">Your Device</text>
-  <text x="130" y="234" text-anchor="middle" fill="#10b981" font-size="11" font-weight="500">🔑 Encrypt locally</text>
+  <text class="label-main" x="130" y="218" text-anchor="middle" font-size="13" font-weight="600">Your Device</text>
+  <text class="label-teal" x="130" y="234" text-anchor="middle" font-size="11" font-weight="500">Encrypt locally</text>
 
-  <!-- ====== ENCRYPTED ARROW LEFT → CENTER ====== -->
-  <g>
-    <line x1="245" y1="130" x2="315" y2="130" stroke="#10b981" stroke-width="2.5" stroke-dasharray="7 4"/>
-    <polygon points="313,124 325,130 313,136" fill="#10b981"/>
-    <!-- Ciphertext label -->
-    <rect x="253" y="106" width="66" height="20" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="1"/>
-    <text x="286" y="120" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="600" font-family="monospace">cipher­text</text>
-  </g>
+  <!-- ====== ARROW LEFT → CENTER ====== -->
+  <line x1="245" y1="130" x2="315" y2="130" stroke="#10b981" stroke-width="2.5" stroke-dasharray="7 4"/>
+  <polygon points="313,124 325,130 313,136" fill="#10b981"/>
+  <rect x="253" y="106" width="66" height="20" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="1"/>
+  <text x="286" y="120" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="600" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace">ciphertext</text>
 
   <!-- ====== CENTER SERVER ====== -->
   <g filter="url(#shadow)">
-    <rect x="330" y="45" width="160" height="170" rx="12" fill="white" stroke="#e2e8f0" stroke-width="1"/>
-    <!-- Header bar -->
-    <rect x="330" y="45" width="160" height="38" rx="12" fill="url(#navyGrad)"/>
-    <rect x="330" y="71" width="160" height="12" fill="url(#navyGrad)"/>
-    <text x="410" y="70" text-anchor="middle" fill="white" font-size="12" font-weight="600">🖥️ Server</text>
-    <!-- Server rack lines -->
-    <rect x="350" y="98" width="120" height="16" rx="4" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.7"/>
-    <rect x="350" y="118" width="120" height="16" rx="4" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.7"/>
-    <rect x="350" y="138" width="120" height="16" rx="4" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.7"/>
-    <rect x="350" y="158" width="120" height="16" rx="4" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="0.7"/>
+    <rect class="server-body" x="330" y="45" width="160" height="170" rx="12" stroke-width="1"/>
+    <rect class="server-header" x="330" y="45" width="160" height="38" rx="12"/>
+    <rect class="server-header" x="330" y="71" width="160" height="12"/>
+    <text x="410" y="70" text-anchor="middle" fill="white" font-size="12" font-weight="600">Server</text>
+    <!-- Server rack -->
+    <rect class="server-row" x="350" y="98" width="120" height="16" rx="4" stroke-width="0.7"/>
+    <rect class="server-row" x="350" y="118" width="120" height="16" rx="4" stroke-width="0.7"/>
+    <rect class="server-row" x="350" y="138" width="120" height="16" rx="4" stroke-width="0.7"/>
+    <rect class="server-row" x="350" y="158" width="120" height="16" rx="4" stroke-width="0.7"/>
     <!-- Ciphertext content -->
-    <text x="410" y="111" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">a7f3…b2c1</text>
-    <text x="410" y="131" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">9e2d…4f8a</text>
-    <text x="410" y="151" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">c1b8…e3d7</text>
-    <text x="410" y="171" text-anchor="middle" fill="#94a3b8" font-size="9" font-family="monospace">5f9a…d2c4</text>
-    <!-- No-key badge -->
-    <rect x="370" y="190" width="80" height="18" rx="9" fill="#fef2f2" stroke="#fca5a5" stroke-width="0.7"/>
-    <text x="410" y="203" text-anchor="middle" fill="#dc2626" font-size="8.5" font-weight="600">🚫 No keys</text>
+    <text class="cipher-text" x="410" y="111" text-anchor="middle" font-size="9" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace">a7f3&#x2026;b2c1</text>
+    <text class="cipher-text" x="410" y="131" text-anchor="middle" font-size="9" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace">9e2d&#x2026;4f8a</text>
+    <text class="cipher-text" x="410" y="151" text-anchor="middle" font-size="9" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace">c1b8&#x2026;e3d7</text>
+    <text class="cipher-text" x="410" y="171" text-anchor="middle" font-size="9" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace">5f9a&#x2026;d2c4</text>
+    <!-- No-keys badge -->
+    <rect class="no-keys-bg" x="370" y="190" width="80" height="18" rx="9" stroke-width="0.7"/>
+    <text class="no-keys-text" x="410" y="203" text-anchor="middle" font-size="8.5" font-weight="600">No keys</text>
   </g>
 
-  <!-- ====== ENCRYPTED ARROW CENTER → RIGHT ====== -->
-  <g>
-    <line x1="505" y1="130" x2="575" y2="130" stroke="#10b981" stroke-width="2.5" stroke-dasharray="7 4"/>
-    <polygon points="573,124 585,130 573,136" fill="#10b981"/>
-    <rect x="513" y="106" width="66" height="20" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="1"/>
-    <text x="546" y="120" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="600" font-family="monospace">cipher­text</text>
-  </g>
+  <!-- ====== ARROW CENTER → RIGHT ====== -->
+  <line x1="505" y1="130" x2="575" y2="130" stroke="#10b981" stroke-width="2.5" stroke-dasharray="7 4"/>
+  <polygon points="573,124 585,130 573,136" fill="#10b981"/>
+  <rect x="513" y="106" width="66" height="20" rx="10" fill="#ecfdf5" stroke="#10b981" stroke-width="1"/>
+  <text x="546" y="120" text-anchor="middle" fill="#059669" font-size="9.5" font-weight="600" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace">ciphertext</text>
 
   <!-- ====== RIGHT DEVICE (phone) ====== -->
   <g filter="url(#shadow)">
-    <!-- Phone body -->
-    <rect x="595" y="52" width="110" height="195" rx="16" fill="url(#navyGrad)"/>
-    <!-- Screen -->
-    <rect x="603" y="68" width="94" height="155" rx="10" fill="url(#screenGrad)"/>
+    <rect class="device-fill" x="595" y="52" width="110" height="195" rx="16"/>
+    <rect class="screen-fill" x="603" y="68" width="94" height="155" rx="10"/>
     <!-- Notch -->
     <rect x="633" y="58" width="34" height="8" rx="4" fill="#1B2838"/>
-    <!-- Unlock icon -->
-    <rect x="630" y="96" width="30" height="24" rx="5" fill="url(#tealGrad)"/>
-    <path d="M652 96 V88 A8 8 0 0 1 668 88 V96" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round"/>
-    <circle cx="645" cy="95" r="2.5" fill="white"/>
-    <!-- Small calendar dots -->
-    <rect x="612" y="136" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
-    <rect x="636" y="136" width="20" height="6" rx="2" fill="#c7d2fe" opacity="0.7"/>
-    <rect x="612" y="148" width="40" height="6" rx="2" fill="#bbf7d0" opacity="0.6"/>
+    <!-- Unlock icon (centered at x=650, body width=30 from x=635 to x=665) -->
+    <rect x="635" y="96" width="30" height="24" rx="5" fill="url(#tealGrad)"/>
+    <path d="M649 96 V88 A8 8 0 0 1 665 88 V96" fill="none" stroke="#10b981" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="645" cy="107" r="3" fill="white"/>
+    <!-- Calendar dots -->
+    <rect class="dot-cal" x="612" y="136" width="20" height="6" rx="2"/>
+    <rect class="dot-cal" x="636" y="136" width="20" height="6" rx="2"/>
+    <rect class="dot-task" x="612" y="148" width="40" height="6" rx="2"/>
     <!-- Home indicator -->
-    <rect x="633" y="218" width="34" height="4" rx="2" fill="#94a3b8"/>
+    <rect class="home-indicator" x="633" y="218" width="34" height="4" rx="2"/>
   </g>
-  <text x="650" y="237" text-anchor="middle" fill="#10b981" font-size="11" font-weight="500">🔓 Decrypt locally</text>
-  <text x="650" y="252" text-anchor="middle" fill="#253549" font-size="9" opacity="0.5">with your key</text>
+  <text class="label-teal" x="650" y="237" text-anchor="middle" font-size="11" font-weight="500">Decrypt locally</text>
+  <text class="label-muted" x="650" y="252" text-anchor="middle" font-size="9">with your key</text>
 
   <!-- ====== BOTTOM CALLOUT ====== -->
-  <rect x="200" y="262" width="420" height="14" rx="7" fill="#ecfdf5"/>
-  <text x="410" y="274" text-anchor="middle" fill="#059669" font-size="11.5" font-weight="600">🔒 The server never has your keys — it never sees your plaintext.</text>
+  <rect class="callout-bg" x="200" y="262" width="420" height="14" rx="7"/>
+  <text class="callout-text" x="410" y="274" text-anchor="middle" font-size="11.5" font-weight="600">The server never has your keys &#x2014; it never sees your plaintext.</text>
 </svg>
