@@ -89,6 +89,7 @@ export function toVTodo(task: Task): string {
     description: task.description || undefined,
     priority: PRIORITY_TO_ICAL[task.priority],
     status: task.completed ? 'COMPLETED' : 'NEEDS-ACTION',
+    percentComplete: task.completed ? 100 : 0,
     created: formatICalDateTime(task.created_at),
     lastModified: formatICalDateTime(task.updated_at),
   };
@@ -118,7 +119,9 @@ export function fromVTodo(vtodoStr: string): Task {
   const now = new Date();
 
   const due_date = vtodo.due ? parseICalDateValue(vtodo.due) : null;
-  const completed = vtodo.status?.toUpperCase() === 'COMPLETED';
+  const completed = vtodo.status?.toUpperCase() === 'COMPLETED'
+    || vtodo.percentComplete === 100
+    || (vtodo.status === undefined && vtodo.completed !== undefined);
 
   return {
     id: vtodo.uid,

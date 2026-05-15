@@ -38,6 +38,13 @@ interface PendingSignup {
   provisionedSubscriptionStatus?: string
 }
 
+interface SignupResult {
+  clientSecret: string | null
+  cryptoCheckoutUrl: string | null
+  cryptoInvoiceId: string | null
+  cryptoInvoiceLookupToken: string | null
+}
+
 /** Shape of the data persisted to sessionStorage for surviving Stripe 3DS redirects. */
 export interface RedirectSignupState {
   pendingSignup: PendingSignup
@@ -56,7 +63,7 @@ interface AuthState {
   isReadOnly: () => boolean
   canWrite: () => boolean
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
-  signup: (planId: string, trialPath: string, promoCode?: string) => Promise<string | null>
+  signup: (planId: string, trialPath: string, promoCode?: string) => Promise<SignupResult>
   /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
   completeSignup: () => void
   login: (email: string, password: string, serverUrl?: string) => Promise<void>
@@ -207,7 +214,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         },
         isLoading: false,
       })
-      return null
+      return { clientSecret: null, cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null }
     }
 
     const pending = get().pendingSignup
@@ -242,11 +249,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         pendingSignup: {
           ...pending,
           provisionedUser: { id: data.id, planId, isAdmin },
-          provisionedSubscriptionStatus: 'trialing',
+            provisionedSubscriptionStatus: data.provisioningStatus ?? 'trialing',
         },
         isLoading: false,
       })
-      return (data.clientSecret as string) ?? null
+      return {
+        clientSecret: (data.clientSecret as string | null) ?? null,
+        cryptoCheckoutUrl: (data.cryptoCheckoutUrl as string | null) ?? null,
+        cryptoInvoiceId: (data.cryptoInvoiceId as string | null) ?? null,
+        cryptoInvoiceLookupToken: (data.cryptoInvoiceLookupToken as string | null) ?? null,
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Signup failed'
       set({ error: message, isLoading: false })
@@ -315,7 +327,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (res.status === 429) {
         set({ isLoading: false, error: 'Too many attempts. Please try again later.' }); return
       }
-      if (res.status === 404) {
+      if (res.status === 404 || res.status === 409) {
         set({ isLoading: false, error: 'Account not fully set up. Please complete signup first.' }); return
       }
       if (!res.ok) {

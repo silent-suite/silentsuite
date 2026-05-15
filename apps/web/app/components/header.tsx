@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LogOut, ChevronDown, Shield, Settings, Lock } from 'lucide-react'
+import { LogOut, Menu, Shield, Settings, Lock } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { ThemeToggle } from '@/app/components/theme-toggle'
 import { SyncIndicator } from '@/app/components/SyncIndicator'
@@ -105,7 +105,7 @@ export function Header() {
             <span className="hidden max-w-[140px] truncate text-xs text-[rgb(var(--muted))] sm:inline">
               {user?.email}
             </span>
-            <ChevronDown className={`h-4 w-4 text-[rgb(var(--muted))] transition-transform ${menuOpen ? 'rotate-180' : ''}`} />
+            <Menu className="h-4 w-4 text-[rgb(var(--muted))]" />
           </button>
 
           {menuOpen && (

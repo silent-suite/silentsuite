@@ -12,6 +12,7 @@ import { useContactListStore } from '@/app/stores/use-contact-list-store'
 
 interface ContactImportProps {
   onImportComplete: (count: number) => void
+  heading?: string
 }
 
 const PLATFORM_INSTRUCTIONS = [
@@ -57,7 +58,7 @@ function splitVCards(text: string): string[] {
   return cards
 }
 
-export default function ContactImport({ onImportComplete }: ContactImportProps) {
+export default function ContactImport({ onImportComplete, heading }: ContactImportProps) {
   const [contacts, setContacts] = useState<VCard[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
@@ -155,6 +156,11 @@ export default function ContactImport({ onImportComplete }: ContactImportProps) 
 
   return (
     <div className="space-y-4">
+      {heading && (
+        <h2 className="text-lg font-semibold leading-tight text-[rgb(var(--foreground))]">
+          {heading}
+        </h2>
+      )}
       <div className="space-y-1 rounded-lg bg-[rgb(var(--surface))]/50 p-1">
         {PLATFORM_INSTRUCTIONS.map((platform) => (
           <div key={platform.name}>

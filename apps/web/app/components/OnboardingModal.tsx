@@ -326,9 +326,9 @@ export function OnboardingModal() {
         <div className={`onb-transition-slide ${slideClass}`}>
           {step === 0 && <WelcomeSlide onGetStarted={next} />}
           {step === 1 && <ThemeChoiceSlide onNext={next} />}
-          {step === 2 && <CalendarImport onImportComplete={handleCalendarImport} />}
-          {step === 3 && <TaskImport onImportComplete={handleTaskImport} />}
-          {step === 4 && <ContactImport onImportComplete={handleContactImport} />}
+          {step === 2 && <CalendarImport heading="Sync your calendars" onImportComplete={handleCalendarImport} />}
+          {step === 3 && <TaskImport heading="Sync your tasks" onImportComplete={handleTaskImport} />}
+          {step === 4 && <ContactImport heading="Sync your contacts" onImportComplete={handleContactImport} />}
           {step === 5 && <CompletionSlide counts={counts} onFinish={finish} />}
         </div>
 

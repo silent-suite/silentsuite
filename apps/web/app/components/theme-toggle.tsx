@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
-import { Sun, Moon, Monitor, Check } from 'lucide-react'
+import { Sun, Moon, Monitor, Check, SunMoon } from 'lucide-react'
 
 const options = [
   { value: 'light', label: 'Light', icon: Sun },
@@ -60,12 +60,10 @@ export function ThemeToggle() {
   if (!mounted) {
     return (
       <button className="rounded-md p-2" aria-label="Toggle theme">
-        <Monitor className="h-5 w-5 text-[rgb(var(--muted))]" />
+        <SunMoon className="h-5 w-5 text-[rgb(var(--muted))]" />
       </button>
     )
   }
-
-  const ActiveIcon = options.find((o) => o.value === theme)?.icon ?? Monitor
 
   return (
     <div ref={ref} className="relative">
@@ -76,7 +74,7 @@ export function ThemeToggle() {
         aria-haspopup="true"
         aria-expanded={open}
       >
-        <ActiveIcon className="h-4 w-4 text-[rgb(var(--foreground))]" />
+        <SunMoon className="h-4 w-4 text-[rgb(var(--foreground))]" />
       </button>
 
       {open && (
