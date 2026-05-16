@@ -424,6 +424,9 @@ function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession
         const data = await res.json()
         if (cancelled) return
         const methods = Array.isArray(data.paymentMethods) ? data.paymentMethods as CryptoPaymentMethod[] : []
+        if (!methods.some((method) => method.qrValue || method.paymentLink || method.address)) {
+          throw new Error('Could not load Bitcoin payment details.')
+        }
         setPaymentMethods(methods)
         setSelectedMethodId(methods[0]?.id ?? null)
         setStatus('pending')
@@ -502,8 +505,11 @@ function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession
           This Bitcoin invoice expired. Go back and start a new Bitcoin invoice.
         </div>
       ) : status === 'error' ? (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-400">
-          {error ?? 'Could not load Bitcoin payment details.'}
+        <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-400">
+          <p>{error ?? 'Could not load Bitcoin payment details.'}</p>
+          <Link href={session.checkoutUrl} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-200 shadow-sm transition-colors hover:bg-red-500/10">
+            Open in BTCPay instead
+          </Link>
         </div>
       ) : selectedMethod && qrValue ? (
         <div className="space-y-4">
