@@ -10,6 +10,7 @@ package io.silentsuite.sync.ui
 
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.app.Activity
 import android.content.*
 import android.content.ContentResolver.SYNC_OBSERVER_TYPE_ACTIVE
 import android.content.ContentResolver.SYNC_OBSERVER_TYPE_SETTINGS
@@ -47,6 +48,8 @@ import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
 import io.silentsuite.sync.Constants.KEY_ACCOUNT
 import io.silentsuite.sync.billing.BillingManager
+import io.silentsuite.sync.dataexport.AndroidDataExporter
+import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalAddressBook
@@ -63,6 +66,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.util.logging.Level
 
 class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMenu.OnMenuItemClickListener, Refreshable, NavigationView.OnNavigationItemSelectedListener, SyncStatusObserver {
@@ -82,6 +86,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private var syncStatusSnackbar: Snackbar? = null
     private var syncStatusObserver: Any? = null
     private var accountListExpanded = false
+    private var pendingExportKind: AndroidExportKind? = null
 
     private val onItemClickListener = AdapterView.OnItemClickListener { parent, view, position, _ ->
         val list = parent as ListView
@@ -133,6 +138,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         title = account.name
         settings = AccountSettings(this, account)
+        pendingExportKind = savedInstanceState?.getString(KEY_PENDING_EXPORT_KIND)?.let { name ->
+            runCatching { AndroidExportKind.valueOf(name) }.getOrNull()
+        }
 
         // TODO(Phase2): Set username in Sentry crash reporting context
 
@@ -213,6 +221,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         PermissionsActivity.requestAllPermissions(this)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        pendingExportKind?.let { outState.putString(KEY_PENDING_EXPORT_KIND, it.name) }
     }
 
     private fun setupNavHeader(navigationView: NavigationView) {
@@ -396,6 +409,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             R.id.nav_app_settings -> startActivity(Intent(this, AppSettingsActivity::class.java))
             R.id.nav_invitations -> startActivity(InvitationsActivity.newIntent(this, account))
             R.id.nav_show_fingerprint -> showFingerprintDialog()
+            R.id.nav_export_data -> showExportDialog()
             R.id.nav_website -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webUri))
             R.id.nav_webapp -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webAppUri))
             R.id.nav_guide -> startActivity(Intent(Intent.ACTION_VIEW, Constants.docsUri))
@@ -407,6 +421,54 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val drawer = findViewById<DrawerLayout>(R.id.drawer_layout)
         drawer.closeDrawer(GravityCompat.START)
         return true
+    }
+
+    private fun showExportDialog() {
+        val exportKinds = AndroidExportKind.values()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.export_data_title)
+            .setItems(exportKinds.map { it.displayName }.toTypedArray()) { _, which ->
+                createExportDocument(exportKinds[which])
+            }
+            .show()
+    }
+
+    private fun createExportDocument(kind: AndroidExportKind) {
+        pendingExportKind = kind
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = kind.mimeType
+            putExtra(Intent.EXTRA_TITLE, AndroidDataExporter.suggestedFileName(kind))
+        }
+        startActivityForResult(intent, REQUEST_CREATE_EXPORT_DOCUMENT)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_CREATE_EXPORT_DOCUMENT)
+            return
+
+        val kind = pendingExportKind.also { pendingExportKind = null } ?: return
+        val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+        if (uri == null)
+            return
+
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val outputStream = contentResolver.openOutputStream(uri)
+                        ?: throw IOException("Could not open export destination")
+                    outputStream.use {
+                        AndroidDataExporter.writeExport(this@AccountActivity, account, kind, it)
+                    }
+                }
+                Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_success, Snackbar.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Logger.log.log(Level.SEVERE, "Android data export failed", e)
+                Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_failed, Snackbar.LENGTH_LONG).show()
+            }
+        }
     }
 
     // SyncStatusObserver (moved from AccountsActivity)
@@ -845,6 +907,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     companion object {
         val EXTRA_ACCOUNT = "account"
+        private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
+        private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
     }
 
 }

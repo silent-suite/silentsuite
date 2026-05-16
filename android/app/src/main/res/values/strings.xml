@@ -156,6 +156,9 @@
     <string name="account_showcase_view_collection">Tap a collection to view sync history, import data, or manage members.</string>
     <string name="account_click_install_tasks">Click here to install OpenTasks!</string>
     <string name="account_tasks_not_showing">Tasks sync requires a task app (Tasks.org or OpenTasks)</string>
+    <string name="export_data_title">Export data</string>
+    <string name="export_data_success">Export saved</string>
+    <string name="export_data_failed">Export failed</string>
 
     <string name="show_fingperprint_title">Your Encryption Fingerprint</string>
 

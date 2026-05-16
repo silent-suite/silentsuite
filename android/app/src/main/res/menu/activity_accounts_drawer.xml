@@ -40,6 +40,10 @@
             android:icon="@drawable/ic_fingerprint_dark"
             android:title="@string/account_show_fingerprint"/>
         <item
+            android:id="@+id/nav_export_data"
+            android:icon="@drawable/ic_import_export_black"
+            android:title="@string/export_data_title"/>
+        <item
             android:id="@+id/nav_theme"
             android:icon="@drawable/ic_palette"
             android:title="@string/navigation_drawer_theme"/>
