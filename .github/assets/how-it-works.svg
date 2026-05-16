@@ -72,7 +72,7 @@
       .accent { fill: #047857; }
       .muted-line { fill: #64748b; }
       .secondary-line { fill: #93c5fd; }
-      .code { fill: #64748b; }
+      .code { fill: #475569; }
       .arrow { stroke: #10b981; }
       .arrow-head { fill: #10b981; }
       .arrow-chip { fill: #ecfdf5; stroke: #34d399; }

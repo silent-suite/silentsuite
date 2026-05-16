@@ -22,7 +22,7 @@ Plaintext stays off the server; keys stay on-device.
 
 <br /><br />
 
-[**⭐ Star this repo to track F-Droid + Google Play launch notes**](https://github.com/silent-suite/silentsuite/stargazers) · [Create your account](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
+[**⭐ Star this repo to help early testers find SilentSuite**](https://github.com/silent-suite/silentsuite/stargazers) · [Create your account](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
 
 </div>
 
@@ -102,6 +102,8 @@ Useful feedback right now:
 Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with logs/screenshots where useful. Do not paste secrets, passwords, or private calendar/contact data.
 
 Security issues: email <info@silentsuite.io> rather than opening a public issue.
+
+Bug reports, feature requests, and PRs are welcome.
 
 ## Docs
 
