@@ -89,13 +89,13 @@ interface AuthState {
    * flow survives a full-page Stripe 3DS redirect. sessionStorage is scoped to
    * the tab and cleared on close, which is a tighter blast radius than
    * localStorage for the etebaseAuthToken this blob carries. The data is also
-   * cleared on first read and rejected if older than 10 minutes.
+   * cleared on first read and rejected if older than 2 hours.
    */
   saveSignupStateForRedirect: (selectedInterval: 'monthly' | 'annual') => void
   /**
    * Restore signup state saved before a Stripe 3DS redirect.
    * Returns the saved data and removes it from sessionStorage (one-time use).
-   * Returns null if no data exists or if it is older than 10 minutes.
+   * Returns null if no data exists or if it is older than 2 hours.
    */
   restoreSignupStateFromRedirect: () => RedirectSignupState | null
 }
@@ -634,10 +634,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         logger.warn('[auth-store] Redirect signup state is malformed, discarding')
         return null
       }
-      // Reject if older than 10 minutes
-      const TEN_MINUTES = 10 * 60 * 1000
-      if (Date.now() - data.savedAt > TEN_MINUTES) {
-        logger.warn('[auth-store] Redirect signup state expired (>10 min old)')
+      // Reject if older than 2 hours. Bitcoin settlement can outlive the old
+      // 10-minute Stripe-only window, but this is still tab-scoped sessionStorage.
+      const TWO_HOURS = 2 * 60 * 60 * 1000
+      if (Date.now() - data.savedAt > TWO_HOURS) {
+        logger.warn('[auth-store] Redirect signup state expired (>2h old)')
         return null
       }
       // Restore pendingSignup into the Zustand store and re-set the signup-in-progress

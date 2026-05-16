@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   XCircle,
   ArrowRight,
+  Bitcoin,
 } from 'lucide-react'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 
@@ -53,6 +54,17 @@ interface EventsPage {
   offset: number
 }
 
+interface PaymentSummary {
+  provider: string
+  providerInvoiceId: string
+  status: string
+  amount: string
+  currency: string
+  billingInterval: string
+  createdAt: string
+  periodEndsAt: string | null
+}
+
 interface LookedUpUser {
   id: string
   email: string
@@ -63,10 +75,12 @@ interface LookedUpUser {
   currentPeriodEnd: string | null
   stripeCustomerId: string | null
   foundingMember: boolean
+  provisioningStatus?: string
   emailVerified?: boolean
   wantsProductUpdates?: boolean
   trialPath?: string | null
   earlyAdopter?: boolean
+  latestPayment?: PaymentSummary | null
 }
 
 interface UserListItem {
@@ -81,6 +95,8 @@ interface UserListItem {
   wantsProductUpdates?: boolean
   trialPath?: string | null
   earlyAdopter?: boolean
+  stripeCustomerId?: string | null
+  latestPayment?: PaymentSummary | null
 }
 
 interface EmailRecord {
@@ -210,6 +226,53 @@ function StatusBadge({ status }: { status: string }) {
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium capitalize ${c.bg} ${c.text}`}>
       {c.label}
     </span>
+  )
+}
+
+function PaymentMethodBadge({ user }: { user: { latestPayment?: PaymentSummary | null; stripeCustomerId?: string | null; trialPath?: string | null } }) {
+  const payment = user.latestPayment
+  if (payment?.provider === 'btcpay') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+        <Bitcoin className="h-3 w-3" /> Bitcoin
+      </span>
+    )
+  }
+  if (user.stripeCustomerId) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-600 dark:text-blue-300">
+        <CreditCard className="h-3 w-3" /> Card
+      </span>
+    )
+  }
+  if (user.trialPath === '7day') {
+    return <span className="text-xs text-[rgb(var(--muted))]">No card</span>
+  }
+  return <span className="text-xs text-[rgb(var(--muted))]">—</span>
+}
+
+function PaymentDetail({ payment }: { payment?: PaymentSummary | null }) {
+  if (!payment) return null
+  return (
+    <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-3 sm:col-span-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs text-[rgb(var(--muted))]">Latest payment</p>
+          <p className="text-sm font-medium text-[rgb(var(--foreground))]">
+            {payment.provider === 'btcpay' ? 'BTCPay / Bitcoin' : payment.provider} · {payment.status.replace(/_/g, ' ')}
+          </p>
+        </div>
+        <p className="text-sm font-medium text-[rgb(var(--foreground))]">
+          {payment.amount} {payment.currency} / {payment.billingInterval}
+        </p>
+      </div>
+      <p className="mt-2 break-all text-xs font-mono text-[rgb(var(--muted))]">
+        Invoice: {payment.providerInvoiceId}
+      </p>
+      {payment.periodEndsAt && (
+        <p className="mt-1 text-xs text-[rgb(var(--muted))]">Access through {formatShortDate(payment.periodEndsAt)}</p>
+      )}
+    </div>
   )
 }
 
@@ -1083,6 +1146,7 @@ function RecentSignupsCard({
               <li key={u.id} className="flex items-center justify-between gap-3 py-2 text-xs">
                 <div className="flex items-center gap-2 min-w-0">
                   <StatusBadge status={u.subscriptionStatus} />
+                  <PaymentMethodBadge user={u} />
                   <span className="font-mono truncate text-[rgb(var(--foreground))]">{u.email}</span>
                 </div>
                 <span className="shrink-0 text-[rgb(var(--muted))]">{relativeTime(new Date(u.createdAt).getTime(), now)}</span>
@@ -1430,6 +1494,10 @@ function UserLookupTab() {
               </p>
             </div>
             <div>
+              <p className="text-xs text-[rgb(var(--muted))]">Payment Method</p>
+              <div className="mt-1"><PaymentMethodBadge user={lookupUser} /></div>
+            </div>
+            <div>
               <p className="text-xs text-[rgb(var(--muted))]">Founding Member</p>
               <p className={`text-sm font-medium ${(lookupUser.foundingMember || lookupUser.earlyAdopter) ? 'text-emerald-500' : 'text-[rgb(var(--muted))]'}`}>
                 {(lookupUser.foundingMember || lookupUser.earlyAdopter) ? 'Yes' : 'No'}
@@ -1471,6 +1539,7 @@ function UserLookupTab() {
                 <p className="text-sm font-mono text-[rgb(var(--foreground))]">{lookupUser.stripeCustomerId}</p>
               </div>
             )}
+            <PaymentDetail payment={lookupUser.latestPayment} />
           </div>
 
           {/* Emails Sent */}
@@ -1520,6 +1589,7 @@ function UserLookupTab() {
               <tr className="border-b border-[rgb(var(--border))] text-left">
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Email</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Status</th>
+                <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Payment</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Plan</th>
                 <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Verified</th>
                 <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Updates</th>
@@ -1533,13 +1603,13 @@ function UserLookupTab() {
             <tbody>
               {usersLoading && !usersPage ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
+                  <td colSpan={11} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
                     Loading users...
                   </td>
                 </tr>
               ) : filteredUsers?.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
+                  <td colSpan={11} className="px-4 py-8 text-center text-xs text-[rgb(var(--muted))]">
                     {tableFilter ? 'No users match filter' : 'No users found'}
                   </td>
                 </tr>
@@ -1553,6 +1623,9 @@ function UserLookupTab() {
                     <td className="px-4 py-2.5 text-sm text-[rgb(var(--foreground))] font-mono truncate max-w-[200px]">{u.email}</td>
                     <td className="px-4 py-2.5">
                       <StatusBadge status={u.subscriptionStatus} />
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <PaymentMethodBadge user={u} />
                     </td>
                     <td className="px-4 py-2.5 text-xs text-[rgb(var(--foreground))] capitalize">
                       {u.planId?.replace(/_/g, ' ') ?? '—'}

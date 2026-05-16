@@ -5,23 +5,33 @@ import Link from 'next/link'
 import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
+import { useAuthStore } from '@/app/stores/use-auth-store'
+import { StepCreateVault } from '../components/step-create-vault'
 
-type PaymentState = 'pending' | 'settled' | 'expired' | 'timeout' | 'unknown'
+type PaymentState = 'pending' | 'settled' | 'vault' | 'expired' | 'timeout' | 'unknown'
 
 const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
 
-function clearPendingCryptoSignup() {
+function clearPendingCryptoPaymentSession() {
   sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
   sessionStorage.removeItem('silentsuite-pending-crypto-token')
   sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
+}
+
+function clearPendingCryptoSignup() {
+  clearPendingCryptoPaymentSession()
   sessionStorage.removeItem('silentsuite-signup-in-progress')
 }
 
 export default function PendingPaymentPage() {
+  const completeSignup = useAuthStore((s) => s.completeSignup)
+  const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
+  const pendingSignup = useAuthStore((s) => s.pendingSignup)
   const [invoiceId, setInvoiceId] = useState<string | null>(null)
   const [returnTo, setReturnTo] = useState<string | null>(null)
   const [showReturnFallback, setShowReturnFallback] = useState(false)
   const [state, setState] = useState<PaymentState>('pending')
+  const [restoredEmail, setRestoredEmail] = useState('')
   const [pollNonce, setPollNonce] = useState(0)
   const [restarting, setRestarting] = useState(false)
   const [restartError, setRestartError] = useState<string | null>(null)
@@ -65,8 +75,16 @@ export default function PendingPaymentPage() {
           sessionStorage.setItem('silentsuite-pending-crypto-invoice', data.invoiceId)
         }
         if (data.status === 'settled') {
-          setState('settled')
-          clearPendingCryptoSignup()
+          clearPendingCryptoPaymentSession()
+          const restored = restoreSignupStateFromRedirect()
+          const email = restored?.pendingSignup.email ?? pendingSignup?.email ?? ''
+          if (email && useAuthStore.getState().pendingSignup?.provisionedUser) {
+            setRestoredEmail(email)
+            setState('vault')
+          } else {
+            clearPendingCryptoSignup()
+            setState('settled')
+          }
         } else if (data.status === 'expired' || data.status === 'invalid') {
           setState('expired')
           clearPendingCryptoSignup()
@@ -104,7 +122,20 @@ export default function PendingPaymentPage() {
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [pollNonce])
+  }, [pendingSignup?.email, pollNonce, restoreSignupStateFromRedirect])
+
+  function handleVaultComplete() {
+    completeSignup()
+    if (returnTo) {
+      setShowReturnFallback(false)
+      window.location.href = returnTo
+      window.setTimeout(() => {
+        if (document.visibilityState === 'visible') setShowReturnFallback(true)
+      }, 2000)
+      return
+    }
+    window.location.href = '/'
+  }
 
   function handleSettledContinue() {
     if (returnTo) {
@@ -169,6 +200,29 @@ export default function PendingPaymentPage() {
       setRestartError(err instanceof Error ? err.message : 'Could not start a new Bitcoin invoice.')
       setRestarting(false)
     }
+  }
+
+  if (state === 'vault') {
+    return (
+      <div className="mx-auto max-w-md space-y-6">
+        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+          <Check className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <div>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Bitcoin payment settled</p>
+            <p className="text-xs text-[rgb(var(--muted))]">One last step - set up your vault.</p>
+          </div>
+        </div>
+        <StepCreateVault email={restoredEmail} onComplete={handleVaultComplete} />
+        {showReturnFallback && returnTo && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
+            <p className="font-medium">Browser did not reopen the Android app automatically.</p>
+            <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+              Tap here to return to Android
+            </a>
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (

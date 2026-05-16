@@ -405,11 +405,21 @@ function StepCreateAccount({
 
 type PlanView = 'cards' | 'method' | 'payment' | 'crypto'
 
-function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession; onBack: () => void }) {
+function CryptoPaymentPanel({
+  session,
+  onBack,
+  onPaymentComplete,
+}: {
+  session: CryptoPaymentSession
+  onBack: () => void
+  onPaymentComplete: () => void
+}) {
+  const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
   const [paymentMethods, setPaymentMethods] = useState<CryptoPaymentMethod[]>([])
   const [selectedMethodId, setSelectedMethodId] = useState<string | null>(null)
   const [status, setStatus] = useState<'loading' | 'pending' | 'settled' | 'expired' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -459,7 +469,8 @@ function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession
           setStatus('settled')
           sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
           sessionStorage.removeItem('silentsuite-pending-crypto-token')
-          sessionStorage.removeItem('silentsuite-signup-in-progress')
+          sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
+          timer = window.setTimeout(onPaymentComplete, 1200)
           return
         }
         if (data.status === 'expired' || data.status === 'invalid') {
@@ -477,10 +488,21 @@ function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [session.invoiceId, session.lookupToken])
+  }, [onPaymentComplete, session.invoiceId, session.lookupToken])
 
   const selectedMethod = paymentMethods.find((method) => method.id === selectedMethodId) ?? paymentMethods[0]
   const qrValue = selectedMethod?.qrValue ?? selectedMethod?.paymentLink ?? selectedMethod?.address ?? ''
+  const handleExternalCheckout = () => saveSignupStateForRedirect('annual')
+
+  async function handleCopyPaymentDetails() {
+    try {
+      await navigator.clipboard.writeText(qrValue)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2500)
+    } catch {
+      setError('Could not copy payment details. Please copy them manually.')
+    }
+  }
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
@@ -493,21 +515,18 @@ function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession
 
       {status === 'settled' ? (
         <div className="space-y-4 text-center">
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
-            Payment settled. Your annual access is active.
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
+            Payment settled. Your annual access is active. Taking you to vault setup...
           </div>
-          <Link href="/" className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
-            Open SilentSuite
-          </Link>
         </div>
       ) : status === 'expired' ? (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-200">
           This Bitcoin invoice expired. Go back and start a new Bitcoin invoice.
         </div>
       ) : status === 'error' ? (
         <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-400">
           <p>{error ?? 'Could not load Bitcoin payment details.'}</p>
-          <Link href={session.checkoutUrl} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-200 shadow-sm transition-colors hover:bg-red-500/10">
+          <Link href={session.checkoutUrl} onClick={handleExternalCheckout} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-500/10 dark:text-red-200">
             Open in BTCPay instead
           </Link>
         </div>
@@ -521,7 +540,7 @@ function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession
                 onClick={() => setSelectedMethodId(method.id)}
                 className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                   selectedMethod.id === method.id
-                    ? 'border-amber-500 bg-amber-500/10 text-amber-200'
+                    ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-200'
                     : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
                 }`}
               >
@@ -543,14 +562,14 @@ function CryptoPaymentPanel({ session, onBack }: { session: CryptoPaymentSession
             <p className="break-all text-xs text-[rgb(var(--muted))]">{selectedMethod.address ?? qrValue}</p>
             <button
               type="button"
-              onClick={() => navigator.clipboard.writeText(qrValue)}
-              className="text-xs text-emerald-400 hover:text-emerald-300"
+              onClick={handleCopyPaymentDetails}
+              className="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
             >
-              Copy payment details
+              {copied ? 'Copied to clipboard' : 'Copy payment details'}
             </button>
           </div>
 
-          <Link href={session.checkoutUrl} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
+          <Link href={session.checkoutUrl} onClick={handleExternalCheckout} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
             Open in BTCPay instead
           </Link>
         </div>
@@ -647,6 +666,7 @@ function StepChoosePlan({
       <CryptoPaymentPanel
         session={cryptoPaymentSession}
         onBack={onBack}
+        onPaymentComplete={onPaymentComplete}
       />
     )
   }
@@ -706,14 +726,14 @@ function StepChoosePlan({
           >
             <div className="flex items-start gap-3">
               <div className="rounded-lg bg-amber-500/10 p-2.5 shrink-0">
-                <Bitcoin className="h-5 w-5 text-amber-400" />
+                <Bitcoin className="h-5 w-5 text-amber-600 dark:text-amber-400" />
               </div>
               <div className="flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-semibold text-[rgb(var(--foreground))]">
                     {interval === 'annual' ? 'Bitcoin with BTCPay' : 'Switch to yearly and pay with Bitcoin'}
                   </h3>
-                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
                     Annual only
                   </span>
                 </div>
