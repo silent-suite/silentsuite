@@ -1,144 +1,105 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 280" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 300" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f8fafc"/>
-      <stop offset="0.52" stop-color="#eef6ff"/>
-      <stop offset="1" stop-color="#ecfdf5"/>
+      <stop offset="0" stop-color="#0b1424"/>
+      <stop offset="0.48" stop-color="#253549"/>
+      <stop offset="1" stop-color="#102c2a"/>
     </linearGradient>
-    <linearGradient id="bgDark" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#07111f"/>
-      <stop offset="0.55" stop-color="#0d1f33"/>
-      <stop offset="1" stop-color="#06251c"/>
-    </linearGradient>
-    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#dbeafe"/>
-    </linearGradient>
-    <linearGradient id="screenDark" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#12223a"/>
-      <stop offset="1" stop-color="#0b1728"/>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111f33" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#172b40" stop-opacity="0.92"/>
     </linearGradient>
     <linearGradient id="device" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#465b7b"/>
-      <stop offset="1" stop-color="#18283d"/>
+      <stop offset="0" stop-color="#677fa3"/>
+      <stop offset="1" stop-color="#253549"/>
     </linearGradient>
-    <linearGradient id="deviceDark" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#7890b5"/>
-      <stop offset="1" stop-color="#354964"/>
+    <linearGradient id="screen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#12243a"/>
+      <stop offset="1" stop-color="#07111f"/>
+    </linearGradient>
+    <linearGradient id="server" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2f48"/>
+      <stop offset="1" stop-color="#0d1b2e"/>
     </linearGradient>
     <linearGradient id="teal" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#5eead4"/>
       <stop offset="1" stop-color="#10b981"/>
     </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="145%">
-      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#0f172a" flood-opacity="0.16"/>
+    <filter id="shadow" x="-18%" y="-18%" width="136%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.42"/>
+    </filter>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
     </filter>
   </defs>
 
-  <style>
-    .bg { fill: url(#bg); }
-    .panel { fill: rgba(255,255,255,0.74); stroke: #dbe7f3; }
-    .device { fill: url(#device); }
-    .screen { fill: url(#screen); stroke: #bfd0e5; }
-    .card { fill: #ffffff; stroke: #dbe7f3; }
-    .server { fill: #ffffff; stroke: #d6e3f0; }
-    .server-top { fill: #253549; }
-    .rack { fill: #f1f5f9; stroke: #dbe7f3; }
-    .title { fill: #0f172a; }
-    .muted { fill: #475569; }
-    .accent { fill: #047857; }
-    .mono { fill: #64748b; }
-    .badge { fill: #ecfdf5; stroke: #6ee7b7; }
-    .danger { fill: #b91c1c; }
-    .arrow { stroke: #10b981; }
-    .arrow-chip { fill: #ecfdf5; stroke: #6ee7b7; }
-    .chrome { fill: #e2e8f0; }
-    .phone-bar { fill: #172033; }
-
-    @media (prefers-color-scheme: dark) {
-      .bg { fill: url(#bgDark); }
-      .panel { fill: rgba(15,23,42,0.72); stroke: #27415f; }
-      .device { fill: url(#deviceDark); }
-      .screen { fill: url(#screenDark); stroke: #49617f; }
-      .card { fill: #172338; stroke: #334963; }
-      .server { fill: #111c2f; stroke: #334963; }
-      .server-top { fill: #587096; }
-      .rack { fill: #0b1424; stroke: #304761; }
-      .title { fill: #f8fafc; }
-      .muted { fill: #cbd5e1; }
-      .accent { fill: #5eead4; }
-      .mono { fill: #cbd5e1; }
-      .badge { fill: #042f2e; stroke: #2dd4bf; }
-      .danger { fill: #fca5a5; }
-      .arrow { stroke: #5eead4; }
-      .arrow-chip { fill: #042f2e; stroke: #2dd4bf; }
-      .chrome { fill: #334155; }
-      .phone-bar { fill: #020617; }
-    }
-  </style>
-
-  <rect class="bg" width="920" height="280" rx="22"/>
-  <rect class="panel" x="26" y="24" width="868" height="232" rx="22"/>
+  <rect width="920" height="300" rx="24" fill="url(#bg)"/>
+  <circle cx="140" cy="58" r="100" fill="#10b981" opacity="0.08"/>
+  <circle cx="792" cy="240" r="116" fill="#34d399" opacity="0.10"/>
+  <rect x="26" y="24" width="868" height="252" rx="24" fill="url(#panel)" stroke="#455b7a" stroke-opacity="0.62"/>
 
   <g filter="url(#shadow)">
-    <rect class="device" x="68" y="66" width="226" height="144" rx="16"/>
-    <rect class="screen" x="80" y="78" width="202" height="118" rx="10"/>
-    <rect class="chrome" x="80" y="78" width="202" height="20" rx="10"/>
-    <circle cx="94" cy="88" r="3.2" fill="#ef4444"/>
-    <circle cx="106" cy="88" r="3.2" fill="#f59e0b"/>
-    <circle cx="118" cy="88" r="3.2" fill="#10b981"/>
-    <rect class="card" x="98" y="112" width="72" height="52" rx="8"/>
-    <rect x="111" y="124" width="46" height="5" rx="2.5" fill="#10b981"/>
-    <rect x="111" y="137" width="34" height="5" rx="2.5" fill="#93c5fd"/>
-    <rect x="111" y="150" width="44" height="5" rx="2.5" fill="#c4b5fd"/>
-    <rect class="card" x="184" y="112" width="70" height="52" rx="8"/>
-    <path d="M202 141 l10 10 24 -28" fill="none" stroke="#10b981" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-    <rect class="device" x="52" y="210" width="258" height="14" rx="7"/>
-    <rect class="screen" x="126" y="211" width="110" height="5" rx="2.5" opacity="0.75"/>
+    <rect x="60" y="68" width="240" height="150" rx="18" fill="url(#device)"/>
+    <rect x="74" y="82" width="212" height="122" rx="12" fill="url(#screen)" stroke="#7890b5" stroke-opacity="0.52"/>
+    <rect x="74" y="82" width="212" height="23" rx="12" fill="#1e314c"/>
+    <circle cx="91" cy="94" r="3.5" fill="#f87171"/>
+    <circle cx="105" cy="94" r="3.5" fill="#fbbf24"/>
+    <circle cx="119" cy="94" r="3.5" fill="#34d399"/>
+    <rect x="96" y="122" width="74" height="56" rx="9" fill="#172a43" stroke="#455b7a"/>
+    <rect x="111" y="136" width="45" height="6" rx="3" fill="#5eead4"/>
+    <rect x="111" y="150" width="34" height="6" rx="3" fill="#93c5fd"/>
+    <rect x="111" y="164" width="46" height="6" rx="3" fill="#677fa3"/>
+    <rect x="188" y="122" width="74" height="56" rx="9" fill="#172a43" stroke="#455b7a"/>
+    <path d="M207 151 l11 11 26 -31" fill="none" stroke="#34d399" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="44" y="218" width="272" height="15" rx="7.5" fill="#253549"/>
+    <rect x="126" y="219" width="108" height="5" rx="2.5" fill="#7890b5" opacity="0.72"/>
   </g>
-  <text class="title" x="181" y="247" text-anchor="middle" font-size="17" font-weight="700">Your device</text>
-  <text class="accent" x="181" y="266" text-anchor="middle" font-size="13" font-weight="650">Encrypt locally</text>
+  <text x="180" y="260" text-anchor="middle" font-size="18" font-weight="800" fill="#f8fafc">Your device</text>
+  <text x="180" y="282" text-anchor="middle" font-size="13" font-weight="750" fill="#5eead4">Encrypts locally</text>
 
-  <line class="arrow" x1="326" y1="142" x2="388" y2="142" stroke-width="4" stroke-linecap="round" stroke-dasharray="9 8"/>
-  <path d="M386 132 L408 142 L386 152 Z" fill="#10b981"/>
-  <rect class="arrow-chip" x="322" y="103" width="86" height="30" rx="15"/>
-  <text class="accent" x="365" y="123" text-anchor="middle" font-size="12" font-weight="750">ciphertext</text>
+  <path d="M328 148 H391" stroke="#5eead4" stroke-width="4" stroke-linecap="round" stroke-dasharray="10 8"/>
+  <path d="M389 137 L413 148 L389 159 Z" fill="#5eead4" filter="url(#glow)"/>
+  <rect x="319" y="105" width="96" height="31" rx="15.5" fill="#062f2d" stroke="#34d399"/>
+  <text x="367" y="126" text-anchor="middle" font-size="12" font-weight="800" fill="#ccfbf1">ciphertext</text>
 
   <g filter="url(#shadow)">
-    <rect class="server" x="408" y="55" width="184" height="172" rx="18"/>
-    <rect class="server-top" x="408" y="55" width="184" height="46" rx="18"/>
-    <rect class="server-top" x="408" y="84" width="184" height="18"/>
-    <text x="500" y="84" text-anchor="middle" fill="#ffffff" font-size="17" font-weight="750">Sync server</text>
-    <rect class="rack" x="432" y="118" width="136" height="24" rx="7"/>
-    <rect class="rack" x="432" y="150" width="136" height="24" rx="7"/>
-    <rect class="rack" x="432" y="182" width="136" height="24" rx="7"/>
-    <text class="mono" x="500" y="135" text-anchor="middle" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">8f2a...91dc</text>
-    <text class="mono" x="500" y="167" text-anchor="middle" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">c7b1...4e08</text>
-    <text class="mono" x="500" y="199" text-anchor="middle" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">a03d...bb62</text>
-    <rect class="badge" x="457" y="222" width="86" height="28" rx="14"/>
-    <text class="danger" x="500" y="241" text-anchor="middle" font-size="12" font-weight="800">No keys</text>
+    <rect x="414" y="56" width="184" height="186" rx="20" fill="url(#server)" stroke="#677fa3" stroke-opacity="0.58"/>
+    <rect x="414" y="56" width="184" height="50" rx="20" fill="#455b7a"/>
+    <rect x="414" y="87" width="184" height="20" fill="#455b7a"/>
+    <text x="506" y="87" text-anchor="middle" fill="#ffffff" font-size="17" font-weight="850">Sync server</text>
+    <rect x="438" y="124" width="136" height="25" rx="7" fill="#0b1728" stroke="#455b7a"/>
+    <rect x="438" y="158" width="136" height="25" rx="7" fill="#0b1728" stroke="#455b7a"/>
+    <rect x="438" y="192" width="136" height="25" rx="7" fill="#0b1728" stroke="#455b7a"/>
+    <text x="506" y="141" text-anchor="middle" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#cbd5e1">8f2a...91dc</text>
+    <text x="506" y="175" text-anchor="middle" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#cbd5e1">c7b1...4e08</text>
+    <text x="506" y="209" text-anchor="middle" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#cbd5e1">a03d...bb62</text>
+    <rect x="458" y="232" width="96" height="30" rx="15" fill="#2d171b" stroke="#f87171"/>
+    <text x="506" y="252" text-anchor="middle" font-size="12" font-weight="900" fill="#fecaca">No keys</text>
   </g>
 
-  <line class="arrow" x1="613" y1="142" x2="675" y2="142" stroke-width="4" stroke-linecap="round" stroke-dasharray="9 8"/>
-  <path d="M673 132 L695 142 L673 152 Z" fill="#10b981"/>
-  <rect class="arrow-chip" x="609" y="103" width="86" height="30" rx="15"/>
-  <text class="accent" x="652" y="123" text-anchor="middle" font-size="12" font-weight="750">ciphertext</text>
+  <path d="M620 148 H683" stroke="#5eead4" stroke-width="4" stroke-linecap="round" stroke-dasharray="10 8"/>
+  <path d="M681 137 L705 148 L681 159 Z" fill="#5eead4" filter="url(#glow)"/>
+  <rect x="611" y="105" width="96" height="31" rx="15.5" fill="#062f2d" stroke="#34d399"/>
+  <text x="659" y="126" text-anchor="middle" font-size="12" font-weight="800" fill="#ccfbf1">ciphertext</text>
 
   <g filter="url(#shadow)">
-    <rect class="device" x="716" y="48" width="126" height="202" rx="28"/>
-    <rect class="screen" x="728" y="64" width="102" height="168" rx="18"/>
-    <rect class="phone-bar" x="760" y="56" width="38" height="7" rx="3.5"/>
-    <rect class="card" x="743" y="88" width="72" height="30" rx="8"/>
-    <rect x="754" y="100" width="50" height="5" rx="2.5" fill="#10b981"/>
-    <rect class="card" x="743" y="128" width="72" height="50" rx="8"/>
-    <circle cx="759" cy="144" r="6" fill="#93c5fd"/>
-    <rect x="772" y="140" width="31" height="5" rx="2.5" fill="#cbd5e1"/>
-    <circle cx="759" cy="163" r="6" fill="#c4b5fd"/>
-    <rect x="772" y="159" width="31" height="5" rx="2.5" fill="#cbd5e1"/>
-    <rect x="762" y="196" width="34" height="5" rx="2.5" fill="#94a3b8"/>
-    <rect x="762" y="209" width="34" height="4" rx="2" fill="#64748b"/>
-    <circle cx="779" cy="231" r="2.5" fill="#94a3b8"/>
+    <rect x="724" y="46" width="128" height="210" rx="30" fill="url(#device)"/>
+    <rect x="737" y="64" width="102" height="174" rx="19" fill="url(#screen)" stroke="#7890b5" stroke-opacity="0.52"/>
+    <rect x="768" y="55" width="40" height="8" rx="4" fill="#07111f"/>
+    <rect x="752" y="90" width="72" height="32" rx="9" fill="#172a43" stroke="#455b7a"/>
+    <rect x="764" y="103" width="48" height="6" rx="3" fill="#5eead4"/>
+    <rect x="752" y="134" width="72" height="54" rx="9" fill="#172a43" stroke="#455b7a"/>
+    <circle cx="768" cy="151" r="6" fill="#93c5fd"/>
+    <rect x="781" y="147" width="31" height="5" rx="2.5" fill="#cbd5e1"/>
+    <circle cx="768" cy="171" r="6" fill="#677fa3"/>
+    <rect x="781" y="167" width="31" height="5" rx="2.5" fill="#cbd5e1"/>
+    <rect x="771" y="205" width="34" height="5" rx="2.5" fill="#7890b5"/>
+    <rect x="771" y="219" width="34" height="4" rx="2" fill="#455b7a"/>
   </g>
-  <text class="title" x="779" y="247" text-anchor="middle" font-size="17" font-weight="700">Your device</text>
-  <text class="accent" x="779" y="266" text-anchor="middle" font-size="13" font-weight="650">Decrypt locally</text>
+  <text x="788" y="260" text-anchor="middle" font-size="18" font-weight="800" fill="#f8fafc">Your device</text>
+  <text x="788" y="282" text-anchor="middle" font-size="13" font-weight="750" fill="#5eead4">Decrypts locally</text>
 </svg>

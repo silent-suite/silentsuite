@@ -22,7 +22,9 @@ Plaintext stays off the server; keys stay on-device.
 
 <br /><br />
 
-[**Create your account**](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
+[**Star this repo**](https://github.com/silent-suite/silentsuite/stargazers) · [Create your account](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
+
+Star the repo to follow the F-Droid and Google Play launch.
 
 </div>
 
@@ -40,6 +42,15 @@ SilentSuite is an end-to-end encrypted alternative to Google Calendar, iCloud, a
 
 Built on the open [Etebase protocol](https://www.etebase.com/). Open source, self-hostable, EU-hosted for the managed service, GDPR-baseline.
 
+## Why it exists
+
+Most calendar and contact sync services can read the data they store. SilentSuite is built for people who want sync without handing over plaintext.
+
+- **Zero-knowledge by default:** encryption is always on, with no opt-out mode
+- **Open and auditable:** server, web app, bridge, and Android code are open source
+- **No lock-in:** export your data, use standard clients through the bridge, or self-host
+- **Practical beta:** usable today, but still honest about what is not ready yet
+
 ## Status
 
 | Status | Details |
@@ -48,7 +59,7 @@ Built on the open [Etebase protocol](https://www.etebase.com/). Open source, sel
 | **In progress** | F-Droid and Google Play listings, broader Android testing, DAV client compatibility reports |
 | **Not in this beta** | Native iOS app, push notifications, shared calendars/contacts, OAuth Google/iCloud import |
 
-Star the repo to follow F-Droid, Google Play, and release updates.
+If you are waiting for app-store availability, [star this repo](https://github.com/silent-suite/silentsuite/stargazers) to follow the F-Droid, Google Play, and release updates.
 
 ## How it works
 
@@ -98,6 +109,24 @@ Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with l
 - [Self-Hosting](./docs/self-hosting/)
 - [Contributing](./docs/contributing/)
 - [docs.silentsuite.io](https://docs.silentsuite.io)
+
+## Follow along
+
+If SilentSuite is useful to you, [star this repo](https://github.com/silent-suite/silentsuite/stargazers). Stars help early testers, contributors, and privacy users find the project while F-Droid and Google Play are in progress.
+
+<p align="center">
+  <a href="https://github.com/silent-suite/silentsuite/stargazers">
+    <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/silent-suite/silentsuite?style=social" />
+  </a>
+</p>
+
+<a href="https://star-history.com/#silent-suite/silentsuite&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date" />
+    <img alt="SilentSuite star history chart" src="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date" />
+  </picture>
+</a>
 
 <details>
 <summary><strong>Developer information</strong></summary>
