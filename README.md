@@ -4,8 +4,8 @@
 
 **Privacy by Architecture.**
 
-End-to-end encrypted calendar, contacts, and tasks.
-Your schedule and relationships — visible only to you.
+Open-source, zero-knowledge sync for calendars, contacts, and tasks.
+Plaintext stays off the server; keys stay on-device.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/silent-suite/silentsuite?logo=github&label=release)](https://github.com/silent-suite/silentsuite/releases)
@@ -22,7 +22,7 @@ Your schedule and relationships — visible only to you.
 
 <br /><br />
 
-[**Create your account**](https://app.silentsuite.io/signup) · [Self-host with Docker](#self-host) · [Run locally](#run-locally-for-development)
+[**Create your account**](https://app.silentsuite.io/signup) · [Self-host with Docker](#self-host) · [Help test the beta](#help-test-the-beta) · [Run locally](#run-locally-for-development)
 
 </div>
 
@@ -30,13 +30,22 @@ Your schedule and relationships — visible only to you.
 
 ## What is SilentSuite?
 
-SilentSuite is an end-to-end encrypted alternative to Google Calendar, iCloud, and other cloud sync services. Every event, contact, and task is encrypted on your device before it reaches the server. The server only ever sees ciphertext — we cannot read your data, and neither can anyone we are compelled to hand it to.
+SilentSuite is an end-to-end encrypted alternative to Google Calendar, iCloud, and other cloud sync services. Every event, contact, and task is encrypted on your device before it reaches the server. The sync server stores ciphertext and never receives your encryption keys, so we cannot read your private data.
 
 - 📅 **Calendar** — events encrypted before they leave your device
 - 👥 **Contacts** — your relationships, visible only to you
 - ✅ **Tasks** — encrypted end-to-end, the server can never read them
 
-Built on the open [Etebase protocol](https://www.etebase.com/). Open source, EU-hosted, GDPR-baseline.
+Built on the open [Etebase protocol](https://www.etebase.com/). Open source, self-hostable, EU-hosted for the managed service, GDPR-baseline.
+
+## Beta status
+
+SilentSuite is in public beta. The core encrypted sync path is usable today, but the product is still being hardened through external testing before broad app-store launch.
+
+- **Available now:** hosted web app, self-hosting, signed Android APK, CalDAV/CardDAV bridge, calendar/contact import-export, task export
+- **In progress:** F-Droid and Google Play listings, broader Android device testing, compatibility reports for DAV clients
+- **Not in this beta:** native iOS app, push notifications, shared calendars/contacts, OAuth-based Google/iCloud import
+- **Best way to follow along:** [star the repo](https://github.com/silent-suite/silentsuite/stargazers) to track the F-Droid / Google Play launch and release notes
 
 ## What works today
 
@@ -52,22 +61,27 @@ Built on the open [Etebase protocol](https://www.etebase.com/). Open source, EU-
 - Calendar, contacts, and tasks all sync through the bridge
 
 🤖 **Android:**
-- Calendar and contacts sync via the [SilentSuite sync adapter](./android/) (Kotlin)
+- Signed APK available from GitHub Releases, with Obtainium-friendly updates
+- Syncs SilentSuite data into Android calendar, contacts, and task providers
+- F-Droid and Google Play listings are in progress
 
 🍎 **iOS (third-party):**
 - Calendar and contacts via the open-source [EteSync app](https://github.com/etesync/ios), using the same Etebase protocol
 
 🚧 **Coming soon:**
-- Standalone Android and iOS apps (replacing the sync adapter + third-party combo)
+- Native iOS app
+- Store listings for easier Android installation
 - Family plans
 
-> **Ready?** [Create your account](https://app.silentsuite.io/signup) — free 30-day trial, from €3/mo. Or [self-host for free](#self-host).
+> **Ready?** [Create your account](https://app.silentsuite.io/signup) — 7 days free with no card, or 30 days with a card; from €3/mo after trial. Or [self-host for free](#self-host).
 
 ## How it works
 
 <img src="./.github/assets/how-it-works.svg" alt="How SilentSuite works — your device encrypts data locally, the server only stores ciphertext, your other device decrypts locally. The server never has your keys and never sees plaintext." width="100%" />
 
-**Zero-knowledge by architecture.** Your plaintext never touches our servers. Encryption is how the system works, not an optional layer — there is no opt-in and no toggle to disable it. Even with full server access, an attacker or a court order yields ciphertext and nothing else.
+**Zero-knowledge by architecture.** Your plaintext never touches our sync servers. Encryption is how the system works, not an optional layer — there is no opt-in and no toggle to disable it. Even with full sync-server access, an attacker or a court order yields encrypted data and operational metadata, not plaintext.
+
+**What the hosted service can still see:** account and billing details, approximate encrypted storage size, sync timing, IP-level network logs, and other operational metadata needed to run the service. Event titles, contact fields, task contents, notes, descriptions, locations, and reminders stay encrypted.
 
 **How it integrates with your devices:**
 
@@ -89,7 +103,7 @@ Built on the open [Etebase protocol](https://www.etebase.com/). Open source, EU-
 
 ### Hosted service
 
-The easiest path — sign up and go. Free 30-day trial, plans from €3/mo:
+The easiest path — sign up and go. Start with 7 days free without a card, or 30 days with a card; plans from €3/mo after trial:
 
 1. Create your account at [app.silentsuite.io/signup](https://app.silentsuite.io/signup).
 2. Sign in at [app.silentsuite.io](https://app.silentsuite.io).
@@ -113,8 +127,8 @@ Full instructions, TLS setup, and operational guidance in the [Self-Hosting guid
 1. **Encryption is the architecture, not a feature.** No toggles, no opt-in. Everything is encrypted by default.
 2. **Open source by default.** Apps and server code are open. Audit the encryption, verify the claims.
 3. **No lock-in.** Export your data anytime. Self-host if you want. Standard Etebase protocol, not proprietary formats.
-4. **EU-hosted, GDPR-baseline.** Your encrypted data stays in the EU. GDPR as a baseline, not a checkbox.
-5. **Sustainable business.** Paid hosted service funds development. No data monetisation — we can't, it's encrypted.
+4. **EU-hosted, GDPR-baseline.** Hosted encrypted data stays in the EU; self-hosted data stays wherever you deploy it. GDPR as a baseline, not a checkbox.
+5. **Sustainable business.** Paid hosted service funds development. No private-data monetisation — we cannot read your sync contents.
 
 ## Documentation
 
@@ -123,6 +137,17 @@ Full instructions, TLS setup, and operational guidance in the [Self-Hosting guid
 - **[Contributing](./docs/contributing/)** — set up a dev environment and ship changes
 
 Hosted at [docs.silentsuite.io](https://docs.silentsuite.io).
+
+## Help test the beta
+
+The most useful feedback right now is concrete, reproducible, and tied to a device or client:
+
+- **Android APK testing** — install via [GitHub Releases](https://github.com/silent-suite/silentsuite/releases/latest) or Obtainium, sign in, confirm calendar/contact/task sync, and report your Android version and device model
+- **Bridge compatibility testing** — try Thunderbird, Apple Calendar, Evolution, GNOME Calendar, or another desktop CalDAV/CardDAV client and report what works or breaks
+- **Self-hosting verification** — run the Docker setup on a fresh server and report unclear steps, TLS issues, or upgrade problems
+- **Docs and trust review** — point out vague privacy claims, missing limitations, confusing setup steps, or screenshots that do not match the current beta
+
+Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with logs/screenshots where useful, but do not paste secrets, recovery phrases, passwords, or private calendar/contact data.
 
 ## Contributing
 
@@ -199,4 +224,3 @@ The marketing site and billing / accounts API live in a separate private repo �
 ## License
 
 [AGPL-3.0](./LICENSE) · [`android/LICENSE`](./android/LICENSE) (GPL-3.0)
-
