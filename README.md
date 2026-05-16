@@ -22,7 +22,7 @@ Plaintext stays off the server; keys stay on-device.
 
 <br /><br />
 
-[**⭐ Star this repo to follow F-Droid + Google Play**](https://github.com/silent-suite/silentsuite/stargazers) · [Create your account](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
+[**⭐ Star this repo to track F-Droid + Google Play launch notes**](https://github.com/silent-suite/silentsuite/stargazers) · [Create your account](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
 
 </div>
 
@@ -37,6 +37,7 @@ SilentSuite is an end-to-end encrypted alternative to Google Calendar, iCloud, a
 - ✅ **Tasks:** encrypted to-do lists
 - 🔌 **Bridge:** local CalDAV/CardDAV for apps like Apple Calendar and Thunderbird
 - 🤖 **Android:** signed APK syncs into Android calendar, contacts, and task providers
+- 🍎 **iOS:** the open-source EteSync app works with the same protocol while a native app is not ready yet
 
 Built on the open [Etebase protocol](https://www.etebase.com/). Open source, self-hostable, EU-hosted for the managed service, GDPR-baseline.
 
@@ -47,6 +48,7 @@ Most calendar and contact sync services can read the data they store. SilentSuit
 - **Zero-knowledge by default:** encryption is always on, with no opt-out mode
 - **Open and auditable:** server, web app, bridge, and Android code are open source
 - **No lock-in:** export your data, use standard clients through the bridge, or self-host
+- **No private-data monetisation:** paid hosting funds development; sync contents are unreadable to us
 - **Practical beta:** usable today, but still honest about what is not ready yet
 
 ## Status
@@ -98,6 +100,8 @@ Useful feedback right now:
 - Docs and trust review for vague privacy claims or confusing setup steps
 
 Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with logs/screenshots where useful. Do not paste secrets, passwords, or private calendar/contact data.
+
+Security issues: email <info@silentsuite.io> rather than opening a public issue.
 
 ## Docs
 
