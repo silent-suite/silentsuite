@@ -22,9 +22,7 @@ Plaintext stays off the server; keys stay on-device.
 
 <br /><br />
 
-[**Star this repo**](https://github.com/silent-suite/silentsuite/stargazers) · [Create your account](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
-
-Star the repo to follow the F-Droid and Google Play launch.
+[**⭐ Star this repo to follow F-Droid + Google Play**](https://github.com/silent-suite/silentsuite/stargazers) · [Create your account](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
 
 </div>
 
@@ -58,8 +56,6 @@ Most calendar and contact sync services can read the data they store. SilentSuit
 | **Available now** | Hosted web app, self-hosting, Android APK, CalDAV/CardDAV bridge, calendar/contact import-export, task export |
 | **In progress** | F-Droid and Google Play listings, broader Android testing, DAV client compatibility reports |
 | **Not in this beta** | Native iOS app, push notifications, shared calendars/contacts, OAuth Google/iCloud import |
-
-If you are waiting for app-store availability, [star this repo](https://github.com/silent-suite/silentsuite/stargazers) to follow the F-Droid, Google Play, and release updates.
 
 ## How it works
 
@@ -112,7 +108,7 @@ Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with l
 
 ## Follow along
 
-If SilentSuite is useful to you, [star this repo](https://github.com/silent-suite/silentsuite/stargazers). Stars help early testers, contributors, and privacy users find the project while F-Droid and Google Play are in progress.
+**⭐ [Star this repo](https://github.com/silent-suite/silentsuite/stargazers) to help early testers, contributors, and privacy users find the project.**
 
 <p align="center">
   <a href="https://github.com/silent-suite/silentsuite/stargazers">
