@@ -7,6 +7,7 @@ import type { Stripe, Appearance } from '@stripe/stripe-js'
 import { useTheme } from 'next-themes'
 import { Button } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { signupSuccessUrl } from '@/app/lib/signup-return'
 
 const STRIPE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
@@ -54,6 +55,16 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInter
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
 
+  useEffect(() => {
+    if (ready) return
+    const timer = window.setTimeout(() => {
+      const msg = 'Payment form is taking longer than expected. Please refresh and try again.'
+      setError(msg)
+      onError?.(msg)
+    }, 15_000)
+    return () => window.clearTimeout(timer)
+  }, [onError, ready])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!stripe || !elements) return
@@ -75,8 +86,9 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInter
     // states set user.email to '', and we'd rather land on 'Customer' than ''.
     const authState = useAuthStore.getState()
     const billingName = authState.pendingSignup?.email || authState.user?.email || 'Customer'
+    const currentReturnTo = new URLSearchParams(window.location.search).get('return_to')
     const confirmParams = {
-      return_url: `${window.location.origin}/signup/success`,
+      return_url: signupSuccessUrl(window.location.origin, currentReturnTo),
       payment_method_data: { billing_details: { name: billingName } },
     }
 
@@ -111,15 +123,15 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInter
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {!ready && (
+      {!ready && !error && (
         <div className="flex flex-col items-center justify-center py-6">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
           <p className="mt-2 text-xs text-slate-500">Loading payment form...</p>
         </div>
       )}
-      <div className={ready ? '' : 'sr-only'}>
+      <div className={ready ? '' : 'min-h-[180px] opacity-0 pointer-events-none'}>
         <PaymentElement
-          onReady={() => setReady(true)}
+          onReady={() => { setReady(true); setError(null) }}
           options={{
             layout: { type: 'tabs', defaultCollapsed: false },
             fields: { billingDetails: { name: 'never' } },
@@ -146,12 +158,12 @@ export default function StripePaymentForm(props: PaymentFormProps) {
   const [themeReady, setThemeReady] = useState(false)
   const capturedTheme = useRef<string | undefined>(undefined)
 
-  // Wait for next-themes to resolve (undefined on SSR, then resolves)
+  // Do not block Stripe Elements forever if next-themes never resolves.
   useEffect(() => {
-    if (resolvedTheme && !capturedTheme.current) {
-      capturedTheme.current = resolvedTheme
-      setThemeReady(true)
-    }
+    if (capturedTheme.current) return
+    capturedTheme.current = resolvedTheme
+      ?? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    setThemeReady(true)
   }, [resolvedTheme])
 
   const appearance = useMemo(

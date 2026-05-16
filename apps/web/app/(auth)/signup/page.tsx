@@ -10,18 +10,21 @@ import {
   Shield, Lock, Check, KeyRound, ChevronRight, Crown,
   ShieldCheck,
   Users, Settings, Activity, ExternalLink, CreditCard,
-  Gift, ArrowLeft,
+  Gift, ArrowLeft, Bitcoin,
 } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
+import { BILLING_API_URL } from '@/app/lib/config'
+import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
+import { QRCodeSVG } from 'qrcode.react'
 
 const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED === 'true'
-const BTCPAY_CHECKOUT_ORIGIN = 'https://btcpay.silentsuite.io'
+const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
 
 const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-form'), {
   loading: () => (
@@ -38,8 +41,24 @@ const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-
 // ---------------------------------------------------------------------------
 
 type PlanId = 'early_monthly' | 'early_annual'
-type TrialPath = '7day' | '30day' | 'crypto_annual'
+type TrialPath = '7day' | '30day'
 type BillingInterval = 'monthly' | 'annual'
+
+type CryptoPaymentMethod = {
+  id: string
+  label: string
+  qrValue: string | null
+  address: string | null
+  paymentLink: string | null
+  amountDue: string | null
+  cryptoCode: string | null
+}
+
+type CryptoPaymentSession = {
+  invoiceId: string
+  lookupToken: string
+  checkoutUrl: string
+}
 
 const PLAN_PRICES: Record<PlanId, { monthly: number; annual: number; annualPerMonth: number }> = {
   early_monthly: { monthly: 3.60, annual: 36, annualPerMonth: 3 },
@@ -384,12 +403,199 @@ function StepCreateAccount({
 // Step 2: Choose your plan (2-card selection + inline payment sub-step)
 // ---------------------------------------------------------------------------
 
-type PlanView = 'cards' | 'payment'
+type PlanView = 'cards' | 'method' | 'payment' | 'crypto'
+
+function CryptoPaymentPanel({
+  session,
+  onBack,
+  onPaymentComplete,
+}: {
+  session: CryptoPaymentSession
+  onBack: () => void
+  onPaymentComplete: () => void
+}) {
+  const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
+  const [paymentMethods, setPaymentMethods] = useState<CryptoPaymentMethod[]>([])
+  const [selectedMethodId, setSelectedMethodId] = useState<string | null>(null)
+  const [status, setStatus] = useState<'loading' | 'pending' | 'settled' | 'expired' | 'error'>('loading')
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadPaymentMethods() {
+      try {
+        const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}/payment-methods`, {
+          credentials: 'include',
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': session.lookupToken },
+        })
+        if (!res.ok) throw new Error('Could not load Bitcoin payment details.')
+        const data = await res.json()
+        if (cancelled) return
+        const methods = Array.isArray(data.paymentMethods) ? data.paymentMethods as CryptoPaymentMethod[] : []
+        if (!methods.some((method) => method.qrValue || method.paymentLink || method.address)) {
+          throw new Error('Could not load Bitcoin payment details.')
+        }
+        setPaymentMethods(methods)
+        setSelectedMethodId(methods[0]?.id ?? null)
+        setStatus('pending')
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Could not load Bitcoin payment details.')
+          setStatus('error')
+        }
+      }
+    }
+
+    loadPaymentMethods()
+    return () => { cancelled = true }
+  }, [session.invoiceId, session.lookupToken])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | undefined
+
+    async function poll() {
+      try {
+        const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}`, {
+          credentials: 'include',
+          headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': session.lookupToken },
+        })
+        if (!res.ok) throw new Error('Could not check Bitcoin payment status.')
+        const data = await res.json()
+        if (cancelled) return
+        if (data.status === 'settled') {
+          setStatus('settled')
+          sessionStorage.removeItem('silentsuite-pending-crypto-invoice')
+          sessionStorage.removeItem('silentsuite-pending-crypto-token')
+          sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
+          timer = window.setTimeout(onPaymentComplete, 1200)
+          return
+        }
+        if (data.status === 'expired' || data.status === 'invalid') {
+          setStatus('expired')
+          return
+        }
+        timer = window.setTimeout(poll, 10_000)
+      } catch {
+        if (!cancelled) timer = window.setTimeout(poll, 15_000)
+      }
+    }
+
+    poll()
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [onPaymentComplete, session.invoiceId, session.lookupToken])
+
+  const selectedMethod = paymentMethods.find((method) => method.id === selectedMethodId) ?? paymentMethods[0]
+  const qrValue = selectedMethod?.qrValue ?? selectedMethod?.paymentLink ?? selectedMethod?.address ?? ''
+  const handleExternalCheckout = () => saveSignupStateForRedirect('annual')
+
+  async function handleCopyPaymentDetails() {
+    try {
+      await navigator.clipboard.writeText(qrValue)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2500)
+    } catch {
+      setError('Could not copy payment details. Please copy them manually.')
+    }
+  }
+
+  return (
+    <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
+      <div className="space-y-2 text-center">
+        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Pay with Bitcoin</h2>
+        <p className="text-sm text-[rgb(var(--muted))]">
+          Scan the QR code or copy the payment details. SilentSuite unlocks after BTCPay settlement confirms.
+        </p>
+      </div>
+
+      {status === 'settled' ? (
+        <div className="space-y-4 text-center">
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
+            Payment settled. Your annual access is active. Taking you to vault setup...
+          </div>
+        </div>
+      ) : status === 'expired' ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-200">
+          This Bitcoin invoice expired. Go back and start a new Bitcoin invoice.
+        </div>
+      ) : status === 'error' ? (
+        <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-400">
+          <p>{error ?? 'Could not load Bitcoin payment details.'}</p>
+          <Link href={session.checkoutUrl} onClick={handleExternalCheckout} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-500/10 dark:text-red-200">
+            Open in BTCPay instead
+          </Link>
+        </div>
+      ) : selectedMethod && qrValue ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2">
+            {paymentMethods.map((method) => (
+              <button
+                key={method.id}
+                type="button"
+                onClick={() => setSelectedMethodId(method.id)}
+                className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                  selectedMethod.id === method.id
+                    ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-200'
+                    : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
+                }`}
+              >
+                {method.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-[rgb(var(--border))] bg-white p-4">
+            <QRCodeSVG value={qrValue} size={240} className="mx-auto h-auto max-w-full" />
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 text-left">
+            {selectedMethod.amountDue && (
+              <p className="text-sm text-[rgb(var(--foreground))]">
+                Amount due: <span className="font-medium">{selectedMethod.amountDue} {selectedMethod.cryptoCode ?? 'BTC'}</span>
+              </p>
+            )}
+            <p className="break-all text-xs text-[rgb(var(--muted))]">{selectedMethod.address ?? qrValue}</p>
+            <button
+              type="button"
+              onClick={handleCopyPaymentDetails}
+              className="text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+            >
+              {copied ? 'Copied to clipboard' : 'Copy payment details'}
+            </button>
+          </div>
+
+          <Link href={session.checkoutUrl} onClick={handleExternalCheckout} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
+            Open in BTCPay instead
+          </Link>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center justify-center py-8">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
+          <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading Bitcoin payment details...</p>
+        </div>
+      )}
+
+      <button
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to payment methods
+      </button>
+    </div>
+  )
+}
 
 function StepChoosePlan({
   interval,
   onIntervalChange,
   onSelectFree,
+  onChoosePaymentMethod,
   onSelectPaid,
   onSelectCrypto,
   planView,
@@ -400,12 +606,14 @@ function StepChoosePlan({
   onClearError,
   onPaymentComplete,
   selectedInterval,
+  cryptoPaymentSession,
 }: {
   interval: BillingInterval
   onIntervalChange: (interval: BillingInterval) => void
   onSelectFree: () => void
+  onChoosePaymentMethod: () => void
   onSelectPaid: (promoCode?: string) => void
-  onSelectCrypto: () => void
+  onSelectCrypto: (useAnnual?: boolean) => void
   planView: PlanView
   onBack: () => void
   clientSecret: string | null
@@ -414,20 +622,36 @@ function StepChoosePlan({
   onClearError: () => void
   onPaymentComplete: () => void
   selectedInterval: BillingInterval
+  cryptoPaymentSession: CryptoPaymentSession | null
 }) {
   const contentRef = useRef<HTMLDivElement>(null)
   const [selectedTrial, setSelectedTrial] = useState<TrialPath>('30day')
+  const [paymentMethodError, setPaymentMethodError] = useState<string | null>(null)
   const [promoCode, setPromoCode] = useState('')
 
   const handleContinue = useCallback(() => {
     if (selectedTrial === '7day') {
       onSelectFree()
-    } else if (selectedTrial === 'crypto_annual') {
-      onSelectCrypto()
     } else {
-      onSelectPaid(promoCode)
+      setPaymentMethodError(null)
+      onClearError()
+      onChoosePaymentMethod()
+      window.scrollTo({ top: 0, behavior: 'smooth' })
     }
-  }, [selectedTrial, onSelectFree, onSelectPaid, onSelectCrypto, promoCode])
+  }, [selectedTrial, onSelectFree, onChoosePaymentMethod, onClearError])
+
+  const handleSelectCard = useCallback(() => {
+    setPaymentMethodError(null)
+    onSelectPaid(promoCode)
+  }, [onSelectPaid, promoCode])
+
+  const handleSelectBitcoin = useCallback(() => {
+    if (interval !== 'annual') {
+      onIntervalChange('annual')
+    }
+    setPaymentMethodError(null)
+    onSelectCrypto(interval !== 'annual')
+  }, [interval, onIntervalChange, onSelectCrypto])
 
   const hasEnteredPromoCode = promoCode.trim().length > 0
 
@@ -437,6 +661,136 @@ function StepChoosePlan({
   }, [planView])
 
   // --- Payment sub-step ---
+  if (planView === 'crypto' && cryptoPaymentSession) {
+    return (
+      <CryptoPaymentPanel
+        session={cryptoPaymentSession}
+        onBack={onBack}
+        onPaymentComplete={onPaymentComplete}
+      />
+    )
+  }
+
+  if (planView === 'method') {
+    const annualBitcoinAvailable = interval === 'annual' && CRYPTO_CHECKOUT_ENABLED
+    return (
+      <div ref={contentRef} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
+        <div className="space-y-2 text-center">
+          <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Choose how to pay</h2>
+          <p className="text-sm text-[rgb(var(--muted))]">
+            Your 30-day trial starts after the payment method is set up. No charge today for card payments.
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Crown className="h-4 w-4 text-emerald-400" />
+              <span className="text-sm font-medium text-[rgb(var(--foreground))]">Early Adopter Plan</span>
+            </div>
+            <span className="text-sm text-[rgb(var(--foreground))]">
+              {interval === 'monthly' ? '€3.60/month' : '€3.00/month billed yearly'}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid gap-3">
+          <button
+            type="button"
+            onClick={handleSelectCard}
+            disabled={provisioning}
+            className="group w-full rounded-xl border-2 border-slate-700/50 bg-[rgb(var(--surface))] p-4 text-left transition-all hover:border-emerald-500/70 hover:bg-emerald-500/5 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-emerald-500/10 p-2.5 shrink-0">
+                <CreditCard className="h-5 w-5 text-emerald-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-[rgb(var(--foreground))]">Card with Stripe</h3>
+                <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                  Start the 30-day trial now. Your card is billed only after the trial unless you cancel.
+                </p>
+              </div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSelectBitcoin}
+            disabled={provisioning || !CRYPTO_CHECKOUT_ENABLED}
+            className={`group w-full rounded-xl border-2 p-4 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+              annualBitcoinAvailable
+                ? 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-amber-500/70 hover:bg-amber-500/5'
+                : 'border-amber-500/30 bg-amber-500/5'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-amber-500/10 p-2.5 shrink-0">
+                <Bitcoin className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold text-[rgb(var(--foreground))]">
+                    {interval === 'annual' ? 'Bitcoin with BTCPay' : 'Switch to yearly and pay with Bitcoin'}
+                  </h3>
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                    Annual only
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+                  {interval === 'annual'
+                    ? 'Pay once with Bitcoin for €32.40/year. App access starts only after the invoice settles.'
+                    : 'Bitcoin is available for the yearly plan only. This switches you to yearly billing and opens BTCPay.'}
+                </p>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        {selectedTrial === '30day' && (
+          <div className="space-y-2">
+            <label
+              htmlFor="beta-promo-code"
+              className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
+            >
+              Add promo code <span className="text-[rgb(var(--muted))]">(optional, card only)</span>
+            </label>
+            <Input
+              id="beta-promo-code"
+              value={promoCode}
+              onChange={(event) => setPromoCode(event.target.value.toUpperCase().replace(/\s/g, '').slice(0, 64))}
+              placeholder="Enter promo code"
+              maxLength={64}
+              autoCapitalize="characters"
+              autoComplete="off"
+              disabled={provisioning}
+              className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
+            />
+            <p className="text-xs text-[rgb(var(--muted))]">
+              {hasEnteredPromoCode
+                ? 'If valid, Stripe applies 100% off for the first 3 months before billing begins.'
+                : 'Applied securely by Stripe before your trial starts.'}
+            </p>
+          </div>
+        )}
+
+        {(paymentMethodError || provisionError) && (
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+            <p className="text-sm text-red-400">{paymentMethodError ?? provisionError}</p>
+          </div>
+        )}
+
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to plan selection
+        </button>
+      </div>
+    )
+  }
+
   if (planView === 'payment') {
     const priceLabel = interval === 'monthly' ? '\u20AC3.60/month' : '\u20AC3.00/month'
     const hasAcceptedPromoCode = hasEnteredPromoCode && !!clientSecret && !provisioning && !provisionError
@@ -613,72 +967,7 @@ function StepChoosePlan({
           </div>
         </button>
 
-        {interval === 'annual' && CRYPTO_CHECKOUT_ENABLED && (
-          <button
-            onClick={() => setSelectedTrial('crypto_annual')}
-            aria-label="Annual prepaid crypto checkout through BTCPay"
-            className={`group w-full rounded-xl border-2 p-4 sm:p-5 text-left transition-all ${
-              selectedTrial === 'crypto_annual'
-                ? 'border-amber-500 bg-amber-500/5'
-                : 'border-slate-700/50 bg-[rgb(var(--surface))] hover:border-slate-600/50 hover:bg-[rgb(var(--surface))]/80'
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <div className="rounded-lg bg-amber-500/10 p-2.5 shrink-0">
-                <Crown className="h-5 w-5 text-amber-400" />
-              </div>
-              <div className="flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="font-semibold text-[rgb(var(--foreground))]">Annual crypto prepaid</h3>
-                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
-                    BTCPay
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                  Pay once with Bitcoin for &euro;32.40/year. App access starts only after the invoice settles.
-                </p>
-                <ul className="mt-2 space-y-1.5">
-                  <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                    <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                    No card and no recurring crypto billing
-                  </li>
-                  <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
-                    <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                    One year of prepaid access after BTCPay settlement
-                  </li>
-                </ul>
-              </div>
-            </div>
-          </button>
-        )}
       </div>
-
-      {selectedTrial === '30day' && (
-        <div className="space-y-2">
-          <label
-            htmlFor="beta-promo-code"
-            className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
-          >
-            Add promo code <span className="text-[rgb(var(--muted))]">(optional)</span>
-          </label>
-          <Input
-            id="beta-promo-code"
-            value={promoCode}
-            onChange={(event) => setPromoCode(event.target.value.toUpperCase().replace(/\s/g, '').slice(0, 64))}
-            placeholder="Enter promo code"
-            maxLength={64}
-            autoCapitalize="characters"
-            autoComplete="off"
-            disabled={provisioning}
-            className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
-          />
-          <p className="text-xs text-[rgb(var(--muted))]">
-            {hasEnteredPromoCode
-              ? 'If valid, Stripe applies 100% off for the first 3 months before billing begins.'
-              : 'Applied securely by Stripe before your trial starts.'}
-          </p>
-        </div>
-      )}
 
       {/* Continue button */}
       <Button
@@ -1001,12 +1290,19 @@ export default function SignupPage() {
   }, [step])
   const [selectedInterval, setSelectedInterval] = useState<BillingInterval>('annual')
   const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [cryptoPaymentSession, setCryptoPaymentSession] = useState<CryptoPaymentSession | null>(null)
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisioning, setProvisioning] = useState(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
   const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
+  const [returnTo, setReturnTo] = useState<string | null>(null)
+  const [showReturnFallback, setShowReturnFallback] = useState(false)
   const formDataRef = useRef<SignupFormData | null>(null)
+
+  useEffect(() => {
+    setReturnTo(normalizeSignupReturnTo(new URLSearchParams(window.location.search).get('return_to')))
+  }, [])
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
     formDataRef.current = data
@@ -1085,14 +1381,18 @@ export default function SignupPage() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to set up your account'
       setProvisionError(message)
-      setPlanView('cards')
+      setPlanView('method')
     } finally {
       setProvisioning(false)
     }
   }, [signup, selectedInterval])
 
-  const handleSelectCrypto = useCallback(async () => {
+  const handleSelectCrypto = useCallback(async (useAnnual = false) => {
     setProvisionError(null)
+    if (!useAnnual && selectedInterval !== 'annual') {
+      setProvisionError('Bitcoin is only available for the yearly plan. Switch to yearly billing to pay with Bitcoin.')
+      return
+    }
     setProvisioning(true)
     try {
       const result = await signup('early_annual', 'crypto_annual')
@@ -1109,17 +1409,34 @@ export default function SignupPage() {
       if (result.cryptoInvoiceLookupToken) {
         sessionStorage.setItem('silentsuite-pending-crypto-token', result.cryptoInvoiceLookupToken)
       }
-      window.location.href = checkoutUrl.toString()
+      if (!result.cryptoInvoiceId || !result.cryptoInvoiceLookupToken) {
+        throw new Error('Crypto checkout did not return a complete payment session.')
+      }
+      if (returnTo) {
+        sessionStorage.setItem('silentsuite-pending-crypto-return-to', returnTo)
+      } else {
+        sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
+      }
+      setCryptoPaymentSession({
+        invoiceId: result.cryptoInvoiceId,
+        lookupToken: result.cryptoInvoiceLookupToken,
+        checkoutUrl: checkoutUrl.toString(),
+      })
+      setPlanView('crypto')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
       setProvisionError(message)
     } finally {
       setProvisioning(false)
     }
-  }, [signup])
+  }, [returnTo, signup, selectedInterval])
 
   const handlePlanBack = useCallback(() => {
-    if (planView === 'payment') {
+    if (planView === 'crypto') {
+      setPlanView('method')
+    } else if (planView === 'payment') {
+      setPlanView('method')
+    } else if (planView === 'method') {
       setPlanView('cards')
     } else {
       // Back from cards view goes to account step
@@ -1134,8 +1451,16 @@ export default function SignupPage() {
   const handleVaultComplete = useCallback(() => {
     // Finalize authentication — only NOW does the user become authenticated.
     completeSignup()
+    if (returnTo) {
+      setShowReturnFallback(false)
+      window.location.href = returnTo
+      window.setTimeout(() => {
+        if (document.visibilityState === 'visible') setShowReturnFallback(true)
+      }, 2000)
+      return
+    }
     router.push('/')
-  }, [completeSignup, router])
+  }, [completeSignup, returnTo, router])
 
   const email = formDataRef.current?.email || ''
 
@@ -1168,6 +1493,7 @@ export default function SignupPage() {
             interval={selectedInterval}
             onIntervalChange={setSelectedInterval}
             onSelectFree={handleSelectFree}
+            onChoosePaymentMethod={() => setPlanView('method')}
             onSelectPaid={handleSelectPaid}
             onSelectCrypto={handleSelectCrypto}
             planView={planView}
@@ -1178,10 +1504,21 @@ export default function SignupPage() {
             onClearError={() => setProvisionError(null)}
             onPaymentComplete={handlePaymentComplete}
             selectedInterval={selectedInterval}
+            cryptoPaymentSession={cryptoPaymentSession}
           />
         )}
         {step === 'vault' && (
-          <StepCreateVault email={email} onComplete={handleVaultComplete} />
+          <>
+            <StepCreateVault email={email} onComplete={handleVaultComplete} />
+            {showReturnFallback && returnTo && (
+              <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">
+                <p className="font-medium">Browser did not reopen the Android app automatically.</p>
+                <a href={returnTo} className="mt-2 inline-flex font-medium text-[rgb(var(--primary))] underline">
+                  Tap here to return to Android
+                </a>
+              </div>
+            )}
+          </>
         )}
       </div>
       {/* Build version indicator */}

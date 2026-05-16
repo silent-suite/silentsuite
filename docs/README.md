@@ -17,6 +17,6 @@ Welcome to the SilentSuite documentation. Whether you're using the app, running 
 ## Quick Links
 
 - **Website:** [silentsuite.io](https://silentsuite.io)
-- **Source Code:** [GitHub](https://github.com/silent-suite/silentsuite.io)
+- **Source Code:** [GitHub](https://github.com/silent-suite/silentsuite)
 - **Status:** [status.silentsuite.io](https://status.silentsuite.io)
 - **License:** AGPL-3.0
