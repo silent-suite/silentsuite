@@ -69,6 +69,10 @@ Hosted-service metadata is still visible where needed to operate the service: ac
 
 Crypto: XChaCha20-Poly1305, Argon2id, libsodium, and the open Etebase protocol.
 
+## Use of AI
+
+SilentSuite is AI-assisted, not vibe-coded. AI helps with development, docs, planning, and review, but releases are human-reviewed. The sync backend builds on reviewed open-source [Etebase](https://www.etebase.com/) code, and AI tools cannot access production user data, logins, secrets, or plaintext contents.
+
 ## Get started
 
 ### Hosted service
