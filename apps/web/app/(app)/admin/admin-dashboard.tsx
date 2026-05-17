@@ -34,14 +34,18 @@ import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 
 // ─── Types ────────────────────────────────────────────────────────────
 interface Metrics {
+  totalUsers?: number
   subscribers: { trialing: number; active: number; past_due: number; cancelled: number; none: number }
   mrr: number
   signups: { today: number; thisWeek: number; thisMonth: number }
+  emailConfirmation?: { confirmed: number; unconfirmed: number }
 }
 
 interface WebhookEvent {
   id: string
-  stripeEventId: string
+  provider: string
+  providerEventId: string
+  stripeEventId: string | null
   eventType: string
   processedAt: string
   payload: string | null
@@ -70,17 +74,19 @@ interface LookedUpUser {
   email: string
   createdAt: string
   subscriptionStatus: string
+  provisioningStatus: string
   planId: string | null
+  trialPath: string | null
   trialEndsAt: string | null
   currentPeriodEnd: string | null
   stripeCustomerId: string | null
+  stripeSubscriptionId: string | null
   foundingMember: boolean
-  provisioningStatus?: string
-  emailVerified?: boolean
-  wantsProductUpdates?: boolean
-  trialPath?: string | null
-  earlyAdopter?: boolean
-  latestPayment?: PaymentSummary | null
+  earlyAdopter: boolean
+  emailVerified: boolean
+  wantsProductUpdates: boolean
+  isAdmin: boolean
+  latestPayment: PaymentSummary | null
 }
 
 interface UserListItem {
@@ -88,32 +94,36 @@ interface UserListItem {
   email: string
   createdAt: string
   subscriptionStatus: string
+  provisioningStatus: string
   planId: string | null
   foundingMember: boolean
   isAdmin: boolean
-  emailVerified?: boolean
-  wantsProductUpdates?: boolean
-  trialPath?: string | null
-  earlyAdopter?: boolean
-  stripeCustomerId?: string | null
-  latestPayment?: PaymentSummary | null
+  emailVerified: boolean
+  wantsProductUpdates: boolean
+  trialPath: string | null
+  earlyAdopter: boolean
+  stripeCustomerId: string | null
+  currentPeriodEnd: string | null
+  latestPayment: PaymentSummary | null
 }
 
 interface EmailRecord {
   id: string
-  type: string
-  subject: string
+  emailType: string
+  qualifier: string | null
   sentAt: string
-  status: string
+  metadata: unknown
 }
 
 interface Subscriber {
   email: string
   source: string
   doiConfirmed: boolean
+  doiSentAt: string | null
   wantsUpdates: boolean
   createdAt: string
   unsubscribedAt: string | null
+  suppressedReason: string | null
 }
 
 interface UsersPage {
@@ -174,6 +184,31 @@ function formatShortDate(iso: string): string {
     day: 'numeric',
     year: 'numeric',
   })
+}
+
+function formatProvider(provider: string | null): string {
+  if (!provider) return '—'
+  if (provider === 'btcpay') return 'BTCPay'
+  if (provider === 'stripe') return 'Stripe'
+  return provider
+}
+
+function formatSource(source: string): string {
+  return source.replace(/_/g, ' ')
+}
+
+function yesNo(value: boolean | null | undefined): string {
+  if (value === true) return 'Yes'
+  if (value === false) return 'No'
+  return '—'
+}
+
+function emailSubject(email: EmailRecord): string {
+  if (email.metadata && typeof email.metadata === 'object' && 'subject' in email.metadata) {
+    const subject = (email.metadata as { subject?: unknown }).subject
+    if (typeof subject === 'string' && subject.length > 0) return subject
+  }
+  return '—'
 }
 
 function daysSince(iso: string): number {
@@ -749,7 +784,7 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
   useEffect(() => { refreshAll() }, [refreshAll])
 
   const totalUsers = metrics
-    ? metrics.subscribers.active + metrics.subscribers.trialing + metrics.subscribers.past_due + metrics.subscribers.cancelled + metrics.subscribers.none
+    ? metrics.totalUsers ?? metrics.subscribers.active + metrics.subscribers.trialing + metrics.subscribers.past_due + metrics.subscribers.cancelled + metrics.subscribers.none
     : 0
 
   const dbOk = health?.database === 'ok'
@@ -813,8 +848,8 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
 
       {/* KPI tiles */}
       {metricsLoading ? (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 animate-pulse">
               <div className="h-3 w-16 rounded bg-[rgb(var(--border))]" />
               <div className="mt-2 h-7 w-20 rounded bg-[rgb(var(--border))]" />
@@ -822,7 +857,7 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
           ))}
         </div>
       ) : metrics ? (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <KpiTile
             label="Total Users"
             value={totalUsers}
@@ -851,6 +886,15 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
             label="Signups Today"
             value={metrics.signups.today}
             icon={<UserPlus className="h-4 w-4 text-blue-400" />}
+            fetchedAt={metricsAt}
+            now={now}
+          />
+          <KpiTile
+            label="Email not confirmed"
+            value={metrics.emailConfirmation?.unconfirmed ?? 0}
+            valueClass={(metrics.emailConfirmation?.unconfirmed ?? 0) > 0 ? 'text-amber-500' : 'text-emerald-500'}
+            icon={<Mail className="h-4 w-4 text-amber-500" />}
+            onDrill={() => onNavigate('users')}
             fetchedAt={metricsAt}
             now={now}
           />
@@ -887,6 +931,18 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
               <FreshnessPill fetchedAt={metricsAt} now={now} />
             </div>
             <SignupBars signups={metrics.signups} />
+            {metrics.emailConfirmation && (
+              <div className="mt-4 border-t border-[rgb(var(--border))] pt-3">
+                <div className="flex items-baseline justify-between text-xs">
+                  <span className="text-[rgb(var(--muted))]">Email not confirmed</span>
+                  <span className="font-semibold text-amber-500">{metrics.emailConfirmation.unconfirmed}</span>
+                </div>
+                <div className="mt-1 flex items-baseline justify-between text-xs">
+                  <span className="text-[rgb(var(--muted))]">Email confirmed</span>
+                  <span className="font-semibold text-emerald-500">{metrics.emailConfirmation.confirmed}</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1049,7 +1105,7 @@ function RecentEventsCard({
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-[rgb(var(--muted))]" />
-          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Recent webhook events</h2>
+          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Recent events</h2>
           <span className="text-xs text-[rgb(var(--muted))]">({total} total)</span>
         </div>
         <div className="flex items-center gap-2">
@@ -1082,6 +1138,9 @@ function RecentEventsCard({
                   ) : (
                     <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500/80" />
                   )}
+                  <span className="shrink-0 rounded-sm bg-[rgb(var(--background))] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[rgb(var(--muted))]">
+                    {formatProvider(event.provider)}
+                  </span>
                   <span className={`font-mono truncate ${isFailed ? 'text-red-400 font-medium' : 'text-[rgb(var(--foreground))]'}`}>
                     {event.eventType}
                   </span>
@@ -1219,11 +1278,11 @@ function RecentContactsCard({
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="font-mono truncate text-[rgb(var(--foreground))]">{c.email}</span>
                   <span className="shrink-0 rounded-sm bg-[rgb(var(--background))] px-1.5 py-0.5 text-[10px] text-[rgb(var(--muted))] capitalize">
-                    {c.source}
+                    {formatSource(c.source)}
                   </span>
-                  {c.doiConfirmed && (
-                    <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" aria-label="Double opt-in confirmed" />
-                  )}
+                  <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] ${c.doiConfirmed ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                    Confirmed {yesNo(c.doiConfirmed)}
+                  </span>
                 </div>
                 <span className="shrink-0 text-[rgb(var(--muted))]">{relativeTime(new Date(c.createdAt).getTime(), now)}</span>
               </li>
@@ -1241,9 +1300,12 @@ function RecentContactsCard({
   )
 }
 
+const FAILED_PAYMENTS_LIMIT = 100
+
 // ─── Failed Payments Tab ──────────────────────────────────────────────
 function FailedPaymentsTab() {
   const [pastDueUsers, setPastDueUsers] = useState<UserListItem[]>([])
+  const [pastDueTotal, setPastDueTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -1251,15 +1313,13 @@ function FailedPaymentsTab() {
     setLoading(true)
     setError(null)
     try {
-      // Fetch all users and filter to past_due on the client side.
-      // The billing API /admin/users endpoint returns paginated results —
-      // fetch enough to capture all past_due users.
       const res = await adminFetch(
-        `${BILLING_API_URL}/admin/users?limit=200&offset=0`,
+        `${BILLING_API_URL}/admin/users?limit=${FAILED_PAYMENTS_LIMIT}&offset=0&status=past_due`,
       )
       if (res.ok) {
         const data: UsersPage = await res.json()
-        setPastDueUsers(data.users.filter(u => u.subscriptionStatus === 'past_due'))
+        setPastDueUsers(data.users)
+        setPastDueTotal(data.total)
       } else {
         setError('Failed to load user data')
       }
@@ -1278,7 +1338,7 @@ function FailedPaymentsTab() {
           <AlertTriangle className="h-4 w-4 text-amber-500" />
           <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Failed Payments</h2>
           {!loading && (
-            <span className="text-xs text-[rgb(var(--muted))]">({pastDueUsers.length} users)</span>
+            <span className="text-xs text-[rgb(var(--muted))]">({pastDueTotal} users)</span>
           )}
         </div>
         <button
@@ -1311,10 +1371,16 @@ function FailedPaymentsTab() {
           <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
             <p className="text-sm text-amber-500">
-              <span className="font-medium">{pastDueUsers.length}</span> user{pastDueUsers.length !== 1 ? 's' : ''} with
+              <span className="font-medium">{pastDueTotal}</span> user{pastDueTotal !== 1 ? 's' : ''} with
               past due payments requiring attention
             </p>
           </div>
+
+          {pastDueTotal > pastDueUsers.length && (
+            <p className="text-xs text-[rgb(var(--muted))]">
+              Showing the first {pastDueUsers.length} of {pastDueTotal} past-due users.
+            </p>
+          )}
 
           {/* Past due users list */}
           <div className="overflow-x-auto rounded-lg border border-[rgb(var(--border))]">
@@ -1345,7 +1411,7 @@ function FailedPaymentsTab() {
                       <div className="flex items-center gap-1.5">
                         <Clock className="h-3 w-3 text-amber-500" />
                         <span className="text-xs font-medium text-amber-500">
-                          {daysSince(u.createdAt)}d
+                          {u.currentPeriodEnd ? `${Math.max(0, daysSince(u.currentPeriodEnd))}d` : '—'}
                         </span>
                       </div>
                     </td>
@@ -1414,16 +1480,16 @@ function UserLookupTab() {
 
   useEffect(() => { fetchUsers(usersOffset, debouncedFilter) }, [fetchUsers, usersOffset, debouncedFilter])
 
-  async function handleLookup(e: React.FormEvent) {
-    e.preventDefault()
-    if (!searchEmail.trim()) return
+  async function lookupByEmail(email: string) {
+    const trimmedEmail = email.trim()
+    if (!trimmedEmail) return
     setLookupLoading(true)
     setLookupError(null)
     setLookupUser(null)
 
     try {
       const res = await adminFetch(
-        `${BILLING_API_URL}/admin/users/${encodeURIComponent(searchEmail.trim())}`,
+        `${BILLING_API_URL}/admin/users/${encodeURIComponent(trimmedEmail)}`,
       )
       if (res.ok) {
         setLookupUser(await res.json())
@@ -1436,6 +1502,11 @@ function UserLookupTab() {
       setLookupError('API unavailable')
     }
     setLookupLoading(false)
+  }
+
+  async function handleLookup(e: React.FormEvent) {
+    e.preventDefault()
+    await lookupByEmail(searchEmail)
   }
 
   const totalPages = usersPage ? Math.ceil(usersPage.total / USERS_LIMIT) : 0
@@ -1498,18 +1569,24 @@ function UserLookupTab() {
               <div className="mt-1"><PaymentMethodBadge user={lookupUser} /></div>
             </div>
             <div>
+              <p className="text-xs text-[rgb(var(--muted))]">Provisioning</p>
+              <p className="text-sm text-[rgb(var(--foreground))] capitalize">
+                {lookupUser.provisioningStatus.replace(/_/g, ' ')}
+              </p>
+            </div>
+            <div>
               <p className="text-xs text-[rgb(var(--muted))]">Founding Member</p>
               <p className={`text-sm font-medium ${(lookupUser.foundingMember || lookupUser.earlyAdopter) ? 'text-emerald-500' : 'text-[rgb(var(--muted))]'}`}>
                 {(lookupUser.foundingMember || lookupUser.earlyAdopter) ? 'Yes' : 'No'}
               </p>
             </div>
             <div>
-              <p className="text-xs text-[rgb(var(--muted))]">Email Verified</p>
-              <p className="text-sm">{lookupUser.emailVerified === true ? '✅' : lookupUser.emailVerified === false ? '❌' : '—'}</p>
+              <p className="text-xs text-[rgb(var(--muted))]">Email confirmed</p>
+              <p className={`text-sm font-medium ${lookupUser.emailVerified ? 'text-emerald-500' : 'text-amber-500'}`}>{yesNo(lookupUser.emailVerified)}</p>
             </div>
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Product Updates</p>
-              <p className="text-sm">{lookupUser.wantsProductUpdates === true ? '✅' : lookupUser.wantsProductUpdates === false ? '❌' : '—'}</p>
+              <p className="text-sm">{yesNo(lookupUser.wantsProductUpdates)}</p>
             </div>
             {lookupUser.trialPath && (
               <div>
@@ -1519,7 +1596,7 @@ function UserLookupTab() {
             )}
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Early Adopter</p>
-              <p className="text-sm">{lookupUser.earlyAdopter === true ? '✅' : lookupUser.earlyAdopter === false ? '❌' : '—'}</p>
+              <p className="text-sm">{yesNo(lookupUser.earlyAdopter)}</p>
             </div>
             {lookupUser.trialEndsAt && (
               <div>
@@ -1537,6 +1614,12 @@ function UserLookupTab() {
               <div>
                 <p className="text-xs text-[rgb(var(--muted))]">Stripe Customer</p>
                 <p className="text-sm font-mono text-[rgb(var(--foreground))]">{lookupUser.stripeCustomerId}</p>
+              </div>
+            )}
+            {lookupUser.stripeSubscriptionId && (
+              <div>
+                <p className="text-xs text-[rgb(var(--muted))]">Stripe Subscription</p>
+                <p className="text-sm font-mono text-[rgb(var(--foreground))]">{lookupUser.stripeSubscriptionId}</p>
               </div>
             )}
             <PaymentDetail payment={lookupUser.latestPayment} />
@@ -1591,7 +1674,7 @@ function UserLookupTab() {
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Status</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Payment</th>
                 <th className="px-4 py-2 text-xs font-medium text-[rgb(var(--muted))]">Plan</th>
-                <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Verified</th>
+                <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Email confirmed</th>
                 <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] sm:table-cell">Updates</th>
                 <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] lg:table-cell">Trial</th>
                 <th className="hidden px-4 py-2 text-xs font-medium text-[rgb(var(--muted))] lg:table-cell">Early</th>
@@ -1618,7 +1701,7 @@ function UserLookupTab() {
                   <tr
                     key={u.id}
                     className="border-b border-[rgb(var(--border))] last:border-b-0 hover:bg-[rgb(var(--background))]/50 transition-colors cursor-pointer"
-                    onClick={() => { setSearchEmail(u.email); }}
+                    onClick={() => { setSearchEmail(u.email); void lookupByEmail(u.email) }}
                   >
                     <td className="px-4 py-2.5 text-sm text-[rgb(var(--foreground))] font-mono truncate max-w-[200px]">{u.email}</td>
                     <td className="px-4 py-2.5">
@@ -1631,16 +1714,16 @@ function UserLookupTab() {
                       {u.planId?.replace(/_/g, ' ') ?? '—'}
                     </td>
                     <td className="hidden px-4 py-2.5 text-center sm:table-cell">
-                      <span className="text-xs">{u.emailVerified === true ? '✅' : u.emailVerified === false ? '❌' : '—'}</span>
+                      <span className={`text-xs font-medium ${u.emailVerified ? 'text-emerald-500' : 'text-amber-500'}`}>{yesNo(u.emailVerified)}</span>
                     </td>
                     <td className="hidden px-4 py-2.5 text-center sm:table-cell">
-                      <span className="text-xs">{u.wantsProductUpdates === true ? '✅' : u.wantsProductUpdates === false ? '❌' : '—'}</span>
+                      <span className="text-xs">{yesNo(u.wantsProductUpdates)}</span>
                     </td>
                     <td className="hidden px-4 py-2.5 text-xs text-[rgb(var(--foreground))] lg:table-cell">
                       {u.trialPath ?? '—'}
                     </td>
                     <td className="hidden px-4 py-2.5 text-center lg:table-cell">
-                      <span className="text-xs">{u.earlyAdopter === true ? '✅' : u.earlyAdopter === false ? '❌' : '—'}</span>
+                      <span className="text-xs">{yesNo(u.earlyAdopter)}</span>
                     </td>
                     <td className="hidden px-4 py-2.5 sm:table-cell">
                       {(u.foundingMember || u.earlyAdopter) ? (
@@ -1758,21 +1841,17 @@ function EmailsSentSection({ userId }: { userId: string }) {
                 <thead>
                   <tr className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
                     <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Type</th>
+                    <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Qualifier</th>
                     <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Subject</th>
-                    <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Status</th>
                     <th className="px-3 py-1.5 text-left text-xs font-medium text-[rgb(var(--muted))]">Sent</th>
                   </tr>
                 </thead>
                 <tbody>
                   {emails.map((em) => (
                     <tr key={em.id} className="border-b border-[rgb(var(--border))] last:border-b-0">
-                      <td className="px-3 py-1.5 text-xs font-mono text-[rgb(var(--foreground))]">{em.type}</td>
-                      <td className="px-3 py-1.5 text-xs text-[rgb(var(--foreground))]"><div className="truncate max-w-[200px]">{em.subject}</div></td>
-                      <td className="px-3 py-1.5">
-                        <span className={`text-xs font-medium ${em.status === 'delivered' ? 'text-emerald-500' : em.status === 'bounced' ? 'text-red-400' : 'text-[rgb(var(--muted))]'}`}>
-                          {em.status}
-                        </span>
-                      </td>
+                      <td className="px-3 py-1.5 text-xs font-mono text-[rgb(var(--foreground))]">{em.emailType}</td>
+                      <td className="px-3 py-1.5 text-xs text-[rgb(var(--muted))]">{em.qualifier ?? '—'}</td>
+                      <td className="px-3 py-1.5 text-xs text-[rgb(var(--foreground))]"><div className="truncate max-w-[200px]">{emailSubject(em)}</div></td>
                       <td className="px-3 py-1.5 text-xs text-[rgb(var(--muted))]">{formatDate(em.sentAt)}</td>
                     </tr>
                   ))}
@@ -1826,7 +1905,7 @@ function SubscribersTab() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Mail className="h-4 w-4 text-[rgb(var(--muted))]" />
-          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Newsletter Subscribers</h2>
+          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Newsletter / Contact Signups</h2>
           {!loading && (
             <span className="text-xs text-[rgb(var(--muted))]">({subscribersTotal} total)</span>
           )}
@@ -1851,7 +1930,7 @@ function SubscribersTab() {
             <Mail className="h-6 w-6 text-[rgb(var(--primary))]" />
           </div>
           <p className="mt-3 text-sm font-medium text-[rgb(var(--foreground))]">No subscribers yet</p>
-          <p className="mt-1 text-xs text-[rgb(var(--muted))]">Subscribers will appear here once users opt in</p>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">Signups appear here before and after email confirmation</p>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[rgb(var(--border))]">
@@ -1860,10 +1939,12 @@ function SubscribersTab() {
               <tr className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]">
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Email</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Source</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">DOI Confirmed</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Email confirmed</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Confirmation sent</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Updates</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Subscribed</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Unsubscribed</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-[rgb(var(--muted))]">Suppressed</th>
               </tr>
             </thead>
             <tbody>
@@ -1873,15 +1954,19 @@ function SubscribersTab() {
                   className={`border-b border-[rgb(var(--border))] last:border-b-0 hover:bg-[rgb(var(--background))]/50 transition-colors ${s.unsubscribedAt ? 'opacity-60' : ''}`}
                 >
                   <td className="px-4 py-2.5 text-sm font-mono text-[rgb(var(--foreground))]">{s.email}</td>
-                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--foreground))] capitalize">{s.source}</td>
+                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--foreground))] capitalize">{formatSource(s.source)}</td>
                   <td className="px-4 py-2.5 text-center">
-                    <span className="text-xs">{s.doiConfirmed ? '✅' : '❌'}</span>
+                    <span className={`text-xs font-medium ${s.doiConfirmed ? 'text-emerald-500' : 'text-amber-500'}`}>{yesNo(s.doiConfirmed)}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">
+                    {s.doiSentAt ? formatShortDate(s.doiSentAt) : '—'}
                   </td>
                   <td className="px-4 py-2.5 text-center">
-                    <span className="text-xs">{s.wantsUpdates ? '✅' : '❌'}</span>
+                    <span className="text-xs">{yesNo(s.wantsUpdates)}</span>
                   </td>
                   <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{formatShortDate(s.createdAt)}</td>
                   <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))]">{s.unsubscribedAt ? formatShortDate(s.unsubscribedAt) : '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-[rgb(var(--muted))] capitalize">{s.suppressedReason ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
