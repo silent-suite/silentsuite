@@ -91,10 +91,10 @@ export const useContactStore = create<ContactState & ContactActions>()(
             if (itemUid) {
               set((state) => ({
                 contacts: state.contacts.map((c) =>
-                  c.id === tempId ? { ...c, id: itemUid, uid: itemUid } : c,
+                  c.id === tempId ? { ...c, id: itemUid } : c,
                 ),
               }))
-              return { ...contact, id: itemUid, uid: itemUid }
+              return { ...contact, id: itemUid }
             }
           } catch (err) {
             console.error('[contact-store] Failed to sync new contact to Etebase:', err)
@@ -211,7 +211,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
               contacts: state.contacts.map((c) => {
                 const idx = contacts.findIndex((contact) => contact.id === c.id)
                 if (idx !== -1 && uids[idx]) {
-                  return { ...c, id: uids[idx]!, uid: uids[idx]! }
+                  return { ...c, id: uids[idx]! }
                 }
                 return c
               }),
