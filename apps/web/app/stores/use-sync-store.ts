@@ -149,21 +149,21 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         const { useTaskStore } = await import('@/app/stores/use-task-store')
         useTaskStore.getState().syncFromRemote(
           useTaskStore.getState().tasks.map((t) =>
-            t.id === tempId ? { ...t, id: result.itemUid!, uid: result.itemUid! } : t,
+            t.id === tempId ? { ...t, id: result.itemUid! } : t,
           ),
         )
       } else if (collectionType === 'contacts') {
         const { useContactStore } = await import('@/app/stores/use-contact-store')
         useContactStore.getState().syncFromRemote(
           useContactStore.getState().contacts.map((c) =>
-            c.id === tempId ? { ...c, id: result.itemUid!, uid: result.itemUid! } : c,
+            c.id === tempId ? { ...c, id: result.itemUid! } : c,
           ),
         )
       } else if (collectionType === 'calendar') {
         const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
         useCalendarStore.getState().syncFromRemote(
           useCalendarStore.getState().events.map((e) =>
-            e.id === tempId ? { ...e, id: result.itemUid!, uid: result.itemUid! } : e,
+            e.id === tempId ? { ...e, id: result.itemUid! } : e,
           ),
         )
       }
@@ -209,19 +209,19 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
       const tasks = taskItems.map((item) => {
         const task = core.deserializeTask(item.content)
-        return { ...task, id: item.uid, uid: item.uid, listId: item.collectionUid }
+        return { ...task, id: item.uid, listId: item.collectionUid }
       })
       useTaskStore.getState().syncFromRemote(tasks)
 
       const contacts = contactItems.map((item) => {
         const contact = core.deserializeContact(item.content)
-        return { ...contact, id: item.uid, uid: item.uid, listId: item.collectionUid }
+        return { ...contact, id: item.uid, listId: item.collectionUid }
       })
       useContactStore.getState().syncFromRemote(contacts)
 
       const events = eventItems.map((item) => {
         const event = core.deserializeCalendarEvent(item.content)
-        return { ...event, id: item.uid, uid: item.uid, calendarId: item.collectionUid }
+        return { ...event, id: item.uid, calendarId: item.collectionUid }
       })
       useCalendarStore.getState().syncFromRemote(events)
 

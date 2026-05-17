@@ -48,6 +48,16 @@ function formatICalDateTime(date: Date): string {
   return `${y}${mo}${d}T${h}${mi}${s}`;
 }
 
+function formatICalUtcDateTime(date: Date): string {
+  const y = date.getUTCFullYear();
+  const mo = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  const h = String(date.getUTCHours()).padStart(2, '0');
+  const mi = String(date.getUTCMinutes()).padStart(2, '0');
+  const s = String(date.getUTCSeconds()).padStart(2, '0');
+  return `${y}${mo}${d}T${h}${mi}${s}Z`;
+}
+
 function formatICalDate(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -90,8 +100,8 @@ export function toVTodo(task: Task): string {
     priority: PRIORITY_TO_ICAL[task.priority],
     status: task.completed ? 'COMPLETED' : 'NEEDS-ACTION',
     percentComplete: task.completed ? 100 : 0,
-    created: formatICalDateTime(task.created_at),
-    lastModified: formatICalDateTime(task.updated_at),
+    created: formatICalUtcDateTime(task.created_at),
+    lastModified: formatICalUtcDateTime(task.updated_at),
   };
 
   if (task.due_date) {
@@ -105,7 +115,7 @@ export function toVTodo(task: Task): string {
   }
 
   if (task.completed) {
-    vtodo.completed = formatICalDateTime(task.updated_at);
+    vtodo.completed = formatICalUtcDateTime(task.updated_at);
   }
 
   return generateVTodo(vtodo);

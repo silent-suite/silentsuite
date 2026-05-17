@@ -163,10 +163,10 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     if (itemUid) {
       set((state) => ({
         events: state.events.map((e) =>
-          e.id === tempId ? { ...e, id: itemUid, uid: itemUid } : e,
+          e.id === tempId ? { ...e, id: itemUid } : e,
         ),
       }))
-      return { ...event, id: itemUid, uid: itemUid }
+      return { ...event, id: itemUid }
     }
 
     return event
@@ -485,7 +485,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           events: state.events.map((e) => {
             const idx = events.findIndex((ev) => ev.id === e.id)
             if (idx !== -1 && uids[idx]) {
-              return { ...e, id: uids[idx]!, uid: uids[idx]! }
+              return { ...e, id: uids[idx]! }
             }
             return e
           }),

@@ -74,10 +74,10 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               // Replace temp id with real Etebase item UID
               set((state) => ({
                 tasks: state.tasks.map((t) =>
-                  t.id === tempId ? { ...t, id: itemUid, uid: itemUid } : t,
+                  t.id === tempId ? { ...t, id: itemUid } : t,
                 ),
               }))
-              return { ...task, id: itemUid, uid: itemUid }
+              return { ...task, id: itemUid }
             }
           } catch (err) {
             console.error('[task-store] Failed to sync new task to Etebase:', err)
@@ -217,7 +217,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               tasks: state.tasks.map((t) => {
                 const idx = tasks.findIndex((task) => task.id === t.id)
                 if (idx !== -1 && uids[idx]) {
-                  return { ...t, id: uids[idx]!, uid: uids[idx]! }
+                  return { ...t, id: uids[idx]! }
                 }
                 return t
               }),
