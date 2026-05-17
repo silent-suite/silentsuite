@@ -375,6 +375,7 @@ class Collection:
         meta.update(update_info)
         self.col.meta = meta
         self.cache_col.eb_col = self.col_mgr.cache_save(self.col)
+        self.cache_col.dirty = True
         self.cache_col.save()
 
     def create(self, vobject_item):

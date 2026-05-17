@@ -6,6 +6,7 @@ import {
   putItems,
   deleteItem,
   replaceItemsForType,
+  replaceItemsForCollection,
   getCollection,
   putCollection,
   getStoken,
@@ -30,11 +31,11 @@ beforeEach(async () => {
   })
 })
 
-function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks', content = 'CONTENT'): CachedItem {
+function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks', content = 'CONTENT', collectionUid = 'col-1'): CachedItem {
   return {
     itemUid: uid,
     collectionType: type,
-    collectionUid: 'col-1',
+    collectionUid,
     content,
     lastModified: Date.now(),
   }
@@ -110,12 +111,24 @@ describe('data-cache', () => {
       expect(contacts).toHaveLength(1)
       expect(contacts[0]!.itemUid).toBe('c')
     })
+
+    it('replaceItemsForCollection only drops items in that collection', async () => {
+      await putItems([
+        makeItem('a', 'tasks', 'old-a', 'col-a'),
+        makeItem('b', 'tasks', 'old-b', 'col-b'),
+      ])
+      await replaceItemsForCollection('col-a', [makeItem('z', 'tasks', 'fresh', 'col-a')])
+
+      const tasks = await getItemsByType('tasks')
+      expect(tasks.map((item) => item.itemUid).sort()).toEqual(['b', 'z'])
+      expect(tasks.find((item) => item.itemUid === 'b')!.collectionUid).toBe('col-b')
+    })
   })
 
   describe('collections / stokens', () => {
     it('returns null for an unknown collection', async () => {
-      expect(await getCollection('tasks')).toBeNull()
-      expect(await getStoken('tasks')).toBeNull()
+      expect(await getCollection('col-tasks')).toBeNull()
+      expect(await getStoken('col-tasks')).toBeNull()
     })
 
     it('persists a collection record', async () => {
@@ -125,7 +138,7 @@ describe('data-cache', () => {
         stoken: 'stk-1',
         lastFullSyncAt: 12345,
       })
-      const col = await getCollection('tasks')
+      const col = await getCollection('col-tasks')
       expect(col).not.toBeNull()
       expect(col!.stoken).toBe('stk-1')
       expect(col!.collectionUid).toBe('col-tasks')
@@ -133,16 +146,23 @@ describe('data-cache', () => {
 
     it('setStoken creates and updates the cursor', async () => {
       await setStoken('tasks', 'col-tasks', 'stk-a')
-      expect(await getStoken('tasks')).toBe('stk-a')
+      expect(await getStoken('col-tasks')).toBe('stk-a')
       await setStoken('tasks', 'col-tasks', 'stk-b')
-      expect(await getStoken('tasks')).toBe('stk-b')
+      expect(await getStoken('col-tasks')).toBe('stk-b')
+    })
+
+    it('stokens are keyed by collectionUid, not collectionType', async () => {
+      await setStoken('tasks', 'col-a', 'stk-a')
+      await setStoken('tasks', 'col-b', 'stk-b')
+      expect(await getStoken('col-a')).toBe('stk-a')
+      expect(await getStoken('col-b')).toBe('stk-b')
     })
 
     it('clearStoken nulls the stoken but preserves the row', async () => {
       await setStoken('tasks', 'col-tasks', 'stk-a')
-      await clearStoken('tasks')
-      expect(await getStoken('tasks')).toBeNull()
-      const col = await getCollection('tasks')
+      await clearStoken('col-tasks')
+      expect(await getStoken('col-tasks')).toBeNull()
+      const col = await getCollection('col-tasks')
       expect(col).not.toBeNull()
       expect(col!.collectionUid).toBe('col-tasks')
     })
@@ -179,7 +199,7 @@ describe('data-cache', () => {
       expect(ok).toBe(false)
 
       // Cache should be wiped for the new account.
-      expect(await getStoken('tasks')).toBeNull()
+      expect(await getStoken('col-tasks')).toBeNull()
       const meta = await getMeta()
       expect(meta?.accountFingerprint).toBe('bob@example.com')
       expect(meta?.lastInvalidatedAt).not.toBeNull()
@@ -191,7 +211,7 @@ describe('data-cache', () => {
 
       const ok = await ensureFingerprint('alice@example.com')
       expect(ok).toBe(true)
-      expect(await getStoken('tasks')).toBe('stk-a')
+      expect(await getStoken('col-tasks')).toBe('stk-a')
     })
   })
 
@@ -208,7 +228,7 @@ describe('data-cache', () => {
       await clearAll()
 
       expect(await getItemsByType('tasks')).toEqual([])
-      expect(await getStoken('tasks')).toBeNull()
+      expect(await getStoken('col-tasks')).toBeNull()
       expect(await getMeta()).toBeNull()
     })
 

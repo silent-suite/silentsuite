@@ -199,6 +199,23 @@ class TestCollectionWrapper:
         assert col.cache_col.deleted is True
         assert col.cache_col.dirty is True
 
+    def test_update_meta_marks_dirty(self, mem_db, user):
+        mock_col = _make_mock_collection(
+            "col-1", "etebase.vevent", meta={"name": "Old", "color": "#000000"}
+        )
+        mgr = self._simple_col_mgr(mock_col)
+        cache_col = CollectionEntity.create(
+            local_user=user, uid="col-1", eb_col=b"\x00" * 8
+        )
+        col = Collection(mgr, cache_col)
+
+        col.update_meta({"name": "New", "color": "#00FF00"})
+
+        refreshed = CollectionEntity.get_by_id(cache_col.id)
+        assert mock_col.meta == {"name": "New", "color": "#00FF00"}
+        assert refreshed.eb_col == b"saved"
+        assert refreshed.dirty is True
+
     def test_list_items(self, mem_db, user, mock_item_mgr):
         mock_col = _make_mock_collection("col-1", "etebase.vevent")
         mgr = MagicMock()

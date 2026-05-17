@@ -12,6 +12,7 @@ export interface QueueEntry {
   id: string
   type: MutationType
   collectionType: CollectionTypeKey
+  collectionUid?: string
   content?: string
   itemUid?: string
   tempId?: string
@@ -97,7 +98,7 @@ async function compact(
   // Match by tempId (for items created offline that haven't synced yet)
   if (incoming.tempId) {
     const existing = pending.find(
-      (e) => e.tempId === incoming.tempId && e.collectionType === incoming.collectionType,
+      (e) => e.tempId === incoming.tempId && e.collectionType === incoming.collectionType && e.collectionUid === incoming.collectionUid,
     )
     if (existing) {
       if (existing.type === 'create' && incoming.type === 'update') {
@@ -116,7 +117,7 @@ async function compact(
   // Match by itemUid (for items that already exist on server)
   if (incoming.itemUid) {
     const existing = pending.find(
-      (e) => e.itemUid === incoming.itemUid && e.collectionType === incoming.collectionType,
+      (e) => e.itemUid === incoming.itemUid && e.collectionType === incoming.collectionType && e.collectionUid === incoming.collectionUid,
     )
     if (existing) {
       if (existing.type === 'update' && incoming.type === 'update') {

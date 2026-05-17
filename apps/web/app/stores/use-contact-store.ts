@@ -6,6 +6,7 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
 import { showErrorToast } from '@/app/stores/use-toast-store'
+import { useContactListStore } from '@/app/stores/use-contact-list-store'
 
 interface NewContact {
   displayName: string
@@ -37,6 +38,12 @@ interface ContactActions {
   syncFromRemote: (contacts: Contact[]) => void
 }
 
+function defaultContactListId(): string | undefined {
+  const { lists, activeListId } = useContactListStore.getState()
+  if (activeListId !== 'all' && lists.some((list) => list.id === activeListId)) return activeListId
+  return lists[0]?.id
+}
+
 export const useContactStore = create<ContactState & ContactActions>()(
     (set, get) => ({
       contacts: [],
@@ -66,7 +73,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
           notes: newContact.notes ?? '',
           birthday: newContact.birthday ?? null,
           photoUrl: newContact.photoUrl ?? null,
-          listId: newContact.listId,
+          listId: newContact.listId ?? defaultContactListId(),
           created_at: now,
           updated_at: now,
         }
@@ -80,7 +87,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
           try {
             const { serializeContact } = await import('@silentsuite/core')
             const content = serializeContact(contact)
-            const itemUid = await etebase.createItem('contacts', content, tempId)
+            const itemUid = await etebase.createItem('contacts', content, tempId, contact.listId)
             if (itemUid) {
               set((state) => ({
                 contacts: state.contacts.map((c) =>
@@ -125,13 +132,14 @@ export const useContactStore = create<ContactState & ContactActions>()(
           } else {
             const { serializeContact } = await import('@silentsuite/core')
             const content = serializeContact(updated)
-            await enqueue({ type: 'update', collectionType: 'contacts', content, tempId: id })
+            await enqueue({ type: 'update', collectionType: 'contacts', collectionUid: updated.listId, content, tempId: id })
           }
         }
       },
 
       deleteContact: async (id: string) => {
         if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
+        const contactToDelete = get().contacts.find((c) => c.id === id)
         set((state) => ({ contacts: state.contacts.filter((c) => c.id !== id) }))
 
         // Sync to Etebase
@@ -147,7 +155,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
             }
           } else {
             // Item was created offline and not yet synced — enqueue delete with tempId for compaction
-            await enqueue({ type: 'delete', collectionType: 'contacts', tempId: id })
+            await enqueue({ type: 'delete', collectionType: 'contacts', collectionUid: contactToDelete?.listId, tempId: id })
           }
         }
       },
@@ -179,7 +187,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
             notes: nc.notes ?? '',
             birthday: nc.birthday ?? null,
             photoUrl: nc.photoUrl ?? null,
-            listId: nc.listId,
+            listId: nc.listId ?? defaultContactListId(),
             created_at: now,
             updated_at: now,
           }
@@ -197,7 +205,8 @@ export const useContactStore = create<ContactState & ContactActions>()(
               content: serializeContact(c),
               tempId: c.id,
             }))
-            const uids = await etebase.createItemsBatch('contacts', contents)
+            const targetCollectionUid = contacts[0]?.listId
+            const uids = await etebase.createItemsBatch('contacts', contents, targetCollectionUid)
             set((state) => ({
               contacts: state.contacts.map((c) => {
                 const idx = contacts.findIndex((contact) => contact.id === c.id)

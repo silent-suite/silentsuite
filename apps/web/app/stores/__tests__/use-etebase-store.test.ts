@@ -29,6 +29,14 @@ interface MockSyncEngine {
   resume: ReturnType<typeof vi.fn>
 }
 
+function mockItem(uid: string, content: string, isDeleted = false) {
+  return {
+    uid,
+    isDeleted,
+    getContent: vi.fn(async () => content),
+  }
+}
+
 function setupStoreWithMocks(itemManager: MockItemManager, syncEngine: MockSyncEngine) {
   const collection = { uid: 'col-1' }
   const account = {
@@ -38,9 +46,28 @@ function setupStoreWithMocks(itemManager: MockItemManager, syncEngine: MockSyncE
   }
   useEtebaseStore.setState({
     account: account as any,
-    collections: { calendar: collection as any, tasks: null, contacts: null },
+    collections: { calendar: [collection as any], tasks: [], contacts: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
+    itemCollectionMap: new Map(),
+    isInitialized: true,
+    syncEngine: syncEngine as any,
+  })
+}
+
+function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemManager>, syncEngine: MockSyncEngine) {
+  const collections = [{ uid: 'col-1' }, { uid: 'col-2' }]
+  const account = {
+    getCollectionManager: () => ({
+      getItemManager: (collection: { uid: string }) => itemManagerByUid[collection.uid],
+    }),
+  }
+  useEtebaseStore.setState({
+    account: account as any,
+    collections: { calendar: collections as any[], tasks: [], contacts: [] },
+    itemCache: new Map(),
+    itemTypeMap: new Map(),
+    itemCollectionMap: new Map(),
     isInitialized: true,
     syncEngine: syncEngine as any,
   })
@@ -50,9 +77,10 @@ describe('useEtebaseStore.createItemsBatch', () => {
   beforeEach(() => {
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: null, tasks: null, contacts: null },
+      collections: { calendar: [], tasks: [], contacts: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
       isInitialized: false,
       syncEngine: null,
     })
@@ -95,6 +123,28 @@ describe('useEtebaseStore.createItemsBatch', () => {
 
     expect(syncEngine.pause).toHaveBeenCalledTimes(1)
     expect(syncEngine.resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes batch creates to the requested collection uid', async () => {
+    const firstManager: MockItemManager = {
+      create: vi.fn(async () => ({ uid: 'wrong' })),
+      batch: vi.fn(async () => {}),
+    }
+    const secondManager: MockItemManager = {
+      create: vi.fn(async () => ({ uid: 'right' })),
+      batch: vi.fn(async () => {}),
+    }
+    const syncEngine: MockSyncEngine = { pause: vi.fn(), resume: vi.fn() }
+    setupStoreWithCollections({ 'col-1': firstManager, 'col-2': secondManager }, syncEngine)
+
+    const uids = await useEtebaseStore.getState().createItemsBatch('calendar', [
+      { content: 'a', tempId: 't1' },
+    ], 'col-2')
+
+    expect(firstManager.create).not.toHaveBeenCalled()
+    expect(secondManager.create).toHaveBeenCalledTimes(1)
+    expect(uids).toEqual(['right'])
+    expect(useEtebaseStore.getState().itemCollectionMap.get('right')).toBe('col-2')
   })
 
   it('resumes the sync engine even when the import throws', async () => {
@@ -172,5 +222,100 @@ describe('useEtebaseStore.createItemsBatch', () => {
     expect(itemManager.batch).toHaveBeenCalledTimes(1 + 3)
     expect(uids.slice(0, 20).every((u) => typeof u === 'string')).toBe(true)
     expect(uids.slice(20).every((u) => u === null)).toBe(true)
+  })
+})
+
+describe('useEtebaseStore.refreshCollection', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('refreshes one concrete collection without removing same-type items from others', async () => {
+    const staleItem = mockItem('old-col-1', 'old calendar')
+    const survivorItem = mockItem('keep-col-2', 'other calendar')
+    const freshItem = mockItem('new-col-1', 'fresh calendar')
+    const collections = [{ uid: 'col-1' }, { uid: 'col-2' }]
+    const itemManagers = {
+      'col-1': {
+        list: vi.fn(async () => ({ data: [freshItem], stoken: null, done: true })),
+      },
+      'col-2': {
+        list: vi.fn(async () => ({ data: [], stoken: null, done: true })),
+      },
+    }
+    const account = {
+      getCollectionManager: () => ({
+        fetch: vi.fn(async (uid: string) => ({ uid })),
+        getItemManager: (collection: { uid: keyof typeof itemManagers }) => itemManagers[collection.uid],
+      }),
+    }
+
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: collections as any[], tasks: [], contacts: [] },
+      itemCache: new Map([
+        ['old-col-1', staleItem],
+        ['keep-col-2', survivorItem],
+      ]),
+      itemTypeMap: new Map([
+        ['old-col-1', 'calendar'],
+        ['keep-col-2', 'calendar'],
+      ]),
+      itemCollectionMap: new Map([
+        ['old-col-1', 'col-1'],
+        ['keep-col-2', 'col-2'],
+      ]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+
+    const result = await useEtebaseStore.getState().refreshCollection('calendar', 'col-1')
+    const state = useEtebaseStore.getState()
+
+    expect(result).toEqual([{ uid: 'new-col-1', content: 'fresh calendar', collectionUid: 'col-1' }])
+    expect(state.itemCache.has('old-col-1')).toBe(false)
+    expect(state.itemCache.get('new-col-1')).toBe(freshItem)
+    expect(state.itemCollectionMap.get('new-col-1')).toBe('col-1')
+    expect(state.itemCache.get('keep-col-2')).toBe(survivorItem)
+    expect(state.itemCollectionMap.get('keep-col-2')).toBe('col-2')
+    expect(itemManagers['col-2'].list).not.toHaveBeenCalled()
+  })
+
+  it('preserves and returns existing items when a network refresh fails', async () => {
+    const existingItem = mockItem('existing', 'existing calendar')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const account = {
+      getCollectionManager: () => ({
+        fetch: vi.fn(async () => {
+          throw new Error('network down')
+        }),
+      }),
+    }
+
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [] },
+      itemCache: new Map([['existing', existingItem]]),
+      itemTypeMap: new Map([['existing', 'calendar']]),
+      itemCollectionMap: new Map([['existing', 'col-1']]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+
+    const result = await useEtebaseStore.getState().refreshCollection('calendar')
+    const state = useEtebaseStore.getState()
+
+    expect(result).toEqual([{ uid: 'existing', content: 'existing calendar', collectionUid: 'col-1' }])
+    expect(state.itemCache.get('existing')).toBe(existingItem)
+    expect(state.itemCollectionMap.get('existing')).toBe('col-1')
+    errorSpy.mockRestore()
   })
 })

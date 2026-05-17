@@ -7,6 +7,7 @@ import type { RecurrenceScope } from '@/app/(app)/calendar/components/Recurrence
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { showErrorToast } from '@/app/stores/use-toast-store'
+import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 
 type CalendarView = 'week' | 'month'
 
@@ -95,7 +96,7 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
     const { serializeCalendarEvent } = await import('@silentsuite/core')
     const content = serializeCalendarEvent(event)
     if (mode === 'create') {
-      return await etebase.createItem('calendar', content, tempId)
+      return await etebase.createItem('calendar', content, tempId, event.calendarId)
     } else {
       // For updates of offline-created items, enqueue with tempId for compaction
       const itemInCache = etebase.itemCache.has(event.id)
@@ -104,7 +105,7 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
         return event.id
       } else {
         const { enqueue } = await import('@/app/lib/offline-queue')
-        await enqueue({ type: 'update', collectionType: 'calendar', content, tempId: event.id })
+        await enqueue({ type: 'update', collectionType: 'calendar', collectionUid: event.calendarId, content, tempId: event.id })
         return event.id
       }
     }
@@ -116,6 +117,12 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
     }
     return null
   }
+}
+
+function defaultCalendarId(): string {
+  const { calendars, defaultCalendarId } = useCalendarListStore.getState()
+  if (calendars.some((calendar) => calendar.id === defaultCalendarId)) return defaultCalendarId
+  return calendars[0]?.id ?? 'default'
 }
 
 export const useCalendarStore = create<CalendarState & CalendarActions>()((set, get) => ({
@@ -142,7 +149,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       recurrenceRule: newEvent.recurrenceRule ?? null,
       exceptions: [],
       alarms: newEvent.alarms ?? [],
-      calendarId: newEvent.calendarId ?? 'default',
+      calendarId: newEvent.calendarId ?? defaultCalendarId(),
       timezone: newEvent.timezone,
       created: now,
       updated: now,
@@ -183,6 +190,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
 
   deleteEvent: async (id: string) => {
     if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
+    const eventToDelete = get().events.find((e) => e.id === id)
     // Optimistic update
     set((state) => ({ events: state.events.filter((e) => e.id !== id) }))
 
@@ -198,7 +206,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           // Non-offline errors are logged and the optimistic removal stands.
           const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
           if (isOfflineError(err)) {
-            await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: id })
+            await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(id), itemUid: id })
           } else {
             showErrorToast('Failed to delete event. Please try again.')
           }
@@ -207,7 +215,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       } else {
         // Item was created offline — enqueue delete with tempId for compaction
         const { enqueue } = await import('@/app/lib/offline-queue')
-        await enqueue({ type: 'delete', collectionType: 'calendar', tempId: id })
+        await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: eventToDelete?.calendarId, tempId: id })
       }
     }
   },
@@ -386,7 +394,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             } catch (err) {
               const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
               if (isOfflineError(err)) {
-                await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: id })
+                await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(id), itemUid: id })
               } else {
                 showErrorToast('Failed to delete event. Please try again.')
               }
@@ -394,7 +402,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             }
           } else {
             const { enqueue } = await import('@/app/lib/offline-queue')
-            await enqueue({ type: 'delete', collectionType: 'calendar', tempId: id })
+            await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: master.calendarId, tempId: id })
           }
         }
         break
@@ -451,7 +459,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         recurrenceRule: ne.recurrenceRule ?? null,
         exceptions: [],
         alarms: ne.alarms ?? [],
-        calendarId: ne.calendarId ?? 'default',
+        calendarId: ne.calendarId ?? defaultCalendarId(),
         timezone: ne.timezone,
         created: now,
         updated: now,
@@ -470,7 +478,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           content: serializeCalendarEvent(e),
           tempId: e.id,
         }))
-        const uids = await etebase.createItemsBatch('calendar', contents)
+        const targetCollectionUid = events[0]?.calendarId
+        const uids = await etebase.createItemsBatch('calendar', contents, targetCollectionUid)
         // Replace temp IDs with real UIDs
         set((state) => ({
           events: state.events.map((e) => {

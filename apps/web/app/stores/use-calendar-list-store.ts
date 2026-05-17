@@ -9,7 +9,7 @@ export interface CalendarList {
   visible: boolean
 }
 
-const DEFAULT_COLORS = [
+export const DEFAULT_CALENDAR_COLORS = [
   '#10b981', // emerald
   '#3b82f6', // blue
   '#f59e0b', // amber
@@ -28,6 +28,7 @@ interface CalendarListState {
   updateCalendar: (id: string, updates: Partial<CalendarList>) => void
   toggleVisibility: (id: string) => void
   setDefaultCalendar: (id: string) => void
+  replaceCalendarsFromRemote: (calendars: CalendarList[]) => void
   getNextColor: () => string
 }
 
@@ -86,10 +87,24 @@ export const useCalendarListStore = create<CalendarListState>()(
           set({ defaultCalendarId: id })
         }
       },
+      replaceCalendarsFromRemote: (calendars) => {
+        if (calendars.length === 0) return
+        const current = get()
+        const remoteIds = new Set(calendars.map((calendar) => calendar.id))
+        const currentById = new Map(current.calendars.map((calendar) => [calendar.id, calendar]))
+        const merged = calendars.map((calendar) => ({
+          ...calendar,
+          visible: currentById.get(calendar.id)?.visible ?? calendar.visible,
+        }))
+        set({
+          calendars: merged,
+          defaultCalendarId: remoteIds.has(current.defaultCalendarId) ? current.defaultCalendarId : calendars[0]!.id,
+        })
+      },
       getNextColor: () => {
         const { calendars } = get()
         const usedColors = new Set(calendars.map((c) => c.color))
-        return DEFAULT_COLORS.find((c) => !usedColors.has(c)) || DEFAULT_COLORS[calendars.length % DEFAULT_COLORS.length]
+        return DEFAULT_CALENDAR_COLORS.find((c) => !usedColors.has(c)) || DEFAULT_CALENDAR_COLORS[calendars.length % DEFAULT_CALENDAR_COLORS.length]
       },
     }),
     {

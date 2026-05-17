@@ -2,6 +2,8 @@
 
 Your contacts are end-to-end encrypted. Only your devices can read them.
 
+Contacts can be organized into multiple address books. Each address book is a separate encrypted collection that syncs across your devices and compatible CardDAV clients.
+
 ## Add a Contact
 
 1. Open the Contacts view.

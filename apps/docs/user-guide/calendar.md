@@ -6,6 +6,8 @@ Your calendar events are end-to-end encrypted. Only your devices can read them.
 
 The web app at [app.silentsuite.io](https://app.silentsuite.io) provides day, week, and month views. The sidebar includes a mini calendar for quick navigation and a calendar list where you can toggle visibility of individual calendars.
 
+You can create multiple calendars. Each calendar is a separate encrypted collection with its own name, color, items, and DAV collection URL.
+
 ## Create an Event
 
 1. Open the Calendar view.

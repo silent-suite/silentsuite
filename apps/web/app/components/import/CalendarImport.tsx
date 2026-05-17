@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { parseVCalendar, parseICalDateValue } from '@silentsuite/core'
 import { ExternalLink } from 'lucide-react'
@@ -11,6 +11,7 @@ import ImportListSelector from './ImportListSelector'
 import { vEventToImportEvent } from './import-mappers'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 
 interface CalendarImportProps {
   onImportComplete: (count: number) => void
@@ -72,10 +73,21 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
-  const [selectedCalendarId, setSelectedCalendarId] = useState('default')
   const importEvents = useCalendarStore((s) => s.importEvents)
   const calendars = useCalendarListStore((s) => s.calendars)
-  const addCalendar = useCalendarListStore((s) => s.addCalendar)
+  const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
+  const [selectedCalendarId, setSelectedCalendarId] = useState(defaultCalendarId)
+  const createCollection = useEtebaseStore((s) => s.createCollection)
+
+  useEffect(() => {
+    if (calendars.length === 0) return
+    const fallbackId = calendars.some((cal) => cal.id === defaultCalendarId)
+      ? defaultCalendarId
+      : calendars[0]!.id
+    if (!calendars.some((cal) => cal.id === selectedCalendarId)) {
+      setSelectedCalendarId(fallbackId)
+    }
+  }, [calendars, defaultCalendarId, selectedCalendarId])
 
   const handleFiles = useCallback(async (files: File[]) => {
     setError(null)
@@ -128,12 +140,10 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     }
   }, [events, importEvents, onImportComplete, selectedCalendarId])
 
-  const handleCreateCalendar = useCallback((name: string, color: string) => {
-    addCalendar(name, color)
-    const newCalendars = useCalendarListStore.getState().calendars
-    const created = newCalendars[newCalendars.length - 1]
-    if (created) setSelectedCalendarId(created.id)
-  }, [addCalendar])
+  const handleCreateCalendar = useCallback(async (name: string, color: string) => {
+    const uid = await createCollection('calendar', name, color)
+    if (uid) setSelectedCalendarId(uid)
+  }, [createCollection])
 
   const handleCancel = useCallback(() => {
     setEvents([])
