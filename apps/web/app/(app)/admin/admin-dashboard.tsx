@@ -857,7 +857,7 @@ function OverviewTab({ onNavigate }: { onNavigate: (tab: string) => void }) {
           ))}
         </div>
       ) : metrics ? (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <KpiTile
             label="Total Users"
             value={totalUsers}
@@ -1105,7 +1105,7 @@ function RecentEventsCard({
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Activity className="h-4 w-4 text-[rgb(var(--muted))]" />
-          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Recent webhook events</h2>
+          <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Recent events</h2>
           <span className="text-xs text-[rgb(var(--muted))]">({total} total)</span>
         </div>
         <div className="flex items-center gap-2">
@@ -1371,7 +1371,7 @@ function FailedPaymentsTab() {
           <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
             <p className="text-sm text-amber-500">
-              <span className="font-medium">{pastDueUsers.length}</span> user{pastDueUsers.length !== 1 ? 's' : ''} with
+              <span className="font-medium">{pastDueTotal}</span> user{pastDueTotal !== 1 ? 's' : ''} with
               past due payments requiring attention
             </p>
           </div>
