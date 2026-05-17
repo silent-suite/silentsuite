@@ -13,7 +13,7 @@ interface ImportListSelectorProps {
   lists: ListItem[]
   selectedId: string
   onSelect: (id: string) => void
-  onCreateNew: (name: string, color: string) => void
+  onCreateNew: (name: string, color: string) => void | Promise<void>
   label: string
 }
 
@@ -36,10 +36,10 @@ export default function ImportListSelector({
     return PRESET_COLORS.find((c) => !usedColors.has(c)) ?? PRESET_COLORS[0]!
   })
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     const name = newName.trim()
     if (!name) return
-    onCreateNew(name, newColor)
+    await onCreateNew(name, newColor)
     setNewName('')
     setShowCreate(false)
   }

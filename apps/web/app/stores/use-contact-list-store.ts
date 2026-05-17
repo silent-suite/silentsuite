@@ -9,7 +9,7 @@ export interface ContactList {
   visible: boolean
 }
 
-const DEFAULT_COLORS = [
+export const DEFAULT_CONTACT_LIST_COLORS = [
   '#8b5cf6', // violet
   '#10b981', // emerald
   '#3b82f6', // blue
@@ -28,6 +28,7 @@ interface ContactListState {
   updateList: (id: string, updates: Partial<ContactList>) => void
   setActiveList: (id: string) => void
   toggleVisibility: (id: string) => void
+  replaceListsFromRemote: (lists: ContactList[]) => void
   getNextColor: () => string
 }
 
@@ -86,10 +87,25 @@ export const useContactListStore = create<ContactListState>()(
         }))
       },
 
+      replaceListsFromRemote: (lists) => {
+        if (lists.length === 0) return
+        const current = get()
+        const remoteIds = new Set(lists.map((list) => list.id))
+        const currentById = new Map(current.lists.map((list) => [list.id, list]))
+        const merged = lists.map((list) => ({
+          ...list,
+          visible: currentById.get(list.id)?.visible ?? list.visible,
+        }))
+        set({
+          lists: merged,
+          activeListId: current.activeListId === 'all' || remoteIds.has(current.activeListId) ? current.activeListId : lists[0]!.id,
+        })
+      },
+
       getNextColor: () => {
         const { lists } = get()
         const usedColors = new Set(lists.map((l) => l.color))
-        return DEFAULT_COLORS.find((c) => !usedColors.has(c)) || DEFAULT_COLORS[lists.length % DEFAULT_COLORS.length]
+        return DEFAULT_CONTACT_LIST_COLORS.find((c) => !usedColors.has(c)) || DEFAULT_CONTACT_LIST_COLORS[lists.length % DEFAULT_CONTACT_LIST_COLORS.length]
       },
     }),
     {

@@ -6,6 +6,7 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
 import { showErrorToast } from '@/app/stores/use-toast-store'
+import { useTaskListStore } from '@/app/stores/use-task-list-store'
 
 interface NewTask {
   title: string
@@ -30,6 +31,12 @@ interface TaskActions {
   syncFromRemote: (tasks: Task[]) => void
 }
 
+function defaultTaskListId(): string | undefined {
+  const { lists, activeListId } = useTaskListStore.getState()
+  if (activeListId !== 'all' && lists.some((list) => list.id === activeListId)) return activeListId
+  return lists[0]?.id
+}
+
 export const useTaskStore = create<TaskState & TaskActions>()(
     (set, get) => ({
       tasks: [],
@@ -48,7 +55,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           due_date: newTask.due_date ?? null,
           priority: newTask.priority ?? 'medium',
           completed: false,
-          listId: newTask.listId,
+          listId: newTask.listId ?? defaultTaskListId(),
           created_at: now,
           updated_at: now,
         }
@@ -62,15 +69,15 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           try {
             const { serializeTask } = await import('@silentsuite/core')
             const content = serializeTask(task)
-            const itemUid = await etebase.createItem('tasks', content, tempId)
+            const itemUid = await etebase.createItem('tasks', content, tempId, task.listId)
             if (itemUid) {
               // Replace temp id with real Etebase item UID
               set((state) => ({
                 tasks: state.tasks.map((t) =>
-                  t.id === tempId ? { ...t, id: itemUid, uid: itemUid } : t,
+                  t.id === tempId ? { ...t, id: itemUid } : t,
                 ),
               }))
-              return { ...task, id: itemUid, uid: itemUid }
+              return { ...task, id: itemUid }
             }
           } catch (err) {
             console.error('[task-store] Failed to sync new task to Etebase:', err)
@@ -109,13 +116,14 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             // Item was created offline — enqueue update with tempId so compaction merges into create
             const { serializeTask } = await import('@silentsuite/core')
             const content = serializeTask(updated)
-            await enqueue({ type: 'update', collectionType: 'tasks', content, tempId: id })
+            await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: updated.listId, content, tempId: id })
           }
         }
       },
 
       deleteTask: async (id: string) => {
         if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
+        const taskToDelete = get().tasks.find((t) => t.id === id)
         set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }))
 
         // Sync to Etebase
@@ -132,7 +140,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             }
           } else {
             // Item was created offline and not yet synced — enqueue delete with tempId for compaction
-            await enqueue({ type: 'delete', collectionType: 'tasks', tempId: id })
+            await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: taskToDelete?.listId, tempId: id })
           }
         }
       },
@@ -165,7 +173,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           } else {
             const { serializeTask } = await import('@silentsuite/core')
             const content = serializeTask(updated)
-            await enqueue({ type: 'update', collectionType: 'tasks', content, tempId: id })
+            await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: updated.listId, content, tempId: id })
           }
         }
       },
@@ -185,7 +193,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             due_date: nt.due_date ?? null,
             priority: nt.priority ?? 'medium',
             completed: false,
-            listId: nt.listId,
+            listId: nt.listId ?? defaultTaskListId(),
             created_at: now,
             updated_at: now,
           }
@@ -203,12 +211,13 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               content: serializeTask(t),
               tempId: t.id,
             }))
-            const uids = await etebase.createItemsBatch('tasks', contents)
+            const targetCollectionUid = tasks[0]?.listId
+            const uids = await etebase.createItemsBatch('tasks', contents, targetCollectionUid)
             set((state) => ({
               tasks: state.tasks.map((t) => {
                 const idx = tasks.findIndex((task) => task.id === t.id)
                 if (idx !== -1 && uids[idx]) {
-                  return { ...t, id: uids[idx]!, uid: uids[idx]! }
+                  return { ...t, id: uids[idx]! }
                 }
                 return t
               }),

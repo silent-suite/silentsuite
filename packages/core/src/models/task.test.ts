@@ -112,6 +112,19 @@ describe('completed vs incomplete tasks', () => {
     expect(vtodo).toContain('PERCENT-COMPLETE:100');
   });
 
+  it('serializes completion metadata as UTC timestamps for CalDAV clients', () => {
+    const task = makeFullTask({
+      completed: true,
+      created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, 0)),
+      updated_at: new Date(Date.UTC(2026, 2, 10, 12, 0, 0)),
+    });
+    const vtodo = toVTodo(task);
+
+    expect(vtodo).toContain('CREATED:20260101T000000Z');
+    expect(vtodo).toContain('LAST-MODIFIED:20260310T120000Z');
+    expect(vtodo).toContain('COMPLETED:20260310T120000Z');
+  });
+
   it('serializes an incomplete task with STATUS:NEEDS-ACTION', () => {
     const task = makeFullTask({ completed: false });
     const vtodo = toVTodo(task);

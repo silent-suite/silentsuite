@@ -107,7 +107,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           try {
             const tasks = taskItems.map((it) => {
               const task = core.deserializeTask(it.content)
-              return { ...task, id: it.itemUid, uid: it.itemUid }
+              return { ...task, id: it.itemUid, listId: it.collectionUid }
             })
             useTaskStore.getState().syncFromRemote(tasks)
             logger.log(`[sync-provider] Hydrated ${tasks.length} tasks from cache`)
@@ -120,7 +120,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           try {
             const contacts = contactItems.map((it) => {
               const contact = core.deserializeContact(it.content)
-              return { ...contact, id: it.itemUid, uid: it.itemUid }
+              return { ...contact, id: it.itemUid, listId: it.collectionUid }
             })
             useContactStore.getState().syncFromRemote(contacts)
             logger.log(`[sync-provider] Hydrated ${contacts.length} contacts from cache`)
@@ -133,7 +133,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           try {
             const events = eventItems.map((it) => {
               const event = core.deserializeCalendarEvent(it.content)
-              return { ...event, id: it.itemUid, uid: it.itemUid }
+              return { ...event, id: it.itemUid, calendarId: it.collectionUid }
             })
             useCalendarStore.getState().syncFromRemote(events)
             logger.log(`[sync-provider] Hydrated ${events.length} events from cache`)
@@ -152,15 +152,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
       async function mirrorToCache(
         type: 'tasks' | 'contacts' | 'calendar',
-        items: { uid: string; content: string }[],
+        items: { uid: string; content: string; collectionUid: string }[],
       ) {
         if (!cacheEnabled || items.length === 0) return
-        const collectionUid = useEtebaseStore.getState().collections[type]?.uid
-        if (!collectionUid) return
         const records: CachedItem[] = items.map((it) => ({
           itemUid: it.uid,
           collectionType: type,
-          collectionUid,
+          collectionUid: it.collectionUid,
           content: it.content,
           lastModified: Date.now(),
         }))
@@ -178,9 +176,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           const { deserializeTask } = await import('@silentsuite/core')
           const tasks = taskItems.map((item) => {
             const task = deserializeTask(item.content)
-            // Override the local id/uid with the Etebase item UID
-            // so we can map back to the Etebase item for updates/deletes
-            return { ...task, id: item.uid, uid: item.uid }
+            // Use the Etebase item UID only as the local id so updates/deletes
+            // can address the item without changing the stable iCalendar UID.
+            return { ...task, id: item.uid, listId: item.collectionUid }
           })
           useTaskStore.getState().syncFromRemote(tasks)
           logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
@@ -198,7 +196,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           const { deserializeContact } = await import('@silentsuite/core')
           const contacts = contactItems.map((item) => {
             const contact = deserializeContact(item.content)
-            return { ...contact, id: item.uid, uid: item.uid }
+            return { ...contact, id: item.uid, listId: item.collectionUid }
           })
           useContactStore.getState().syncFromRemote(contacts)
           logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
@@ -216,7 +214,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           const { deserializeCalendarEvent } = await import('@silentsuite/core')
           const events = eventItems.map((item) => {
             const event = deserializeCalendarEvent(item.content)
-            return { ...event, id: item.uid, uid: item.uid }
+            return { ...event, id: item.uid, calendarId: item.collectionUid }
           })
           useCalendarStore.getState().syncFromRemote(events)
           logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
@@ -241,10 +239,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (collectionType === 'etebase.vtodo') {
           try {
-            const taskItems = await refresher('tasks')
+            await refresher('tasks', event.collectionUid)
+            const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks')
             const tasks = taskItems.map((item) => {
               const task = core.deserializeTask(item.content)
-              return { ...task, id: item.uid, uid: item.uid }
+              return { ...task, id: item.uid, listId: item.collectionUid }
             })
             useTaskStore.getState().syncFromRemote(tasks)
           } catch (err) {
@@ -253,10 +252,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           }
         } else if (collectionType === 'etebase.vcard') {
           try {
-            const contactItems = await refresher('contacts')
+            await refresher('contacts', event.collectionUid)
+            const contactItems = await useEtebaseStore.getState().fetchAllItems('contacts')
             const contacts = contactItems.map((item) => {
               const contact = core.deserializeContact(item.content)
-              return { ...contact, id: item.uid, uid: item.uid }
+              return { ...contact, id: item.uid, listId: item.collectionUid }
             })
             useContactStore.getState().syncFromRemote(contacts)
           } catch (err) {
@@ -265,10 +265,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           }
         } else if (collectionType === 'etebase.vevent') {
           try {
-            const eventItems = await refresher('calendar')
+            await refresher('calendar', event.collectionUid)
+            const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar')
             const events = eventItems.map((item) => {
               const event = core.deserializeCalendarEvent(item.content)
-              return { ...event, id: item.uid, uid: item.uid }
+              return { ...event, id: item.uid, calendarId: item.collectionUid }
             })
             useCalendarStore.getState().syncFromRemote(events)
           } catch (err) {

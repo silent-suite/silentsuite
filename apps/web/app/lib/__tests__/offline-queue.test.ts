@@ -258,6 +258,21 @@ describe('offline-queue', () => {
       expect(all).toHaveLength(2)
     })
 
+    it('does not compact entries in different collections of the same type', async () => {
+      await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: 'col-a', content: 'v1', itemUid: 'uid-1' })
+      await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: 'col-b', content: 'v2', itemUid: 'uid-1' })
+
+      const all = await getAll()
+      expect(all).toHaveLength(2)
+    })
+
+    it('persists collectionUid for replay routing', async () => {
+      await enqueue({ type: 'create', collectionType: 'calendar', collectionUid: 'cal-b', content: 'ics', tempId: 'temp-1' })
+
+      const all = await getAll()
+      expect(all[0].collectionUid).toBe('cal-b')
+    })
+
     it('does not compact entries with different tempIds', async () => {
       await enqueue({ type: 'create', collectionType: 'tasks', content: 'a', tempId: 'temp-a' })
       await enqueue({ type: 'update', collectionType: 'tasks', content: 'b', tempId: 'temp-b' })

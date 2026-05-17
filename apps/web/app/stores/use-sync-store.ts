@@ -104,7 +104,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       try {
         switch (entry.type) {
           case 'create': {
-            const uid = await etebase.createItem(entry.collectionType, entry.content!)
+            const uid = await etebase.createItem(entry.collectionType, entry.content!, entry.tempId, entry.collectionUid)
             return { itemUid: uid ?? undefined }
           }
           case 'update': {
@@ -128,7 +128,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
             `[sync-store] Conflict on ${entry.type} ${entry.collectionType}/${entry.itemUid} — discarding local change (server wins)`,
           )
           // Refresh the collection to get server's version
-          await etebase.refreshCollection(entry.collectionType)
+          await etebase.refreshCollection(entry.collectionType, entry.collectionUid)
           // Return success so the entry is removed from queue
           return {}
         }
@@ -149,21 +149,21 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         const { useTaskStore } = await import('@/app/stores/use-task-store')
         useTaskStore.getState().syncFromRemote(
           useTaskStore.getState().tasks.map((t) =>
-            t.id === tempId ? { ...t, id: result.itemUid!, uid: result.itemUid! } : t,
+            t.id === tempId ? { ...t, id: result.itemUid! } : t,
           ),
         )
       } else if (collectionType === 'contacts') {
         const { useContactStore } = await import('@/app/stores/use-contact-store')
         useContactStore.getState().syncFromRemote(
           useContactStore.getState().contacts.map((c) =>
-            c.id === tempId ? { ...c, id: result.itemUid!, uid: result.itemUid! } : c,
+            c.id === tempId ? { ...c, id: result.itemUid! } : c,
           ),
         )
       } else if (collectionType === 'calendar') {
         const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
         useCalendarStore.getState().syncFromRemote(
           useCalendarStore.getState().events.map((e) =>
-            e.id === tempId ? { ...e, id: result.itemUid!, uid: result.itemUid! } : e,
+            e.id === tempId ? { ...e, id: result.itemUid! } : e,
           ),
         )
       }
@@ -195,7 +195,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         }
       }
 
-      // Then refresh all three collections from the server
+      // Then refresh every collection of each type from the server
       const [taskItems, contactItems, eventItems] = await Promise.all([
         etebase.refreshCollection('tasks'),
         etebase.refreshCollection('contacts'),
@@ -207,29 +207,23 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
 
-      if (taskItems.length > 0) {
-        const tasks = taskItems.map((item) => {
-          const task = core.deserializeTask(item.content)
-          return { ...task, id: item.uid, uid: item.uid }
-        })
-        useTaskStore.getState().syncFromRemote(tasks)
-      }
+      const tasks = taskItems.map((item) => {
+        const task = core.deserializeTask(item.content)
+        return { ...task, id: item.uid, listId: item.collectionUid }
+      })
+      useTaskStore.getState().syncFromRemote(tasks)
 
-      if (contactItems.length > 0) {
-        const contacts = contactItems.map((item) => {
-          const contact = core.deserializeContact(item.content)
-          return { ...contact, id: item.uid, uid: item.uid }
-        })
-        useContactStore.getState().syncFromRemote(contacts)
-      }
+      const contacts = contactItems.map((item) => {
+        const contact = core.deserializeContact(item.content)
+        return { ...contact, id: item.uid, listId: item.collectionUid }
+      })
+      useContactStore.getState().syncFromRemote(contacts)
 
-      if (eventItems.length > 0) {
-        const events = eventItems.map((item) => {
-          const event = core.deserializeCalendarEvent(item.content)
-          return { ...event, id: item.uid, uid: item.uid }
-        })
-        useCalendarStore.getState().syncFromRemote(events)
-      }
+      const events = eventItems.map((item) => {
+        const event = core.deserializeCalendarEvent(item.content)
+        return { ...event, id: item.uid, calendarId: item.collectionUid }
+      })
+      useCalendarStore.getState().syncFromRemote(events)
 
       // Purge stale queue entries (older than 24h) that may cause phantom indicators
       const stale = await getStaleEntries()

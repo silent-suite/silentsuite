@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { parseVTodo } from '@silentsuite/core/utils/ical-parser'
 import type { VTodo } from '@silentsuite/core/utils/ical-parser'
@@ -10,6 +10,7 @@ import ImportListSelector from './ImportListSelector'
 import { parseICalDate } from './import-mappers'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import type { Priority } from '@silentsuite/core'
 
 interface TaskImportProps {
@@ -166,10 +167,22 @@ export default function TaskImport({ onImportComplete, heading }: TaskImportProp
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
-  const [selectedListId, setSelectedListId] = useState('default')
   const importTasks = useTaskStore((s) => s.importTasks)
   const taskLists = useTaskListStore((s) => s.lists)
-  const addList = useTaskListStore((s) => s.addList)
+  const activeListId = useTaskListStore((s) => s.activeListId)
+  const initialListId = activeListId !== 'all' ? activeListId : 'default'
+  const [selectedListId, setSelectedListId] = useState(initialListId)
+  const createCollection = useEtebaseStore((s) => s.createCollection)
+
+  useEffect(() => {
+    if (taskLists.length === 0) return
+    const fallbackId = activeListId !== 'all' && taskLists.some((list) => list.id === activeListId)
+      ? activeListId
+      : taskLists[0]!.id
+    if (!taskLists.some((list) => list.id === selectedListId)) {
+      setSelectedListId(fallbackId)
+    }
+  }, [activeListId, selectedListId, taskLists])
 
   const handleFiles = useCallback(async (files: File[]) => {
     setError(null)
@@ -220,12 +233,10 @@ export default function TaskImport({ onImportComplete, heading }: TaskImportProp
     }
   }, [tasks, importTasks, onImportComplete, selectedListId])
 
-  const handleCreateList = useCallback((name: string, color: string) => {
-    addList(name, color)
-    const newLists = useTaskListStore.getState().lists
-    const created = newLists[newLists.length - 1]
-    if (created) setSelectedListId(created.id)
-  }, [addList])
+  const handleCreateList = useCallback(async (name: string, color: string) => {
+    const uid = await createCollection('tasks', name, color)
+    if (uid) setSelectedListId(uid)
+  }, [createCollection])
 
   const handleCancel = useCallback(() => {
     setTasks([])
