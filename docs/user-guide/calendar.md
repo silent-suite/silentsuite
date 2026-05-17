@@ -65,7 +65,8 @@ Shared calendars between accounts are not supported in v0.1.0-beta. Your calenda
 
 If you've installed the [desktop bridge](./getting-started.md#desktop-caldav--carddav-via-the-bridge), your CalDAV client (Thunderbird, Apple Calendar, etc.) can read and write the same calendar through `localhost:37358`. Edits there sync the same way as edits in the web app.
 
+Multiple calendars are supported. Each calendar is a separate encrypted collection with its own name, color, items, and DAV collection URL.
+
 ## Limits in this beta
 
-- A single default calendar collection per account. Managing multiple calendars is on the roadmap (see [issue #88](https://github.com/silent-suite/silentsuite/issues/88)).
 - No invitations / RSVP / scheduling — SilentSuite is single-user, by design.

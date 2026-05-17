@@ -21,6 +21,8 @@ The bridge handles encryption/decryption locally. Your data is still end-to-end 
 - Tasks (CalDAV / VTODO)
 - Contacts (CardDAV / VCARD)
 
+The bridge exposes every SilentSuite calendar, task list, and address book as its own DAV collection, so compatible clients can select the destination collection for new events, tasks, and contacts.
+
 ## Install
 
 ### One-Line Installer (Recommended)

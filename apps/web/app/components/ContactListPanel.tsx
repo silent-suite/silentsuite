@@ -1,21 +1,36 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 
 export function ContactListPanel() {
-  const { lists, addList, removeList, toggleVisibility, getNextColor } = useContactListStore()
+  const { lists, toggleVisibility, getNextColor } = useContactListStore()
+  const createCollection = useEtebaseStore((s) => s.createCollection)
+  const deleteCollection = useEtebaseStore((s) => s.deleteCollection)
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
+  const isCreatingRef = useRef(false)
 
-  const handleAdd = useCallback(() => {
-    if (newName.trim()) {
-      addList(newName.trim())
+  const handleAdd = useCallback(async () => {
+    if (isCreatingRef.current) return
+    const name = newName.trim()
+    if (name) {
+      isCreatingRef.current = true
       setNewName('')
-      setIsAdding(false)
+      const uid = await createCollection('contacts', name, getNextColor())
+      if (uid) setIsAdding(false)
+      else setNewName(name)
+      isCreatingRef.current = false
     }
-  }, [newName, addList])
+  }, [createCollection, getNextColor, newName])
+
+  const handleDelete = useCallback(async (id: string, name: string) => {
+    if (lists.length <= 1) return
+    if (!window.confirm(`Delete address book "${name}" and all contacts in it? This cannot be undone.`)) return
+    await deleteCollection('contacts', id)
+  }, [deleteCollection, lists.length])
 
   return (
     <div className="px-3 py-2">
@@ -56,9 +71,9 @@ export function ContactListPanel() {
               </span>
             </button>
             <div className="flex items-center gap-0.5">
-              {list.id !== 'default' && (
+              {lists.length > 1 && (
                 <button
-                  onClick={() => removeList(list.id)}
+                  onClick={() => handleDelete(list.id, list.name)}
                   className="hidden group-hover:block rounded p-0.5 text-[rgb(var(--muted))] hover:text-red-500 transition-colors"
                   aria-label={`Remove ${list.name}`}
                 >

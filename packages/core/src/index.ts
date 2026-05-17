@@ -33,6 +33,8 @@ export {
   createCollection,
   listCollections,
   getCollection,
+  updateCollectionMeta,
+  deleteCollection,
   createItem,
   listItems,
   updateItem,

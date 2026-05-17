@@ -195,6 +195,16 @@ export function EventDialog({
     isEdit ? (event.calendarId ?? defaultCalendarId) : defaultCalendarId,
   )
 
+  useEffect(() => {
+    if (isEdit || calendarLists.length === 0) return
+    if (calendarLists.some((calendar) => calendar.id === selectedCalendarId)) return
+    setSelectedCalendarId(
+      calendarLists.some((calendar) => calendar.id === defaultCalendarId)
+        ? defaultCalendarId
+        : calendarLists[0]!.id,
+    )
+  }, [calendarLists, defaultCalendarId, isEdit, selectedCalendarId])
+
   // Saving state to prevent double-submission
   const [saving, setSaving] = useState(false)
 

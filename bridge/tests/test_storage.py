@@ -246,6 +246,46 @@ class TestDiscover:
         # Should yield root collection + user collection
         assert len(results) == 2
 
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
+    def test_discover_user_yields_all_supported_collections(self, mock_start, mock_etesync_ctx):
+        mock_thread = MagicMock()
+        mock_thread.wait_for_sync.return_value = True
+        mock_start.return_value = mock_thread
+
+        journals = [
+            MagicMock(uid="cal-work", col_type="etebase.vevent"),
+            MagicMock(uid="cal-home", col_type="etebase.vevent"),
+            MagicMock(uid="tasks", col_type="etebase.vtodo"),
+            MagicMock(uid="contacts", col_type="etebase.vcard"),
+            MagicMock(uid="ignored", col_type="etebase.notes"),
+        ]
+        collections = {journal.uid: journal for journal in journals}
+
+        mock_etesync = MagicMock()
+        mock_etesync.list.return_value = journals
+        mock_etesync.get.side_effect = lambda uid: collections[uid]
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(mock_etesync, False)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+        from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
+
+        configuration = Configuration(DEFAULT_CONFIG_SCHEMA)
+        storage = Storage(configuration)
+
+        with storage.acquire_lock("r", user="test@example.com"):
+            results = list(storage.discover("/test@example.com", depth="1"))
+
+        assert [result.path for result in results] == [
+            "test@example.com",
+            "test@example.com/cal-work",
+            "test@example.com/cal-home",
+            "test@example.com/tasks",
+            "test@example.com/contacts",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Collection — create_collection

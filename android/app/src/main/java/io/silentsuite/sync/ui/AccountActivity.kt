@@ -673,12 +673,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
 
             synchronized(etebaseLocalCache) {
-                // Surface at most one collection per type — multi-collection support was
-                // dropped in the 2026-04-12 triage. The sync adapter still caches every
-                // collection locally so nothing is lost for users with prior extras.
                 return etebaseLocalCache.collectionList(colMgr)
                     .filter { it.collectionType == strType }
-                    .take(1)
                     .map {
                         val meta = it.meta
                         val accessLevel = it.col.accessLevel

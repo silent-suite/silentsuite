@@ -39,8 +39,9 @@ The list can be filtered by completion state and sorted by due date or priority.
 
 With the [desktop bridge](./getting-started.md#desktop-caldav--carddav-via-the-bridge) installed, any CalDAV client that speaks `VTODO` can read and write the same tasks through `localhost:37358`.
 
+Multiple task lists are supported. Each list is a separate encrypted collection and appears as its own task collection in compatible DAV clients.
+
 ## Limits in this beta
 
-- A single default tasks collection per account. Managing multiple task lists is on the roadmap (see [issue #88](https://github.com/silent-suite/silentsuite/issues/88)).
 - Date-only `DUE` values round-trip cleanly. Full timezone (`TZID`) preservation on date-time `DUE` values is being tightened up — see [issue #66](https://github.com/silent-suite/silentsuite/issues/66).
 - No subtasks or dependencies — a flat task list per collection.

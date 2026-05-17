@@ -9,7 +9,7 @@ export interface TaskList {
   visible: boolean
 }
 
-const DEFAULT_COLORS = [
+export const DEFAULT_TASK_LIST_COLORS = [
   '#3b82f6', // blue
   '#10b981', // emerald
   '#f59e0b', // amber
@@ -28,6 +28,7 @@ interface TaskListState {
   updateList: (id: string, updates: Partial<TaskList>) => void
   setActiveList: (id: string) => void
   toggleVisibility: (id: string) => void
+  replaceListsFromRemote: (lists: TaskList[]) => void
   getNextColor: () => string
 }
 
@@ -86,10 +87,25 @@ export const useTaskListStore = create<TaskListState>()(
         }))
       },
 
+      replaceListsFromRemote: (lists) => {
+        if (lists.length === 0) return
+        const current = get()
+        const remoteIds = new Set(lists.map((list) => list.id))
+        const currentById = new Map(current.lists.map((list) => [list.id, list]))
+        const merged = lists.map((list) => ({
+          ...list,
+          visible: currentById.get(list.id)?.visible ?? list.visible,
+        }))
+        set({
+          lists: merged,
+          activeListId: current.activeListId === 'all' || remoteIds.has(current.activeListId) ? current.activeListId : lists[0]!.id,
+        })
+      },
+
       getNextColor: () => {
         const { lists } = get()
         const usedColors = new Set(lists.map((l) => l.color))
-        return DEFAULT_COLORS.find((c) => !usedColors.has(c)) || DEFAULT_COLORS[lists.length % DEFAULT_COLORS.length]
+        return DEFAULT_TASK_LIST_COLORS.find((c) => !usedColors.has(c)) || DEFAULT_TASK_LIST_COLORS[lists.length % DEFAULT_TASK_LIST_COLORS.length]
       },
     }),
     {

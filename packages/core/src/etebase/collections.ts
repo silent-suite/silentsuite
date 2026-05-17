@@ -58,6 +58,45 @@ export async function getCollection(
 }
 
 /**
+ * Update collection metadata and upload the collection.
+ */
+export async function updateCollectionMeta(
+  account: Etebase.Account,
+  collection: Etebase.Collection,
+  meta: CollectionMeta,
+): Promise<Etebase.Collection> {
+  const collectionManager = account.getCollectionManager();
+  const currentMeta = (collection as any).getMeta?.() ?? {};
+  const nextMeta = {
+    ...currentMeta,
+    name: meta.name,
+    description: meta.description,
+    color: meta.color,
+  };
+
+  if (typeof (collection as any).setMeta === 'function') {
+    await (collection as any).setMeta(nextMeta);
+  } else {
+    (collection as any).meta = nextMeta;
+  }
+
+  await collectionManager.upload(collection);
+  return collection;
+}
+
+/**
+ * Mark a collection deleted and upload the tombstone.
+ */
+export async function deleteCollection(
+  account: Etebase.Account,
+  collection: Etebase.Collection,
+): Promise<void> {
+  const collectionManager = account.getCollectionManager();
+  (collection as any).delete();
+  await collectionManager.upload(collection);
+}
+
+/**
  * Create a new item in a collection.
  */
 export async function createItem(

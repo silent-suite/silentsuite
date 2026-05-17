@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { parseVCard } from '@silentsuite/core/utils/vcard-parser'
 import type { VCard } from '@silentsuite/core/utils/vcard-parser'
@@ -9,6 +9,7 @@ import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 
 interface ContactImportProps {
   onImportComplete: (count: number) => void
@@ -64,10 +65,22 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
-  const [selectedListId, setSelectedListId] = useState('default')
   const importContacts = useContactStore((s) => s.importContacts)
   const contactLists = useContactListStore((s) => s.lists)
-  const addList = useContactListStore((s) => s.addList)
+  const activeListId = useContactListStore((s) => s.activeListId)
+  const initialListId = activeListId !== 'all' ? activeListId : 'default'
+  const [selectedListId, setSelectedListId] = useState(initialListId)
+  const createCollection = useEtebaseStore((s) => s.createCollection)
+
+  useEffect(() => {
+    if (contactLists.length === 0) return
+    const fallbackId = activeListId !== 'all' && contactLists.some((list) => list.id === activeListId)
+      ? activeListId
+      : contactLists[0]!.id
+    if (!contactLists.some((list) => list.id === selectedListId)) {
+      setSelectedListId(fallbackId)
+    }
+  }, [activeListId, contactLists, selectedListId])
 
   const handleFiles = useCallback(async (files: File[]) => {
     setError(null)
@@ -141,12 +154,10 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     }
   }, [contacts, importContacts, onImportComplete, selectedListId])
 
-  const handleCreateList = useCallback((name: string, color: string) => {
-    addList(name, color)
-    const newLists = useContactListStore.getState().lists
-    const created = newLists[newLists.length - 1]
-    if (created) setSelectedListId(created.id)
-  }, [addList])
+  const handleCreateList = useCallback(async (name: string, color: string) => {
+    const uid = await createCollection('contacts', name, color)
+    if (uid) setSelectedListId(uid)
+  }, [createCollection])
 
   const handleCancel = useCallback(() => {
     setContacts([])

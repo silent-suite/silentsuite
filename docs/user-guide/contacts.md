@@ -33,11 +33,12 @@ Both are built from your locally decrypted data.
 
 With the [desktop bridge](./getting-started.md#desktop-caldav--carddav-via-the-bridge) installed, any CardDAV client (Thunderbird, Apple Contacts, GNOME Contacts, Evolution) can read and write the same contacts through `localhost:37358`.
 
+Multiple address books are supported. Each address book is a separate encrypted collection and appears as its own CardDAV collection in compatible clients.
+
 ## Sharing
 
 Shared address books between accounts are not supported in v0.1.0-beta. Your contacts are visible only to you, across your own devices.
 
 ## Limits in this beta
 
-- A single default contacts collection per account. Managing multiple address books is on the roadmap (see [issue #88](https://github.com/silent-suite/silentsuite/issues/88)).
 - No OAuth-based one-click import from Google or iCloud yet — file-based `.vcf` import only. (On the roadmap.)

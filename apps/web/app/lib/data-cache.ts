@@ -51,10 +51,10 @@ export interface CacheMeta {
 }
 
 /** Bumped on shape changes to the cached records. */
-export const CACHE_SCHEMA_VERSION = 1
+export const CACHE_SCHEMA_VERSION = 2
 
 const DB_NAME = 'silentsuite-data-cache'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_ITEMS = 'items'
 const STORE_COLLECTIONS = 'collections'
 const STORE_META = 'meta'
@@ -71,15 +71,18 @@ function openDB(): Promise<IDBDatabase> {
       return
     }
     const request = indexedDB.open(DB_NAME, DB_VERSION)
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result
       if (!db.objectStoreNames.contains(STORE_ITEMS)) {
         const items = db.createObjectStore(STORE_ITEMS, { keyPath: 'itemUid' })
         items.createIndex('byCollectionType', 'collectionType', { unique: false })
         items.createIndex('byCollectionUid', 'collectionUid', { unique: false })
       }
+      if (db.objectStoreNames.contains(STORE_COLLECTIONS) && event.oldVersion < 2) {
+        db.deleteObjectStore(STORE_COLLECTIONS)
+      }
       if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
-        db.createObjectStore(STORE_COLLECTIONS, { keyPath: 'collectionType' })
+        db.createObjectStore(STORE_COLLECTIONS, { keyPath: 'collectionUid' })
       }
       if (!db.objectStoreNames.contains(STORE_META)) {
         db.createObjectStore(STORE_META)
@@ -200,11 +203,44 @@ export async function replaceItemsForType(
   }
 }
 
+/**
+ * Replace all cached items for one concrete collection. Other collections of
+ * the same type are intentionally left intact.
+ */
+export async function replaceItemsForCollection(
+  collectionUid: string,
+  items: CachedItem[],
+): Promise<void> {
+  try {
+    const db = await openDB()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_ITEMS, 'readwrite')
+      const store = tx.objectStore(STORE_ITEMS)
+      const idx = store.index('byCollectionUid')
+      const cursorReq = idx.openCursor(collectionUid)
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result
+        if (cursor) {
+          cursor.delete()
+          cursor.continue()
+        } else {
+          for (const item of items) store.put(item)
+        }
+      }
+      cursorReq.onerror = () => reject(cursorReq.error)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    logger.warn('[data-cache] replaceItemsForCollection failed', err)
+  }
+}
+
 // ── Collections / stokens ──
 
-export async function getCollection(type: CollectionTypeKey): Promise<CachedCollection | null> {
+export async function getCollection(collectionUid: string): Promise<CachedCollection | null> {
   try {
-    const value = await withStore(STORE_COLLECTIONS, 'readonly', (store) => store.get(type))
+    const value = await withStore(STORE_COLLECTIONS, 'readonly', (store) => store.get(collectionUid))
     return (value as CachedCollection | undefined) ?? null
   } catch (err) {
     logger.warn('[data-cache] getCollection failed', err)
@@ -220,8 +256,8 @@ export async function putCollection(record: CachedCollection): Promise<void> {
   }
 }
 
-export async function getStoken(type: CollectionTypeKey): Promise<string | null> {
-  const col = await getCollection(type)
+export async function getStoken(collectionUid: string): Promise<string | null> {
+  const col = await getCollection(collectionUid)
   return col?.stoken ?? null
 }
 
@@ -230,7 +266,7 @@ export async function setStoken(
   collectionUid: string,
   stoken: string | null,
 ): Promise<void> {
-  const existing = await getCollection(type)
+  const existing = await getCollection(collectionUid)
   await putCollection({
     collectionType: type,
     collectionUid,
@@ -243,8 +279,8 @@ export async function setStoken(
  * Mark a collection's stoken as stale (server returned an unknown-stoken error).
  * Caller should fall back to a full refresh.
  */
-export async function clearStoken(type: CollectionTypeKey): Promise<void> {
-  const existing = await getCollection(type)
+export async function clearStoken(collectionUid: string): Promise<void> {
+  const existing = await getCollection(collectionUid)
   if (!existing) return
   await putCollection({ ...existing, stoken: null })
 }
