@@ -147,6 +147,25 @@ describe('useEtebaseStore.createItemsBatch', () => {
     expect(useEtebaseStore.getState().itemCollectionMap.get('right')).toBe('col-2')
   })
 
+  it('does not fall back to the first collection when the requested collection uid is missing', async () => {
+    const itemManager: MockItemManager = {
+      create: vi.fn(async () => ({ uid: 'wrong' })),
+      batch: vi.fn(async () => {}),
+    }
+    const syncEngine: MockSyncEngine = { pause: vi.fn(), resume: vi.fn() }
+    setupStoreWithCollections({ 'col-1': itemManager }, syncEngine)
+
+    const uids = await useEtebaseStore.getState().createItemsBatch('calendar', [
+      { content: 'a', tempId: 't1' },
+    ], 'missing-col')
+
+    expect(uids).toEqual([null])
+    expect(itemManager.create).not.toHaveBeenCalled()
+    expect(itemManager.batch).not.toHaveBeenCalled()
+    expect(syncEngine.pause).not.toHaveBeenCalled()
+    expect(syncEngine.resume).not.toHaveBeenCalled()
+  })
+
   it('resumes the sync engine even when the import throws', async () => {
     const itemManager: MockItemManager = {
       create: vi.fn(async () => {

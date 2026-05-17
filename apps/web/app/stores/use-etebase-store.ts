@@ -114,6 +114,8 @@ function resolveCollection(
   if (collectionUid && collectionUid !== 'default' && collectionUid !== 'all') {
     const match = typedCollections.find((collection) => collection.uid === collectionUid)
     if (match) return match
+    logger.warn(`[etebase-store] Unknown ${type} collection ${collectionUid}`)
+    return null
   }
   return typedCollections[0] ?? null
 }
