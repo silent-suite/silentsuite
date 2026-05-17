@@ -267,7 +267,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         if (newItemUid) {
           set((state) => ({
             events: state.events.map((e) =>
-              e.id === newTempId ? { ...e, id: newItemUid, uid: newItemUid } : e,
+              e.id === newTempId ? { ...e, id: newItemUid } : e,
             ),
           }))
         }
@@ -311,7 +311,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         if (newItemUid) {
           set((state) => ({
             events: state.events.map((e) =>
-              e.id === newTempId ? { ...e, id: newItemUid, uid: newItemUid } : e,
+              e.id === newTempId ? { ...e, id: newItemUid } : e,
             ),
           }))
         }
