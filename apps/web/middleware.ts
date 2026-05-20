@@ -3,9 +3,11 @@ import type { NextRequest } from 'next/server'
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const isSelfHostedBuild = process.env.NEXT_PUBLIC_SELF_HOSTED === 'true'
 
-  // Protect /admin routes: require is_admin cookie synced by the auth store on login/refresh
-  if (pathname.startsWith('/admin')) {
+  // Hosted builds render /admin as a redirect to the private SaaS dashboard.
+  // Self-hosted builds still guard the helper behind an admin session cookie.
+  if (isSelfHostedBuild && pathname.startsWith('/admin')) {
     const isAdmin = request.cookies.get('is_admin')?.value
 
     if (isAdmin !== 'true') {
