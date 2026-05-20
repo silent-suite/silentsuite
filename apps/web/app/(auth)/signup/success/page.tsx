@@ -8,20 +8,21 @@ import { Button } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { StepCreateVault } from '../components/step-create-vault'
+import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
 
 // ---------------------------------------------------------------------------
 // Inner component that reads searchParams (must be inside <Suspense>)
 // ---------------------------------------------------------------------------
 
-type RedirectState = 'loading' | 'vault' | 'failed' | 'expired' | 'none'
+type RedirectState = 'loading' | 'account' | 'vault' | 'failed' | 'expired' | 'none'
 
 function SignupSuccessInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const completeSignup = useAuthStore((s) => s.completeSignup)
+  const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
+  const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
   const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
-  const pendingSignup = useAuthStore((s) => s.pendingSignup)
-
   const redirectStatus = searchParams.get('redirect_status')
   const setupIntent = searchParams.get('setup_intent')
   const returnTo = normalizeSignupReturnTo(searchParams.get('return_to'))
@@ -41,9 +42,12 @@ function SignupSuccessInner() {
 
     if (redirectStatus === 'succeeded' || redirectStatus === 'processing') {
       const restored = restoreSignupStateFromRedirect()
-      if (restored) {
+      if (restored?.pendingSignup.provisionedUser) {
         setRestoredEmail(restored.pendingSignup.email)
         setState('vault')
+      } else if (restored?.pendingSignup.paymentSessionToken) {
+        setRestoredEmail(restored.pendingSignup.email)
+        setState('account')
       } else {
         // State missing or expired — can't complete the flow
         setState('expired')
@@ -69,6 +73,12 @@ function SignupSuccessInner() {
     router.push('/')
   }, [completeSignup, returnTo, router])
 
+  const handlePaidAccountComplete = useCallback(async (data: PaidAccountFormData) => {
+    await createEtebaseAccount(restoredEmail, data.password)
+    await finalizePaidSignup()
+    setState('vault')
+  }, [createEtebaseAccount, finalizePaidSignup, restoredEmail])
+
   const handleSuccessContinue = useCallback(() => {
     completeSignup()
     if (returnTo) {
@@ -88,6 +98,21 @@ function SignupSuccessInner() {
       <div className="max-w-md mx-auto flex flex-col items-center justify-center py-12">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
         <p className="mt-4 text-sm text-[rgb(var(--muted))]">Completing setup...</p>
+      </div>
+    )
+  }
+
+  if (state === 'account') {
+    return (
+      <div className="max-w-md mx-auto space-y-6">
+        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+          <CheckCircle className="h-5 w-5 text-emerald-500 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Card verified successfully</p>
+            <p className="text-xs text-[rgb(var(--muted))]">One last account step before your vault setup.</p>
+          </div>
+        </div>
+        <StepCreatePaidAccount email={restoredEmail} onNext={handlePaidAccountComplete} />
       </div>
     )
   }

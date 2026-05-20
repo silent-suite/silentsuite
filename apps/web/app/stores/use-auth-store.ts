@@ -25,7 +25,8 @@ export interface User {
 
 interface PendingSignup {
   email: string
-  etebaseAuthToken: string
+  etebaseAuthToken?: string
+  paymentSessionToken?: string
   earlyAdopter?: boolean
   wantsProductUpdates?: boolean
   /** Provisioned user data — stored here until the entire signup flow completes. */
@@ -43,6 +44,7 @@ interface SignupResult {
   cryptoCheckoutUrl: string | null
   cryptoInvoiceId: string | null
   cryptoInvoiceLookupToken: string | null
+  paymentSessionToken: string | null
 }
 
 /** Shape of the data persisted to sessionStorage for surviving Stripe 3DS redirects. */
@@ -62,8 +64,10 @@ interface AuthState {
   isDegraded: () => boolean
   isReadOnly: () => boolean
   canWrite: () => boolean
+  prepareSignupDraft: (email: string, wantsProductUpdates?: boolean) => void
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
   signup: (planId: string, trialPath: string, promoCode?: string) => Promise<SignupResult>
+  finalizePaidSignup: () => Promise<SignupResult>
   /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
   completeSignup: () => void
   login: (email: string, password: string, serverUrl?: string) => Promise<void>
@@ -137,11 +141,38 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   canWrite: () => !get().isReadOnly(),
 
+  prepareSignupDraft: (email: string, wantsProductUpdates?: boolean) => {
+    const pending = get().pendingSignup
+    const reusablePending = pending?.email.toLowerCase() === email.toLowerCase() ? pending : null
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('silentsuite-signup-in-progress', 'true')
+    }
+    set({
+      pendingSignup: {
+        ...(reusablePending ?? {}),
+        email,
+        wantsProductUpdates,
+      },
+      error: null,
+    })
+  },
+
   createEtebaseAccount: async (email: string, password: string, serverUrl?: string) => {
     set({ isLoading: true, error: null })
     try {
-      const { etebaseSignUp } = await import('@/app/lib/etebase-auth')
-      const { authToken, savedSession } = await etebaseSignUp(email, password, serverUrl)
+      const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      let authResult: { authToken: string; savedSession: string }
+      try {
+        authResult = await etebaseSignUp(email, password, serverUrl)
+      } catch (signupErr) {
+        const raw = signupErr instanceof Error ? signupErr.message.toLowerCase() : ''
+        if (!raw.includes('conflict') && !raw.includes('409') && !raw.includes('already')) {
+          throw signupErr
+        }
+        // Recover legacy abandoned signups where Etebase was created before payment.
+        authResult = await etebaseLogIn(email, password, serverUrl)
+      }
+      const { authToken, savedSession } = authResult
       await secureSet('etebase_session', savedSession)
 
       let earlyAdopter = false
@@ -164,8 +195,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         sessionStorage.setItem('silentsuite-signup-in-progress', 'true')
       }
 
+      const pending = get().pendingSignup
+      const reusablePending = pending?.email.toLowerCase() === email.toLowerCase() ? pending : null
       set({
-        pendingSignup: { email, etebaseAuthToken: authToken, earlyAdopter },
+        pendingSignup: { ...(reusablePending ?? {}), email, etebaseAuthToken: authToken, earlyAdopter },
         isLoading: false,
       })
     } catch (err) {
@@ -214,11 +247,58 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         },
         isLoading: false,
       })
-      return { clientSecret: null, cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null }
+      return { clientSecret: null, cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null, paymentSessionToken: null }
     }
 
     const pending = get().pendingSignup
-    if (!pending?.etebaseAuthToken) {
+    if (!pending?.email) {
+      throw new Error('No pending signup')
+    }
+    const isPaidSignupDraft = (trialPath === '30day' || trialPath === 'crypto_annual') && !pending.etebaseAuthToken
+    if (isPaidSignupDraft) {
+      set({ isLoading: true, error: null })
+      try {
+        const res = await fetch(`${BILLING_API_URL}/auth/signup/payment-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+          body: JSON.stringify({
+            email: pending.email,
+            planId,
+            trialPath,
+            ...(promoCode?.trim() ? { promoCode: promoCode.trim() } : {}),
+            wantsProductUpdates: pending.wantsProductUpdates,
+          }),
+          credentials: 'include',
+        })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null)
+          throw new Error(errData?.detail ?? 'Payment setup failed')
+        }
+        const data = await res.json()
+        const paymentSessionToken = (data.paymentSessionToken as string | null) ?? null
+        if (!paymentSessionToken) throw new Error('Payment setup did not return a session token')
+        set({
+          pendingSignup: {
+            ...pending,
+            paymentSessionToken,
+          },
+          isLoading: false,
+        })
+        return {
+          clientSecret: (data.clientSecret as string | null) ?? null,
+          cryptoCheckoutUrl: (data.cryptoCheckoutUrl as string | null) ?? null,
+          cryptoInvoiceId: (data.cryptoInvoiceId as string | null) ?? null,
+          cryptoInvoiceLookupToken: (data.cryptoInvoiceLookupToken as string | null) ?? null,
+          paymentSessionToken,
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Payment setup failed'
+        set({ error: message, isLoading: false })
+        throw err
+      }
+    }
+
+    if (!pending.etebaseAuthToken) {
       throw new Error('No Etebase session. Please start signup again.')
     }
     set({ isLoading: true, error: null })
@@ -258,9 +338,54 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         cryptoCheckoutUrl: (data.cryptoCheckoutUrl as string | null) ?? null,
         cryptoInvoiceId: (data.cryptoInvoiceId as string | null) ?? null,
         cryptoInvoiceLookupToken: (data.cryptoInvoiceLookupToken as string | null) ?? null,
+        paymentSessionToken: null,
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Signup failed'
+      set({ error: message, isLoading: false })
+      throw err
+    }
+  },
+
+  finalizePaidSignup: async () => {
+    const pending = get().pendingSignup
+    if (!pending?.etebaseAuthToken || !pending.paymentSessionToken) {
+      throw new Error('No completed payment session. Please start signup again.')
+    }
+    set({ isLoading: true, error: null })
+    try {
+      const res = await fetch(`${BILLING_API_URL}/auth/signup/finalize-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+        body: JSON.stringify({
+          etebaseSessionToken: pending.etebaseAuthToken,
+          paymentSessionToken: pending.paymentSessionToken,
+        }),
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null)
+        throw new Error(errData?.detail ?? 'Could not finish signup')
+      }
+      const data = await res.json()
+      const isAdmin = data.isAdmin === true
+      set({
+        pendingSignup: {
+          ...pending,
+          provisionedUser: { id: data.id, planId: data.planId ?? 'early_annual', isAdmin },
+          provisionedSubscriptionStatus: data.provisioningStatus ?? 'active',
+        },
+        isLoading: false,
+      })
+      return {
+        clientSecret: null,
+        cryptoCheckoutUrl: null,
+        cryptoInvoiceId: null,
+        cryptoInvoiceLookupToken: null,
+        paymentSessionToken: null,
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not finish signup'
       set({ error: message, isLoading: false })
       throw err
     }
@@ -630,7 +755,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       sessionStorage.removeItem('silentsuite-signup-redirect-state')
       const data = JSON.parse(raw) as RedirectSignupState
       // Basic shape validation — guard against corrupted or tampered storage data
-      if (!data.pendingSignup?.email || !data.pendingSignup?.etebaseAuthToken) {
+      if (!data.pendingSignup?.email || (!data.pendingSignup?.etebaseAuthToken && !data.pendingSignup?.paymentSessionToken)) {
         logger.warn('[auth-store] Redirect signup state is malformed, discarding')
         return null
       }
