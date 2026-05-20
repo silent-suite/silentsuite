@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useContactStore, getFilteredContacts } from '../use-contact-store'
+import { useEtebaseStore } from '../use-etebase-store'
 import type { Contact } from '@silentsuite/core'
 
 // Mock the sync store to prevent side effects
@@ -20,6 +21,7 @@ function resetStore() {
     searchQuery: '',
     pendingChanges: [],
   })
+  useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
 }
 
 describe('useContactStore', () => {
@@ -61,6 +63,32 @@ describe('useContactStore', () => {
 
     const { contacts } = useContactStore.getState()
     expect(contacts).toHaveLength(0)
+  })
+
+  it('keeps the vCard UID stable after replacing the local id with the Etebase item id', async () => {
+    const createItem = vi.fn(async () => 'remote-contact-item')
+    const updateItem = vi.fn(async () => {})
+    useEtebaseStore.setState({
+      account: {},
+      createItem,
+      updateItem,
+    } as any)
+
+    const contact = await useContactStore.getState().createContact({ displayName: 'Sync Contact' })
+
+    expect(contact.id).toBe('remote-contact-item')
+    expect(contact.uid).not.toBe('remote-contact-item')
+    expect(createItem.mock.calls[0]![1]).toContain(`UID:${contact.uid}`)
+
+    useEtebaseStore.setState({
+      itemCache: new Map([['remote-contact-item', {}]]),
+    } as any)
+
+    await useContactStore.getState().updateContact('remote-contact-item', { notes: 'Updated' })
+
+    const updatedContent = updateItem.mock.calls[0]![2] as string
+    expect(updatedContent).toContain(`UID:${contact.uid}`)
+    expect(updatedContent).not.toContain('UID:remote-contact-item')
   })
 
   describe('getFilteredContacts', () => {
