@@ -17,9 +17,13 @@ export default function AuthLayout({
   useEffect(() => setMounted(true), [])
 
   const isDark = mounted ? resolvedTheme === 'dark' : true
+  const isSignupFlow = pathname.startsWith('/signup')
+  const verticalAlignment = isSignupFlow
+    ? 'items-start py-4 sm:items-center sm:py-8'
+    : 'items-center py-4 sm:py-8'
 
   return (
-    <div className={`relative flex min-h-screen items-center justify-center overflow-hidden transition-colors duration-300 ${
+    <div className={`relative flex min-h-dvh justify-center overflow-x-hidden transition-colors duration-300 ${verticalAlignment} ${
       isDark ? 'bg-gradient-to-br from-navy-950 via-navy-900 to-emerald-950/20' : 'bg-gradient-to-br from-gray-50 via-white to-emerald-50/30'
     }`}>
       {/* Subtle grid pattern background */}

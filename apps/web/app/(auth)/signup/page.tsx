@@ -1229,7 +1229,7 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
       </div>
 
       {/* Mobile: horizontal stepper on top */}
-      <div className="flex md:hidden items-center justify-center gap-1 sm:gap-2 mb-4 sm:mb-6">
+      <div className="flex w-full md:hidden items-center justify-center gap-1 sm:gap-2 mb-4 sm:mb-6">
         {steps.map((step, i) => (
           <div key={step.key} className="flex items-center gap-1.5">
             <div className="flex items-center gap-1">
@@ -1469,9 +1469,9 @@ export default function SignupPage() {
     : STEPS_HOSTED
 
   return (
-    <div className="flex items-start justify-center max-w-2xl mx-auto">
+    <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch justify-center md:flex-row md:items-start">
       <ProgressStepper currentStep={step} steps={activeSteps} />
-      <div className="flex-1 max-w-md">
+      <div className="mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1">
         {step === 'account' && (
           <StepCreateAccount
             onNext={handleAccountComplete}
