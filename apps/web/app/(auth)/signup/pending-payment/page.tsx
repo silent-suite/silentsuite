@@ -40,6 +40,8 @@ export default function PendingPaymentPage() {
   const [restartError, setRestartError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (state !== 'pending') return
+
     let id = sessionStorage.getItem('silentsuite-pending-crypto-invoice')
     let invoiceLookupToken = sessionStorage.getItem('silentsuite-pending-crypto-token')
     const storedReturnTo = normalizeSignupReturnTo(sessionStorage.getItem('silentsuite-pending-crypto-return-to'))
@@ -124,7 +126,7 @@ export default function PendingPaymentPage() {
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [pendingSignup?.email, pollNonce, restoreSignupStateFromRedirect])
+  }, [pendingSignup?.email, pollNonce, restoreSignupStateFromRedirect, state])
 
   function handleVaultComplete() {
     completeSignup()
