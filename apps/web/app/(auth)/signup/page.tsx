@@ -21,6 +21,7 @@ import { BILLING_API_URL } from '@/app/lib/config'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
+import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
 
 const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED === 'true'
@@ -376,7 +377,7 @@ function StepCreateAccount({
           {isSubmitting ? (
             <span className="flex items-center justify-center gap-2">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-              Creating account...
+              Continuing...
             </span>
           ) : (
             'Continue'
@@ -1167,7 +1168,7 @@ function StepAdminInfo({ serverUrl, onNext }: { serverUrl: string; onNext: () =>
 // Progress Stepper
 // ---------------------------------------------------------------------------
 
-type Step = 'account' | 'plan' | 'selfhost' | 'admin' | 'vault'
+type Step = 'account' | 'plan' | 'selfhost' | 'admin' | 'paidAccount' | 'vault'
 
 const STEPS_HOSTED = [
   { key: 'account' as const, label: 'Account', number: 1 },
@@ -1229,7 +1230,7 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
       </div>
 
       {/* Mobile: horizontal stepper on top */}
-      <div className="flex md:hidden items-center justify-center gap-1 sm:gap-2 mb-4 sm:mb-6">
+      <div className="flex w-full md:hidden items-center justify-center gap-1 sm:gap-2 mb-4 sm:mb-6">
         {steps.map((step, i) => (
           <div key={step.key} className="flex items-center gap-1.5">
             <div className="flex items-center gap-1">
@@ -1278,8 +1279,10 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
 
 export default function SignupPage() {
   const router = useRouter()
+  const prepareSignupDraft = useAuthStore((s) => s.prepareSignupDraft)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
   const signup = useAuthStore((s) => s.signup)
+  const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
   const completeSignup = useAuthStore((s) => s.completeSignup)
   const [step, setStep] = useState<Step>('account')
   const [serverUrl, setServerUrl] = useState('')
@@ -1313,28 +1316,32 @@ export default function SignupPage() {
       localStorage.removeItem('silentsuite-server-url')
     }
 
-    // Create account on the server (default or custom)
     const identifier = data.email || ''
-    await createEtebaseAccount(identifier, data.password, normalizedUrl)
-
-    // Store product updates preference in pendingSignup for later use
-    const pending = useAuthStore.getState().pendingSignup
-    if (!pending) console.error('pendingSignup not set after createEtebaseAccount')
-    if (pending) {
-      useAuthStore.setState({
-        pendingSignup: { ...pending, wantsProductUpdates },
-      })
-    }
-
     const selfHosted = isSelfHosted || isCustomServer(normalizedUrl)
-    setUsingSelfHostedServer(selfHosted)
 
     if (selfHosted) {
+      await createEtebaseAccount(identifier, data.password, normalizedUrl)
+
+      const pending = useAuthStore.getState().pendingSignup
+      if (!pending) console.error('pendingSignup not set after createEtebaseAccount')
+      if (pending) {
+        useAuthStore.setState({
+          pendingSignup: { ...pending, wantsProductUpdates },
+        })
+      }
+      setUsingSelfHostedServer(true)
       setStep('selfhost')
-    } else {
-      setStep('plan')
+      return
     }
-  }, [createEtebaseAccount, serverUrl, wantsProductUpdates])
+
+    prepareSignupDraft(identifier, wantsProductUpdates)
+    setClientSecret(null)
+    setCryptoPaymentSession(null)
+    setProvisionError(null)
+    setPlanView('cards')
+    setUsingSelfHostedServer(false)
+    setStep('plan')
+  }, [createEtebaseAccount, prepareSignupDraft, serverUrl, wantsProductUpdates])
 
   const handleSelfHostChoice = useCallback(async (choice: 'free' | 'support') => {
     if (choice === 'support') {
@@ -1357,6 +1364,10 @@ export default function SignupPage() {
     setProvisioning(true)
     setProvisionError(null)
     try {
+      const data = formDataRef.current
+      if (!data) throw new Error('Please enter your account details again.')
+      const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
+      await createEtebaseAccount(data.email, data.password, normalizedUrl)
       const planId: PlanId = selectedInterval === 'monthly' ? 'early_monthly' : 'early_annual'
       await signup(planId, '7day')
       setStep('vault')
@@ -1366,7 +1377,7 @@ export default function SignupPage() {
     } finally {
       setProvisioning(false)
     }
-  }, [signup, selectedInterval])
+  }, [createEtebaseAccount, serverUrl, signup, selectedInterval])
 
   const handleSelectPaid = useCallback(async (promoCode?: string) => {
     setProvisionError(null)
@@ -1444,9 +1455,32 @@ export default function SignupPage() {
     }
   }, [planView])
 
-  const handlePaymentComplete = useCallback(() => {
+  const createAndFinalizePaidAccount = useCallback(async (password?: string) => {
+    const data = formDataRef.current
+    if (!data?.email) throw new Error('Please enter your account details again.')
+    const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
+    await createEtebaseAccount(data.email, password ?? data.password, normalizedUrl)
+    await finalizePaidSignup()
+  }, [createEtebaseAccount, finalizePaidSignup, serverUrl])
+
+  const handlePaymentComplete = useCallback(async () => {
+    setProvisioning(true)
+    setProvisionError(null)
+    try {
+      await createAndFinalizePaidAccount()
+      setStep('vault')
+    } catch (err) {
+      setProvisionError(err instanceof Error ? err.message : 'Payment succeeded, but account creation needs one more step.')
+      setStep('paidAccount')
+    } finally {
+      setProvisioning(false)
+    }
+  }, [createAndFinalizePaidAccount])
+
+  const handlePaidAccountComplete = useCallback(async (data: PaidAccountFormData) => {
+    await createAndFinalizePaidAccount(data.password)
     setStep('vault')
-  }, [])
+  }, [createAndFinalizePaidAccount])
 
   const handleVaultComplete = useCallback(() => {
     // Finalize authentication — only NOW does the user become authenticated.
@@ -1469,9 +1503,9 @@ export default function SignupPage() {
     : STEPS_HOSTED
 
   return (
-    <div className="flex items-start justify-center max-w-2xl mx-auto">
-      <ProgressStepper currentStep={step} steps={activeSteps} />
-      <div className="flex-1 max-w-md">
+    <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch justify-center md:flex-row md:items-start">
+      <ProgressStepper currentStep={step === 'paidAccount' ? 'vault' : step} steps={activeSteps} />
+      <div className="mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1">
         {step === 'account' && (
           <StepCreateAccount
             onNext={handleAccountComplete}
@@ -1505,6 +1539,13 @@ export default function SignupPage() {
             onPaymentComplete={handlePaymentComplete}
             selectedInterval={selectedInterval}
             cryptoPaymentSession={cryptoPaymentSession}
+          />
+        )}
+        {step === 'paidAccount' && (
+          <StepCreatePaidAccount
+            email={formDataRef.current?.email ?? ''}
+            onNext={handlePaidAccountComplete}
+            initialError={provisionError}
           />
         )}
         {step === 'vault' && (

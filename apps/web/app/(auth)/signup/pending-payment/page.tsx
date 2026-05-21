@@ -7,8 +7,9 @@ import { BILLING_API_URL } from '@/app/lib/config'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { StepCreateVault } from '../components/step-create-vault'
+import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
 
-type PaymentState = 'pending' | 'settled' | 'vault' | 'expired' | 'timeout' | 'unknown'
+type PaymentState = 'pending' | 'settled' | 'account' | 'vault' | 'expired' | 'timeout' | 'unknown'
 
 const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
 
@@ -25,6 +26,8 @@ function clearPendingCryptoSignup() {
 
 export default function PendingPaymentPage() {
   const completeSignup = useAuthStore((s) => s.completeSignup)
+  const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
+  const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
   const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
   const pendingSignup = useAuthStore((s) => s.pendingSignup)
   const [invoiceId, setInvoiceId] = useState<string | null>(null)
@@ -37,6 +40,8 @@ export default function PendingPaymentPage() {
   const [restartError, setRestartError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (state !== 'pending') return
+
     let id = sessionStorage.getItem('silentsuite-pending-crypto-invoice')
     let invoiceLookupToken = sessionStorage.getItem('silentsuite-pending-crypto-token')
     const storedReturnTo = normalizeSignupReturnTo(sessionStorage.getItem('silentsuite-pending-crypto-return-to'))
@@ -78,9 +83,13 @@ export default function PendingPaymentPage() {
           clearPendingCryptoPaymentSession()
           const restored = restoreSignupStateFromRedirect()
           const email = restored?.pendingSignup.email ?? pendingSignup?.email ?? ''
-          if (email && useAuthStore.getState().pendingSignup?.provisionedUser) {
+          const currentPending = useAuthStore.getState().pendingSignup
+          if (email && currentPending?.provisionedUser) {
             setRestoredEmail(email)
             setState('vault')
+          } else if (email && currentPending?.paymentSessionToken) {
+            setRestoredEmail(email)
+            setState('account')
           } else {
             clearPendingCryptoSignup()
             setState('settled')
@@ -94,11 +103,6 @@ export default function PendingPaymentPage() {
         }
       } catch {
         if (!cancelled) {
-          if (!id || !invoiceLookupToken) {
-            setState('unknown')
-            sessionStorage.removeItem('silentsuite-signup-in-progress')
-            return
-          }
           setState('pending')
           scheduleNextPoll()
         }
@@ -122,7 +126,7 @@ export default function PendingPaymentPage() {
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [pendingSignup?.email, pollNonce, restoreSignupStateFromRedirect])
+  }, [pendingSignup?.email, pollNonce, restoreSignupStateFromRedirect, state])
 
   function handleVaultComplete() {
     completeSignup()
@@ -135,6 +139,12 @@ export default function PendingPaymentPage() {
       return
     }
     window.location.href = '/'
+  }
+
+  async function handlePaidAccountComplete(data: PaidAccountFormData) {
+    await createEtebaseAccount(restoredEmail, data.password)
+    await finalizePaidSignup()
+    setState('vault')
   }
 
   function handleSettledContinue() {
@@ -221,6 +231,21 @@ export default function PendingPaymentPage() {
             </a>
           </div>
         )}
+      </div>
+    )
+  }
+
+  if (state === 'account') {
+    return (
+      <div className="mx-auto max-w-md space-y-6">
+        <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
+          <Check className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <div>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Bitcoin payment settled</p>
+            <p className="text-xs text-[rgb(var(--muted))]">One last account step before your vault setup.</p>
+          </div>
+        </div>
+        <StepCreatePaidAccount email={restoredEmail} onNext={handlePaidAccountComplete} />
       </div>
     )
   }

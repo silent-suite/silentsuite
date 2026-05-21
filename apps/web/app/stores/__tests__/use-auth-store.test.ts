@@ -138,6 +138,122 @@ describe('useAuthStore', () => {
     })
   })
 
+  it('starts a paid signup payment session before an Etebase account exists', async () => {
+    useAuthStore.setState({
+      pendingSignup: {
+        email: 'paid@example.com',
+        wantsProductUpdates: false,
+      },
+    })
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        clientSecret: 'seti_secret',
+        cryptoCheckoutUrl: null,
+        cryptoInvoiceId: null,
+        cryptoInvoiceLookupToken: null,
+        paymentSessionToken: 'signup-session-token',
+      }),
+    } as Response)
+
+    const result = await useAuthStore.getState().signup('early_monthly', '30day', ' BETA196 ')
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/auth/signup/payment-session'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          email: 'paid@example.com',
+          planId: 'early_monthly',
+          trialPath: '30day',
+          promoCode: 'BETA196',
+          wantsProductUpdates: false,
+        }),
+      }),
+    )
+    expect(result.paymentSessionToken).toBe('signup-session-token')
+    expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe('signup-session-token')
+    expect(useAuthStore.getState().pendingSignup?.etebaseAuthToken).toBeUndefined()
+  })
+
+  it('clears stale payment state when the signup draft email changes', () => {
+    useAuthStore.setState({
+      pendingSignup: {
+        email: 'old@example.com',
+        etebaseAuthToken: 'old-etebase-token',
+        paymentSessionToken: 'old-payment-token',
+      },
+    })
+
+    useAuthStore.getState().prepareSignupDraft('new@example.com', true)
+
+    expect(useAuthStore.getState().pendingSignup).toEqual({
+      email: 'new@example.com',
+      wantsProductUpdates: true,
+    })
+  })
+
+  it('finalizes a paid signup payment session after Etebase signup completes', async () => {
+    useAuthStore.setState({
+      pendingSignup: {
+        email: 'paid@example.com',
+        etebaseAuthToken: 'etebase-token',
+        paymentSessionToken: 'payment-session-token',
+      },
+    })
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'user-1',
+        email: 'paid@example.com',
+        planId: 'early_monthly',
+        provisioningStatus: 'active',
+        isAdmin: true,
+        earlyAdopter: false,
+        createdAt: '2026-05-20T00:00:00.000Z',
+        clientSecret: null,
+        cryptoCheckoutUrl: null,
+        cryptoInvoiceId: null,
+        cryptoInvoiceLookupToken: null,
+        emailVerified: false,
+      }),
+    } as Response)
+
+    await useAuthStore.getState().finalizePaidSignup()
+
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/auth/signup/finalize-payment'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          etebaseSessionToken: 'etebase-token',
+          paymentSessionToken: 'payment-session-token',
+        }),
+      }),
+    )
+    expect(useAuthStore.getState().pendingSignup?.provisionedUser).toEqual({
+      id: 'user-1',
+      planId: 'early_monthly',
+      isAdmin: true,
+    })
+    expect(useAuthStore.getState().pendingSignup?.provisionedSubscriptionStatus).toBe('active')
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+  })
+
+  it('does not finalize paid signup without both session tokens', async () => {
+    useAuthStore.setState({
+      pendingSignup: {
+        email: 'paid@example.com',
+        etebaseAuthToken: 'etebase-token',
+      },
+    })
+
+    await expect(useAuthStore.getState().finalizePaidSignup()).rejects.toThrow('No completed payment session')
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it('signup returns crypto checkout details without authenticating', async () => {
     useAuthStore.setState({
       pendingSignup: {
@@ -165,6 +281,7 @@ describe('useAuthStore', () => {
       cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/inv-123',
       cryptoInvoiceId: 'inv-123',
       cryptoInvoiceLookupToken: 'lookup-token',
+      paymentSessionToken: null,
     })
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
   })
