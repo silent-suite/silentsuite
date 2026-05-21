@@ -136,7 +136,7 @@ export default function LoginPage() {
               className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))] text-xs"
             />
             <p className="text-[10px] text-[rgb(var(--muted))]">
-              Leave empty to use the default SilentSuite server. Self-hosters: enter your own server URL.
+              Leave empty to use the default silentsuite.io server. Self-hosters: enter your own server URL.
             </p>
           </div>
         </details>

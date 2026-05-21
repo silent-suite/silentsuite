@@ -68,7 +68,7 @@ If the native module is not available for your distribution, you can use the [DA
 3. Enter your username.
 4. Click **Advanced Options** > set server to `http://localhost:37358/`.
 5. Tick **"Look up for a CalDAV/CardDAV server"**, untick other options.
-6. Click **Look Up** and enter your SilentSuite password.
+6. Click **Look Up** and enter your account password.
 
 ## Troubleshooting
 
@@ -83,4 +83,4 @@ ls /usr/lib/evolution/modules/ | grep etesync
 
 ### Authentication fails
 
-Double-check your username and password. Remember that your SilentSuite password is also your encryption key -- it must be entered exactly.
+Double-check your username and password. Remember that your account password is also your encryption key -- it must be entered exactly.

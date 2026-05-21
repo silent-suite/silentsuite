@@ -16,7 +16,7 @@ SilentSuite works across all major platforms:
 
 - **Web:** The web app is live at [app.silentsuite.io](https://app.silentsuite.io).
 - **Android:** A dedicated Android sync adapter is available as an APK from [GitHub Releases](https://github.com/silent-suite/silentsuite/releases).
-- **iOS:** Use the third-party [EteSync for iOS](https://apps.apple.com/app/etesync/id1489574285) app from the App Store. Enter your SilentSuite server URL during setup.
+- **iOS:** Use the third-party [EteSync for iOS](https://apps.apple.com/app/etesync/id1489574285) app from the App Store. Enter your server URL during setup.
 - **Desktop:** Use the [SilentSuite Bridge](./apps/dav-bridge.md) with any CalDAV/CardDAV app (Thunderbird, macOS Calendar, GNOME Calendar, and more).
 
 ## Privacy & Security

@@ -10,8 +10,8 @@ Before configuring your app, make sure the [SilentSuite Bridge](./dav-bridge.md)
 |---|---|
 | **CalDAV URL** | `http://localhost:37358/your@email.com/` |
 | **CardDAV URL** | `http://localhost:37358/your@email.com/` |
-| **Username** | Your SilentSuite email |
-| **Password** | Your SilentSuite password |
+| **Username** | Your account email |
+| **Password** | Your account password |
 
 Replace `your@email.com` with the email you used to log into the bridge.
 

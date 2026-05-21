@@ -5,7 +5,7 @@ Sync SilentSuite with the native macOS Calendar and Contacts apps through the [S
 ## Prerequisites
 
 1. The [SilentSuite Bridge](./dav-bridge.md) running on your Mac.
-2. Your **SilentSuite credentials** from the bridge's web UI at `http://localhost:37358/.web/`.
+2. Your **account credentials** from the bridge's web UI at `http://localhost:37358/.web/`.
 
 ## Add Calendar Account
 
@@ -14,8 +14,8 @@ Sync SilentSuite with the native macOS Calendar and Contacts apps through the [S
 3. Click **CalDAV Account**.
 4. Select **Manual** for the account type.
 5. Enter:
-   - **Username**: your SilentSuite email
-   - **Password**: your **SilentSuite password**
+   - **Username**: your account email
+   - **Password**: your **account password**
    - **Server Address**: `http://localhost:37358/`
 6. Click **Sign In**.
 
@@ -27,8 +27,8 @@ Your SilentSuite calendars will appear in the Calendar app.
 2. Click **CardDAV Account**.
 3. Select **Manual**.
 4. Enter:
-   - **Username**: your SilentSuite email
-   - **Password**: your **SilentSuite password**
+   - **Username**: your account email
+   - **Password**: your **account password**
    - **Server Address**: `http://localhost:37358/`
 5. Click **Sign In**.
 

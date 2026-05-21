@@ -19,7 +19,7 @@ export default defineConfig({
 
   themeConfig: {
     logo: '/logo.svg',
-    siteTitle: 'SilentSuite',
+    siteTitle: 'silentsuite',
 
     nav: [
       { text: 'User Guide', link: '/user-guide/getting-started', activeMatch: '/user-guide/' },
@@ -116,7 +116,7 @@ export default defineConfig({
 
     footer: {
       message: 'Released under the AGPL-3.0 License.',
-      copyright: `Copyright © ${new Date().getFullYear()} SilentSuite`,
+      copyright: `Copyright © ${new Date().getFullYear()} silentsuite.io`,
     },
   },
 })

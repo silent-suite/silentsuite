@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
-  <rect width="180" height="180" rx="36" fill="#1B2838"/>
-  <path d="M90 30C70 44 50 47 40 47v55c0 28 22 48 50 56 28-8 50-28 50-56V47c-10 0-30-3-50-17z" fill="none" stroke="#34d399" stroke-width="8"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 210 210" role="img" aria-labelledby="title"><title id="title">SilentSuite</title><rect x="0" y="0" width="210" height="210" rx="42" fill="#0A1018"/><path d="M 104.84766,74.535156 C 90.917915,75.001064 39.3235,94.856003 34.816406,99.376953 28.707593,194.17587 100.32746,228.34576 103.94336,227.32227 c 3.60354,1.0662 75.6234,-32.25458 70.63672,-127.11914 -4.45329,-4.573969 -55.80917,-25.037276 -69.73242,-25.667974 z" transform="matrix(1,0,0.00591644,1,-0.28864348,-45.974315)" fill="#0A1018" stroke="#34d399" stroke-width="14.684" stroke-linecap="round" stroke-linejoin="round"/></svg>

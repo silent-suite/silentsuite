@@ -10,9 +10,17 @@ export const metadata: Metadata = {
   title: 'SilentSuite',
   description: 'End-to-end encrypted productivity suite',
   manifest: '/manifest.json',
-  // Next picks up app/icon.svg and app/apple-icon.svg automatically, which now
-  // match the landing page shield. The PNGs in public/ are kept for the PWA
-  // manifest but no longer advertised in <head>.
+  icons: {
+    icon: [
+      { url: '/favicon.ico' },
+      { url: '/favicon-16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/favicon-48.png', sizes: '48x48', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+    ],
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',

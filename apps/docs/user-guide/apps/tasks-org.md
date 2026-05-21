@@ -1,6 +1,6 @@
 # Tasks.org
 
-[Tasks.org](https://tasks.org) is an open-source task management app for Android with built-in EteSync support. It connects directly to your SilentSuite server for end-to-end encrypted task sync.
+[Tasks.org](https://tasks.org) is an open-source task management app for Android with built-in EteSync support. It connects directly to `server.silentsuite.io` or your self-hosted server for end-to-end encrypted task sync.
 
 ## Install
 
@@ -14,13 +14,13 @@ Install **Tasks.org** from one of these sources:
 1. Open **Tasks.org**.
 2. Go to **Settings** (gear icon) > **Synchronization**.
 3. Tap **Add account** > **EteSync**.
-4. Enter your SilentSuite server URL:
+4. Enter your server URL:
    - Hosted: `https://server.silentsuite.io`
    - Self-hosted: `https://sync.your-domain.com`
 5. Enter your **username** (email) and **password**.
 6. Tap **Sign in**.
 
-Your task lists from SilentSuite will appear in the app. Any tasks you create, complete, or edit will sync back to your SilentSuite server with end-to-end encryption.
+Your task lists from SilentSuite will appear in the app. Any tasks you create, complete, or edit will sync back to `server.silentsuite.io` or your self-hosted server with end-to-end encryption.
 
 ## Using with EteSync Android App
 
