@@ -59,7 +59,7 @@ After installation, run:
 silentsuite-bridge --login
 ```
 
-This opens your browser to a login page. Enter your SilentSuite email and password. The bridge authenticates with the server and stores your session locally.
+This opens your browser to a login page. Enter your account email and password. The bridge authenticates with the server and stores your session locally.
 
 ### 2. Note Your Connection URLs
 
@@ -69,8 +69,8 @@ After successful login, the browser shows your CalDAV/CardDAV URLs:
 |---|---|
 | **CalDAV URL** | `http://localhost:37358/your@email.com/` |
 | **CardDAV URL** | `http://localhost:37358/your@email.com/` |
-| **Username** | Your SilentSuite email |
-| **Password** | Your SilentSuite password |
+| **Username** | Your account email |
+| **Password** | Your account password |
 
 You can always find these URLs by:
 - Opening the dashboard at `http://localhost:37358/.web/`
@@ -132,7 +132,7 @@ silentsuite-bridge --remove-autostart
 | `SILENTSUITE_SYNC_INTERVAL` | `900` (15 min) | Sync interval in seconds |
 | `SILENTSUITE_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
 
-For self-hosted SilentSuite:
+For self-hosted servers:
 
 ```bash
 export SILENTSUITE_SERVER_URL=https://sync.your-domain.com

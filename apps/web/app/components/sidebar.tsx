@@ -45,11 +45,11 @@ export function Sidebar() {
       {/* Logo */}
       <div className="flex h-12 items-center gap-2 overflow-hidden px-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10 border border-[rgb(var(--primary))]/20">
-          <Shield className="h-4 w-4 text-[rgb(var(--primary))]" />
+          <span className="h-5 w-5 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
         </div>
         {isExpanded && (
           <span className="truncate text-sm font-semibold text-[rgb(var(--foreground))]">
-            SilentSuite
+            silentsuite
           </span>
         )}
       </div>

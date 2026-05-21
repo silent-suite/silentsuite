@@ -6,7 +6,7 @@ GNOME Calendar and GNOME Contacts support CalDAV and CardDAV through GNOME Onlin
 
 1. GNOME Desktop (any recent version).
 2. [SilentSuite Bridge](./dav-bridge.md) installed and running on your machine.
-3. Your SilentSuite email and password.
+3. Your account email and password.
 
 ## Add CalDAV/CardDAV Account
 
@@ -17,8 +17,8 @@ GNOME uses a centralized account system. Adding one account enables both calenda
 3. Enter:
    - **CalDAV URL**: `http://localhost:37358/your@email.com/`
    - **CardDAV URL**: `http://localhost:37358/your@email.com/`
-   - **Username**: your SilentSuite email
-   - **Password**: your SilentSuite password
+   - **Username**: your account email
+   - **Password**: your account password
 4. Click **Connect**.
 
 Your calendars, tasks, and contacts will now appear in:
@@ -34,7 +34,7 @@ If GNOME Online Accounts doesn't show CalDAV/CardDAV:
 2. Click the menu button > **Calendar Sources** > **+**.
 3. Select **CalDAV**.
 4. Enter the CalDAV URL: `http://localhost:37358/your@email.com/`
-5. Enter your SilentSuite email and password.
+5. Enter your account email and password.
 
 ## Troubleshooting
 

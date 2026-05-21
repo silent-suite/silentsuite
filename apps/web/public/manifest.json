@@ -1,6 +1,6 @@
 {
   "name": "SilentSuite",
-  "short_name": "SilentSuite",
+  "short_name": "silentsuite",
   "description": "End-to-end encrypted productivity suite",
   "start_url": "/",
   "display": "standalone",

@@ -361,7 +361,7 @@ function StepCreateAccount({
               className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))] text-xs"
             />
             <p className="text-[10px] text-[rgb(var(--muted))]">
-              Leave empty to use the default SilentSuite server. Self-hosters: enter your own server URL.
+              Leave empty to use the default silentsuite.io server. Self-hosters: enter your own server URL.
             </p>
           </div>
         </details>
@@ -509,7 +509,7 @@ function CryptoPaymentPanel({
       <div className="space-y-2 text-center">
         <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Pay with Bitcoin</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Scan the QR code or copy the payment details. SilentSuite unlocks after BTCPay settlement confirms.
+          Scan the QR code or copy the payment details. Your silentsuite.io access unlocks after BTCPay settlement confirms.
         </p>
       </div>
 

@@ -78,7 +78,7 @@ Distribution channels (Google Play, F-Droid) are on the roadmap — see [#58](ht
 
 ### How does the desktop bridge work?
 
-It runs a tiny CalDAV/CardDAV daemon bound to `localhost:37358`. Standard PIM clients (Thunderbird, Apple Calendar, Evolution, etc.) talk to it like any other DAV server. The bridge handles encryption/decryption against your SilentSuite account; plaintext stays inside `localhost`.
+It runs a tiny CalDAV/CardDAV daemon bound to `localhost:37358`. Standard PIM clients (Thunderbird, Apple Calendar, Evolution, etc.) talk to it like any other DAV server. The bridge handles encryption/decryption against your silentsuite.io or self-hosted account; plaintext stays inside `localhost`.
 
 Install commands are in *Settings → Desktop* in the web app.
 

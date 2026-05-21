@@ -95,10 +95,10 @@ export default function AuthLayout({
                 ? 'bg-emerald-400/10 border border-emerald-400/20'
                 : 'bg-emerald-500/10 border border-emerald-500/20'
             }`}>
-              <Shield className={`w-4 h-4 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} aria-hidden="true" />
+              <span className="h-5 w-5 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
             </div>
             <span className={`font-semibold text-lg transition-colors ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              SilentSuite
+              silentsuite
             </span>
           </div>
           <div className="mt-2 sm:mt-3 flex items-center gap-1.5">

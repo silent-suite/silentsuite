@@ -65,7 +65,7 @@ export default function AccountPage() {
     if (isSelfHosted || isCustomServer(stored ?? undefined)) {
       return stored ?? ETEBASE_SERVER_URL ?? 'Self-Hosted'
     }
-    return 'SilentSuite Cloud'
+    return 'silentsuite.io'
   }, [])
 
   const email = account?.email ?? user?.email ?? '—'

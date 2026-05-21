@@ -3,7 +3,7 @@
 Implements an OAuth-style flow:
 1. Bridge starts a temporary HTTP server on a random localhost port
 2. Opens the user's default browser to the auth page
-3. User enters SilentSuite credentials in the browser
+3. User enters account credentials in the browser
 4. Bridge authenticates with Etebase server
 5. On success, stores session token + password hash
 6. Redirects browser to the bridge dashboard
@@ -149,7 +149,7 @@ AUTH_PAGE_HTML = """<!DOCTYPE html>
 
             <label for="password">Password</label>
             <input type="password" id="password" name="password" required
-                   placeholder="Your SilentSuite password">
+                   placeholder="Your account password">
 
             <details style="margin-bottom:16px;">
                 <summary style="cursor:pointer;font-size:13px;color:#888;list-style:none;display:flex;align-items:center;gap:6px;">
@@ -414,7 +414,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                         <li>Click the <strong>+</strong> (Add) button to create a new profile.</li>
                         <li>Select <strong>Generic CalDAV/CardDAV</strong> as the profile type.</li>
                         <li>Set the <strong>DAV URL</strong> to: <code>BRIDGE_URL</code></li>
-                        <li>Enter your <strong>SilentSuite email</strong> as the username and your <strong>SilentSuite password</strong>.</li>
+                        <li>Enter your <strong>account email</strong> as the username and your <strong>account password</strong>.</li>
                         <li>Choose the Outlook folder to sync with (e.g. your default Calendar).</li>
                         <li>Click <strong>Test or discover settings</strong> to verify the connection.</li>
                         <li>Click <strong>OK</strong> to save. For contacts, create a second profile with the same URL and select your Contacts folder.</li>
@@ -431,7 +431,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                         <li>Right-click in the calendar list on the left and select <strong>New Calendar...</strong></li>
                         <li>Choose <strong>On the Network</strong> and click <strong>Next</strong>.</li>
                         <li>Select <strong>CalDAV</strong> format and enter the URL: <code>BRIDGE_URL</code></li>
-                        <li>When prompted, enter your <strong>SilentSuite email</strong> and <strong>password</strong>.</li>
+                        <li>When prompted, enter your <strong>account email</strong> and <strong>password</strong>.</li>
                         <li>Thunderbird will discover your calendars. Select the ones you want and click <strong>Subscribe</strong>.</li>
                         <li>For contacts: open the <strong>Address Book</strong>, click <strong>New Address Book</strong> &gt; <strong>Add CardDAV Address Book</strong>.</li>
                         <li>Enter the same URL: <code>BRIDGE_URL</code> and your credentials.</li>
@@ -448,7 +448,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                         <li>Open <strong>System Settings</strong> (or System Preferences on older macOS) and go to <strong>Internet Accounts</strong>.</li>
                         <li>Click <strong>Add Other Account...</strong> then select <strong>CalDAV Account</strong>.</li>
                         <li>Set the Account Type to <strong>Manual</strong>.</li>
-                        <li>Enter your <strong>SilentSuite email</strong> as the username, your <strong>password</strong>, and the server address: <code>BRIDGE_URL</code></li>
+                        <li>Enter your <strong>account email</strong> as the username, your <strong>password</strong>, and the server address: <code>BRIDGE_URL</code></li>
                         <li>Click <strong>Sign In</strong>. macOS Calendar will discover your calendars automatically.</li>
                         <li>To add contacts: repeat steps 1-2 but choose <strong>CardDAV Account</strong> and enter the same server URL and credentials.</li>
                     </ol>
@@ -456,7 +456,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                     <ol>
                         <li>Go to <strong>Settings &gt; Calendar &gt; Accounts &gt; Add Account &gt; Other</strong>.</li>
                         <li>Tap <strong>Add CalDAV Account</strong>.</li>
-                        <li>Enter the server URL: <code>BRIDGE_URL</code>, your SilentSuite email, and password.</li>
+                        <li>Enter the server URL: <code>BRIDGE_URL</code>, your account email, and password.</li>
                         <li>Tap <strong>Next</strong> to verify and save.</li>
                         <li>For contacts: go back to <strong>Other</strong> and tap <strong>Add CardDAV Account</strong> with the same details.</li>
                     </ol>
@@ -475,7 +475,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                         <li>Click <strong>Other</strong> (on GNOME 46+ you may see a dedicated <strong>CalDAV / CardDAV</strong> option).</li>
                         <li>Select <strong>CalDAV</strong> or <strong>GNOME Online Account (WebDAV)</strong>.</li>
                         <li>Enter the URL: <code>BRIDGE_URL</code></li>
-                        <li>Enter your <strong>SilentSuite email</strong> as the username and your <strong>password</strong>.</li>
+                        <li>Enter your <strong>account email</strong> as the username and your <strong>password</strong>.</li>
                         <li>Toggle on <strong>Calendar</strong> and <strong>Contacts</strong>.</li>
                         <li>GNOME Calendar and GNOME Contacts will both discover your data automatically.</li>
                     </ol>
@@ -491,7 +491,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                         <li>Open DAVx&#8309; and tap the <strong>+</strong> button to add a new account.</li>
                         <li>Select <strong>Login with URL and user name</strong>.</li>
                         <li>Enter the base URL: <code>BRIDGE_URL</code></li>
-                        <li>Enter your <strong>SilentSuite email</strong> as the user name and your <strong>password</strong>.</li>
+                        <li>Enter your <strong>account email</strong> as the user name and your <strong>password</strong>.</li>
                         <li>Tap <strong>Login</strong>. DAVx&#8309; will discover your calendars, tasks, and address books.</li>
                         <li>Select the collections you want to sync and tap the sync icon.</li>
                         <li>Your data will now appear in your Android Calendar, Contacts, and Tasks apps.</li>
@@ -508,7 +508,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                         <li>Open <strong>Evolution</strong> and go to <strong>Edit &gt; Accounts</strong> (or <strong>File &gt; New &gt; Calendar</strong>).</li>
                         <li>Click <strong>Add</strong> and choose <strong>CalDAV</strong> as the type.</li>
                         <li>Enter the URL: <code>BRIDGE_URL</code></li>
-                        <li>Enter your <strong>SilentSuite email</strong> and <strong>password</strong>.</li>
+                        <li>Enter your <strong>account email</strong> and <strong>password</strong>.</li>
                         <li>Click <strong>Find Calendars</strong> to discover available collections, then select the ones you want.</li>
                         <li>For contacts: go to <strong>File &gt; New &gt; Address Book</strong>, choose <strong>CardDAV</strong>, and enter the same URL and credentials.</li>
                     </ol>
@@ -522,8 +522,8 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                     <p>Any app that supports the <strong>CalDAV</strong> or <strong>CardDAV</strong> protocol can connect to SilentSuite Bridge. You will need:</p>
                     <ol>
                         <li><strong>Server URL:</strong> <code>BRIDGE_URL</code></li>
-                        <li><strong>Username:</strong> your SilentSuite email address (<code>USER_EMAIL</code>)</li>
-                        <li><strong>Password:</strong> your SilentSuite password</li>
+                        <li><strong>Username:</strong> your account email address (<code>USER_EMAIL</code>)</li>
+                        <li><strong>Password:</strong> your account password</li>
                     </ol>
                     <p style="margin-top:8px;">Most apps have an <strong>"Add CalDAV account"</strong>, <strong>"Add internet calendar"</strong>, or <strong>"Add WebDAV account"</strong> option in their settings. Enter the details above and the app will auto-discover your calendars, contacts, and tasks.</p>
                     <p style="margin-top:8px;"><em>If the app asks for separate CalDAV and CardDAV URLs, use the same URL for both &mdash; the bridge handles discovery automatically.</em></p>

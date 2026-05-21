@@ -10,7 +10,7 @@ Install the **EteSync** app from the [App Store](https://apps.apple.com/app/etes
 
 1. Open the **EteSync** app.
 2. Tap **Advanced Settings** to reveal the server URL field.
-3. Enter your SilentSuite server URL:
+3. Enter your server URL:
    - Hosted: `https://server.silentsuite.io`
    - Self-hosted: `https://sync.your-domain.com`
 4. Enter your **username** (email) and **password**.

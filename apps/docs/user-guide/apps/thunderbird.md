@@ -6,7 +6,7 @@ Mozilla Thunderbird supports CalDAV and CardDAV natively (since version 91). Con
 
 1. **Thunderbird 91 or later** (earlier versions require the TbSync add-on).
 2. [SilentSuite Bridge](./dav-bridge.md) installed and running on your machine.
-3. Your SilentSuite email and password.
+3. Your account email and password.
 
 ## Add Calendars
 
@@ -14,10 +14,10 @@ Mozilla Thunderbird supports CalDAV and CardDAV natively (since version 91). Con
 2. Right-click the calendar list (or click **+**) > **New Calendar**.
 3. Select **On the Network**.
 4. Enter:
-   - **Username**: your SilentSuite email
+   - **Username**: your account email
    - **Location**: `http://localhost:37358/your@email.com/`
 5. Click **Find Calendars**.
-6. When prompted for a password, enter your **SilentSuite password**.
+6. When prompted for a password, enter your **account password**.
 7. Select the calendars you want and click **Subscribe**.
 
 ## Add Address Books
@@ -25,10 +25,10 @@ Mozilla Thunderbird supports CalDAV and CardDAV natively (since version 91). Con
 1. Switch to the **Address Book** view.
 2. Go to **File > New > CardDAV Address Book**.
 3. Enter:
-   - **Username**: your SilentSuite email
+   - **Username**: your account email
    - **Location**: `http://localhost:37358/your@email.com/`
 4. Click **Continue**.
-5. Enter your **SilentSuite password** when prompted.
+5. Enter your **account password** when prompted.
 6. Select the address books to add.
 
 ## Add Task Lists
@@ -49,8 +49,8 @@ Then:
 3. Enter:
    - CalDAV server: `http://localhost:37358/`
    - CardDAV server: `http://localhost:37358/`
-   - Username: your SilentSuite email
-   - Password: your SilentSuite password
+   - Username: your account email
+   - Password: your account password
 4. Click **Add**.
 
 ## Troubleshooting
@@ -61,7 +61,7 @@ Make sure the bridge is running. Verify by opening `http://localhost:37358/.web/
 
 ### Password rejected
 
-Use your **SilentSuite password** (the same one you use to log into the SilentSuite web app).
+Use your **account password** (the same one you use to log into app.silentsuite.io or your self-hosted server).
 
 ### Calendar not updating
 
