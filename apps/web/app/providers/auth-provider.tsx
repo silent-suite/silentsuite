@@ -8,8 +8,8 @@ const DEGRADED_RETRY_INTERVAL_MS = 60_000 // retry billing every 60s in degraded
 function LoadingSpinner() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[rgb(var(--background))]">
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[rgb(var(--primary))]/10 border border-[rgb(var(--primary))]/20">
-        <span className="h-8 w-8 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
+      <div className="flex h-12 w-12 items-center justify-center rounded-xl">
+        <span className="h-11 w-11 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
       </div>
       <div className="flex flex-col items-center gap-2">
         <span className="text-sm font-semibold tracking-[-0.04em]">
