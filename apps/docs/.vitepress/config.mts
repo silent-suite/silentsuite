@@ -19,7 +19,7 @@ export default defineConfig({
 
   themeConfig: {
     logo: '/logo.svg',
-    siteTitle: 'silentsuite',
+    siteTitle: 'docs.silentsuite.io',
 
     nav: [
       { text: 'User Guide', link: '/user-guide/getting-started', activeMatch: '/user-guide/' },

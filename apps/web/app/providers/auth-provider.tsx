@@ -12,7 +12,9 @@ function LoadingSpinner() {
         <span className="h-8 w-8 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
       </div>
       <div className="flex flex-col items-center gap-2">
-        <span className="text-sm font-semibold text-[rgb(var(--foreground))]">silentsuite</span>
+        <span className="text-sm font-semibold tracking-[-0.04em]">
+          <span className="text-[rgb(var(--primary))]">app.</span><span className="text-[rgb(var(--foreground))]">silentsuite</span><span className="text-[rgb(var(--primary))]">.io</span>
+        </span>
         <div className="flex items-center gap-2">
           <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[rgb(var(--primary))]" />
           <span className="text-xs text-[rgb(var(--muted))]">Decrypting your workspace...</span>

@@ -1,1 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="18 14 174 184" role="img" aria-labelledby="title"><title id="title">SilentSuite</title><path d="M 104.84766,74.535156 C 90.917915,75.001064 39.3235,94.856003 34.816406,99.376953 28.707593,194.17587 100.32746,228.34576 103.94336,227.32227 c 3.60354,1.0662 75.6234,-32.25458 70.63672,-127.11914 -4.45329,-4.573969 -55.80917,-25.037276 -69.73242,-25.667974 z" transform="matrix(1,0,0.00591644,1,-0.28864348,-45.974315)" fill="#0A1018" stroke="#34d399" stroke-width="14.684" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 210 210" role="img" aria-labelledby="title desc">
+  <title id="title">SilentSuite arrows mark dark tile</title>
+  <desc id="desc">Two circular sync arrows on a dark rounded square. The upper arrow uses the SilentSuite emerald gradient; the lower arrow is white.</desc>
+  <defs>
+    <linearGradient id="emeraldArrow" x1="66" y1="64" x2="138" y2="135" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34d399" />
+      <stop offset="1" stop-color="#10b981" />
+    </linearGradient>
+    <clipPath id="roundedTile">
+      <rect width="210" height="210" rx="39" />
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#roundedTile)">
+    <rect width="210" height="210" fill="#0a1018" />
+    <g transform="translate(1.031319 -48.008124)">
+      <path d="m 103.37823,105.13893 c -10.756462,0.18251 -21.313309,4.49685 -29.191412,12.51367 -12.604964,12.8269 -15.609755,32.34552 -7.445312,48.36914 l 12.265625,-6.25 c -5.50107,-10.79646 -3.494974,-23.8301 4.998047,-32.47266 8.493021,-8.64256 21.490042,-10.87431 32.380862,-5.5625 l 6.0332,-12.37305 c -6.06137,-2.95633 -12.58714,-4.33412 -19.04101,-4.2246 z" fill="url(#emeraldArrow)" />
+      <path d="m 114.07261,128.59802 4.85725,-29.069129 17.36851,17.880829 z" fill="url(#emeraldArrow)" stroke="url(#emeraldArrow)" stroke-width="6.865" stroke-linejoin="round" />
+    </g>
+    <g transform="rotate(180 104.96788 98.943297) translate(1.031319 -48.008124)">
+      <path d="m 103.37823,105.13893 c -10.756462,0.18251 -21.313309,4.49685 -29.191412,12.51367 -12.604964,12.8269 -15.609755,32.34552 -7.445312,48.36914 l 12.265625,-6.25 c -5.50107,-10.79646 -3.494974,-23.8301 4.998047,-32.47266 8.493021,-8.64256 21.490042,-10.87431 32.380862,-5.5625 l 6.0332,-12.37305 c -6.06137,-2.95633 -12.58714,-4.33412 -19.04101,-4.2246 z" fill="#ffffff" />
+      <path d="m 114.07261,128.59802 4.85725,-29.069129 17.36851,17.880829 z" fill="#ffffff" stroke="#ffffff" stroke-width="6.865" stroke-linejoin="round" />
+    </g>
+  </g>
+</svg>
