@@ -75,7 +75,7 @@ export function Header() {
 
   return (
     <header className="relative z-40 flex h-12 shrink-0 items-center justify-between border-b border-[rgb(var(--border))] bg-[rgb(var(--background))]/95 backdrop-blur-sm px-4">
-      {/* Mobile: show SilentSuite branding since sidebar is hidden */}
+      {/* Mobile: show app branding since sidebar is hidden */}
       <div className="flex items-center gap-2">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10 border border-[rgb(var(--primary))]/20 md:hidden">
           <span className="h-4 w-4 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />

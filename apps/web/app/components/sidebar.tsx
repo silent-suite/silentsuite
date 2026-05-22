@@ -48,8 +48,8 @@ export function Sidebar() {
           <span className="h-5 w-5 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
         </div>
         {isExpanded && (
-          <span className="truncate text-sm font-semibold text-[rgb(var(--foreground))]">
-            silentsuite
+          <span className="truncate text-sm font-semibold tracking-[-0.04em]">
+            <span className="text-[rgb(var(--primary))]">app.</span><span className="text-[rgb(var(--foreground))]">silentsuite</span><span className="text-[rgb(var(--primary))]">.io</span>
           </span>
         )}
       </div>
