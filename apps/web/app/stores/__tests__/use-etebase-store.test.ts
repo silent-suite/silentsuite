@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useCalendarStore } from '../use-calendar-store'
+import { useCalendarListStore } from '../use-calendar-list-store'
+import { useTaskListStore } from '../use-task-list-store'
+import { useContactListStore } from '../use-contact-list-store'
 
 const offlineQueueMock = vi.hoisted(() => ({
   enqueue: vi.fn(async () => {}),
@@ -9,8 +12,16 @@ const offlineQueueMock = vi.hoisted(() => ({
   isOfflineError: vi.fn(() => false),
 }))
 
+const coreMock = vi.hoisted(() => ({
+  listCollections: vi.fn(),
+  createCollection: vi.fn(),
+  updateCollectionMeta: vi.fn(),
+}))
+
 // Stub the offline queue so isOfflineError + enqueue don't try to open IndexedDB.
 vi.mock('@/app/lib/offline-queue', () => offlineQueueMock)
+
+vi.mock('@silentsuite/core', () => coreMock)
 
 vi.mock('@/app/lib/secure-storage', () => ({
   secureGet: vi.fn(async () => null),
@@ -23,6 +34,12 @@ vi.mock('@/app/lib/secure-storage', () => ({
 vi.mock('@/app/stores/use-toast-store', () => ({
   showErrorToast: vi.fn(),
 }))
+
+beforeEach(() => {
+  coreMock.listCollections.mockReset()
+  coreMock.createCollection.mockReset()
+  coreMock.updateCollectionMeta.mockReset()
+})
 
 interface MockItemManager {
   create: ReturnType<typeof vi.fn>
@@ -39,6 +56,13 @@ function mockItem(uid: string, content: string, isDeleted = false) {
     uid,
     isDeleted,
     getContent: vi.fn(async () => content),
+  }
+}
+
+function mockCollection(uid: string, meta: Record<string, string> = {}) {
+  return {
+    uid,
+    getMeta: vi.fn(() => meta),
   }
 }
 
@@ -500,5 +524,147 @@ describe('useEtebaseStore.refreshCollection', () => {
     expect(state.itemCache.get('existing')).toBe(existingItem)
     expect(state.itemCollectionMap.get('existing')).toBe('col-1')
     errorSpy.mockRestore()
+  })
+})
+
+describe('useEtebaseStore.reconcileCollections', () => {
+  beforeEach(() => {
+    offlineQueueMock.getAll.mockReset().mockResolvedValue([])
+    offlineQueueMock.remove.mockClear()
+    useCalendarStore.setState({
+      events: [],
+      selectedEventId: null,
+      isLoading: false,
+      syncStatus: 'synced',
+      currentView: 'week',
+      currentDate: new Date('2026-01-01T00:00:00Z'),
+    })
+    useCalendarListStore.setState({
+      calendars: [{ id: 'deleted-cal', name: 'Deleted', color: '#ef4444', visible: true }],
+      defaultCalendarId: 'deleted-cal',
+    })
+    useTaskListStore.setState({
+      lists: [{ id: 'tasks-1', name: 'Tasks', color: '#3b82f6', visible: true }],
+      activeListId: 'tasks-1',
+    })
+    useContactListStore.setState({
+      lists: [{ id: 'contacts-1', name: 'Contacts', color: '#8b5cf6', visible: true }],
+      activeListId: 'contacts-1',
+    })
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('removes a remotely deleted calendar and does not rehydrate its events', async () => {
+    const account = { id: 'account' }
+    const deletedCalendar = mockCollection('deleted-cal', { name: 'Deleted', color: '#ef4444' })
+    const replacementCalendar = mockCollection('new-default-cal', { name: 'Personal Calendar', color: '#10b981' })
+    const taskCollection = mockCollection('tasks-1', { name: 'Tasks', color: '#3b82f6' })
+    const contactCollection = mockCollection('contacts-1', { name: 'Contacts', color: '#8b5cf6' })
+    const syncEngine = {
+      pause: vi.fn(),
+      resume: vi.fn(),
+      trackCollection: vi.fn(),
+      untrackCollection: vi.fn(),
+      setStoken: vi.fn(),
+    }
+    coreMock.listCollections.mockImplementation(async (_account: unknown, collectionType: string) => {
+      if (collectionType === 'etebase.vevent') return []
+      if (collectionType === 'etebase.vtodo') return [taskCollection]
+      if (collectionType === 'etebase.vcard') return [contactCollection]
+      return []
+    })
+    coreMock.createCollection.mockResolvedValue(replacementCalendar)
+
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [deletedCalendar] as any[], tasks: [taskCollection] as any[], contacts: [contactCollection] as any[] },
+      itemCache: new Map([['event-1', mockItem('event-1', 'deleted event')]]),
+      itemTypeMap: new Map([['event-1', 'calendar']]),
+      itemCollectionMap: new Map([['event-1', 'deleted-cal']]),
+      isInitialized: true,
+      syncEngine: syncEngine as any,
+    })
+    useCalendarStore.setState({
+      events: [{ id: 'event-1', calendarId: 'deleted-cal', title: 'Deleted event' } as any],
+      selectedEventId: 'event-1',
+    })
+
+    await useEtebaseStore.getState().reconcileCollections()
+    const state = useEtebaseStore.getState()
+
+    expect(coreMock.createCollection).toHaveBeenCalledWith(account, 'etebase.vevent', { name: 'Personal Calendar' })
+    expect(state.collections.calendar.map((collection) => collection.uid)).toEqual(['new-default-cal'])
+    expect(state.itemCache.has('event-1')).toBe(false)
+    expect(state.itemTypeMap.has('event-1')).toBe(false)
+    expect(state.itemCollectionMap.has('event-1')).toBe(false)
+    expect(useCalendarStore.getState().events).toEqual([])
+    expect(useCalendarStore.getState().selectedEventId).toBeNull()
+    expect(useCalendarListStore.getState().calendars.map((calendar) => calendar.id)).toEqual(['new-default-cal'])
+    expect(syncEngine.pause).toHaveBeenCalledTimes(1)
+    expect(syncEngine.resume).toHaveBeenCalledTimes(1)
+    expect(syncEngine.untrackCollection).toHaveBeenCalledWith('deleted-cal')
+    expect(syncEngine.trackCollection).toHaveBeenCalledWith('etebase.vevent', 'new-default-cal')
+  })
+})
+
+describe('useEtebaseStore.updateCollectionMeta', () => {
+  beforeEach(() => {
+    useCalendarListStore.setState({
+      calendars: [{ id: 'cal-1', name: 'Work', color: '#111111', visible: false }],
+      defaultCalendarId: 'cal-1',
+    })
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('persists calendar color through collection metadata while preserving existing metadata', async () => {
+    const account = { id: 'account' }
+    const collection = mockCollection('cal-1', {
+      name: 'Work',
+      description: 'Keep this',
+      color: '#111111',
+    })
+    const updatedCollection = mockCollection('cal-1', {
+      name: 'Work',
+      description: 'Keep this',
+      color: '#ff0000',
+    })
+    coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [collection] as any[], tasks: [], contacts: [] },
+      isInitialized: true,
+    })
+
+    const result = await useEtebaseStore.getState().updateCollectionMeta('calendar', 'cal-1', { color: '#ff0000' })
+
+    expect(result).toBe(true)
+    expect(coreMock.updateCollectionMeta).toHaveBeenCalledWith(account, collection, {
+      name: 'Work',
+      description: 'Keep this',
+      color: '#ff0000',
+    })
+    expect(useEtebaseStore.getState().collections.calendar[0]).toBe(updatedCollection)
+    expect(useCalendarListStore.getState().calendars[0]).toMatchObject({
+      id: 'cal-1',
+      name: 'Work',
+      color: '#ff0000',
+      visible: false,
+    })
   })
 })

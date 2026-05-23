@@ -6,6 +6,12 @@ export interface CollectionMeta {
   color?: string;
 }
 
+export interface CollectionMetaUpdate {
+  name?: string;
+  description?: string;
+  color?: string;
+}
+
 export interface ItemListResponse {
   items: Etebase.Item[];
   stoken: string | null;
@@ -43,7 +49,7 @@ export async function listCollections(
 ): Promise<Etebase.Collection[]> {
   const collectionManager = account.getCollectionManager();
   const response = await collectionManager.list(collectionType);
-  return response.data;
+  return response.data.filter((collection) => !(collection as any).isDeleted);
 }
 
 /**
@@ -63,15 +69,15 @@ export async function getCollection(
 export async function updateCollectionMeta(
   account: Etebase.Account,
   collection: Etebase.Collection,
-  meta: CollectionMeta,
+  meta: CollectionMetaUpdate,
 ): Promise<Etebase.Collection> {
   const collectionManager = account.getCollectionManager();
   const currentMeta = (collection as any).getMeta?.() ?? {};
   const nextMeta = {
     ...currentMeta,
-    name: meta.name,
-    description: meta.description,
-    color: meta.color,
+    ...(meta.name !== undefined ? { name: meta.name } : {}),
+    ...(meta.description !== undefined ? { description: meta.description } : {}),
+    ...(meta.color !== undefined ? { color: meta.color } : {}),
   };
 
   if (typeof (collection as any).setMeta === 'function') {
