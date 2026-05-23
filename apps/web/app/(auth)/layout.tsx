@@ -90,12 +90,8 @@ export default function AuthLayout({
 
         <div className="mb-4 sm:mb-8 flex flex-col items-center text-center">
           <div className="flex items-center gap-2.5">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-              isDark
-                ? 'bg-emerald-400/10 border border-emerald-400/20'
-                : 'bg-emerald-500/10 border border-emerald-500/20'
-            }`}>
-              <span className="h-5 w-5 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors">
+              <span className="h-8 w-8 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
             </div>
             <span className="font-semibold text-lg tracking-[-0.04em] transition-colors">
               <span className="text-emerald-500">app.</span><span className={isDark ? 'text-white' : 'text-gray-900'}>silentsuite</span><span className="text-emerald-500">.io</span>
