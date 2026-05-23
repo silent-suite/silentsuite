@@ -14,7 +14,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.CheckedTextView
 import android.widget.EditText
 import android.widget.TextView
 import androidx.fragment.app.Fragment
@@ -33,8 +32,9 @@ class LoginCredentialsFragment : Fragment() {
     internal lateinit var editUserName: EditText
     internal lateinit var editUrlPassword: TextInputLayout
 
-    internal lateinit var showAdvanced: CheckedTextView
+    internal lateinit var showAdvanced: TextView
     internal lateinit var customServer: EditText
+    private var advancedExpanded = false
 
     internal var initialUsername: String? = null
     internal var initialPassword: String? = null
@@ -42,10 +42,11 @@ class LoginCredentialsFragment : Fragment() {
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val v = inflater.inflate(R.layout.login_credentials_fragment, container, false)
+        advancedExpanded = savedInstanceState?.getBoolean(KEY_ADVANCED_EXPANDED) ?: false
 
         editUserName = v.findViewById<TextInputEditText>(R.id.user_name)
         editUrlPassword = v.findViewById<TextInputLayout>(R.id.url_password)
-        showAdvanced = v.findViewById<CheckedTextView>(R.id.show_advanced)
+        showAdvanced = v.findViewById<TextView>(R.id.show_advanced)
         customServer = v.findViewById<TextInputEditText>(R.id.custom_server)
 
         if (savedInstanceState == null) {
@@ -73,18 +74,27 @@ class LoginCredentialsFragment : Fragment() {
         forgotPassword.setOnClickListener { WebViewActivity.openUrl(requireContext(), Constants.forgotPassword) }
 
         val advancedLayout = v.findViewById<View>(R.id.advanced_layout) as ExpandableLayout
+        if (advancedExpanded) {
+            advancedLayout.expand()
+        }
+        updateAdvancedDisclosure()
 
         showAdvanced.setOnClickListener {
-            if (showAdvanced.isChecked) {
-                showAdvanced.isChecked = false
-                advancedLayout.collapse()
-            } else {
-                showAdvanced.isChecked = true
+            advancedExpanded = !advancedExpanded
+            if (advancedExpanded) {
                 advancedLayout.expand()
+            } else {
+                advancedLayout.collapse()
             }
+            updateAdvancedDisclosure()
         }
 
         return v
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_ADVANCED_EXPANDED, advancedExpanded)
     }
 
     protected fun validateLoginData(): LoginCredentials? {
@@ -107,7 +117,7 @@ class LoginCredentialsFragment : Fragment() {
         }
 
         var uri: URI? = null
-        if (showAdvanced.isChecked) {
+        if (advancedExpanded) {
             val server = customServer.text.toString()
             // If this field is null, just use the default
             if (!server.isEmpty()) {
@@ -125,7 +135,15 @@ class LoginCredentialsFragment : Fragment() {
         return if (valid) LoginCredentials(uri, userName, password) else null
     }
 
+    private fun updateAdvancedDisclosure() {
+        showAdvanced.contentDescription = getString(
+                if (advancedExpanded) R.string.login_custom_server_expanded else R.string.login_custom_server_collapsed
+        )
+    }
+
     companion object {
+        private const val KEY_ADVANCED_EXPANDED = "advancedExpanded"
+
         fun newInstance(initialUsername: String?, initialPassword: String?): LoginCredentialsFragment {
             val ret = LoginCredentialsFragment()
             ret.initialUsername = initialUsername

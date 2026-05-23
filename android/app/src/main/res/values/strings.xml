@@ -148,14 +148,20 @@
     <string name="account_synchronizing_now">Synchronizing now</string>
     <string name="account_settings">Account settings</string>
     <string name="account_delete">Sign out</string>
-    <string name="account_show_fingerprint">Encryption fingerprint</string>
+    <string name="account_show_fingerprint">Verify encryption fingerprint</string>
     <string name="account_delete_confirmation_title">Sign out?</string>
     <string name="account_delete_confirmation_text">Local copies of your contacts, calendars and tasks will be removed from this device. Your data on the server is safe.</string>
     <string name="account_delete_collection_last_title">Can\'t delete last collection</string>
     <string name="account_delete_collection_last_text">Deleting the last collection is not allowed, please create a new one if you\'d like to delete this one.</string>
-    <string name="account_showcase_view_collection">Tap a collection to view sync history, import data, or manage members.</string>
-    <string name="account_click_install_tasks">Click here to install OpenTasks!</string>
-    <string name="account_tasks_not_showing">Tasks sync requires a task app (Tasks.org or OpenTasks)</string>
+    <string name="account_showcase_view_collection">Tap a collection to view recent sync activity, import data, or manage members.</string>
+    <string name="account_click_install_tasks">Install OpenTasks</string>
+    <string name="account_tasks_not_showing">Task app needed. Android does not include a built-in task provider. Install Tasks.org or OpenTasks to create and sync tasks.</string>
+    <string name="account_section_status_loading">Checking sync status</string>
+    <string name="account_section_status_synced">Synced</string>
+    <string name="account_section_status_syncing">Syncing</string>
+    <string name="account_section_status_setup_needed">Setup needed</string>
+    <string name="account_collection_shared_indicator">Shared collection</string>
+    <string name="account_collection_read_only_indicator">Read-only collection</string>
     <string name="export_data_title">Export data</string>
     <string name="export_data_success">Export saved</string>
     <string name="export_data_failed">Export failed</string>
@@ -163,11 +169,14 @@
     <string name="show_fingperprint_title">Your Encryption Fingerprint</string>
 
     <!-- ViewCollection -->
-    <string name="change_journal_title">Sync History</string>
-    <string name="tasks_not_showing">* Log is only shown if a task provider is installed.</string>
+    <string name="change_journal_title">Recent sync activity</string>
+    <string name="tasks_not_showing">Task app needed. Android does not include a built-in task provider. Install Tasks.org or OpenTasks to create and sync tasks on this device.</string>
     <string name="account_showcase_import">In order to import contacts and calendars into SilentSuite, you need to click on the menu, and choose \"Import\".</string>
     <string name="account_owner">Owner: %s</string>
     <string name="members_owner_only">Only the owner of this collection (%s) is allowed to view its members.</string>
+    <string name="collection_shared_with_us">Shared with us</string>
+    <string name="collection_recent_activity_loading">Loading recent activity...</string>
+    <string name="collection_recent_activity_none">No recent activity yet</string>
     <string name="not_allowed_title">Not Allowed</string>
     <string name="edit_owner_only">Only the owner of this collection (%s) is allowed to edit it.</string>
     <string name="edit_owner_only_anon">Only the owner of this collection is allowed to edit it.</string>
@@ -268,7 +277,9 @@
     <string name="login_password">Password</string>
     <string name="login_custom_server">Server URL</string>
     <string name="login_custom_server_error">Invalid URL found, did you forget to include https://?</string>
-    <string name="login_toggle_advanced">Show advanced settings</string>
+    <string name="login_toggle_advanced">Custom server</string>
+    <string name="login_custom_server_collapsed">Custom server settings, collapsed</string>
+    <string name="login_custom_server_expanded">Custom server settings, expanded</string>
     <string name="login_encryption_password">Encryption Password</string>
     <string name="login_encryption_set_new_password">Please set your encryption password below, and make sure you got it right, as it *can\'t* be recovered if lost!</string>
     <string name="login_encryption_enter_password">You are logged in as \"%s\". Please enter your encryption password to continue, or log out from the side menu.</string>
@@ -280,7 +291,9 @@
     <string name="login_signup_prompt">Don\'t have an account? Sign up</string>
     <string name="login_finish">Finish</string>
     <string name="login_back">Back</string>
-    <string name="login_enter_service_details">Sign in to silentsuite.io</string>
+    <string name="login_enter_service_details">Connect Android sync</string>
+    <string name="login_bridge_sync">Syncs with your phone\'s calendar, contacts, and task apps.</string>
+    <string name="login_bridge_encrypted">Your data is encrypted before it leaves this device.</string>
     <string name="login_enter_encryption_details">Secret Encryption Password</string>
     <string name="login_encryption_account_label">Account:</string>
     <string name="login_service_details_description">This is your login password, *not* your encryption password!</string>
@@ -392,8 +405,19 @@
     <string name="delete_collection_deleting_collection">Deleting collection</string>
 
     <!-- JournalViewer -->
-    <string name="journal_entries_list_empty">Collection is empty.\nMaybe it\'s still syncing?</string>
-    <string name="journal_entries_loading">Loading change log entries...</string>
+    <string name="journal_entries_list_empty">No recent sync activity.\nCreate or edit items in your Android app, then sync.</string>
+    <string name="journal_entries_list_empty_calendar">No recent calendar activity.\nCreate or edit events in your Android calendar app, then sync.</string>
+    <string name="journal_entries_list_empty_contacts">No recent contact activity.\nCreate or edit contacts in your Android contacts app, then sync.</string>
+    <string name="journal_entries_list_empty_tasks">No recent task activity.\nCreate or edit tasks in your task app, then sync.</string>
+    <string name="journal_entries_list_empty_tasks_setup">Task app needed.\nAndroid does not include a built-in task provider. Install Tasks.org or OpenTasks, then sync.</string>
+    <string name="journal_entries_loading">Loading recent activity...</string>
+    <string name="journal_revisions_list_empty">No revisions available for this item.</string>
+    <string name="journal_item_title_unavailable">Item details unavailable</string>
+    <string name="journal_item_modified">Modified: %s</string>
+    <string name="journal_item_modified_unavailable">Modified date unavailable</string>
+    <string name="journal_item_action_changed">Updated item</string>
+    <string name="journal_item_action_deleted">Deleted item</string>
+    <string name="journal_item_sync_issue">Sync issue</string>
 
     <!-- ExceptionInfoFragment -->
     <string name="exception">An error has occurred.</string>

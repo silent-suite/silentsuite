@@ -17,6 +17,7 @@ import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.CachedItem
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.utils.TaskProviderHandling
 import java.text.SimpleDateFormat
 
 
@@ -57,7 +58,7 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
                     restored = true
                 }
 
-                emptyTextView!!.text = getString(R.string.journal_entries_list_empty)
+                emptyTextView!!.text = getString(emptyTextRes(requireContext(), col.collectionType))
             }
         }
 
@@ -133,20 +134,38 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
 
             val fullContent = item.content
             var content = getLine(fullContent, prefix)
-            content = content ?: "Not found"
+            content = content ?: v.context.getString(R.string.journal_item_title_unavailable)
             tv.text = content
 
             tv = v.findViewById<View>(R.id.description) as TextView
-            // FIXME: Don't use a hard-coded string
-            content = "Modified: ${dateFormatter.format(item.meta.mtime ?: 0)}"
-            tv.text = content
+            val modifiedAt = item.meta.mtime
+            tv.text = if (modifiedAt == null || modifiedAt <= 0L) {
+                v.context.getString(R.string.journal_item_modified_unavailable)
+            } else {
+                v.context.getString(R.string.journal_item_modified, dateFormatter.format(modifiedAt))
+            }
 
             val action = v.findViewById<View>(R.id.action) as ImageView
             if (item.item.isDeleted) {
                 action.setImageResource(R.drawable.action_delete)
+                action.contentDescription = v.context.getString(R.string.journal_item_action_deleted)
             } else {
                 action.setImageResource(R.drawable.action_change)
+                action.contentDescription = v.context.getString(R.string.journal_item_action_changed)
             }
+        }
+
+        private fun emptyTextRes(context: Context, collectionType: String) = when (collectionType) {
+            Constants.ETEBASE_TYPE_CALENDAR -> R.string.journal_entries_list_empty_calendar
+            Constants.ETEBASE_TYPE_TASKS -> {
+                if (TaskProviderHandling.getWantedTaskSyncProvider(context) == null) {
+                    R.string.journal_entries_list_empty_tasks_setup
+                } else {
+                    R.string.journal_entries_list_empty_tasks
+                }
+            }
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK -> R.string.journal_entries_list_empty_contacts
+            else -> R.string.journal_entries_list_empty
         }
     }
 }

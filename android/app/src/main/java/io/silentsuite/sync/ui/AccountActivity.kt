@@ -58,6 +58,7 @@ import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.InvitationsActivity
 import io.silentsuite.sync.ui.setup.LoginActivity
+import io.silentsuite.sync.utils.TaskProviderHandling
 import io.silentsuite.sync.utils.packageInstalled
 import com.google.android.material.navigation.NavigationView
 import com.google.android.material.snackbar.Snackbar
@@ -199,11 +200,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         tbTaskDAV.inflateMenu(R.menu.taskdav_actions)
         tbTaskDAV.setOnMenuItemClickListener(this)
         tbTaskDAV.setTitle(R.string.settings_taskdav)
-        if (!packageInstalled(this, tasksOrgPackage)) {
+        val tasksOrgInstalled = packageInstalled(this, tasksOrgPackage)
+        val openTasksInstalled = packageInstalled(this, openTasksPackage)
+        if (!tasksOrgInstalled) {
             val tasksInstallMenuItem = tbTaskDAV.menu.findItem(R.id.install_tasksorg)
             tasksInstallMenuItem.setVisible(true)
         }
-        if (!packageInstalled(this, openTasksPackage)) {
+        if (!openTasksInstalled) {
             val tasksInstallMenuItem = tbTaskDAV.menu.findItem(R.id.install_opentasks)
             tasksInstallMenuItem.setVisible(true)
         }
@@ -565,6 +568,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (info.carddav != null) {
             val progress = findViewById<View>(R.id.carddav_refreshing) as ProgressBar
             progress.visibility = if (info.carddav!!.refreshing) View.VISIBLE else View.GONE
+            updateSectionStatus(R.id.carddav_status, info.carddav!!.refreshing)
 
             listCardDAV = findViewById<View>(R.id.address_books) as ListView
             listCardDAV!!.isEnabled = !info.carddav!!.refreshing
@@ -579,6 +583,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (info.caldav != null) {
             val progress = findViewById<View>(R.id.caldav_refreshing) as ProgressBar
             progress.visibility = if (info.caldav!!.refreshing) View.VISIBLE else View.GONE
+            updateSectionStatus(R.id.caldav_status, info.caldav!!.refreshing)
 
             listCalDAV = findViewById<View>(R.id.calendars) as ListView
             listCalDAV!!.isEnabled = !info.caldav!!.refreshing
@@ -593,6 +598,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (info.taskdav != null) {
             val progress = findViewById<View>(R.id.taskdav_refreshing) as ProgressBar
             progress.visibility = if (info.taskdav!!.refreshing) View.VISIBLE else View.GONE
+            val hasTaskProvider = hasSupportedTaskProvider()
+            updateSectionStatus(R.id.taskdav_status, info.taskdav!!.refreshing, setupNeeded = !hasTaskProvider)
 
             listTaskDAV = findViewById<View>(R.id.tasklists) as ListView
             listTaskDAV!!.isEnabled = !info.taskdav!!.refreshing
@@ -603,12 +610,22 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             listTaskDAV!!.adapter = adapter
             listTaskDAV!!.onItemClickListener = onItemClickListener
 
-            if (!packageInstalled(this, tasksOrgPackage) && !packageInstalled(this, openTasksPackage)) {
-                val opentasksWarning = findViewById<View>(R.id.taskdav_opentasks_warning)
-                opentasksWarning.visibility = View.VISIBLE
-            }
+            val opentasksWarning = findViewById<View>(R.id.taskdav_opentasks_warning)
+            opentasksWarning.visibility = if (hasTaskProvider) View.GONE else View.VISIBLE
         }
     }
+
+    private fun updateSectionStatus(statusViewId: Int, refreshing: Boolean, setupNeeded: Boolean = false) {
+        val status = findViewById<TextView>(statusViewId)
+        status.setText(when {
+            setupNeeded -> R.string.account_section_status_setup_needed
+            refreshing -> R.string.account_section_status_syncing
+            else -> R.string.account_section_status_synced
+        })
+    }
+
+    private fun hasSupportedTaskProvider() =
+            TaskProviderHandling.getWantedTaskSyncProvider(this) != null
 
 
     class AccountInfoViewModel : ViewModel(), AccountUpdateService.RefreshingStatusListener, ServiceConnection, SyncStatusObserver {

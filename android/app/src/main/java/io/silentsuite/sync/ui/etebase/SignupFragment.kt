@@ -16,7 +16,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.CheckedTextView
 import android.widget.TextView
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
@@ -53,12 +52,14 @@ class SignupFragment : Fragment() {
     internal lateinit var editEmail: TextInputLayout
     internal lateinit var editPassword: TextInputLayout
 
-    internal lateinit var showAdvanced: CheckedTextView
+    internal lateinit var showAdvanced: TextView
     internal lateinit var customServer: TextInputEditText
+    private var advancedExpanded = false
 
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val v = inflater.inflate(R.layout.signup_fragment, container, false)
+        advancedExpanded = savedInstanceState?.getBoolean(KEY_ADVANCED_EXPANDED) ?: false
 
         editEmail = v.findViewById(R.id.email)
         editPassword = v.findViewById(R.id.url_password)
@@ -89,18 +90,27 @@ class SignupFragment : Fragment() {
         }
 
         val advancedLayout = v.findViewById<View>(R.id.advanced_layout) as ExpandableLayout
+        if (advancedExpanded) {
+            advancedLayout.expand()
+        }
+        updateAdvancedDisclosure()
 
         showAdvanced.setOnClickListener {
-            if (showAdvanced.isChecked) {
-                showAdvanced.isChecked = false
-                advancedLayout.collapse()
-            } else {
-                showAdvanced.isChecked = true
+            advancedExpanded = !advancedExpanded
+            if (advancedExpanded) {
                 advancedLayout.expand()
+            } else {
+                advancedLayout.collapse()
             }
+            updateAdvancedDisclosure()
         }
 
         return v
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_ADVANCED_EXPANDED, advancedExpanded)
     }
 
     protected fun validateData(): SignupCredentials? {
@@ -123,7 +133,7 @@ class SignupFragment : Fragment() {
         }
 
         var uri: URI? = null
-        if (showAdvanced.isChecked) {
+        if (advancedExpanded) {
             val server = customServer.text.toString()
             if (!server.isEmpty()) {
                 val url = server.toHttpUrlOrNull()
@@ -141,7 +151,15 @@ class SignupFragment : Fragment() {
         return if (valid) SignupCredentials(uri, email, email, password) else null
     }
 
+    private fun updateAdvancedDisclosure() {
+        showAdvanced.contentDescription = getString(
+                if (advancedExpanded) R.string.login_custom_server_expanded else R.string.login_custom_server_collapsed
+        )
+    }
+
     companion object {
+        private const val KEY_ADVANCED_EXPANDED = "advancedExpanded"
+
         fun newInstance(initialEmail: String?, initialPassword: String?): SignupFragment {
             val ret = SignupFragment()
             ret.initialEmail = initialEmail
