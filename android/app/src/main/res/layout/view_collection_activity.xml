@@ -40,7 +40,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Stats:" />
+                android:text="@string/collection_recent_activity_loading" />
 
             <ProgressBar
                 android:id="@+id/progressBar"

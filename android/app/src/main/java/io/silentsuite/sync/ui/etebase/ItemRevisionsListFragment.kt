@@ -70,7 +70,7 @@ class ItemRevisionsListFragment : ListFragment(), AdapterView.OnItemClickListene
                 restored = true
             }
 
-            emptyTextView!!.text = getString(R.string.journal_entries_list_empty)
+            emptyTextView!!.text = getString(R.string.journal_revisions_list_empty)
         }
 
         listView.onItemClickListener = this
