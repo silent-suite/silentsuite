@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useEtebaseStore } from '../use-etebase-store'
+import { useCalendarStore } from '../use-calendar-store'
+
+const offlineQueueMock = vi.hoisted(() => ({
+  enqueue: vi.fn(async () => {}),
+  getAll: vi.fn(async () => []),
+  remove: vi.fn(async () => {}),
+  isOfflineError: vi.fn(() => false),
+}))
 
 // Stub the offline queue so isOfflineError + enqueue don't try to open IndexedDB.
-vi.mock('@/app/lib/offline-queue', () => ({
-  enqueue: vi.fn(async () => {}),
-  isOfflineError: () => false,
-}))
+vi.mock('@/app/lib/offline-queue', () => offlineQueueMock)
 
 vi.mock('@/app/lib/secure-storage', () => ({
   secureGet: vi.fn(async () => null),
@@ -75,6 +80,18 @@ function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemMana
 
 describe('useEtebaseStore.createItemsBatch', () => {
   beforeEach(() => {
+    offlineQueueMock.enqueue.mockClear()
+    offlineQueueMock.getAll.mockReset().mockResolvedValue([])
+    offlineQueueMock.remove.mockClear()
+    offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
+    useCalendarStore.setState({
+      events: [],
+      isLoading: false,
+      syncStatus: 'synced',
+      currentView: 'week',
+      currentDate: new Date('2026-01-01T00:00:00Z'),
+      selectedEventId: null,
+    })
     useEtebaseStore.setState({
       account: null,
       collections: { calendar: [], tasks: [], contacts: [] },
@@ -241,6 +258,153 @@ describe('useEtebaseStore.createItemsBatch', () => {
     expect(itemManager.batch).toHaveBeenCalledTimes(1 + 3)
     expect(uids.slice(0, 20).every((u) => typeof u === 'string')).toBe(true)
     expect(uids.slice(20).every((u) => u === null)).toBe(true)
+  })
+})
+
+describe('useEtebaseStore.deleteItemsInCollection', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('deletes only items in the requested collection and clears local maps', async () => {
+    const deleteItemOne = { uid: 'item-1', delete: vi.fn() }
+    const deleteItemTwo = { uid: 'item-2', delete: vi.fn() }
+    const keepItem = { uid: 'item-3', delete: vi.fn() }
+    const itemManager = { batch: vi.fn(async () => {}) }
+    const account = {
+      getCollectionManager: () => ({
+        getItemManager: () => itemManager,
+      }),
+    }
+
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [{ uid: 'col-1' }, { uid: 'col-2' }] as any[], tasks: [], contacts: [] },
+      itemCache: new Map([
+        ['item-1', deleteItemOne],
+        ['item-2', deleteItemTwo],
+        ['item-3', keepItem],
+      ]),
+      itemTypeMap: new Map([
+        ['item-1', 'calendar'],
+        ['item-2', 'calendar'],
+        ['item-3', 'calendar'],
+      ]),
+      itemCollectionMap: new Map([
+        ['item-1', 'col-1'],
+        ['item-2', 'col-1'],
+        ['item-3', 'col-2'],
+      ]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+
+    const deleted = await useEtebaseStore.getState().deleteItemsInCollection('calendar', 'col-1')
+    const state = useEtebaseStore.getState()
+
+    expect(deleted).toBe(2)
+    expect(deleteItemOne.delete).toHaveBeenCalledTimes(1)
+    expect(deleteItemTwo.delete).toHaveBeenCalledTimes(1)
+    expect(keepItem.delete).not.toHaveBeenCalled()
+    expect(itemManager.batch).toHaveBeenCalledWith([deleteItemOne, deleteItemTwo])
+    expect(state.itemCache.has('item-1')).toBe(false)
+    expect(state.itemCache.has('item-2')).toBe(false)
+    expect(state.itemCache.get('item-3')).toBe(keepItem)
+    expect(state.itemCollectionMap.get('item-3')).toBe('col-2')
+  })
+
+  it('clears local-only queued items for the requested collection', async () => {
+    const account = {
+      getCollectionManager: () => ({
+        getItemManager: () => ({ batch: vi.fn() }),
+      }),
+    }
+
+    offlineQueueMock.getAll.mockResolvedValueOnce([
+      {
+        id: 'queue-1',
+        type: 'create',
+        collectionType: 'calendar',
+        collectionUid: 'col-1',
+        tempId: 'temp-1',
+        createdAt: 1,
+        retryCount: 0,
+        status: 'pending',
+      },
+    ])
+
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: true,
+      syncEngine: null,
+    })
+    useCalendarStore.setState({
+      events: [{ id: 'temp-1', calendarId: 'col-1', title: 'Queued event' } as any],
+      selectedEventId: 'temp-1',
+    })
+
+    const deleted = await useEtebaseStore.getState().deleteItemsInCollection('calendar', 'col-1')
+
+    expect(deleted).toBe(1)
+    expect(offlineQueueMock.remove).toHaveBeenCalledWith('queue-1')
+    expect(useCalendarStore.getState().events).toHaveLength(0)
+    expect(useCalendarStore.getState().selectedEventId).toBeNull()
+  })
+
+  it('removes locally confirmed deletes when a later clear batch fails', async () => {
+    const items = Array.from({ length: 21 }, (_, index) => ({ uid: `item-${index}`, delete: vi.fn() }))
+    let batchCalls = 0
+    const itemManager = {
+      batch: vi.fn(async () => {
+        batchCalls++
+        if (batchCalls === 2) throw new Error('server error')
+      }),
+    }
+    const account = {
+      getCollectionManager: () => ({
+        getItemManager: () => itemManager,
+      }),
+    }
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [] },
+      itemCache: new Map(items.map((item) => [item.uid, item])),
+      itemTypeMap: new Map(items.map((item) => [item.uid, 'calendar' as const])),
+      itemCollectionMap: new Map(items.map((item) => [item.uid, 'col-1'])),
+      isInitialized: true,
+      syncEngine: null,
+    })
+    useCalendarStore.setState({
+      events: [
+        { id: 'item-0', calendarId: 'col-1', title: 'Deleted remotely' } as any,
+        { id: 'item-20', calendarId: 'col-1', title: 'Still pending' } as any,
+      ],
+    })
+
+    const deleted = await useEtebaseStore.getState().deleteItemsInCollection('calendar', 'col-1')
+    const state = useEtebaseStore.getState()
+
+    expect(deleted).toBe(0)
+    expect(itemManager.batch).toHaveBeenCalledTimes(2)
+    expect(state.itemCache.has('item-0')).toBe(false)
+    expect(state.itemCache.has('item-19')).toBe(false)
+    expect(state.itemCache.has('item-20')).toBe(true)
+    expect(useCalendarStore.getState().events.map((event) => event.id)).toEqual(['item-20'])
+    errorSpy.mockRestore()
   })
 })
 

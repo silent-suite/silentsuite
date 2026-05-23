@@ -7,6 +7,7 @@ const etebaseMock = vi.hoisted(() => ({
   state: {
     account: null as unknown,
     createItem: vi.fn(),
+    createItemsBatch: vi.fn(),
     updateItem: vi.fn(),
     itemCache: new Map<string, unknown>(),
   },
@@ -31,6 +32,7 @@ vi.mock('@/app/stores/use-toast-store', () => ({
 function resetStore() {
   etebaseMock.state.account = null
   etebaseMock.state.createItem.mockReset()
+  etebaseMock.state.createItemsBatch.mockReset()
   etebaseMock.state.updateItem.mockReset()
   etebaseMock.state.itemCache = new Map()
   useCalendarStore.setState({
@@ -136,6 +138,32 @@ describe('useCalendarStore.importEvents', () => {
     const ical = serializeCalendarEvent(events[0]!)
     expect(ical).not.toMatch(/DTSTART;TZID=/)
     expect(ical).toContain('DTSTART;VALUE=DATE:')
+  })
+
+  it('routes mixed-calendar imports to each target collection', async () => {
+    etebaseMock.state.account = {}
+    etebaseMock.state.createItemsBatch.mockImplementation(async (_type: unknown, contents: unknown[]) => (
+      contents.map((_, index) => `remote-${index}-${String(index)}`)
+    ))
+
+    await useCalendarStore.getState().importEvents([
+      {
+        title: 'Work event',
+        startDate: new Date('2026-06-01T09:00:00Z'),
+        endDate: new Date('2026-06-01T10:00:00Z'),
+        calendarId: 'work-cal',
+      },
+      {
+        title: 'Family event',
+        startDate: new Date('2026-06-02T09:00:00Z'),
+        endDate: new Date('2026-06-02T10:00:00Z'),
+        calendarId: 'family-cal',
+      },
+    ])
+
+    expect(etebaseMock.state.createItemsBatch).toHaveBeenCalledTimes(2)
+    expect(etebaseMock.state.createItemsBatch.mock.calls[0]![2]).toBe('work-cal')
+    expect(etebaseMock.state.createItemsBatch.mock.calls[1]![2]).toBe('family-cal')
   })
 })
 

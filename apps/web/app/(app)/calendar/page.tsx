@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { CalendarViewSwitcher } from './components/CalendarViewSwitcher'
@@ -96,6 +97,7 @@ export default function CalendarPage() {
   const navigateToday = useCalendarStore((s) => s.navigateToday)
   const selectedEventId = useCalendarStore((s) => s.selectedEventId)
   const setSelectedEvent = useCalendarStore((s) => s.setSelectedEvent)
+  const calendars = useCalendarListStore((s) => s.calendars)
 
   const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null)
   const [eventInstanceDate, setEventInstanceDate] = useState<Date | undefined>(undefined)
@@ -103,6 +105,19 @@ export default function CalendarPage() {
   const dateLabel = useMemo(
     () => formatDateRange(currentDate, currentView),
     [currentDate, currentView],
+  )
+
+  const visibleCalendarIds = useMemo(
+    () => {
+      const visibleIds = calendars.filter((calendar) => calendar.visible).map((calendar) => calendar.id)
+      return new Set(calendars.length === 0 ? ['default', ...visibleIds] : visibleIds)
+    },
+    [calendars],
+  )
+
+  const visibleEvents = useMemo(
+    () => events.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')),
+    [events, visibleCalendarIds],
   )
 
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
@@ -219,14 +234,14 @@ export default function CalendarPage() {
         <>
           {/* Desktop: schedule-x grid */}
           <div className="hidden md:flex md:flex-1 md:min-h-0">
-            <CalendarGrid events={events} onSlotClick={handleSlotClick} onEventClick={handleEventClick} />
+            <CalendarGrid events={visibleEvents} onSlotClick={handleSlotClick} onEventClick={handleEventClick} />
           </div>
 
           {/* Mobile: agenda list view */}
           <div className="flex flex-col flex-1 md:hidden">
             <PullToRefresh>
               <AgendaView
-                events={events}
+                events={visibleEvents}
                 currentDate={currentDate}
                 onEventClick={(id) => {
                   setSelectedEvent(id)
