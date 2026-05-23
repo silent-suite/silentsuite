@@ -28,6 +28,8 @@ The list can be filtered by completion state and sorted by due date or priority.
 
 **Settings → Import** accepts `.ics` files containing `VTODO` entries. Parsing is local-only.
 
+Use **Settings → Import → Manage imported data** to clear a task list's tasks or delete an extra task list and everything inside it.
+
 ## Export
 
 **Settings → Export** gives you:

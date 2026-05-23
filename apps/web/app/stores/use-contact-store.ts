@@ -201,21 +201,28 @@ export const useContactStore = create<ContactState & ContactActions>()(
         if (etebase.account) {
           try {
             const { serializeContact } = await import('@silentsuite/core')
-            const contents = contacts.map((c) => ({
-              content: serializeContact(c),
-              tempId: c.id,
-            }))
-            const targetCollectionUid = contacts[0]?.listId
-            const uids = await etebase.createItemsBatch('contacts', contents, targetCollectionUid)
-            set((state) => ({
-              contacts: state.contacts.map((c) => {
-                const idx = contacts.findIndex((contact) => contact.id === c.id)
-                if (idx !== -1 && uids[idx]) {
-                  return { ...c, id: uids[idx]! }
-                }
-                return c
-              }),
-            }))
+            const groups = new Map<string | undefined, Contact[]>()
+            for (const contact of contacts) {
+              const key = contact.listId
+              groups.set(key, [...(groups.get(key) ?? []), contact])
+            }
+
+            for (const [targetCollectionUid, groupContacts] of groups) {
+              const contents = groupContacts.map((c) => ({
+                content: serializeContact(c),
+                tempId: c.id,
+              }))
+              const uids = await etebase.createItemsBatch('contacts', contents, targetCollectionUid)
+              set((state) => ({
+                contacts: state.contacts.map((c) => {
+                  const idx = groupContacts.findIndex((contact) => contact.id === c.id)
+                  if (idx !== -1 && uids[idx]) {
+                    return { ...c, id: uids[idx]! }
+                  }
+                  return c
+                }),
+              }))
+            }
           } catch (err) {
             console.error('[contact-store] Failed to batch import contacts:', err)
           }
