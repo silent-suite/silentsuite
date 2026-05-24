@@ -4,7 +4,7 @@ SilentSuite is built on the [Etebase protocol](https://www.etebase.com/), which 
 
 ## How It Works
 
-Your SilentSuite server at `server.silentsuite.io` (or your self-hosted URL) speaks the Etebase protocol. Apps connect to it directly or through a local bridge, and all encryption/decryption happens on your device.
+The hosted server at `server.silentsuite.io` (or your self-hosted URL) speaks the Etebase protocol. Apps connect to it directly or through a local bridge, and all encryption/decryption happens on your device.
 
 ## SilentSuite Apps
 
@@ -15,7 +15,7 @@ Your SilentSuite server at `server.silentsuite.io` (or your self-hosted URL) spe
 
 ## Compatible Third-Party Apps
 
-These apps connect directly to your SilentSuite server with full end-to-end encryption. No bridge needed.
+These apps connect directly to `server.silentsuite.io` or your self-hosted server with full end-to-end encryption. No bridge needed.
 
 | App | Platform | Syncs |
 |---|---|---|

@@ -34,4 +34,4 @@ Your Device          SilentSuite Server          Your Other Device
 - **Web** — [app.silentsuite.io](https://app.silentsuite.io) (offline-first PWA, installable to any desktop or mobile home screen)
 - **Android** — signed APK, sideloadable. QR-code download in *Settings → Mobile* once you're signed in
 - **Desktop (CalDAV / CardDAV)** — the SilentSuite bridge runs a local DAV daemon for Thunderbird, Apple Calendar, Evolution, GNOME Calendar, etc. Install commands in *Settings → Desktop*
-- **iOS** — no native app yet; the [EteSync iOS app](https://www.etesync.com/) works against your SilentSuite account in the meantime
+- **iOS** — no native app yet; the [EteSync iOS app](https://www.etesync.com/) works against your silentsuite.io or self-hosted account in the meantime

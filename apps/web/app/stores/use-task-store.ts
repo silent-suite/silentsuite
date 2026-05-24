@@ -207,21 +207,28 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         if (etebase.account) {
           try {
             const { serializeTask } = await import('@silentsuite/core')
-            const contents = tasks.map((t) => ({
-              content: serializeTask(t),
-              tempId: t.id,
-            }))
-            const targetCollectionUid = tasks[0]?.listId
-            const uids = await etebase.createItemsBatch('tasks', contents, targetCollectionUid)
-            set((state) => ({
-              tasks: state.tasks.map((t) => {
-                const idx = tasks.findIndex((task) => task.id === t.id)
-                if (idx !== -1 && uids[idx]) {
-                  return { ...t, id: uids[idx]! }
-                }
-                return t
-              }),
-            }))
+            const groups = new Map<string | undefined, Task[]>()
+            for (const task of tasks) {
+              const key = task.listId
+              groups.set(key, [...(groups.get(key) ?? []), task])
+            }
+
+            for (const [targetCollectionUid, groupTasks] of groups) {
+              const contents = groupTasks.map((t) => ({
+                content: serializeTask(t),
+                tempId: t.id,
+              }))
+              const uids = await etebase.createItemsBatch('tasks', contents, targetCollectionUid)
+              set((state) => ({
+                tasks: state.tasks.map((t) => {
+                  const idx = groupTasks.findIndex((task) => task.id === t.id)
+                  if (idx !== -1 && uids[idx]) {
+                    return { ...t, id: uids[idx]! }
+                  }
+                  return t
+                }),
+              }))
+            }
           } catch (err) {
             console.error('[task-store] Failed to batch import tasks:', err)
           }

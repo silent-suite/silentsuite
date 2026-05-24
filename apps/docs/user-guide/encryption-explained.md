@@ -39,7 +39,7 @@ Since encryption keys are derived from your password and the server never has ac
 
 We strongly recommend:
 
-- Using a password manager to store your SilentSuite password
+- Using a password manager to store your account password
 - Writing down your password and storing it in a secure physical location
 
 ## The Etebase Protocol

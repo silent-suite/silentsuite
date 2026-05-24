@@ -1,6 +1,6 @@
 # KDE Kontact
 
-KDE's Kontact suite (KOrganizer, KAddressBook, KMail) has native Etebase support built into `kdepim-runtime`, allowing direct sync with your SilentSuite server -- no DAV bridge required.
+KDE's Kontact suite (KOrganizer, KAddressBook, KMail) has native Etebase support built into `kdepim-runtime`, allowing direct sync with `server.silentsuite.io` or your self-hosted server -- no DAV bridge required.
 
 ## Install
 
@@ -41,7 +41,7 @@ See the [EteSync KDE guide](https://www.etesync.com/guides/kde/) and the [develo
 3. Select **"EteSync Groupware Resource"** from the list.
 4. Enter your **username** (email) and **password**.
 5. Click **Next**.
-6. Enter your **encryption password** (this is the same as your SilentSuite password).
+6. Enter your **encryption password** (this is the same as your account password).
 7. For self-hosted servers: tick **Advanced Settings** and enter your server URL (e.g. `https://sync.your-domain.com`). For the hosted service, enter `https://server.silentsuite.io`.
 8. Click **Finish**.
 
@@ -62,7 +62,7 @@ If the native resource is not available, use the [DAV bridge](./dav-bridge.md):
 1. Set up the [SilentSuite Bridge](./dav-bridge.md).
 2. In KOrganizer, add a new CalDAV/CardDAV resource.
 3. Server URL: `http://localhost:37358/`.
-4. Use your SilentSuite credentials.
+4. Use your account credentials.
 
 ## Troubleshooting
 

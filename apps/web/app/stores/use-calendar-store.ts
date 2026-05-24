@@ -474,22 +474,29 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     if (etebase.account) {
       try {
         const { serializeCalendarEvent } = await import('@silentsuite/core')
-        const contents = events.map((e) => ({
-          content: serializeCalendarEvent(e),
-          tempId: e.id,
-        }))
-        const targetCollectionUid = events[0]?.calendarId
-        const uids = await etebase.createItemsBatch('calendar', contents, targetCollectionUid)
-        // Replace temp IDs with real UIDs
-        set((state) => ({
-          events: state.events.map((e) => {
-            const idx = events.findIndex((ev) => ev.id === e.id)
-            if (idx !== -1 && uids[idx]) {
-              return { ...e, id: uids[idx]! }
-            }
-            return e
-          }),
-        }))
+        const groups = new Map<string | undefined, CalendarEvent[]>()
+        for (const event of events) {
+          const key = event.calendarId
+          groups.set(key, [...(groups.get(key) ?? []), event])
+        }
+
+        for (const [targetCollectionUid, groupEvents] of groups) {
+          const contents = groupEvents.map((e) => ({
+            content: serializeCalendarEvent(e),
+            tempId: e.id,
+          }))
+          const uids = await etebase.createItemsBatch('calendar', contents, targetCollectionUid)
+          // Replace temp IDs with real item UIDs for this concrete collection.
+          set((state) => ({
+            events: state.events.map((e) => {
+              const idx = groupEvents.findIndex((ev) => ev.id === e.id)
+              if (idx !== -1 && uids[idx]) {
+                return { ...e, id: uids[idx]! }
+              }
+              return e
+            }),
+          }))
+        }
       } catch (err) {
         console.error('[calendar-store] Failed to batch import events:', err)
       }

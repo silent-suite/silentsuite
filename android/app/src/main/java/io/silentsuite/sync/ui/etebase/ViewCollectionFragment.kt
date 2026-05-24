@@ -14,8 +14,8 @@ import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.ui.BaseActivity
+import io.silentsuite.sync.utils.TaskProviderHandling
 import com.google.android.material.floatingactionbutton.FloatingActionButton
-import java.util.*
 
 class ViewCollectionFragment : Fragment() {
     private val collectionModel: CollectionViewModel by activityViewModels()
@@ -65,7 +65,11 @@ class ViewCollectionFragment : Fragment() {
             Constants.ETEBASE_TYPE_TASKS -> {
                 colorSquare.setBackgroundColor(color)
                 val tasksNotShowing = container.findViewById<View>(R.id.tasks_not_showing)
-                tasksNotShowing.visibility = View.VISIBLE
+                tasksNotShowing.visibility = if (TaskProviderHandling.getWantedTaskSyncProvider(requireContext()) == null) {
+                    View.VISIBLE
+                } else {
+                    View.GONE
+                }
             }
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> {
                 colorSquare.visibility = View.GONE
@@ -82,13 +86,17 @@ class ViewCollectionFragment : Fragment() {
             owner.visibility = View.GONE
         } else {
             owner.visibility = View.VISIBLE
-            owner.text = "Shared with us" // FIXME: Figure out how to represent it and don't use a hardcoded string
+            owner.text = getString(R.string.collection_shared_with_us)
         }
 
         itemsModel.observe(this) {
             val stats = container.findViewById<TextView>(R.id.stats)
             container.findViewById<View>(R.id.progressBar).visibility = View.GONE
-            stats.text = String.format(Locale.getDefault(), "Change log items: %d", it.size)
+            stats.text = if (it.isEmpty()) {
+                getString(R.string.collection_recent_activity_none)
+            } else {
+                resources.getQuantityString(R.plurals.collection_recent_activity_items, it.size, it.size)
+            }
         }
     }
 

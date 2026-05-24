@@ -187,9 +187,14 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     ]).then(async ([{ useEtebaseStore }, core]) => {
       const etebase = useEtebaseStore.getState()
 
-      // First, run the SyncEngine poll to advance stokens
-      if (etebase.syncEngine) {
-        try { await etebase.syncEngine.syncNow() } catch (err) {
+      // First reconcile collection membership so manual sync notices calendars,
+      // task lists, or address books deleted or created on another device.
+      await etebase.reconcileCollections()
+      const reconciledEtebase = useEtebaseStore.getState()
+
+      // Then run the SyncEngine poll to advance stokens for active collections.
+      if (reconciledEtebase.syncEngine) {
+        try { await reconciledEtebase.syncEngine.syncNow() } catch (err) {
           logger.error('SyncStore', 'SyncEngine.syncNow() failed', err)
           set({ syncStatus: 'error' })
         }
@@ -197,9 +202,9 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
       // Then refresh every collection of each type from the server
       const [taskItems, contactItems, eventItems] = await Promise.all([
-        etebase.refreshCollection('tasks'),
-        etebase.refreshCollection('contacts'),
-        etebase.refreshCollection('calendar'),
+        reconciledEtebase.refreshCollection('tasks'),
+        reconciledEtebase.refreshCollection('contacts'),
+        reconciledEtebase.refreshCollection('calendar'),
       ])
 
       // Push fresh data into stores

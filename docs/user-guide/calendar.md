@@ -48,6 +48,10 @@ Timezones are stored as `TZID` references on each event, not converted to UTC on
 
 **Settings → Import** accepts `.ics` files. Parsing happens entirely in your browser — the file's contents never reach the server in plaintext. Imported events keep their original `TZID`s and `VALARM`s.
 
+When you select multiple `.ics` files at once, SilentSuite asks whether to create one calendar per file or import every file into a single calendar. Calendar names are suggested from the file metadata or filename before anything is imported.
+
+If you imported into the wrong place, use **Settings → Import → Manage imported data** to clear a calendar's events or delete an extra calendar and everything inside it.
+
 ## Export
 
 **Settings → Export** gives you:

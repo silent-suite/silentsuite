@@ -10,12 +10,14 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:background="?attr/selectableItemBackground"
     android:gravity="center_vertical"
+    android:minHeight="56dp"
     android:orientation="horizontal"
-    android:paddingTop="8dp"
-    android:paddingBottom="8dp"
-    android:paddingLeft="12dp"
-    android:paddingRight="12dp">
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp"
+    android:paddingLeft="16dp"
+    android:paddingRight="16dp">
 
     <CheckBox
         android:id="@+id/sync"
@@ -38,6 +40,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textAppearance="?android:attr/textAppearanceMedium"
+            android:textStyle="bold"
+            android:ellipsize="end"
+            android:maxLines="1"
             tools:text="Title" />
 
         <TextView
@@ -45,29 +50,35 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textAppearance="?android:attr/textAppearanceSmall"
+            android:textColor="?android:attr/textColorSecondary"
+            android:ellipsize="end"
+            android:maxLines="2"
             tools:text="Description" />
     </LinearLayout>
 
 
     <ImageView
         android:id="@+id/shared"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
         android:layout_marginRight="8dp"
+        android:contentDescription="@string/account_collection_shared_indicator"
         android:src="@drawable/ic_members_dark"
         android:visibility="gone" />
 
     <ImageView
         android:id="@+id/read_only"
-        android:layout_width="32dp"
-        android:layout_height="32dp"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
         android:layout_marginRight="8dp"
+        android:contentDescription="@string/account_collection_read_only_indicator"
         android:src="@drawable/ic_readonly_dark" />
 
     <View
         android:id="@+id/color"
-        android:layout_width="28dp"
-        android:layout_height="28dp"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:importantForAccessibility="no"
         tools:background="@color/green700" />
 
 </LinearLayout>

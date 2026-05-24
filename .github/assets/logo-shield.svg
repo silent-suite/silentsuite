@@ -1,23 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 210 210" role="img" aria-labelledby="title desc">
+  <title id="title">SilentSuite arrows mark dark tile</title>
+  <desc id="desc">Two circular sync arrows on a dark rounded square. The upper arrow uses the SilentSuite emerald gradient; the lower arrow is white.</desc>
   <defs>
-    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#455B7A"/>
-      <stop offset="100%" stop-color="#253549"/>
+    <linearGradient id="emeraldArrow" x1="66" y1="64" x2="138" y2="135" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34d399" />
+      <stop offset="1" stop-color="#10b981" />
     </linearGradient>
-    <linearGradient id="tealGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#34d399"/>
-      <stop offset="100%" stop-color="#10b981"/>
-    </linearGradient>
+    <clipPath id="roundedTile">
+      <rect width="210" height="210" rx="39" />
+    </clipPath>
   </defs>
-  <!-- Shield -->
-  <path d="M100 20 L170 55 L170 115 Q170 165 100 185 Q30 165 30 115 L30 55 Z" fill="url(#shieldGrad)"/>
-  <!-- Inner shield highlight -->
-  <path d="M100 30 L160 60 L160 112 Q160 155 100 173 Q40 155 40 112 L40 60 Z" fill="none" stroke="#677FA3" stroke-width="0.8" opacity="0.4"/>
-  <!-- Lock body -->
-  <rect x="78" y="100" width="44" height="36" rx="8" fill="url(#tealGrad)"/>
-  <!-- Lock shackle -->
-  <path d="M88 100 V86 A12 12 0 0 1 112 86 V100" fill="none" stroke="url(#tealGrad)" stroke-width="5" stroke-linecap="round"/>
-  <!-- Keyhole -->
-  <circle cx="100" cy="115" r="5" fill="white"/>
-  <rect x="97.5" y="117" width="5" height="10" rx="2.5" fill="white"/>
+  <g clip-path="url(#roundedTile)">
+    <rect width="210" height="210" fill="#0a1018" />
+    <g transform="translate(105 113.6) scale(1.42) translate(-105 -105)">
+      <g transform="translate(1.031319 -48.008124)">
+        <path d="m 103.37823,105.13893 c -10.756462,0.18251 -21.313309,4.49685 -29.191412,12.51367 -12.604964,12.8269 -15.609755,32.34552 -7.445312,48.36914 l 12.265625,-6.25 c -5.50107,-10.79646 -3.494974,-23.8301 4.998047,-32.47266 8.493021,-8.64256 21.490042,-10.87431 32.380862,-5.5625 l 6.0332,-12.37305 c -6.06137,-2.95633 -12.58714,-4.33412 -19.04101,-4.2246 z" fill="url(#emeraldArrow)" />
+        <path d="m 114.07261,128.59802 4.85725,-29.069129 17.36851,17.880829 z" fill="url(#emeraldArrow)" stroke="url(#emeraldArrow)" stroke-width="6.865" stroke-linejoin="round" />
+      </g>
+      <g transform="rotate(180 104.96788 98.943297) translate(1.031319 -48.008124)">
+        <path d="m 103.37823,105.13893 c -10.756462,0.18251 -21.313309,4.49685 -29.191412,12.51367 -12.604964,12.8269 -15.609755,32.34552 -7.445312,48.36914 l 12.265625,-6.25 c -5.50107,-10.79646 -3.494974,-23.8301 4.998047,-32.47266 8.493021,-8.64256 21.490042,-10.87431 32.380862,-5.5625 l 6.0332,-12.37305 c -6.06137,-2.95633 -12.58714,-4.33412 -19.04101,-4.2246 z" fill="#ffffff" />
+        <path d="m 114.07261,128.59802 4.85725,-29.069129 17.36851,17.880829 z" fill="#ffffff" stroke="#ffffff" stroke-width="6.865" stroke-linejoin="round" />
+      </g>
+    </g>
+  </g>
 </svg>

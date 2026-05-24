@@ -1,14 +1,19 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSyncStore } from '../use-sync-store'
 
+const etebaseMock = vi.hoisted(() => ({
+  state: {
+    account: null as unknown,
+    syncEngine: null as { syncNow: ReturnType<typeof vi.fn> } | null,
+    reconcileCollections: vi.fn().mockResolvedValue(undefined),
+    refreshCollection: vi.fn().mockResolvedValue([]),
+  },
+}))
+
 // Mock the heavy dependencies that simulateSyncCycle imports dynamically
 vi.mock('@/app/stores/use-etebase-store', () => ({
   useEtebaseStore: {
-    getState: () => ({
-      account: null,
-      syncEngine: null,
-      refreshCollection: vi.fn().mockResolvedValue([]),
-    }),
+    getState: () => etebaseMock.state,
   },
 }))
 
@@ -44,6 +49,10 @@ vi.mock('@/app/stores/use-toast-store', () => ({
 }))
 
 function resetStore() {
+  etebaseMock.state.account = null
+  etebaseMock.state.syncEngine = null
+  etebaseMock.state.reconcileCollections.mockReset().mockResolvedValue(undefined)
+  etebaseMock.state.refreshCollection.mockReset().mockResolvedValue([])
   useSyncStore.setState({
     syncStatus: 'synced',
     lastSyncedAt: null,
@@ -115,5 +124,25 @@ describe('useSyncStore', () => {
 
     await flushPromises()
     expect(useSyncStore.getState().syncStatus).toBe('synced')
+  })
+
+  it('reconciles collection deletion from another device before refreshing items', async () => {
+    const syncNow = vi.fn().mockResolvedValue(undefined)
+    etebaseMock.state.syncEngine = { syncNow }
+
+    useSyncStore.getState().simulateSyncCycle()
+
+    await flushPromises()
+    await flushPromises()
+    expect(etebaseMock.state.reconcileCollections).toHaveBeenCalledTimes(1)
+    expect(syncNow).toHaveBeenCalledTimes(1)
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(3)
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('tasks')
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('contacts')
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('calendar')
+
+    const reconcileOrder = etebaseMock.state.reconcileCollections.mock.invocationCallOrder[0]!
+    const firstRefreshOrder = etebaseMock.state.refreshCollection.mock.invocationCallOrder[0]!
+    expect(reconcileOrder).toBeLessThan(firstRefreshOrder)
   })
 })

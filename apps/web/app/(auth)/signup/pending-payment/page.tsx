@@ -275,7 +275,7 @@ export default function PendingPaymentPage() {
         {state === 'settled' ? (
           <>
             <button type="button" onClick={handleSettledContinue} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
-              {returnTo ? 'Return to Android app' : 'Open SilentSuite'}
+              {returnTo ? 'Return to Android app' : 'Open app.silentsuite.io'}
             </button>
             {showReturnFallback && returnTo && (
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-[rgb(var(--foreground))]">

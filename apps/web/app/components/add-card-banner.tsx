@@ -124,7 +124,7 @@ function AddCardModal({
       <div className="mx-4 w-full max-w-md rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6 space-y-5">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">
-            Continue with SilentSuite
+            Continue with silentsuite.io
           </h2>
           <button onClick={onClose} className="text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors">
             <X className="h-5 w-5" />
@@ -280,7 +280,7 @@ export default function AddCardBanner({ daysRemaining, onCardAdded }: AddCardBan
               {daysRemaining} day{daysRemaining !== 1 ? 's' : ''} left in your trial
             </p>
             <p className="text-xs text-[rgb(var(--muted))]">
-              Add a card to continue with SilentSuite
+              Add a card to continue with silentsuite.io
             </p>
           </div>
         </div>

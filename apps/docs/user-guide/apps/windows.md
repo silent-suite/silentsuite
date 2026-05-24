@@ -5,7 +5,7 @@ Sync SilentSuite with Microsoft Outlook, Windows Calendar, or other Windows apps
 ## Prerequisites
 
 1. The [SilentSuite Bridge](./dav-bridge.md) running on your PC.
-2. Your **SilentSuite credentials** from the bridge's web UI at `http://localhost:37358/.web/`.
+2. Your **account credentials** from the bridge's web UI at `http://localhost:37358/.web/`.
 
 ## Microsoft Outlook (with CalDav Synchronizer)
 
@@ -26,8 +26,8 @@ Outlook does not support CalDAV natively. The free, open-source [CalDav Synchron
 4. Give the profile a name (e.g. "SilentSuite Calendar").
 5. Under **Server Settings**, enter:
    - **DAV URL**: `http://localhost:37358/your@email.com/`
-   - **Username**: your SilentSuite email
-   - **Password**: your SilentSuite password
+   - **Username**: your account email
+   - **Password**: your account password
 6. Click **Test or discover settings**. The plugin will find your calendars.
 7. Select the Outlook folder to sync with (or create a new calendar folder).
 8. Click **OK** to save.
@@ -55,8 +55,8 @@ Click **Synchronize now** in the CalDav Synchronizer ribbon tab, or wait for the
 3. Select **Calendar** (or **Contacts**) > **CalDAV** (or **CardDAV**).
 4. Enter:
    - **Server URL**: `http://localhost:37358/your@email.com/`
-   - **Username**: your SilentSuite email
-   - **Password**: your SilentSuite password
+   - **Username**: your account email
+   - **Password**: your account password
 5. Click **Next**. em Client will discover your calendars and contacts.
 6. Click **Finish**.
 
@@ -68,8 +68,8 @@ The built-in Windows Calendar app has limited CalDAV support. It requires a work
 2. Go to **Settings** (gear icon) > **Manage Accounts** > **Add account**.
 3. Select **iCloud** (Windows does not have a generic CalDAV option, so we use iCloud as a starting point).
 4. Enter:
-   - **Email**: your SilentSuite email
-   - **Password**: your SilentSuite password
+   - **Email**: your account email
+   - **Password**: your account password
 5. Windows will fail to connect to iCloud. When it shows the manual configuration:
    - **Calendar server (CalDAV)**: `http://localhost:37358/`
    - **Contacts server (CardDAV)**: `http://localhost:37358/`
@@ -101,4 +101,4 @@ Windows 10/11 has bugs with local CalDAV connections. Try:
 
 ### Password rejected
 
-Use your **SilentSuite password** (the same one you use to log into the SilentSuite web app). Verify it works by opening `http://localhost:37358/.web/` in your browser.
+Use your **account password** (the same one you use to log into app.silentsuite.io or your self-hosted server). Verify it works by opening `http://localhost:37358/.web/` in your browser.

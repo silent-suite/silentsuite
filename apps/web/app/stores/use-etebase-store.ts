@@ -6,7 +6,12 @@ import type {
   CollectionType,
   SyncChangeEvent,
 } from '@silentsuite/core'
-import { enqueue, isOfflineError } from '@/app/lib/offline-queue'
+import {
+  enqueue,
+  getAll as getQueuedMutations,
+  isOfflineError,
+  remove as removeQueuedMutation,
+} from '@/app/lib/offline-queue'
 import { secureGet } from '@/app/lib/secure-storage'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
@@ -67,8 +72,16 @@ const COLLECTION_TYPE_TASKS = 'etebase.vtodo'
 const COLLECTION_TYPE_CONTACTS = 'etebase.vcard'
 
 type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts'
+type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
+type EtebaseCore = typeof import('@silentsuite/core')
 
 type CachedContentItem = { uid: string; content: string; collectionUid: string }
+
+const COLLECTION_DEFINITIONS: [CollectionTypeKey, string, string][] = [
+  ['calendar', COLLECTION_TYPE_CALENDAR, 'Personal Calendar'],
+  ['tasks', COLLECTION_TYPE_TASKS, 'Personal Tasks'],
+  ['contacts', COLLECTION_TYPE_CONTACTS, 'Personal Contacts'],
+]
 
 function collectionTypeToKey(ct: string): CollectionTypeKey | null {
   if (ct === COLLECTION_TYPE_CALENDAR) return 'calendar'
@@ -81,6 +94,51 @@ function keyToCollectionType(type: CollectionTypeKey): string {
   if (type === 'calendar') return COLLECTION_TYPE_CALENDAR
   if (type === 'tasks') return COLLECTION_TYPE_TASKS
   return COLLECTION_TYPE_CONTACTS
+}
+
+async function ensureCollectionsForAccount(
+  account: any,
+  core: EtebaseCore,
+): Promise<Record<CollectionTypeKey, any[]>> {
+  const collections: Record<CollectionTypeKey, any[]> = {
+    calendar: [],
+    tasks: [],
+    contacts: [],
+  }
+
+  for (const [key, colType, defaultName] of COLLECTION_DEFINITIONS) {
+    const existing = await core.listCollections(account, colType)
+    if (existing.length > 0) {
+      collections[key] = existing
+      logger.debug(`[etebase-store] Found ${existing.length} existing ${key} collection(s)`)
+    } else {
+      const created = await core.createCollection(account, colType, { name: defaultName })
+      collections[key] = [created]
+      logger.debug(`[etebase-store] Created ${key} collection: ${created.uid}`)
+    }
+  }
+
+  return collections
+}
+
+async function trackCollectionWithSyncEngine(
+  syncEngine: any | null,
+  collectionType: string,
+  type: CollectionTypeKey,
+  collectionUid: string,
+): Promise<void> {
+  if (!syncEngine) return
+  syncEngine.trackCollection(collectionType as CollectionType, collectionUid)
+  if (!isLocalCacheEnabled()) return
+  try {
+    const stoken = await cacheGetStoken(collectionUid)
+    if (stoken) {
+      syncEngine.setStoken?.(collectionUid, stoken)
+      logger.debug(`[etebase-store] Seeded ${type} stoken from cache`)
+    }
+  } catch (err) {
+    logger.warn(`[etebase-store] Failed to seed ${type} stoken`, err)
+  }
 }
 
 /**
@@ -170,6 +228,81 @@ async function hydrateListStores(collections: Record<CollectionTypeKey, any[]>):
   )
 }
 
+async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid: string, itemUids?: string[]): Promise<number> {
+  const itemUidSet = itemUids ? new Set(itemUids) : null
+
+  if (type === 'calendar') {
+    const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
+    let removed = 0
+    useCalendarStore.setState((state) => {
+      const events = state.events.filter((event) => {
+        const shouldRemove = itemUidSet
+          ? itemUidSet.has(event.id)
+          : (event.calendarId ?? 'default') === collectionUid
+        if (shouldRemove) removed++
+        return !shouldRemove
+      })
+      const selectedEventId = state.selectedEventId && (itemUidSet
+        ? itemUidSet.has(state.selectedEventId)
+        : state.events.some((event) => event.id === state.selectedEventId && (event.calendarId ?? 'default') === collectionUid))
+        ? null
+        : state.selectedEventId
+      return { events, selectedEventId }
+    })
+    return removed
+  }
+  if (type === 'tasks') {
+    const { useTaskStore } = await import('@/app/stores/use-task-store')
+    let removed = 0
+    useTaskStore.setState((state) => ({
+      tasks: state.tasks.filter((task) => {
+        const shouldRemove = itemUidSet
+          ? itemUidSet.has(task.id)
+          : (task.listId ?? 'default') === collectionUid
+        if (shouldRemove) removed++
+        return !shouldRemove
+      }),
+    }))
+    return removed
+  }
+  const { useContactStore } = await import('@/app/stores/use-contact-store')
+  let removed = 0
+  useContactStore.setState((state) => ({
+    contacts: state.contacts.filter((contact) => {
+      const shouldRemove = itemUidSet
+        ? itemUidSet.has(contact.id)
+        : (contact.listId ?? 'default') === collectionUid
+      if (shouldRemove) removed++
+      return !shouldRemove
+    }),
+  }))
+  return removed
+}
+
+async function removeQueuedMutationsForCollection(type: CollectionTypeKey, collectionUid: string, includeDeletes: boolean): Promise<number> {
+  try {
+    const entries = await getQueuedMutations()
+    const matching = entries.filter((entry) => (
+      entry.collectionType === type
+      && entry.collectionUid === collectionUid
+      && (includeDeletes || entry.type !== 'delete')
+    ))
+    for (const entry of matching) {
+      await removeQueuedMutation(entry.id)
+    }
+    return matching.length
+  } catch (err) {
+    logger.warn(`[etebase-store] Failed to prune queued mutations for ${type}/${collectionUid}`, err)
+    return 0
+  }
+}
+
+function collectionItemNoun(type: CollectionTypeKey): string {
+  if (type === 'calendar') return 'events'
+  if (type === 'tasks') return 'tasks'
+  return 'contacts'
+}
+
 interface EtebaseState {
   // The live Account object (null until session restored)
   account: any | null
@@ -209,7 +342,22 @@ interface EtebaseActions {
   /**
    * Delete an Etebase collection and remove its cached items locally.
    */
-  deleteCollection: (type: CollectionTypeKey, collectionUid: string) => Promise<void>
+  deleteCollection: (type: CollectionTypeKey, collectionUid: string) => Promise<boolean>
+
+  /**
+   * Update Etebase collection metadata and refresh local list stores.
+   */
+  updateCollectionMeta: (type: CollectionTypeKey, collectionUid: string, updates: CollectionMetaUpdates) => Promise<boolean>
+
+  /**
+   * Re-list remote collections and reconcile local state with active collections.
+   */
+  reconcileCollections: () => Promise<void>
+
+  /**
+   * Delete every item inside a collection while keeping the collection itself.
+   */
+  deleteItemsInCollection: (type: CollectionTypeKey, collectionUid: string) => Promise<number>
 
   /**
    * Create multiple items in a single batch upload.
@@ -297,29 +445,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
 
       // 2. Ensure collections exist (create if first login, fetch if returning)
-      const collections: Record<CollectionTypeKey, any[]> = {
-        calendar: [],
-        tasks: [],
-        contacts: [],
-      }
-
-      const typeMap: [CollectionTypeKey, string, string][] = [
-        ['calendar', COLLECTION_TYPE_CALENDAR, 'Personal Calendar'],
-        ['tasks', COLLECTION_TYPE_TASKS, 'Personal Tasks'],
-        ['contacts', COLLECTION_TYPE_CONTACTS, 'Personal Contacts'],
-      ]
-
-      for (const [key, colType, defaultName] of typeMap) {
-        const existing = await core.listCollections(account, colType)
-        if (existing.length > 0) {
-          collections[key] = existing
-          logger.debug(`[etebase-store] Found ${existing.length} existing ${key} collection(s)`)
-        } else {
-          const created = await core.createCollection(account, colType, { name: defaultName })
-          collections[key] = [created]
-          logger.debug(`[etebase-store] Created ${key} collection: ${created.uid}`)
-        }
-      }
+      const collections = await ensureCollectionsForAccount(account, core)
 
       set({ collections })
       await hydrateListStores(collections)
@@ -329,7 +455,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const itemTypeMap = new Map<string, CollectionTypeKey>()
       const itemCollectionMap = new Map<string, string>()
 
-      for (const [key] of typeMap) {
+      for (const [key] of COLLECTION_DEFINITIONS) {
         const typedCollections = collections[key]
 
         for (const collection of typedCollections) {
@@ -361,9 +487,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       })
 
       // Track all collections
-      for (const [key, colType] of typeMap) {
+      for (const [key, colType] of COLLECTION_DEFINITIONS) {
         for (const collection of collections[key]) {
-          engine.trackCollection(colType as CollectionType, collection.uid)
+          await trackCollectionWithSyncEngine(engine, colType, key, collection.uid)
         }
       }
 
@@ -371,20 +497,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // pulls only deltas instead of refetching the whole vault. Wire the
       // advance handler so subsequent stoken updates are persisted too.
       if (cacheEnabled) {
-        for (const [key] of typeMap) {
-          for (const collection of collections[key]) {
-            try {
-              const stoken = await cacheGetStoken(collection.uid)
-              if (stoken) {
-                engine.setStoken(collection.uid, stoken)
-                logger.debug(`[etebase-store] Seeded ${key} stoken from cache`)
-              }
-            } catch (err) {
-              logger.warn(`[etebase-store] Failed to seed ${key} stoken`, err)
-            }
-          }
-        }
-
         engine.onStokenAdvance((event: { collectionType: string; collectionUid: string; stoken: string | null }) => {
           const key = collectionTypeToKey(event.collectionType)
           if (!key) return
@@ -438,11 +550,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot delete ${type} collection ${collectionUid}: missing account or collection`)
-      return
+      return false
     }
     if (collections[type].length <= 1) {
       showErrorToast(`Create another ${type === 'calendar' ? 'calendar' : type === 'tasks' ? 'task list' : 'address book'} before deleting this one.`)
-      return
+      return false
     }
 
     try {
@@ -474,10 +586,212 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (isLocalCacheEnabled()) {
         void cacheReplaceItemsForCollection(collection.uid, [])
       }
+      await removeQueuedMutationsForCollection(type, collection.uid, true)
+      await removeItemsFromDomainStore(type, collection.uid)
       await hydrateListStores(newCollections)
+      return true
     } catch (err) {
       console.error(`[etebase-store] Failed to delete ${type} collection ${collectionUid}:`, err)
       showErrorToast(`Failed to delete ${type === 'calendar' ? 'calendar' : type === 'tasks' ? 'task list' : 'address book'}. Please try again.`)
+      return false
+    }
+  },
+
+  updateCollectionMeta: async (type: CollectionTypeKey, collectionUid: string, updates: CollectionMetaUpdates) => {
+    const { account, collections } = get()
+    const collection = resolveCollection(collections, type, collectionUid)
+    if (!account || !collection) {
+      logger.warn(`[etebase-store] Cannot update ${type} collection ${collectionUid}: missing account or collection`)
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      const currentMeta = collection?.getMeta?.() ?? {}
+      const updatedMeta: CollectionMetaUpdates = {}
+      if (updates.name !== undefined) updatedMeta.name = updates.name
+      else if (currentMeta.name !== undefined) updatedMeta.name = currentMeta.name
+      if (updates.description !== undefined) updatedMeta.description = updates.description
+      else if (currentMeta.description !== undefined) updatedMeta.description = currentMeta.description
+      if (updates.color !== undefined) updatedMeta.color = updates.color
+      else if (currentMeta.color !== undefined) updatedMeta.color = currentMeta.color
+      const updatedCollection = await core.updateCollectionMeta(account, collection, updatedMeta)
+      const newCollections = {
+        ...get().collections,
+        [type]: get().collections[type].map((existing) =>
+          existing.uid === collection.uid ? updatedCollection : existing,
+        ),
+      }
+      set({ collections: newCollections })
+      await hydrateListStores(newCollections)
+      return true
+    } catch (err) {
+      console.error(`[etebase-store] Failed to update ${type} collection ${collectionUid}:`, err)
+      showErrorToast(`Failed to update ${type === 'calendar' ? 'calendar' : type === 'tasks' ? 'task list' : 'address book'}. Please try again.`)
+      return false
+    }
+  },
+
+  reconcileCollections: async () => {
+    const { account, syncEngine } = get()
+    if (!account) {
+      logger.warn('[etebase-store] Cannot reconcile collections: no account')
+      return
+    }
+
+    syncEngine?.pause?.()
+    try {
+      const core = await import('@silentsuite/core')
+      const previousCollections = get().collections
+      const activeCollections = await ensureCollectionsForAccount(account, core)
+      const newItemCache = new Map(get().itemCache)
+      const newItemTypeMap = new Map(get().itemTypeMap)
+      const newItemCollectionMap = new Map(get().itemCollectionMap)
+      const cleanupPromises: Promise<unknown>[] = []
+      let removedCollectionCount = 0
+
+      for (const [type, colType] of COLLECTION_DEFINITIONS) {
+        const activeUids = new Set(activeCollections[type].map((collection) => collection.uid))
+        const previousUids = new Set(previousCollections[type].map((collection) => collection.uid))
+        const removedUids = new Set<string>()
+
+        for (const collection of previousCollections[type]) {
+          if (!activeUids.has(collection.uid)) removedUids.add(collection.uid)
+        }
+
+        for (const [itemUid, mappedCollectionUid] of newItemCollectionMap.entries()) {
+          if (newItemTypeMap.get(itemUid) === type && !activeUids.has(mappedCollectionUid)) {
+            removedUids.add(mappedCollectionUid)
+          }
+        }
+
+        for (const collectionUid of removedUids) {
+          removedCollectionCount++
+          syncEngine?.untrackCollection(collectionUid)
+          for (const [itemUid, mappedCollectionUid] of Array.from(newItemCollectionMap.entries())) {
+            if (mappedCollectionUid !== collectionUid) continue
+            newItemCache.delete(itemUid)
+            newItemTypeMap.delete(itemUid)
+            newItemCollectionMap.delete(itemUid)
+          }
+          cleanupPromises.push(removeQueuedMutationsForCollection(type, collectionUid, true))
+          cleanupPromises.push(removeItemsFromDomainStore(type, collectionUid))
+          if (isLocalCacheEnabled()) {
+            cleanupPromises.push(cacheReplaceItemsForCollection(collectionUid, []))
+          }
+        }
+
+        for (const collection of activeCollections[type]) {
+          if (!previousUids.has(collection.uid)) {
+            await trackCollectionWithSyncEngine(syncEngine, colType, type, collection.uid)
+          }
+        }
+      }
+
+      set({
+        collections: activeCollections,
+        itemCache: newItemCache,
+        itemTypeMap: newItemTypeMap,
+        itemCollectionMap: newItemCollectionMap,
+      })
+      await Promise.all(cleanupPromises)
+      await hydrateListStores(activeCollections)
+      logger.debug(`[etebase-store] Reconciled collections (${removedCollectionCount} removed)`)
+    } catch (err) {
+      console.error('[etebase-store] Failed to reconcile collections:', err)
+      throw err
+    } finally {
+      syncEngine?.resume?.()
+    }
+  },
+
+  deleteItemsInCollection: async (type: CollectionTypeKey, collectionUid: string) => {
+    const { account, collections, itemCache, itemCollectionMap } = get()
+    const collection = resolveCollection(collections, type, collectionUid)
+    if (!account || !collection) {
+      logger.warn(`[etebase-store] Cannot clear ${type} collection ${collectionUid}: missing account or collection`)
+      return 0
+    }
+
+    const removeCachedItems = (uids: string[]) => {
+      if (uids.length === 0) return
+      const uidSet = new Set(uids)
+      const newItemCache = new Map(get().itemCache)
+      const newItemTypeMap = new Map(get().itemTypeMap)
+      const newItemCollectionMap = new Map(get().itemCollectionMap)
+      for (const uid of uidSet) {
+        newItemCache.delete(uid)
+        newItemTypeMap.delete(uid)
+        newItemCollectionMap.delete(uid)
+        if (isLocalCacheEnabled()) {
+          void cacheDeleteItem(uid)
+        }
+      }
+      set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, itemCollectionMap: newItemCollectionMap })
+    }
+
+    const itemEntries = Array.from(itemCollectionMap.entries())
+      .filter(([, mappedCollectionUid]) => mappedCollectionUid === collection.uid)
+      .map(([uid]) => ({ uid, item: itemCache.get(uid) }))
+      .filter((entry): entry is { uid: string; item: any } => Boolean(entry.item))
+
+    if (itemEntries.length === 0) {
+      await removeQueuedMutationsForCollection(type, collection.uid, true)
+      return await removeItemsFromDomainStore(type, collection.uid)
+    }
+
+    const successfulUids: string[] = []
+
+    try {
+      const collectionManager = account.getCollectionManager()
+      const itemManager = collectionManager.getItemManager(collection)
+      const BATCH_SIZE = 20
+
+      for (let i = 0; i < itemEntries.length; i += BATCH_SIZE) {
+        const batchEntries = itemEntries.slice(i, i + BATCH_SIZE)
+        const batchItems = batchEntries.map(({ item }) => item)
+        for (const item of batchItems) item.delete()
+        await itemManager.batch(batchItems)
+        successfulUids.push(...batchEntries.map(({ uid }) => uid))
+      }
+
+      removeCachedItems(successfulUids)
+      if (isLocalCacheEnabled()) {
+        void cacheReplaceItemsForCollection(collection.uid, [])
+      }
+      await removeQueuedMutationsForCollection(type, collection.uid, true)
+      const removedLocal = await removeItemsFromDomainStore(type, collection.uid)
+      return Math.max(successfulUids.length, removedLocal)
+    } catch (err) {
+      if (isOfflineError(err)) {
+        logger.warn(`[etebase-store] Offline — queuing clear for ${type}/${collection.uid}`)
+        await removeQueuedMutationsForCollection(type, collection.uid, false)
+        const alreadyDeleted = new Set(successfulUids)
+        for (const { uid } of itemEntries) {
+          if (alreadyDeleted.has(uid)) continue
+          try {
+            await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid: uid })
+          } catch (queueErr) {
+            console.error(`[etebase-store] Failed to enqueue collection item delete:`, queueErr)
+          }
+        }
+        removeCachedItems(itemEntries.map(({ uid }) => uid))
+        if (isLocalCacheEnabled()) {
+          void cacheReplaceItemsForCollection(collection.uid, [])
+        }
+        const removedLocal = await removeItemsFromDomainStore(type, collection.uid)
+        return Math.max(itemEntries.length, removedLocal)
+      }
+
+      console.error(`[etebase-store] Failed to clear ${type} collection ${collectionUid}:`, err)
+      if (successfulUids.length > 0) {
+        removeCachedItems(successfulUids)
+        await removeItemsFromDomainStore(type, collection.uid, successfulUids)
+        showErrorToast(`Deleted ${successfulUids.length} of ${itemEntries.length} ${collectionItemNoun(type)}. Please try again to delete the rest.`)
+      } else {
+        showErrorToast(`Failed to delete ${collectionItemNoun(type)}. Please try again.`)
+      }
+      return 0
     }
   },
 

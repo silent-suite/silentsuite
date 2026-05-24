@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LogOut, Menu, Shield, Settings, Lock } from 'lucide-react'
+import { LogOut, Menu, Settings, Lock } from 'lucide-react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { ThemeToggle } from '@/app/components/theme-toggle'
 import { SyncIndicator } from '@/app/components/SyncIndicator'
@@ -75,10 +75,10 @@ export function Header() {
 
   return (
     <header className="relative z-40 flex h-12 shrink-0 items-center justify-between border-b border-[rgb(var(--border))] bg-[rgb(var(--background))]/95 backdrop-blur-sm px-4">
-      {/* Mobile: show SilentSuite branding since sidebar is hidden */}
+      {/* Mobile: show app branding since sidebar is hidden */}
       <div className="flex items-center gap-2">
-        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[rgb(var(--primary))]/10 border border-[rgb(var(--primary))]/20 md:hidden">
-          <Shield className="h-3.5 w-3.5 text-[rgb(var(--primary))]" />
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg md:hidden">
+          <span className="h-7 w-7 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: "url('/logo-shield.svg')" }} aria-hidden="true" />
         </div>
         <h1 className="text-sm font-semibold text-[rgb(var(--foreground))]">
           {title}

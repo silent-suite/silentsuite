@@ -41,7 +41,7 @@ export {
   deleteItem,
   batchUpload,
 } from './etebase/collections.js';
-export type { CollectionMeta, ItemListResponse } from './etebase/collections.js';
+export type { CollectionMeta, CollectionMetaUpdate, ItemListResponse } from './etebase/collections.js';
 
 // Sync engine
 export { SyncEngine } from './etebase/sync.js';

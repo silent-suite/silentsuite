@@ -9,6 +9,7 @@ export function CalendarListPanel() {
   const { calendars, defaultCalendarId, toggleVisibility, setDefaultCalendar, getNextColor } = useCalendarListStore()
   const createCollection = useEtebaseStore((s) => s.createCollection)
   const deleteCollection = useEtebaseStore((s) => s.deleteCollection)
+  const updateCollectionMeta = useEtebaseStore((s) => s.updateCollectionMeta)
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const isCreatingRef = useRef(false)
@@ -31,6 +32,10 @@ export function CalendarListPanel() {
     if (!window.confirm(`Delete calendar "${name}" and all events in it? This cannot be undone.`)) return
     await deleteCollection('calendar', id)
   }, [calendars.length, deleteCollection])
+
+  const handleColorChange = useCallback((id: string, color: string) => {
+    void updateCollectionMeta('calendar', id, { color })
+  }, [updateCollectionMeta])
 
   return (
     <div className="px-3 py-2">
@@ -71,6 +76,14 @@ export function CalendarListPanel() {
               </span>
             </button>
             <div className="flex items-center gap-0.5">
+              <input
+                type="color"
+                value={cal.color}
+                onChange={(e) => handleColorChange(cal.id, e.target.value)}
+                className="h-4 w-4 cursor-pointer rounded border border-[rgb(var(--border))] bg-transparent p-0"
+                aria-label={`Change ${cal.name} color`}
+                title="Change color"
+              />
               {/* Default indicator / set as default */}
               <button
                 onClick={() => setDefaultCalendar(cal.id)}

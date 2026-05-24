@@ -20,6 +20,8 @@ The search box at the top of the contacts list filters by name, email, phone, or
 
 **Settings → Import** accepts `.vcf` files (vCard 3.0 and 4.0). Parsing is local-only — the file content never leaves your browser unencrypted. Multi-contact files are supported (one big `.vcf` with many `BEGIN:VCARD` blocks).
 
+Use **Settings → Import → Manage imported data** to clear an address book's contacts or delete an extra address book and everything inside it.
+
 ## Export
 
 **Settings → Export** gives you:

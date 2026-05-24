@@ -28,7 +28,7 @@ export default function MobileSettingsPage() {
               size={168}
               level="M"
               marginSize={0}
-              aria-label="QR code linking to the SilentSuite Android install guide"
+              aria-label="QR code linking to the Android install guide"
             />
           </div>
           <p className="text-sm text-[rgb(var(--foreground))] font-medium">
@@ -102,7 +102,7 @@ export default function MobileSettingsPage() {
               >
                 EteSync iOS app
               </a>{' '}
-              on the App Store — same Etebase protocol, sign in with your SilentSuite credentials.
+              on the App Store — same Etebase protocol, sign in with your silentsuite.io credentials.
             </p>
           </div>
         </div>

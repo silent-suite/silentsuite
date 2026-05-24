@@ -4,6 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:minHeight="48dp"
     android:padding="8dp"
     android:gravity="center_vertical">
 
@@ -35,6 +36,7 @@
     <ImageView
         android:id="@+id/error"
         android:src="@drawable/ic_bug_report"
+        android:contentDescription="@string/journal_item_sync_issue"
         android:layout_width="32dp"
         android:layout_height="32dp"
         android:visibility="gone" />

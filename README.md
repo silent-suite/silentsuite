@@ -126,14 +126,6 @@ Bug reports, feature requests, and PRs are welcome.
   </a>
 </p>
 
-<a href="https://star-history.com/#silent-suite/silentsuite&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date" />
-    <img alt="SilentSuite star history chart" src="https://api.star-history.com/svg?repos=silent-suite/silentsuite&type=Date" />
-  </picture>
-</a>
-
 <details>
 <summary><strong>Developer information</strong></summary>
 

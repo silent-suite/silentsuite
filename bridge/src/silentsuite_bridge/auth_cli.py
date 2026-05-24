@@ -79,6 +79,6 @@ def manual_login():
     print(f"Etebase server: {config.ETEBASE_SERVER_URL}")
     print(f"CalDAV/CardDAV URL: http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{username}/")
     print(f"Username: {username}")
-    print("Password: (your SilentSuite password)")
+    print("Password: (your account password)")
     print()
     print("Start the bridge with: silentsuite-bridge")
