@@ -18,6 +18,10 @@ const coreMock = vi.hoisted(() => ({
   updateCollectionMeta: vi.fn(),
 }))
 
+const toastStoreMock = vi.hoisted(() => ({
+  showErrorToast: vi.fn(),
+}))
+
 // Stub the offline queue so isOfflineError + enqueue don't try to open IndexedDB.
 vi.mock('@/app/lib/offline-queue', () => offlineQueueMock)
 
@@ -31,14 +35,13 @@ vi.mock('@/app/lib/secure-storage', () => ({
   migrateFromLocalStorage: vi.fn(async () => {}),
 }))
 
-vi.mock('@/app/stores/use-toast-store', () => ({
-  showErrorToast: vi.fn(),
-}))
+vi.mock('@/app/stores/use-toast-store', () => toastStoreMock)
 
 beforeEach(() => {
   coreMock.listCollections.mockReset()
   coreMock.createCollection.mockReset()
   coreMock.updateCollectionMeta.mockReset()
+  toastStoreMock.showErrorToast.mockReset()
 })
 
 interface MockItemManager {
@@ -621,6 +624,14 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
       calendars: [{ id: 'cal-1', name: 'Work', color: '#111111', visible: false }],
       defaultCalendarId: 'cal-1',
     })
+    useTaskListStore.setState({
+      lists: [{ id: 'tasks-1', name: 'Work Tasks', color: '#222222', visible: false }],
+      activeListId: 'tasks-1',
+    })
+    useContactListStore.setState({
+      lists: [{ id: 'contacts-1', name: 'Work Contacts', color: '#333333', visible: false }],
+      activeListId: 'contacts-1',
+    })
     useEtebaseStore.setState({
       account: null,
       collections: { calendar: [], tasks: [], contacts: [] },
@@ -666,5 +677,106 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
       color: '#ff0000',
       visible: false,
     })
+  })
+
+  it('persists task-list color through collection metadata while preserving existing metadata', async () => {
+    const account = { id: 'account' }
+    const collection = mockCollection('tasks-1', {
+      name: 'Work Tasks',
+      description: 'Keep this',
+      color: '#222222',
+    })
+    const updatedCollection = mockCollection('tasks-1', {
+      name: 'Work Tasks',
+      description: 'Keep this',
+      color: '#ff0000',
+    })
+    coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [], tasks: [collection] as any[], contacts: [] },
+      isInitialized: true,
+    })
+
+    const result = await useEtebaseStore.getState().updateCollectionMeta('tasks', 'tasks-1', { color: '#ff0000' })
+
+    expect(result).toBe(true)
+    expect(coreMock.updateCollectionMeta).toHaveBeenCalledWith(account, collection, {
+      name: 'Work Tasks',
+      description: 'Keep this',
+      color: '#ff0000',
+    })
+    expect(useEtebaseStore.getState().collections.tasks[0]).toBe(updatedCollection)
+    expect(useTaskListStore.getState().lists[0]).toMatchObject({
+      id: 'tasks-1',
+      name: 'Work Tasks',
+      color: '#ff0000',
+      visible: false,
+    })
+  })
+
+  it('persists contact-list color through collection metadata while preserving existing metadata', async () => {
+    const account = { id: 'account' }
+    const collection = mockCollection('contacts-1', {
+      name: 'Work Contacts',
+      description: 'Keep this',
+      color: '#333333',
+    })
+    const updatedCollection = mockCollection('contacts-1', {
+      name: 'Work Contacts',
+      description: 'Keep this',
+      color: '#ff0000',
+    })
+    coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [], tasks: [], contacts: [collection] as any[] },
+      isInitialized: true,
+    })
+
+    const result = await useEtebaseStore.getState().updateCollectionMeta('contacts', 'contacts-1', { color: '#ff0000' })
+
+    expect(result).toBe(true)
+    expect(coreMock.updateCollectionMeta).toHaveBeenCalledWith(account, collection, {
+      name: 'Work Contacts',
+      description: 'Keep this',
+      color: '#ff0000',
+    })
+    expect(useEtebaseStore.getState().collections.contacts[0]).toBe(updatedCollection)
+    expect(useContactListStore.getState().lists[0]).toMatchObject({
+      id: 'contacts-1',
+      name: 'Work Contacts',
+      color: '#ff0000',
+      visible: false,
+    })
+  })
+
+  it.each([
+    ['calendar', 'cal-1', 'calendar', 'calendar'] as const,
+    ['tasks', 'tasks-1', 'task list', 'tasks'] as const,
+    ['contacts', 'contacts-1', 'address book', 'contacts'] as const,
+  ])('returns false and preserves local state when %s collection metadata update fails', async (type, collectionUid, label, collectionKey) => {
+    const account = { id: 'account' }
+    const collection = mockCollection(collectionUid, {
+      name: 'Original',
+      description: 'Keep this',
+      color: '#111111',
+    })
+    coreMock.updateCollectionMeta.mockRejectedValue(new Error('upload failed'))
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: {
+        calendar: type === 'calendar' ? [collection] as any[] : [],
+        tasks: type === 'tasks' ? [collection] as any[] : [],
+        contacts: type === 'contacts' ? [collection] as any[] : [],
+      },
+      isInitialized: true,
+    })
+
+    const result = await useEtebaseStore.getState().updateCollectionMeta(type, collectionUid, { color: '#ff0000' })
+
+    expect(result).toBe(false)
+    expect(useEtebaseStore.getState().collections[collectionKey][0]).toBe(collection)
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith(`Failed to update ${label}. Please try again.`)
   })
 })

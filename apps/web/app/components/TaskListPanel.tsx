@@ -9,6 +9,7 @@ export function TaskListPanel() {
   const { lists, toggleVisibility, getNextColor } = useTaskListStore()
   const createCollection = useEtebaseStore((s) => s.createCollection)
   const deleteCollection = useEtebaseStore((s) => s.deleteCollection)
+  const updateCollectionMeta = useEtebaseStore((s) => s.updateCollectionMeta)
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const isCreatingRef = useRef(false)
@@ -31,6 +32,10 @@ export function TaskListPanel() {
     if (!window.confirm(`Delete task list "${name}" and all tasks in it? This cannot be undone.`)) return
     await deleteCollection('tasks', id)
   }, [deleteCollection, lists.length])
+
+  const handleColorChange = useCallback((id: string, color: string) => {
+    void updateCollectionMeta('tasks', id, { color })
+  }, [updateCollectionMeta])
 
   return (
     <div className="px-3 py-2">
@@ -71,6 +76,14 @@ export function TaskListPanel() {
               </span>
             </button>
             <div className="flex items-center gap-0.5">
+              <input
+                type="color"
+                value={list.color}
+                onChange={(e) => handleColorChange(list.id, e.target.value)}
+                className="h-4 w-4 cursor-pointer rounded border border-[rgb(var(--border))] bg-transparent p-0"
+                aria-label={`Change ${list.name} color`}
+                title="Change color"
+              />
               {lists.length > 1 && (
                 <button
                   onClick={() => handleDelete(list.id, list.name)}
