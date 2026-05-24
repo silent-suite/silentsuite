@@ -409,10 +409,12 @@ type PlanView = 'cards' | 'method' | 'payment' | 'crypto'
 function CryptoPaymentPanel({
   session,
   onBack,
+  onInvoiceInactive,
   onPaymentComplete,
 }: {
   session: CryptoPaymentSession
   onBack: () => void
+  onInvoiceInactive: () => void
   onPaymentComplete: () => void
 }) {
   const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
@@ -505,6 +507,11 @@ function CryptoPaymentPanel({
     }
   }
 
+  function handleBack() {
+    if (status === 'expired' || status === 'settled' || status === 'error') onInvoiceInactive()
+    onBack()
+  }
+
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
       <div className="space-y-2 text-center">
@@ -582,7 +589,7 @@ function CryptoPaymentPanel({
       )}
 
       <button
-        onClick={onBack}
+        onClick={handleBack}
         className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -605,6 +612,7 @@ function StepChoosePlan({
   provisioning,
   provisionError,
   onClearError,
+  onClearCryptoPaymentSession,
   onPaymentComplete,
   selectedInterval,
   cryptoPaymentSession,
@@ -621,6 +629,7 @@ function StepChoosePlan({
   provisioning: boolean
   provisionError: string | null
   onClearError: () => void
+  onClearCryptoPaymentSession: () => void
   onPaymentComplete: () => void
   selectedInterval: BillingInterval
   cryptoPaymentSession: CryptoPaymentSession | null
@@ -667,6 +676,7 @@ function StepChoosePlan({
       <CryptoPaymentPanel
         session={cryptoPaymentSession}
         onBack={onBack}
+        onInvoiceInactive={onClearCryptoPaymentSession}
         onPaymentComplete={onPaymentComplete}
       />
     )
@@ -1404,6 +1414,10 @@ export default function SignupPage() {
       setProvisionError('Bitcoin is only available for the yearly plan. Switch to yearly billing to pay with Bitcoin.')
       return
     }
+    if (cryptoPaymentSession) {
+      setPlanView('crypto')
+      return
+    }
     setProvisioning(true)
     try {
       const result = await signup('early_annual', 'crypto_annual')
@@ -1440,7 +1454,7 @@ export default function SignupPage() {
     } finally {
       setProvisioning(false)
     }
-  }, [returnTo, signup, selectedInterval])
+  }, [cryptoPaymentSession, returnTo, signup, selectedInterval])
 
   const handlePlanBack = useCallback(() => {
     if (planView === 'crypto') {
@@ -1536,6 +1550,7 @@ export default function SignupPage() {
             provisioning={provisioning}
             provisionError={provisionError}
             onClearError={() => setProvisionError(null)}
+            onClearCryptoPaymentSession={() => setCryptoPaymentSession(null)}
             onPaymentComplete={handlePaymentComplete}
             selectedInterval={selectedInterval}
             cryptoPaymentSession={cryptoPaymentSession}

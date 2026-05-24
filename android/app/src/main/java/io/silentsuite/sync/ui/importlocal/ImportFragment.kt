@@ -31,6 +31,7 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
 
 
 class ImportFragment : DialogFragment() {
@@ -192,15 +193,18 @@ class ImportFragment : DialogFragment() {
 
             try {
                 val context = requireContext()
-                val importReader = InputStreamReader(inputStream)
+                val importReader = InputStreamReader(
+                        inputStream ?: throw FileNotFoundException("Failed to open selected file."),
+                        StandardCharsets.UTF_8
+                )
 
-                if (enumType == CollectionInfo.Type.CALENDAR) {
+                try {
+                    if (enumType == CollectionInfo.Type.CALENDAR) {
                     val events = Event.eventsFromReader(importReader, null)
-                    importReader.close()
 
                     if (events.isEmpty()) {
-                        Logger.log.warning("Empty/invalid file.")
-                        result.e = Exception("Empty/invalid file.")
+                        Logger.log.warning("No calendar events found in selected file.")
+                        result.e = Exception("No calendar events found in the selected file.")
                         return result
                     }
 
@@ -248,13 +252,12 @@ class ImportFragment : DialogFragment() {
 
                         entryProcessed()
                     }
-                } else if (enumType == CollectionInfo.Type.TASKS) {
+                    } else if (enumType == CollectionInfo.Type.TASKS) {
                     val tasks = Task.tasksFromReader(importReader)
-                    importReader.close()
 
                     if (tasks.isEmpty()) {
-                        Logger.log.warning("Empty/invalid file.")
-                        result.e = Exception("Empty/invalid file.")
+                        Logger.log.warning("No tasks found in selected file.")
+                        result.e = Exception("No tasks found in the selected file.")
                         return result
                     }
 
@@ -304,14 +307,14 @@ class ImportFragment : DialogFragment() {
                             entryProcessed()
                         }
                     }
-                } else if (enumType == CollectionInfo.Type.ADDRESS_BOOK) {
+                    } else if (enumType == CollectionInfo.Type.ADDRESS_BOOK) {
                     val uidToLocalId = HashMap<String?, Long>()
                     val downloader = ContactsSyncManager.ResourceDownloader(context)
                     val contacts = Contact.fromReader(importReader, downloader)
 
                     if (contacts.isEmpty()) {
-                        Logger.log.warning("Empty/invalid file.")
-                        result.e = Exception("Empty/invalid file.")
+                        Logger.log.warning("No contacts found in selected file.")
+                        result.e = Exception("No contacts found in the selected file.")
                         return result
                     }
 
@@ -325,65 +328,72 @@ class ImportFragment : DialogFragment() {
                         return result
                     }
 
-                    val localAddressBook = LocalAddressBook.findByUid(context, provider, account, uid)
-                    if (localAddressBook == null) {
-                        result.e = FileNotFoundException("Failed to load local address book.")
-                        return result
-                    }
-
-                    for (contact in contacts.filter { contact -> !contact.group }) {
-                        try {
-                            var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
-
-                            if (localContact != null) {
-                                localContact.updateAsDirty(contact)
-                                result.updated++
-                            } else {
-                                localContact = LocalContact(localAddressBook, contact, contact.uid, null)
-                                localContact.createAsDirty()
-                                result.added++
-                            }
-
-                            uidToLocalId[contact.uid] = localContact.id!!
-
-                            // Apply categories
-                            val batch = BatchOperation(localAddressBook.provider!!)
-                            for (category in contact.categories) {
-                                localContact.addToGroup(batch, localAddressBook.findOrCreateGroup(category))
-                            }
-                            batch.commit()
-                        } catch (e: ContactsStorageException) {
-                            e.printStackTrace()
+                    try {
+                        val localAddressBook = LocalAddressBook.findByUid(context, provider, account, uid)
+                        if (localAddressBook == null) {
+                            result.e = FileNotFoundException("Failed to load local address book.")
+                            return result
                         }
 
-                        entryProcessed()
-                    }
+                        for (contact in contacts.filter { contact -> !contact.group }) {
+                            try {
+                                var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
 
-                    for (contact in contacts.filter { contact -> contact.group }) {
-                        try {
-                            val memberIds = contact.members.mapNotNull { memberUid ->
-                                uidToLocalId[memberUid]
+                                if (localContact != null) {
+                                    localContact.updateAsDirty(contact)
+                                    result.updated++
+                                } else {
+                                    localContact = LocalContact(localAddressBook, contact, contact.uid, null)
+                                    localContact.createAsDirty()
+                                    result.added++
+                                }
+
+                                uidToLocalId[contact.uid] = localContact.id!!
+
+                                // Apply categories
+                                val batch = BatchOperation(localAddressBook.provider!!)
+                                for (category in contact.categories) {
+                                    localContact.addToGroup(batch, localAddressBook.findOrCreateGroup(category))
+                                }
+                                batch.commit()
+                            } catch (e: ContactsStorageException) {
+                                e.printStackTrace()
                             }
 
-                            val group = contact
-                            var localGroup: LocalGroup? = localAddressBook.findByUid(group.uid!!) as LocalGroup?
-
-                            if (localGroup != null) {
-                                localGroup.updateAsDirty(group, memberIds)
-                                result.updated++
-                            } else {
-                                localGroup = LocalGroup(localAddressBook, group, group.uid, null)
-                                localGroup.createAsDirty(memberIds)
-                                result.added++
-                            }
-                        } catch (e: ContactsStorageException) {
-                            e.printStackTrace()
+                            entryProcessed()
                         }
 
-                        entryProcessed()
-                    }
+                        for (contact in contacts.filter { contact -> contact.group }) {
+                            try {
+                                val memberIds = contact.members.mapNotNull { memberUid ->
+                                    uidToLocalId[memberUid]
+                                }
 
-                    provider.release()
+                                val group = contact
+                                var localGroup: LocalGroup? = localAddressBook.findByUid(group.uid!!) as LocalGroup?
+
+                                if (localGroup != null) {
+                                    localGroup.updateAsDirty(group, memberIds)
+                                    result.updated++
+                                } else {
+                                    localGroup = LocalGroup(localAddressBook, group, group.uid, null)
+                                    localGroup.createAsDirty(memberIds)
+                                    result.added++
+                                }
+                            } catch (e: ContactsStorageException) {
+                                e.printStackTrace()
+                            }
+
+                            entryProcessed()
+                        }
+
+                    } finally {
+                        provider.release()
+                    }
+                    }
+                } finally {
+                    importReader.close()
+                    inputStream = null
                 }
 
                 return result
