@@ -1482,6 +1482,7 @@ export default function SignupPage() {
     setProvisionError(null)
     try {
       await createAndFinalizePaidAccount()
+      setCryptoPaymentSession(null)
       setStep('vault')
     } catch (err) {
       setProvisionError(err instanceof Error ? err.message : 'Payment succeeded, but account creation needs one more step.')
