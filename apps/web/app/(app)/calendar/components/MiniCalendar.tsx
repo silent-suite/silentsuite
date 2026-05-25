@@ -3,9 +3,13 @@
 import { useCallback, useMemo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
+import { expandRecurrence, type CalendarEvent } from '@silentsuite/core'
+import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 
 const WEEKDAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
+const FALLBACK_CALENDAR_COLOR = '#10b981'
+const MAX_DOTS_PER_DAY = 4
 
 function isSameDay(a: Date, b: Date): boolean {
   return (
@@ -15,8 +19,76 @@ function isSameDay(a: Date, b: Date): boolean {
   )
 }
 
-function isSameMonth(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function nextDay(date: Date): Date {
+  const next = startOfDay(date)
+  next.setDate(next.getDate() + 1)
+  return next
+}
+
+function dateKey(date: Date): string {
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
+}
+
+function formatDayLabel(date: Date): string {
+  return date.toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+function eventOverlapsDay(startDate: Date, endDate: Date, day: Date): boolean {
+  if (endDate <= startDate) return isSameDay(startDate, day)
+  const dayStart = startOfDay(day)
+  return startDate < nextDay(dayStart) && endDate > dayStart
+}
+
+function addDotColor(dotsByDay: Map<string, string[]>, day: Date, color: string) {
+  const key = dateKey(day)
+  const colors = dotsByDay.get(key) ?? []
+  if (!colors.includes(color)) {
+    colors.push(color)
+    dotsByDay.set(key, colors)
+  }
+}
+
+function addEventDots(
+  dotsByDay: Map<string, string[]>,
+  days: Date[],
+  event: CalendarEvent,
+  color: string,
+  rangeStart: Date,
+  rangeEnd: Date,
+) {
+  const addSpan = (startDate: Date, endDate: Date) => {
+    if (endDate < rangeStart || startDate > rangeEnd) return
+    for (const day of days) {
+      if (eventOverlapsDay(startDate, endDate, day)) addDotColor(dotsByDay, day, color)
+    }
+  }
+
+  if (!event.recurrenceRule) {
+    addSpan(event.startDate, event.endDate)
+    return
+  }
+
+  const durationMs = Math.max(0, event.endDate.getTime() - event.startDate.getTime())
+  const expansionStart = new Date(rangeStart.getTime() - Math.max(durationMs, 86400000))
+  const occurrences = expandRecurrence(
+    event.recurrenceRule,
+    event.startDate,
+    { start: expansionStart, end: rangeEnd },
+    event.exceptions,
+  )
+
+  for (const occurrenceStart of occurrences) {
+    addSpan(occurrenceStart, new Date(occurrenceStart.getTime() + durationMs))
+  }
 }
 
 interface DayCell {
@@ -24,7 +96,7 @@ interface DayCell {
   inCurrentMonth: boolean
   isToday: boolean
   isSelected: boolean
-  hasEvent: boolean
+  eventDotColors: string[]
 }
 
 export function MiniCalendar() {
@@ -32,9 +104,8 @@ export function MiniCalendar() {
   const pathname = usePathname()
   const currentDate = useCalendarStore((s) => s.currentDate)
   const setCurrentDate = useCalendarStore((s) => s.setCurrentDate)
-  const currentView = useCalendarStore((s) => s.currentView)
-  const setCurrentView = useCalendarStore((s) => s.setCurrentView)
   const events = useCalendarStore((s) => s.events)
+  const calendars = useCalendarListStore((s) => s.calendars)
 
   const today = useMemo(() => new Date(), [])
 
@@ -54,54 +125,73 @@ export function MiniCalendar() {
     [currentDate],
   )
 
+  const calendarColors = useMemo(() => {
+    const colors = new Map<string, string>()
+    for (const calendar of calendars) colors.set(calendar.id, calendar.color)
+    if (!colors.has('default')) colors.set('default', FALLBACK_CALENDAR_COLOR)
+    return colors
+  }, [calendars])
+
+  const visibleCalendarIds = useMemo(() => {
+    const ids = new Set(calendars.filter((calendar) => calendar.visible).map((calendar) => calendar.id))
+    ids.add('default')
+    return ids
+  }, [calendars])
+
   const days = useMemo((): DayCell[] => {
     const firstOfMonth = new Date(miniYear, miniMonth, 1)
     // Monday = 0, Sunday = 6
     let startDow = firstOfMonth.getDay() - 1
     if (startDow < 0) startDow = 6
 
-    const result: DayCell[] = []
+    const cellDates: { date: Date; inCurrentMonth: boolean }[] = []
 
     // Days from previous month
     for (let i = startDow - 1; i >= 0; i--) {
       const d = new Date(miniYear, miniMonth, -i)
-      result.push({
-        date: d,
-        inCurrentMonth: false,
-        isToday: isSameDay(d, today),
-        isSelected: isSameDay(d, currentDate),
-        hasEvent: events.some((e) => isSameDay(e.startDate, d)),
-      })
+      cellDates.push({ date: d, inCurrentMonth: false })
     }
 
     // Days in current month
     const daysInMonth = new Date(miniYear, miniMonth + 1, 0).getDate()
     for (let day = 1; day <= daysInMonth; day++) {
       const d = new Date(miniYear, miniMonth, day)
-      result.push({
-        date: d,
-        inCurrentMonth: true,
-        isToday: isSameDay(d, today),
-        isSelected: isSameDay(d, currentDate),
-        hasEvent: events.some((e) => isSameDay(e.startDate, d)),
-      })
+      cellDates.push({ date: d, inCurrentMonth: true })
     }
 
     // Fill remaining cells (up to 42 = 6 rows)
-    const remaining = 42 - result.length
+    const remaining = 42 - cellDates.length
     for (let i = 1; i <= remaining; i++) {
       const d = new Date(miniYear, miniMonth + 1, i)
-      result.push({
-        date: d,
-        inCurrentMonth: false,
-        isToday: isSameDay(d, today),
-        isSelected: isSameDay(d, currentDate),
-        hasEvent: events.some((e) => isSameDay(e.startDate, d)),
-      })
+      cellDates.push({ date: d, inCurrentMonth: false })
     }
 
-    return result
-  }, [miniYear, miniMonth, currentDate, events, today])
+    const dotsByDay = new Map<string, string[]>()
+    const visibleDays = cellDates.map((cell) => cell.date)
+    const rangeStart = startOfDay(visibleDays[0]!)
+    const rangeEnd = nextDay(visibleDays[visibleDays.length - 1]!)
+
+    for (const event of events) {
+      const calendarId = event.calendarId ?? 'default'
+      if (!visibleCalendarIds.has(calendarId)) continue
+      addEventDots(
+        dotsByDay,
+        visibleDays,
+        event,
+        calendarColors.get(calendarId) ?? FALLBACK_CALENDAR_COLOR,
+        rangeStart,
+        rangeEnd,
+      )
+    }
+
+    return cellDates.map((cell) => ({
+      date: cell.date,
+      inCurrentMonth: cell.inCurrentMonth,
+      isToday: isSameDay(cell.date, today),
+      isSelected: isSameDay(cell.date, currentDate),
+      eventDotColors: dotsByDay.get(dateKey(cell.date)) ?? [],
+    }))
+  }, [miniYear, miniMonth, currentDate, events, today, calendarColors, visibleCalendarIds])
 
   const monthLabel = new Date(miniYear, miniMonth).toLocaleString('default', {
     month: 'long',
@@ -150,6 +240,7 @@ export function MiniCalendar() {
           <button
             key={i}
             onClick={() => handleDayClick(cell.date)}
+            aria-label={formatDayLabel(cell.date)}
             className={`relative flex h-7 w-full items-center justify-center rounded text-[11px] transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
               cell.isToday
                 ? 'bg-[rgb(var(--primary))] font-bold text-white'
@@ -161,8 +252,16 @@ export function MiniCalendar() {
             }`}
           >
             {cell.date.getDate()}
-            {cell.hasEvent && !cell.isToday && (
-              <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full bg-[rgb(var(--primary))]" />
+            {cell.eventDotColors.length > 0 && (
+              <span className="absolute bottom-0.5 left-1/2 flex max-w-[22px] -translate-x-1/2 gap-0.5 overflow-hidden" aria-hidden="true">
+                {cell.eventDotColors.slice(0, MAX_DOTS_PER_DAY).map((color, index) => (
+                  <span
+                    key={`${color}-${index}`}
+                    className="h-1 w-1 shrink-0 rounded-full ring-[0.5px] ring-[rgb(var(--background))]"
+                    style={{ backgroundColor: color }}
+                  />
+                ))}
+              </span>
             )}
           </button>
         ))}

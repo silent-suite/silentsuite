@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useCallback, useRef } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { CollectionListItem } from '@/app/components/CollectionListItem'
 
 export function ContactListPanel() {
-  const { lists, toggleVisibility, getNextColor } = useContactListStore()
+  const { lists, activeListId, toggleVisibility, setActiveList, getNextColor } = useContactListStore()
   const createCollection = useEtebaseStore((s) => s.createCollection)
   const deleteCollection = useEtebaseStore((s) => s.deleteCollection)
   const updateCollectionMeta = useEtebaseStore((s) => s.updateCollectionMeta)
@@ -37,6 +38,16 @@ export function ContactListPanel() {
     void updateCollectionMeta('contacts', id, { color })
   }, [updateCollectionMeta])
 
+  const handleRename = useCallback((id: string, name: string) => {
+    void updateCollectionMeta('contacts', id, { name })
+  }, [updateCollectionMeta])
+
+  const handleSetDefault = useCallback((id: string) => {
+    const list = lists.find((item) => item.id === id)
+    if (list && !list.visible) toggleVisibility(id)
+    setActiveList(id)
+  }, [lists, setActiveList, toggleVisibility])
+
   return (
     <div className="px-3 py-2">
       <div className="flex items-center justify-between mb-1">
@@ -54,47 +65,22 @@ export function ContactListPanel() {
 
       <div className="space-y-0.5">
         {lists.map((list) => (
-          <div
+          <CollectionListItem
             key={list.id}
-            className="group flex items-center gap-2 rounded px-1 py-1 hover:bg-[rgb(var(--background))] transition-colors"
-          >
-            <button
-              onClick={() => toggleVisibility(list.id)}
-              className="flex items-center gap-2 flex-1 min-w-0"
-            >
-              <div
-                className="h-3 w-3 shrink-0 rounded-sm"
-                style={{
-                  backgroundColor: list.visible ? list.color : 'transparent',
-                  border: list.visible ? 'none' : `2px solid ${list.color}`,
-                }}
-              />
-              <span className={`text-xs truncate ${
-                list.visible ? 'text-[rgb(var(--foreground))]' : 'text-[rgb(var(--muted))]'
-              }`}>
-                {list.name}
-              </span>
-            </button>
-            <div className="flex items-center gap-0.5">
-              <input
-                type="color"
-                value={list.color}
-                onChange={(e) => handleColorChange(list.id, e.target.value)}
-                className="h-4 w-4 cursor-pointer rounded border border-[rgb(var(--border))] bg-transparent p-0"
-                aria-label={`Change ${list.name} color`}
-                title="Change color"
-              />
-              {lists.length > 1 && (
-                <button
-                  onClick={() => handleDelete(list.id, list.name)}
-                  className="hidden group-hover:block rounded p-0.5 text-[rgb(var(--muted))] hover:text-red-500 transition-colors"
-                  aria-label={`Remove ${list.name}`}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          </div>
+            name={list.name}
+            color={list.color}
+            visible={list.visible}
+            isDefault={list.id === activeListId}
+            canDelete={lists.length > 1}
+            itemLabel="address book"
+            defaultLabel="Default address book"
+            deleteLabel="Delete address book"
+            onToggleVisibility={() => toggleVisibility(list.id)}
+            onRename={(name) => handleRename(list.id, name)}
+            onSetDefault={() => handleSetDefault(list.id)}
+            onColorChange={(color) => handleColorChange(list.id, color)}
+            onDelete={() => handleDelete(list.id, list.name)}
+          />
         ))}
 
         {isAdding && (
