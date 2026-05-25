@@ -386,6 +386,12 @@ interface EtebaseActions {
   updateItem: (type: CollectionTypeKey, itemUid: string, content: string) => Promise<void>
 
   /**
+   * Move an existing item to another concrete collection by recreating it there.
+   * Returns the new item UID, or the original UID if the target is unchanged.
+   */
+  moveItem: (type: CollectionTypeKey, itemUid: string, content: string, targetCollectionUid: string, sourceCollectionUid?: string) => Promise<string | null>
+
+  /**
    * Delete an item by UID.
    */
   deleteItem: (type: CollectionTypeKey, itemUid: string) => Promise<void>
@@ -1017,6 +1023,62 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
     }
+  },
+
+  moveItem: async (type: CollectionTypeKey, itemUid: string, content: string, targetCollectionUid: string, sourceCollectionUid?: string) => {
+    const { account, collections, itemCache, itemCollectionMap } = get()
+    const resolvedSourceCollectionUid = itemCollectionMap.get(itemUid) ?? sourceCollectionUid
+    const sourceCollection = resolveCollection(collections, type, resolvedSourceCollectionUid)
+    const targetCollection = resolveCollection(collections, type, targetCollectionUid)
+    const item = itemCache.get(itemUid)
+    if (!account || !sourceCollection || !targetCollection || !item) {
+      logger.warn(`[etebase-store] Cannot move item ${itemUid}: missing account, source collection, target collection, or item`)
+      return null
+    }
+
+    if (sourceCollection.uid === targetCollection.uid) {
+      await get().updateItem(type, itemUid, content)
+      return itemUid
+    }
+
+    const core = await import('@silentsuite/core')
+    const created = await core.createItem(account, targetCollection, content)
+    let keepSourceUntilQueuedDelete = false
+
+    try {
+      await core.deleteItem(account, sourceCollection, item)
+    } catch (err) {
+      if (isOfflineError(err)) {
+        logger.warn(`[etebase-store] Offline after moving ${type}/${itemUid} - queuing source delete`)
+        await enqueue({ type: 'delete', collectionType: type, collectionUid: sourceCollection.uid, itemUid })
+        keepSourceUntilQueuedDelete = true
+      } else {
+        try {
+          await core.deleteItem(account, targetCollection, created)
+        } catch (rollbackErr) {
+          logger.warn(`[etebase-store] Failed to roll back moved ${type} item ${created.uid}`, rollbackErr)
+        }
+        throw err
+      }
+    }
+
+    const newCache = new Map(get().itemCache)
+    const newTypeMap = new Map(get().itemTypeMap)
+    const newCollectionMap = new Map(get().itemCollectionMap)
+    if (!keepSourceUntilQueuedDelete) {
+      newCache.delete(itemUid)
+      newTypeMap.delete(itemUid)
+      newCollectionMap.delete(itemUid)
+    }
+    newCache.set(created.uid, created)
+    newTypeMap.set(created.uid, type)
+    newCollectionMap.set(created.uid, targetCollection.uid)
+    set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
+    if (isLocalCacheEnabled()) {
+      if (!keepSourceUntilQueuedDelete) void cacheDeleteItem(itemUid)
+      void writeItemToCache(type, targetCollection.uid, created.uid, content)
+    }
+    return created.uid
   },
 
   deleteItem: async (type: CollectionTypeKey, itemUid: string) => {

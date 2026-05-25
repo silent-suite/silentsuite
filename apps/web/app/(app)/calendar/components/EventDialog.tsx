@@ -306,6 +306,7 @@ export function EventDialog({
         if (effectiveEnd.getTime() !== event.endDate.getTime()) patch.endDate = effectiveEnd
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
         if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
+        if (selectedCalendarId !== (event.calendarId ?? defaultCalendarId)) patch.calendarId = selectedCalendarId
 
         // Compare alarms
         const eventAlarms: VAlarm[] = alarms

@@ -9,7 +9,9 @@ const etebaseMock = vi.hoisted(() => ({
     createItem: vi.fn(),
     createItemsBatch: vi.fn(),
     updateItem: vi.fn(),
+    moveItem: vi.fn(),
     itemCache: new Map<string, unknown>(),
+    itemCollectionMap: new Map<string, string>(),
   },
 }))
 
@@ -34,7 +36,9 @@ function resetStore() {
   etebaseMock.state.createItem.mockReset()
   etebaseMock.state.createItemsBatch.mockReset()
   etebaseMock.state.updateItem.mockReset()
+  etebaseMock.state.moveItem.mockReset()
   etebaseMock.state.itemCache = new Map()
+  etebaseMock.state.itemCollectionMap = new Map()
   useCalendarStore.setState({
     events: [],
     isLoading: false,
@@ -197,5 +201,115 @@ describe('useCalendarStore.updateRecurringEvent', () => {
     const uploadedContent = etebaseMock.state.createItem.mock.calls[0]![1] as string
     expect(uploadedContent).toContain(`UID:${created!.uid}`)
     expect(uploadedContent).not.toContain(`UID:${remoteItemUid}`)
+  })
+})
+
+describe('useCalendarStore.updateEvent calendar moves', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('moves a cached event to the target calendar and remaps the local item id', async () => {
+    const event = makeRecurringEvent({
+      id: 'item-old',
+      uid: 'stable-vevent-uid',
+      recurrenceRule: null,
+      calendarId: 'cal-a',
+    })
+    etebaseMock.state.account = {}
+    etebaseMock.state.itemCache = new Map([[event.id, {}]])
+    etebaseMock.state.itemCollectionMap = new Map([[event.id, 'cal-a']])
+    etebaseMock.state.moveItem.mockResolvedValue('item-new')
+    useCalendarStore.setState({ events: [event], selectedEventId: event.id })
+
+    await useCalendarStore.getState().updateEvent(event.id, {
+      title: 'Moved meeting',
+      calendarId: 'cal-b',
+    })
+
+    expect(etebaseMock.state.updateItem).not.toHaveBeenCalled()
+    expect(etebaseMock.state.moveItem).toHaveBeenCalledTimes(1)
+    expect(etebaseMock.state.moveItem.mock.calls[0]![0]).toBe('calendar')
+    expect(etebaseMock.state.moveItem.mock.calls[0]![1]).toBe('item-old')
+    expect(etebaseMock.state.moveItem.mock.calls[0]![3]).toBe('cal-b')
+    expect(etebaseMock.state.moveItem.mock.calls[0]![4]).toBe('cal-a')
+    const uploadedContent = etebaseMock.state.moveItem.mock.calls[0]![2] as string
+    expect(uploadedContent).toContain('UID:stable-vevent-uid')
+    expect(uploadedContent).toContain('SUMMARY:Moved meeting')
+
+    const moved = useCalendarStore.getState().events[0]!
+    expect(moved.id).toBe('item-new')
+    expect(moved.uid).toBe('stable-vevent-uid')
+    expect(moved.calendarId).toBe('cal-b')
+    expect(useCalendarStore.getState().selectedEventId).toBe('item-new')
+  })
+
+  it('uses the previous event calendar as the source if the Etebase collection map is missing', async () => {
+    const event = makeRecurringEvent({
+      id: 'item-old',
+      uid: 'stable-vevent-uid',
+      recurrenceRule: null,
+      calendarId: 'cal-a',
+    })
+    etebaseMock.state.account = {}
+    etebaseMock.state.itemCache = new Map([[event.id, {}]])
+    etebaseMock.state.itemCollectionMap = new Map()
+    etebaseMock.state.moveItem.mockResolvedValue('item-new')
+    useCalendarStore.setState({ events: [event] })
+
+    await useCalendarStore.getState().updateEvent(event.id, { calendarId: 'cal-b' })
+
+    expect(etebaseMock.state.moveItem).toHaveBeenCalledWith(
+      'calendar',
+      'item-old',
+      expect.any(String),
+      'cal-b',
+      'cal-a',
+    )
+    expect(useCalendarStore.getState().events[0]!.id).toBe('item-new')
+    expect(useCalendarStore.getState().events[0]!.calendarId).toBe('cal-b')
+  })
+
+  it('keeps same-calendar edits on the normal update path', async () => {
+    const event = makeRecurringEvent({ id: 'item-1', recurrenceRule: null, calendarId: 'cal-a' })
+    etebaseMock.state.account = {}
+    etebaseMock.state.itemCache = new Map([[event.id, {}]])
+    etebaseMock.state.itemCollectionMap = new Map([[event.id, 'cal-a']])
+    etebaseMock.state.updateItem.mockResolvedValue(undefined)
+    useCalendarStore.setState({ events: [event] })
+
+    await useCalendarStore.getState().updateEvent(event.id, { title: 'Still here' })
+
+    expect(etebaseMock.state.updateItem).toHaveBeenCalledTimes(1)
+    expect(etebaseMock.state.moveItem).not.toHaveBeenCalled()
+    expect(useCalendarStore.getState().events[0]!.id).toBe('item-1')
+    expect(useCalendarStore.getState().events[0]!.calendarId).toBe('cal-a')
+  })
+
+  it('moves a recurring master when all occurrences are changed to another calendar', async () => {
+    const master = makeRecurringEvent({ id: 'master-old', uid: 'stable-master-uid', calendarId: 'cal-a' })
+    etebaseMock.state.account = {}
+    etebaseMock.state.itemCache = new Map([[master.id, {}]])
+    etebaseMock.state.itemCollectionMap = new Map([[master.id, 'cal-a']])
+    etebaseMock.state.moveItem.mockResolvedValue('master-new')
+    useCalendarStore.setState({ events: [master], selectedEventId: master.id })
+
+    await useCalendarStore.getState().updateRecurringEvent(
+      master.id,
+      { calendarId: 'cal-b', title: 'Moved series' },
+      'all',
+      new Date('2026-06-03T09:00:00Z'),
+    )
+
+    expect(etebaseMock.state.moveItem).toHaveBeenCalledTimes(1)
+    expect(etebaseMock.state.moveItem.mock.calls[0]![1]).toBe('master-old')
+    expect(etebaseMock.state.moveItem.mock.calls[0]![3]).toBe('cal-b')
+    expect(etebaseMock.state.moveItem.mock.calls[0]![4]).toBe('cal-a')
+    const moved = useCalendarStore.getState().events[0]!
+    expect(moved.id).toBe('master-new')
+    expect(moved.uid).toBe('stable-master-uid')
+    expect(moved.calendarId).toBe('cal-b')
+    expect(moved.recurrenceRule).toBe('FREQ=DAILY')
+    expect(useCalendarStore.getState().selectedEventId).toBe('master-new')
   })
 })

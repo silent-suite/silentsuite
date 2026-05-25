@@ -15,6 +15,8 @@ const offlineQueueMock = vi.hoisted(() => ({
 const coreMock = vi.hoisted(() => ({
   listCollections: vi.fn(),
   createCollection: vi.fn(),
+  createItem: vi.fn(),
+  deleteItem: vi.fn(),
   updateCollectionMeta: vi.fn(),
 }))
 
@@ -38,8 +40,14 @@ vi.mock('@/app/lib/secure-storage', () => ({
 vi.mock('@/app/stores/use-toast-store', () => toastStoreMock)
 
 beforeEach(() => {
+  offlineQueueMock.enqueue.mockClear()
+  offlineQueueMock.getAll.mockReset().mockResolvedValue([])
+  offlineQueueMock.remove.mockClear()
+  offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
   coreMock.listCollections.mockReset()
   coreMock.createCollection.mockReset()
+  coreMock.createItem.mockReset()
+  coreMock.deleteItem.mockReset()
   coreMock.updateCollectionMeta.mockReset()
   toastStoreMock.showErrorToast.mockReset()
 })
@@ -285,6 +293,92 @@ describe('useEtebaseStore.createItemsBatch', () => {
     expect(itemManager.batch).toHaveBeenCalledTimes(1 + 3)
     expect(uids.slice(0, 20).every((u) => typeof u === 'string')).toBe(true)
     expect(uids.slice(20).every((u) => u === null)).toBe(true)
+  })
+})
+
+describe('useEtebaseStore.moveItem', () => {
+  beforeEach(() => {
+    offlineQueueMock.enqueue.mockClear()
+    offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('recreates the item in the target collection, deletes the source item, and remaps local caches', async () => {
+    const account = { id: 'account' }
+    const sourceCollection = { uid: 'col-1' }
+    const targetCollection = { uid: 'col-2' }
+    const sourceItem = { uid: 'item-old' }
+    const targetItem = { uid: 'item-new' }
+    coreMock.createItem.mockResolvedValue(targetItem)
+    coreMock.deleteItem.mockResolvedValue(undefined)
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map([['item-old', sourceItem]]),
+      itemTypeMap: new Map([['item-old', 'calendar']]),
+      itemCollectionMap: new Map([['item-old', 'col-1']]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+
+    const result = await useEtebaseStore.getState().moveItem('calendar', 'item-old', 'VEVENT content', 'col-2')
+    const state = useEtebaseStore.getState()
+
+    expect(result).toBe('item-new')
+    expect(coreMock.createItem).toHaveBeenCalledWith(account, targetCollection, 'VEVENT content')
+    expect(coreMock.deleteItem).toHaveBeenCalledWith(account, sourceCollection, sourceItem)
+    expect(state.itemCache.has('item-old')).toBe(false)
+    expect(state.itemTypeMap.has('item-old')).toBe(false)
+    expect(state.itemCollectionMap.has('item-old')).toBe(false)
+    expect(state.itemCache.get('item-new')).toBe(targetItem)
+    expect(state.itemTypeMap.get('item-new')).toBe('calendar')
+    expect(state.itemCollectionMap.get('item-new')).toBe('col-2')
+  })
+
+  it('keeps the created target item and queues source delete if the source delete fails offline', async () => {
+    const account = { id: 'account' }
+    const sourceCollection = { uid: 'col-1' }
+    const targetCollection = { uid: 'col-2' }
+    const sourceItem = { uid: 'item-old' }
+    const targetItem = { uid: 'item-new' }
+    const offlineError = new TypeError('Failed to fetch')
+    coreMock.createItem.mockResolvedValue(targetItem)
+    coreMock.deleteItem.mockRejectedValueOnce(offlineError)
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map([['item-old', sourceItem]]),
+      itemTypeMap: new Map([['item-old', 'calendar']]),
+      itemCollectionMap: new Map([['item-old', 'col-1']]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+
+    const result = await useEtebaseStore.getState().moveItem('calendar', 'item-old', 'VEVENT content', 'col-2')
+    const state = useEtebaseStore.getState()
+
+    expect(result).toBe('item-new')
+    expect(coreMock.createItem).toHaveBeenCalledWith(account, targetCollection, 'VEVENT content')
+    expect(coreMock.deleteItem).toHaveBeenCalledTimes(1)
+    expect(offlineQueueMock.enqueue).toHaveBeenCalledWith({
+      type: 'delete',
+      collectionType: 'calendar',
+      collectionUid: 'col-1',
+      itemUid: 'item-old',
+    })
+    expect(state.itemCache.get('item-old')).toBe(sourceItem)
+    expect(state.itemCache.get('item-new')).toBe(targetItem)
+    expect(state.itemCollectionMap.get('item-old')).toBe('col-1')
+    expect(state.itemCollectionMap.get('item-new')).toBe('col-2')
   })
 })
 
