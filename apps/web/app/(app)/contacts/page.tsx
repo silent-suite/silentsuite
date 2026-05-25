@@ -236,6 +236,7 @@ function ContactForm({
 }) {
   const createContact = useContactStore((s) => s.createContact)
   const contactLists = useContactListStore((s) => s.lists)
+  const activeListId = useContactListStore((s) => s.activeListId)
   const photoInputRef = useRef<HTMLInputElement>(null)
   const modalRef = useRef<HTMLDivElement>(null)
   const [nameError, setNameError] = useState(false)
@@ -253,9 +254,10 @@ function ContactForm({
   }, [onClose])
 
   const defaultListId = useMemo(() => {
+    if (activeListId !== 'all' && contactLists.some((list) => list.id === activeListId)) return activeListId
     const visible = contactLists.filter(l => l.visible)
     return visible.length === 1 ? visible[0]!.id : 'default'
-  }, [contactLists])
+  }, [activeListId, contactLists])
 
   const [selectedListId, setSelectedListId] = useState(defaultListId)
   const [given, setGiven] = useState('')

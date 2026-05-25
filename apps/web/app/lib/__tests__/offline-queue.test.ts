@@ -219,6 +219,17 @@ describe('offline-queue', () => {
       expect(all[0].tempId).toBe('temp-1')
     })
 
+    it('create + create with same tempId → keeps one create with latest content', async () => {
+      await enqueue({ type: 'create', collectionType: 'preferences', content: 'original', tempId: 'prefs' })
+      await enqueue({ type: 'create', collectionType: 'preferences', content: 'updated', tempId: 'prefs' })
+
+      const all = await getAll()
+      expect(all).toHaveLength(1)
+      expect(all[0].type).toBe('create')
+      expect(all[0].content).toBe('updated')
+      expect(all[0].tempId).toBe('prefs')
+    })
+
     it('create + delete with same tempId → cancels both', async () => {
       await enqueue({ type: 'create', collectionType: 'contacts', content: 'vcard', tempId: 'temp-2' })
       await enqueue({ type: 'delete', collectionType: 'contacts', tempId: 'temp-2' })
@@ -271,6 +282,54 @@ describe('offline-queue', () => {
 
       const all = await getAll()
       expect(all[0].collectionUid).toBe('cal-b')
+    })
+
+    it('retargets a queued temp create when an offline-created event is moved before replay', async () => {
+      await enqueue({ type: 'create', collectionType: 'calendar', collectionUid: 'cal-a', content: 'original', tempId: 'temp-1' })
+      await enqueue({ type: 'update', collectionType: 'calendar', collectionUid: 'cal-b', content: 'updated', tempId: 'temp-1' })
+
+      const all = await getAll()
+      expect(all).toHaveLength(1)
+      expect(all[0].type).toBe('create')
+      expect(all[0].collectionUid).toBe('cal-b')
+      expect(all[0].content).toBe('updated')
+      expect(all[0].tempId).toBe('temp-1')
+    })
+
+    it('merges an update followed by a move into one move entry', async () => {
+      await enqueue({ type: 'update', collectionType: 'calendar', collectionUid: 'cal-a', content: 'updated', itemUid: 'item-1' })
+      await enqueue({ type: 'move', collectionType: 'calendar', collectionUid: 'cal-a', targetCollectionUid: 'cal-b', content: 'moved', itemUid: 'item-1' })
+
+      const all = await getAll()
+      expect(all).toHaveLength(1)
+      expect(all[0].type).toBe('move')
+      expect(all[0].collectionUid).toBe('cal-a')
+      expect(all[0].targetCollectionUid).toBe('cal-b')
+      expect(all[0].content).toBe('moved')
+    })
+
+    it('turns a queued move into a source delete if the item is deleted before replay', async () => {
+      await enqueue({ type: 'move', collectionType: 'calendar', collectionUid: 'cal-a', targetCollectionUid: 'cal-b', content: 'moved', itemUid: 'item-1' })
+      await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: 'cal-a', itemUid: 'item-1' })
+
+      const all = await getAll()
+      expect(all).toHaveLength(1)
+      expect(all[0].type).toBe('delete')
+      expect(all[0].collectionUid).toBe('cal-a')
+      expect(all[0].targetCollectionUid).toBeUndefined()
+      expect(all[0].content).toBeUndefined()
+    })
+
+    it('turns a queued move back into an update when the item is moved back to its source collection', async () => {
+      await enqueue({ type: 'move', collectionType: 'calendar', collectionUid: 'cal-a', targetCollectionUid: 'cal-b', content: 'moved', itemUid: 'item-1' })
+      await enqueue({ type: 'update', collectionType: 'calendar', collectionUid: 'cal-a', content: 'back home', itemUid: 'item-1' })
+
+      const all = await getAll()
+      expect(all).toHaveLength(1)
+      expect(all[0].type).toBe('update')
+      expect(all[0].collectionUid).toBe('cal-a')
+      expect(all[0].targetCollectionUid).toBeUndefined()
+      expect(all[0].content).toBe('back home')
     })
 
     it('does not compact entries with different tempIds', async () => {

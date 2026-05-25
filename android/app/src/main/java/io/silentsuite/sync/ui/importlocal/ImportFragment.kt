@@ -31,6 +31,7 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
 
 
 class ImportFragment : DialogFragment() {
@@ -192,198 +193,215 @@ class ImportFragment : DialogFragment() {
 
             try {
                 val context = requireContext()
-                val importReader = InputStreamReader(inputStream)
+                val importReader = InputStreamReader(
+                        inputStream ?: throw FileNotFoundException("Failed to open selected file."),
+                        StandardCharsets.UTF_8
+                )
 
-                if (enumType == CollectionInfo.Type.CALENDAR) {
-                    val events = Event.eventsFromReader(importReader, null)
-                    importReader.close()
+                try {
+                    if (enumType == CollectionInfo.Type.CALENDAR) {
+                        val events = Event.eventsFromReader(importReader, null)
 
-                    if (events.isEmpty()) {
-                        Logger.log.warning("Empty/invalid file.")
-                        result.e = Exception("Empty/invalid file.")
-                        return result
-                    }
-
-                    result.total = events.size.toLong()
-
-                    finishParsingFile(events.size)
-
-                    val provider = context.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
-                    if (provider == null) {
-                        result.e = Exception("Failed to acquire calendar content provider.")
-                        return result
-                    }
-
-                    val localCalendar: LocalCalendar?
-                    try {
-                        localCalendar = LocalCalendar.findByName(account, provider, LocalCalendar.Factory, uid)
-                        if (localCalendar == null) {
-                            result.e = FileNotFoundException("Failed to load local resource.")
-                            return result
-                        }
-                    } catch (e: CalendarStorageException) {
-                        Logger.log.info("Fail" + e.localizedMessage)
-                        result.e = e
-                        return result
-                    } catch (e: FileNotFoundException) {
-                        Logger.log.info("Fail" + e.localizedMessage)
-                        result.e = e
-                        return result
-                    }
-
-                    for (event in events) {
-                        try {
-                            var localEvent = localCalendar.findByUid(event.uid!!)
-                            if (localEvent != null) {
-                                localEvent.updateAsDirty(event)
-                                result.updated++
-                            } else {
-                                localEvent = LocalEvent(localCalendar, event, event.uid, null)
-                                localEvent.addAsDirty()
-                                result.added++
-                            }
-                        } catch (e: CalendarStorageException) {
-                            e.printStackTrace()
-                        }
-
-                        entryProcessed()
-                    }
-                } else if (enumType == CollectionInfo.Type.TASKS) {
-                    val tasks = Task.tasksFromReader(importReader)
-                    importReader.close()
-
-                    if (tasks.isEmpty()) {
-                        Logger.log.warning("Empty/invalid file.")
-                        result.e = Exception("Empty/invalid file.")
-                        return result
-                    }
-
-                    result.total = tasks.size.toLong()
-
-                    finishParsingFile(tasks.size)
-
-                    val provider = TaskProviderHandling.getWantedTaskSyncProvider(requireContext())
-                            .let {
-                                if (it == null) {
-                                    result.e = Exception("Failed to acquire tasks content provider.")
-                                    null
-                                } else {
-                                    TaskProvider.acquire(context, it)
-                                }
-                            }
-
-                    provider?.let {
-                        val localTaskList: LocalTaskList?
-                        try {
-                            localTaskList = LocalTaskList.findByName(account, it, LocalTaskList.Factory, uid)
-                            if (localTaskList == null) {
-                                result.e = FileNotFoundException("Failed to load local resource.")
-                                return result
-                            }
-                        } catch (e: FileNotFoundException) {
-                            Logger.log.info("Fail" + e.localizedMessage)
-                            result.e = e
+                        if (events.isEmpty()) {
+                            Logger.log.warning("No calendar events found in selected file.")
+                            result.e = Exception("No calendar events found in the selected file.")
                             return result
                         }
 
-                        for (task in tasks) {
+                        result.total = events.size.toLong()
+
+                        finishParsingFile(events.size)
+
+                        val provider = context.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
+                        if (provider == null) {
+                            result.e = Exception("Failed to acquire calendar content provider.")
+                            return result
+                        }
+
+                        try {
+                            val localCalendar: LocalCalendar?
                             try {
-                                var localTask = localTaskList.findByUid(task.uid!!)
-                                if (localTask != null) {
-                                    localTask.updateAsDirty(task)
-                                    result.updated++
-                                } else {
-                                    localTask = LocalTask(localTaskList, task, task.uid, null)
-                                    localTask.addAsDirty()
-                                    result.added++
+                                localCalendar = LocalCalendar.findByName(account, provider, LocalCalendar.Factory, uid)
+                                if (localCalendar == null) {
+                                    result.e = FileNotFoundException("Failed to load local resource.")
+                                    return result
                                 }
                             } catch (e: CalendarStorageException) {
-                                e.printStackTrace()
+                                Logger.log.info("Fail" + e.localizedMessage)
+                                result.e = e
+                                return result
+                            } catch (e: FileNotFoundException) {
+                                Logger.log.info("Fail" + e.localizedMessage)
+                                result.e = e
+                                return result
                             }
 
-                            entryProcessed()
+                            for (event in events) {
+                                try {
+                                    var localEvent = localCalendar.findByUid(event.uid!!)
+                                    if (localEvent != null) {
+                                        localEvent.updateAsDirty(event)
+                                        result.updated++
+                                    } else {
+                                        localEvent = LocalEvent(localCalendar, event, event.uid, null)
+                                        localEvent.addAsDirty()
+                                        result.added++
+                                    }
+                                } catch (e: CalendarStorageException) {
+                                    e.printStackTrace()
+                                }
+
+                                entryProcessed()
+                            }
+                        } finally {
+                            provider.release()
                         }
-                    }
-                } else if (enumType == CollectionInfo.Type.ADDRESS_BOOK) {
-                    val uidToLocalId = HashMap<String?, Long>()
-                    val downloader = ContactsSyncManager.ResourceDownloader(context)
-                    val contacts = Contact.fromReader(importReader, downloader)
+                    } else if (enumType == CollectionInfo.Type.TASKS) {
+                        val tasks = Task.tasksFromReader(importReader)
 
-                    if (contacts.isEmpty()) {
-                        Logger.log.warning("Empty/invalid file.")
-                        result.e = Exception("Empty/invalid file.")
-                        return result
-                    }
+                        if (tasks.isEmpty()) {
+                            Logger.log.warning("No tasks found in selected file.")
+                            result.e = Exception("No tasks found in the selected file.")
+                            return result
+                        }
 
-                    result.total = contacts.size.toLong()
+                        result.total = tasks.size.toLong()
 
-                    finishParsingFile(contacts.size)
+                        finishParsingFile(tasks.size)
 
-                    val provider = context.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
-                    if (provider == null) {
-                        result.e = Exception("Failed to acquire contacts content provider.")
-                        return result
-                    }
+                        val providerName = TaskProviderHandling.getWantedTaskSyncProvider(context)
+                        if (providerName == null) {
+                            result.e = Exception("Failed to acquire tasks content provider.")
+                            return result
+                        }
 
-                    val localAddressBook = LocalAddressBook.findByUid(context, provider, account, uid)
-                    if (localAddressBook == null) {
-                        result.e = FileNotFoundException("Failed to load local address book.")
-                        return result
-                    }
+                        val provider = TaskProvider.acquire(context, providerName)
+                        if (provider == null) {
+                            result.e = Exception("Failed to acquire tasks content provider.")
+                            return result
+                        }
 
-                    for (contact in contacts.filter { contact -> !contact.group }) {
                         try {
-                            var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
-
-                            if (localContact != null) {
-                                localContact.updateAsDirty(contact)
-                                result.updated++
-                            } else {
-                                localContact = LocalContact(localAddressBook, contact, contact.uid, null)
-                                localContact.createAsDirty()
-                                result.added++
+                            val localTaskList: LocalTaskList?
+                            try {
+                                localTaskList = LocalTaskList.findByName(account, provider, LocalTaskList.Factory, uid)
+                                if (localTaskList == null) {
+                                    result.e = FileNotFoundException("Failed to load local resource.")
+                                    return result
+                                }
+                            } catch (e: FileNotFoundException) {
+                                Logger.log.info("Fail" + e.localizedMessage)
+                                result.e = e
+                                return result
                             }
 
-                            uidToLocalId[contact.uid] = localContact.id!!
+                            for (task in tasks) {
+                                try {
+                                    var localTask = localTaskList.findByUid(task.uid!!)
+                                    if (localTask != null) {
+                                        localTask.updateAsDirty(task)
+                                        result.updated++
+                                    } else {
+                                        localTask = LocalTask(localTaskList, task, task.uid, null)
+                                        localTask.addAsDirty()
+                                        result.added++
+                                    }
+                                } catch (e: CalendarStorageException) {
+                                    e.printStackTrace()
+                                }
 
-                            // Apply categories
-                            val batch = BatchOperation(localAddressBook.provider!!)
-                            for (category in contact.categories) {
-                                localContact.addToGroup(batch, localAddressBook.findOrCreateGroup(category))
+                                entryProcessed()
                             }
-                            batch.commit()
-                        } catch (e: ContactsStorageException) {
-                            e.printStackTrace()
+                        } finally {
+                            provider.close()
+                        }
+                    } else if (enumType == CollectionInfo.Type.ADDRESS_BOOK) {
+                        val uidToLocalId = HashMap<String?, Long>()
+                        val downloader = ContactsSyncManager.ResourceDownloader(context)
+                        val contacts = Contact.fromReader(importReader, downloader)
+
+                        if (contacts.isEmpty()) {
+                            Logger.log.warning("No contacts found in selected file.")
+                            result.e = Exception("No contacts found in the selected file.")
+                            return result
                         }
 
-                        entryProcessed()
-                    }
+                        result.total = contacts.size.toLong()
 
-                    for (contact in contacts.filter { contact -> contact.group }) {
+                        finishParsingFile(contacts.size)
+
+                        val provider = context.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
+                        if (provider == null) {
+                            result.e = Exception("Failed to acquire contacts content provider.")
+                            return result
+                        }
+
                         try {
-                            val memberIds = contact.members.mapNotNull { memberUid ->
-                                uidToLocalId[memberUid]
+                            val localAddressBook = LocalAddressBook.findByUid(context, provider, account, uid)
+                            if (localAddressBook == null) {
+                                result.e = FileNotFoundException("Failed to load local address book.")
+                                return result
                             }
 
-                            val group = contact
-                            var localGroup: LocalGroup? = localAddressBook.findByUid(group.uid!!) as LocalGroup?
+                            for (contact in contacts.filter { contact -> !contact.group }) {
+                                try {
+                                    var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
 
-                            if (localGroup != null) {
-                                localGroup.updateAsDirty(group, memberIds)
-                                result.updated++
-                            } else {
-                                localGroup = LocalGroup(localAddressBook, group, group.uid, null)
-                                localGroup.createAsDirty(memberIds)
-                                result.added++
+                                    if (localContact != null) {
+                                        localContact.updateAsDirty(contact)
+                                        result.updated++
+                                    } else {
+                                        localContact = LocalContact(localAddressBook, contact, contact.uid, null)
+                                        localContact.createAsDirty()
+                                        result.added++
+                                    }
+
+                                    uidToLocalId[contact.uid] = localContact.id!!
+
+                                    // Apply categories
+                                    val batch = BatchOperation(localAddressBook.provider!!)
+                                    for (category in contact.categories) {
+                                        localContact.addToGroup(batch, localAddressBook.findOrCreateGroup(category))
+                                    }
+                                    batch.commit()
+                                } catch (e: ContactsStorageException) {
+                                    e.printStackTrace()
+                                }
+
+                                entryProcessed()
                             }
-                        } catch (e: ContactsStorageException) {
-                            e.printStackTrace()
+
+                            for (contact in contacts.filter { contact -> contact.group }) {
+                                try {
+                                    val memberIds = contact.members.mapNotNull { memberUid ->
+                                        uidToLocalId[memberUid]
+                                    }
+
+                                    val group = contact
+                                    var localGroup: LocalGroup? = localAddressBook.findByUid(group.uid!!) as LocalGroup?
+
+                                    if (localGroup != null) {
+                                        localGroup.updateAsDirty(group, memberIds)
+                                        result.updated++
+                                    } else {
+                                        localGroup = LocalGroup(localAddressBook, group, group.uid, null)
+                                        localGroup.createAsDirty(memberIds)
+                                        result.added++
+                                    }
+                                } catch (e: ContactsStorageException) {
+                                    e.printStackTrace()
+                                }
+
+                                entryProcessed()
+                            }
+
+                        } finally {
+                            provider.release()
                         }
-
-                        entryProcessed()
                     }
-
-                    provider.release()
+                } finally {
+                    importReader.close()
+                    inputStream = null
                 }
 
                 return result

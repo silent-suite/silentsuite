@@ -1,5 +1,7 @@
 package io.silentsuite.sync.ui.etebase
 
+import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.view.*
 import android.widget.TextView
@@ -8,16 +10,24 @@ import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
+import androidx.lifecycle.lifecycleScope
 import com.etebase.client.CollectionAccessLevel
 import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.ui.BaseActivity
+import io.silentsuite.sync.ui.importlocal.ImportFragment
 import io.silentsuite.sync.utils.TaskProviderHandling
-import com.google.android.material.floatingactionbutton.FloatingActionButton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.util.logging.Level
 
 class ViewCollectionFragment : Fragment() {
+    private val accountModel: AccountViewModel by activityViewModels()
     private val collectionModel: CollectionViewModel by activityViewModels()
     private val itemsModel: ItemsViewModel by activityViewModels()
 
@@ -39,18 +49,6 @@ class ViewCollectionFragment : Fragment() {
 
     private fun initUi(inflater: LayoutInflater, container: View, cachedCollection: CachedCollection) {
         val title = container.findViewById<TextView>(R.id.display_name)
-
-        val fab = container.findViewById<FloatingActionButton>(R.id.fab)
-        fab?.setOnClickListener {
-            if (cachedCollection.col.accessLevel != CollectionAccessLevel.ReadOnly) {
-                parentFragmentManager.commit {
-                    replace(R.id.fragment_container, ImportCollectionFragment())
-                    addToBackStack(null)
-                }
-            } else {
-                Toast.makeText(requireContext(), R.string.not_allowed_title, Toast.LENGTH_SHORT).show()
-            }
-        }
 
         val col = cachedCollection.col
         val meta = cachedCollection.meta
@@ -135,21 +133,83 @@ class ViewCollectionFragment : Fragment() {
                 }
             }
             R.id.on_import -> {
-                if (cachedCollection.col.accessLevel != CollectionAccessLevel.ReadOnly) {
-                    parentFragmentManager.commit {
-                        replace(R.id.fragment_container, ImportCollectionFragment())
-                        addToBackStack(null)
-                    }
-                } else {
-                    val dialog = AlertDialog.Builder(requireContext())
-                            .setIcon(R.drawable.ic_info_dark)
-                            .setTitle(R.string.not_allowed_title)
-                            .setMessage(R.string.edit_owner_only_anon)
-                            .setPositiveButton(android.R.string.yes) { _, _ -> }.create()
-                    dialog.show()
-                }
+                startImport(cachedCollection)
+                return true
+            }
+            R.id.on_export -> {
+                createExportDocument(cachedCollection)
+                return true
             }
         }
         return super.onOptionsItemSelected(item)
+    }
+
+    private fun startImport(cachedCollection: CachedCollection) {
+        if (cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly) {
+            val dialog = AlertDialog.Builder(requireContext())
+                    .setIcon(R.drawable.ic_info_dark)
+                    .setTitle(R.string.not_allowed_title)
+                    .setMessage(R.string.edit_owner_only_anon)
+                    .setPositiveButton(android.R.string.yes) { _, _ -> }.create()
+            dialog.show()
+            return
+        }
+
+        val accountHolder = accountModel.value
+        if (accountHolder == null) {
+            Toast.makeText(context, R.string.loading_error_title, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        parentFragmentManager.commit {
+            add(ImportFragment.newInstance(accountHolder.account, cachedCollection), null)
+        }
+    }
+
+    private fun createExportDocument(cachedCollection: CachedCollection) {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = AndroidDataExporter.collectionMimeType(cachedCollection.collectionType)
+            putExtra(Intent.EXTRA_TITLE, AndroidDataExporter.suggestedCollectionFileName(cachedCollection.collectionType, cachedCollection.meta.name))
+        }
+        startActivityForResult(intent, REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT) return
+
+        val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+        if (uri == null) return
+
+        val cachedCollection = collectionModel.value ?: run {
+            Toast.makeText(context, R.string.loading_error_title, Toast.LENGTH_LONG).show()
+            return
+        }
+        val itemContents = itemsModel.value
+            ?.filter { !it.item.isDeleted }
+            ?.map { it.content }
+            ?: emptyList()
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val outputStream = requireContext().contentResolver.openOutputStream(uri)
+                            ?: throw IOException("Could not open export destination")
+                    outputStream.use {
+                        AndroidDataExporter.writeCollectionExport(cachedCollection.collectionType, itemContents, it)
+                    }
+                }
+                Toast.makeText(requireContext(), R.string.export_data_success, Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                io.silentsuite.sync.log.Logger.log.log(Level.SEVERE, "Collection data export failed", e)
+                Toast.makeText(requireContext(), R.string.export_data_failed, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    companion object {
+        private const val REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT = 6385
     }
 }

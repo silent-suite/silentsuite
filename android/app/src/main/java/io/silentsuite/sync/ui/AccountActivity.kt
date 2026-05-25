@@ -504,7 +504,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             .setPositiveButton(R.string.navigation_drawer_logout) { _, _ ->
                 lifecycleScope.launch {
                     for (acc in accounts) {
-                        teardownAccountState(acc)
+                        try {
+                            teardownAccountState(acc)
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            Logger.log.warning("Account teardown failed for ${acc.name}: $e")
+                        }
                     }
                     for (acc in accounts) {
                         accountManager.removeAccountExplicitly(acc)
@@ -816,7 +821,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     // leaving the Etebase FS cache behind causes stale stokens on re-login, which
     // makes incremental sync miss historical items.
     private suspend fun teardownAccountState(account: Account) = withContext(Dispatchers.IO) {
-        EtebaseLocalCache.clearUserCache(this@AccountActivity, account.name)
+        try {
+            EtebaseLocalCache.clearUserCache(this@AccountActivity, account.name)
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Logger.log.warning("Cache clear failed for ${account.name}: $e")
+        }
 
         try {
             val settings = AccountSettings(this@AccountActivity, account)
@@ -826,7 +836,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         } catch (e: EtebaseException) {
             Logger.log.warning("Server logout failed for ${account.name}: $e")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Logger.log.warning("Account teardown failed for ${account.name}: $e")
         }
     }

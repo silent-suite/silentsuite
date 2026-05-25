@@ -8,6 +8,7 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
@@ -224,6 +225,16 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         Sentry.captureException(err)
         console.error('[sync-provider] Failed to load calendar events:', err)
       }
+
+      // Load and subscribe account-level preferences after the Etebase item
+      // cache is ready. Preferences stay in their own local store because one
+      // field, notificationSound, is intentionally device-local.
+      try {
+        await usePreferencesSyncStore.getState().initialize()
+      } catch (err) {
+        Sentry.captureException(err)
+        console.error('[sync-provider] Failed to initialize preferences sync:', err)
+      }
     }
 
     function wireChangeHandler(): (() => void) | null {
@@ -276,6 +287,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             Sentry.captureException(err)
             console.error('[sync-provider] Failed to sync calendar events:', err)
           }
+        } else if (collectionType === 'silentsuite.preferences') {
+          try {
+            const preferenceItems = await refresher('preferences', event.collectionUid)
+            await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
+          } catch (err) {
+            Sentry.captureException(err)
+            console.error('[sync-provider] Failed to sync preferences:', err)
+          }
         }
 
         setLastSynced(new Date())
@@ -300,6 +319,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     return () => {
       if (unsubChange) unsubChange()
       if (unsubStatus) unsubStatus()
+      usePreferencesSyncStore.getState().destroy()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

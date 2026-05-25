@@ -115,6 +115,12 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
             await etebase.deleteItem(entry.collectionType, entry.itemUid!)
             return {}
           }
+          case 'move': {
+            if (!entry.targetCollectionUid) throw new Error('Missing move target collection')
+            const uid = await etebase.moveItem(entry.collectionType, entry.itemUid!, entry.content!, entry.targetCollectionUid, entry.collectionUid)
+            if (!uid) throw new Error('Move did not return item UID')
+            return { itemUid: uid }
+          }
         }
       } catch (err) {
         // Handle 409 Conflict (ETag mismatch) — server-wins strategy
@@ -129,6 +135,9 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
           )
           // Refresh the collection to get server's version
           await etebase.refreshCollection(entry.collectionType, entry.collectionUid)
+          if (entry.type === 'move' && entry.targetCollectionUid && entry.targetCollectionUid !== entry.collectionUid) {
+            await etebase.refreshCollection(entry.collectionType, entry.targetCollectionUid)
+          }
           // Return success so the entry is removed from queue
           return {}
         }
@@ -138,34 +147,40 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
     const results = await replay(executeMutation)
 
-    // Replace tempIds in domain stores for successful creates
+    // Replace tempIds in domain stores for successful creates, and old item IDs
+    // for successful collection moves that recreate the Etebase item.
     for (const result of results) {
-      if (!result.success || result.entry.type !== 'create' || !result.itemUid) continue
+      if (!result.success || !result.itemUid) continue
 
-      const { collectionType, tempId } = result.entry
-      if (!tempId) continue
+      const { collectionType } = result.entry
+      const oldId = result.entry.type === 'create' ? result.entry.tempId : result.entry.type === 'move' ? result.entry.itemUid : undefined
+      const targetCollectionUid = result.entry.type === 'move' ? result.entry.targetCollectionUid : undefined
+      if (!oldId) continue
 
       if (collectionType === 'tasks') {
         const { useTaskStore } = await import('@/app/stores/use-task-store')
         useTaskStore.getState().syncFromRemote(
           useTaskStore.getState().tasks.map((t) =>
-            t.id === tempId ? { ...t, id: result.itemUid! } : t,
+            t.id === oldId ? { ...t, id: result.itemUid!, listId: targetCollectionUid ?? t.listId } : t,
           ),
         )
       } else if (collectionType === 'contacts') {
         const { useContactStore } = await import('@/app/stores/use-contact-store')
         useContactStore.getState().syncFromRemote(
           useContactStore.getState().contacts.map((c) =>
-            c.id === tempId ? { ...c, id: result.itemUid! } : c,
+            c.id === oldId ? { ...c, id: result.itemUid!, listId: targetCollectionUid ?? c.listId } : c,
           ),
         )
       } else if (collectionType === 'calendar') {
         const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
         useCalendarStore.getState().syncFromRemote(
           useCalendarStore.getState().events.map((e) =>
-            e.id === tempId ? { ...e, id: result.itemUid! } : e,
+            e.id === oldId ? { ...e, id: result.itemUid!, calendarId: targetCollectionUid ?? e.calendarId } : e,
           ),
         )
+      } else if (collectionType === 'preferences' && result.entry.type === 'create') {
+        const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
+        usePreferencesSyncStore.getState().setRemoteItemUid(result.itemUid)
       }
     }
 
@@ -201,16 +216,18 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       }
 
       // Then refresh every collection of each type from the server
-      const [taskItems, contactItems, eventItems] = await Promise.all([
+      const [taskItems, contactItems, eventItems, preferenceItems] = await Promise.all([
         reconciledEtebase.refreshCollection('tasks'),
         reconciledEtebase.refreshCollection('contacts'),
         reconciledEtebase.refreshCollection('calendar'),
+        reconciledEtebase.refreshCollection('preferences'),
       ])
 
       // Push fresh data into stores
       const { useTaskStore } = await import('@/app/stores/use-task-store')
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
+      const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
 
       const tasks = taskItems.map((item) => {
         const task = core.deserializeTask(item.content)
@@ -229,6 +246,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         return { ...event, id: item.uid, calendarId: item.collectionUid }
       })
       useCalendarStore.getState().syncFromRemote(events)
+      await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
 
       // Purge stale queue entries (older than 24h) that may cause phantom indicators
       const stale = await getStaleEntries()

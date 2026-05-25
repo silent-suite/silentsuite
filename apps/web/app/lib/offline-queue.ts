@@ -5,14 +5,15 @@
  */
 import { logger } from '@/app/lib/logger'
 
-type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts'
-type MutationType = 'create' | 'update' | 'delete'
+type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
+type MutationType = 'create' | 'update' | 'delete' | 'move'
 
 export interface QueueEntry {
   id: string
   type: MutationType
   collectionType: CollectionTypeKey
   collectionUid?: string
+  targetCollectionUid?: string
   content?: string
   itemUid?: string
   tempId?: string
@@ -86,6 +87,9 @@ function notifyListeners(): void {
  * - create + delete (same tempId) → cancel both: remove from queue
  * - update + update (same itemUid) → merge: keep latest content
  * - update + delete (same itemUid) → replace update with delete
+ * - update + move / move + update (same itemUid) → merge into move with latest content
+ *   (unless the update returns to the source collection, then revert to update)
+ * - move + delete (same itemUid) → replace move with source delete
  *
  * Returns the id of a compacted entry if the new entry was absorbed, or null.
  */
@@ -98,12 +102,17 @@ async function compact(
   // Match by tempId (for items created offline that haven't synced yet)
   if (incoming.tempId) {
     const existing = pending.find(
-      (e) => e.tempId === incoming.tempId && e.collectionType === incoming.collectionType && e.collectionUid === incoming.collectionUid,
+      (e) => e.tempId === incoming.tempId && e.collectionType === incoming.collectionType,
     )
     if (existing) {
       if (existing.type === 'create' && incoming.type === 'update') {
-        // Merge: update content in the existing create entry
-        await updateEntry({ ...existing, content: incoming.content })
+        // Merge: update content and target collection in the existing create entry.
+        await updateEntry({ ...existing, collectionUid: incoming.collectionUid ?? existing.collectionUid, content: incoming.content })
+        return existing.id
+      }
+      if (existing.type === 'create' && incoming.type === 'create') {
+        // Merge duplicate creates for the same optimistic item, keeping latest content.
+        await updateEntry({ ...existing, collectionUid: incoming.collectionUid ?? existing.collectionUid, content: incoming.content })
         return existing.id
       }
       if (existing.type === 'create' && incoming.type === 'delete') {
@@ -116,6 +125,43 @@ async function compact(
 
   // Match by itemUid (for items that already exist on server)
   if (incoming.itemUid) {
+    const moveRelated = pending.find(
+      (e) => e.itemUid === incoming.itemUid && e.collectionType === incoming.collectionType && (e.type === 'move' || incoming.type === 'move'),
+    )
+    if (moveRelated) {
+      if (moveRelated.type === 'update' && incoming.type === 'move') {
+        await updateEntry({
+          ...moveRelated,
+          type: 'move',
+          collectionUid: incoming.collectionUid ?? moveRelated.collectionUid,
+          targetCollectionUid: incoming.targetCollectionUid,
+          content: incoming.content,
+        })
+        return moveRelated.id
+      }
+      if (moveRelated.type === 'move' && incoming.type === 'update') {
+        if (incoming.collectionUid && incoming.collectionUid === moveRelated.collectionUid) {
+          await updateEntry({ ...moveRelated, type: 'update', targetCollectionUid: undefined, content: incoming.content })
+          return moveRelated.id
+        }
+        await updateEntry({ ...moveRelated, content: incoming.content ?? moveRelated.content })
+        return moveRelated.id
+      }
+      if (moveRelated.type === 'move' && incoming.type === 'move') {
+        await updateEntry({
+          ...moveRelated,
+          collectionUid: incoming.collectionUid ?? moveRelated.collectionUid,
+          targetCollectionUid: incoming.targetCollectionUid ?? moveRelated.targetCollectionUid,
+          content: incoming.content ?? moveRelated.content,
+        })
+        return moveRelated.id
+      }
+      if (moveRelated.type === 'move' && incoming.type === 'delete') {
+        await updateEntry({ ...moveRelated, type: 'delete', targetCollectionUid: undefined, content: undefined })
+        return moveRelated.id
+      }
+    }
+
     const existing = pending.find(
       (e) => e.itemUid === incoming.itemUid && e.collectionType === incoming.collectionType && e.collectionUid === incoming.collectionUid,
     )

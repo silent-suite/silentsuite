@@ -24,4 +24,8 @@
         android:id="@+id/on_import"
         app:showAsAction="never"/>
 
+    <item android:title="@string/view_collection_export"
+        android:id="@+id/on_export"
+        app:showAsAction="never"/>
+
 </menu>

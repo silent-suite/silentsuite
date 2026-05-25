@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSyncStore } from '../use-sync-store'
+import { getPendingCount, replay } from '@/app/lib/offline-queue'
 
 const etebaseMock = vi.hoisted(() => ({
   state: {
@@ -7,7 +8,13 @@ const etebaseMock = vi.hoisted(() => ({
     syncEngine: null as { syncNow: ReturnType<typeof vi.fn> } | null,
     reconcileCollections: vi.fn().mockResolvedValue(undefined),
     refreshCollection: vi.fn().mockResolvedValue([]),
+    moveItem: vi.fn(),
   },
+}))
+
+const calendarStoreMock = vi.hoisted(() => ({
+  events: [] as { id: string; calendarId?: string }[],
+  syncFromRemote: vi.fn(),
 }))
 
 // Mock the heavy dependencies that simulateSyncCycle imports dynamically
@@ -32,7 +39,19 @@ vi.mock('@/app/stores/use-contact-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-calendar-store', () => ({
-  useCalendarStore: { getState: () => ({ syncFromRemote: vi.fn() }) },
+  useCalendarStore: {
+    getState: () => ({
+      events: calendarStoreMock.events,
+      syncFromRemote: (events: { id: string; calendarId?: string }[]) => {
+        calendarStoreMock.events = events
+        calendarStoreMock.syncFromRemote(events)
+      },
+    }),
+  },
+}))
+
+vi.mock('@/app/stores/use-preferences-sync-store', () => ({
+  usePreferencesSyncStore: { getState: () => ({ loadFromRemote: vi.fn(), setRemoteItemUid: vi.fn() }) },
 }))
 
 vi.mock('@/app/lib/offline-queue', () => ({
@@ -53,6 +72,9 @@ function resetStore() {
   etebaseMock.state.syncEngine = null
   etebaseMock.state.reconcileCollections.mockReset().mockResolvedValue(undefined)
   etebaseMock.state.refreshCollection.mockReset().mockResolvedValue([])
+  etebaseMock.state.moveItem.mockReset()
+  calendarStoreMock.events = []
+  calendarStoreMock.syncFromRemote.mockReset()
   useSyncStore.setState({
     syncStatus: 'synced',
     lastSyncedAt: null,
@@ -136,13 +158,42 @@ describe('useSyncStore', () => {
     await flushPromises()
     expect(etebaseMock.state.reconcileCollections).toHaveBeenCalledTimes(1)
     expect(syncNow).toHaveBeenCalledTimes(1)
-    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(3)
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(4)
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('tasks')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('contacts')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('calendar')
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('preferences')
 
     const reconcileOrder = etebaseMock.state.reconcileCollections.mock.invocationCallOrder[0]!
     const firstRefreshOrder = etebaseMock.state.refreshCollection.mock.invocationCallOrder[0]!
     expect(reconcileOrder).toBeLessThan(firstRefreshOrder)
+  })
+
+  it('replays queued collection moves and remaps the calendar event id', async () => {
+    etebaseMock.state.account = {}
+    etebaseMock.state.moveItem.mockResolvedValue('item-new')
+    calendarStoreMock.events = [{ id: 'item-old', calendarId: 'cal-a' }]
+    vi.mocked(getPendingCount).mockResolvedValueOnce(1)
+    vi.mocked(replay).mockImplementationOnce(async (executeMutation) => {
+      const entry = {
+        id: 'queue-1',
+        type: 'move' as const,
+        collectionType: 'calendar' as const,
+        collectionUid: 'cal-a',
+        targetCollectionUid: 'cal-b',
+        itemUid: 'item-old',
+        content: 'VEVENT content',
+        createdAt: 1,
+        retryCount: 0,
+        status: 'pending' as const,
+      }
+      const result = await executeMutation(entry)
+      return [{ entry, success: true, itemUid: result.itemUid }]
+    })
+
+    await useSyncStore.getState().replayOfflineQueue()
+
+    expect(etebaseMock.state.moveItem).toHaveBeenCalledWith('calendar', 'item-old', 'VEVENT content', 'cal-b', 'cal-a')
+    expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledWith([{ id: 'item-new', calendarId: 'cal-b' }])
   })
 })

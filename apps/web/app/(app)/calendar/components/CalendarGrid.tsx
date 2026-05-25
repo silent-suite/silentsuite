@@ -337,7 +337,9 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       .map(([id, color]) => {
         const cls = `sx-cal-color-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`
         const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : '#10b981'
-        return `.${cls} { background-color: ${safeColor} !important; color: #fff !important; }`
+        // Schedule-X nests text spans inside event chips; keep descendants readable on custom colors.
+        return `.${cls} { background-color: ${safeColor} !important; color: #fff !important; }
+.${cls} * { color: #fff !important; }`
       })
       .join('\n')
     return () => {

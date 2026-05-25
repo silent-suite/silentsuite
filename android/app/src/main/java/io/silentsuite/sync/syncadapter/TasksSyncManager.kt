@@ -74,7 +74,7 @@ class TasksSyncManager(
 
             val tasks = Task.tasksFromReader(inputReader)
             if (tasks.size == 0) {
-                Logger.log.warning("Received VCard without data, ignoring")
+                Logger.log.warning("Received VTODO without data, ignoring")
                 return
             } else if (tasks.size > 1) {
                 Logger.log.warning("Received multiple VCALs, using first one")

@@ -15,6 +15,8 @@ const offlineQueueMock = vi.hoisted(() => ({
 const coreMock = vi.hoisted(() => ({
   listCollections: vi.fn(),
   createCollection: vi.fn(),
+  createItem: vi.fn(),
+  deleteItem: vi.fn(),
   updateCollectionMeta: vi.fn(),
 }))
 
@@ -38,8 +40,14 @@ vi.mock('@/app/lib/secure-storage', () => ({
 vi.mock('@/app/stores/use-toast-store', () => toastStoreMock)
 
 beforeEach(() => {
+  offlineQueueMock.enqueue.mockClear()
+  offlineQueueMock.getAll.mockReset().mockResolvedValue([])
+  offlineQueueMock.remove.mockClear()
+  offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
   coreMock.listCollections.mockReset()
   coreMock.createCollection.mockReset()
+  coreMock.createItem.mockReset()
+  coreMock.deleteItem.mockReset()
   coreMock.updateCollectionMeta.mockReset()
   toastStoreMock.showErrorToast.mockReset()
 })
@@ -78,7 +86,7 @@ function setupStoreWithMocks(itemManager: MockItemManager, syncEngine: MockSyncE
   }
   useEtebaseStore.setState({
     account: account as any,
-    collections: { calendar: [collection as any], tasks: [], contacts: [] },
+    collections: { calendar: [collection as any], tasks: [], contacts: [], preferences: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
@@ -96,7 +104,7 @@ function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemMana
   }
   useEtebaseStore.setState({
     account: account as any,
-    collections: { calendar: collections as any[], tasks: [], contacts: [] },
+    collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
@@ -121,7 +129,7 @@ describe('useEtebaseStore.createItemsBatch', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -288,11 +296,97 @@ describe('useEtebaseStore.createItemsBatch', () => {
   })
 })
 
+describe('useEtebaseStore.moveItem', () => {
+  beforeEach(() => {
+    offlineQueueMock.enqueue.mockClear()
+    offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('recreates the item in the target collection, deletes the source item, and remaps local caches', async () => {
+    const account = { id: 'account' }
+    const sourceCollection = { uid: 'col-1' }
+    const targetCollection = { uid: 'col-2' }
+    const sourceItem = { uid: 'item-old' }
+    const targetItem = { uid: 'item-new' }
+    coreMock.createItem.mockResolvedValue(targetItem)
+    coreMock.deleteItem.mockResolvedValue(undefined)
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map([['item-old', sourceItem]]),
+      itemTypeMap: new Map([['item-old', 'calendar']]),
+      itemCollectionMap: new Map([['item-old', 'col-1']]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+
+    const result = await useEtebaseStore.getState().moveItem('calendar', 'item-old', 'VEVENT content', 'col-2')
+    const state = useEtebaseStore.getState()
+
+    expect(result).toBe('item-new')
+    expect(coreMock.createItem).toHaveBeenCalledWith(account, targetCollection, 'VEVENT content')
+    expect(coreMock.deleteItem).toHaveBeenCalledWith(account, sourceCollection, sourceItem)
+    expect(state.itemCache.has('item-old')).toBe(false)
+    expect(state.itemTypeMap.has('item-old')).toBe(false)
+    expect(state.itemCollectionMap.has('item-old')).toBe(false)
+    expect(state.itemCache.get('item-new')).toBe(targetItem)
+    expect(state.itemTypeMap.get('item-new')).toBe('calendar')
+    expect(state.itemCollectionMap.get('item-new')).toBe('col-2')
+  })
+
+  it('keeps the created target item and queues source delete if the source delete fails offline', async () => {
+    const account = { id: 'account' }
+    const sourceCollection = { uid: 'col-1' }
+    const targetCollection = { uid: 'col-2' }
+    const sourceItem = { uid: 'item-old' }
+    const targetItem = { uid: 'item-new' }
+    const offlineError = new TypeError('Failed to fetch')
+    coreMock.createItem.mockResolvedValue(targetItem)
+    coreMock.deleteItem.mockRejectedValueOnce(offlineError)
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map([['item-old', sourceItem]]),
+      itemTypeMap: new Map([['item-old', 'calendar']]),
+      itemCollectionMap: new Map([['item-old', 'col-1']]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+
+    const result = await useEtebaseStore.getState().moveItem('calendar', 'item-old', 'VEVENT content', 'col-2')
+    const state = useEtebaseStore.getState()
+
+    expect(result).toBe('item-new')
+    expect(coreMock.createItem).toHaveBeenCalledWith(account, targetCollection, 'VEVENT content')
+    expect(coreMock.deleteItem).toHaveBeenCalledTimes(1)
+    expect(offlineQueueMock.enqueue).toHaveBeenCalledWith({
+      type: 'delete',
+      collectionType: 'calendar',
+      collectionUid: 'col-1',
+      itemUid: 'item-old',
+    })
+    expect(state.itemCache.get('item-old')).toBe(sourceItem)
+    expect(state.itemCache.get('item-new')).toBe(targetItem)
+    expect(state.itemCollectionMap.get('item-old')).toBe('col-1')
+    expect(state.itemCollectionMap.get('item-new')).toBe('col-2')
+  })
+})
+
 describe('useEtebaseStore.deleteItemsInCollection', () => {
   beforeEach(() => {
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -314,7 +408,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }, { uid: 'col-2' }] as any[], tasks: [], contacts: [] },
+      collections: { calendar: [{ uid: 'col-1' }, { uid: 'col-2' }] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map([
         ['item-1', deleteItemOne],
         ['item-2', deleteItemTwo],
@@ -370,7 +464,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -408,7 +502,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(items.map((item) => [item.uid, item])),
       itemTypeMap: new Map(items.map((item) => [item.uid, 'calendar' as const])),
       itemCollectionMap: new Map(items.map((item) => [item.uid, 'col-1'])),
@@ -439,7 +533,7 @@ describe('useEtebaseStore.refreshCollection', () => {
   beforeEach(() => {
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -470,7 +564,7 @@ describe('useEtebaseStore.refreshCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: collections as any[], tasks: [], contacts: [] },
+      collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map([
         ['old-col-1', staleItem],
         ['keep-col-2', survivorItem],
@@ -512,7 +606,7 @@ describe('useEtebaseStore.refreshCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map([['existing', existingItem]]),
       itemTypeMap: new Map([['existing', 'calendar']]),
       itemCollectionMap: new Map([['existing', 'col-1']]),
@@ -556,7 +650,7 @@ describe('useEtebaseStore.reconcileCollections', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -588,7 +682,7 @@ describe('useEtebaseStore.reconcileCollections', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [deletedCalendar] as any[], tasks: [taskCollection] as any[], contacts: [contactCollection] as any[] },
+      collections: { calendar: [deletedCalendar] as any[], tasks: [taskCollection] as any[], contacts: [contactCollection] as any[], preferences: [] },
       itemCache: new Map([['event-1', mockItem('event-1', 'deleted event')]]),
       itemTypeMap: new Map([['event-1', 'calendar']]),
       itemCollectionMap: new Map([['event-1', 'deleted-cal']]),
@@ -634,7 +728,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -658,7 +752,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [collection] as any[], tasks: [], contacts: [] },
+      collections: { calendar: [collection] as any[], tasks: [], contacts: [], preferences: [] },
       isInitialized: true,
     })
 
@@ -694,7 +788,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [], tasks: [collection] as any[], contacts: [] },
+      collections: { calendar: [], tasks: [collection] as any[], contacts: [], preferences: [] },
       isInitialized: true,
     })
 
@@ -730,7 +824,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [], tasks: [], contacts: [collection] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [collection] as any[], preferences: [] },
       isInitialized: true,
     })
 
@@ -769,6 +863,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
         calendar: type === 'calendar' ? [collection] as any[] : [],
         tasks: type === 'tasks' ? [collection] as any[] : [],
         contacts: type === 'contacts' ? [collection] as any[] : [],
+        preferences: [],
       },
       isInitialized: true,
     })

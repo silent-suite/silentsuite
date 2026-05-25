@@ -88,19 +88,26 @@ function addUntilToRRule(rrule: string, untilDate: Date): string {
 }
 
 /** Sync a single event to Etebase (used by create/update helpers) */
-async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update', tempId?: string): Promise<string | null> {
+async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update', tempId?: string, sourceCalendarId?: string): Promise<string | null> {
   const etebase = useEtebaseStore.getState()
   if (!etebase.account) return null
 
+  let content: string | undefined
   try {
     const { serializeCalendarEvent } = await import('@silentsuite/core')
-    const content = serializeCalendarEvent(event)
+    content = serializeCalendarEvent(event)
     if (mode === 'create') {
       return await etebase.createItem('calendar', content, tempId, event.calendarId)
     } else {
       // For updates of offline-created items, enqueue with tempId for compaction
       const itemInCache = etebase.itemCache.has(event.id)
       if (itemInCache) {
+        const currentCollectionUid = etebase.itemCollectionMap.get(event.id) ?? sourceCalendarId
+        if (event.calendarId && currentCollectionUid && event.calendarId !== currentCollectionUid) {
+          const movedItemUid = await etebase.moveItem('calendar', event.id, content, event.calendarId, currentCollectionUid)
+          if (!movedItemUid) throw new Error(`Failed to move event ${event.id} to calendar ${event.calendarId}`)
+          return movedItemUid
+        }
         await etebase.updateItem('calendar', event.id, content)
         return event.id
       } else {
@@ -111,9 +118,27 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
     }
   } catch (err) {
     console.error(`[calendar-store] Failed to ${mode} event in Etebase:`, err)
-    const { isOfflineError } = await import('@/app/lib/offline-queue')
+    const { enqueue, isOfflineError } = await import('@/app/lib/offline-queue')
     if (!isOfflineError(err)) {
       showErrorToast('Failed to save event. Please try again.')
+    } else if (mode === 'update' && content) {
+      const latestEtebase = useEtebaseStore.getState()
+      const sourceCollectionUid = latestEtebase.itemCollectionMap.get(event.id) ?? sourceCalendarId
+      if (
+        latestEtebase.itemCache.has(event.id)
+        && sourceCollectionUid
+        && event.calendarId
+        && event.calendarId !== sourceCollectionUid
+      ) {
+        await enqueue({
+          type: 'move',
+          collectionType: 'calendar',
+          collectionUid: sourceCollectionUid,
+          targetCollectionUid: event.calendarId,
+          content,
+          itemUid: event.id,
+        })
+      }
     }
     return null
   }
@@ -185,7 +210,15 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     set({ events: next })
 
     // Sync to Etebase
-    await syncEventToEtebase(updated, 'update')
+    const syncedItemUid = await syncEventToEtebase(updated, 'update', undefined, events[index].calendarId)
+    if (syncedItemUid && syncedItemUid !== id) {
+      set((state) => ({
+        events: state.events.map((e) =>
+          e.id === id ? { ...e, id: syncedItemUid } : e,
+        ),
+        selectedEventId: state.selectedEventId === id ? syncedItemUid : state.selectedEventId,
+      }))
+    }
   },
 
   deleteEvent: async (id: string) => {
@@ -262,7 +295,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         set({ events: next })
 
         // Sync both changes to Etebase
-        await syncEventToEtebase(updatedMaster, 'update')
+        await syncEventToEtebase(updatedMaster, 'update', undefined, master.calendarId)
         const newItemUid = await syncEventToEtebase(standaloneEvent, 'create')
         if (newItemUid) {
           set((state) => ({
@@ -306,7 +339,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         set({ events: next })
 
         // Sync both changes to Etebase
-        await syncEventToEtebase(updatedMaster, 'update')
+        await syncEventToEtebase(updatedMaster, 'update', undefined, master.calendarId)
         const newItemUid = await syncEventToEtebase(newRecurring, 'create')
         if (newItemUid) {
           set((state) => ({
@@ -326,7 +359,15 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         set({ events: next })
 
         // Sync to Etebase
-        await syncEventToEtebase(updated, 'update')
+        const movedItemUid = await syncEventToEtebase(updated, 'update', undefined, master.calendarId)
+        if (movedItemUid && movedItemUid !== id) {
+          set((state) => ({
+            events: state.events.map((e) =>
+              e.id === id ? { ...e, id: movedItemUid } : e,
+            ),
+            selectedEventId: state.selectedEventId === id ? movedItemUid : state.selectedEventId,
+          }))
+        }
         break
       }
     }

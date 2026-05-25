@@ -27,12 +27,50 @@ enum class AndroidExportKind(
 
 object AndroidDataExporter {
     fun suggestedFileName(kind: AndroidExportKind): String {
-        val date = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-        val extensionStart = kind.fileName.lastIndexOf('.')
-        return if (extensionStart >= 0) {
-            kind.fileName.substring(0, extensionStart) + "-$date" + kind.fileName.substring(extensionStart)
-        } else {
-            kind.fileName + "-$date"
+        return datedFileName(kind.fileName)
+    }
+
+    fun collectionMimeType(collectionType: String): String {
+        return when (collectionType) {
+            Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS -> "text/calendar"
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK -> "text/vcard"
+            else -> "text/plain"
+        }
+    }
+
+    fun suggestedCollectionFileName(collectionType: String, displayName: String?): String {
+        val fallback = when (collectionType) {
+            Constants.ETEBASE_TYPE_CALENDAR -> "calendar"
+            Constants.ETEBASE_TYPE_TASKS -> "tasks"
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK -> "contacts"
+            else -> "collection"
+        }
+        val extension = when (collectionType) {
+            Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS -> ".ics"
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK -> ".vcf"
+            else -> ".txt"
+        }
+        val baseName = displayName
+            ?.trim()
+            ?.replace(Regex("[^A-Za-z0-9._-]+"), "-")
+            ?.trim('-', '.', '_')
+            ?.takeIf { it.isNotBlank() }
+            ?: fallback
+        return datedFileName("$baseName$extension")
+    }
+
+    fun writeCollectionExport(
+        collectionType: String,
+        itemContents: List<String>,
+        outputStream: OutputStream,
+    ) {
+        val exportData = when (collectionType) {
+            Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS -> calendarData(itemContents)
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK -> contactData(itemContents)
+            else -> itemContents.filter { it.isNotBlank() }.joinToString("\r\n")
+        }
+        OutputStreamWriter(outputStream, StandardCharsets.UTF_8).use { writer ->
+            writer.write(exportData)
         }
     }
 
@@ -76,14 +114,31 @@ object AndroidDataExporter {
 
     private data class ExportData(val calendar: String, val tasks: String, val contacts: String)
 
+    private fun datedFileName(fileName: String): String {
+        val date = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+        val extensionStart = fileName.lastIndexOf('.')
+        return if (extensionStart >= 0) {
+            fileName.substring(0, extensionStart) + "-$date" + fileName.substring(extensionStart)
+        } else {
+            fileName + "-$date"
+        }
+    }
+
     private fun calendarData(cache: EtebaseLocalCache, collectionManager: com.etebase.client.CollectionManager, type: String): String {
-        val body = cache.collectionList(collectionManager)
+        val contents = cache.collectionList(collectionManager)
             .filter { it.collectionType == type }
             .flatMap { collection ->
                 val itemManager = collectionManager.getItemManager(collection.col)
                 cache.itemList(itemManager, collection.col.uid).map { it.content }
             }
-            .joinToString("\r\n") { calendarBody(it) }
+        return calendarData(contents)
+    }
+
+    private fun calendarData(itemContents: List<String>): String {
+        val body = itemContents
+            .map { calendarBody(it) }
+            .filter { it.isNotBlank() }
+            .joinToString("\r\n")
 
         return buildString {
             append("BEGIN:VCALENDAR\r\n")
@@ -98,12 +153,18 @@ object AndroidDataExporter {
     }
 
     private fun contactData(cache: EtebaseLocalCache, collectionManager: com.etebase.client.CollectionManager): String {
-        return cache.collectionList(collectionManager)
+        val contents = cache.collectionList(collectionManager)
             .filter { it.collectionType == Constants.ETEBASE_TYPE_ADDRESS_BOOK }
             .flatMap { collection ->
                 val itemManager = collectionManager.getItemManager(collection.col)
                 cache.itemList(itemManager, collection.col.uid).map { it.content.trim() }
             }
+        return contactData(contents)
+    }
+
+    private fun contactData(itemContents: List<String>): String {
+        return itemContents
+            .map { it.trim() }
             .filter { it.isNotBlank() }
             .joinToString("\r\n") { it }
             .let { if (it.isBlank()) "" else "$it\r\n" }

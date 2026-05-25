@@ -397,6 +397,7 @@
     <string name="create_collection_description">Description (optional):</string>
     <string name="view_collection_edit">Edit</string>
     <string name="view_collection_import">Import</string>
+    <string name="view_collection_export">Export</string>
     <string name="view_collection_members">Manage Members</string>
     <string name="create_collection_create">Save</string>
     <string name="delete_collection">Delete</string>

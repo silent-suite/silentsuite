@@ -93,12 +93,14 @@ function TaskQuickAdd() {
   const createTask = useTaskStore((s) => s.createTask)
   const canWrite = useAuthStore((s) => s.canWrite())
   const taskLists = useTaskListStore((s) => s.lists)
+  const activeListId = useTaskListStore((s) => s.activeListId)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const defaultListId = useMemo(() => {
+    if (activeListId !== 'all' && taskLists.some((list) => list.id === activeListId)) return activeListId
     const visible = taskLists.filter(l => l.visible)
     return visible.length === 1 ? visible[0]!.id : 'default'
-  }, [taskLists])
+  }, [activeListId, taskLists])
 
   const handleSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -157,6 +159,7 @@ function TaskDialog({
   const createTask = useTaskStore((s) => s.createTask)
   const updateTask = useTaskStore((s) => s.updateTask)
   const taskLists = useTaskListStore((s) => s.lists)
+  const activeListId = useTaskListStore((s) => s.activeListId)
   const titleRef = useRef<HTMLInputElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
 
@@ -164,9 +167,10 @@ function TaskDialog({
   useFocusTrap(dialogRef)
 
   const defaultListId = useMemo(() => {
+    if (activeListId !== 'all' && taskLists.some((list) => list.id === activeListId)) return activeListId
     const visible = taskLists.filter(l => l.visible)
     return visible.length === 1 ? visible[0]!.id : 'default'
-  }, [taskLists])
+  }, [activeListId, taskLists])
 
   const [title, setTitle] = useState(task?.title ?? '')
   const [description, setDescription] = useState(task?.description ?? '')

@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useCallback, useRef } from 'react'
-import { Plus, Trash2, Star } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { CollectionListItem } from '@/app/components/CollectionListItem'
 
 export function CalendarListPanel() {
   const { calendars, defaultCalendarId, toggleVisibility, setDefaultCalendar, getNextColor } = useCalendarListStore()
@@ -37,6 +38,16 @@ export function CalendarListPanel() {
     void updateCollectionMeta('calendar', id, { color })
   }, [updateCollectionMeta])
 
+  const handleRename = useCallback((id: string, name: string) => {
+    void updateCollectionMeta('calendar', id, { name })
+  }, [updateCollectionMeta])
+
+  const handleSetDefault = useCallback((id: string) => {
+    const calendar = calendars.find((cal) => cal.id === id)
+    if (calendar && !calendar.visible) toggleVisibility(id)
+    setDefaultCalendar(id)
+  }, [calendars, setDefaultCalendar, toggleVisibility])
+
   return (
     <div className="px-3 py-2">
       <div className="flex items-center justify-between mb-1">
@@ -54,60 +65,22 @@ export function CalendarListPanel() {
 
       <div className="space-y-0.5">
         {calendars.map((cal) => (
-          <div
+          <CollectionListItem
             key={cal.id}
-            className="group flex items-center gap-2 rounded px-1 py-1 hover:bg-[rgb(var(--background))] transition-colors"
-          >
-            <button
-              onClick={() => toggleVisibility(cal.id)}
-              className="flex items-center gap-2 flex-1 min-w-0"
-            >
-              <div
-                className="h-3 w-3 shrink-0 rounded-sm"
-                style={{
-                  backgroundColor: cal.visible ? cal.color : 'transparent',
-                  border: cal.visible ? 'none' : `2px solid ${cal.color}`,
-                }}
-              />
-              <span className={`text-xs truncate ${
-                cal.visible ? 'text-[rgb(var(--foreground))]' : 'text-[rgb(var(--muted))]'
-              }`}>
-                {cal.name}
-              </span>
-            </button>
-            <div className="flex items-center gap-0.5">
-              <input
-                type="color"
-                value={cal.color}
-                onChange={(e) => handleColorChange(cal.id, e.target.value)}
-                className="h-4 w-4 cursor-pointer rounded border border-[rgb(var(--border))] bg-transparent p-0"
-                aria-label={`Change ${cal.name} color`}
-                title="Change color"
-              />
-              {/* Default indicator / set as default */}
-              <button
-                onClick={() => setDefaultCalendar(cal.id)}
-                className={`rounded p-0.5 transition-colors ${
-                  cal.id === defaultCalendarId
-                    ? 'text-amber-500'
-                    : 'hidden group-hover:block text-[rgb(var(--muted))] hover:text-amber-500'
-                }`}
-                aria-label={cal.id === defaultCalendarId ? 'Default calendar' : `Set ${cal.name} as default`}
-                title={cal.id === defaultCalendarId ? 'Default calendar' : 'Set as default'}
-              >
-                <Star className={`h-3 w-3 ${cal.id === defaultCalendarId ? 'fill-current' : ''}`} />
-              </button>
-              {calendars.length > 1 && (
-                <button
-                  onClick={() => handleDelete(cal.id, cal.name)}
-                  className="hidden group-hover:block rounded p-0.5 text-[rgb(var(--muted))] hover:text-red-500 transition-colors"
-                  aria-label={`Remove ${cal.name}`}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          </div>
+            name={cal.name}
+            color={cal.color}
+            visible={cal.visible}
+            isDefault={cal.id === defaultCalendarId}
+            canDelete={calendars.length > 1}
+            itemLabel="calendar"
+            defaultLabel="Default calendar"
+            deleteLabel="Delete calendar"
+            onToggleVisibility={() => toggleVisibility(cal.id)}
+            onRename={(name) => handleRename(cal.id, name)}
+            onSetDefault={() => handleSetDefault(cal.id)}
+            onColorChange={(color) => handleColorChange(cal.id, color)}
+            onDelete={() => handleDelete(cal.id, cal.name)}
+          />
         ))}
 
         {isAdding && (

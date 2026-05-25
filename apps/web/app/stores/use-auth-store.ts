@@ -496,6 +496,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     // Destroy Etebase store (stops SyncEngine, clears SDK objects)
     try {
+      const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
+      usePreferencesSyncStore.getState().destroy()
       const { useEtebaseStore } = await import('@/app/stores/use-etebase-store')
       useEtebaseStore.getState().destroy()
     } catch (err) {
@@ -526,6 +528,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.removeItem('silentsuite-contacts')
     localStorage.removeItem('silentsuite-calendar')
     localStorage.removeItem('etebase_session')
+
+    // Keep device-local notificationSound, but avoid uploading a previous
+    // account's synced preference fields if another user signs in here.
+    try {
+      const { usePreferencesStore } = await import('@/app/stores/use-preferences-store')
+      usePreferencesStore.getState().resetSyncedPreferences()
+    } catch (err) {
+      logger.warn('[auth-store] Failed to reset synced preferences during logout:', err)
+    }
 
     syncAdminCookie(false)
     set({ user: null, isAuthenticated: false, error: null, subscriptionStatus: null })
