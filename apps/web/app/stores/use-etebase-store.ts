@@ -70,8 +70,9 @@ function getServerUrl(): string {
 const COLLECTION_TYPE_CALENDAR = 'etebase.vevent'
 const COLLECTION_TYPE_TASKS = 'etebase.vtodo'
 const COLLECTION_TYPE_CONTACTS = 'etebase.vcard'
+const COLLECTION_TYPE_PREFERENCES = 'silentsuite.preferences'
 
-type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts'
+type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
 type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
 type EtebaseCore = typeof import('@silentsuite/core')
 
@@ -81,19 +82,22 @@ const COLLECTION_DEFINITIONS: [CollectionTypeKey, string, string][] = [
   ['calendar', COLLECTION_TYPE_CALENDAR, 'Personal Calendar'],
   ['tasks', COLLECTION_TYPE_TASKS, 'Personal Tasks'],
   ['contacts', COLLECTION_TYPE_CONTACTS, 'Personal Contacts'],
+  ['preferences', COLLECTION_TYPE_PREFERENCES, 'Preferences'],
 ]
 
 function collectionTypeToKey(ct: string): CollectionTypeKey | null {
   if (ct === COLLECTION_TYPE_CALENDAR) return 'calendar'
   if (ct === COLLECTION_TYPE_TASKS) return 'tasks'
   if (ct === COLLECTION_TYPE_CONTACTS) return 'contacts'
+  if (ct === COLLECTION_TYPE_PREFERENCES) return 'preferences'
   return null
 }
 
 function keyToCollectionType(type: CollectionTypeKey): string {
   if (type === 'calendar') return COLLECTION_TYPE_CALENDAR
   if (type === 'tasks') return COLLECTION_TYPE_TASKS
-  return COLLECTION_TYPE_CONTACTS
+  if (type === 'contacts') return COLLECTION_TYPE_CONTACTS
+  return COLLECTION_TYPE_PREFERENCES
 }
 
 async function ensureCollectionsForAccount(
@@ -104,6 +108,7 @@ async function ensureCollectionsForAccount(
     calendar: [],
     tasks: [],
     contacts: [],
+    preferences: [],
   }
 
   for (const [key, colType, defaultName] of COLLECTION_DEFINITIONS) {
@@ -229,6 +234,8 @@ async function hydrateListStores(collections: Record<CollectionTypeKey, any[]>):
 }
 
 async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid: string, itemUids?: string[]): Promise<number> {
+  if (type === 'preferences') return 0
+
   const itemUidSet = itemUids ? new Set(itemUids) : null
 
   if (type === 'calendar') {
@@ -300,7 +307,15 @@ async function removeQueuedMutationsForCollection(type: CollectionTypeKey, colle
 function collectionItemNoun(type: CollectionTypeKey): string {
   if (type === 'calendar') return 'events'
   if (type === 'tasks') return 'tasks'
+  if (type === 'preferences') return 'preferences'
   return 'contacts'
+}
+
+function collectionDisplayName(type: CollectionTypeKey): string {
+  if (type === 'calendar') return 'calendar'
+  if (type === 'tasks') return 'task list'
+  if (type === 'contacts') return 'address book'
+  return 'preferences'
 }
 
 interface EtebaseState {
@@ -406,7 +421,7 @@ interface EtebaseActions {
 
 export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) => ({
   account: null,
-  collections: { calendar: [], tasks: [], contacts: [] },
+  collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
   itemCache: new Map(),
   itemTypeMap: new Map(),
   itemCollectionMap: new Map(),
@@ -540,7 +555,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return collection.uid
     } catch (err) {
       console.error(`[etebase-store] Failed to create ${type} collection:`, err)
-      showErrorToast(`Failed to create ${type === 'calendar' ? 'calendar' : type === 'tasks' ? 'task list' : 'address book'}. Please try again.`)
+      showErrorToast(`Failed to create ${collectionDisplayName(type)}. Please try again.`)
       return null
     }
   },
@@ -553,7 +568,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return false
     }
     if (collections[type].length <= 1) {
-      showErrorToast(`Create another ${type === 'calendar' ? 'calendar' : type === 'tasks' ? 'task list' : 'address book'} before deleting this one.`)
+      showErrorToast(`Create another ${collectionDisplayName(type)} before deleting this one.`)
       return false
     }
 
@@ -592,7 +607,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return true
     } catch (err) {
       console.error(`[etebase-store] Failed to delete ${type} collection ${collectionUid}:`, err)
-      showErrorToast(`Failed to delete ${type === 'calendar' ? 'calendar' : type === 'tasks' ? 'task list' : 'address book'}. Please try again.`)
+      showErrorToast(`Failed to delete ${collectionDisplayName(type)}. Please try again.`)
       return false
     }
   },
@@ -627,7 +642,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return true
     } catch (err) {
       console.error(`[etebase-store] Failed to update ${type} collection ${collectionUid}:`, err)
-      showErrorToast(`Failed to update ${type === 'calendar' ? 'calendar' : type === 'tasks' ? 'task list' : 'address book'}. Please try again.`)
+      showErrorToast(`Failed to update ${collectionDisplayName(type)}. Please try again.`)
       return false
     }
   },
@@ -828,7 +843,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to create ${type} item:`, err)
-        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : 'contact'}. Please try again.`)
+        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
       return null
     }
@@ -943,7 +958,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (permanentFailure) {
         const succeeded = lastSuccessfulItemIndex + 1
         const total = items.length
-        const noun = type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : 'contacts'
+        const noun = type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : type === 'contacts' ? 'contacts' : 'preferences'
         console.error(`[etebase-store] Batch import failed after retries (${succeeded}/${total} ${noun} imported):`, permanentFailure)
         if (succeeded > 0) {
           showErrorToast(`Imported ${succeeded} of ${total} ${noun}. Please try again to import the rest.`)
@@ -965,7 +980,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to batch create ${type} items:`, err)
-        showErrorToast(`Failed to import ${type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : 'contacts'}. Please try again.`)
+        showErrorToast(`Failed to import ${type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : type === 'contacts' ? 'contacts' : 'preferences'}. Please try again.`)
       }
       return contents.map(() => null)
     } finally {
@@ -999,7 +1014,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to update ${type} item ${itemUid}:`, err)
-        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : 'contact'}. Please try again.`)
+        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
     }
   },
@@ -1036,7 +1051,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to delete ${type} item ${itemUid}:`, err)
-        showErrorToast(`Failed to delete ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : 'contact'}. Please try again.`)
+        showErrorToast(`Failed to delete ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
     }
   },
@@ -1164,7 +1179,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
     set({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),

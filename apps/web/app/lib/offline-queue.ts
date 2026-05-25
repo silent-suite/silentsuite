@@ -5,7 +5,7 @@
  */
 import { logger } from '@/app/lib/logger'
 
-type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts'
+type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
 type MutationType = 'create' | 'update' | 'delete'
 
 export interface QueueEntry {
@@ -103,6 +103,11 @@ async function compact(
     if (existing) {
       if (existing.type === 'create' && incoming.type === 'update') {
         // Merge: update content in the existing create entry
+        await updateEntry({ ...existing, content: incoming.content })
+        return existing.id
+      }
+      if (existing.type === 'create' && incoming.type === 'create') {
+        // Merge duplicate creates for the same optimistic item, keeping latest content.
         await updateEntry({ ...existing, content: incoming.content })
         return existing.id
       }

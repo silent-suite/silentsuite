@@ -219,6 +219,17 @@ describe('offline-queue', () => {
       expect(all[0].tempId).toBe('temp-1')
     })
 
+    it('create + create with same tempId → keeps one create with latest content', async () => {
+      await enqueue({ type: 'create', collectionType: 'preferences', content: 'original', tempId: 'prefs' })
+      await enqueue({ type: 'create', collectionType: 'preferences', content: 'updated', tempId: 'prefs' })
+
+      const all = await getAll()
+      expect(all).toHaveLength(1)
+      expect(all[0].type).toBe('create')
+      expect(all[0].content).toBe('updated')
+      expect(all[0].tempId).toBe('prefs')
+    })
+
     it('create + delete with same tempId → cancels both', async () => {
       await enqueue({ type: 'create', collectionType: 'contacts', content: 'vcard', tempId: 'temp-2' })
       await enqueue({ type: 'delete', collectionType: 'contacts', tempId: 'temp-2' })

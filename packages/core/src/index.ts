@@ -16,6 +16,7 @@ export {
   COLLECTION_TYPE_CALENDAR,
   COLLECTION_TYPE_TASKS,
   COLLECTION_TYPE_CONTACTS,
+  COLLECTION_TYPE_PREFERENCES,
 } from './etebase/constants.js';
 export type { CollectionType } from './etebase/constants.js';
 
@@ -80,6 +81,29 @@ export type { Contact } from './models/contact.js';
 
 // Model types
 export type { DateRange, Priority, SortOrder } from './models/types.js';
+
+// Synced preferences model
+export {
+  SYNCED_PREFERENCE_KEYS,
+  DEFAULT_SYNCED_PREFERENCES,
+  createSyncedPreferences,
+  normalizeSyncedPreferences,
+  getSyncedPreferenceValues,
+  getSyncedPreferenceTimestamps,
+  mergeSyncedPreferences,
+  serializePreferences,
+  deserializePreferences,
+} from './models/preferences.js';
+export type {
+  SyncedPreferenceKey,
+  TimeFormat,
+  FirstDayOfWeek,
+  DefaultReminder,
+  SyncedPreferenceValues,
+  SyncedPreferenceTimestamps,
+  VersionedPreference,
+  SyncedPreferencesV1,
+} from './models/preferences.js';
 
 // iCal parser
 export {

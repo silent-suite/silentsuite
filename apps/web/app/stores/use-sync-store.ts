@@ -166,6 +166,9 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
             e.id === tempId ? { ...e, id: result.itemUid! } : e,
           ),
         )
+      } else if (collectionType === 'preferences') {
+        const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
+        usePreferencesSyncStore.getState().setRemoteItemUid(result.itemUid)
       }
     }
 
@@ -201,16 +204,18 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       }
 
       // Then refresh every collection of each type from the server
-      const [taskItems, contactItems, eventItems] = await Promise.all([
+      const [taskItems, contactItems, eventItems, preferenceItems] = await Promise.all([
         reconciledEtebase.refreshCollection('tasks'),
         reconciledEtebase.refreshCollection('contacts'),
         reconciledEtebase.refreshCollection('calendar'),
+        reconciledEtebase.refreshCollection('preferences'),
       ])
 
       // Push fresh data into stores
       const { useTaskStore } = await import('@/app/stores/use-task-store')
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
+      const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
 
       const tasks = taskItems.map((item) => {
         const task = core.deserializeTask(item.content)
@@ -229,6 +234,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         return { ...event, id: item.uid, calendarId: item.collectionUid }
       })
       useCalendarStore.getState().syncFromRemote(events)
+      await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
 
       // Purge stale queue entries (older than 24h) that may cause phantom indicators
       const stale = await getStaleEntries()

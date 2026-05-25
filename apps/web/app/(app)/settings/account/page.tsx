@@ -5,6 +5,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
+import type { DefaultReminder } from '@silentsuite/core'
 
 interface AccountDetails {
   id: string
@@ -180,7 +181,7 @@ export default function AccountPage() {
                 <p className="text-xs text-[rgb(var(--muted))]">Default reminder for new events</p>
                 <select
                   value={defaultReminder}
-                  onChange={(e) => setDefaultReminder(e.target.value)}
+                  onChange={(e) => setDefaultReminder(e.target.value as DefaultReminder)}
                   className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="none">None</option>
