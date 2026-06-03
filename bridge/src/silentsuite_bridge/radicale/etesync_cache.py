@@ -70,3 +70,9 @@ def etesync_for_user(user):
     with _get_etesync_lock:
         ret = _etesync_cache.etesync_for_user(user)
         yield ret
+
+
+def forget_etesync_user(user):
+    """Evict one user's restored Etebase session from the runtime cache."""
+    with _get_etesync_lock:
+        _etesync_cache._etesync_cache.pop(user, None)

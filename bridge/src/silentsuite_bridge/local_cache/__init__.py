@@ -21,6 +21,92 @@ from . import db, models
 logger = logging.getLogger("silentsuite-bridge.cache")
 
 
+def _init_cache_database(db_path=None):
+    """Initialize the cache DB proxy only when it is not already initialized.
+
+    When tests or the running bridge have already initialized the proxy, keep
+    using that database even if a db_path was supplied.
+    """
+    database = getattr(db.database_proxy, "obj", None)
+    if database is not None:
+        return database, False
+
+    from playhouse.sqlite_ext import SqliteExtDatabase
+
+    path = db_path or config.DATABASE_FILE
+    directory = os.path.dirname(path)
+    if directory != "" and not os.path.exists(directory):
+        os.makedirs(directory)
+
+    database = SqliteExtDatabase(
+        path,
+        pragmas={
+            "journal_mode": "wal",
+            "foreign_keys": 1,
+        },
+    )
+    db.database_proxy.initialize(database)
+    return database, True
+
+
+def _ensure_cache_tables(database):
+    database.create_tables(
+        [models.Config, models.User, models.CollectionEntity, models.ItemEntity, models.HrefMapper],
+        safe=True,
+    )
+    models.Config.get_or_create(defaults={"db_version": 1})
+
+
+def clear_cached_user(username, db_path=None):
+    """Delete one user's cached rows without needing a live Etebase session.
+
+    Returns True when a cache user row existed and was deleted. Missing users are
+    an idempotent no-op.
+    """
+    normalized = (username or "").strip()
+    if not normalized:
+        raise ValueError("Account username is required")
+
+    database, initialized_here = _init_cache_database(db_path)
+    if database.is_closed():
+        database.connect(reuse_if_open=True)
+
+    try:
+        _ensure_cache_tables(database)
+        user = models.User.get_or_none(models.User.username == normalized)
+        if user is None:
+            return False
+
+        collection_ids = [
+            col.id
+            for col in models.CollectionEntity.select(models.CollectionEntity.id).where(
+                models.CollectionEntity.local_user == user
+            )
+        ]
+        if collection_ids:
+            item_ids = [
+                item.id
+                for item in models.ItemEntity.select(models.ItemEntity.id).where(
+                    models.ItemEntity.collection.in_(collection_ids)
+                )
+            ]
+            if item_ids:
+                models.HrefMapper.delete().where(
+                    models.HrefMapper.content.in_(item_ids)
+                ).execute()
+            models.ItemEntity.delete().where(
+                models.ItemEntity.collection.in_(collection_ids)
+            ).execute()
+            models.CollectionEntity.delete().where(
+                models.CollectionEntity.id.in_(collection_ids)
+            ).execute()
+        user.delete_instance()
+        return True
+    finally:
+        if initialized_here and not database.is_closed():
+            database.close()
+
+
 def _extract_uid(vobject_item):
     """Extract UID from a vobject item, handling wrapper components.
 
@@ -331,13 +417,8 @@ class Etebase:
                 raise DoesNotExist(e)
 
     def clear_user(self):
-        with db.database_proxy:
-            for col in self.user.collections:
-                for item in col.items:
-                    item.delete_instance()
-                col.delete_instance()
-            self.user.delete_instance()
-            self.user = None
+        clear_cached_user(self.username)
+        self.user = None
 
 
 class Collection:

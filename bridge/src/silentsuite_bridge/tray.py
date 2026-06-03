@@ -72,14 +72,13 @@ def _create_icon_image(color, size=64):
     return image
 
 
-def _get_user_email():
-    """Get the first configured user email."""
+def _get_accounts():
+    """Get configured account emails."""
     try:
         creds = Credentials()
-        users = creds.list_users()
-        return users[0] if users else None
+        return creds.list_users()
     except Exception:
-        return None
+        return []
 
 
 class BridgeTray:
@@ -98,7 +97,7 @@ class BridgeTray:
 
     def _build_menu(self):
         """Build the tray menu."""
-        email = _get_user_email()
+        accounts = _get_accounts()
         base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}"
 
         status_text = {
@@ -108,8 +107,27 @@ class BridgeTray:
             "disconnected": "Disconnected",
         }.get(self._state, self._state)
 
-        caldav_url = f"{base_url}/{email}/" if email else "Not configured"
-        carddav_url = caldav_url
+        if accounts:
+            account_items = []
+            for email in accounts:
+                dav_url = f"{base_url}/{email}/"
+                account_items.append(pystray.MenuItem(
+                    email,
+                    pystray.Menu(
+                        pystray.MenuItem(
+                            "Copy CalDAV URL",
+                            lambda url=dav_url: self._copy_to_clipboard(url),
+                        ),
+                        pystray.MenuItem(
+                            "Copy CardDAV URL",
+                            lambda url=dav_url: self._copy_to_clipboard(url),
+                        ),
+                    ),
+                ))
+        else:
+            account_items = [
+                pystray.MenuItem("No accounts configured", None, enabled=False),
+            ]
 
         return pystray.Menu(
             pystray.MenuItem(
@@ -118,28 +136,19 @@ class BridgeTray:
                 enabled=False,
             ),
             pystray.MenuItem(
-                f"Account: {email or 'Not logged in'}",
+                f"Accounts: {len(accounts)} configured",
                 None,
                 enabled=False,
             ),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "Copy CalDAV URL",
-                lambda: self._copy_to_clipboard(caldav_url),
-                enabled=email is not None,
-            ),
-            pystray.MenuItem(
-                "Copy CardDAV URL",
-                lambda: self._copy_to_clipboard(carddav_url),
-                enabled=email is not None,
-            ),
+            *account_items,
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Open Dashboard",
                 lambda: webbrowser.open(f"{base_url}/.web/"),
             ),
             pystray.MenuItem(
-                "Re-authenticate",
+                "Add / Re-authenticate Account",
                 lambda: self._reauthenticate(),
             ),
             pystray.Menu.SEPARATOR,

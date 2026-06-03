@@ -5,15 +5,13 @@ Provides a simple terminal-based login flow for early development.
 """
 
 import getpass
-import hashlib
 import logging
-import os
 import sys
 
 from etebase import Account, Client
 
 from . import config
-from .radicale.creds import Credentials
+from .accounts import store_authenticated_account
 
 logger = logging.getLogger("silentsuite-bridge.auth")
 
@@ -54,31 +52,18 @@ def manual_login():
     print("Authentication successful!")
     print("Saving credentials...")
 
-    creds = Credentials()
-    # Clear any existing users — bridge supports one account at a time
-    for old_user in creds.list_users():
-        creds.delete(old_user)
-    creds.set_etebase(
+    result = store_authenticated_account(
         username,
+        password,
         etebase.save(None),
         config.ETEBASE_SERVER_URL,
     )
 
-    # Store password hash for CalDAV client auth (PBKDF2)
-    salt = os.urandom(32)
-    password_hash = hashlib.pbkdf2_hmac(
-        "sha256", password.encode(), salt, 600000,
-    ).hex()
-    creds.set_password_salt(username, salt.hex())
-    creds.set_password_hash(username, password_hash)
-
-    creds.save()
-
     print()
-    print("Setup complete!")
+    print("Account saved! Existing accounts were left unchanged.")
     print(f"Etebase server: {config.ETEBASE_SERVER_URL}")
-    print(f"CalDAV/CardDAV URL: http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{username}/")
-    print(f"Username: {username}")
+    print(f"CalDAV/CardDAV URL: http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{result.username}/")
+    print(f"Username: {result.username}")
     print("Password: (your account password)")
     print()
     print("Start the bridge with: silentsuite-bridge")
