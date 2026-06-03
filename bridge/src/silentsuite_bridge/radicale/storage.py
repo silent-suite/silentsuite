@@ -140,8 +140,6 @@ class SyncThread(threading.Thread):
                 self._force_sync.clear()
                 self._done_syncing.set()
 
-            if self._stop_sync.is_set():
-                break
             if was_re_requested:
                 continue  # immediately loop back to sync without waiting
             self._force_sync.wait(self.interval)

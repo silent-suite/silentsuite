@@ -22,7 +22,11 @@ logger = logging.getLogger("silentsuite-bridge.cache")
 
 
 def _init_cache_database(db_path=None):
-    """Initialize the cache DB proxy only when it is not already initialized."""
+    """Initialize the cache DB proxy only when it is not already initialized.
+
+    When tests or the running bridge have already initialized the proxy, keep
+    using that database even if a db_path was supplied.
+    """
     database = getattr(db.database_proxy, "obj", None)
     if database is not None:
         return database, False

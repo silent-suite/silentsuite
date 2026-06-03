@@ -480,11 +480,22 @@ class Web(BaseWeb):
             is_syncing = False
             sync_started_at = None
             last_sync_duration = None
+            latest_completed_sync = None
             for thread in _sync_threads.values():
                 if getattr(thread, "is_syncing", False):
                     is_syncing = True
-                    sync_started_at = getattr(thread, "sync_started_at", None)
-                if getattr(thread, "last_sync_duration", None) is not None:
+                    started_at = getattr(thread, "sync_started_at", None)
+                    if started_at is not None:
+                        if sync_started_at is None or started_at < sync_started_at:
+                            sync_started_at = started_at
+
+                completed_at = getattr(thread, "last_sync", None)
+                if (
+                    getattr(thread, "last_sync_duration", None) is not None
+                    and completed_at is not None
+                    and (latest_completed_sync is None or completed_at > latest_completed_sync)
+                ):
+                    latest_completed_sync = completed_at
                     last_sync_duration = thread.last_sync_duration
             data = {
                 "is_syncing": is_syncing,
