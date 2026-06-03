@@ -11,6 +11,12 @@ describe('scrubSentryEvent', () => {
       breadcrumbs: [{ message: 'PRIVATE_TASK_TITLE', data: { note: 'PRIVATE_NOTE' } }],
       extra: { raw: 'PRIVATE_EXTRA' },
       contexts: { parser: { detail: 'PRIVATE_CONTEXT' } },
+      transaction: 'PRIVATE_TRANSACTION',
+      user: { email: 'PRIVATE_USER_EMAIL' },
+      tags: { item: 'PRIVATE_TAG' },
+      fingerprint: ['PRIVATE_FINGERPRINT'],
+      logger: 'PRIVATE_LOGGER',
+      server_name: 'PRIVATE_SERVER',
       request: {
         url: 'https://app.silentsuite.io/private-path',
         query_string: 'q=PRIVATE_QUERY',
@@ -24,6 +30,12 @@ describe('scrubSentryEvent', () => {
     expect(event.message).toBe(SENTRY_REDACTED_TEXT)
     expect(event.exception?.values?.[0]?.value).toBe(SENTRY_REDACTED_TEXT)
     expect(event.breadcrumbs?.[0]?.message).toBe(SENTRY_REDACTED_TEXT)
+    expect(event.transaction).toBe(SENTRY_REDACTED_TEXT)
+    expect(event.user).toBeUndefined()
+    expect(event.tags?.item).toBe(SENTRY_REDACTED_TEXT)
+    expect(event.fingerprint?.[0]).toBe(SENTRY_REDACTED_TEXT)
+    expect(event.logger).toBe(SENTRY_REDACTED_TEXT)
+    expect(event.server_name).toBe(SENTRY_REDACTED_TEXT)
     expect(event.request?.headers).toBeUndefined()
     expect(event.request?.cookies).toBeUndefined()
     expect(event.request?.data).toBeUndefined()

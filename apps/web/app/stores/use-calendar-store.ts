@@ -4,6 +4,7 @@ import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
+import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { showErrorToast } from '@/app/stores/use-toast-store'
@@ -117,7 +118,7 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
       }
     }
   } catch (err) {
-    console.error(`[calendar-store] Failed to ${mode} event in Etebase:`, err)
+    console.error(`[calendar-store] Failed to ${mode} event in Etebase`, getSafeErrorDetails(err))
     const { enqueue, isOfflineError } = await import('@/app/lib/offline-queue')
     if (!isOfflineError(err)) {
       showErrorToast('Failed to save event. Please try again.')
@@ -243,7 +244,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           } else {
             showErrorToast('Failed to delete event. Please try again.')
           }
-          console.error('[calendar-store] Failed to delete event in Etebase:', err)
+          console.error('[calendar-store] Failed to delete event in Etebase', getSafeErrorDetails(err))
         }
       } else {
         // Item was created offline — enqueue delete with tempId for compaction
@@ -439,7 +440,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
               } else {
                 showErrorToast('Failed to delete event. Please try again.')
               }
-              console.error('[calendar-store] Failed to delete recurring event in Etebase:', err)
+              console.error('[calendar-store] Failed to delete recurring event in Etebase', getSafeErrorDetails(err))
             }
           } else {
             const { enqueue } = await import('@/app/lib/offline-queue')
@@ -539,7 +540,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           }))
         }
       } catch (err) {
-        console.error('[calendar-store] Failed to batch import events:', err)
+        console.error('[calendar-store] Failed to batch import events', getSafeErrorDetails(err))
       }
     }
 

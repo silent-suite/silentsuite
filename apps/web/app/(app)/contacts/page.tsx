@@ -12,6 +12,7 @@ import { useSyncStore } from '@/app/stores/use-sync-store'
 import { ContactsEmptyState, SearchEmptyState, ContactDetailEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
+import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import type { Contact } from '@silentsuite/core'
 
 // ── Helpers ──
@@ -284,7 +285,7 @@ function ContactForm({
       const dataUrl = await processContactPhoto(file)
       setPhotoUrl(dataUrl)
     } catch (err) {
-      console.error('[contacts] Failed to process photo:', err)
+      console.error('[contacts] Failed to process photo', getSafeErrorDetails(err))
     }
     // Reset so the same file can be re-selected
     e.target.value = ''
@@ -633,7 +634,7 @@ function ContactDetail({
       const dataUrl = await processContactPhoto(file)
       updateContact(contact.id, { photoUrl: dataUrl })
     } catch (err) {
-      console.error('[contacts] Failed to process photo:', err)
+      console.error('[contacts] Failed to process photo', getSafeErrorDetails(err))
     }
     e.target.value = ''
   }, [contact.id, updateContact])

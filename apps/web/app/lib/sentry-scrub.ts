@@ -11,6 +11,12 @@ type ScrubbableSentryEvent = {
   extra?: ScrubbableObject
   contexts?: ScrubbableObject
   request?: ScrubbableObject
+  transaction?: string
+  user?: ScrubbableObject
+  tags?: ScrubbableObject
+  fingerprint?: unknown[]
+  logger?: string
+  server_name?: string
 }
 
 function scrubValue(value: unknown): unknown {
@@ -50,6 +56,12 @@ export function scrubSentryEvent<T extends object>(event: T): T {
 
   if (scrubbed.extra) scrubbed.extra = scrubValue(scrubbed.extra) as ScrubbableObject
   if (scrubbed.contexts) scrubbed.contexts = scrubValue(scrubbed.contexts) as ScrubbableObject
+  if (scrubbed.transaction) scrubbed.transaction = SENTRY_REDACTED_TEXT
+  if (scrubbed.user) scrubbed.user = undefined
+  if (scrubbed.tags) scrubbed.tags = scrubValue(scrubbed.tags) as ScrubbableObject
+  if (scrubbed.fingerprint) scrubbed.fingerprint = scrubValue(scrubbed.fingerprint) as unknown[]
+  if (scrubbed.logger) scrubbed.logger = SENTRY_REDACTED_TEXT
+  if (scrubbed.server_name) scrubbed.server_name = SENTRY_REDACTED_TEXT
   if (scrubbed.request) {
     scrubbed.request = {
       ...scrubbed.request,

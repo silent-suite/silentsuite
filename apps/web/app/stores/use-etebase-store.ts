@@ -26,6 +26,7 @@ import {
   isCacheEnabled as isLocalCacheEnabled,
   type CachedItem,
 } from '@/app/lib/data-cache'
+import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 
 /**
  * Holds live Etebase SDK objects (Account, Collections, Items, SyncEngine).
@@ -530,7 +531,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ syncEngine: engine, isInitialized: true })
       logger.debug('[etebase-store] SyncEngine started')
     } catch (err) {
-      console.error('[etebase-store] Initialization failed:', err)
+      console.error('[etebase-store] Initialization failed', getSafeErrorDetails(err))
       // Don't clear the session -- the user might be offline
       // They can retry on next page load
       set({ isInitialized: true })
@@ -560,7 +561,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       await hydrateListStores(newCollections)
       return collection.uid
     } catch (err) {
-      console.error(`[etebase-store] Failed to create ${type} collection:`, err)
+      console.error(`[etebase-store] Failed to create ${type} collection`, getSafeErrorDetails(err))
       showErrorToast(`Failed to create ${collectionDisplayName(type)}. Please try again.`)
       return null
     }
@@ -612,7 +613,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       await hydrateListStores(newCollections)
       return true
     } catch (err) {
-      console.error(`[etebase-store] Failed to delete ${type} collection ${collectionUid}:`, err)
+      console.error(`[etebase-store] Failed to delete ${type} collection`, getSafeErrorDetails(err))
       showErrorToast(`Failed to delete ${collectionDisplayName(type)}. Please try again.`)
       return false
     }
@@ -647,7 +648,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       await hydrateListStores(newCollections)
       return true
     } catch (err) {
-      console.error(`[etebase-store] Failed to update ${type} collection ${collectionUid}:`, err)
+      console.error(`[etebase-store] Failed to update ${type} collection`, getSafeErrorDetails(err))
       showErrorToast(`Failed to update ${collectionDisplayName(type)}. Please try again.`)
       return false
     }
@@ -719,7 +720,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       await hydrateListStores(activeCollections)
       logger.debug(`[etebase-store] Reconciled collections (${removedCollectionCount} removed)`)
     } catch (err) {
-      console.error('[etebase-store] Failed to reconcile collections:', err)
+      console.error('[etebase-store] Failed to reconcile collections', getSafeErrorDetails(err))
       throw err
     } finally {
       syncEngine?.resume?.()
@@ -804,7 +805,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         return Math.max(itemEntries.length, removedLocal)
       }
 
-      console.error(`[etebase-store] Failed to clear ${type} collection ${collectionUid}:`, err)
+      console.error(`[etebase-store] Failed to clear ${type} collection`, getSafeErrorDetails(err))
       if (successfulUids.length > 0) {
         removeCachedItems(successfulUids)
         await removeItemsFromDomainStore(type, collection.uid, successfulUids)
@@ -848,7 +849,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           console.error(`[etebase-store] Failed to enqueue create:`, queueErr)
         }
       } else {
-        console.error(`[etebase-store] Failed to create ${type} item:`, err)
+        console.error(`[etebase-store] Failed to create ${type} item`, getSafeErrorDetails(err))
         showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
       return null
@@ -985,7 +986,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           }
         }
       } else {
-        console.error(`[etebase-store] Failed to batch create ${type} items:`, err)
+        console.error(`[etebase-store] Failed to batch create ${type} items`, getSafeErrorDetails(err))
         showErrorToast(`Failed to import ${type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : type === 'contacts' ? 'contacts' : 'preferences'}. Please try again.`)
       }
       return contents.map(() => null)
@@ -1019,7 +1020,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           console.error(`[etebase-store] Failed to enqueue update:`, queueErr)
         }
       } else {
-        console.error(`[etebase-store] Failed to update ${type} item ${itemUid}:`, err)
+        console.error(`[etebase-store] Failed to update ${type} item`, getSafeErrorDetails(err))
         showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
     }
@@ -1112,7 +1113,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           console.error(`[etebase-store] Failed to enqueue delete:`, queueErr)
         }
       } else {
-        console.error(`[etebase-store] Failed to delete ${type} item ${itemUid}:`, err)
+        console.error(`[etebase-store] Failed to delete ${type} item`, getSafeErrorDetails(err))
         showErrorToast(`Failed to delete ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
     }
@@ -1229,7 +1230,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       logger.debug(`[etebase-store] Refreshed ${type}: ${allResults.length} items`)
       return allResults
     } catch (err) {
-      console.error(`[etebase-store] Failed to refresh ${type}:`, err)
+      console.error(`[etebase-store] Failed to refresh ${type}`, getSafeErrorDetails(err))
       return get().fetchAllItems(type)
     }
   },

@@ -5,6 +5,7 @@ import type { Task, Priority, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
+import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 
@@ -80,7 +81,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               return { ...task, id: itemUid }
             }
           } catch (err) {
-            console.error('[task-store] Failed to sync new task to Etebase:', err)
+            console.error('[task-store] Failed to sync new task to Etebase', getSafeErrorDetails(err))
             showErrorToast('Failed to save task. Please try again.')
           }
         }
@@ -109,7 +110,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               const content = serializeTask(updated)
               await etebase.updateItem('tasks', id, content)
             } catch (err) {
-              console.error('[task-store] Failed to sync task update to Etebase:', err)
+              console.error('[task-store] Failed to sync task update to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to save task. Please try again.')
             }
           } else {
@@ -135,7 +136,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             try {
               await etebase.deleteItem('tasks', id)
             } catch (err) {
-              console.error('[task-store] Failed to sync task deletion to Etebase:', err)
+              console.error('[task-store] Failed to sync task deletion to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to delete task. Please try again.')
             }
           } else {
@@ -167,7 +168,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               const content = serializeTask(updated)
               await etebase.updateItem('tasks', id, content)
             } catch (err) {
-              console.error('[task-store] Failed to sync task toggle to Etebase:', err)
+              console.error('[task-store] Failed to sync task toggle to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to save task. Please try again.')
             }
           } else {
@@ -230,7 +231,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               }))
             }
           } catch (err) {
-            console.error('[task-store] Failed to batch import tasks:', err)
+            console.error('[task-store] Failed to batch import tasks', getSafeErrorDetails(err))
           }
         }
 
