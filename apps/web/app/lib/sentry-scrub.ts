@@ -32,7 +32,7 @@ function scrubValue(value: unknown): unknown {
 
 export function scrubSentryEvent<T extends object>(event: T): T {
   const source = event as ScrubbableSentryEvent
-  const scrubbed: ScrubbableSentryEvent = { ...source }
+  const scrubbed: ScrubbableSentryEvent = source
 
   if (scrubbed.message) scrubbed.message = SENTRY_REDACTED_TEXT
 
