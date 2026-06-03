@@ -26,5 +26,4 @@ images:
   - android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-account.png
   - android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-create-calendar.png
   - android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-view-collection.png
-release_notes: |
-  v0.2.0-beta: multiple calendars, address books, and task lists; Android export backups; clearer sync states; refreshed branding; and Bitcoin/Lightning annual signup via BTCPay.
+release_notes: android/fastlane/metadata/android/en-US/changelogs/6.txt
