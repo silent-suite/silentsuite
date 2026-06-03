@@ -794,7 +794,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           try {
             await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid: uid })
           } catch (queueErr) {
-            console.error(`[etebase-store] Failed to enqueue collection item delete:`, queueErr)
+            console.error('[etebase-store] Failed to enqueue collection item delete', getSafeErrorDetails(queueErr))
           }
         }
         removeCachedItems(itemEntries.map(({ uid }) => uid))
@@ -846,7 +846,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         try {
           await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId: queueTempId })
         } catch (queueErr) {
-          console.error(`[etebase-store] Failed to enqueue create:`, queueErr)
+          console.error('[etebase-store] Failed to enqueue create', getSafeErrorDetails(queueErr))
         }
       } else {
         console.error(`[etebase-store] Failed to create ${type} item`, getSafeErrorDetails(err))
@@ -966,7 +966,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const succeeded = lastSuccessfulItemIndex + 1
         const total = items.length
         const noun = type === 'calendar' ? 'events' : type === 'tasks' ? 'tasks' : type === 'contacts' ? 'contacts' : 'preferences'
-        console.error(`[etebase-store] Batch import failed after retries (${succeeded}/${total} ${noun} imported):`, permanentFailure)
+        console.error('[etebase-store] Batch import failed after retries', getSafeErrorDetails(permanentFailure))
         if (succeeded > 0) {
           showErrorToast(`Imported ${succeeded} of ${total} ${noun}. Please try again to import the rest.`)
         } else {
@@ -982,7 +982,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           try {
             await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId })
           } catch (queueErr) {
-            console.error(`[etebase-store] Failed to enqueue create:`, queueErr)
+            console.error('[etebase-store] Failed to enqueue create', getSafeErrorDetails(queueErr))
           }
         }
       } else {
@@ -1017,7 +1017,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         try {
           await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid })
         } catch (queueErr) {
-          console.error(`[etebase-store] Failed to enqueue update:`, queueErr)
+          console.error('[etebase-store] Failed to enqueue update', getSafeErrorDetails(queueErr))
         }
       } else {
         console.error(`[etebase-store] Failed to update ${type} item`, getSafeErrorDetails(err))
@@ -1110,7 +1110,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         try {
           await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid })
         } catch (queueErr) {
-          console.error(`[etebase-store] Failed to enqueue delete:`, queueErr)
+          console.error('[etebase-store] Failed to enqueue delete', getSafeErrorDetails(queueErr))
         }
       } else {
         console.error(`[etebase-store] Failed to delete ${type} item`, getSafeErrorDetails(err))
