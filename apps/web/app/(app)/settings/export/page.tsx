@@ -12,6 +12,7 @@ import {
 } from '@/app/stores/use-toast-store'
 import { Download, Loader2 } from 'lucide-react'
 import JSZip from 'jszip'
+import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 
 /**
  * Above this combined item count we surface a "this may take a minute" warning
@@ -55,7 +56,7 @@ function serializeAll<T>(items: T[], serialize: (item: T) => string): { vcompone
       vcomponents.push(serialize(item))
     } catch (err) {
       skipped++
-      console.warn('[export] Skipped item that failed to serialize:', err, item)
+      console.warn('[export] Skipped item that failed to serialize', getSafeErrorDetails(err))
     }
   }
   return { vcomponents, skipped }
@@ -76,15 +77,14 @@ function serializeContacts(contacts: Contact[]) {
 function reportSkipped(label: string, skipped: number) {
   if (skipped > 0) {
     showWarningToast(
-      `${skipped} ${label}${skipped === 1 ? '' : 's'} were skipped because they couldn't be serialized — see browser console for details.`,
+      `${skipped} ${label}${skipped === 1 ? '' : 's'} were skipped because they couldn't be serialized.`,
     )
   }
 }
 
 function reportError(label: string, err: unknown) {
-  console.error(`[export] ${label} failed:`, err)
-  const detail = err instanceof Error ? `: ${err.message}` : ''
-  showErrorToast(`${label} failed${detail}. See browser console for details.`)
+  console.error(`[export] ${label} failed`, getSafeErrorDetails(err))
+  showErrorToast(`${label} failed. Please try again.`)
 }
 
 export default function ExportPage() {

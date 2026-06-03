@@ -235,8 +235,9 @@ describe('ExportPage', () => {
   })
 
   it('skips events that fail to serialize and shows a warning toast', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.mocked(toVEvent).mockImplementationOnce(() => {
-      throw new Error('boom — malformed event')
+      throw new Error('boom — PRIVATE_EVENT_TITLE')
     })
 
     render(<ExportPage />)
@@ -248,25 +249,33 @@ describe('ExportPage', () => {
     expect(showWarningToast).toHaveBeenCalledWith(
       expect.stringContaining('1 event'),
     )
+    expect(showWarningToast).not.toHaveBeenCalledWith(
+      expect.stringContaining('browser console'),
+    )
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('Meeting')
+    expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('PRIVATE_EVENT_TITLE')
+    warnSpy.mockRestore()
   })
 
-  it('shows an error toast (with detail) when the download path fails', () => {
+  it('shows a safe error toast when the download path fails', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     // Simulate a real-world failure mode: blob URL creation blocked by a
     // privacy-hardened browser context. Fires after `serializeAll` succeeds,
     // exercising the outer try/catch in `exportCalendar`.
     const originalCreateObjectURL = URL.createObjectURL
     ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementationOnce(
       () => {
-        throw new Error('blob URL creation blocked')
+        throw new Error('PRIVATE_DOWNLOAD_DETAIL')
       },
     )
 
     render(<ExportPage />)
     fireEvent.click(screen.getByText(/Export Calendar/))
 
-    expect(showErrorToast).toHaveBeenCalledWith(
-      expect.stringContaining('Calendar export failed'),
-    )
+    expect(showErrorToast).toHaveBeenCalledWith('Calendar export failed. Please try again.')
+    expect(showErrorToast).not.toHaveBeenCalledWith(expect.stringContaining('PRIVATE_DOWNLOAD_DETAIL'))
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('PRIVATE_DOWNLOAD_DETAIL')
+    errorSpy.mockRestore()
 
     // restore the spy for downstream tests in this describe block
     ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementation(
