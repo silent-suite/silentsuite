@@ -4,6 +4,8 @@ import os
 import sys
 
 import django
+from django.conf import settings
+from django.test import Client
 from django.test import TestCase, override_settings
 
 # Ensure Django is configured before any imports that need it
@@ -28,9 +30,11 @@ class DjangoAppLoadTest(TestCase):
 
     def test_auth_user_model(self):
         """Custom auth user model should be set."""
-        from django.conf import settings
-
         self.assertEqual(settings.AUTH_USER_MODEL, "myauth.User")
+
+    def test_csrf_middleware_protects_django_admin(self):
+        """Django admin uses session auth and must keep CSRF middleware enabled."""
+        self.assertIn("django.middleware.csrf.CsrfViewMiddleware", settings.MIDDLEWARE)
 
 
 @override_settings(ALLOWED_HOSTS=["*"], DEBUG=True)
@@ -61,3 +65,14 @@ class URLRoutingTest(TestCase):
         """Admin login page should return a response."""
         response = self.client.get("/admin/login/")
         self.assertIn(response.status_code, [200, 301, 302])
+
+    def test_admin_login_post_without_csrf_is_rejected(self):
+        """Admin state-changing POSTs should fail closed without a CSRF token."""
+        client = Client(enforce_csrf_checks=True)
+
+        response = client.post(
+            "/admin/login/",
+            {"username": "admin", "password": "wrong", "next": "/admin/"},
+        )
+
+        self.assertEqual(response.status_code, 403)

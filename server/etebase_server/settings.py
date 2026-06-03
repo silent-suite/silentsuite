@@ -64,8 +64,9 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
-    # CsrfViewMiddleware removed — all API auth is via FastAPI dependency injection;
-    # Django admin uses session auth but CSRF is not required for internal dev use.
+    # FastAPI protocol routes are mounted separately; Django middleware protects
+    # the Django admin/session-auth surface.
+    "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
