@@ -268,6 +268,7 @@ def main():
         print("  SILENTSUITE_SERVER_URL       Etebase server URL")
         print("  SILENTSUITE_LISTEN_ADDRESS   Listen address (default: 127.0.0.1)")
         print("  SILENTSUITE_LISTEN_PORT      Listen port (default: 37358)")
+        print("  SILENTSUITE_SERVER_HOSTS     Radicale host specs (default: listen address:port)")
         print("  SILENTSUITE_ALLOW_REMOTE     Allow non-loopback bind and disable dashboard")
         print("  SILENTSUITE_DATA_DIR         Data directory path")
         print("  SILENTSUITE_LOG_LEVEL        Log level (default: INFO)")

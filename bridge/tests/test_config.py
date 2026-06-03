@@ -144,6 +144,47 @@ class TestConfigEnvOverrides:
         finally:
             restore_config(monkeypatch)
 
+    def test_ipv6_loopback_listen_address_default_hosts_are_bracketed(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_LISTEN_ADDRESS="::1")
+        try:
+            assert cfg.DEFAULT_SERVER_HOSTS == "[::1]:37358"
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_unbracketed_ipv6_loopback_host_with_port_is_allowed(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="::1:37358")
+        try:
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_malformed_ipv6_loopback_bracket_does_not_drop_address_tail(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="[::1")
+        try:
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_localhost_and_127_range_server_hosts_are_allowed(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="localhost:37358,127.0.0.2:37358")
+        try:
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_non_loopback_ipv6_server_host_requires_explicit_opt_in(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="[fe80::1]:37358")
+        try:
+            with pytest.raises(RuntimeError, match="SILENTSUITE_SERVER_HOSTS"):
+                cfg.validate_network_config()
+        finally:
+            restore_config(monkeypatch)
+
 
 class TestConfigHelpers:
     """Test config helper functions."""

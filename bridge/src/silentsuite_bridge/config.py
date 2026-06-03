@@ -20,7 +20,14 @@ ETEBASE_SERVER_URL = os.environ.get(
 # --- Network ---
 LISTEN_ADDRESS = os.environ.get("SILENTSUITE_LISTEN_ADDRESS", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("SILENTSUITE_LISTEN_PORT", "37358"))
-DEFAULT_SERVER_HOSTS = f"{LISTEN_ADDRESS}:{LISTEN_PORT}"
+
+
+def _format_host_port(host: str, port: int) -> str:
+    """Format host:port for Radicale, bracketing IPv6 literals."""
+    return f"[{host}]:{port}" if ":" in host and not host.startswith("[") else f"{host}:{port}"
+
+
+DEFAULT_SERVER_HOSTS = _format_host_port(LISTEN_ADDRESS, LISTEN_PORT)
 SERVER_HOSTS = os.environ.get(
     "SILENTSUITE_SERVER_HOSTS",
     DEFAULT_SERVER_HOSTS,
@@ -78,9 +85,17 @@ def _extract_host(host_spec: str) -> str:
     value = host_spec.strip()
     if value.startswith("["):
         end = value.find("]")
-        return value[1:end] if end != -1 else value
+        return value[1:end] if end != -1 else value[1:]
     if value.count(":") == 1:
         return value.rsplit(":", 1)[0]
+    if ":" in value:
+        host, port = value.rsplit(":", 1)
+        if port.isdigit():
+            try:
+                ip_address(host)
+                return host
+            except ValueError:
+                pass
     return value
 
 
