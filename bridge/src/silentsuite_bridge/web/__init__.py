@@ -30,6 +30,7 @@ _bridge_status = {
     "last_sync": None,
     "error": None,
     "collections": {"calendars": 0, "contacts": 0, "tasks": 0},
+    "collections_by_account": {},
     "collections_scope": "all configured accounts",
 }
 
@@ -52,11 +53,25 @@ def update_status(state, error=None, collections=None, account=None, scope=None)
     if error:
         _bridge_status["error"] = str(error)
     if collections:
-        _bridge_status["collections"] = collections
         if account:
-            _bridge_status["collections_scope"] = f"latest sync for {account}"
+            _bridge_status.setdefault("collections_by_account", {})[account] = collections
+            _bridge_status["collections"] = _aggregate_collections(
+                _bridge_status["collections_by_account"].values()
+            )
+            _bridge_status["collections_scope"] = "all configured accounts"
         elif scope:
+            _bridge_status["collections"] = collections
             _bridge_status["collections_scope"] = scope
+        else:
+            _bridge_status["collections"] = collections
+
+
+def _aggregate_collections(collections_iterable):
+    totals = {"calendars": 0, "contacts": 0, "tasks": 0}
+    for collections in collections_iterable:
+        for key in totals:
+            totals[key] += collections.get(key, 0)
+    return totals
 
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -375,6 +390,10 @@ def _render_dashboard():
 
     last_sync = _bridge_status.get("last_sync", "Never")
     cols = _bridge_status.get("collections", {})
+    account_cols = _bridge_status.get("collections_by_account", {})
+    filtered_account_cols = [account_cols[user] for user in users if user in account_cols]
+    if filtered_account_cols:
+        cols = _aggregate_collections(filtered_account_cols)
     col_text = f"{cols.get('calendars', 0)} calendars, {cols.get('contacts', 0)} contacts, {cols.get('tasks', 0)} tasks"
     collections_scope = _bridge_status.get("collections_scope") or "all configured accounts"
     collections_label = f"Collections ({collections_scope})"

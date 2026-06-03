@@ -607,7 +607,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode()
             params = urllib.parse.parse_qs(body)
-            email = params.get("email", [""])[0]
+            email = params.get("email", [""])[0].strip()
             password = params.get("password", [""])[0]
             server_url = params.get("server_url", [config.ETEBASE_SERVER_URL])[0].strip()
             if not server_url:

@@ -162,6 +162,7 @@ def _initial_status_check():
                 for key, value in collections.items():
                     totals[key] += value
                 synced += 1
+                update_status("connected", collections=collections, account=user)
                 log_sync_event("info", f"Initial sync complete for {user}")
                 logger.info(
                     "Initial sync for %s: %d calendars, %d contacts, %d tasks",
@@ -188,6 +189,8 @@ def _initial_status_check():
             )
     elif errors:
         update_status("error", error="; ".join(errors))
+    else:
+        update_status("disconnected")
 
 
 def run_server():
