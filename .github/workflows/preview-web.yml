@@ -1,12 +1,9 @@
-name: Preview Web App (feature branches + PRs)
+name: Preview Web App (dev deploy + PR builds)
 
 on:
   push:
     branches:
       - dev
-      - 'feature/**'
-      - 'fix/**'
-      - 'blog/**'
     paths:
       - 'apps/web/**'
       - 'packages/**'
@@ -26,14 +23,78 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-preview:
+    name: Build Preview (no deploy)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build preview image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          file: Dockerfile.web
+          push: false
+          tags: |
+            silentsuite-web:pr-${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+            NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
+            NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Comment on PR
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const body = `**Preview build completed**\n\nVPS preview deploy is restricted to \`dev\` pushes. This PR built the web image locally but did not publish the shared preview tag or SSH deploy.\n\nBranch: \`${context.payload.pull_request.head.ref}\``;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Preview build completed')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
   build-and-deploy-preview:
     name: Build & Deploy Preview
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       packages: write
-      pull-requests: write
 
     steps:
       - name: Checkout
@@ -77,36 +138,3 @@ jobs:
             cd ~/etebase
             docker compose -f docker-compose.preview.yml up -d --force-recreate web-preview
             echo "Preview deployed: https://previewapp.silentsuite.io (branch: ${{ github.ref_name }})"
-
-      - name: Comment on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
-        with:
-          script: |
-            const body = `**Preview deployed** ✅\n\n🔗 https://previewapp.silentsuite.io\n📦 \`ghcr.io/silent-suite/silentsuite-web:preview-${context.sha.substring(0, 7)}\`\n🌿 Branch: \`${context.payload.pull_request.head.ref}\``;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
-            });
-
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Preview deployed')
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body
-              });
-            }
