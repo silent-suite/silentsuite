@@ -18,23 +18,17 @@ import android.content.SharedPreferences
 import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.Constants
-import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.utils.NotificationUtils
-import okhttp3.Request
-import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
-import java.util.logging.Level
 
 /**
  * Manages subscription status checks for SilentSuite accounts.
  *
- * Checks the billing API (GET /subscription) to determine if the user's
- * subscription allows sync. Results are cached both in-memory and to
- * SharedPreferences to avoid hitting the API on every sync cycle.
+ * Subscription checks fail open until Android has a billing-specific auth
+ * token. Etebase sessions must never be sent to billing endpoints.
  *
  * Subscription states:
  * - trialing: Active trial, full sync allowed
@@ -117,11 +111,6 @@ class BillingManager private constructor() {
         private const val PREF_LAST_SUCCESSFUL_FETCH = "last_successful_fetch"
 
         const val NOTIFICATION_SUBSCRIPTION_EXPIRED = 50
-
-        /**
-         * Base URL for the billing API.
-         */
-        const val BILLING_API_BASE_URL = "https://api.silentsuite.io"
 
         /** URL for subscription management / reactivation */
         const val BILLING_MANAGE_URL = "https://app.silentsuite.io/settings/billing"
@@ -287,63 +276,14 @@ class BillingManager private constructor() {
     // --- API fetch ---
 
     /**
-     * Fetch subscription status from the billing API.
-     */
-    private fun fetchSubscriptionStatus(context: Context, account: Account): SubscriptionStatus {
-        try {
-            val settings = AccountSettings(context, account)
-
-            // Self-hosted users or accounts without Etebase sessions skip billing check
-            if (settings.etebaseSession == null) {
-                Logger.log.fine("No Etebase session for ${account.name}, skipping billing check")
-                return SubscriptionStatus.unreachable()
-            }
-
-            HttpClient.Builder(context, settings).build().use { httpClient ->
-                val request = Request.Builder()
-                    .url("$BILLING_API_BASE_URL/subscription")
-                    .header("Authorization", "Token ${settings.etebaseSession}")
-                    .get()
-                    .build()
-
-                val response = httpClient.okHttpClient.newCall(request).execute()
-                response.use {
-                    if (!it.isSuccessful) {
-                        Logger.log.warning("Billing API returned ${it.code} for ${account.name}, allowing sync (optimistic)")
-                        return SubscriptionStatus.unreachable()
-                    }
-
-                    val body = it.body?.string() ?: return SubscriptionStatus.unreachable()
-                    return parseSubscriptionResponse(body)
-                }
-            }
-        } catch (e: Exception) {
-            Logger.log.log(Level.WARNING, "Failed to check subscription status for ${account.name}, allowing sync", e)
-            return SubscriptionStatus.unreachable()
-        }
-    }
-
-    /**
-     * Parse the JSON response from GET /subscription.
+     * Subscription status is temporarily disabled on Android.
      *
-     * Expected format:
-     * {
-     *   "subscriptionStatus": "active",
-     *   "plan": "personal",
-     *   "billingInterval": "monthly",
-     *   "renewalDate": "2026-04-13T00:00:00Z",
-     *   "trialDaysRemaining": null
-     * }
+     * The billing API uses billing JWT cookies, while Android only has an
+     * Etebase session today. Sending that Etebase session as Authorization
+     * over-shares sync credentials and does not authenticate /subscription.
      */
-    private fun parseSubscriptionResponse(json: String): SubscriptionStatus {
-        val obj = JSONObject(json)
-        return SubscriptionStatus(
-            status = obj.optString("subscriptionStatus", "unknown"),
-            plan = obj.optString("plan", null),
-            billingInterval = obj.optString("billingInterval", null),
-            renewalDate = obj.optString("renewalDate", null),
-            trialDaysRemaining = if (obj.has("trialDaysRemaining") && !obj.isNull("trialDaysRemaining"))
-                obj.getInt("trialDaysRemaining") else null
-        )
+    private fun fetchSubscriptionStatus(_context: Context, account: Account): SubscriptionStatus {
+        Logger.log.fine("Android billing check disabled for ${account.name}; no billing-specific token is available")
+        return SubscriptionStatus.unreachable()
     }
 }
