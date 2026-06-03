@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type { SyncStatus } from '@silentsuite/core'
 import { replay, getPendingCount, getFailedCount, onCountChange, getStaleEntries, remove, type QueueEntry } from '@/app/lib/offline-queue'
+import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
 
@@ -259,7 +260,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const fc = await getFailedCount()
       set({ syncStatus: 'synced', lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
     }).catch((err) => {
-      console.error('[sync-store] Manual sync failed:', err)
+      console.error('[sync-store] Manual sync failed', getSafeErrorDetails(err))
       set({ syncStatus: 'error', error: 'Sync failed' })
       const isOnline = get().isOnline
       showErrorToast(isOnline ? 'Sync failed. Check your connection.' : 'Sync failed. Retrying...')

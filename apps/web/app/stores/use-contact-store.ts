@@ -5,6 +5,7 @@ import type { Contact, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
+import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 
@@ -97,7 +98,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
               return { ...contact, id: itemUid }
             }
           } catch (err) {
-            console.error('[contact-store] Failed to sync new contact to Etebase:', err)
+            console.error('[contact-store] Failed to sync new contact to Etebase', getSafeErrorDetails(err))
             showErrorToast('Failed to save contact. Please try again.')
           }
         }
@@ -126,7 +127,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
               const content = serializeContact(updated)
               await etebase.updateItem('contacts', id, content)
             } catch (err) {
-              console.error('[contact-store] Failed to sync contact update to Etebase:', err)
+              console.error('[contact-store] Failed to sync contact update to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to save contact. Please try again.')
             }
           } else {
@@ -150,7 +151,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
             try {
               await etebase.deleteItem('contacts', id)
             } catch (err) {
-              console.error('[contact-store] Failed to sync contact deletion to Etebase:', err)
+              console.error('[contact-store] Failed to sync contact deletion to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to delete contact. Please try again.')
             }
           } else {
@@ -224,7 +225,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
               }))
             }
           } catch (err) {
-            console.error('[contact-store] Failed to batch import contacts:', err)
+            console.error('[contact-store] Failed to batch import contacts', getSafeErrorDetails(err))
           }
         }
 

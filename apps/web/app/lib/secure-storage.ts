@@ -9,6 +9,7 @@
  * another encryption layer — just move it out of the trivially-scriptable
  * localStorage API.
  */
+import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 
 const DB_NAME = 'silentsuite-secure'
 const DB_VERSION = 1
@@ -83,7 +84,7 @@ export async function secureSet(key: string, value: string): Promise<void> {
   try {
     await withStore('readwrite', (store) => store.put(value, key))
   } catch (err) {
-    console.error('[secure-storage] Failed to write to IndexedDB:', err)
+    console.error('[secure-storage] Failed to write to IndexedDB', getSafeErrorDetails(err))
   }
 }
 

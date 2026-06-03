@@ -16,13 +16,16 @@ import {
   putMeta,
   clearAll,
   ensureFingerprint,
+  isCacheEnabled,
   CACHE_SCHEMA_VERSION,
   _resetForTests,
+  _setEncryptedCacheAvailableForTests,
   type CachedItem,
 } from '../data-cache'
 
 beforeEach(async () => {
   await _resetForTests()
+  _setEncryptedCacheAvailableForTests(true)
   await new Promise<void>((resolve) => {
     const req = indexedDB.deleteDatabase('silentsuite-data-cache')
     req.onsuccess = () => resolve()
@@ -42,6 +45,29 @@ function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks'
 }
 
 describe('data-cache', () => {
+  describe('encryption guard', () => {
+    it('does not enable cache when the env flag is true but encryption is unavailable', () => {
+      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
+      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
+      _setEncryptedCacheAvailableForTests(false)
+
+      expect(isCacheEnabled()).toBe(false)
+
+      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
+    })
+
+    it('refuses plaintext item writes without an encrypted cache envelope', async () => {
+      _setEncryptedCacheAvailableForTests(false)
+
+      await putItem(makeItem('plain-1', 'tasks', 'PRIVATE TASK SUMMARY'))
+      await putItems([makeItem('plain-2', 'tasks', 'PRIVATE BULK TASK')])
+      await replaceItemsForType('tasks', [makeItem('plain-3', 'tasks', 'PRIVATE REPLACE TYPE')])
+      await replaceItemsForCollection('col-1', [makeItem('plain-4', 'tasks', 'PRIVATE REPLACE COLLECTION')])
+
+      expect(await getItemsByType('tasks')).toEqual([])
+    })
+  })
+
   describe('items CRUD', () => {
     it('starts empty', async () => {
       const items = await getItemsByType('tasks')
