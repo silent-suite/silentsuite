@@ -13,6 +13,7 @@ Integrates with Radicale's web module system.
 import html
 import json
 import logging
+import threading
 import time
 from collections import deque
 
@@ -30,7 +31,10 @@ _bridge_status = {
     "last_sync": None,
     "error": None,
     "collections": {"calendars": 0, "contacts": 0, "tasks": 0},
+    "collections_by_account": {},
+    "collections_scope": "all configured accounts",
 }
+_bridge_status_lock = threading.RLock()
 
 
 def log_sync_event(event_type, message):
@@ -42,16 +46,43 @@ def log_sync_event(event_type, message):
     })
 
 
-def update_status(state, error=None, collections=None):
+def update_status(state, error=None, collections=None, account=None, scope=None):
     """Update the bridge status."""
-    _bridge_status["state"] = state
-    if state == "connected":
-        _bridge_status["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        _bridge_status["error"] = None
-    if error:
-        _bridge_status["error"] = str(error)
-    if collections:
-        _bridge_status["collections"] = collections
+    with _bridge_status_lock:
+        _bridge_status["state"] = state
+        if state == "connected":
+            _bridge_status["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            _bridge_status["error"] = None
+        if error:
+            _bridge_status["error"] = str(error)
+        if collections:
+            if account:
+                _bridge_status.setdefault("collections_by_account", {})[account] = collections
+                _bridge_status["collections"] = _aggregate_collections(
+                    _bridge_status["collections_by_account"].values()
+                )
+                _bridge_status["collections_scope"] = "all configured accounts"
+            elif scope:
+                _bridge_status["collections"] = collections
+                _bridge_status["collections_scope"] = scope
+            else:
+                _bridge_status["collections"] = collections
+
+
+def forget_account_status(account):
+    """Remove one account's in-memory dashboard status."""
+    with _bridge_status_lock:
+        account_collections = _bridge_status.setdefault("collections_by_account", {})
+        account_collections.pop(account, None)
+        _bridge_status["collections"] = _aggregate_collections(account_collections.values())
+
+
+def _aggregate_collections(collections_iterable):
+    totals = {"calendars": 0, "contacts": 0, "tasks": 0}
+    for collections in collections_iterable:
+        for key in totals:
+            totals[key] += collections.get(key, 0)
+    return totals
 
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -147,6 +178,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             font-size: 11px;
         }
         .copy-btn:hover { background: #444; }
+        .account-card {
+            background: #111;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+        .account-card h4 {
+            font-size: 15px;
+            color: #fff;
+            margin-bottom: 8px;
+            overflow-wrap: anywhere;
+        }
+        .account-meta {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 10px;
+            overflow-wrap: anywhere;
+        }
 
         .log-section { margin-top: 8px; }
         .log-section h3 {
@@ -201,34 +251,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span class="status-text">{{STATUS_TEXT}}</span>
             </div>
             <div class="info-grid">
-                <span class="info-label">Account</span>
-                <span class="info-value">{{USER_EMAIL}}</span>
-                <span class="info-label">Server</span>
-                <span class="info-value"><code>{{SERVER_URL}}</code></span>
                 <span class="info-label">Last sync</span>
                 <span class="info-value">{{LAST_SYNC}}</span>
-                <span class="info-label">Collections</span>
+                <span class="info-label">{{COLLECTIONS_LABEL}}</span>
                 <span class="info-value">{{COLLECTIONS}}</span>
                 <span class="info-label">Sync interval</span>
                 <span class="info-value">{{SYNC_INTERVAL_DISPLAY}}</span>
             </div>
 
             <div class="url-section">
-                <h3>Connection URLs</h3>
-                <div class="url-box">
-                    <div>
-                        <label>CalDAV (Calendars + Tasks)</label>
-                        <code id="caldavUrl">{{CALDAV_URL}}</code>
-                    </div>
-                    <button class="copy-btn" onclick="copy(event, 'caldavUrl')">Copy</button>
-                </div>
-                <div class="url-box">
-                    <div>
-                        <label>CardDAV (Contacts)</label>
-                        <code id="carddavUrl">{{CARDDAV_URL}}</code>
-                    </div>
-                    <button class="copy-btn" onclick="copy(event, 'carddavUrl')">Copy</button>
-                </div>
+                <h3>Configured Accounts</h3>
+                {{ACCOUNT_LIST}}
             </div>
         </div>
 
@@ -354,13 +387,17 @@ def _render_dashboard():
 
     creds = Credentials()
     users = creds.list_users()
-    email = users[0] if users else "Not configured"
 
     base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}"
-    caldav_url = f"{base_url}/{email}/" if users else "N/A"
-    carddav_url = caldav_url
 
-    state = _bridge_status["state"]
+    with _bridge_status_lock:
+        state = _bridge_status["state"]
+        last_sync = _bridge_status.get("last_sync", "Never")
+        cols = dict(_bridge_status.get("collections", {}))
+        account_cols = dict(_bridge_status.get("collections_by_account", {}))
+        collections_scope = _bridge_status.get("collections_scope") or "all configured accounts"
+        status_error = _bridge_status.get("error")
+
     status_map = {
         "starting": "Starting...",
         "connected": "Connected",
@@ -369,13 +406,15 @@ def _render_dashboard():
     }
     status_text = status_map.get(state, state)
 
-    last_sync = _bridge_status.get("last_sync", "Never")
-    cols = _bridge_status.get("collections", {})
+    filtered_account_cols = [account_cols[user] for user in users if user in account_cols]
+    if filtered_account_cols:
+        cols = _aggregate_collections(filtered_account_cols)
     col_text = f"{cols.get('calendars', 0)} calendars, {cols.get('contacts', 0)} contacts, {cols.get('tasks', 0)} tasks"
+    collections_label = f"Collections ({collections_scope})"
 
     error_banner = ""
-    if _bridge_status.get("error"):
-        error_banner = f'<div class="error-banner">{esc(_bridge_status["error"])}</div>'
+    if status_error:
+        error_banner = f'<div class="error-banner">{esc(status_error)}</div>'
 
     # Build sync log HTML
     if _sync_log:
@@ -393,17 +432,37 @@ def _render_dashboard():
     else:
         log_html = '<div class="log-empty">No sync activity yet</div>'
 
+    if users:
+        account_html = ""
+        for index, user in enumerate(users):
+            dav_url = f"{base_url}/{user}/"
+            server_url = creds.get_server_url(user)
+            url_id = f"davUrl{index}"
+            account_html += (
+                '<div class="account-card">'
+                f'<h4>{esc(user)}</h4>'
+                f'<div class="account-meta">Server: <code>{esc(server_url)}</code></div>'
+                '<div class="url-box">'
+                '<div>'
+                '<label>CalDAV/CardDAV URL</label>'
+                f'<code id="{url_id}">{esc(dav_url)}</code>'
+                '</div>'
+                f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
+                '</div>'
+                '</div>'
+            )
+    else:
+        account_html = '<div class="log-empty">No accounts configured</div>'
+
     page = DASHBOARD_HTML
     page = page.replace("{{VERSION}}", esc(__version__))
     page = page.replace("{{ERROR_BANNER}}", error_banner)
     page = page.replace("{{STATUS_STATE}}", esc(state))
     page = page.replace("{{STATUS_TEXT}}", esc(status_text))
-    page = page.replace("{{USER_EMAIL}}", esc(email))
-    page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
     page = page.replace("{{LAST_SYNC}}", esc(last_sync or "Never"))
+    page = page.replace("{{COLLECTIONS_LABEL}}", esc(collections_label))
     page = page.replace("{{COLLECTIONS}}", esc(col_text))
-    page = page.replace("{{CALDAV_URL}}", esc(caldav_url))
-    page = page.replace("{{CARDDAV_URL}}", esc(carddav_url))
+    page = page.replace("{{ACCOUNT_LIST}}", account_html)
     page = page.replace("{{SYNC_LOG}}", log_html)
 
     # Sync interval display
@@ -438,8 +497,14 @@ class Web(BaseWeb):
 
         # API endpoint for JSON status
         if path == "/.web/api/status":
+            with _bridge_status_lock:
+                status = dict(_bridge_status)
+                status["collections"] = dict(_bridge_status.get("collections", {}))
+                status["collections_by_account"] = dict(
+                    _bridge_status.get("collections_by_account", {})
+                )
             data = {
-                "status": _bridge_status,
+                "status": status,
                 "log": list(_sync_log)[:20],
             }
             return (
@@ -454,18 +519,30 @@ class Web(BaseWeb):
             is_syncing = False
             sync_started_at = None
             last_sync_duration = None
+            latest_completed_sync = None
             for thread in _sync_threads.values():
                 if getattr(thread, "is_syncing", False):
                     is_syncing = True
-                    sync_started_at = getattr(thread, "sync_started_at", None)
-                if getattr(thread, "last_sync_duration", None) is not None:
+                    started_at = getattr(thread, "sync_started_at", None)
+                    if started_at is not None:
+                        if sync_started_at is None or started_at < sync_started_at:
+                            sync_started_at = started_at
+
+                completed_at = getattr(thread, "last_sync", None)
+                if (
+                    getattr(thread, "last_sync_duration", None) is not None
+                    and completed_at is not None
+                    and (latest_completed_sync is None or completed_at > latest_completed_sync)
+                ):
+                    latest_completed_sync = completed_at
                     last_sync_duration = thread.last_sync_duration
             data = {
                 "is_syncing": is_syncing,
                 "sync_started_at": sync_started_at,
                 "last_sync_duration": last_sync_duration,
-                "collections": _bridge_status.get("collections", {}),
             }
+            with _bridge_status_lock:
+                data["collections"] = dict(_bridge_status.get("collections", {}))
             return (
                 200,
                 {"Content-Type": "application/json"},
@@ -492,6 +569,7 @@ class Web(BaseWeb):
                             "stoken": col.stoken[:20] if col.stoken else None,
                             "local_stoken": col.local_stoken[:20] if col.local_stoken else None,
                             "dirty": col.dirty,
+                            "new": col.new,
                             "deleted": col.deleted,
                             "item_count": len(items),
                             "items": items,
@@ -515,37 +593,6 @@ class Web(BaseWeb):
                 200,
                 {"Content-Type": "application/json"},
                 json.dumps(data).encode(),
-            )
-
-        # Diagnostic dump of cached collections/items
-        if path == "/.web/api/dump":
-            from ..local_cache import models, db
-            dump = {}
-            try:
-                with db.database_proxy:
-                    for col in models.CollectionEntity.select():
-                        items = []
-                        for item in col.items:
-                            items.append({
-                                "uid": item.uid,
-                                "dirty": item.dirty,
-                                "new": item.new,
-                                "deleted": item.deleted,
-                            })
-                        dump[col.uid] = {
-                            "stoken": col.stoken,
-                            "local_stoken": col.local_stoken,
-                            "dirty": col.dirty,
-                            "new": col.new,
-                            "deleted": col.deleted,
-                            "items": items,
-                        }
-            except Exception as e:
-                dump = {"error": str(e)}
-            return (
-                200,
-                {"Content-Type": "application/json"},
-                json.dumps(dump, indent=2).encode(),
             )
 
         return (404, {}, b"Not found")

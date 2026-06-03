@@ -50,6 +50,7 @@ class SyncThread(threading.Thread):
     def __init__(self, user, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._force_sync = threading.Event()
+        self._stop_sync = threading.Event()
         self._done_syncing = threading.Event()
         self._done_syncing.set()
         self.user = user
@@ -65,6 +66,11 @@ class SyncThread(threading.Thread):
     def force_sync(self):
         self._force_sync.set()
         self._done_syncing.clear()
+
+    def stop(self):
+        """Request a clean shutdown and wake any interval wait."""
+        self._stop_sync.set()
+        self._force_sync.set()
 
     def request_sync(self):
         if self.last_sync and time.time() - self.last_sync >= SYNC_MINIMUM:
@@ -89,9 +95,13 @@ class SyncThread(threading.Thread):
         return ret
 
     def run(self):
-        while True:
+        while not self._stop_sync.is_set():
             try:
+                if self._stop_sync.is_set():
+                    break
                 with etesync_for_user(self.user) as (etesync, _):
+                    if self._stop_sync.is_set():
+                        break
                     self.last_sync = time.time()
                     self._done_syncing.clear()
                     self.is_syncing = True
@@ -113,7 +123,11 @@ class SyncThread(threading.Thread):
                                 collections["tasks"] += 1
                     except Exception:
                         pass
-                    update_status("connected", collections=collections)
+                    update_status(
+                        "connected",
+                        collections=collections,
+                        account=self.user,
+                    )
                     log_sync_event("sync", f"Synced for {self.user}")
             except Exception as e:
                 logger.exception("Sync error for user %s: %s", self.user, e)
@@ -151,6 +165,36 @@ def get_sync_thread(user):
     """Get the SyncThread for a user, or None."""
     with _sync_threads_lock:
         return _sync_threads.get(user)
+
+
+def stop_sync_thread(user, timeout=2.0):
+    """Stop and remove one user's SyncThread.
+
+    Returns True when no live thread remains. If shutdown times out, the old
+    thread stays registered so start_sync_thread will not create a duplicate.
+    """
+    with _sync_threads_lock:
+        thread = _sync_threads.get(user)
+
+    if thread is None:
+        return True
+
+    thread.stop()
+    if thread is threading.current_thread():
+        logger.warning("SyncThread for user %s cannot join itself", user)
+        return False
+    thread.join(timeout)
+
+    with _sync_threads_lock:
+        current = _sync_threads.get(user)
+        if current is not thread:
+            return True
+        if thread.is_alive():
+            logger.warning("Timed out stopping SyncThread for user %s", user)
+            return False
+        del _sync_threads[user]
+        logger.info("Stopped SyncThread for user %s", user)
+        return True
 
 
 # --- Meta Mapping ---
@@ -503,8 +547,20 @@ class Storage(BaseStorage):
         """Verify storage is accessible."""
         return True
 
+    def _path_belongs_to_user(self, path):
+        attributes = _get_attributes_from_path(path)
+        return not self.user or not attributes or attributes[0] == self.user
+
     def discover(self, path, depth="0"):
         """Discover collections and items under the given path."""
+        if not self._path_belongs_to_user(path):
+            logger.warning(
+                "Rejecting DAV path %s authenticated as %s",
+                path,
+                self.user,
+            )
+            return
+
         attributes = _get_attributes_from_path(path)
 
         if len(attributes) == 3:
@@ -564,6 +620,14 @@ class Storage(BaseStorage):
         # Only handle creating sub-collections (user/collection-uid),
         # not the root user principal
         attributes = _get_attributes_from_path(href)
+        if not self._path_belongs_to_user(href):
+            logger.warning(
+                "Rejecting collection create for path %s authenticated as %s",
+                href,
+                self.user,
+            )
+            raise ComponentNotFoundError(href)
+
         if len(attributes) < 2:
             # Creating the user principal itself — nothing to do
             return Collection(self, href)

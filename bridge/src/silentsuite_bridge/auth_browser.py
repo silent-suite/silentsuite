@@ -12,12 +12,10 @@ For MVP, the auth page is served by the bridge itself.
 In the future, this will redirect to app.silentsuite.io/bridge-auth.
 """
 
-import hashlib
 import html as html_mod
 import http.server
 import json
 import logging
-import os
 import socket
 import threading
 import urllib.parse
@@ -26,7 +24,7 @@ import webbrowser
 from etebase import Account, Client
 
 from . import config
-from .radicale.creds import Credentials
+from .accounts import store_authenticated_account
 
 logger = logging.getLogger("silentsuite-bridge.auth")
 
@@ -585,7 +583,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(html.encode())
         elif self.path.startswith("/success"):
             params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            email = params.get("email", [""])[0]
+            email = params.get("email", [""])[0].strip()
             dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
             bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
 
@@ -609,7 +607,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode()
             params = urllib.parse.parse_qs(body)
-            email = params.get("email", [""])[0]
+            email = params.get("email", [""])[0].strip()
             password = params.get("password", [""])[0]
             server_url = params.get("server_url", [config.ETEBASE_SERVER_URL])[0].strip()
             if not server_url:
@@ -646,32 +644,20 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             if server_url != config.ETEBASE_SERVER_URL:
                 config.ETEBASE_SERVER_URL = server_url
 
-            # Store credentials — clear any existing users first
-            # (bridge supports one account at a time)
-            creds = Credentials()
-            for old_user in creds.list_users():
-                creds.delete(old_user)
-            creds.set_etebase(
+            result = store_authenticated_account(
                 email,
+                password,
                 etebase.save(None),
                 server_url,
             )
 
-            salt = os.urandom(32)
-            password_hash = hashlib.pbkdf2_hmac(
-                "sha256", password.encode(), salt, 600000,
-            ).hex()
-            creds.set_password_salt(email, salt.hex())
-            creds.set_password_hash(email, password_hash)
-            creds.save()
-
-            logger.info("Authentication successful for %s", email)
+            logger.info("Authentication successful for %s", result.username)
 
             # Store the email and server URL for the success handler
-            self.server.authenticated_email = email
+            self.server.authenticated_email = result.username
             self.server.authenticated_server_url = server_url
 
-            redirect_url = f"/success?email={urllib.parse.quote(email)}"
+            redirect_url = f"/success?email={urllib.parse.quote(result.username)}"
             self._json_response(200, {
                 "success": True,
                 "redirect": redirect_url,
