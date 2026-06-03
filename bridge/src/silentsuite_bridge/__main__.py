@@ -16,6 +16,14 @@ from . import config
 
 logger = logging.getLogger("silentsuite-bridge")
 
+_ACCOUNT_ACTION_FLAGS = (
+    "--login",
+    "--manual-login",
+    "--list-accounts",
+    "--logout",
+    "--remove-account",
+)
+
 
 def configure_logging():
     """Set up logging for the bridge."""
@@ -135,32 +143,51 @@ def _initial_status_check():
     if not users:
         return
 
-    user = users[0]
-    try:
-        with etesync_for_user(user) as (etesync, _):
-            etesync.sync()
-            # Dashboard mirrors what the bridge actually exposes — one collection
-            # per type — even if the server has more (multi-collection was dropped).
-            collections = {"calendars": 0, "contacts": 0, "tasks": 0}
-            for col in etesync.list():
-                if col.col_type == "etebase.vevent" and collections["calendars"] == 0:
-                    collections["calendars"] = 1
-                elif col.col_type == "etebase.vcard" and collections["contacts"] == 0:
-                    collections["contacts"] = 1
-                elif col.col_type == "etebase.vtodo" and collections["tasks"] == 0:
-                    collections["tasks"] = 1
-            update_status("connected", collections=collections)
-            log_sync_event("info", f"Initial sync complete for {user}")
-            logger.info(
-                "Initial sync: %d calendars, %d contacts, %d tasks",
-                collections["calendars"],
-                collections["contacts"],
-                collections["tasks"],
+    totals = {"calendars": 0, "contacts": 0, "tasks": 0}
+    synced = 0
+    errors = []
+
+    for user in users:
+        try:
+            with etesync_for_user(user) as (etesync, _):
+                etesync.sync()
+                collections = {"calendars": 0, "contacts": 0, "tasks": 0}
+                for col in etesync.list():
+                    if col.col_type == "etebase.vevent":
+                        collections["calendars"] += 1
+                    elif col.col_type == "etebase.vcard":
+                        collections["contacts"] += 1
+                    elif col.col_type == "etebase.vtodo":
+                        collections["tasks"] += 1
+                for key, value in collections.items():
+                    totals[key] += value
+                synced += 1
+                log_sync_event("info", f"Initial sync complete for {user}")
+                logger.info(
+                    "Initial sync for %s: %d calendars, %d contacts, %d tasks",
+                    user,
+                    collections["calendars"],
+                    collections["contacts"],
+                    collections["tasks"],
+                )
+        except Exception as e:
+            logger.warning("Initial status check failed for %s: %s", user, e)
+            errors.append(f"{user}: {e}")
+            log_sync_event("error", f"Initial sync failed for {user}: {e}")
+
+    if synced:
+        update_status(
+            "connected",
+            collections=totals,
+            scope="all configured accounts",
+        )
+        if errors:
+            log_sync_event(
+                "error",
+                f"Initial sync skipped {len(errors)} account(s): {'; '.join(errors)}",
             )
-    except Exception as e:
-        logger.warning("Initial status check failed: %s", e)
-        update_status("error", error=str(e))
-        log_sync_event("error", f"Initial sync failed: {e}")
+    elif errors:
+        update_status("error", error="; ".join(errors))
 
 
 def run_server():
@@ -218,7 +245,11 @@ def main():
         print("Options:")
         print("  --help, -h            Show this help message and exit")
         print("  --version             Show version and exit")
-        print("  --login               Run browser-based login flow")
+        print("  --login               Add or re-authenticate an account")
+        print("  --list-accounts       List configured bridge accounts")
+        print("  --logout ACCOUNT      Remove local credentials; keep cache")
+        print("  --remove-account ACCOUNT")
+        print("                        Remove credentials plus that account's cache")
         print("  --server URL          Etebase server URL (for self-hosters)")
         print("  --manual-login        Run CLI login (for development/testing)")
         print("  --install-autostart   Install auto-start for current platform")
@@ -246,6 +277,60 @@ def main():
 
     configure_logging()
     config.ensure_data_dir()
+
+    action_count = sum(1 for flag in _ACCOUNT_ACTION_FLAGS if flag in sys.argv)
+    if action_count > 1:
+        print("Error: account action flags cannot be combined")
+        sys.exit(1)
+
+    # Handle --list-accounts before any bridge startup side effects.
+    if "--list-accounts" in sys.argv:
+        from .accounts import list_accounts
+        from .radicale.creds import Credentials
+
+        creds = Credentials()
+        users = list_accounts(credentials=creds)
+        if not users:
+            print("No accounts configured.")
+        else:
+            print("Configured accounts:")
+            for user in users:
+                print(f"- {user} ({creds.get_server_url(user)})")
+        sys.exit(0)
+
+    if "--logout" in sys.argv:
+        idx = sys.argv.index("--logout")
+        if idx + 1 >= len(sys.argv) or sys.argv[idx + 1].startswith("--"):
+            print("Error: --logout requires an account argument")
+            sys.exit(1)
+
+        from .accounts import logout_account
+
+        result = logout_account(sys.argv[idx + 1])
+        if result.existed:
+            print(f"Logged out {result.username}. Local cache was retained.")
+            if not result.sync_stopped:
+                print("Warning: sync thread is still shutting down; no duplicate will be started.")
+        else:
+            print(f"Account {result.username} is not configured; nothing to do.")
+        sys.exit(0)
+
+    if "--remove-account" in sys.argv:
+        idx = sys.argv.index("--remove-account")
+        if idx + 1 >= len(sys.argv) or sys.argv[idx + 1].startswith("--"):
+            print("Error: --remove-account requires an account argument")
+            sys.exit(1)
+
+        from .accounts import remove_account
+
+        result = remove_account(sys.argv[idx + 1])
+        if result.existed:
+            print(f"Removed {result.username}. Credentials and local cache were deleted.")
+            if not result.sync_stopped:
+                print("Warning: sync thread is still shutting down; no duplicate will be started.")
+        else:
+            print(f"Account {result.username} is not configured; nothing to do.")
+        sys.exit(0)
 
     # Handle --login (browser-based auth)
     if "--login" in sys.argv:

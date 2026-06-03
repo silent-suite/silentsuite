@@ -32,6 +32,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from silentsuite_bridge import config
+from silentsuite_bridge.accounts import store_authenticated_account
 from silentsuite_bridge.radicale.auth import Auth
 from silentsuite_bridge.radicale.creds import Credentials
 
@@ -226,22 +227,13 @@ class TestEndToEndAuthSetup:
 
     def test_browser_auth_then_caldav_login_round_trip(self, auth, creds_file):
         # Step 1: browser_login persists the session + a salted PBKDF2 hash.
-        creds = Credentials(filename=creds_file)
-        # Wipe any prior users (browser_login does this for single-account mode).
-        for u in creds.list_users():
-            creds.delete(u)
-        creds.set_etebase(
+        store_authenticated_account(
             USERNAME,
-            stored_session="fake-stored-session-blob",
-            server_url="https://test.silentsuite.io",
+            PASSWORD,
+            "fake-stored-session-blob",
+            "https://test.silentsuite.io",
         )
-        salt = os.urandom(32)
-        pwd_hash = hashlib.pbkdf2_hmac(
-            "sha256", PASSWORD.encode(), salt, 600000
-        ).hex()
-        creds.set_password_salt(USERNAME, salt.hex())
-        creds.set_password_hash(USERNAME, pwd_hash)
-        creds.save()
+        creds = Credentials(filename=creds_file)
 
         # Step 2: a CalDAV client connects with those credentials — the
         # bridge's Auth.login (called by Radicale per request) returns the
@@ -256,3 +248,23 @@ class TestEndToEndAuthSetup:
         # elsewhere in the bridge tests).
         assert creds.get_etebase(USERNAME) == "fake-stored-session-blob"
         assert creds.get_server_url(USERNAME) == "https://test.silentsuite.io"
+
+    def test_browser_auth_style_save_preserves_existing_account(self, auth, creds_file):
+        store_authenticated_account(
+            "alice@example.com",
+            PASSWORD,
+            "alice-session",
+            "https://server-a.test",
+        )
+        store_authenticated_account(
+            "bob@example.com",
+            PASSWORD,
+            "bob-session",
+            "https://server-b.test",
+        )
+
+        creds = Credentials(filename=creds_file)
+        assert creds.list_users() == ["alice@example.com", "bob@example.com"]
+        assert creds.get_etebase("alice@example.com") == "alice-session"
+        assert auth.login("alice@example.com", PASSWORD) == "alice@example.com"
+        assert auth.login("bob@example.com", PASSWORD) == "bob@example.com"

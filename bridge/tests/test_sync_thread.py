@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from silentsuite_bridge.radicale.storage import SyncThread, start_sync_thread
+from silentsuite_bridge.radicale.storage import SyncThread, start_sync_thread, stop_sync_thread
 
 
 class TestSyncThread:
@@ -74,6 +74,12 @@ class TestSyncThread:
         # Setting interval should set _force_sync to wake the wait
         assert t._force_sync.is_set()
 
+    def test_stop_sets_stop_event_and_wakes_wait(self):
+        t = SyncThread("user@test.com")
+        t.stop()
+        assert t._stop_sync.is_set()
+        assert t._force_sync.is_set()
+
 
 class TestSyncThreadRun:
     """Test the SyncThread.run() loop with mocked etesync."""
@@ -93,12 +99,16 @@ class TestSyncThreadRun:
         t.interval = 0.05  # short interval for testing
 
         t.start()
-        time.sleep(0.2)
+        try:
+            time.sleep(0.2)
 
-        assert t.last_sync is not None
-        mock_etesync.sync.assert_called()
-        # Thread should still be alive (looping)
-        assert t.is_alive()
+            assert t.last_sync is not None
+            mock_etesync.sync.assert_called()
+            # Thread should still be alive (looping)
+            assert t.is_alive()
+        finally:
+            t.stop()
+            t.join(1)
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.update_status")
@@ -115,13 +125,17 @@ class TestSyncThreadRun:
         t.interval = 300  # very long so it only syncs when forced
 
         t.start()
-        time.sleep(0.15)  # let initial sync complete
-        initial_count = mock_etesync.sync.call_count
+        try:
+            time.sleep(0.15)  # let initial sync complete
+            initial_count = mock_etesync.sync.call_count
 
-        t.force_sync()
-        t.wait_for_sync(timeout=2)
+            t.force_sync()
+            t.wait_for_sync(timeout=2)
 
-        assert mock_etesync.sync.call_count > initial_count
+            assert mock_etesync.sync.call_count > initial_count
+        finally:
+            t.stop()
+            t.join(1)
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.update_status")
@@ -138,12 +152,16 @@ class TestSyncThreadRun:
         t.interval = 300
 
         t.start()
-        time.sleep(0.15)
+        try:
+            time.sleep(0.15)
 
-        # Error should be stored and re-raised on wait
-        t.force_sync()
-        with pytest.raises(ConnectionError, match="network down"):
-            t.wait_for_sync(timeout=2)
+            # Error should be stored and re-raised on wait
+            t.force_sync()
+            with pytest.raises(ConnectionError, match="network down"):
+                t.wait_for_sync(timeout=2)
+        finally:
+            t.stop()
+            t.join(1)
 
 
 class TestStartSyncThread:
@@ -177,6 +195,64 @@ class TestStartSyncThread:
 
             result = start_sync_thread("alive@test.com")
             assert result is existing
+            MockThread.assert_not_called()
+        finally:
+            storage._sync_threads = original
+
+    def test_stop_sync_thread_missing_user_is_noop(self):
+        assert stop_sync_thread("missing@test.com", timeout=0) is True
+
+    def test_stop_sync_thread_removes_stopped_thread(self):
+        from silentsuite_bridge.radicale import storage
+
+        original = storage._sync_threads.copy()
+        try:
+            storage._sync_threads.clear()
+            thread = MagicMock()
+            thread.is_alive.return_value = False
+            storage._sync_threads["stopped@test.com"] = thread
+
+            assert stop_sync_thread("stopped@test.com", timeout=0) is True
+
+            thread.stop.assert_called_once()
+            thread.join.assert_called_once_with(0)
+            assert "stopped@test.com" not in storage._sync_threads
+        finally:
+            storage._sync_threads = original
+
+    def test_stop_sync_thread_does_not_join_current_thread(self, monkeypatch):
+        from silentsuite_bridge.radicale import storage
+
+        original = storage._sync_threads.copy()
+        try:
+            storage._sync_threads.clear()
+            thread = MagicMock()
+            monkeypatch.setattr(threading, "current_thread", lambda: thread)
+            storage._sync_threads["self@test.com"] = thread
+
+            assert stop_sync_thread("self@test.com", timeout=0) is False
+
+            thread.stop.assert_called_once()
+            thread.join.assert_not_called()
+            assert storage._sync_threads["self@test.com"] is thread
+        finally:
+            storage._sync_threads = original
+
+    @patch("silentsuite_bridge.radicale.storage.SyncThread")
+    def test_stop_timeout_keeps_thread_and_prevents_duplicate(self, MockThread):
+        from silentsuite_bridge.radicale import storage
+
+        original = storage._sync_threads.copy()
+        try:
+            storage._sync_threads.clear()
+            existing = MagicMock()
+            existing.is_alive.return_value = True
+            storage._sync_threads["slow@test.com"] = existing
+
+            assert stop_sync_thread("slow@test.com", timeout=0) is False
+            assert storage._sync_threads["slow@test.com"] is existing
+
+            assert start_sync_thread("slow@test.com") is existing
             MockThread.assert_not_called()
         finally:
             storage._sync_threads = original

@@ -61,6 +61,8 @@ silentsuite-bridge --login
 
 This opens your browser to a login page. Enter your account email and password. The bridge authenticates with the server and stores your session locally.
 
+Running `silentsuite-bridge --login` again adds another account or re-authenticates the same account. It does not remove accounts that are already configured.
+
 ### 2. Note Your Connection URLs
 
 After successful login, the browser shows your CalDAV/CardDAV URLs:
@@ -74,7 +76,42 @@ After successful login, the browser shows your CalDAV/CardDAV URLs:
 
 You can always find these URLs by:
 - Opening the dashboard at `http://localhost:37358/.web/`
-- Using the system tray menu (Copy CalDAV URL / Copy CardDAV URL)
+- Using the system tray menu account entries (Copy CalDAV URL / Copy CardDAV URL)
+
+## Multi-Account Use
+
+The bridge can keep multiple accounts active in one local bridge profile. Each account has its own credentials, local cache namespace, sync thread, and DAV path.
+
+```bash
+silentsuite-bridge --login
+silentsuite-bridge --login
+silentsuite-bridge --list-accounts
+```
+
+Each account uses a URL containing the account email:
+
+```text
+http://localhost:37358/work@example.com/
+http://localhost:37358/personal@example.com/
+```
+
+Use the matching account email and password in your calendar/contact client. A client authenticated as one account cannot access another account's DAV path.
+
+To remove only the local login/session for one account while keeping its local cache for future re-login:
+
+```bash
+silentsuite-bridge --logout work@example.com
+```
+
+To fully remove one account's local bridge data, including its decrypted local cache:
+
+```bash
+silentsuite-bridge --remove-account work@example.com
+```
+
+::: warning
+The bridge local cache contains decrypted calendar, contact, and task data. Use `--remove-account` when retiring a shared or untrusted machine.
+:::
 
 ### 3. Start the Bridge
 
@@ -97,9 +134,9 @@ http://localhost:37358/.web/
 
 The dashboard shows:
 - Connection status
-- Account info
+- All configured accounts
 - Last sync time
-- CalDAV/CardDAV URLs with copy buttons
+- Per-account CalDAV/CardDAV URLs with copy buttons
 - Recent sync log
 
 ## Auto-Start
@@ -144,8 +181,11 @@ silentsuite-bridge
 ```bash
 silentsuite-bridge                    # Start the bridge
 silentsuite-bridge --version          # Show version
-silentsuite-bridge --login            # Browser-based login
-silentsuite-bridge --manual-login     # CLI login (for headless systems)
+silentsuite-bridge --login            # Add or re-authenticate an account
+silentsuite-bridge --list-accounts    # List configured accounts
+silentsuite-bridge --logout EMAIL     # Remove local credentials; keep cache
+silentsuite-bridge --remove-account EMAIL  # Remove credentials and local cache
+silentsuite-bridge --manual-login     # CLI add/re-authenticate (headless/dev)
 silentsuite-bridge --install-autostart  # Install auto-start
 silentsuite-bridge --remove-autostart   # Remove auto-start
 silentsuite-bridge --no-tray          # Start without system tray

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import pytest
 import vobject
 
-from silentsuite_bridge.local_cache import models, db, Etebase, Collection, Item
+from silentsuite_bridge.local_cache import Collection, Etebase, Item, clear_cached_user, db, models
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
     ItemEntity,
@@ -131,6 +131,38 @@ class TestHrefMapper:
         )
         assert created2 is False
         assert mapper2.href == "new.ics"
+
+
+class TestClearCachedUser:
+    """Test session-independent per-user cache deletion."""
+
+    @staticmethod
+    def _seed_user(username):
+        user = User.create(username=username)
+        col = CollectionEntity.create(local_user=user, uid=f"{username}-col", eb_col=b"a")
+        item = ItemEntity.create(collection=col, uid=f"{username}-item", eb_item=b"b")
+        HrefMapper.create(content=item, href=f"{username}.ics")
+        return user
+
+    def test_clear_cached_user_deletes_only_selected_user(self, mem_db):
+        self._seed_user("alice@example.com")
+        self._seed_user("bob@example.com")
+
+        assert clear_cached_user("alice@example.com") is True
+
+        assert User.get_or_none(User.username == "alice@example.com") is None
+        bob = User.get(User.username == "bob@example.com")
+        assert bob.collections.count() == 1
+        assert ItemEntity.select().join(CollectionEntity).where(
+            CollectionEntity.local_user == bob
+        ).count() == 1
+        assert HrefMapper.select().count() == 1
+
+    def test_clear_cached_user_missing_is_idempotent(self, mem_db):
+        self._seed_user("bob@example.com")
+
+        assert clear_cached_user("ghost@example.com") is False
+        assert User.get_or_none(User.username == "bob@example.com") is not None
 
 
 # ---------------------------------------------------------------------------

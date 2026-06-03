@@ -30,6 +30,7 @@ _bridge_status = {
     "last_sync": None,
     "error": None,
     "collections": {"calendars": 0, "contacts": 0, "tasks": 0},
+    "collections_scope": "all configured accounts",
 }
 
 
@@ -42,7 +43,7 @@ def log_sync_event(event_type, message):
     })
 
 
-def update_status(state, error=None, collections=None):
+def update_status(state, error=None, collections=None, account=None, scope=None):
     """Update the bridge status."""
     _bridge_status["state"] = state
     if state == "connected":
@@ -52,6 +53,10 @@ def update_status(state, error=None, collections=None):
         _bridge_status["error"] = str(error)
     if collections:
         _bridge_status["collections"] = collections
+        if account:
+            _bridge_status["collections_scope"] = f"latest sync for {account}"
+        elif scope:
+            _bridge_status["collections_scope"] = scope
 
 
 DASHBOARD_HTML = """<!DOCTYPE html>
@@ -147,6 +152,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             font-size: 11px;
         }
         .copy-btn:hover { background: #444; }
+        .account-card {
+            background: #111;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+        .account-card h4 {
+            font-size: 15px;
+            color: #fff;
+            margin-bottom: 8px;
+            overflow-wrap: anywhere;
+        }
+        .account-meta {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 10px;
+            overflow-wrap: anywhere;
+        }
 
         .log-section { margin-top: 8px; }
         .log-section h3 {
@@ -201,34 +225,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span class="status-text">{{STATUS_TEXT}}</span>
             </div>
             <div class="info-grid">
-                <span class="info-label">Account</span>
-                <span class="info-value">{{USER_EMAIL}}</span>
-                <span class="info-label">Server</span>
-                <span class="info-value"><code>{{SERVER_URL}}</code></span>
                 <span class="info-label">Last sync</span>
                 <span class="info-value">{{LAST_SYNC}}</span>
-                <span class="info-label">Collections</span>
+                <span class="info-label">{{COLLECTIONS_LABEL}}</span>
                 <span class="info-value">{{COLLECTIONS}}</span>
                 <span class="info-label">Sync interval</span>
                 <span class="info-value">{{SYNC_INTERVAL_DISPLAY}}</span>
             </div>
 
             <div class="url-section">
-                <h3>Connection URLs</h3>
-                <div class="url-box">
-                    <div>
-                        <label>CalDAV (Calendars + Tasks)</label>
-                        <code id="caldavUrl">{{CALDAV_URL}}</code>
-                    </div>
-                    <button class="copy-btn" onclick="copy(event, 'caldavUrl')">Copy</button>
-                </div>
-                <div class="url-box">
-                    <div>
-                        <label>CardDAV (Contacts)</label>
-                        <code id="carddavUrl">{{CARDDAV_URL}}</code>
-                    </div>
-                    <button class="copy-btn" onclick="copy(event, 'carddavUrl')">Copy</button>
-                </div>
+                <h3>Configured Accounts</h3>
+                {{ACCOUNT_LIST}}
             </div>
         </div>
 
@@ -354,11 +361,8 @@ def _render_dashboard():
 
     creds = Credentials()
     users = creds.list_users()
-    email = users[0] if users else "Not configured"
 
     base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}"
-    caldav_url = f"{base_url}/{email}/" if users else "N/A"
-    carddav_url = caldav_url
 
     state = _bridge_status["state"]
     status_map = {
@@ -372,6 +376,8 @@ def _render_dashboard():
     last_sync = _bridge_status.get("last_sync", "Never")
     cols = _bridge_status.get("collections", {})
     col_text = f"{cols.get('calendars', 0)} calendars, {cols.get('contacts', 0)} contacts, {cols.get('tasks', 0)} tasks"
+    collections_scope = _bridge_status.get("collections_scope") or "all configured accounts"
+    collections_label = f"Collections ({collections_scope})"
 
     error_banner = ""
     if _bridge_status.get("error"):
@@ -393,17 +399,37 @@ def _render_dashboard():
     else:
         log_html = '<div class="log-empty">No sync activity yet</div>'
 
+    if users:
+        account_html = ""
+        for index, user in enumerate(users):
+            dav_url = f"{base_url}/{user}/"
+            server_url = creds.get_server_url(user)
+            url_id = f"davUrl{index}"
+            account_html += (
+                '<div class="account-card">'
+                f'<h4>{esc(user)}</h4>'
+                f'<div class="account-meta">Server: <code>{esc(server_url)}</code></div>'
+                '<div class="url-box">'
+                '<div>'
+                '<label>CalDAV/CardDAV URL</label>'
+                f'<code id="{url_id}">{esc(dav_url)}</code>'
+                '</div>'
+                f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
+                '</div>'
+                '</div>'
+            )
+    else:
+        account_html = '<div class="log-empty">No accounts configured</div>'
+
     page = DASHBOARD_HTML
     page = page.replace("{{VERSION}}", esc(__version__))
     page = page.replace("{{ERROR_BANNER}}", error_banner)
     page = page.replace("{{STATUS_STATE}}", esc(state))
     page = page.replace("{{STATUS_TEXT}}", esc(status_text))
-    page = page.replace("{{USER_EMAIL}}", esc(email))
-    page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
     page = page.replace("{{LAST_SYNC}}", esc(last_sync or "Never"))
+    page = page.replace("{{COLLECTIONS_LABEL}}", esc(collections_label))
     page = page.replace("{{COLLECTIONS}}", esc(col_text))
-    page = page.replace("{{CALDAV_URL}}", esc(caldav_url))
-    page = page.replace("{{CARDDAV_URL}}", esc(carddav_url))
+    page = page.replace("{{ACCOUNT_LIST}}", account_html)
     page = page.replace("{{SYNC_LOG}}", log_html)
 
     # Sync interval display

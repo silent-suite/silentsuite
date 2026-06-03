@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
+from radicale.storage import ComponentNotFoundError
 import vobject
 
 from silentsuite_bridge.local_cache import models, db
@@ -286,6 +287,31 @@ class TestDiscover:
             "test@example.com/contacts",
         ]
 
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
+    def test_discover_rejects_authenticated_user_path_mismatch(self, mock_start, mock_etesync_ctx):
+        mock_thread = MagicMock()
+        mock_thread.wait_for_sync.return_value = True
+        mock_start.return_value = mock_thread
+
+        mock_etesync = MagicMock()
+        mock_etesync.list.return_value = []
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(mock_etesync, False)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+        from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
+
+        configuration = Configuration(DEFAULT_CONFIG_SCHEMA)
+        storage = Storage(configuration)
+
+        with storage.acquire_lock("r", user="alice@example.com"):
+            results = list(storage.discover("/bob@example.com/calendar/item.ics", depth="1"))
+
+        assert results == []
+        mock_etesync.list.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Collection — create_collection
@@ -447,3 +473,36 @@ class TestCreateCollection:
 
         # Should return a fake collection without creating anything on Etebase
         assert result is not None
+
+    @patch("silentsuite_bridge.radicale.storage.log_sync_event")
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
+    def test_create_collection_rejects_authenticated_user_path_mismatch(
+        self, mock_start, mock_etesync_ctx, mock_log, mem_db,
+    ):
+        mock_thread = MagicMock()
+        mock_thread.wait_for_sync.return_value = True
+        mock_start.return_value = mock_thread
+
+        mock_etesync = MagicMock()
+        mock_col_mgr = MagicMock()
+        mock_etesync.etebase.get_collection_manager.return_value = mock_col_mgr
+        mock_etesync.user = User.create(username="alice@example.com")
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(mock_etesync, False)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+        from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
+
+        configuration = Configuration(DEFAULT_CONFIG_SCHEMA)
+        storage = Storage(configuration)
+
+        with storage.acquire_lock("w", user="alice@example.com"):
+            with pytest.raises(ComponentNotFoundError):
+                storage.create_collection(
+                    "/bob@example.com/new-cal-uid",
+                    props={"tag": "VCALENDAR", "D:displayname": "Work Calendar"},
+                )
+
+        mock_col_mgr.create.assert_not_called()
