@@ -1,0 +1,29 @@
+repository: https://github.com/silent-suite/silentsuite
+release_source: https://github.com/silent-suite/silentsuite/releases/download/v0.2.0-beta/silentsuite-android-v0.2.0-beta.apk
+pubkey: npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35
+name: SilentSuite
+summary: Zero-knowledge calendar, contacts, and tasks sync for Android
+description: |
+  SilentSuite is a zero-knowledge sync app for Android calendars, contacts, and tasks. It keeps your productivity data encrypted before it reaches the server, so SilentSuite cannot read your calendar events, address book, or task lists.
+
+  Use your existing Android calendar, contacts, and task apps while syncing private data through SilentSuite. Your plaintext data stays on your devices. Sync data is stored on the server as encrypted blobs, and your encryption keys do not leave your device.
+
+  You can use SilentSuite with a hosted silentsuite.io account, or point the app at your own self-hosted SilentSuite server. The server and client code are open source, so privacy claims can be inspected instead of merely trusted.
+
+  Beta note: SilentSuite is actively improving. Calendar, contacts, and tasks sync are the core focus of this beta; please report issues so we can make the Android experience better.
+tags:
+  - productivity
+  - privacy
+  - calendar
+  - contacts
+  - tasks
+  - sync
+license: GPL-3.0-only
+website: https://silentsuite.io
+icon: android/fastlane/metadata/android/en-US/images/icon.png
+images:
+  - zapstore/screenshots/1-add-account.png
+  - zapstore/screenshots/2-sync-overview.png
+  - zapstore/screenshots/3-navigation-drawer.png
+  - zapstore/screenshots/4-encryption-fingerprint.png
+release_notes: android/fastlane/metadata/android/en-US/changelogs/6.txt

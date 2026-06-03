@@ -1,0 +1,1 @@
+v0.2.0-beta: multiple calendars, address books, and task lists; Android export backups; clearer sync states; refreshed branding; and Bitcoin/Lightning annual signup via BTCPay.
