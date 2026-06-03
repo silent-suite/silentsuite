@@ -92,7 +92,15 @@ jobs:
 
           node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
           const fs = require('fs')
-          const report = JSON.parse(fs.readFileSync('pnpm-audit.json', 'utf8'))
+          let report
+          try {
+            report = JSON.parse(fs.readFileSync('pnpm-audit.json', 'utf8'))
+          } catch (err) {
+            console.log('## Dependency Audit')
+            console.log('')
+            console.log('Dependency audit output could not be parsed. This non-blocking guardrail needs follow-up inspection in the workflow logs.')
+            process.exit(0)
+          }
           const counts = report.metadata?.vulnerabilities ?? {}
           const advisories = Object.values(report.advisories ?? {})
             .filter((advisory) => ['high', 'critical'].includes(advisory.severity))
