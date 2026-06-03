@@ -67,8 +67,11 @@ def clear_cached_user(username, db_path=None):
     if not normalized:
         raise ValueError("Account username is required")
 
-    database, _ = _init_cache_database(db_path)
-    with db.database_proxy:
+    database, initialized_here = _init_cache_database(db_path)
+    if database.is_closed():
+        database.connect(reuse_if_open=True)
+
+    try:
         _ensure_cache_tables(database)
         user = models.User.get_or_none(models.User.username == normalized)
         if user is None:
@@ -99,6 +102,9 @@ def clear_cached_user(username, db_path=None):
             ).execute()
         user.delete_instance()
         return True
+    finally:
+        if initialized_here and not database.is_closed():
+            database.close()
 
 
 def _extract_uid(vobject_item):
