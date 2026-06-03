@@ -17,6 +17,7 @@ on:
       - 'packages/**'
       - 'Dockerfile.web'
       - 'pnpm-lock.yaml'
+      - '.github/workflows/preview-web.yml'
 
 concurrency:
   group: preview-web-${{ github.ref }}
@@ -53,7 +54,6 @@ jobs:
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
             NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Comment on PR
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
