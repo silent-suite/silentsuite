@@ -20,10 +20,10 @@ tags:
   - sync
 license: GPL-3.0-only
 website: https://silentsuite.io
-icon: android/fastlane/metadata/android/en-US/images/icon.png
+icon: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/icon.png
 images:
-  - android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-main.png
-  - android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-account.png
-  - android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-create-calendar.png
-  - android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-view-collection.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-main.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-account.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-create-calendar.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-view-collection.png
 release_notes: android/fastlane/metadata/android/en-US/changelogs/6.txt
