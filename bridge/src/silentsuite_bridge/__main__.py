@@ -50,7 +50,10 @@ def build_radicale_configuration():
     """
     from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
 
+    config.validate_network_config()
+
     configuration = Configuration(DEFAULT_CONFIG_SCHEMA)
+    web_type = "silentsuite_bridge.web" if config.is_dashboard_enabled() else "none"
     configuration.update(
         {
             "server": {
@@ -63,7 +66,7 @@ def build_radicale_configuration():
                 "type": "silentsuite_bridge.radicale.storage",
             },
             "web": {
-                "type": "silentsuite_bridge.web",
+                "type": web_type,
             },
             "logging": {
                 "level": config.LOG_LEVEL.lower(),
@@ -204,13 +207,15 @@ def run_server():
         __version__,
         config.SERVER_HOSTS,
     )
+    if config.is_remote_bind_configured():
+        logger.warning(
+            "Remote bridge bind enabled by SILENTSUITE_ALLOW_REMOTE=1. "
+            "DAV traffic is plaintext HTTP unless protected by your own proxy/VPN."
+        )
+        logger.warning("Bridge dashboard disabled while remote bind is configured.")
     logger.info("Etebase server: %s", config.ETEBASE_SERVER_URL)
     logger.info("Data directory: %s", config.DATA_DIR)
-    logger.info(
-        "CalDAV/CardDAV URL: http://%s:%d/<username>/",
-        config.LISTEN_ADDRESS,
-        config.LISTEN_PORT,
-    )
+    logger.info("CalDAV/CardDAV host(s): %s", config.SERVER_HOSTS)
 
     # Run initial sync so dashboard shows correct status immediately
     _initial_status_check()
@@ -263,6 +268,8 @@ def main():
         print("  SILENTSUITE_SERVER_URL       Etebase server URL")
         print("  SILENTSUITE_LISTEN_ADDRESS   Listen address (default: 127.0.0.1)")
         print("  SILENTSUITE_LISTEN_PORT      Listen port (default: 37358)")
+        print("  SILENTSUITE_SERVER_HOSTS     Radicale host specs (default: listen address:port)")
+        print("  SILENTSUITE_ALLOW_REMOTE     Allow non-loopback bind and disable dashboard")
         print("  SILENTSUITE_DATA_DIR         Data directory path")
         print("  SILENTSUITE_LOG_LEVEL        Log level (default: INFO)")
         print("  SILENTSUITE_LOG_FILE         Log file path")
@@ -279,6 +286,12 @@ def main():
             sys.exit(1)
 
     configure_logging()
+    try:
+        config.validate_network_config()
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
     config.ensure_data_dir()
 
     action_count = sum(1 for flag in _ACCOUNT_ACTION_FLAGS if flag in sys.argv)
