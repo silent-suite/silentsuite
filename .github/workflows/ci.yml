@@ -84,8 +84,48 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Audit dependencies
-        run: pnpm audit --audit-level=high
-        continue-on-error: true  # TODO: tighten to fail on high-severity vulnerabilities once existing issues are resolved
+        run: |
+          set +e
+          pnpm audit --audit-level=high --json > pnpm-audit.json
+          audit_status=$?
+          set -e
+
+          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require('fs')
+          const report = JSON.parse(fs.readFileSync('pnpm-audit.json', 'utf8'))
+          const counts = report.metadata?.vulnerabilities ?? {}
+          const advisories = Object.values(report.advisories ?? {})
+            .filter((advisory) => ['high', 'critical'].includes(advisory.severity))
+            .sort((a, b) => {
+              const order = { critical: 0, high: 1 }
+              return order[a.severity] - order[b.severity]
+            })
+
+          console.log('## Dependency Audit')
+          console.log('')
+          console.log(`Current baseline: ${counts.critical ?? 0} critical, ${counts.high ?? 0} high, ${counts.moderate ?? 0} moderate, ${counts.low ?? 0} low.`)
+          console.log('')
+          if (advisories.length === 0) {
+            console.log('No high or critical advisories found. This job can be made blocking.')
+          } else {
+            console.log('High/critical audit is intentionally non-blocking while the baseline is remediated.')
+            console.log('')
+            console.log('| Severity | Package | Advisory |')
+            console.log('| --- | --- | --- |')
+            for (const advisory of advisories) {
+              const pkg = advisory.module_name ?? advisory.name ?? 'unknown'
+              const title = String(advisory.title ?? advisory.url ?? 'advisory').replaceAll('|', '\\|')
+              const url = advisory.url ? `[${title}](${advisory.url})` : title
+              console.log(`| ${advisory.severity} | ${pkg} | ${url} |`)
+            }
+          }
+          NODE
+
+          if [ "$audit_status" -ne 0 ]; then
+            echo "::warning title=Dependency audit baseline::pnpm audit found high/critical advisories; see the job summary."
+          fi
+
+          exit 0
 
   build-web:
     name: Build Web App
