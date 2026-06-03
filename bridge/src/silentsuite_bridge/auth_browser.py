@@ -391,9 +391,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                 <button class="copy-btn" onclick="copyUrl(event, 'bridgeUrl')">Copy</button>
             </div>
             <p class="url-note">CalDAV and CardDAV share the same base URL &mdash; this is normal. Your app will discover calendars and contacts automatically.</p>
-            <div class="bookmark-box">
-                &#11088; Bookmark <a href="DASHBOARD_URL">DASHBOARD_URL</a> to find these details later
-            </div>
+            DASHBOARD_BOOKMARK
             <div class="next-step">
                 You're signed in. You can close this tab &mdash; the bridge is already running in the background and will keep syncing on its own.
             </div>
@@ -584,13 +582,21 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
         elif self.path.startswith("/success"):
             params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             email = params.get("email", [""])[0].strip()
-            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
             bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+            if config.is_dashboard_enabled():
+                dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
+                dashboard_bookmark = (
+                    '<div class="bookmark-box">&#11088; Bookmark '
+                    f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
+                    "to find these details later</div>"
+                )
+            else:
+                dashboard_bookmark = '<div class="bookmark-box">Dashboard is disabled for remote bridge binds.</div>'
 
             page = SUCCESS_PAGE_HTML
             page = page.replace("USER_EMAIL", html_mod.escape(email))
             page = page.replace("BRIDGE_URL", html_mod.escape(bridge_url))
-            page = page.replace("DASHBOARD_URL", html_mod.escape(dashboard_url))
+            page = page.replace("DASHBOARD_BOOKMARK", dashboard_bookmark)
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -731,13 +737,16 @@ def browser_login():
     email = server.authenticated_email
     if email:
         used_server = server.authenticated_server_url
-        dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
         base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
         print(f"\n  Login successful! Now start the bridge daemon:")
         print(f"    ./silentsuite-bridge")
         print()
         print(f"  Etebase server: {used_server}")
-        print(f"  Dashboard will be available at: {dashboard_url}")
+        if config.is_dashboard_enabled():
+            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
+            print(f"  Dashboard will be available at: {dashboard_url}")
+        else:
+            print("  Dashboard is disabled for remote bridge binds.")
         print(f"  CalDAV/CardDAV URL for your apps: {base_url}")
         print(f"\n  Full setup guides: https://docs.silentsuite.io/user-guide/apps/dav-bridge\n")
 
