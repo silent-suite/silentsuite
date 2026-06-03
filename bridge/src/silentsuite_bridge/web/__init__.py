@@ -13,6 +13,7 @@ Integrates with Radicale's web module system.
 import html
 import json
 import logging
+import threading
 import time
 from collections import deque
 
@@ -33,6 +34,7 @@ _bridge_status = {
     "collections_by_account": {},
     "collections_scope": "all configured accounts",
 }
+_bridge_status_lock = threading.RLock()
 
 
 def log_sync_event(event_type, message):
@@ -46,24 +48,33 @@ def log_sync_event(event_type, message):
 
 def update_status(state, error=None, collections=None, account=None, scope=None):
     """Update the bridge status."""
-    _bridge_status["state"] = state
-    if state == "connected":
-        _bridge_status["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        _bridge_status["error"] = None
-    if error:
-        _bridge_status["error"] = str(error)
-    if collections:
-        if account:
-            _bridge_status.setdefault("collections_by_account", {})[account] = collections
-            _bridge_status["collections"] = _aggregate_collections(
-                _bridge_status["collections_by_account"].values()
-            )
-            _bridge_status["collections_scope"] = "all configured accounts"
-        elif scope:
-            _bridge_status["collections"] = collections
-            _bridge_status["collections_scope"] = scope
-        else:
-            _bridge_status["collections"] = collections
+    with _bridge_status_lock:
+        _bridge_status["state"] = state
+        if state == "connected":
+            _bridge_status["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            _bridge_status["error"] = None
+        if error:
+            _bridge_status["error"] = str(error)
+        if collections:
+            if account:
+                _bridge_status.setdefault("collections_by_account", {})[account] = collections
+                _bridge_status["collections"] = _aggregate_collections(
+                    _bridge_status["collections_by_account"].values()
+                )
+                _bridge_status["collections_scope"] = "all configured accounts"
+            elif scope:
+                _bridge_status["collections"] = collections
+                _bridge_status["collections_scope"] = scope
+            else:
+                _bridge_status["collections"] = collections
+
+
+def forget_account_status(account):
+    """Remove one account's in-memory dashboard status."""
+    with _bridge_status_lock:
+        account_collections = _bridge_status.setdefault("collections_by_account", {})
+        account_collections.pop(account, None)
+        _bridge_status["collections"] = _aggregate_collections(account_collections.values())
 
 
 def _aggregate_collections(collections_iterable):
@@ -379,7 +390,14 @@ def _render_dashboard():
 
     base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}"
 
-    state = _bridge_status["state"]
+    with _bridge_status_lock:
+        state = _bridge_status["state"]
+        last_sync = _bridge_status.get("last_sync", "Never")
+        cols = dict(_bridge_status.get("collections", {}))
+        account_cols = dict(_bridge_status.get("collections_by_account", {}))
+        collections_scope = _bridge_status.get("collections_scope") or "all configured accounts"
+        status_error = _bridge_status.get("error")
+
     status_map = {
         "starting": "Starting...",
         "connected": "Connected",
@@ -388,19 +406,15 @@ def _render_dashboard():
     }
     status_text = status_map.get(state, state)
 
-    last_sync = _bridge_status.get("last_sync", "Never")
-    cols = _bridge_status.get("collections", {})
-    account_cols = _bridge_status.get("collections_by_account", {})
     filtered_account_cols = [account_cols[user] for user in users if user in account_cols]
     if filtered_account_cols:
         cols = _aggregate_collections(filtered_account_cols)
     col_text = f"{cols.get('calendars', 0)} calendars, {cols.get('contacts', 0)} contacts, {cols.get('tasks', 0)} tasks"
-    collections_scope = _bridge_status.get("collections_scope") or "all configured accounts"
     collections_label = f"Collections ({collections_scope})"
 
     error_banner = ""
-    if _bridge_status.get("error"):
-        error_banner = f'<div class="error-banner">{esc(_bridge_status["error"])}</div>'
+    if status_error:
+        error_banner = f'<div class="error-banner">{esc(status_error)}</div>'
 
     # Build sync log HTML
     if _sync_log:
@@ -483,8 +497,14 @@ class Web(BaseWeb):
 
         # API endpoint for JSON status
         if path == "/.web/api/status":
+            with _bridge_status_lock:
+                status = dict(_bridge_status)
+                status["collections"] = dict(_bridge_status.get("collections", {}))
+                status["collections_by_account"] = dict(
+                    _bridge_status.get("collections_by_account", {})
+                )
             data = {
-                "status": _bridge_status,
+                "status": status,
                 "log": list(_sync_log)[:20],
             }
             return (
@@ -520,8 +540,9 @@ class Web(BaseWeb):
                 "is_syncing": is_syncing,
                 "sync_started_at": sync_started_at,
                 "last_sync_duration": last_sync_duration,
-                "collections": _bridge_status.get("collections", {}),
             }
+            with _bridge_status_lock:
+                data["collections"] = dict(_bridge_status.get("collections", {}))
             return (
                 200,
                 {"Content-Type": "application/json"},
@@ -548,6 +569,7 @@ class Web(BaseWeb):
                             "stoken": col.stoken[:20] if col.stoken else None,
                             "local_stoken": col.local_stoken[:20] if col.local_stoken else None,
                             "dirty": col.dirty,
+                            "new": col.new,
                             "deleted": col.deleted,
                             "item_count": len(items),
                             "items": items,
@@ -571,37 +593,6 @@ class Web(BaseWeb):
                 200,
                 {"Content-Type": "application/json"},
                 json.dumps(data).encode(),
-            )
-
-        # Diagnostic dump of cached collections/items
-        if path == "/.web/api/dump":
-            from ..local_cache import models, db
-            dump = {}
-            try:
-                with db.database_proxy:
-                    for col in models.CollectionEntity.select():
-                        items = []
-                        for item in col.items:
-                            items.append({
-                                "uid": item.uid,
-                                "dirty": item.dirty,
-                                "new": item.new,
-                                "deleted": item.deleted,
-                            })
-                        dump[col.uid] = {
-                            "stoken": col.stoken,
-                            "local_stoken": col.local_stoken,
-                            "dirty": col.dirty,
-                            "new": col.new,
-                            "deleted": col.deleted,
-                            "items": items,
-                        }
-            except Exception as e:
-                dump = {"error": str(e)}
-            return (
-                200,
-                {"Content-Type": "application/json"},
-                json.dumps(dump, indent=2).encode(),
             )
 
         return (404, {}, b"Not found")

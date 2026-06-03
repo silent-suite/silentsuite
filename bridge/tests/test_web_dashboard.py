@@ -2,7 +2,12 @@
 
 from silentsuite_bridge import config
 from silentsuite_bridge.radicale.creds import Credentials
-from silentsuite_bridge.web import _bridge_status, _render_dashboard, update_status
+from silentsuite_bridge.web import (
+    _bridge_status,
+    _render_dashboard,
+    forget_account_status,
+    update_status,
+)
 
 
 def _reset_status():
@@ -83,3 +88,26 @@ def test_render_dashboard_handles_no_accounts(tmp_path, monkeypatch):
     html = _render_dashboard()
 
     assert "No accounts configured" in html
+
+
+def test_forget_account_status_removes_one_accounts_counts():
+    _reset_status()
+    update_status(
+        "connected",
+        collections={"calendars": 2, "contacts": 0, "tasks": 1},
+        account="alice@example.com",
+    )
+    update_status(
+        "connected",
+        collections={"calendars": 1, "contacts": 3, "tasks": 0},
+        account="bob@example.com",
+    )
+
+    forget_account_status("alice@example.com")
+
+    assert _bridge_status["collections"] == {
+        "calendars": 1,
+        "contacts": 3,
+        "tasks": 0,
+    }
+    assert "alice@example.com" not in _bridge_status["collections_by_account"]

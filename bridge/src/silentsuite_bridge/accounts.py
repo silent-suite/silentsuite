@@ -90,6 +90,9 @@ def logout_account(
 
         sync_stopped = stop_sync_thread(normalized)
         forget_etesync_user(normalized)
+        from .web import forget_account_status
+
+        forget_account_status(normalized)
 
         if existed:
             creds.delete(normalized)
