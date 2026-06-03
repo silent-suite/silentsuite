@@ -25,6 +25,7 @@ export default defineConfig({
       { text: 'User Guide', link: '/user-guide/getting-started', activeMatch: '/user-guide/' },
       { text: 'Self-Hosting', link: '/self-hosting/quick-start', activeMatch: '/self-hosting/' },
       { text: 'Contributing', link: '/contributing/dev-setup', activeMatch: '/contributing/' },
+      { text: 'Privacy', link: 'https://silentsuite.io/privacy' },
       { text: 'silentsuite.io', link: 'https://silentsuite.io' },
     ],
 
