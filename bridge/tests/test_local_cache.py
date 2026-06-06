@@ -1,5 +1,8 @@
 """Tests for the local Etebase cache layer."""
 
+import logging
+import os
+import stat
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import pytest
@@ -524,3 +527,132 @@ class TestSyncLogic:
 
             # Key assertion: item_mgr.list() MUST be called even when stokens match
             mock_item_mgr.list.assert_called_once()
+
+    @patch("silentsuite_bridge.local_cache.Account")
+    @patch("silentsuite_bridge.local_cache.Client")
+    def test_pull_collection_info_logs_do_not_expose_item_identifiers_or_metadata(
+        self,
+        MockClient,
+        MockAccount,
+        mem_db,
+        caplog,
+    ):
+        mock_account = MagicMock()
+        MockAccount.restore.return_value = mock_account
+        mock_col_mgr = MagicMock()
+        mock_account.get_collection_manager.return_value = mock_col_mgr
+        mock_col = MagicMock()
+        mock_col_mgr.cache_load.return_value = mock_col
+        mock_item_mgr = MagicMock()
+        mock_col_mgr.get_item_manager.return_value = mock_item_mgr
+        mock_item = MagicMock()
+        mock_item.uid = "private-etebase-item-uid"
+        mock_item.meta = {"name": "private-local-item-uid", "summary": "Private Appointment"}
+        mock_item.deleted = False
+        mock_item_mgr.cache_save.return_value = b"item-cache"
+        mock_item_list = MagicMock()
+        mock_item_list.data = [mock_item]
+        mock_item_list.done = True
+        mock_item_list.stoken = "private-stoken"
+        mock_item_mgr.list.return_value = mock_item_list
+
+        with patch("silentsuite_bridge.local_cache.Etebase._init_db"):
+            etebase = Etebase.__new__(Etebase)
+            etebase.etebase = mock_account
+            etebase.username = "test@example.com"
+            etebase._database = mem_db
+            etebase.stored_session = "fake"
+            db.database_proxy.initialize(mem_db)
+            user_obj = User.create(username="private-log-test@example.com")
+            etebase.user = user_obj
+            CollectionEntity.create(
+                local_user=user_obj,
+                uid="private-collection-uid",
+                eb_col=b"\x00" * 8,
+                local_stoken="private-old-stoken",
+            )
+
+            with caplog.at_level(logging.INFO, logger="silentsuite-bridge.cache"):
+                etebase.pull_collection("private-collection-uid")
+
+        logs = caplog.text
+        assert "fetched 1 items" in logs
+        assert "private-collection-uid" not in logs
+        assert "private-etebase-item-uid" not in logs
+        assert "private-local-item-uid" not in logs
+        assert "Private Appointment" not in logs
+        assert "private-stoken" not in logs
+
+    @patch("silentsuite_bridge.local_cache.Account")
+    @patch("silentsuite_bridge.local_cache.Client")
+    def test_push_collection_info_logs_do_not_expose_item_identifiers(
+        self,
+        MockClient,
+        MockAccount,
+        mem_db,
+        caplog,
+    ):
+        mock_account = MagicMock()
+        MockAccount.restore.return_value = mock_account
+        mock_col_mgr = MagicMock()
+        mock_account.get_collection_manager.return_value = mock_col_mgr
+        mock_col = MagicMock()
+        mock_col_mgr.cache_load.return_value = mock_col
+        mock_item_mgr = MagicMock()
+        mock_col_mgr.get_item_manager.return_value = mock_item_mgr
+        mock_item_mgr.cache_load.return_value = MagicMock()
+        mock_item_mgr.cache_save.return_value = b"saved-item"
+
+        with patch("silentsuite_bridge.local_cache.Etebase._init_db"):
+            etebase = Etebase.__new__(Etebase)
+            etebase.etebase = mock_account
+            etebase.username = "test@example.com"
+            etebase._database = mem_db
+            etebase.stored_session = "fake"
+            db.database_proxy.initialize(mem_db)
+            user_obj = User.create(username="private-push-log-test@example.com")
+            etebase.user = user_obj
+            col = CollectionEntity.create(
+                local_user=user_obj,
+                uid="private-push-collection-uid",
+                eb_col=b"\x00" * 8,
+            )
+            ItemEntity.create(
+                collection=col,
+                uid="private-push-item-uid",
+                eb_item=b"\x00" * 8,
+                dirty=True,
+            )
+
+            with caplog.at_level(logging.INFO, logger="silentsuite-bridge.cache"):
+                etebase.push_collection("private-push-collection-uid")
+
+        logs = caplog.text
+        assert "1 dirty/new items" in logs
+        assert "private-push-collection-uid" not in logs
+        assert "private-push-item-uid" not in logs
+
+
+def test_cache_database_files_are_owner_only(tmp_path):
+    if os.name == "nt":
+        pytest.skip("POSIX file modes are not meaningful on Windows")
+
+    etebase = Etebase.__new__(Etebase)
+    etebase.username = "mode-test@example.com"
+    db_path = tmp_path / "nested" / "bridge_data.db"
+    db_path.parent.mkdir(mode=0o755)
+    os.chmod(db_path.parent, 0o755)
+
+    old_umask = os.umask(0o022)
+    try:
+        etebase._init_db(str(db_path))
+    finally:
+        os.umask(old_umask)
+        db.database_proxy.close()
+
+    assert stat.S_IMODE(os.stat(db_path).st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(db_path.parent).st_mode) == 0o700
+    for suffix in ("-wal", "-shm"):
+        sidecar = f"{db_path}{suffix}"
+        if os.path.exists(sidecar):
+            assert stat.S_IMODE(os.stat(sidecar).st_mode) == 0o600

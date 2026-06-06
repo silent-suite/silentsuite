@@ -588,8 +588,10 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(html.encode())
         elif self.path.startswith("/success"):
-            params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            email = params.get("email", [""])[0].strip()
+            email = getattr(self.server, "authenticated_email", "") or ""
+            if not email:
+                self.send_error(404)
+                return
             bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
             if config.is_dashboard_enabled():
                 dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
@@ -654,7 +656,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 else:
                     error_msg = f"Authentication failed: {error_msg}"
 
-                logger.warning("Auth failed for %s: %s", email, error_msg)
+                logger.warning("Auth failed: %s", error_msg)
                 self._json_response(401, {
                     "success": False,
                     "error": error_msg,
@@ -672,13 +674,13 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 server_url,
             )
 
-            logger.info("Authentication successful for %s", result.username)
+            logger.info("Authentication successful")
 
             # Store the email and server URL for the success handler
             self.server.authenticated_email = result.username
             self.server.authenticated_server_url = server_url
 
-            redirect_url = f"/success?email={urllib.parse.quote(result.username)}"
+            redirect_url = "/success"
             self._json_response(200, {
                 "success": True,
                 "redirect": redirect_url,
