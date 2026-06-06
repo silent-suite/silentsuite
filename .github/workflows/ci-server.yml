@@ -5,10 +5,16 @@ on:
     branches: [main, dev]
     paths:
       - 'server/**'
+      - 'Dockerfile.server'
+      - '.dockerignore'
+      - '.github/workflows/ci-server.yml'
   pull_request:
     branches: [main, dev]
     paths:
       - 'server/**'
+      - 'Dockerfile.server'
+      - '.dockerignore'
+      - '.github/workflows/ci-server.yml'
 
 concurrency:
   group: ci-server-${{ github.ref }}
@@ -52,6 +58,13 @@ jobs:
         working-directory: server
         run: python -c "import django; django.setup(); print('Django loaded OK')"
 
+      - name: Verify Docker secret exclusions
+        run: |
+          grep -Fx 'secret.txt' .dockerignore
+          grep -Fx '**/secret.txt' .dockerignore
+          grep -Fx '/secret.txt' server/.dockerignore
+          grep -Fx '**/secret.txt' server/.dockerignore
+
       - name: Lint with ruff
         working-directory: server
         run: ruff check . --select=E,F,I --ignore=E501
@@ -59,4 +72,4 @@ jobs:
 
       - name: Run tests
         working-directory: server
-        run: python -m pytest etebase_server/ -v --tb=short || python manage.py test --verbosity=2
+        run: python -m pytest etebase_server/ -v --tb=short

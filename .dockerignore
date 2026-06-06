@@ -2,6 +2,8 @@
 **/.next
 **/.turbo
 **/.git
+secret.txt
+**/secret.txt
 **/dist
 _bmad/
 _bmad-output/
