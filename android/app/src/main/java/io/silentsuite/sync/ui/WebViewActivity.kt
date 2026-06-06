@@ -31,12 +31,22 @@ class WebViewActivity : BaseActivity() {
         mToolbar = supportActionBar
         mToolbar!!.setDisplayHomeAsUpEnabled(true)
 
-        var uri = intent.getParcelableExtra<Uri>(KEY_URL)!!
+        val initialUri = intent.getParcelableExtra<Uri>(KEY_URL)
+        if (initialUri == null || !isAllowedUrl(initialUri)) {
+            finish()
+            return
+        }
+        var uri = initialUri
         uri = addQueryParams(uri)
         mWebView = findViewById<View>(R.id.webView) as WebView
         mProgressBar = findViewById<View>(R.id.progressBar) as ProgressBar
 
         mWebView!!.settings.javaScriptEnabled = true
+        mWebView!!.settings.allowFileAccess = false
+        mWebView!!.settings.allowContentAccess = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            mWebView!!.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        }
         if (savedInstanceState == null) {
             mWebView!!.loadUrl(uri.toString())
         }
