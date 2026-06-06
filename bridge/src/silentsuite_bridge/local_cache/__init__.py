@@ -11,6 +11,7 @@ Original: https://github.com/etesync/etesync-dav
 import logging
 import os
 import time
+from contextlib import contextmanager
 
 import msgpack
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
@@ -19,6 +20,29 @@ from .. import config
 from . import db, models
 
 logger = logging.getLogger("silentsuite-bridge.cache")
+
+
+@contextmanager
+def _private_umask():
+    old_umask = os.umask(0o077)
+    try:
+        yield
+    finally:
+        os.umask(old_umask)
+
+
+def _ensure_private_cache_dir(path):
+    directory = os.path.dirname(path)
+    if directory != "" and not os.path.exists(directory):
+        os.makedirs(directory, mode=0o700)
+
+
+def _restrict_cache_database_files(path):
+    if not path or path == ":memory:":
+        return
+    for cache_path in (path, f"{path}-wal", f"{path}-shm"):
+        if os.path.exists(cache_path):
+            os.chmod(cache_path, 0o600)
 
 
 def _init_cache_database(db_path=None):
@@ -34,9 +58,7 @@ def _init_cache_database(db_path=None):
     from playhouse.sqlite_ext import SqliteExtDatabase
 
     path = db_path or config.DATABASE_FILE
-    directory = os.path.dirname(path)
-    if directory != "" and not os.path.exists(directory):
-        os.makedirs(directory)
+    _ensure_private_cache_dir(path)
 
     database = SqliteExtDatabase(
         path,
@@ -50,11 +72,13 @@ def _init_cache_database(db_path=None):
 
 
 def _ensure_cache_tables(database):
-    database.create_tables(
-        [models.Config, models.User, models.CollectionEntity, models.ItemEntity, models.HrefMapper],
-        safe=True,
-    )
-    models.Config.get_or_create(defaults={"db_version": 1})
+    with _private_umask():
+        database.create_tables(
+            [models.Config, models.User, models.CollectionEntity, models.ItemEntity, models.HrefMapper],
+            safe=True,
+        )
+        models.Config.get_or_create(defaults={"db_version": 1})
+    _restrict_cache_database_files(getattr(database, "database", None))
 
 
 def clear_cached_user(username, db_path=None):
@@ -69,7 +93,8 @@ def clear_cached_user(username, db_path=None):
 
     database, initialized_here = _init_cache_database(db_path)
     if database.is_closed():
-        database.connect(reuse_if_open=True)
+        with _private_umask():
+            database.connect(reuse_if_open=True)
 
     try:
         _ensure_cache_tables(database)
@@ -175,16 +200,16 @@ class Etebase:
         self._database = database
         db.database_proxy.initialize(database)
 
-        with db.database_proxy:
-            self._init_db_tables(database)
-            self.user, created = models.User.get_or_create(username=self.username)
+        with _private_umask():
+            with db.database_proxy:
+                self._init_db_tables(database)
+                self.user, created = models.User.get_or_create(username=self.username)
+        _restrict_cache_database_files(getattr(database, "database", None))
 
     def _init_db(self, db_path):
         from playhouse.sqlite_ext import SqliteExtDatabase
 
-        directory = os.path.dirname(db_path)
-        if directory != "" and not os.path.exists(directory):
-            os.makedirs(directory)
+        _ensure_private_cache_dir(db_path)
 
         database = SqliteExtDatabase(
             db_path,
@@ -205,6 +230,7 @@ class Etebase:
             database.create_tables(additional_tables, safe=True)
 
         models.Config.get_or_create(defaults={"db_version": 1})
+        _restrict_cache_database_files(getattr(database, "database", None))
 
     def sync(self):
         """Full bidirectional sync: push local changes, pull remote changes."""
@@ -313,6 +339,10 @@ class Etebase:
                 items_data = list(item_list.data)
 
                 logger.info(
+                    "PULL collection: fetched %d items",
+                    len(items_data),
+                )
+                logger.debug(
                     "PULL %s: fetched %d items (stoken=%s)",
                     uid[:8], len(items_data),
                     str(stoken)[:16] if stoken else "None",
@@ -320,12 +350,12 @@ class Etebase:
 
                 for item in items_data:
                     meta = item.meta
-                    logger.info(
+                    logger.debug(
                         "PULL %s: item uid=%s meta=%s deleted=%s",
                         uid[:8], item.uid[:16], dict(meta), item.deleted,
                     )
                     if "name" not in meta:
-                        logger.info(
+                        logger.debug(
                             "PULL %s: item %s has no 'name' in meta — using item.uid as fallback",
                             uid[:8], item.uid[:16],
                         )
@@ -340,9 +370,9 @@ class Etebase:
                             collection=cache_col,
                             uid=item_uid,
                         )
-                        logger.info("PULL %s: NEW item %s", uid[:8], item_uid)
+                        logger.debug("PULL %s: NEW item %s", uid[:8], item_uid)
                     else:
-                        logger.info("PULL %s: UPDATE item %s", uid[:8], item_uid)
+                        logger.debug("PULL %s: UPDATE item %s", uid[:8], item_uid)
                     cache_item.eb_item = item_mgr.cache_save(item)
                     cache_item.deleted = item.deleted
                     cache_item.save()
@@ -375,22 +405,25 @@ class Etebase:
             item_mgr = col_mgr.get_item_manager(col)
 
             changed = list(self._collection_dirty_get(cache_col))
-            logger.info("PUSH %s: %d dirty/new items to push", uid[:8], len(changed))
+            logger.info("PUSH collection: %d dirty/new items to push", len(changed))
+            logger.debug("PUSH %s: %d dirty/new items to push", uid[:8], len(changed))
 
             if not changed:
                 return
 
             for chunk in batch(changed, CHUNK_PUSH):
                 chunk_items = list(map(lambda x: item_mgr.cache_load(x.eb_item), chunk))
-                logger.info("PUSH %s: uploading batch of %d items", uid[:8], len(chunk_items))
+                logger.info("PUSH collection: uploading batch of %d items", len(chunk_items))
+                logger.debug("PUSH %s: uploading batch of %d items", uid[:8], len(chunk_items))
                 item_mgr.batch(chunk_items, None, None)
-                logger.info("PUSH %s: batch upload SUCCESS", uid[:8])
+                logger.info("PUSH collection: batch upload succeeded")
+                logger.debug("PUSH %s: batch upload SUCCESS", uid[:8])
                 for cache_item, item in zip(chunk, chunk_items):
                     cache_item.eb_item = item_mgr.cache_save(item)
                     cache_item.dirty = False
                     cache_item.new = False
                     cache_item.save()
-                    logger.info("PUSH %s: cleared dirty/new for %s", uid[:8], cache_item.uid)
+                    logger.debug("PUSH %s: cleared dirty/new for %s", uid[:8], cache_item.uid)
 
     # --- CRUD operations ---
 

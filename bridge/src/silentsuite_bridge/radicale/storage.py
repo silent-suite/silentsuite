@@ -128,7 +128,7 @@ class SyncThread(threading.Thread):
                         collections=collections,
                         account=self.user,
                     )
-                    log_sync_event("sync", f"Synced for {self.user}")
+                    log_sync_event("sync", "Synced account")
             except Exception as e:
                 logger.exception("Sync error for user %s: %s", self.user, e)
                 self._exception = e
@@ -157,7 +157,7 @@ def start_sync_thread(user):
         thread = SyncThread(user, daemon=True)
         _sync_threads[user] = thread
         thread.start()
-        logger.info("Started SyncThread for user %s (interval=%ds)", user, thread.interval)
+        logger.info("Started SyncThread (interval=%ds)", thread.interval)
         return thread
 
 
@@ -193,7 +193,7 @@ def stop_sync_thread(user, timeout=2.0):
             logger.warning("Timed out stopping SyncThread for user %s", user)
             return False
         del _sync_threads[user]
-        logger.info("Stopped SyncThread for user %s", user)
+        logger.info("Stopped SyncThread")
         return True
 
 
@@ -685,8 +685,8 @@ class Storage(BaseStorage):
             cache_col.dirty = False
             cache_col.save()
 
-        logger.info("Created collection %s (type=%s, name=%s)", col.uid, col_type, meta.get("name"))
-        log_sync_event("sync", f"Created collection {meta.get('name', col.uid)}")
+        logger.info("Created collection (type=%s)", col_type)
+        log_sync_event("sync", "Created collection")
 
         # Upload any items that came with the collection
         collection = Collection(self, posixpath.join("/", attributes[0], col.uid))
@@ -704,7 +704,7 @@ class Storage(BaseStorage):
             return
 
         sync_thread = start_sync_thread(user)
-        logger.info("acquire_lock(%s, user=%s): pre-yield sync", mode, user)
+        logger.info("acquire_lock(%s): pre-yield sync", mode)
         sync_thread.force_sync()
         try:
             sync_thread.wait_for_sync(20)
@@ -727,7 +727,7 @@ class Storage(BaseStorage):
                     etesync.push_collection_list()
                     for col in etesync.list():
                         if etesync.collection_is_dirty(col.uid):
-                            logger.info("acquire_lock: pushing dirty collection %s", col.uid[:8])
+                            logger.info("acquire_lock: pushing dirty collection")
                             etesync.push_collection(col.uid)
                     logger.info("acquire_lock(w): inline push done")
                 except Exception as e:

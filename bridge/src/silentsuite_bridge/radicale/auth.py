@@ -69,7 +69,7 @@ class Auth(BaseAuth):
 
         # Auto-upgrade legacy SHA-256 hashes to PBKDF2
         if not stored_salt:
-            logger.info("Upgrading password hash to PBKDF2 for user: %s", login)
+            logger.info("Upgrading password hash to PBKDF2")
             new_salt = os.urandom(32)
             new_hash = hashlib.pbkdf2_hmac(
                 "sha256", password.encode(), new_salt, 600000,

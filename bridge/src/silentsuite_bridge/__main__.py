@@ -103,7 +103,7 @@ def check_credentials():
         if not users:
             return False
 
-    logger.info("Found %d configured user(s): %s", len(users), ", ".join(users))
+    logger.info("Found %d configured user(s)", len(users))
     return True
 
 
@@ -166,18 +166,17 @@ def _initial_status_check():
                     totals[key] += value
                 synced += 1
                 update_status("connected", collections=collections, account=user)
-                log_sync_event("info", f"Initial sync complete for {user}")
+                log_sync_event("info", "Initial sync complete")
                 logger.info(
-                    "Initial sync for %s: %d calendars, %d contacts, %d tasks",
-                    user,
+                    "Initial sync complete: %d calendars, %d contacts, %d tasks",
                     collections["calendars"],
                     collections["contacts"],
                     collections["tasks"],
                 )
         except Exception as e:
-            logger.warning("Initial status check failed for %s: %s", user, e)
-            errors.append(f"{user}: {e}")
-            log_sync_event("error", f"Initial sync failed for {user}: {e}")
+            logger.warning("Initial status check failed for a configured account: %s", e)
+            errors.append(str(e))
+            log_sync_event("error", f"Initial sync failed for an account: {e}")
 
     if synced:
         update_status(
@@ -188,10 +187,10 @@ def _initial_status_check():
         if errors:
             log_sync_event(
                 "error",
-                f"Initial sync skipped {len(errors)} account(s): {'; '.join(errors)}",
+                f"Initial sync skipped {len(errors)} account(s)",
             )
     elif errors:
-        update_status("error", error="; ".join(errors))
+        update_status("error", error=f"Initial status check failed for {len(errors)} account(s)")
     else:
         update_status("disconnected")
 
