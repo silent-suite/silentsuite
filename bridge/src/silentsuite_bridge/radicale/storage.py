@@ -30,7 +30,7 @@ from ..local_cache import Etebase
 from ..local_cache import models as cache_models
 from ..local_cache.models import HrefMapper, ItemEntity
 from ..web import log_sync_event, update_status
-from .etesync_cache import etesync_for_user
+from .etesync_cache import etesync_for_user, forget_etesync_user
 
 logger = logging.getLogger("silentsuite-bridge.storage")
 
@@ -159,6 +159,19 @@ def start_sync_thread(user):
         thread.start()
         logger.info("Started SyncThread (interval=%ds)", thread.interval)
         return thread
+
+
+def refresh_sync_thread(user):
+    """Start or wake one user's SyncThread after credentials changed."""
+    with _sync_threads_lock:
+        existing = _sync_threads.get(user)
+        had_live_thread = existing is not None and existing.is_alive()
+
+    forget_etesync_user(user)
+    thread = start_sync_thread(user)
+    if had_live_thread and thread.is_alive():
+        thread.force_sync()
+    return thread
 
 
 def get_sync_thread(user):

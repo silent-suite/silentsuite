@@ -20,6 +20,12 @@ silentsuite-bridge --remove-account user@example.com
 - `--remove-account <email>` performs logout and deletes that account's local cache rows.
 - DAV URLs are namespaced per account: `http://localhost:37358/user@example.com/`.
 
+The local dashboard at `http://localhost:37358/.web/` exposes the same account-management flow without terminal commands:
+
+- **Add / Re-authenticate Account** opens the bridge sign-in page in your browser and starts that account's sync thread after login succeeds.
+- **Log out** removes local bridge credentials/session material for one account and keeps that account's local cache.
+- **Remove account** removes local bridge credentials/session material and deletes that account's local cache rows.
+
 The local bridge cache contains decrypted calendar/contact/task data. Use `--remove-account` when retiring a shared or untrusted machine.
 
 ## License

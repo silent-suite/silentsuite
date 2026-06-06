@@ -97,6 +97,8 @@ http://localhost:37358/personal@example.com/
 
 Use the matching account email and password in your calendar/contact client. A client authenticated as one account cannot access another account's DAV path.
 
+You can add or re-authenticate accounts from the dashboard with **Add / Re-authenticate Account**. It opens the same bridge sign-in flow in your browser and starts syncing the account after login succeeds; you do not need to restart the bridge.
+
 To remove only the local login/session for one account while keeping its local cache for future re-login:
 
 ```bash
@@ -137,7 +139,10 @@ The dashboard shows:
 - All configured accounts
 - Last sync time
 - Per-account CalDAV/CardDAV URLs with copy buttons
+- Add / Re-authenticate, Log out, and Remove account actions
 - Recent sync log
+
+Use **Log out** to remove local bridge credentials while keeping that account's local cache for re-login. Use **Remove account** to delete local bridge credentials and that account's decrypted local bridge cache on this computer. Other configured accounts are not affected.
 
 ## Auto-Start
 

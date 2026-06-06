@@ -3,12 +3,19 @@
 import io
 import json
 
-from silentsuite_bridge import config
+import pytest
+
+import silentsuite_bridge.auth_browser as auth_browser
+import silentsuite_bridge.web as web_module
+from silentsuite_bridge import accounts, config
+from silentsuite_bridge.accounts import AccountOperationResult
+from silentsuite_bridge.radicale import storage
 from silentsuite_bridge.radicale.creds import Credentials
 from silentsuite_bridge.web import (
     Web,
     _bridge_status,
     _dashboard_csrf_token,
+    _run_dashboard_login,
     _render_dashboard,
     forget_account_status,
     update_status,
@@ -65,6 +72,10 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert "2 calendars, 1 contacts, 0 tasks" in html
     assert "window.SILENTSUITE_DASHBOARD_CSRF" in html
     assert "X-SilentSuite-CSRF" in html
+    assert "Add / Re-authenticate Account" in html
+    assert 'data-account="alice@example.com"' in html
+    assert 'onclick="logoutAccount(this)"' in html
+    assert 'onclick="removeAccount(this)"' in html
 
 
 def test_update_status_aggregates_background_sync_counts(tmp_path, monkeypatch):
@@ -105,6 +116,24 @@ def test_render_dashboard_handles_no_accounts(tmp_path, monkeypatch):
     html = _render_dashboard()
 
     assert "No accounts configured" in html
+    assert "Add / Re-authenticate Account" in html
+
+
+def test_render_dashboard_escapes_account_action_attributes(tmp_path, monkeypatch):
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+
+    username = "evil\"'<account@example.com"
+    creds = Credentials()
+    creds.set_etebase(username, "session", "https://server.test")
+    creds.save()
+
+    html = _render_dashboard()
+
+    assert 'data-account="evil&quot;&#x27;&lt;account@example.com"' in html
+    assert username not in html
+    assert "logoutAccount('" not in html
+    assert "removeAccount('" not in html
 
 
 def test_forget_account_status_removes_one_accounts_counts():
@@ -179,6 +208,233 @@ def test_dashboard_sync_post_rejects_wrong_csrf_token():
     assert status == 403
     assert headers["Content-Type"] == "application/json"
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
+
+
+def test_dashboard_account_login_requires_csrf_before_start(monkeypatch):
+    def fail_start():
+        raise AssertionError("login should not start without CSRF")
+
+    monkeypatch.setattr(web_module, "_start_dashboard_login", fail_start)
+    web = Web.__new__(Web)
+
+    status, _, _ = web.post(_post_environ(), "", "/.web/api/accounts/login", None)
+
+    assert status == 403
+
+
+def test_dashboard_account_login_starts_browser_flow(monkeypatch):
+    monkeypatch.setattr(web_module, "_start_dashboard_login", lambda: True)
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/accounts/login",
+        None,
+    )
+
+    payload = json.loads(body)
+    assert status == 202
+    assert headers["Content-Type"] == "application/json"
+    assert payload["ok"] is True
+    assert "Sign-in window opened" in payload["message"]
+
+
+def test_dashboard_account_login_rejects_duplicate_flow(monkeypatch):
+    monkeypatch.setattr(web_module, "_start_dashboard_login", lambda: False)
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/accounts/login",
+        None,
+    )
+
+    assert status == 409
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(body)["error"] == "A login window is already open"
+
+
+def test_dashboard_login_starts_sync_thread_after_auth(monkeypatch):
+    browser_calls = []
+    refresh_calls = []
+
+    def fake_browser_login(running_bridge=False):
+        browser_calls.append(running_bridge)
+        return "bob@example.com"
+
+    monkeypatch.setattr(auth_browser, "browser_login", fake_browser_login)
+    monkeypatch.setattr(storage, "refresh_sync_thread", refresh_calls.append)
+
+    email = _run_dashboard_login()
+
+    assert email == "bob@example.com"
+    assert browser_calls == [True]
+    assert refresh_calls == ["bob@example.com"]
+
+
+def test_dashboard_login_does_not_start_sync_when_auth_returns_no_account(monkeypatch):
+    refresh_calls = []
+
+    monkeypatch.setattr(auth_browser, "browser_login", lambda running_bridge=False: None)
+    monkeypatch.setattr(storage, "refresh_sync_thread", refresh_calls.append)
+
+    email = _run_dashboard_login()
+
+    assert email is None
+    assert refresh_calls == []
+
+
+@pytest.mark.parametrize(
+    ("path", "helper_name"),
+    [
+        ("/.web/api/accounts/logout", "logout_account"),
+        ("/.web/api/accounts/remove", "remove_account"),
+    ],
+)
+def test_dashboard_account_mutation_requires_csrf_before_calling_helpers(monkeypatch, path, helper_name):
+    def fail_helper(username):
+        raise AssertionError("account helper should not run without CSRF")
+
+    monkeypatch.setattr(accounts, helper_name, fail_helper)
+    web = Web.__new__(Web)
+    body = json.dumps({"username": "alice@example.com"}).encode()
+
+    status, headers, response_body = web.post(_post_environ(body=body), "", path, None)
+
+    assert status == 403
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(response_body)["error"] == "Invalid dashboard CSRF token"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/.web/api/accounts/logout", "/.web/api/accounts/remove"],
+)
+def test_dashboard_account_mutation_rejects_invalid_json(path):
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(body=b"{", csrf_token=_dashboard_csrf_token),
+        "",
+        path,
+        None,
+    )
+
+    assert status == 400
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(body)["error"] == "Invalid JSON"
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/.web/api/accounts/logout", "/.web/api/accounts/remove"],
+)
+def test_dashboard_account_mutation_requires_username(path):
+    web = Web.__new__(Web)
+    body = json.dumps({"username": "  "}).encode()
+
+    status, headers, response_body = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
+        "",
+        path,
+        None,
+    )
+
+    assert status == 400
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(response_body)["error"] == "Account username is required"
+
+
+def test_dashboard_account_logout_calls_account_helper(monkeypatch):
+    calls = []
+
+    def fake_logout(username):
+        calls.append(username)
+        return AccountOperationResult(username=username, existed=True, sync_stopped=True)
+
+    monkeypatch.setattr(accounts, "logout_account", fake_logout)
+    web = Web.__new__(Web)
+    body = json.dumps({"username": "alice@example.com"}).encode()
+
+    status, headers, response_body = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/accounts/logout",
+        None,
+    )
+
+    payload = json.loads(response_body)
+    assert status == 200
+    assert headers["Content-Type"] == "application/json"
+    assert calls == ["alice@example.com"]
+    assert payload["ok"] is True
+    assert payload["existed"] is True
+    assert payload["syncStopped"] is True
+    assert "Local bridge cache was kept" in payload["message"]
+
+
+def test_dashboard_account_remove_calls_account_helper(monkeypatch):
+    calls = []
+
+    def fake_remove(username):
+        calls.append(username)
+        return AccountOperationResult(
+            username=username,
+            existed=True,
+            sync_stopped=True,
+            cache_cleared=True,
+        )
+
+    monkeypatch.setattr(accounts, "remove_account", fake_remove)
+    web = Web.__new__(Web)
+    body = json.dumps({"username": "alice@example.com"}).encode()
+
+    status, headers, response_body = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/accounts/remove",
+        None,
+    )
+
+    payload = json.loads(response_body)
+    assert status == 200
+    assert headers["Content-Type"] == "application/json"
+    assert calls == ["alice@example.com"]
+    assert payload["ok"] is True
+    assert payload["existed"] is True
+    assert payload["cacheCleared"] is True
+    assert "Local bridge cache for this account was deleted" in payload["message"]
+
+
+@pytest.mark.parametrize(
+    ("path", "helper_name"),
+    [
+        ("/.web/api/accounts/logout", "logout_account"),
+        ("/.web/api/accounts/remove", "remove_account"),
+    ],
+)
+def test_dashboard_account_mutation_unknown_account_is_noop(monkeypatch, path, helper_name):
+    def fake_helper(username):
+        return AccountOperationResult(username=username, existed=False)
+
+    monkeypatch.setattr(accounts, helper_name, fake_helper)
+    web = Web.__new__(Web)
+    body = json.dumps({"username": "ghost@example.com"}).encode()
+
+    status, _, response_body = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
+        "",
+        path,
+        None,
+    )
+
+    payload = json.loads(response_body)
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["existed"] is False
+    assert "nothing changed" in payload["message"]
 
 
 def test_dashboard_settings_post_requires_csrf_before_writing(tmp_path, monkeypatch):

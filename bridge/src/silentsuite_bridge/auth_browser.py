@@ -706,7 +706,7 @@ def _find_free_port():
         return s.getsockname()[1]
 
 
-def browser_login():
+def browser_login(running_bridge=False):
     """Run the browser-based login flow.
 
     Starts a temporary HTTP server, opens the browser to the login page,
@@ -756,8 +756,11 @@ def browser_login():
     if email:
         used_server = server.authenticated_server_url
         base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
-        print(f"\n  Login successful! Now start the bridge daemon:")
-        print(f"    ./silentsuite-bridge")
+        if running_bridge:
+            print(f"\n  Login successful! The bridge is already running.")
+        else:
+            print(f"\n  Login successful! Now start the bridge daemon:")
+            print(f"    ./silentsuite-bridge")
         print()
         print(f"  Etebase server: {used_server}")
         if config.is_dashboard_enabled():
