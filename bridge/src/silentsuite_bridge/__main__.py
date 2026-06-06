@@ -79,29 +79,45 @@ def build_radicale_configuration():
     return configuration
 
 
-def check_credentials():
-    """Check if any user credentials exist. If not, run browser login."""
+def _dashboard_url():
+    return f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+
+
+def _open_dashboard_later(url, delay=1.0):
+    """Open the dashboard after Radicale has had a moment to bind."""
+    import threading
+    import webbrowser
+
+    def open_dashboard():
+        try:
+            webbrowser.open(url)
+        except Exception:
+            logger.debug("Could not open dashboard automatically")
+
+    threading.Timer(delay, open_dashboard).start()
+
+
+def check_credentials(open_browser=True):
+    """Check whether startup can proceed with current account state."""
     from .radicale.creds import Credentials
 
     creds = Credentials()
     users = creds.list_users()
 
     if not users:
-        logger.info("No users configured — starting browser login...")
-        print("\nNo account configured yet. Opening browser to sign in...\n")
+        if config.is_dashboard_enabled():
+            dashboard_url = _dashboard_url()
+            logger.info("No users configured; starting bridge dashboard setup")
+            print("\nNo account configured yet. Open the bridge dashboard to sign in:")
+            print(f"  {dashboard_url}\n")
+            if open_browser:
+                _open_dashboard_later(dashboard_url)
+            return True
 
-        from .auth_browser import browser_login
-
-        email = browser_login()
-        if not email:
-            logger.error("Login cancelled or failed.")
-            return False
-
-        # Re-check after login
-        creds = Credentials()
-        users = creds.list_users()
-        if not users:
-            return False
+        logger.error("No users configured and bridge dashboard is disabled")
+        print("\nNo account configured and the bridge dashboard is disabled for this bind.")
+        print("Run `silentsuite-bridge --login` or `silentsuite-bridge --manual-login` first.\n")
+        return False
 
     logger.info("Found %d configured user(s)", len(users))
     return True

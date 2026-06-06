@@ -145,7 +145,7 @@ class BridgeTray:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Open Dashboard",
-                lambda: webbrowser.open(f"{base_url}/.web/"),
+                lambda: webbrowser.open(f"{base_url}/"),
             ),
             pystray.MenuItem(
                 "Add / Re-authenticate Account",

@@ -6,7 +6,7 @@ Connects to `server.silentsuite.io` by default, or your configured self-hosted s
 
 ## Account Commands
 
-`--login` adds a new account or re-authenticates an existing account. It does not remove other configured accounts.
+The local dashboard at `http://localhost:37358/` is the normal place to set up and manage bridge accounts. `--login` is still available as a fallback or advanced path; it adds a new account or re-authenticates an existing account without removing other configured accounts.
 
 ```bash
 silentsuite-bridge --login
@@ -20,9 +20,9 @@ silentsuite-bridge --remove-account user@example.com
 - `--remove-account <email>` performs logout and deletes that account's local cache rows.
 - DAV URLs are namespaced per account: `http://localhost:37358/user@example.com/`.
 
-The local dashboard at `http://localhost:37358/.web/` exposes the same account-management flow without terminal commands:
+The dashboard exposes the same account-management flow without terminal commands:
 
-- **Add / Re-authenticate Account** opens the bridge sign-in page in your browser and starts that account's sync thread after login succeeds.
+- **Add / Re-authenticate Account** shows the dashboard sign-in form and starts that account's sync thread after login succeeds.
 - **Log out** removes local bridge credentials/session material for one account and keeps that account's local cache.
 - **Remove account** removes local bridge credentials/session material and deletes that account's local cache rows.
 

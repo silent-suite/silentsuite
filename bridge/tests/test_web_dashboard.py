@@ -9,13 +9,13 @@ import silentsuite_bridge.auth_browser as auth_browser
 import silentsuite_bridge.web as web_module
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.accounts import AccountOperationResult
+from silentsuite_bridge.auth_browser import AuthenticatedAccount, AuthenticationError
 from silentsuite_bridge.radicale import storage
 from silentsuite_bridge.radicale.creds import Credentials
 from silentsuite_bridge.web import (
     Web,
     _bridge_status,
     _dashboard_csrf_token,
-    _run_dashboard_login,
     _render_dashboard,
     forget_account_status,
     update_status,
@@ -73,6 +73,8 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert "window.SILENTSUITE_DASHBOARD_CSRF" in html
     assert "X-SilentSuite-CSRF" in html
     assert "Add / Re-authenticate Account" in html
+    assert "Add or re-authenticate an account" in html
+    assert 'class="login-panel hidden"' in html
     assert 'data-account="alice@example.com"' in html
     assert 'onclick="logoutAccount(this)"' in html
     assert 'onclick="removeAccount(this)"' in html
@@ -116,6 +118,10 @@ def test_render_dashboard_handles_no_accounts(tmp_path, monkeypatch):
     html = _render_dashboard()
 
     assert "No accounts configured" in html
+    assert "Set up your bridge account" in html
+    assert 'data-required="true"' in html
+    assert 'id="dashboardLoginForm"' in html
+    assert 'name="password"' in html
     assert "Add / Re-authenticate Account" in html
 
 
@@ -170,6 +176,29 @@ def test_dump_api_returns_404_when_disabled(monkeypatch):
     assert body == b"Not found"
 
 
+def test_root_route_serves_dashboard(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    web = Web.__new__(Web)
+
+    status, headers, body = web.get({}, "", "/", None)
+
+    assert status == 200
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"SilentSuite Bridge" in body
+    assert b"dashboardLoginForm" in body
+
+
+@pytest.mark.parametrize("path", ["/.web/", "/.web"])
+def test_web_compat_route_redirects_to_root(path):
+    web = Web.__new__(Web)
+
+    status, headers, body = web.get({}, "", path, None)
+
+    assert status == 302
+    assert headers["Location"] == "/"
+    assert body == b""
+
+
 def test_dashboard_post_requires_csrf_token():
     web = Web.__new__(Web)
 
@@ -210,80 +239,134 @@ def test_dashboard_sync_post_rejects_wrong_csrf_token():
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
 
 
-def test_dashboard_account_login_requires_csrf_before_start(monkeypatch):
-    def fail_start():
-        raise AssertionError("login should not start without CSRF")
+def test_dashboard_account_login_requires_csrf_before_reading_body(monkeypatch):
+    def fail_login(environ):
+        raise AssertionError("login body should not be read without CSRF")
 
-    monkeypatch.setattr(web_module, "_start_dashboard_login", fail_start)
+    monkeypatch.setattr(web_module, "_handle_account_login", fail_login)
     web = Web.__new__(Web)
+    body = json.dumps({"email": "alice@example.com", "password": "secret"}).encode()
 
-    status, _, _ = web.post(_post_environ(), "", "/.web/api/accounts/login", None)
+    status, _, _ = web.post(_post_environ(body=body), "", "/.web/api/accounts/login", None)
 
     assert status == 403
 
 
-def test_dashboard_account_login_starts_browser_flow(monkeypatch):
-    monkeypatch.setattr(web_module, "_start_dashboard_login", lambda: True)
+def test_dashboard_account_login_rejects_invalid_json():
     web = Web.__new__(Web)
 
-    status, headers, body = web.post(
-        _post_environ(csrf_token=_dashboard_csrf_token),
+    status, headers, response_body = web.post(
+        _post_environ(body=b"{", csrf_token=_dashboard_csrf_token),
         "",
         "/.web/api/accounts/login",
         None,
     )
 
-    payload = json.loads(body)
-    assert status == 202
+    assert status == 400
     assert headers["Content-Type"] == "application/json"
-    assert payload["ok"] is True
-    assert "Sign-in window opened" in payload["message"]
+    assert json.loads(response_body)["error"] == "Invalid JSON"
 
 
-def test_dashboard_account_login_rejects_duplicate_flow(monkeypatch):
-    monkeypatch.setattr(web_module, "_start_dashboard_login", lambda: False)
+@pytest.mark.parametrize("payload", [{"email": "", "password": "secret"}, {"email": "alice@example.com"}])
+def test_dashboard_account_login_requires_email_and_password(payload):
     web = Web.__new__(Web)
+    body = json.dumps(payload).encode()
 
-    status, headers, body = web.post(
-        _post_environ(csrf_token=_dashboard_csrf_token),
+    status, headers, response_body = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
         "",
         "/.web/api/accounts/login",
         None,
     )
 
-    assert status == 409
+    assert status == 400
     assert headers["Content-Type"] == "application/json"
-    assert json.loads(body)["error"] == "A login window is already open"
+    assert json.loads(response_body)["error"] == "Email and password are required"
 
 
-def test_dashboard_login_starts_sync_thread_after_auth(monkeypatch):
-    browser_calls = []
+def test_dashboard_account_login_returns_user_safe_auth_error(monkeypatch):
+    def fail_auth(email, password, server_url=None):
+        raise AuthenticationError("Invalid email or password.")
+
+    monkeypatch.setattr(auth_browser, "authenticate_and_store_account", fail_auth)
+    web = Web.__new__(Web)
+    body = json.dumps({"email": "alice@example.com", "password": "wrong"}).encode()
+
+    status, headers, response_body = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/accounts/login",
+        None,
+    )
+
+    assert status == 401
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(response_body)["error"] == "Invalid email or password."
+
+
+def test_dashboard_account_login_authenticates_and_refreshes_sync(monkeypatch):
+    auth_calls = []
     refresh_calls = []
 
-    def fake_browser_login(running_bridge=False):
-        browser_calls.append(running_bridge)
-        return "bob@example.com"
+    def fake_auth(email, password, server_url=None):
+        auth_calls.append((email, password, server_url))
+        return AuthenticatedAccount(username="bob@example.com", server_url="https://server.test")
 
-    monkeypatch.setattr(auth_browser, "browser_login", fake_browser_login)
+    monkeypatch.setattr(auth_browser, "authenticate_and_store_account", fake_auth)
     monkeypatch.setattr(storage, "refresh_sync_thread", refresh_calls.append)
+    web = Web.__new__(Web)
+    body = json.dumps({
+        "email": " bob@example.com ",
+        "password": "secret",
+        "serverUrl": "https://server.test",
+    }).encode()
 
-    email = _run_dashboard_login()
+    status, headers, response_body = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/accounts/login",
+        None,
+    )
 
-    assert email == "bob@example.com"
-    assert browser_calls == [True]
+    payload = json.loads(response_body)
+    assert status == 200
+    assert headers["Content-Type"] == "application/json"
+    assert payload["ok"] is True
+    assert payload["username"] == "bob@example.com"
+    assert payload["serverUrl"] == "https://server.test"
+    assert payload["syncStarted"] is True
+    assert "password" not in payload
+    assert auth_calls == [("bob@example.com", "secret", "https://server.test")]
     assert refresh_calls == ["bob@example.com"]
 
 
-def test_dashboard_login_does_not_start_sync_when_auth_returns_no_account(monkeypatch):
-    refresh_calls = []
+def test_dashboard_account_login_reports_sync_refresh_failure_after_auth(monkeypatch):
+    def fake_auth(email, password, server_url=None):
+        return AuthenticatedAccount(username="bob@example.com", server_url="https://server.test")
 
-    monkeypatch.setattr(auth_browser, "browser_login", lambda running_bridge=False: None)
-    monkeypatch.setattr(storage, "refresh_sync_thread", refresh_calls.append)
+    def fail_refresh(username):
+        raise RuntimeError("thread failed")
 
-    email = _run_dashboard_login()
+    monkeypatch.setattr(auth_browser, "authenticate_and_store_account", fake_auth)
+    monkeypatch.setattr(storage, "refresh_sync_thread", fail_refresh)
+    web = Web.__new__(Web)
+    body = json.dumps({"email": "bob@example.com", "password": "secret"}).encode()
 
-    assert email is None
-    assert refresh_calls == []
+    status, headers, response_body = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/accounts/login",
+        None,
+    )
+
+    payload = json.loads(response_body)
+    assert status == 200
+    assert headers["Content-Type"] == "application/json"
+    assert payload["ok"] is True
+    assert payload["username"] == "bob@example.com"
+    assert payload["syncStarted"] is False
+    assert "sync could not start automatically" in payload["message"]
+    assert "password" not in payload
 
 
 @pytest.mark.parametrize(

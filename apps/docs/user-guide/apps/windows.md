@@ -5,7 +5,7 @@ Sync SilentSuite with Microsoft Outlook, Windows Calendar, or other Windows apps
 ## Prerequisites
 
 1. The [SilentSuite Bridge](./dav-bridge.md) running on your PC.
-2. Your **account credentials** from the bridge's web UI at `http://localhost:37358/.web/`.
+2. Your **account credentials** from the bridge's web UI at `http://localhost:37358/`.
 
 ## Microsoft Outlook (with CalDav Synchronizer)
 
@@ -89,7 +89,7 @@ To run the SilentSuite Bridge automatically on Windows startup, see the [DAV bri
 
 1. Open the **CalDav Synchronizer** tab and click **Status**.
 2. Check for error messages in the sync log.
-3. Make sure the bridge is running: open `http://localhost:37358/.web/` in your browser.
+3. Make sure the bridge is running: open `http://localhost:37358/` in your browser.
 4. Verify the DAV URL includes your email: `http://localhost:37358/your@email.com/`.
 
 ### Windows Calendar won't connect
@@ -101,4 +101,4 @@ Windows 10/11 has bugs with local CalDAV connections. Try:
 
 ### Password rejected
 
-Use your **account password** (the same one you use to log into app.silentsuite.io or your self-hosted server). Verify it works by opening `http://localhost:37358/.web/` in your browser.
+Use your **account password** (the same one you use to log into app.silentsuite.io or your self-hosted server). Verify it works by opening `http://localhost:37358/` in your browser.

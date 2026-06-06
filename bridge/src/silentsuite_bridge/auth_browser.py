@@ -22,6 +22,7 @@ import socket
 import threading
 import urllib.parse
 import webbrowser
+from dataclasses import dataclass
 
 from etebase import Account, Client
 
@@ -29,6 +30,54 @@ from . import config
 from .accounts import store_authenticated_account
 
 logger = logging.getLogger("silentsuite-bridge.auth")
+
+
+@dataclass(frozen=True)
+class AuthenticatedAccount:
+    """Result of a successful bridge account authentication."""
+
+    username: str
+    server_url: str
+
+
+class AuthenticationError(Exception):
+    """User-safe authentication failure for bridge login flows."""
+
+
+def _auth_error_message(exc):
+    error_text = str(exc)
+    if "401" in error_text or "Unauthorized" in error_text:
+        return "Invalid email or password."
+    if "404" in error_text:
+        return "Account not found."
+    return "Authentication failed. Check the server URL and try again."
+
+
+def authenticate_and_store_account(email, password, server_url=None):
+    """Authenticate with Etebase and persist one bridge account."""
+    email = (email or "").strip()
+    server_url = (server_url or "").strip() or config.ETEBASE_SERVER_URL
+    if not email or not password:
+        raise ValueError("Email and password are required.")
+
+    try:
+        client = Client("silentsuite-bridge", server_url)
+        etebase = Account.login(client, email, password)
+    except Exception as exc:
+        raise AuthenticationError(_auth_error_message(exc)) from exc
+
+    # Preserve existing custom-server behavior for subsequent bridge operations.
+    if server_url != config.ETEBASE_SERVER_URL:
+        config.ETEBASE_SERVER_URL = server_url
+
+    result = store_authenticated_account(
+        email,
+        password,
+        etebase.save(None),
+        server_url,
+    )
+    logger.info("Authentication successful")
+    return AuthenticatedAccount(username=result.username, server_url=server_url)
 
 # Simple HTML auth page
 AUTH_PAGE_HTML = """<!DOCTYPE html>
@@ -594,7 +643,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 return
             bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
             if config.is_dashboard_enabled():
-                dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
+                dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
                 dashboard_bookmark = (
                     '<div class="bookmark-box">&#11088; Bookmark '
                     f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
@@ -633,29 +682,17 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                     "error": "Invalid CSRF token.",
                 })
                 return
-            if not server_url:
-                server_url = config.ETEBASE_SERVER_URL
 
-            if not email or not password:
+            try:
+                result = authenticate_and_store_account(email, password, server_url)
+            except ValueError as exc:
                 self._json_response(400, {
                     "success": False,
-                    "error": "Email and password are required.",
+                    "error": str(exc),
                 })
                 return
-
-            # Authenticate with Etebase
-            try:
-                client = Client("silentsuite-bridge", server_url)
-                etebase = Account.login(client, email, password)
-            except Exception as e:
-                error_msg = str(e)
-                if "401" in error_msg or "Unauthorized" in error_msg:
-                    error_msg = "Invalid email or password."
-                elif "404" in error_msg:
-                    error_msg = "Account not found."
-                else:
-                    error_msg = f"Authentication failed: {error_msg}"
-
+            except AuthenticationError as exc:
+                error_msg = str(exc)
                 logger.warning("Auth failed: %s", error_msg)
                 self._json_response(401, {
                     "success": False,
@@ -663,22 +700,9 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 })
                 return
 
-            # Update runtime config if a custom server URL was provided
-            if server_url != config.ETEBASE_SERVER_URL:
-                config.ETEBASE_SERVER_URL = server_url
-
-            result = store_authenticated_account(
-                email,
-                password,
-                etebase.save(None),
-                server_url,
-            )
-
-            logger.info("Authentication successful")
-
             # Store the email and server URL for the success handler
             self.server.authenticated_email = result.username
-            self.server.authenticated_server_url = server_url
+            self.server.authenticated_server_url = result.server_url
 
             redirect_url = "/success"
             self._json_response(200, {
@@ -764,7 +788,7 @@ def browser_login(running_bridge=False):
         print()
         print(f"  Etebase server: {used_server}")
         if config.is_dashboard_enabled():
-            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
+            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
             print(f"  Dashboard will be available at: {dashboard_url}")
         else:
             print("  Dashboard is disabled for remote bridge binds.")

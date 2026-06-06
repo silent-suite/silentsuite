@@ -132,3 +132,20 @@ def test_success_page_requires_completed_authentication():
 
     assert status == 404
     assert "404" in body
+
+
+def test_success_page_links_root_dashboard():
+    server = http.server.HTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
+    server.csrf_token = "expected-token"
+    server.authenticated_email = "alice@example.com"
+    thread = threading.Thread(target=server.handle_request)
+    thread.start()
+    try:
+        status, body = _get_auth_path(server, "/success")
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 200
+    assert "http://127.0.0.1:37358/" in body
+    assert "/.web/" not in body

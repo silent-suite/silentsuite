@@ -39,8 +39,6 @@ _bridge_status = {
 _bridge_status_lock = threading.RLock()
 # Process-local token protects localhost dashboard POSTs from cross-site form/script submissions.
 _dashboard_csrf_token = secrets.token_urlsafe(32)
-_dashboard_login_lock = threading.Lock()
-_dashboard_login_active = False
 
 
 def _json_response(status, payload):
@@ -67,55 +65,6 @@ def _read_json_body(environ):
         return json.loads(body), None
     except (json.JSONDecodeError, ValueError):
         return None, _json_response(400, {"error": "Invalid JSON"})
-
-
-def _run_dashboard_login():
-    """Run dashboard-launched auth and start sync for the authenticated account."""
-    from ..auth_browser import browser_login
-    from ..radicale.storage import refresh_sync_thread
-
-    email = browser_login(running_bridge=True)
-    if not email:
-        log_sync_event("info", "Account sign-in cancelled or timed out")
-        logger.info("Dashboard account sign-in cancelled or timed out")
-        return None
-
-    refresh_sync_thread(email)
-    log_sync_event("info", f"Account added or re-authenticated: {email}")
-    logger.info("Account added or re-authenticated: %s", email)
-    return email
-
-
-def _dashboard_login_worker():
-    global _dashboard_login_active
-
-    try:
-        _run_dashboard_login()
-    except Exception:
-        logger.warning("Dashboard account sign-in failed")
-        log_sync_event("error", "Account sign-in failed. Try again.")
-    finally:
-        with _dashboard_login_lock:
-            _dashboard_login_active = False
-
-
-def _start_dashboard_login():
-    """Start one dashboard-launched browser login flow if none is active."""
-    global _dashboard_login_active
-
-    with _dashboard_login_lock:
-        if _dashboard_login_active:
-            return False
-        _dashboard_login_active = True
-
-    thread = threading.Thread(target=_dashboard_login_worker, daemon=True)
-    try:
-        thread.start()
-    except Exception:
-        with _dashboard_login_lock:
-            _dashboard_login_active = False
-        raise
-    return True
 
 
 def _account_mutation_response(action, result):
@@ -181,6 +130,54 @@ def _handle_account_mutation(environ, action):
     return _account_mutation_response(action, result)
 
 
+def _handle_account_login(environ):
+    data, error_response = _read_json_body(environ)
+    if error_response:
+        return error_response
+    if not isinstance(data, dict):
+        return _json_response(400, {"error": "JSON object is required"})
+
+    email = (data.get("email") or "").strip()
+    password = data.get("password") or ""
+    server_url = (data.get("serverUrl") or "").strip()
+    if not email or not password:
+        return _json_response(400, {"error": "Email and password are required"})
+
+    try:
+        from ..auth_browser import AuthenticationError, authenticate_and_store_account
+        from ..radicale.storage import refresh_sync_thread
+
+        result = authenticate_and_store_account(email, password, server_url)
+    except AuthenticationError as exc:
+        logger.warning("Dashboard account sign-in failed: %s", exc)
+        return _json_response(401, {"error": str(exc)})
+    except ValueError as exc:
+        return _json_response(400, {"error": str(exc)})
+    except Exception:
+        logger.warning("Dashboard account sign-in failed")
+        return _json_response(500, {"error": "Account sign-in failed"})
+
+    sync_started = True
+    message = "Account added or re-authenticated. The bridge will start syncing it now."
+    try:
+        refresh_sync_thread(result.username)
+    except Exception:
+        sync_started = False
+        message = "Account added, but sync could not start automatically. Restart the bridge if sync does not begin."
+        logger.exception("Dashboard account sync refresh failed after sign-in")
+        log_sync_event("error", "Account sign-in succeeded, but sync did not start automatically")
+
+    log_sync_event("info", f"Account added or re-authenticated: {result.username}")
+    logger.info("Account added or re-authenticated: %s", result.username)
+    return _json_response(200, {
+        "ok": True,
+        "username": result.username,
+        "serverUrl": result.server_url,
+        "syncStarted": sync_started,
+        "message": message,
+    })
+
+
 def log_sync_event(event_type, message):
     """Add an entry to the sync log."""
     _sync_log.appendleft({
@@ -235,7 +232,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SilentSuite Bridge</title>
-    <meta http-equiv="refresh" content="30">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -381,6 +377,57 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             font-size: 12px;
             margin-bottom: 10px;
         }
+        .login-panel {
+            background: #0f1712;
+            border: 1px solid #1f3f2d;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+        .login-panel.hidden { display: none; }
+        .login-panel h4 {
+            color: #fff;
+            font-size: 16px;
+            margin-bottom: 6px;
+        }
+        .login-panel p {
+            color: #9ca3af;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 14px;
+        }
+        .login-panel label {
+            display: block;
+            color: #ccc;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+        .login-panel input {
+            width: 100%;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 15px;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+        }
+        .login-panel input:focus {
+            border-color: #34d399;
+            outline: none;
+        }
+        .login-panel details { margin-bottom: 12px; }
+        .login-panel summary {
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+        .login-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
 
         .log-section { margin-top: 8px; }
         .log-section h3 {
@@ -447,9 +494,28 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div class="url-section">
                 <div class="section-title-row">
                     <h3>Configured Accounts</h3>
-                    <button id="addAccountBtn" class="account-action-btn primary" onclick="addAccount()">Add / Re-authenticate Account</button>
+                    <button id="addAccountBtn" class="account-action-btn primary" onclick="showLoginPanel()">Add / Re-authenticate Account</button>
                 </div>
                 <div id="accountActionStatus" class="account-action-status" role="status"></div>
+                <div id="dashboardLoginPanel" class="login-panel {{LOGIN_PANEL_CLASS}}" data-required="{{LOGIN_REQUIRED}}">
+                    <h4>{{LOGIN_TITLE}}</h4>
+                    <p>{{LOGIN_COPY}}</p>
+                    <form id="dashboardLoginForm" onsubmit="submitDashboardLogin(event)">
+                        <label for="dashboardEmail">Email</label>
+                        <input type="email" id="dashboardEmail" name="email" required autofocus placeholder="you@example.com">
+                        <label for="dashboardPassword">Password</label>
+                        <input type="password" id="dashboardPassword" name="password" required placeholder="Your account password">
+                        <details>
+                            <summary>Advanced</summary>
+                            <label for="dashboardServerUrl">Server URL</label>
+                            <input type="url" id="dashboardServerUrl" name="serverUrl" value="{{SERVER_URL}}" placeholder="https://server.silentsuite.io">
+                        </details>
+                        <div class="login-actions">
+                            <button id="dashboardLoginSubmit" class="account-action-btn primary" type="submit">Sign in</button>
+                            <button class="account-action-btn" type="button" onclick="hideLoginPanel()">Cancel</button>
+                        </div>
+                    </form>
+                </div>
                 {{ACCOUNT_LIST}}
             </div>
         </div>
@@ -488,15 +554,46 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     return data;
                 });
             }
-            function addAccount() {
-                var btn = document.getElementById('addAccountBtn');
+            function showLoginPanel() {
+                var panel = document.getElementById('dashboardLoginPanel');
+                if (!panel) return;
+                panel.classList.remove('hidden');
+                var email = document.getElementById('dashboardEmail');
+                if (email) email.focus();
+            }
+            function hideLoginPanel() {
+                var panel = document.getElementById('dashboardLoginPanel');
+                if (panel && panel.getAttribute('data-required') !== 'true') {
+                    panel.classList.add('hidden');
+                }
+            }
+            function submitDashboardLogin(event) {
+                event.preventDefault();
+                var form = document.getElementById('dashboardLoginForm');
+                var btn = document.getElementById('dashboardLoginSubmit');
+                var formData = new FormData(form);
                 btn.disabled = true;
-                setAccountStatus('Opening sign-in...', false);
-                fetch('/.web/api/accounts/login', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
+                setAccountStatus('Signing in...', false);
+                fetch('/.web/api/accounts/login', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF},
+                    body: JSON.stringify({
+                        email: formData.get('email'),
+                        password: formData.get('password'),
+                        serverUrl: formData.get('serverUrl')
+                    })
+                })
                     .then(handleJsonResponse)
-                    .then(function(data) { setAccountStatus(data.message || 'Sign-in window opened. Finish login in your browser.', false); })
-                    .catch(function(error) { setAccountStatus(error.message || 'Could not open sign-in.', true); })
-                    .finally(function() { setTimeout(function() { btn.disabled = false; }, 1000); });
+                    .then(function(data) {
+                        setAccountStatus(data.message || 'Account added. Reloading dashboard...', false);
+                        var password = document.getElementById('dashboardPassword');
+                        if (password) password.value = '';
+                        setTimeout(function() { window.location.href = '/'; }, 900);
+                    })
+                    .catch(function(error) {
+                        setAccountStatus(error.message || 'Account sign-in failed.', true);
+                        btn.disabled = false;
+                    });
             }
             function accountAction(path, button, confirmMessage) {
                 var account = button.getAttribute('data-account');
@@ -688,6 +785,10 @@ def _render_dashboard():
         log_html = '<div class="log-empty">No sync activity yet</div>'
 
     if users:
+        login_panel_class = "hidden"
+        login_required = "false"
+        login_title = "Add or re-authenticate an account"
+        login_copy = "Sign in with your SilentSuite account. Existing accounts stay configured; signing in again refreshes credentials for that account."
         account_html = ""
         for index, user in enumerate(users):
             dav_url = f"{base_url}/{user}/"
@@ -714,7 +815,11 @@ def _render_dashboard():
                 '</div>'
             )
     else:
-        account_html = '<div class="log-empty">No accounts configured</div>'
+        login_panel_class = ""
+        login_required = "true"
+        login_title = "Set up your bridge account"
+        login_copy = "Sign in here to store this account locally, start its sync thread, and reveal your CalDAV/CardDAV URL."
+        account_html = '<div class="log-empty">No accounts configured yet. Sign in above to get started.</div>'
 
     page = DASHBOARD_HTML
     page = page.replace("{{VERSION}}", esc(__version__))
@@ -727,6 +832,11 @@ def _render_dashboard():
     page = page.replace("{{ACCOUNT_LIST}}", account_html)
     page = page.replace("{{SYNC_LOG}}", log_html)
     page = page.replace("{{CSRF_TOKEN}}", esc(_dashboard_csrf_token))
+    page = page.replace("{{LOGIN_PANEL_CLASS}}", login_panel_class)
+    page = page.replace("{{LOGIN_REQUIRED}}", login_required)
+    page = page.replace("{{LOGIN_TITLE}}", esc(login_title))
+    page = page.replace("{{LOGIN_COPY}}", esc(login_copy))
+    page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
 
     # Sync interval display
     interval = config.SYNC_INTERVAL
@@ -750,13 +860,16 @@ class Web(BaseWeb):
 
     def get(self, environ, base_prefix, path, user):
         """Serve the dashboard for GET requests to the root."""
-        if path == "/.web/" or path == "/.web":
+        if path in ("", "/"):
             html = _render_dashboard()
             return (
                 200,
                 {"Content-Type": "text/html; charset=utf-8"},
                 html.encode(),
             )
+
+        if path == "/.web/" or path == "/.web":
+            return (302, {"Location": "/"}, b"")
 
         # API endpoint for JSON status
         if path == "/.web/api/status":
@@ -881,22 +994,11 @@ class Web(BaseWeb):
                 json.dumps({"ok": True}).encode(),
             )
 
-        # Start dashboard-launched browser login
+        # Inline dashboard account login/setup
         if path == "/.web/api/accounts/login":
             if not _has_valid_csrf(environ):
                 return _csrf_error()
-            try:
-                started = _start_dashboard_login()
-            except Exception:
-                logger.warning("Dashboard account sign-in could not start")
-                return _json_response(500, {"error": "Could not start account sign-in"})
-            if not started:
-                return _json_response(409, {"error": "A login window is already open"})
-            log_sync_event("info", "Account sign-in opened from dashboard")
-            return _json_response(202, {
-                "ok": True,
-                "message": "Sign-in window opened. Finish login in your browser; the bridge will start syncing after success.",
-            })
+            return _handle_account_login(environ)
 
         # Local account actions
         if path == "/.web/api/accounts/logout":
