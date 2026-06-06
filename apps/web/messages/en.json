@@ -1,0 +1,23 @@
+{
+  "Navigation": {
+    "mainNavigation": "Main navigation",
+    "mobileNavigation": "Mobile navigation",
+    "calendar": "Calendar",
+    "tasks": "Tasks",
+    "contacts": "Contacts",
+    "admin": "Admin",
+    "settings": "Settings",
+    "skipToContent": "Skip to content",
+    "collapse": "Collapse",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
+  },
+  "AppError": {
+    "title": "Something went wrong",
+    "description": "An unexpected error occurred. Check your connection and try again.",
+    "errorId": "Error ID:",
+    "tryAgain": "Try again",
+    "goToCalendar": "Go to Calendar",
+    "contactPrefix": "If this keeps happening, contact us at"
+  }
+}
