@@ -656,7 +656,7 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 else:
                     error_msg = f"Authentication failed: {error_msg}"
 
-                logger.warning("Auth failed for %s: %s", email, error_msg)
+                logger.warning("Auth failed: %s", error_msg)
                 self._json_response(401, {
                     "success": False,
                     "error": error_msg,

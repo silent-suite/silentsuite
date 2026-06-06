@@ -640,6 +640,8 @@ def test_cache_database_files_are_owner_only(tmp_path):
     etebase = Etebase.__new__(Etebase)
     etebase.username = "mode-test@example.com"
     db_path = tmp_path / "nested" / "bridge_data.db"
+    db_path.parent.mkdir(mode=0o755)
+    os.chmod(db_path.parent, 0o755)
 
     old_umask = os.umask(0o022)
     try:

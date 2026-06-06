@@ -555,9 +555,8 @@ class Storage(BaseStorage):
         """Discover collections and items under the given path."""
         if not self._path_belongs_to_user(path):
             logger.warning(
-                "Rejecting DAV path %s authenticated as %s",
+                "Rejecting DAV path %s authenticated as configured account",
                 path,
-                self.user,
             )
             return
 
@@ -622,9 +621,8 @@ class Storage(BaseStorage):
         attributes = _get_attributes_from_path(href)
         if not self._path_belongs_to_user(href):
             logger.warning(
-                "Rejecting collection create for path %s authenticated as %s",
+                "Rejecting collection create for path %s authenticated as configured account",
                 href,
-                self.user,
             )
             raise ComponentNotFoundError(href)
 

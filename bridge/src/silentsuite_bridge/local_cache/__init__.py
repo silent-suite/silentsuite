@@ -33,8 +33,10 @@ def _private_umask():
 
 def _ensure_private_cache_dir(path):
     directory = os.path.dirname(path)
-    if directory != "" and not os.path.exists(directory):
-        os.makedirs(directory, mode=0o700)
+    if directory != "":
+        if not os.path.exists(directory):
+            os.makedirs(directory, mode=0o700)
+        os.chmod(directory, 0o700)
 
 
 def _restrict_cache_database_files(path):
