@@ -123,13 +123,13 @@ class ImportFragment : DialogFragment() {
                     if (data != null) {
                         // Get the URI of the selected file
                         val uri = data.data!!
-                        Logger.log.info("Starting import into ${uid} from file ${uri}")
+                        Logger.log.info("Starting import from selected file")
                         try {
                             inputStream = requireActivity().contentResolver.openInputStream(uri)
 
                             Thread(ImportEntriesLoader()).start()
                         } catch (e: Exception) {
-                            Logger.log.severe("File select error: ${e.message}")
+                            Logger.log.severe("File select error: ${e.javaClass.name}")
 
                             val importResult = ImportResult()
                             importResult.e = e
@@ -227,11 +227,11 @@ class ImportFragment : DialogFragment() {
                                     return result
                                 }
                             } catch (e: CalendarStorageException) {
-                                Logger.log.info("Fail" + e.localizedMessage)
+                                Logger.log.info("Import lookup failed: ${e.javaClass.name}")
                                 result.e = e
                                 return result
                             } catch (e: FileNotFoundException) {
-                                Logger.log.info("Fail" + e.localizedMessage)
+                                Logger.log.info("Import lookup failed: ${e.javaClass.name}")
                                 result.e = e
                                 return result
                             }
@@ -248,7 +248,7 @@ class ImportFragment : DialogFragment() {
                                         result.added++
                                     }
                                 } catch (e: CalendarStorageException) {
-                                    e.printStackTrace()
+                                    Logger.log.warning("Calendar import entry failed: ${e.javaClass.name}")
                                 }
 
                                 entryProcessed()
@@ -290,7 +290,7 @@ class ImportFragment : DialogFragment() {
                                     return result
                                 }
                             } catch (e: FileNotFoundException) {
-                                Logger.log.info("Fail" + e.localizedMessage)
+                                Logger.log.info("Import lookup failed: ${e.javaClass.name}")
                                 result.e = e
                                 return result
                             }
@@ -307,7 +307,7 @@ class ImportFragment : DialogFragment() {
                                         result.added++
                                     }
                                 } catch (e: CalendarStorageException) {
-                                    e.printStackTrace()
+                                    Logger.log.warning("Task import entry failed: ${e.javaClass.name}")
                                 }
 
                                 entryProcessed()
@@ -365,7 +365,7 @@ class ImportFragment : DialogFragment() {
                                     }
                                     batch.commit()
                                 } catch (e: ContactsStorageException) {
-                                    e.printStackTrace()
+                                    Logger.log.warning("Contact import entry failed: ${e.javaClass.name}")
                                 }
 
                                 entryProcessed()
@@ -389,7 +389,7 @@ class ImportFragment : DialogFragment() {
                                         result.added++
                                     }
                                 } catch (e: ContactsStorageException) {
-                                    e.printStackTrace()
+                                    Logger.log.warning("Contact group import entry failed: ${e.javaClass.name}")
                                 }
 
                                 entryProcessed()

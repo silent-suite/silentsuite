@@ -34,7 +34,7 @@ class BaseConfigurationFinder(protected val context: Context, protected val cred
             val etebase = Account.login(client, credentials.userName, credentials.password)
             etebaseSession = etebase.save(null)
         } catch (e: java.lang.Exception) {
-            Logger.log.warning(e.localizedMessage)
+            Logger.log.warning("Configuration lookup failed: ${e.javaClass.name}")
             exception = e
         }
 
@@ -59,7 +59,7 @@ class BaseConfigurationFinder(protected val context: Context, protected val cred
             get() = this.error != null
 
         override fun toString(): String {
-            return "BaseConfigurationFinder.Configuration(url=" + this.url + ", userName=" + this.userName + ", error=" + this.error + ", failed=" + this.isFailed + ")"
+            return "BaseConfigurationFinder.Configuration(urlConfigured=" + (this.url != null) + ", userNameConfigured=" + this.userName.isNotEmpty() + ", error=" + this.error?.javaClass?.name + ", failed=" + this.isFailed + ")"
         }
     }
 

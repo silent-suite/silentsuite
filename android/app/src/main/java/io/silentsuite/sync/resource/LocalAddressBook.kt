@@ -48,7 +48,7 @@ class LocalAddressBook(
 
             val account = Account(accountName(mainAccount, cachedCollection), App.addressBookAccountType)
             val userData = initialUserData(mainAccount, col.uid)
-            Logger.log.log(Level.INFO, "Creating local address book $account", userData)
+            Logger.log.info("Creating local address book")
             if (!accountManager.addAccountExplicitly(account, null, userData))
                 throw IllegalStateException("Couldn't create address book account")
 
@@ -266,10 +266,10 @@ class LocalAddressBook(
             val currentHash = contact.dataHashCode()
             if (lastHash == currentHash) {
                 // hash is code still the same, contact is not "really dirty" (only metadata been have changed)
-                Logger.log.log(Level.FINE, "Contact data hash has not changed, resetting dirty flag", contact)
+                Logger.log.log(Level.FINE, "Contact data hash has not changed, resetting dirty flag")
                 contact.resetDirty()
             } else {
-                Logger.log.log(Level.FINE, "Contact data has changed from hash $lastHash to $currentHash", contact)
+                Logger.log.log(Level.FINE, "Contact data hash has changed")
                 reallyDirty++
             }
         }
@@ -370,7 +370,7 @@ class LocalAddressBook(
         // find groups without members
         /** should be done using {@link Groups.SUMMARY_COUNT}, but it's not implemented in Android yet */
         queryGroups(null, null).filter { it.getMembers().isEmpty() }.forEach { group ->
-            Logger.log.log(Level.FINE, "Deleting group", group)
+            Logger.log.log(Level.FINE, "Deleting empty group")
             group.delete()
         }
     }

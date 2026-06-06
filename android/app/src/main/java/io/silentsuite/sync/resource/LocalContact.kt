@@ -32,7 +32,6 @@ import ezvcard.VCardVersion
 import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
 import java.util.*
-import java.util.logging.Level
 
 class LocalContact : AndroidContact, LocalAddress {
     companion object {
@@ -62,7 +61,7 @@ class LocalContact : AndroidContact, LocalAddress {
             val contact: Contact
             contact = this.contact!!
 
-            Logger.log.log(Level.FINE, "Preparing upload of VCard $uuid", contact)
+            Logger.log.fine("Preparing upload of VCard resource")
 
             val os = ByteArrayOutputStream()
             contact.write(VCardVersion.V4_0, GROUP_VCARDS, os)
@@ -99,7 +98,7 @@ class LocalContact : AndroidContact, LocalAddress {
             // workaround for Android 7 which sets DIRTY flag when only meta-data is changed
             val hashCode = dataHashCode()
             values.put(COLUMN_HASHCODE, hashCode)
-            Logger.log.finer("Clearing dirty flag with eTag = $eTag, contact hash = $hashCode")
+            Logger.log.finer("Clearing dirty flag for contact resource")
         }
 
         addressBook.provider?.update(rawContactSyncURI(), values, null, null)
@@ -172,7 +171,7 @@ class LocalContact : AndroidContact, LocalAddress {
         // groupMemberships is filled by getContact()
         val dataHash = contact!!.hashCode()
         val groupHash = groupMemberships.hashCode()
-        Logger.log.finest("Calculated data hash = $dataHash, group memberships hash = $groupHash")
+        Logger.log.finest("Calculated contact data hash for dirty workaround")
         return dataHash xor groupHash
     }
 
@@ -182,7 +181,7 @@ class LocalContact : AndroidContact, LocalAddress {
 
         val values = ContentValues(1)
         val hashCode = dataHashCode()
-        Logger.log.fine("Storing contact hash = $hashCode")
+        Logger.log.fine("Storing contact hash for dirty workaround")
         values.put(COLUMN_HASHCODE, hashCode)
 
         if (batch == null)

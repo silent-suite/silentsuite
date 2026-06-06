@@ -519,7 +519,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                             teardownAccountState(acc)
                         } catch (e: Exception) {
                             if (e is kotlinx.coroutines.CancellationException) throw e
-                            Logger.log.warning("Account teardown failed for ${acc.name}: $e")
+                            Logger.log.warning("Account teardown failed: ${e.javaClass.name}")
                         }
                     }
                     for (acc in accounts) {
@@ -742,7 +742,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 return info
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                Logger.log.log(Level.SEVERE, "AccountInfoViewModel.doLoad failed for ${account.name}", e)
+                Logger.log.log(Level.SEVERE, "AccountInfoViewModel.doLoad failed", e)
                 return info
             }
 
@@ -836,7 +836,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             EtebaseLocalCache.clearUserCache(this@AccountActivity, account.name)
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Logger.log.warning("Cache clear failed for ${account.name}: $e")
+            Logger.log.warning("Cache clear failed: ${e.javaClass.name}")
         }
 
         try {
@@ -846,10 +846,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 etebase.logout()
             }
         } catch (e: EtebaseException) {
-            Logger.log.warning("Server logout failed for ${account.name}: $e")
+            Logger.log.warning("Server logout failed: ${e.javaClass.name}")
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Logger.log.warning("Account teardown failed for ${account.name}: $e")
+            Logger.log.warning("Account teardown failed: ${e.javaClass.name}")
         }
     }
 

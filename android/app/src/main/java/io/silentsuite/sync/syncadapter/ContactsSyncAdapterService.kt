@@ -35,22 +35,22 @@ class ContactsSyncAdapterService : SyncAdapterService() {
                 settings = AccountSettings(context, addressBook.mainAccount)
             } catch (e: InvalidAccountException) {
                 Logger.log.info("Skipping sync due to invalid account.")
-                Logger.log.info(e.localizedMessage)
+                Logger.log.info("Invalid account: ${e.javaClass.name}")
                 return
             } catch (e: ContactsStorageException) {
                 Logger.log.info("Skipping sync due to invalid account.")
-                Logger.log.info(e.localizedMessage)
+                Logger.log.info("Invalid account: ${e.javaClass.name}")
                 return
             }
 
             if (!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(settings))
                 return
 
-            Logger.log.info("Synchronizing address book: " + addressBook.url)
-            Logger.log.info("Taking settings from: " + addressBook.mainAccount)
+            Logger.log.info("Synchronizing address book")
+            Logger.log.info("Taking settings from main account")
 
             val principal = settings.uri?.toHttpUrlOrNull() ?: run {
-                Logger.log.warning("Contacts sync skipped: no valid URI for account ${addressBook.mainAccount.name}")
+                Logger.log.warning("Contacts sync skipped: no valid URI")
                 return
             }
             ContactsSyncManager(context, account, settings, extras, authority, provider, syncResult, addressBook, principal).use {

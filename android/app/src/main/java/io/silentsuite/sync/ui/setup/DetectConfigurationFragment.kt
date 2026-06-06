@@ -54,7 +54,7 @@ class DetectConfigurationFragment : DialogFragment() {
     private fun onLoadFinished(data: Configuration?) {
         if (data != null) {
             if (data.isFailed) {
-                Logger.log.warning("Failed login configuration ${data.error?.localizedMessage}")
+                Logger.log.warning("Failed login configuration ${data.error?.javaClass?.name}")
                 // no service found: show error message
                 requireFragmentManager().beginTransaction()
                         .add(NothingDetectedFragment.newInstance(data.error!!.localizedMessage), null)

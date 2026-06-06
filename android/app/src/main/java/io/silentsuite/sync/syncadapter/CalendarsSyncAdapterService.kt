@@ -36,12 +36,12 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
             updateLocalCalendars(provider, account, settings)
 
             val principal = settings.uri?.toHttpUrlOrNull() ?: run {
-                Logger.log.warning("Calendar sync skipped: no valid URI for account ${account.name}")
+                Logger.log.warning("Calendar sync skipped: no valid URI")
                 return
             }
 
             for (calendar in AndroidCalendar.find(account, provider, LocalCalendar.Factory, CalendarContract.Calendars.SYNC_EVENTS + "!=0", null)) {
-                Logger.log.info("Synchronizing calendar #" + calendar.id + ", URL: " + calendar.name)
+                Logger.log.info("Synchronizing calendar #" + calendar.id)
                 CalendarSyncManager(context, account, settings, extras, authority, syncResult, calendar, principal).use {
                     it.performSync()
                 }
@@ -76,11 +76,11 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
                 val url = calendar.name
                 val collection = remote[url]
                 if (collection == null) {
-                    Logger.log.fine("Deleting obsolete local calendar $url")
+                    Logger.log.fine("Deleting obsolete local calendar")
                     calendar.delete()
                 } else {
                     // remote CollectionInfo found for this local collection, update data
-                    Logger.log.fine("Updating local calendar $url")
+                    Logger.log.fine("Updating local calendar")
                     calendar.update(collection, updateColors)
                     // we already have a local calendar for this remote collection, don't take into consideration anymore
                     remote.remove(url)
@@ -90,7 +90,7 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
             // create new local calendars
             for (url in remote.keys) {
                 val cachedCollection = remote[url]!!
-                Logger.log.info("Adding local calendar list $cachedCollection")
+                Logger.log.info("Adding local calendar")
                 LocalCalendar.create(account, provider, cachedCollection)
             }
         }

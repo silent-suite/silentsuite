@@ -23,7 +23,6 @@ import net.fortuna.ical4j.model.property.Action
 import net.fortuna.ical4j.model.property.ProdId
 import java.io.ByteArrayOutputStream
 import java.util.*
-import java.util.logging.Level
 
 class LocalEvent : AndroidEvent, LocalResource<Event> {
     companion object {
@@ -45,7 +44,7 @@ class LocalEvent : AndroidEvent, LocalResource<Event> {
 
     override val content: String
         get() {
-            Logger.log.log(Level.FINE, "Preparing upload of event $fileName} ${event}")
+            Logger.log.fine("Preparing upload of event resource")
 
             val os = ByteArrayOutputStream()
             event?.write(os)

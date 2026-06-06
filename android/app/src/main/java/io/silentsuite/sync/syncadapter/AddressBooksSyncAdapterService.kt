@@ -82,11 +82,11 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
                 val url = addressBook.url
                 val collection = remote[url]
                 if (collection == null) {
-                    Logger.log.fine("Deleting obsolete local addressBook $url")
+                    Logger.log.fine("Deleting obsolete local address book")
                     addressBook.delete()
                 } else {
                     // remote CollectionInfo found for this local collection, update data
-                    Logger.log.fine("Updating local addressBook $url")
+                    Logger.log.fine("Updating local address book")
                     addressBook.update(collection)
                     // we already have a local addressBook for this remote collection, don't take into consideration anymore
                     remote.remove(url)
@@ -96,7 +96,7 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
             // create new local calendars
             for (url in remote.keys) {
                 val cachedCollection = remote[url]!!
-                Logger.log.info("Adding local calendar list $cachedCollection")
+                Logger.log.info("Adding local address book")
                 LocalAddressBook.create(context, provider, account, cachedCollection)
             }
         }
