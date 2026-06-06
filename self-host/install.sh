@@ -249,6 +249,11 @@ cat > .env <<EOF
 # Your reverse proxy should forward traffic to this port.
 SERVER_PORT=3735
 
+# Comma-separated reverse proxy IPs allowed to set X-Forwarded-* headers.
+# Keep 127.0.0.1 for local host proxies. Use the exact Docker proxy container IP
+# when a proxy container reaches the server over a Docker network.
+TRUSTED_PROXY_IPS=127.0.0.1
+
 # PostgreSQL credentials (auto-generated)
 DATABASE_PASSWORD=$DATABASE_PASSWORD
 
@@ -377,7 +382,8 @@ echo ""
 echo "  1. Set up a reverse proxy to forward HTTPS traffic"
 echo "     to this server on port 3735."
 echo ""
-echo "     The server listens on 127.0.0.1:3735 (localhost only)."
+echo "     Docker publishes the server on host loopback only:"
+echo "       127.0.0.1:${SERVER_PORT:-3735}:3735"
 echo "     You need a reverse proxy (Caddy, nginx, Traefik, or"
 echo "     Cloudflare Tunnel) to handle TLS and forward traffic."
 echo ""
@@ -385,6 +391,9 @@ if [ -n "$PROXY_NETWORK" ]; then
 echo "     Your reverse proxy network ($PROXY_NETWORK) has been"
 echo "     configured. Use 'silentsuite-server:3735' as the"
 echo "     upstream/target in your proxy settings."
+echo "     IMPORTANT: set TRUSTED_PROXY_IPS in .env to your"
+echo "     proxy container's exact IP, then run:"
+echo "       $COMPOSE up -d --force-recreate server"
 else
 echo "     If using Nginx Proxy Manager or another Docker-based proxy,"
 echo "     re-run this installer and enter the proxy network name, or"

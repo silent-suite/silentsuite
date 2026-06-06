@@ -28,7 +28,7 @@ The `install.sh` script will:
 7. Pull Docker images and start the two containers (PostgreSQL and the SilentSuite server).
 8. Wait for health checks to pass.
 
-The server listens on `127.0.0.1:3735`. It is **not** reachable from the network until you put a reverse proxy in front of it.
+Docker publishes the server on host loopback at `127.0.0.1:3735`. It is **not** reachable from the network until you put a reverse proxy in front of it.
 
 ## Set Up a Reverse Proxy
 
