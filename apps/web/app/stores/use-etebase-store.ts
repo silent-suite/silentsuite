@@ -322,6 +322,8 @@ function collectionDisplayName(type: CollectionTypeKey): string {
 interface EtebaseState {
   // The live Account object (null until session restored)
   account: any | null
+  // Stable account public-key fingerprint for cross-device verification.
+  accountFingerprint: string | null
   // Collection references keyed by type; each type may have multiple collections.
   collections: Record<CollectionTypeKey, any[]>
   // Item cache: itemUid -> Etebase.Item (needed for update/delete which require the Item object)
@@ -428,6 +430,7 @@ interface EtebaseActions {
 
 export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) => ({
   account: null,
+  accountFingerprint: null,
   collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
   itemCache: new Map(),
   itemTypeMap: new Map(),
@@ -450,7 +453,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       logger.debug('[etebase-store] Restoring Etebase session...')
       const serverUrl = getServerUrl()
       const account = await core.restoreSession(serverUrl, savedSession)
-      set({ account })
+      const accountFingerprint = core.getAccountFingerprint(account)
+      set({ account, accountFingerprint })
       logger.debug('[etebase-store] Session restored')
 
       // Local-cache fingerprint check: if a different account previously
@@ -459,8 +463,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const cacheEnabled = isLocalCacheEnabled()
       if (cacheEnabled) {
         try {
-          const username = (account as any)?.user?.username ?? 'unknown'
-          await cacheEnsureFingerprint(String(username))
+          await cacheEnsureFingerprint(accountFingerprint)
         } catch (err) {
           logger.warn('[etebase-store] Cache fingerprint check failed', err)
         }
@@ -1242,6 +1245,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
     set({
       account: null,
+      accountFingerprint: null,
       collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),

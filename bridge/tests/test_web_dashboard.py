@@ -48,6 +48,11 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
     monkeypatch.setattr(config, "LISTEN_PORT", 37358)
+    monkeypatch.setattr(
+        web_module,
+        "_account_fingerprint",
+        lambda _creds, username: f"fingerprint for {username}",
+    )
 
     creds = Credentials()
     creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
@@ -78,11 +83,17 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert 'data-account="alice@example.com"' in html
     assert 'onclick="logoutAccount(this)"' in html
     assert 'onclick="removeAccount(this)"' in html
+    assert 'data-fingerprint="fingerprint for alice@example.com"' in html
+    assert "Hidden until revealed" in html
+    assert "Compare this with Android and the web app" in html
+    assert 'onclick="toggleFingerprint(\'accountFingerprint0\', this)"' in html
+    assert 'data-copy-target="accountFingerprint0"' in html
 
 
 def test_update_status_aggregates_background_sync_counts(tmp_path, monkeypatch):
     _reset_status()
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, _username: None)
 
     creds = Credentials()
     creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
@@ -128,6 +139,7 @@ def test_render_dashboard_handles_no_accounts(tmp_path, monkeypatch):
 def test_render_dashboard_escapes_account_action_attributes(tmp_path, monkeypatch):
     _reset_status()
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, _username: None)
 
     username = "evil\"'<account@example.com"
     creds = Credentials()

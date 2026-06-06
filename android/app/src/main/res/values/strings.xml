@@ -167,6 +167,9 @@
     <string name="export_data_failed">Export failed</string>
 
     <string name="show_fingperprint_title">Your Encryption Fingerprint</string>
+    <string name="copy_fingerprint">Copy fingerprint</string>
+    <string name="fingerprint_copied">Fingerprint copied</string>
+    <string name="fingerprint_unavailable">Fingerprint unavailable</string>
 
     <!-- ViewCollection -->
     <string name="change_journal_title">Recent sync activity</string>

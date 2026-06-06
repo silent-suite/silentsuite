@@ -226,6 +226,22 @@ def _aggregate_collections(collections_iterable):
     return totals
 
 
+def _account_fingerprint(creds, username):
+    stored_session = creds.get_etebase(username)
+    if not stored_session:
+        return None
+
+    server_url = creds.get_server_url(username) or config.ETEBASE_SERVER_URL
+    try:
+        from etebase import Account, Client, pretty_fingerprint
+
+        account = Account.restore(Client("silentsuite-bridge", server_url), stored_session, None)
+        return pretty_fingerprint(account.get_invitation_manager().pubkey)
+    except Exception:
+        logger.warning("Failed to compute bridge account fingerprint", exc_info=True)
+        return None
+
+
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -336,6 +352,44 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             font-size: 12px;
             margin-bottom: 10px;
             overflow-wrap: anywhere;
+        }
+        .fingerprint-box {
+            background: #0b0b0b;
+            border: 1px solid #242424;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+        }
+        .fingerprint-box label {
+            color: #666;
+            display: block;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .fingerprint-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .fingerprint-row code {
+            color: #fff;
+            display: block;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .fingerprint-row code.hidden { color: #777; font-family: inherit; }
+        .fingerprint-actions {
+            display: flex;
+            flex-shrink: 0;
+            gap: 6px;
+        }
+        .fingerprint-help {
+            color: #777;
+            font-size: 11px;
+            line-height: 1.4;
+            margin-top: 6px;
         }
         .section-title-row {
             display: flex;
@@ -629,6 +683,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     'Remove {account}? This deletes local bridge credentials and that account\'s local decrypted bridge cache on this computer. Other accounts are not affected.'
                 );
             }
+            function toggleFingerprint(id, button) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                var copyBtn = document.querySelector('[data-copy-target="' + id + '"]');
+                var revealed = el.getAttribute('data-revealed') === 'true';
+                if (revealed) {
+                    el.textContent = 'Hidden until revealed';
+                    el.classList.add('hidden');
+                    el.setAttribute('data-revealed', 'false');
+                    button.textContent = 'Reveal';
+                    if (copyBtn) copyBtn.disabled = true;
+                } else {
+                    el.textContent = el.getAttribute('data-fingerprint') || '';
+                    el.classList.remove('hidden');
+                    el.setAttribute('data-revealed', 'true');
+                    button.textContent = 'Hide';
+                    if (copyBtn) copyBtn.disabled = false;
+                }
+            }
             function triggerSync() {
                 var btn = document.getElementById('syncNowBtn');
                 btn.textContent = 'Syncing...';
@@ -794,11 +867,40 @@ def _render_dashboard():
             dav_url = f"{base_url}/{user}/"
             server_url = creds.get_server_url(user)
             url_id = f"davUrl{index}"
+            fingerprint = _account_fingerprint(creds, user)
+            fingerprint_id = f"accountFingerprint{index}"
+            if fingerprint:
+                fingerprint_html = (
+                    '<div class="fingerprint-box">'
+                    '<label>Account fingerprint</label>'
+                    '<div class="fingerprint-row">'
+                    '<div>'
+                    f'<code id="{fingerprint_id}" class="hidden" data-revealed="false" '
+                    f'data-fingerprint="{esc(fingerprint)}">Hidden until revealed</code>'
+                    '<div class="fingerprint-help">Compare this with Android and the web app. '
+                    'It is not a recovery secret.</div>'
+                    '</div>'
+                    '<div class="fingerprint-actions">'
+                    f'<button class="copy-btn" onclick="toggleFingerprint(\'{fingerprint_id}\', this)">Reveal</button>'
+                    f'<button class="copy-btn" data-copy-target="{fingerprint_id}" '
+                    f'onclick="copy(event, \'{fingerprint_id}\')" disabled>Copy</button>'
+                    '</div>'
+                    '</div>'
+                    '</div>'
+                )
+            else:
+                fingerprint_html = (
+                    '<div class="fingerprint-box">'
+                    '<label>Account fingerprint</label>'
+                    '<div class="fingerprint-help">Fingerprint unavailable. Re-authenticate this account if it does not appear.</div>'
+                    '</div>'
+                )
             account_attr = esc(user)
             account_html += (
                 '<div class="account-card">'
                 f'<h4>{esc(user)}</h4>'
                 f'<div class="account-meta">Server: <code>{esc(server_url)}</code></div>'
+                f'{fingerprint_html}'
                 '<div class="url-box">'
                 '<div>'
                 '<label>CalDAV/CardDAV URL</label>'

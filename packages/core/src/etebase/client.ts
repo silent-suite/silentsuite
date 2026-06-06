@@ -61,6 +61,14 @@ export async function saveSession(
 }
 
 /**
+ * Return the stable account public-key fingerprint used for cross-device verification.
+ */
+export function getAccountFingerprint(account: Etebase.Account): string {
+  const invitationManager = account.getInvitationManager();
+  return Etebase.getPrettyFingerprint(invitationManager.pubkey);
+}
+
+/**
  * Change the account password.
  */
 export async function changePassword(
