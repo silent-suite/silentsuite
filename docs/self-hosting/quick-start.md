@@ -34,6 +34,8 @@ Docker publishes the server on host loopback at `127.0.0.1:3735`. It is **not** 
 
 Pick whatever you already run. Examples (Caddy, nginx, Traefik, Cloudflare Tunnel) are in [SELF-HOSTING.md → Reverse Proxy Examples](https://github.com/silent-suite/silentsuite/blob/main/self-host/SELF-HOSTING.md#reverse-proxy-examples). Forward HTTPS traffic for your domain to `localhost:3735`.
 
+Use the full examples in `SELF-HOSTING.md` when copy-pasting proxy config; they include security headers and `TRUSTED_PROXY_IPS` guidance for Docker-network proxies.
+
 ## Connect Your Apps
 
 Once the proxy is up:
