@@ -125,12 +125,19 @@ When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `ve
 
 ## Reverse Proxy Examples
 
-The SilentSuite server listens on `127.0.0.1:3735` by default. Configure your reverse proxy to forward HTTPS traffic to it.
+Docker publishes the SilentSuite server on host loopback at `127.0.0.1:3735` by default. Configure your reverse proxy to forward HTTPS traffic to it.
 
 ### Caddy (recommended -- automatic HTTPS)
 
 ```
 sync.example.com {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
     reverse_proxy localhost:3735
 }
 ```
@@ -145,6 +152,12 @@ server {
     ssl_certificate     /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
 
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
     location / {
         proxy_pass http://127.0.0.1:3735;
         proxy_set_header Host $host;
@@ -155,6 +168,16 @@ server {
     }
 }
 ```
+
+### Trusted Proxy Headers
+
+The server only accepts `X-Forwarded-*` headers from `TRUSTED_PROXY_IPS`.
+Keep the default `127.0.0.1` when Caddy/nginx/cloudflared connects through the
+host loopback port. If a Docker-network proxy connects directly to the server
+container, set `TRUSTED_PROXY_IPS` in `.env` to that proxy's exact container IP
+before recreating the server. Multiple values are comma-separated, for example
+`TRUSTED_PROXY_IPS=127.0.0.1,172.18.0.5`. Uvicorn matches exact IPs here; CIDR
+ranges are not supported.
 
 ### Traefik (Docker labels)
 
@@ -167,7 +190,7 @@ labels:
   - "traefik.http.services.silentsuite.loadbalancer.server.port=3735"
 ```
 
-> If Traefik runs in Docker, replace the `ports:` mapping with `expose: ["3735"]` and ensure Traefik shares the `silentsuite` Docker network.
+> If Traefik runs in Docker, replace the `ports:` mapping with `expose: ["3735"]` and ensure Traefik shares the `silentsuite` Docker network. Also set `TRUSTED_PROXY_IPS` in `.env` to the Traefik container's exact IP so only that proxy can set `X-Forwarded-*` headers.
 
 ### Cloudflare Tunnel
 
@@ -177,7 +200,8 @@ cloudflared tunnel --url http://localhost:3735
 
 ### Recommended Security Headers
 
-Add these in your reverse proxy for defense in depth:
+Add these in your reverse proxy for defense in depth if your proxy example does
+not already include them:
 
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY`
@@ -298,7 +322,7 @@ curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-
 ## Security Notes
 
 - PostgreSQL is only accessible within the Docker network (not exposed to the host)
-- The server binds to `127.0.0.1` only -- not accessible from the network without a reverse proxy
+- Docker publishes the server port on host loopback only: `127.0.0.1:${SERVER_PORT:-3735}:3735`. Do not change this to `0.0.0.0` unless you put the server behind your own network firewall or proxy controls.
 - All sync traffic is end-to-end encrypted. The server never sees your plaintext data.
 - Built on the [Etebase protocol](https://docs.etebase.com), an open standard for E2E encrypted data sync.
 

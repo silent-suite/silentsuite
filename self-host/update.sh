@@ -61,3 +61,7 @@ fi
 
 echo ""
 echo "Update complete."
+echo ""
+echo "If your reverse proxy reaches the server over a Docker network,"
+echo "make sure TRUSTED_PROXY_IPS in .env contains that proxy container's"
+echo "exact IP, then run: $COMPOSE up -d --force-recreate server"

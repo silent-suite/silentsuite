@@ -46,7 +46,8 @@ PYEOF
 fi
 
 echo "[entrypoint] starting uvicorn..."
+TRUSTED_PROXY_IPS="${TRUSTED_PROXY_IPS:-127.0.0.1}"
 exec uvicorn etebase_server.asgi:application \
     --host 0.0.0.0 --port 3735 \
     --workers 2 --proxy-headers \
-    --forwarded-allow-ips '*'
+    --forwarded-allow-ips "$TRUSTED_PROXY_IPS"
