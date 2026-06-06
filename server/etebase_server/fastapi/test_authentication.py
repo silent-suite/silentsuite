@@ -13,6 +13,8 @@ delegates to).
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import nacl.signing
 import pytest
 from django.test.utils import override_settings
@@ -143,19 +145,7 @@ class TestLogin:
         assert response.status_code == 400
         assert decode_response(response)["code"] == "wrong_host"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "validate_login_request in routers/authentication.py:156-157 "
-            "doesn't catch nacl.exceptions.CryptoError, so undecryptable "
-            "challenge bytes surface as a 500 instead of a clean 400. "
-            "Not exploitable — no user data leaks — but the route should "
-            "raise HttpError('invalid_challenge', ..., 400). When that fix "
-            "lands, this xfail will flip to XPASS and strict mode will "
-            "force removing the marker."
-        ),
-    )
-    def test_login_with_garbage_challenge_bytes_fails(
+    def test_login_with_garbage_challenge_bytes_returns_client_error(
         self, auth_app, user_factory, signing_key
     ):
         # Skip the real challenge endpoint and send random bytes — the
@@ -174,7 +164,8 @@ class TestLogin:
         )
         response = msgpack_post(client, f"{AUTH_PREFIX}/login/", body)
 
-        assert response.status_code in (400, 422)
+        assert response.status_code == 400
+        assert decode_response(response)["code"] == "invalid_challenge"
 
 
 @pytest.mark.django_db(transaction=True)
@@ -214,6 +205,29 @@ class TestSignup:
 
         assert response.status_code == 409
         assert decode_response(response)["code"] == "user_exists"
+
+    def test_signup_unexpected_creation_error_returns_safe_detail(
+        self, auth_client, login_pubkey, encryption_pubkey, user_salt
+    ):
+        body = {
+            "user": {"username": "test_user_error", "email": "error@example.com"},
+            "salt": user_salt,
+            "loginPubkey": login_pubkey,
+            "pubkey": encryption_pubkey,
+            "encryptedContent": b"\x00" * 64,
+        }
+
+        with patch(
+            "etebase_server.fastapi.routers.authentication.create_user",
+            side_effect=Exception("raw database hostname secret"),
+        ):
+            response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
+
+        decoded = decode_response(response)
+        assert response.status_code == 400
+        assert decoded["code"] == "generic"
+        assert decoded["detail"] == "An error occurred during signup. Please try again."
+        assert "raw database hostname secret" not in decoded["detail"]
 
 
 @pytest.mark.django_db(transaction=True)
@@ -299,6 +313,33 @@ class TestChangePassword:
 
         info = UserInfo.objects.get(owner__username="test_user_alice")
         assert bytes(info.loginPubkey) == bytes(signing_key.verify_key)
+
+    def test_change_password_with_garbage_challenge_bytes_returns_client_error(
+        self, auth_app, user_factory, signing_key
+    ):
+        from fastapi.testclient import TestClient
+
+        client = TestClient(auth_app, raise_server_exceptions=False)
+        user_factory(username="test_user_alice")
+        token = self._auth_token(client, signing_key)
+        attacker_key = nacl.signing.SigningKey.generate()
+        body = build_signed_response(
+            username="test_user_alice",
+            challenge_bytes=b"\x00" * 64,
+            signing_key=attacker_key,
+            action="changePassword",
+            extra={"loginPubkey": b"\x01" * 32, "encryptedContent": b"\x02" * 64},
+        )
+
+        response = msgpack_post(
+            client,
+            f"{AUTH_PREFIX}/change_password/",
+            body,
+            headers={"Authorization": f"Token {token}"},
+        )
+
+        assert response.status_code == 400
+        assert decode_response(response)["code"] == "invalid_challenge"
 
     def test_change_password_succeeds_with_correct_signature(
         self, auth_client, user_factory, signing_key
