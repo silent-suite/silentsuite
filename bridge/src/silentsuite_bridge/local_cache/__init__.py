@@ -60,13 +60,14 @@ def _init_cache_database(db_path=None):
     path = db_path or config.DATABASE_FILE
     _ensure_private_cache_dir(path)
 
-    database = SqliteExtDatabase(
-        path,
-        pragmas={
-            "journal_mode": "wal",
-            "foreign_keys": 1,
-        },
-    )
+    with _private_umask():
+        database = SqliteExtDatabase(
+            path,
+            pragmas={
+                "journal_mode": "wal",
+                "foreign_keys": 1,
+            },
+        )
     db.database_proxy.initialize(database)
     return database, True
 
@@ -211,13 +212,14 @@ class Etebase:
 
         _ensure_private_cache_dir(db_path)
 
-        database = SqliteExtDatabase(
-            db_path,
-            pragmas={
-                "journal_mode": "wal",
-                "foreign_keys": 1,
-            },
-        )
+        with _private_umask():
+            database = SqliteExtDatabase(
+                db_path,
+                pragmas={
+                    "journal_mode": "wal",
+                    "foreign_keys": 1,
+                },
+            )
 
         self._set_db(database)
 

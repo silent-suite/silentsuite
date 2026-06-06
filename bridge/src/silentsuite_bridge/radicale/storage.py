@@ -109,7 +109,7 @@ class SyncThread(threading.Thread):
                     etesync.sync()
                     self.last_sync_duration = time.time() - self.sync_started_at
                     self.is_syncing = False
-                    logger.debug("Sync completed for user %s", self.user)
+                    logger.debug("Sync completed for configured account")
 
                     # Update dashboard status with collection counts
                     collections = {"calendars": 0, "contacts": 0, "tasks": 0}
@@ -130,7 +130,7 @@ class SyncThread(threading.Thread):
                     )
                     log_sync_event("sync", "Synced account")
             except Exception as e:
-                logger.exception("Sync error for user %s: %s", self.user, e)
+                logger.exception("Sync error for configured account: %s", e)
                 self._exception = e
                 update_status("error", error=str(e))
                 log_sync_event("error", f"Sync failed: {e}")
@@ -181,7 +181,7 @@ def stop_sync_thread(user, timeout=2.0):
 
     thread.stop()
     if thread is threading.current_thread():
-        logger.warning("SyncThread for user %s cannot join itself", user)
+        logger.warning("SyncThread cannot join itself")
         return False
     thread.join(timeout)
 
@@ -190,7 +190,7 @@ def stop_sync_thread(user, timeout=2.0):
         if current is not thread:
             return True
         if thread.is_alive():
-            logger.warning("Timed out stopping SyncThread for user %s", user)
+            logger.warning("Timed out stopping SyncThread")
             return False
         del _sync_threads[user]
         logger.info("Stopped SyncThread")
@@ -710,7 +710,7 @@ class Storage(BaseStorage):
             sync_thread.wait_for_sync(20)
         except Exception as e:
             logger.warning(
-                "Sync failed for user %s, continuing with local cache: %s", user, e
+                "Sync failed for configured account, continuing with local cache: %s", e
             )
 
         with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):

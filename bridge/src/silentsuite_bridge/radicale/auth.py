@@ -38,16 +38,15 @@ class Auth(BaseAuth):
         # Check if user exists in credential store
         stored_session = self._creds.get_etebase(login)
         if stored_session is None:
-            logger.warning("Login attempt for unknown user: %s", login)
+            logger.warning("Login attempt for unknown configured user")
             return ""
 
         # Validate password against stored hash
         stored_hash = self._creds.get_password_hash(login)
         if stored_hash is None:
             logger.warning(
-                "No password hash stored for user: %s. "
-                "Please re-authenticate via browser.",
-                login,
+                "No password hash stored for configured user. "
+                "Please re-authenticate via browser."
             )
             return ""
 
@@ -62,10 +61,10 @@ class Auth(BaseAuth):
             password_hash = hashlib.sha256(password.encode()).hexdigest()
 
         if not hmac.compare_digest(password_hash, stored_hash):
-            logger.warning("Invalid password for user: %s", login)
+            logger.warning("Invalid password for configured user")
             return ""
 
-        logger.debug("Successful login for user: %s", login)
+        logger.debug("Successful login for configured user")
 
         # Auto-upgrade legacy SHA-256 hashes to PBKDF2
         if not stored_salt:
