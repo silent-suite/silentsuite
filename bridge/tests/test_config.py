@@ -6,11 +6,12 @@ from unittest.mock import patch
 import pytest
 
 
-NETWORK_ENV_KEYS = (
+CONFIG_ENV_KEYS = (
     "SILENTSUITE_LISTEN_ADDRESS",
     "SILENTSUITE_LISTEN_PORT",
     "SILENTSUITE_SERVER_HOSTS",
     "SILENTSUITE_ALLOW_REMOTE",
+    "SILENTSUITE_DASHBOARD_DUMP",
 )
 
 
@@ -18,7 +19,7 @@ def reload_config_with_env(monkeypatch, **values):
     import importlib
     from silentsuite_bridge import config
 
-    for key in NETWORK_ENV_KEYS:
+    for key in CONFIG_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     for key, value in values.items():
         monkeypatch.setenv(key, value)
@@ -29,7 +30,7 @@ def restore_config(monkeypatch):
     import importlib
     from silentsuite_bridge import config
 
-    for key in NETWORK_ENV_KEYS:
+    for key in CONFIG_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     return importlib.reload(config)
 
@@ -68,6 +69,13 @@ class TestConfigDefaults:
         from silentsuite_bridge import config
         assert config.LOG_LEVEL == "INFO"
 
+    def test_dashboard_dump_disabled_by_default(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            assert cfg.DASHBOARD_DUMP_ENABLED is False
+        finally:
+            restore_config(monkeypatch)
+
 
 class TestConfigEnvOverrides:
     """Test that environment variables override defaults."""
@@ -97,6 +105,13 @@ class TestConfigEnvOverrides:
         with patch.dict(os.environ, {"SILENTSUITE_SYNC_MINIMUM": "10"}):
             val = int(os.environ.get("SILENTSUITE_SYNC_MINIMUM", "30"))
             assert val == 10
+
+    def test_dashboard_dump_env_opt_in(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_DASHBOARD_DUMP="true")
+        try:
+            assert cfg.DASHBOARD_DUMP_ENABLED is True
+        finally:
+            restore_config(monkeypatch)
 
     def test_default_network_config_is_loopback_only(self, monkeypatch):
         cfg = reload_config_with_env(monkeypatch)

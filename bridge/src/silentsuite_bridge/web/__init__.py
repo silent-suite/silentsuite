@@ -11,8 +11,10 @@ Integrates with Radicale's web module system.
 """
 
 import html
+import hmac
 import json
 import logging
+import secrets
 import threading
 import time
 from collections import deque
@@ -35,6 +37,25 @@ _bridge_status = {
     "collections_scope": "all configured accounts",
 }
 _bridge_status_lock = threading.RLock()
+# Process-local token protects localhost dashboard POSTs from cross-site form/script submissions.
+_dashboard_csrf_token = secrets.token_urlsafe(32)
+
+
+def _json_response(status, payload):
+    return (
+        status,
+        {"Content-Type": "application/json"},
+        json.dumps(payload).encode(),
+    )
+
+
+def _has_valid_csrf(environ):
+    token = environ.get("HTTP_X_SILENTSUITE_CSRF", "")
+    return bool(token) and hmac.compare_digest(token, _dashboard_csrf_token)
+
+
+def _csrf_error():
+    return _json_response(403, {"error": "Invalid dashboard CSRF token"})
 
 
 def log_sync_event(event_type, message):
@@ -236,6 +257,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </style>
 </head>
 <body>
+    <script>window.SILENTSUITE_DASHBOARD_CSRF = '{{CSRF_TOKEN}}';</script>
     <div class="container">
         <h1>SilentSuite Bridge</h1>
         <div class="version">v{{VERSION}}</div>
@@ -289,7 +311,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 var btn = document.getElementById('syncNowBtn');
                 btn.textContent = 'Syncing...';
                 btn.disabled = true;
-                fetch('/.web/api/sync', {method:'POST'})
+                fetch('/.web/api/sync', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
                     .then(function(r) { return r.json(); })
                     .then(function() { btn.textContent = 'Done!'; setTimeout(function() { location.reload(); }, 1000); })
                     .catch(function() { btn.textContent = 'Error'; })
@@ -298,7 +320,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             function updateInterval() {
                 var val = document.getElementById('syncInterval').value;
                 var st = document.getElementById('syncIntervalStatus');
-                fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({syncInterval: parseInt(val)})})
+                fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({syncInterval: parseInt(val)})})
                     .then(function(r) { return r.json(); })
                     .then(function() { st.textContent = 'Saved'; setTimeout(function() { st.textContent = ''; }, 2000); })
                     .catch(function() { st.textContent = 'Error'; });
@@ -464,6 +486,7 @@ def _render_dashboard():
     page = page.replace("{{COLLECTIONS}}", esc(col_text))
     page = page.replace("{{ACCOUNT_LIST}}", account_html)
     page = page.replace("{{SYNC_LOG}}", log_html)
+    page = page.replace("{{CSRF_TOKEN}}", esc(_dashboard_csrf_token))
 
     # Sync interval display
     interval = config.SYNC_INTERVAL
@@ -551,6 +574,8 @@ class Web(BaseWeb):
 
         # Diagnostic: dump all cached items
         if path == "/.web/api/dump":
+            if not config.DASHBOARD_DUMP_ENABLED:
+                return (404, {}, b"Not found")
             from ..local_cache import models, db
             try:
                 with db.database_proxy:
@@ -606,6 +631,8 @@ class Web(BaseWeb):
 
         # Trigger immediate sync
         if path == "/.web/api/sync":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
             for thread in _sync_threads.values():
                 if thread.is_alive():
                     thread.force_sync()
@@ -619,6 +646,8 @@ class Web(BaseWeb):
 
         # Update settings
         if path == "/.web/api/settings":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
             try:
                 data = json.loads(body)
             except (json.JSONDecodeError, ValueError):
