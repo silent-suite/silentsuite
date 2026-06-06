@@ -1,5 +1,6 @@
 'use client'
 
+import { useTranslations } from 'next-intl'
 import { ProtectedRoute } from '@/app/components/protected-route'
 import { Sidebar } from '@/app/components/sidebar'
 import { Header } from '@/app/components/header'
@@ -16,6 +17,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
+  const t = useTranslations('Navigation')
   const readOnly = useAuthStore((s) => s.isReadOnly())
   const degraded = useAuthStore((s) => s.isDegraded())
 
@@ -29,7 +31,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               href="#main-content"
               className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:rounded-lg focus:bg-[rgb(var(--primary))] focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg"
             >
-              Skip to content
+              {t('skipToContent')}
             </a>
             <Sidebar />
             <div className="flex flex-1 flex-col min-w-0">

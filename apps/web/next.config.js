@@ -1,6 +1,9 @@
 const path = require('path')
+const createNextIntlPlugin = require('next-intl/plugin')
 const withPWA = require('@ducanh2912/next-pwa').default
 const { withSentryConfig } = require('@sentry/nextjs')
+
+const withNextIntl = createNextIntlPlugin('./i18n/request.ts')
 
 // Resolve etebase CJS entry — it's a dep of @silentsuite/core,
 // not directly in apps/web's node_modules (pnpm strict isolation).
@@ -44,7 +47,7 @@ const pwaConfig = withPWA({
     document: '/offline',
   },
   importScripts: ['/notification-worker.js'],
-})(nextConfig)
+})(withNextIntl(nextConfig))
 
 module.exports = withSentryConfig(pwaConfig, {
   // Suppresses source map upload logs during build

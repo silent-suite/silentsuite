@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import {
   CalendarDays,
   CheckSquare,
@@ -22,12 +23,13 @@ import { ContactListPanel } from '@/app/components/ContactListPanel'
 import { OnboardingChecklist } from '@/app/components/OnboardingChecklist'
 
 const navItems = [
-  { href: '/calendar', label: 'Calendar', icon: CalendarDays },
-  { href: '/tasks', label: 'Tasks', icon: CheckSquare },
-  { href: '/contacts', label: 'Contacts', icon: Users },
+  { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
+  { href: '/tasks', labelKey: 'tasks', icon: CheckSquare },
+  { href: '/contacts', labelKey: 'contacts', icon: Users },
 ]
 
 export function Sidebar() {
+  const t = useTranslations('Navigation')
   const { isExpanded, toggle } = useSidebarStore()
   const pathname = usePathname()
   const isAdmin = useAuthStore((s) => s.user?.isAdmin) || isSelfHosted
@@ -38,7 +40,7 @@ export function Sidebar() {
 
   return (
     <nav
-      aria-label="Main navigation"
+      aria-label={t('mainNavigation')}
       className="hidden md:flex flex-col border-r border-[rgb(var(--border))] bg-[rgb(var(--surface))] transition-[width] duration-200 ease-in-out z-40 overflow-visible"
       style={{ width: isExpanded ? 240 : 56 }}
     >
@@ -66,8 +68,9 @@ export function Sidebar() {
 
       {/* Nav items */}
       <div className="mt-2 flex flex-1 flex-col gap-1 px-2">
-        {navItems.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, labelKey, icon: Icon }) => {
           const isActive = pathname.startsWith(href)
+          const label = t(labelKey)
           return (
             <Link
               key={href}
@@ -107,14 +110,14 @@ export function Sidebar() {
                 : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]'
             }`}
             aria-current={pathname.startsWith('/admin') ? 'page' : undefined}
-            aria-label={!isExpanded ? 'Admin' : undefined}
+            aria-label={!isExpanded ? t('admin') : undefined}
           >
             <Shield className="h-5 w-5 shrink-0" />
             {isExpanded ? (
-              <span className="truncate">Admin</span>
+              <span className="truncate">{t('admin')}</span>
             ) : (
               <span className="pointer-events-none absolute left-full ml-2 z-[100] hidden whitespace-nowrap rounded-md bg-[rgb(var(--foreground))] px-2 py-1 text-xs text-[rgb(var(--background))] shadow-lg group-hover:block group-focus-within:block">
-                Admin
+                {t('admin')}
               </span>
             )}
           </Link>
@@ -127,14 +130,14 @@ export function Sidebar() {
               : 'text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))]'
           }`}
           aria-current={pathname.startsWith('/settings') ? 'page' : undefined}
-          aria-label={!isExpanded ? 'Settings' : undefined}
+          aria-label={!isExpanded ? t('settings') : undefined}
         >
           <Settings className="h-5 w-5 shrink-0" />
           {isExpanded ? (
-            <span className="truncate">Settings</span>
+            <span className="truncate">{t('settings')}</span>
           ) : (
             <span className="pointer-events-none absolute left-full ml-2 z-[100] hidden whitespace-nowrap rounded-md bg-[rgb(var(--foreground))] px-2 py-1 text-xs text-[rgb(var(--background))] shadow-lg group-hover:block group-focus-within:block">
-              Settings
+              {t('settings')}
             </span>
           )}
         </Link>
@@ -142,12 +145,12 @@ export function Sidebar() {
         <button
           onClick={toggle}
           className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-[rgb(var(--muted))] hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))] transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
-          aria-label={isExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          aria-label={isExpanded ? t('collapseSidebar') : t('expandSidebar')}
         >
           {isExpanded ? (
             <>
               <ChevronLeft className="h-5 w-5 shrink-0" />
-              <span className="truncate">Collapse</span>
+              <span className="truncate">{t('collapse')}</span>
             </>
           ) : (
             <ChevronRight className="h-5 w-5 shrink-0" />
