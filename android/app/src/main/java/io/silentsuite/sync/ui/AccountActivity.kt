@@ -105,7 +105,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 return Utils.prettyFingerprint(invitationManager.pubkey)
             } catch (e: Exception) {
                 e.printStackTrace()
-                return e.localizedMessage
+                return null
             }
         }
 
@@ -344,13 +344,24 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun showFingerprintDialog() {
+        val fingerprint = formattedFingerprint
+        val displayFingerprint = fingerprint ?: getString(R.string.fingerprint_unavailable)
         val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
         view.findViewById<View>(R.id.body).visibility = View.GONE
-        (view.findViewById<View>(R.id.fingerprint) as TextView).text = formattedFingerprint
+        (view.findViewById<View>(R.id.fingerprint) as TextView).text = displayFingerprint
         AlertDialog.Builder(this@AccountActivity)
                 .setIcon(R.drawable.ic_fingerprint_dark)
                 .setTitle(R.string.show_fingperprint_title)
                 .setView(view)
+                .setNeutralButton(R.string.copy_fingerprint) { _, _ ->
+                    if (fingerprint == null) {
+                        Toast.makeText(this, R.string.fingerprint_unavailable, Toast.LENGTH_SHORT).show()
+                    } else {
+                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("account fingerprint", fingerprint))
+                        Toast.makeText(this, R.string.fingerprint_copied, Toast.LENGTH_SHORT).show()
+                    }
+                }
                 .setPositiveButton(android.R.string.yes) { _, _ -> }
                 .create()
                 .show()

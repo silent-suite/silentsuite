@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -33,6 +34,67 @@ const passwordSchema = z
   })
 
 type PasswordFormData = z.infer<typeof passwordSchema>
+
+// ---------------------------------------------------------------------------
+// Account Fingerprint Section
+// ---------------------------------------------------------------------------
+
+function AccountFingerprintSection() {
+  const t = useTranslations('SettingsSecurity.AccountFingerprint')
+  const fingerprint = useEtebaseStore((s) => s.accountFingerprint)
+  const [revealed, setRevealed] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+
+  const copyFingerprint = async () => {
+    if (!fingerprint) return
+
+    try {
+      await navigator.clipboard.writeText(fingerprint)
+      setCopyStatus('copied')
+    } catch {
+      setCopyStatus('failed')
+    }
+
+    window.setTimeout(() => setCopyStatus('idle'), 2000)
+  }
+
+  return (
+    <section className="rounded-lg border border-[rgb(var(--border))] p-4 space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">{t('title')}</h2>
+        <p className="text-xs text-[rgb(var(--muted))]">
+          {t('description')}
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 space-y-3">
+        <code className="block whitespace-pre-wrap break-words font-mono text-xs text-[rgb(var(--foreground))]">
+          {fingerprint ? (revealed ? fingerprint : t('hidden')) : t('unavailable')}
+        </code>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={!fingerprint}
+            onClick={() => setRevealed((value) => !value)}
+          >
+            {revealed ? t('hide') : t('reveal')}
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={!fingerprint || !revealed}
+            onClick={copyFingerprint}
+          >
+            {copyStatus === 'copied' ? t('copied') : copyStatus === 'failed' ? t('copyFailed') : t('copy')}
+          </Button>
+        </div>
+      </div>
+    </section>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Change Password Section
@@ -284,6 +346,7 @@ function DeleteAccountSection() {
 export default function SecurityPage() {
   return (
     <div className="space-y-6">
+      <AccountFingerprintSection />
       <ChangePasswordSection />
       <DeleteAccountSection />
     </div>
