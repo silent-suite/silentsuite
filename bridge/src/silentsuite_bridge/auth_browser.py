@@ -13,9 +13,11 @@ In the future, this will redirect to app.silentsuite.io/bridge-auth.
 """
 
 import html as html_mod
+import hmac
 import http.server
 import json
 import logging
+import secrets
 import socket
 import threading
 import urllib.parse
@@ -141,6 +143,7 @@ AUTH_PAGE_HTML = """<!DOCTYPE html>
         </div>
         <div class="error" id="error"></div>
         <form id="loginForm" method="POST" action="/auth">
+            <input type="hidden" name="csrf_token" value="CSRF_TOKEN">
             <label for="email">Email</label>
             <input type="email" id="email" name="email" required autofocus
                    placeholder="you@example.com">
@@ -569,12 +572,17 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
 
     server_instance = None
 
+    @staticmethod
+    def _valid_csrf(provided, expected):
+        return bool(provided) and bool(expected) and hmac.compare_digest(provided, expected)
+
     def log_message(self, format, *args):
         logger.debug("Auth server: %s", format % args)
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/auth"):
             html = AUTH_PAGE_HTML.replace("SERVER_URL", html_mod.escape(config.ETEBASE_SERVER_URL))
+            html = html.replace("CSRF_TOKEN", html_mod.escape(self.server.csrf_token))
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
@@ -616,6 +624,13 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             email = params.get("email", [""])[0].strip()
             password = params.get("password", [""])[0]
             server_url = params.get("server_url", [config.ETEBASE_SERVER_URL])[0].strip()
+            csrf_token = params.get("csrf_token", [""])[0]
+            if not self._valid_csrf(csrf_token, self.server.csrf_token):
+                self._json_response(403, {
+                    "success": False,
+                    "error": "Invalid CSRF token.",
+                })
+                return
             if not server_url:
                 server_url = config.ETEBASE_SERVER_URL
 
@@ -704,6 +719,7 @@ def browser_login():
     server.auth_complete = threading.Event()
     server.authenticated_email = None
     server.authenticated_server_url = config.ETEBASE_SERVER_URL
+    server.csrf_token = secrets.token_urlsafe(32)
 
     auth_url = f"http://127.0.0.1:{port}/"
 

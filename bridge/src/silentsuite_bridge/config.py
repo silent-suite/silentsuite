@@ -73,6 +73,14 @@ COL_TYPES = [
 LOG_LEVEL = os.environ.get("SILENTSUITE_LOG_LEVEL", "INFO")
 LOG_FILE = os.environ.get("SILENTSUITE_LOG_FILE", None)
 
+# --- Dashboard diagnostics ---
+DASHBOARD_DUMP_ENABLED = os.environ.get("SILENTSUITE_DASHBOARD_DUMP", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 
 def ensure_data_dir():
     """Create the data directory if it doesn't exist."""
