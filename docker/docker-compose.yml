@@ -1,13 +1,13 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.9-alpine
     container_name: silentsuite-postgres
     ports:
       - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: silentsuite
       POSTGRES_USER: silentsuite
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-silentsuite_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in docker/.env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile
     container_name: silentsuite-etebase
     ports:
-      - "3735:3735"
+      - "127.0.0.1:3735:3735"
     depends_on:
       postgres:
         condition: service_healthy

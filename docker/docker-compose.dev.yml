@@ -3,6 +3,7 @@ services:
     ports:
       - "5432:5432"
     environment:
+      # Dev-only default for disposable local databases. Never use in production.
       POSTGRES_PASSWORD: silentsuite_dev
 
   etebase:

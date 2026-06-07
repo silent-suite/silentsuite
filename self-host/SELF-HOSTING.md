@@ -79,6 +79,7 @@ When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `ve
 1. **Create a directory and download the config:**
    ```bash
    mkdir silentsuite-server && cd silentsuite-server
+   chmod 750 .
    curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/docker-compose.yml -o docker-compose.yml
    curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/.env.example -o .env
    curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/success.html -o success.html
@@ -93,6 +94,7 @@ When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `ve
 3. **Edit `.env`:**
    - `DATABASE_PASSWORD` -- the generated database password
    - `SUPER_PASS` -- the generated admin password
+   - Save with `chmod 600 .env` so only the host operator can read it.
 
 4. **Create `etebase-server.ini`** (server-side configuration; mounted into the container). Replace `YOUR_DATABASE_PASSWORD` with the value you set in `.env`, and `sync.example.com` with your domain:
    ```ini
@@ -114,7 +116,7 @@ When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `ve
    host = postgres
    port = 5432
    ```
-   Save with `chmod 644` so the container's `etebase` user can read it via the bind mount.
+   Save with `chmod 644` so the container's `etebase` user can read it via the bind mount. Keep the install directory itself at `0750`; `etebase-server.ini` contains the database password and should not live in a shared directory. Users outside the directory owner/group cannot traverse a `0750` directory, but members of that group can still read the file.
 
 5. **Start the stack:**
    ```bash

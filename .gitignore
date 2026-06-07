@@ -21,6 +21,8 @@ dist/
 .env.test.local
 .env.production.local
 **/.env
+secret.txt
+**/secret.txt
 
 # Logs
 npm-debug.log*
