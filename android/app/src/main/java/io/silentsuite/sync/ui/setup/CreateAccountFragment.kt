@@ -54,7 +54,7 @@ class CreateAccountFragment : DialogFragment() {
             // garbage-collected). Previously this branch silently no-op'd, leaving the user
             // staring at a frozen "setting up encryption" progress dialog. Log the failure
             // and dismiss the dialog so the operator notices and the user can retry.
-            Logger.log.log(Level.SEVERE, "addAccountExplicitly returned false for ${config.userName}")
+            Logger.log.log(Level.SEVERE, "addAccountExplicitly returned false")
             dismissAllowingStateLoss()
         }
     }
@@ -64,7 +64,7 @@ class CreateAccountFragment : DialogFragment() {
         val account = Account(accountName, App.accountType)
 
         // create Android account
-        Logger.log.log(Level.INFO, "Creating Android account with initial config", arrayOf(account, config.userName, config.url))
+        Logger.log.log(Level.INFO, "Creating Android account with initial config")
 
         val accountManager = AccountManager.get(context)
         if (!accountManager.addAccountExplicitly(account, config.password, null))
@@ -73,7 +73,7 @@ class CreateAccountFragment : DialogFragment() {
         AccountSettings.setUserData(accountManager, account, config.url, config.userName)
 
         // add entries for account to service DB
-        Logger.log.log(Level.INFO, "Writing account configuration to database", config)
+        Logger.log.log(Level.INFO, "Writing account configuration to database")
         try {
             val settings = AccountSettings(requireContext(), account)
 

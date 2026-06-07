@@ -95,7 +95,7 @@ constructor(internal val context: Context, internal val account: Account) {
             } catch (ignored: NumberFormatException) {
             }
 
-            Logger.log.fine("Account " + account.name + " has version " + version + ", current version: " + CURRENT_VERSION)
+            Logger.log.fine("Account settings version " + version + ", current version: " + CURRENT_VERSION)
 
             if (version < CURRENT_VERSION)
                 update(version)
@@ -104,7 +104,7 @@ constructor(internal val context: Context, internal val account: Account) {
 
     fun username(): String {
         return accountManager.getUserData(account, KEY_USERNAME)
-                ?: throw IllegalStateException("Username not set for account ${account.name}")
+                ?: throw IllegalStateException("Username not set")
     }
 
     fun username(userName: String) {
@@ -113,7 +113,7 @@ constructor(internal val context: Context, internal val account: Account) {
 
     fun password(): String {
         return accountManager.getPassword(account)
-                ?: throw IllegalStateException("Password not set for account ${account.name}")
+                ?: throw IllegalStateException("Password not set")
     }
 
     fun password(password: String) {
@@ -155,7 +155,7 @@ constructor(internal val context: Context, internal val account: Account) {
 
     private fun update(fromVersion: Int) {
         val toVersion = CURRENT_VERSION
-        Logger.log.info("Updating account " + account.name + " from version " + fromVersion + " to " + toVersion)
+        Logger.log.info("Updating account settings from version " + fromVersion + " to " + toVersion)
         try {
             updateInner(fromVersion)
             accountManager.setUserData(account, KEY_SETTINGS_VERSION, toVersion.toString())
@@ -181,7 +181,7 @@ constructor(internal val context: Context, internal val account: Account) {
             val accountManager = AccountManager.get(context)
             for (account in accountManager.getAccountsByType(App.accountType))
                 try {
-                    Logger.log.info("Checking account " + account.name)
+                    Logger.log.info("Checking account settings")
                     AccountSettings(context, account)
                 } catch (e: InvalidAccountException) {
                     Logger.log.log(Level.SEVERE, "Couldn't check for updated account settings", e)

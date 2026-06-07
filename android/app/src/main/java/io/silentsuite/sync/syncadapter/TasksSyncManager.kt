@@ -84,10 +84,10 @@ class TasksSyncManager(
             processTask(item, task, local)
         } else {
             if (local != null) {
-                Logger.log.info("Removing local record #" + local.id + " which has been deleted on the server")
+                Logger.log.info("Removing local task resource which has been deleted on the server")
                 local.delete()
             } else {
-                Logger.log.warning("Tried deleting a non-existent record: " + item.uid)
+                Logger.log.warning("Tried deleting a non-existent local task resource")
             }
         }
     }
@@ -96,12 +96,12 @@ class TasksSyncManager(
         var localTask = _localTask
         // delete local Task, if it exists
         if (localTask != null) {
-            Logger.log.info("Updating " + item.uid + " in local calendar")
+            Logger.log.info("Updating local task resource")
             localTask.eTag = item.etag
             localTask.update(newData)
             syncResult.stats.numUpdates++
         } else {
-            Logger.log.info("Adding " + item.uid + " to local calendar")
+            Logger.log.info("Adding local task resource")
             localTask = LocalTask(localTaskList(), newData, item.uid, item.etag)
             localTask.add()
             syncResult.stats.numInserts++

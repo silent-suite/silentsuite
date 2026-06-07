@@ -77,7 +77,11 @@ class HttpClient private constructor(
                         logger.finest(message)
                     }
                 })
-                loggingInterceptor.level = HttpLoggingInterceptor.Level.BODY
+                loggingInterceptor.redactHeader("Authorization")
+                loggingInterceptor.level = if (BuildConfig.DEBUG)
+                    HttpLoggingInterceptor.Level.BODY
+                else
+                    HttpLoggingInterceptor.Level.NONE
                 orig.addInterceptor(loggingInterceptor)
             }
 

@@ -135,7 +135,7 @@ class BillingManager private constructor() {
     fun isSyncAllowed(context: Context, account: Account): Boolean {
         val status = getSubscriptionStatus(context, account)
         if (!status.isSyncAllowed) {
-            Logger.log.info("Sync blocked for ${account.name}: subscription status is '${status.status}'")
+            Logger.log.info("Sync blocked: subscription status is '${status.status}'")
             showExpiredNotification(context, account)
         } else {
             // Clear any previous expiry notification when subscription is good
@@ -154,7 +154,7 @@ class BillingManager private constructor() {
         val now = System.currentTimeMillis()
 
         if (cached != null && (now - cached.fetchedAt) < CACHE_TTL_MS) {
-            Logger.log.fine("Using in-memory cached subscription status for ${account.name}: ${cached.status}")
+            Logger.log.fine("Using in-memory cached subscription status: ${cached.status}")
             return cached
         }
 
@@ -171,7 +171,7 @@ class BillingManager private constructor() {
             if (persisted != null) {
                 val lastSuccessfulFetch = getLastSuccessfulFetch(context, account.name)
                 if (lastSuccessfulFetch > 0 && (now - lastSuccessfulFetch) > DEGRADED_MODE_THRESHOLD_MS) {
-                    Logger.log.warning("Billing API unreachable for >24h for ${account.name}, using last known status: ${persisted.status}")
+                    Logger.log.warning("Billing API unreachable for >24h, using last known status: ${persisted.status}")
                     showDegradedModeWarning(context)
                 }
                 // Use persisted status (but with current timestamp for cache purposes)
@@ -283,7 +283,7 @@ class BillingManager private constructor() {
      * over-shares sync credentials and does not authenticate /subscription.
      */
     private fun fetchSubscriptionStatus(_context: Context, account: Account): SubscriptionStatus {
-        Logger.log.fine("Android billing check disabled for ${account.name}; no billing-specific token is available")
+        Logger.log.fine("Android billing check disabled; no billing-specific token is available")
         return SubscriptionStatus.unreachable()
     }
 }

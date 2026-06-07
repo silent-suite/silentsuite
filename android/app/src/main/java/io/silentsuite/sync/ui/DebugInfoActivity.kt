@@ -36,7 +36,6 @@ import io.silentsuite.sync.Constants.KEY_ACCOUNT
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalAddressBook
 // TODO(Phase2): Replace ACRA with Sentry for crash reporting
-import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.commons.lang3.text.WordUtils
 import java.io.File
 import java.util.logging.Level
@@ -125,22 +124,22 @@ class DebugInfoActivity : BaseActivity() {
             if (phase != null)
                 report.append("SYNCHRONIZATION INFO\nSynchronization phase: ").append(phase).append("\n")
             if (account != null)
-                report.append("Account name: ").append(account.name).append("\n")
+                report.append("Account: [redacted]\n")
             if (authority != null)
                 report.append("Authority: ").append(authority).append("\n")
             if (caller != null)
                 report.append("Debug activity source: ").append(caller).append("\n")
 
             if (throwable is com.etebase.client.exceptions.HttpException) {
-                report.append("\nHTTP ERROR:\n").append(throwable.localizedMessage).append("\n")
+                report.append("\nHTTP ERROR:\n").append(throwable.javaClass.name).append("\n")
             }
 
             if (throwable != null)
                 report.append("\nEXCEPTION:\n")
-                        .append(ExceptionUtils.getStackTrace(throwable))
+                        .append(redactedStackTrace(throwable))
 
             if (logs != null)
-                report.append("\nLOGS:\n").append(logs).append("\n")
+                report.append("\nLOGS:\n[redacted from shared debug report]\n")
 
             try {
                 val pm = context.packageManager
@@ -171,26 +170,26 @@ class DebugInfoActivity : BaseActivity() {
                     .append("\n")
             // main accounts
             val accountManager = AccountManager.get(context)
-            for (acct in accountManager.getAccountsByType(context.getString(R.string.account_type)))
+            for ((idx, acct) in accountManager.getAccountsByType(context.getString(R.string.account_type)).withIndex())
                 try {
                     val settings = AccountSettings(context, acct)
-                    report.append("Account: ").append(acct.name).append("\n" + "  Address book sync. interval: ").append(syncStatus(settings, App.addressBooksAuthority)).append("\n" + "  Calendar     sync. interval: ").append(syncStatus(settings, CalendarContract.AUTHORITY)).append("\n" + "  OpenTasks    sync. interval: ").append(syncStatus(settings, ProviderName.OpenTasks.authority)).append("\n" + "  Tasks.org    sync. interval: ").append(syncStatus(settings, ProviderName.TasksOrg.authority)).append("\n" + "  WiFi only: ").append(settings.syncWifiOnly)
+                    report.append("Account #").append(idx + 1).append("\n" + "  Address book sync. interval: ").append(syncStatus(settings, App.addressBooksAuthority)).append("\n" + "  Calendar     sync. interval: ").append(syncStatus(settings, CalendarContract.AUTHORITY)).append("\n" + "  OpenTasks    sync. interval: ").append(syncStatus(settings, ProviderName.OpenTasks.authority)).append("\n" + "  Tasks.org    sync. interval: ").append(syncStatus(settings, ProviderName.TasksOrg.authority)).append("\n" + "  WiFi only: ").append(settings.syncWifiOnly)
                     if (settings.syncWifiOnlySSID != null)
-                        report.append(", SSID: ").append(settings.syncWifiOnlySSID)
+                        report.append(", SSID configured: yes")
                     report.append("\n  [CardDAV] Contact group method: ").append(settings.groupMethod)
                             .append("\n           Manage calendar colors: ").append(settings.manageCalendarColors)
                             .append("\n")
                 } catch (e: InvalidAccountException) {
-                    report.append(acct).append(" is invalid (unsupported settings version) or does not exist\n")
+                    report.append("Account #").append(idx + 1).append(" is invalid (unsupported settings version) or does not exist\n")
                 }
 
             // address book accounts
-            for (acct in accountManager.getAccountsByType(App.addressBookAccountType))
+            for ((idx, acct) in accountManager.getAccountsByType(App.addressBookAccountType).withIndex())
                 try {
                     val addressBook = LocalAddressBook(context, acct, null)
-                    report.append("Address book account: ").append(acct.name).append("\n" + "  Main account: ").append(addressBook.mainAccount).append("\n" + "  URL: ").append(addressBook.url).append("\n" + "  Sync automatically: ").append(ContentResolver.getSyncAutomatically(acct, ContactsContract.AUTHORITY)).append("\n")
+                    report.append("Address book account #").append(idx + 1).append("\n" + "  Main account: [redacted]\n" + "  URL configured: ").append(addressBook.url != null).append("\n" + "  Sync automatically: ").append(ContentResolver.getSyncAutomatically(acct, ContactsContract.AUTHORITY)).append("\n")
                 } catch (e: ContactsStorageException) {
-                    report.append(acct).append(" is invalid: ").append(e.message).append("\n")
+                    report.append("Address book account #").append(idx + 1).append(" is invalid\n")
                 }
 
             report.append("\n")
@@ -218,6 +217,16 @@ class DebugInfoActivity : BaseActivity() {
                 if (interval == AccountSettings.SYNC_INTERVAL_MANUALLY) "manually" else (interval / 60).toString() + " min"
             else
                 "—"
+        }
+
+        private fun redactedStackTrace(throwable: Throwable): String {
+            val builder = StringBuilder(throwable.javaClass.name)
+            for (frame in throwable.stackTrace)
+                builder.append("\n\tat ").append(frame)
+            throwable.cause?.let { cause ->
+                builder.append("\nCaused by: ").append(redactedStackTrace(cause))
+            }
+            return builder.toString()
         }
     }
 

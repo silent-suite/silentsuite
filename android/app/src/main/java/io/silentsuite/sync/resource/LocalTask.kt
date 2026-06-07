@@ -17,7 +17,6 @@ import io.silentsuite.sync.log.Logger
 import org.dmfs.tasks.contract.TaskContract
 import java.io.ByteArrayOutputStream
 import java.util.*
-import java.util.logging.Level
 
 class LocalTask : AndroidTask, LocalResource<Task> {
     companion object {
@@ -33,7 +32,7 @@ class LocalTask : AndroidTask, LocalResource<Task> {
 
     override val content: String
         get() {
-            Logger.log.log(Level.FINE, "Preparing upload of task ${fileName} ${task}")
+            Logger.log.fine("Preparing upload of task resource")
 
             val os = ByteArrayOutputStream()
             task?.write(os)

@@ -174,7 +174,7 @@ class EditCollectionFragment : Fragment() {
                 }
                 activity?.finish()
             } catch (e: EtebaseException) {
-                Logger.log.warning(e.localizedMessage)
+                Logger.log.warning("Collection edit failed: ${e.javaClass.name}")
                 context?.let { context ->
                     AlertDialog.Builder(context)
                             .setIcon(R.drawable.ic_info_dark)
