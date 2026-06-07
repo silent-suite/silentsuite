@@ -116,7 +116,7 @@ When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `ve
    host = postgres
    port = 5432
    ```
-   Save with `chmod 644` so the container's `etebase` user can read it via the bind mount. Keep the install directory itself at `0750`; `etebase-server.ini` contains the database password and should not live in a shared world-readable directory.
+   Save with `chmod 644` so the container's `etebase` user can read it via the bind mount. Keep the install directory itself at `0750`; `etebase-server.ini` contains the database password and should not live in a shared directory. Users outside the directory owner/group cannot traverse a `0750` directory, but members of that group can still read the file.
 
 5. **Start the stack:**
    ```bash

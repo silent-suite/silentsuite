@@ -10,8 +10,10 @@ documents reverse-proxy/TLS setup.
 If you still run this legacy stack locally:
 
 - Copy `.env.example` to `.env` and set a unique `POSTGRES_PASSWORD`.
-- Update `etebase/etebase-server.ini` so its database password matches `.env`.
+- Update `etebase/etebase-server.ini` so its database password matches `.env`,
+  then rebuild the image with `docker compose build etebase` because the legacy
+  Dockerfile copies that INI file at build time.
 - Keep the default loopback-only ports and put any public access behind your
   reverse proxy/TLS layer.
 - Use `docker-compose.dev.yml` only for disposable local development; it contains
-  intentional dev-only defaults.
+  intentional dev-only defaults and exposes Postgres on all interfaces.
