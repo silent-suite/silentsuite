@@ -1,27 +1,11 @@
 'use client'
 
-import { useCallback, useState } from 'react'
-import { Monitor, ExternalLink, Copy, CheckCircle, ShieldCheck } from 'lucide-react'
+import { Monitor, ExternalLink, ShieldCheck } from 'lucide-react'
 
-const INSTALL_COMMAND = 'curl -fsSL https://silentsuite.io/bridge/install.sh | sh'
-const INSTALL_COMMAND_PS = 'irm https://silentsuite.io/bridge/install.ps1 | iex'
 const RELEASES_URL = 'https://github.com/silent-suite/silentsuite/releases/latest'
 const DOCS_URL = 'https://docs.silentsuite.io/user-guide/apps/dav-bridge'
 
 export default function DesktopSettingsPage() {
-  const [copied, setCopied] = useState<'sh' | 'ps' | null>(null)
-
-  const handleCopy = useCallback(async (variant: 'sh' | 'ps') => {
-    const text = variant === 'sh' ? INSTALL_COMMAND : INSTALL_COMMAND_PS
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(variant)
-      setTimeout(() => setCopied(null), 2000)
-    } catch {
-      // Clipboard access may be blocked; users can still select manually
-    }
-  }, [])
-
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -34,71 +18,18 @@ export default function DesktopSettingsPage() {
         </p>
       </div>
 
-      {/* Install one-liner — macOS / Linux */}
+      {/* Installer status */}
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-3">
         <div className="flex items-center gap-3">
           <Monitor className="h-5 w-5 text-[rgb(var(--primary))]" />
           <div>
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">
-              Install on macOS or Linux
+              Installers are published through releases
             </p>
             <p className="text-xs text-[rgb(var(--muted))]">
-              Run this in your terminal.
+              Download bridge binaries from GitHub releases until stable installer endpoints are pinned to main or a release tag.
             </p>
           </div>
-        </div>
-
-        <div className="flex items-stretch gap-2">
-          <pre className="flex-1 overflow-x-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-xs text-[rgb(var(--foreground))] font-mono">
-            <code>{INSTALL_COMMAND}</code>
-          </pre>
-          <button
-            type="button"
-            onClick={() => handleCopy('sh')}
-            aria-label="Copy install command"
-            className="flex items-center gap-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors"
-          >
-            {copied === 'sh' ? (
-              <CheckCircle className="h-4 w-4 text-emerald-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-            {copied === 'sh' ? 'Copied' : 'Copy'}
-          </button>
-        </div>
-      </div>
-
-      {/* Install one-liner — Windows */}
-      <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-3">
-        <div className="flex items-center gap-3">
-          <Monitor className="h-5 w-5 text-[rgb(var(--primary))]" />
-          <div>
-            <p className="text-sm font-medium text-[rgb(var(--foreground))]">
-              Install on Windows
-            </p>
-            <p className="text-xs text-[rgb(var(--muted))]">
-              Run this in PowerShell.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-stretch gap-2">
-          <pre className="flex-1 overflow-x-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-xs text-[rgb(var(--foreground))] font-mono">
-            <code>{INSTALL_COMMAND_PS}</code>
-          </pre>
-          <button
-            type="button"
-            onClick={() => handleCopy('ps')}
-            aria-label="Copy PowerShell install command"
-            className="flex items-center gap-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors"
-          >
-            {copied === 'ps' ? (
-              <CheckCircle className="h-4 w-4 text-emerald-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-            {copied === 'ps' ? 'Copied' : 'Copy'}
-          </button>
         </div>
       </div>
 

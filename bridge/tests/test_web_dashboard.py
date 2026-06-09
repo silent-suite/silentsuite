@@ -188,6 +188,17 @@ def test_dump_api_returns_404_when_disabled(monkeypatch):
     assert body == b"Not found"
 
 
+def test_dump_api_requires_csrf_when_enabled(monkeypatch):
+    monkeypatch.setattr(config, "DASHBOARD_DUMP_ENABLED", True)
+    web = Web.__new__(Web)
+
+    status, headers, body = web.get({}, "", "/.web/api/dump", None)
+
+    assert status == 403
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
+
+
 def test_root_route_serves_dashboard(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     web = Web.__new__(Web)

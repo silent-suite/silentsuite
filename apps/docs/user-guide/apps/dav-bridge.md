@@ -25,29 +25,19 @@ The bridge exposes every SilentSuite calendar, task list, and address book as it
 
 ## Install
 
-### One-Line Installer (Recommended)
+### Installer Status
 
-**Linux / macOS:**
+Bridge installer scripts are not yet published as stable `main`/release-tagged endpoints. Until they are, download bridge binaries from the [GitHub releases](https://github.com/silent-suite/silentsuite/releases) page instead of piping an installer URL into your shell.
 
-```bash
-curl -fsSL https://silentsuite.io/bridge/install.sh | sh
-```
+::: warning
+Do not run installer commands from the public `dev` branch. Those scripts may contain unreleased changes and are not part of the stable docs flow.
+:::
 
-**Windows (PowerShell):**
-
-```powershell
-irm https://silentsuite.io/bridge/install.ps1 | iex
-```
-
-The installer will:
+When stable installers are published, they will:
 1. Download the correct binary for your OS and architecture
 2. Install it to `~/.local/bin/`
 3. Optionally set up auto-start
 4. Open the bridge dashboard for first-time login
-
-::: info
-The bridge install URLs are coming soon. The binary distribution pipeline is being finalized. Check back shortly or watch the [GitHub releases](https://github.com/silent-suite/silentsuite/releases) for updates.
-:::
 
 ## First-Time Setup
 
