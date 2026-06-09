@@ -174,8 +174,6 @@ class SignupFragment : Fragment() {
 class SignupDoFragment: DialogFragment() {
     private val model: ConfigurationViewModel by viewModels()
 
-    private lateinit var signupCredentials: SignupCredentials
-
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         isCancelable = false
         return ProgressDialogHelper.createIndeterminate(
@@ -189,6 +187,16 @@ class SignupDoFragment: DialogFragment() {
         super.onCreate(savedInstanceState)
 
         if (savedInstanceState == null) {
+            val signupCredentials = SetupSecretHolder.getSignupCredentials()
+            if (signupCredentials == null) {
+                io.silentsuite.sync.log.Logger.log.warning("Signup credentials expired before account creation")
+                SetupSecretHolder.clearSignupCredentials()
+                requireFragmentManager().beginTransaction()
+                        .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
+                        .commitAllowingStateLoss()
+                dismissAllowingStateLoss()
+                return
+            }
             model.signup(requireContext(), signupCredentials)
             model.observe(this) {
                 if (it.isFailed) {
@@ -201,6 +209,7 @@ class SignupDoFragment: DialogFragment() {
                             .addToBackStack(null)
                             .commitAllowingStateLoss()
                 }
+                SetupSecretHolder.clearSignupCredentials()
                 dismissAllowingStateLoss()
             }
         }
@@ -208,9 +217,8 @@ class SignupDoFragment: DialogFragment() {
 
     companion object {
         fun newInstance(signupCredentials: SignupCredentials): SignupDoFragment {
-            val ret = SignupDoFragment()
-            ret.signupCredentials = signupCredentials
-            return ret
+            SetupSecretHolder.setSignupCredentials(signupCredentials)
+            return SignupDoFragment()
         }
     }
 }

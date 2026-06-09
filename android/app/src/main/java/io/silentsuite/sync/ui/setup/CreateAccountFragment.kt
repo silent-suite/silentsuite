@@ -38,15 +38,29 @@ class CreateAccountFragment : DialogFragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val config = requireArguments().getSerializable(KEY_CONFIG) as Configuration
+        val config = SetupSecretHolder.getPendingConfiguration()
+        if (config == null) {
+            Logger.log.severe("Setup configuration expired before account creation")
+            SetupSecretHolder.clearCredentialsAndConfiguration()
+            parentFragmentManager.beginTransaction()
+                    .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
+                    .commitAllowingStateLoss()
+            dismissAllowingStateLoss()
+            return
+        }
 
         val activity = requireActivity()
-        val account = createAccount(config.userName, config)
+        val account = try {
+            createAccount(config.userName, config)
+        } catch (e: InvalidAccountException) {
+            SetupSecretHolder.clearCredentialsAndConfiguration()
+            throw e
+        }
         if (account != null) {
             activity.setResult(Activity.RESULT_OK)
-            // Pass the freshly-minted session through the intent as well — AccountManager.setUserData
-            // isn't always visible to the next activity's read on the first login.
-            startActivity(ModeSelectionActivity.newIntent(requireContext(), account, config.etebaseSession))
+            SetupSecretHolder.setPendingSession(account.name, config.etebaseSession)
+            SetupSecretHolder.clearCredentialsAndConfiguration()
+            startActivity(ModeSelectionActivity.newIntent(requireContext(), account))
             activity.finish()
         } else {
             // Issue #119: addAccountExplicitly returned false (e.g. partial-state collision
@@ -55,6 +69,7 @@ class CreateAccountFragment : DialogFragment() {
             // staring at a frozen "setting up encryption" progress dialog. Log the failure
             // and dismiss the dialog so the operator notices and the user can retry.
             Logger.log.log(Level.SEVERE, "addAccountExplicitly returned false")
+            SetupSecretHolder.clearCredentialsAndConfiguration()
             dismissAllowingStateLoss()
         }
     }
@@ -67,7 +82,7 @@ class CreateAccountFragment : DialogFragment() {
         Logger.log.log(Level.INFO, "Creating Android account with initial config")
 
         val accountManager = AccountManager.get(context)
-        if (!accountManager.addAccountExplicitly(account, config.password, null))
+        if (!accountManager.addAccountExplicitly(account, null, null))
             return null
 
         AccountSettings.setUserData(accountManager, account, config.url, config.userName)
@@ -101,14 +116,9 @@ class CreateAccountFragment : DialogFragment() {
     }
 
     companion object {
-        private val KEY_CONFIG = "config"
-
         fun newInstance(config: Configuration): CreateAccountFragment {
-            val frag = CreateAccountFragment()
-            val args = Bundle(1)
-            args.putSerializable(KEY_CONFIG, config)
-            frag.arguments = args
-            return frag
+            SetupSecretHolder.setPendingConfiguration(config)
+            return CreateAccountFragment()
         }
     }
 }
