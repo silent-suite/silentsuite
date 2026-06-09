@@ -3,7 +3,7 @@
 import { useEffect } from 'react'
 import * as Sentry from '@sentry/nextjs'
 import { useTranslations } from 'next-intl'
-import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { createSafeOperationalError, getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 
 export default function AppError({
   error,
@@ -16,7 +16,9 @@ export default function AppError({
 
   useEffect(() => {
     console.error('App error boundary caught', getSafeErrorDetails(error))
-    Sentry.captureException(error)
+    Sentry.captureException(createSafeOperationalError('error-boundary', 'app'), {
+      extra: { ...getSafeErrorDetails(error), digest: error.digest },
+    })
   }, [error])
 
   return (

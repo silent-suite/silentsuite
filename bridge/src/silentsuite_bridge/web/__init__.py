@@ -1031,6 +1031,8 @@ class Web(BaseWeb):
         if path == "/.web/api/dump":
             if not config.DASHBOARD_DUMP_ENABLED:
                 return (404, {}, b"Not found")
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
             from ..local_cache import models, db
             try:
                 with db.database_proxy:
@@ -1060,10 +1062,11 @@ class Web(BaseWeb):
                     json.dumps(result, indent=2).encode(),
                 )
             except Exception as e:
+                logger.warning("Dashboard dump failed: %s", e.__class__.__name__)
                 return (
                     500,
                     {"Content-Type": "application/json"},
-                    json.dumps({"error": str(e)}).encode(),
+                    json.dumps({"error": "Failed to dump dashboard diagnostics"}).encode(),
                 )
 
         # API endpoint for current settings

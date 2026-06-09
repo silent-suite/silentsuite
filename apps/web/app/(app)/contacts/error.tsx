@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import * as Sentry from '@sentry/nextjs'
-import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { createSafeOperationalError, getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 
 export default function ContactsError({
   error,
@@ -13,7 +13,9 @@ export default function ContactsError({
 }) {
   useEffect(() => {
     console.error('Contacts error boundary caught', getSafeErrorDetails(error))
-    Sentry.captureException(error)
+    Sentry.captureException(createSafeOperationalError('error-boundary', 'contacts'), {
+      extra: { ...getSafeErrorDetails(error), digest: error.digest },
+    })
   }, [error])
 
   return (
