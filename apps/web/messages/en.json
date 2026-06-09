@@ -1,0 +1,36 @@
+{
+  "Navigation": {
+    "mainNavigation": "Main navigation",
+    "mobileNavigation": "Mobile navigation",
+    "calendar": "Calendar",
+    "tasks": "Tasks",
+    "contacts": "Contacts",
+    "admin": "Admin",
+    "settings": "Settings",
+    "skipToContent": "Skip to content",
+    "collapse": "Collapse",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
+  },
+  "AppError": {
+    "title": "Something went wrong",
+    "description": "An unexpected error occurred. Check your connection and try again.",
+    "errorId": "Error ID:",
+    "tryAgain": "Try again",
+    "goToCalendar": "Go to Calendar",
+    "contactPrefix": "If this keeps happening, contact us at"
+  },
+  "SettingsSecurity": {
+    "AccountFingerprint": {
+      "title": "Account fingerprint",
+      "description": "Compare this fingerprint with Android and the bridge to confirm they are connected to the same encrypted account. It is not a recovery secret.",
+      "hidden": "Hidden until revealed",
+      "unavailable": "Fingerprint unavailable. Make sure sync has finished initializing, then try again.",
+      "reveal": "Reveal fingerprint",
+      "hide": "Hide fingerprint",
+      "copy": "Copy fingerprint",
+      "copied": "Fingerprint copied",
+      "copyFailed": "Copy failed"
+    }
+  }
+}

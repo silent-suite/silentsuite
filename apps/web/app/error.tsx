@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import * as Sentry from '@sentry/nextjs'
+import { createSafeOperationalError, getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 
 export default function GlobalError({
   error,
@@ -11,8 +12,10 @@ export default function GlobalError({
   reset: () => void
 }) {
   useEffect(() => {
-    console.error('Global error boundary caught:', error)
-    Sentry.captureException(error)
+    console.error('Global error boundary caught', getSafeErrorDetails(error))
+    Sentry.captureException(createSafeOperationalError('error-boundary', 'global'), {
+      extra: { ...getSafeErrorDetails(error), digest: error.digest },
+    })
   }, [error])
 
   return (

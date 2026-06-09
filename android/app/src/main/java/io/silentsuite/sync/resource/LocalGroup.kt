@@ -26,7 +26,6 @@ import io.silentsuite.sync.log.Logger
 import ezvcard.VCardVersion
 import java.io.ByteArrayOutputStream
 import java.util.*
-import java.util.logging.Level
 
 class LocalGroup : AndroidGroup, LocalAddress {
     companion object {
@@ -63,7 +62,7 @@ class LocalGroup : AndroidGroup, LocalAddress {
 
                     // insert memberships
                     val membersIds = members.map {uid ->
-                        Constants.log.fine("Assigning member: $uid")
+                        Constants.log.fine("Assigning group member")
                         val contact = addressBook.findByUid(uid) as LocalContact?
                         if (contact != null) contact.id else null
                     }.filterNotNull()
@@ -87,7 +86,7 @@ class LocalGroup : AndroidGroup, LocalAddress {
             val contact: Contact
             contact = this.contact!!
 
-            Logger.log.log(Level.FINE, "Preparing upload of VCard $uuid", contact)
+            Logger.log.fine("Preparing upload of group VCard resource")
 
             val os = ByteArrayOutputStream()
             contact.write(VCardVersion.V4_0, GROUP_VCARDS, os)

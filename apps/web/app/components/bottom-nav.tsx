@@ -2,25 +2,28 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { CalendarDays, CheckSquare, Users, Settings } from 'lucide-react'
 
 const items = [
-  { href: '/calendar', label: 'Calendar', icon: CalendarDays },
-  { href: '/tasks', label: 'Tasks', icon: CheckSquare },
-  { href: '/contacts', label: 'Contacts', icon: Users },
-  { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
+  { href: '/tasks', labelKey: 'tasks', icon: CheckSquare },
+  { href: '/contacts', labelKey: 'contacts', icon: Users },
+  { href: '/settings', labelKey: 'settings', icon: Settings },
 ]
 
 export function BottomNav() {
+  const t = useTranslations('Navigation')
   const pathname = usePathname()
 
   return (
     <nav
-      aria-label="Mobile navigation"
+      aria-label={t('mobileNavigation')}
       className="fixed inset-x-0 bottom-0 z-50 flex border-t border-[rgb(var(--border))] bg-[rgb(var(--background))]/95 backdrop-blur-sm bottom-nav-safe md:hidden"
     >
-      {items.map(({ href, label, icon: Icon }) => {
+      {items.map(({ href, labelKey, icon: Icon }) => {
         const isActive = pathname.startsWith(href)
+        const label = t(labelKey)
         return (
           <Link
             key={href}

@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import * as Sentry from '@sentry/nextjs'
+import { createSafeOperationalError, getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 
 export default function CalendarError({
   error,
@@ -11,8 +12,10 @@ export default function CalendarError({
   reset: () => void
 }) {
   useEffect(() => {
-    console.error('Calendar error boundary caught:', error)
-    Sentry.captureException(error)
+    console.error('Calendar error boundary caught', getSafeErrorDetails(error))
+    Sentry.captureException(createSafeOperationalError('error-boundary', 'calendar'), {
+      extra: { ...getSafeErrorDetails(error), digest: error.digest },
+    })
   }, [error])
 
   return (

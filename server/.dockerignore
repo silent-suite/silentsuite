@@ -1,4 +1,6 @@
 /db.sqlite3*
+/secret.txt
+**/secret.txt
 Session.vim
 /local_settings.py
 .venv

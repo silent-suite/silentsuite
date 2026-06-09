@@ -52,7 +52,7 @@ abstract class SyncAdapterService : Service() {
         abstract fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult)
 
         override fun onPerformSync(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult) {
-            Logger.log.log(Level.INFO, "$authority sync of $account has been initiated.", extras.keySet().toTypedArray())
+            Logger.log.log(Level.INFO, "$authority sync has been initiated.", extras.keySet().toTypedArray())
 
             // required for dav4android (ServiceLoader)
             Thread.currentThread().contextClassLoader = context.classLoader
@@ -63,7 +63,7 @@ abstract class SyncAdapterService : Service() {
             // Blocks sync when subscription is cancelled/expired (read-only mode).
             // Allows sync when billing API is unreachable (optimistic for dev/self-hosted).
             if (!BillingManager.getInstance().isSyncAllowed(context, account)) {
-                Logger.log.info("Sync skipped for $account: subscription inactive")
+                Logger.log.info("Sync skipped: subscription inactive")
                 return
             }
 

@@ -181,7 +181,7 @@ constructor(protected val context: Context, protected val account: Account, prot
             }
             notifyUserOnSync()
 
-            Logger.log.info("Finished sync with CTag=$remoteCTag")
+            Logger.log.info("Finished sync")
         } catch (e: SSLHandshakeException) {
             syncResult.stats.numIoExceptions++
 
@@ -300,7 +300,7 @@ constructor(protected val context: Context, protected val account: Account, prot
             Logger.log.info("Fetched items. Done=${ret.isDone}")
             return ret
         } else {
-            Logger.log.info("Skipping fetch because local stoken == lastStoken (${remoteCTag})")
+            Logger.log.info("Skipping fetch because local sync token is unchanged")
             return null
         }
     }
@@ -316,7 +316,7 @@ constructor(protected val context: Context, protected val account: Account, prot
                 throw InterruptedException()
             }
             i++
-            Logger.log.info("Processing (${i}/${size}) UID=${item.uid} Etag=${item.etag}")
+            Logger.log.info("Processing remote resource (${i}/${size}) deleted=${item.isDeleted}")
 
             processItem(item)
             persistItem(item)
@@ -362,7 +362,7 @@ constructor(protected val context: Context, protected val account: Account, prot
             for (local in localDirty) {
                 if (remaining <= 0) break
                 remaining--
-                Logger.log.info("Added/changed resource with filename: " + local.fileName)
+                Logger.log.info("Uploaded local ${resourceType(local)} resource")
                 local.clearDirty(chunkPushItems[i].etag)
                 i++
             }
@@ -403,14 +403,7 @@ constructor(protected val context: Context, protected val account: Account, prot
         try {
             item.setContent(local.content)
         } catch (e: Exception) {
-            Logger.log.warning("Failed creating local entry ${local.uuid}")
-            if (local is LocalContact) {
-                Logger.log.warning("Contact with title ${local.contact?.displayName}")
-            } else if (local is LocalEvent) {
-                Logger.log.warning("Event with title ${local.event?.summary}")
-            } else if (local is LocalTask) {
-                Logger.log.warning("Task with title ${local.task?.summary}")
-            }
+            Logger.log.warning("Failed creating local ${resourceType(local)} resource")
             throw e
         }
 
@@ -472,7 +465,7 @@ constructor(protected val context: Context, protected val account: Account, prot
         val readOnly = cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly
         if (readOnly) {
             for (local in localList) {
-                Logger.log.info("Restoring locally deleted resource on a read only collection: ${local.uuid}")
+                Logger.log.info("Restoring locally deleted ${resourceType(local)} resource on a read only collection")
                 local.resetDeleted()
                 numDiscarded++
             }
@@ -481,9 +474,8 @@ constructor(protected val context: Context, protected val account: Account, prot
                 if (Thread.interrupted())
                     return ret
 
-                if (local.uuid != null) {
-                    Logger.log.info(local.uuid + " has been deleted locally -> deleting from server")
-                }
+                if (local.uuid != null)
+                    Logger.log.info("Local ${resourceType(local)} resource has been deleted -> deleting from server")
 
                 ret.add(local)
 
@@ -499,7 +491,7 @@ constructor(protected val context: Context, protected val account: Account, prot
         val readOnly = cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly
         if (readOnly) {
             for (local in localDirty) {
-                Logger.log.info("Restoring locally modified resource on a read only collection: ${local.uuid}")
+                Logger.log.info("Restoring locally modified ${resourceType(local)} resource on a read only collection")
                 if (local.uuid == null) {
                     // If it was only local, delete.
                     local.delete()
@@ -526,6 +518,14 @@ constructor(protected val context: Context, protected val account: Account, prot
         val displayName = meta.name ?: cachedCollection.col.uid
         val intent = Intent(context, AccountsActivity::class.java)
         notification.notify(context.getString(R.string.sync_journal_readonly, displayName), context.getString(R.string.sync_journal_readonly_message, numDiscarded), null, intent, R.drawable.ic_error_light)
+    }
+
+    private fun resourceType(local: T) = when (local) {
+        is LocalContact -> "contact"
+        is LocalEvent -> "event"
+        is LocalGroup -> "group"
+        is LocalTask -> "task"
+        else -> "local"
     }
 
     companion object {

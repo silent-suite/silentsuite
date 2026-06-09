@@ -145,7 +145,7 @@ class BridgeTray:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Open Dashboard",
-                lambda: webbrowser.open(f"{base_url}/.web/"),
+                lambda: webbrowser.open(f"{base_url}/"),
             ),
             pystray.MenuItem(
                 "Add / Re-authenticate Account",
@@ -193,9 +193,20 @@ class BridgeTray:
 
     def _reauthenticate(self):
         """Open browser auth flow for re-authentication."""
+        def run_login():
+            try:
+                from .auth_browser import browser_login
+                from .radicale.storage import refresh_sync_thread
+
+                email = browser_login(running_bridge=True)
+                if email:
+                    refresh_sync_thread(email)
+                    logger.info("Account added or re-authenticated from tray: %s", email)
+            except Exception as e:
+                logger.error("Failed to complete re-authentication: %s", e)
+
         try:
-            from .auth_browser import browser_login
-            threading.Thread(target=browser_login, daemon=True).start()
+            threading.Thread(target=run_login, daemon=True).start()
         except Exception as e:
             logger.error("Failed to start re-authentication: %s", e)
 

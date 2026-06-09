@@ -58,12 +58,12 @@ class TasksSyncAdapterService: SyncAdapterService() {
             updateLocalTaskLists(taskProvider, account, accountSettings)
 
             val principal = accountSettings.uri?.toHttpUrlOrNull() ?: run {
-                Logger.log.warning("Task sync skipped: no valid URI for account ${account.name}")
+                Logger.log.warning("Task sync skipped: no valid URI")
                 return
             }
 
             for (taskList in AndroidTaskList.find(account, taskProvider, LocalTaskList.Factory, "${TaskContract.TaskLists.SYNC_ENABLED}!=0", null)) {
-                Logger.log.info("Synchronizing task list #${taskList.id} [${taskList.syncId}]")
+                Logger.log.info("Synchronizing task list #${taskList.id}")
                 TasksSyncManager(context, account, accountSettings, extras, authority, syncResult, taskList, principal).use {
                     it.performSync()
                 }
@@ -98,11 +98,11 @@ class TasksSyncAdapterService: SyncAdapterService() {
                 val url = taskList.syncId
                 val collection = remote[url]
                 if (collection == null) {
-                    Logger.log.fine("Deleting obsolete local taskList $url")
+                    Logger.log.fine("Deleting obsolete local task list")
                     taskList.delete()
                 } else {
                     // remote CollectionInfo found for this local collection, update data
-                    Logger.log.fine("Updating local taskList $url")
+                    Logger.log.fine("Updating local task list")
                     taskList.update(collection, updateColors)
                     // we already have a local taskList for this remote collection, don't take into consideration anymore
                     remote.remove(url)
@@ -112,7 +112,7 @@ class TasksSyncAdapterService: SyncAdapterService() {
             // create new local calendars
             for (url in remote.keys) {
                 val cachedCollection = remote[url]!!
-                Logger.log.info("Adding local calendar list $cachedCollection")
+                Logger.log.info("Adding local task list")
                 LocalTaskList.create(account, provider, cachedCollection)
             }
         }

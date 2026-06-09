@@ -7,6 +7,7 @@ export {
   logIn,
   restoreSession,
   saveSession,
+  getAccountFingerprint,
   changePassword,
   logout,
 } from './etebase/client.js';

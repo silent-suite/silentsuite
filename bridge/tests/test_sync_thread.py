@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from silentsuite_bridge.radicale.storage import SyncThread, start_sync_thread, stop_sync_thread
+from silentsuite_bridge.radicale.storage import (
+    SyncThread,
+    refresh_sync_thread,
+    start_sync_thread,
+    stop_sync_thread,
+)
 
 
 class TestSyncThread:
@@ -195,6 +200,47 @@ class TestStartSyncThread:
 
             result = start_sync_thread("alive@test.com")
             assert result is existing
+            MockThread.assert_not_called()
+        finally:
+            storage._sync_threads = original
+
+    @patch("silentsuite_bridge.radicale.storage.forget_etesync_user")
+    @patch("silentsuite_bridge.radicale.storage.SyncThread")
+    def test_refresh_sync_thread_starts_new_thread(self, MockThread, mock_forget):
+        from silentsuite_bridge.radicale import storage
+
+        original = storage._sync_threads.copy()
+        storage._sync_threads.clear()
+        try:
+            mock_thread = MagicMock()
+            mock_thread.is_alive.return_value = True
+            MockThread.return_value = mock_thread
+
+            result = refresh_sync_thread("new@test.com")
+
+            assert result is mock_thread
+            mock_forget.assert_called_once_with("new@test.com")
+            mock_thread.start.assert_called_once()
+            mock_thread.force_sync.assert_not_called()
+        finally:
+            storage._sync_threads = original
+
+    @patch("silentsuite_bridge.radicale.storage.forget_etesync_user")
+    @patch("silentsuite_bridge.radicale.storage.SyncThread")
+    def test_refresh_sync_thread_wakes_existing_thread(self, MockThread, mock_forget):
+        from silentsuite_bridge.radicale import storage
+
+        original = storage._sync_threads.copy()
+        try:
+            existing = MagicMock()
+            existing.is_alive.return_value = True
+            storage._sync_threads["alive@test.com"] = existing
+
+            result = refresh_sync_thread("alive@test.com")
+
+            assert result is existing
+            mock_forget.assert_called_once_with("alive@test.com")
+            existing.force_sync.assert_called_once()
             MockThread.assert_not_called()
         finally:
             storage._sync_threads = original

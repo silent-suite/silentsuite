@@ -1,5 +1,5 @@
 /**
- * Local data cache for instant reload — IndexedDB-backed, plain JSON values.
+ * Local data cache for instant reload — IndexedDB-backed values.
  *
  * Stores already-decrypted item content (iCal/vCard/vTodo strings) plus
  * per-collection sync cursors (stokens) so that on the next page load the
@@ -8,17 +8,12 @@
  * SCOPE: This module follows the same raw-IDB pattern as `secure-storage.ts`
  * and `offline-queue.ts` — no `idb` / Dexie dependency.
  *
- * AT-REST ENCRYPTION: NOT applied. Decrypted item content sits in plain
- * IndexedDB. This is consistent with the bridge's behavior (it stores its
- * cache in plain SQLite, not sqlcipher) and with the wider PWA ecosystem
- * (Slack, Linear, Notion all do the same). Encrypting the cache at rest is
- * tracked in a separate follow-up that covers webapp + bridge + Android
- * together.
+ * AT-REST ENCRYPTION: required before item content writes are allowed. Until
+ * an encrypted cache envelope exists, decrypted item content writes fail
+ * closed even if the public feature flag is accidentally enabled.
  *
- * Gated by the `NEXT_PUBLIC_LOCAL_CACHE_ENABLED` feature flag in callers.
- * This module itself does not check the flag — the flag is checked at the
- * caller boundaries (sync-provider, etebase-store, auth-store) so this
- * module stays pure and easy to test.
+ * Gated by both the `NEXT_PUBLIC_LOCAL_CACHE_ENABLED` feature flag and the
+ * encrypted-envelope availability check.
  */
 import { logger } from '@/app/lib/logger'
 
@@ -62,6 +57,18 @@ const STORE_META = 'meta'
 const META_KEY = 'singleton'
 
 let dbPromise: Promise<IDBDatabase> | null = null
+let encryptedCacheAvailableForTests: boolean | null = null
+
+function hasEncryptedCacheEnvelope(): boolean {
+  if (encryptedCacheAvailableForTests !== null) return encryptedCacheAvailableForTests
+  return false
+}
+
+function canWriteItemContent(operation: string): boolean {
+  if (hasEncryptedCacheEnvelope()) return true
+  logger.warn(`[data-cache] ${operation} skipped; encrypted cache envelope is unavailable`)
+  return false
+}
 
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise
@@ -138,6 +145,7 @@ export async function getItemsByType(type: CollectionTypeKey): Promise<CachedIte
 
 /** Insert/update a single item. Failures are logged and swallowed. */
 export async function putItem(item: CachedItem): Promise<void> {
+  if (!canWriteItemContent('putItem')) return
   try {
     await withStore(STORE_ITEMS, 'readwrite', (store) => store.put(item))
   } catch (err) {
@@ -148,6 +156,7 @@ export async function putItem(item: CachedItem): Promise<void> {
 /** Bulk insert/update — single transaction for efficiency. */
 export async function putItems(items: CachedItem[]): Promise<void> {
   if (items.length === 0) return
+  if (!canWriteItemContent('putItems')) return
   try {
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
@@ -178,6 +187,7 @@ export async function replaceItemsForType(
   type: CollectionTypeKey,
   items: CachedItem[],
 ): Promise<void> {
+  if (!canWriteItemContent('replaceItemsForType')) return
   try {
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
@@ -211,6 +221,7 @@ export async function replaceItemsForCollection(
   collectionUid: string,
   items: CachedItem[],
 ): Promise<void> {
+  if (!canWriteItemContent('replaceItemsForCollection')) return
   try {
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
@@ -369,12 +380,12 @@ export async function ensureFingerprint(accountFingerprint: string): Promise<boo
 // ── Feature flag helper ──
 
 /**
- * Returns true if the local cache feature is enabled via the env flag.
- * Off by default — when false, the cache is never read or written and
- * the app behaves identically to pre-PR.
+ * Returns true only when the local cache feature is enabled and encrypted
+ * cache storage is available. Off by default, and fail-closed if the flag is
+ * enabled before encryption exists.
  */
 export function isCacheEnabled(): boolean {
-  return process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED === 'true'
+  return process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED === 'true' && hasEncryptedCacheEnvelope()
 }
 
 // ── Test helpers ──
@@ -390,4 +401,10 @@ export async function _resetForTests(): Promise<void> {
     }
   }
   dbPromise = null
+  encryptedCacheAvailableForTests = null
+}
+
+/** Test-only hook that simulates encrypted cache availability. */
+export function _setEncryptedCacheAvailableForTests(value: boolean | null): void {
+  encryptedCacheAvailableForTests = value
 }

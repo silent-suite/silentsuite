@@ -6,6 +6,35 @@ from unittest.mock import patch
 import pytest
 
 
+CONFIG_ENV_KEYS = (
+    "SILENTSUITE_LISTEN_ADDRESS",
+    "SILENTSUITE_LISTEN_PORT",
+    "SILENTSUITE_SERVER_HOSTS",
+    "SILENTSUITE_ALLOW_REMOTE",
+    "SILENTSUITE_DASHBOARD_DUMP",
+)
+
+
+def reload_config_with_env(monkeypatch, **values):
+    import importlib
+    from silentsuite_bridge import config
+
+    for key in CONFIG_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    return importlib.reload(config)
+
+
+def restore_config(monkeypatch):
+    import importlib
+    from silentsuite_bridge import config
+
+    for key in CONFIG_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    return importlib.reload(config)
+
+
 class TestConfigDefaults:
     """Test that config module exposes sensible defaults."""
 
@@ -40,6 +69,13 @@ class TestConfigDefaults:
         from silentsuite_bridge import config
         assert config.LOG_LEVEL == "INFO"
 
+    def test_dashboard_dump_disabled_by_default(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            assert cfg.DASHBOARD_DUMP_ENABLED is False
+        finally:
+            restore_config(monkeypatch)
+
 
 class TestConfigEnvOverrides:
     """Test that environment variables override defaults."""
@@ -69,6 +105,100 @@ class TestConfigEnvOverrides:
         with patch.dict(os.environ, {"SILENTSUITE_SYNC_MINIMUM": "10"}):
             val = int(os.environ.get("SILENTSUITE_SYNC_MINIMUM", "30"))
             assert val == 10
+
+    def test_dashboard_dump_env_opt_in(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_DASHBOARD_DUMP="true")
+        try:
+            assert cfg.DASHBOARD_DUMP_ENABLED is True
+        finally:
+            restore_config(monkeypatch)
+
+    def test_default_network_config_is_loopback_only(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+            assert cfg.is_dashboard_enabled() is True
+        finally:
+            restore_config(monkeypatch)
+
+    def test_non_loopback_listen_address_requires_explicit_opt_in(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_LISTEN_ADDRESS="0.0.0.0")
+        try:
+            with pytest.raises(RuntimeError, match="SILENTSUITE_ALLOW_REMOTE=1"):
+                cfg.validate_network_config()
+        finally:
+            restore_config(monkeypatch)
+
+    def test_non_loopback_server_hosts_requires_explicit_opt_in(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="0.0.0.0:37358")
+        try:
+            with pytest.raises(RuntimeError, match="SILENTSUITE_SERVER_HOSTS"):
+                cfg.validate_network_config()
+        finally:
+            restore_config(monkeypatch)
+
+    def test_remote_opt_in_allows_bind_but_disables_dashboard(self, monkeypatch):
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_LISTEN_ADDRESS="0.0.0.0",
+            SILENTSUITE_ALLOW_REMOTE="1",
+        )
+        try:
+            cfg.validate_network_config()
+            assert cfg.is_remote_bind_configured() is True
+            assert cfg.is_dashboard_enabled() is False
+        finally:
+            restore_config(monkeypatch)
+
+    def test_ipv6_loopback_server_hosts_are_allowed(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="[::1]:37358")
+        try:
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_ipv6_loopback_listen_address_default_hosts_are_bracketed(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_LISTEN_ADDRESS="::1")
+        try:
+            assert cfg.DEFAULT_SERVER_HOSTS == "[::1]:37358"
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_unbracketed_ipv6_loopback_host_with_port_is_allowed(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="::1:37358")
+        try:
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_malformed_ipv6_loopback_bracket_does_not_drop_address_tail(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="[::1")
+        try:
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_localhost_and_127_range_server_hosts_are_allowed(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="localhost:37358,127.0.0.2:37358")
+        try:
+            cfg.validate_network_config()
+            assert cfg.remote_bind_reasons() == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_non_loopback_ipv6_server_host_requires_explicit_opt_in(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SERVER_HOSTS="[fe80::1]:37358")
+        try:
+            with pytest.raises(RuntimeError, match="SILENTSUITE_SERVER_HOSTS"):
+                cfg.validate_network_config()
+        finally:
+            restore_config(monkeypatch)
 
 
 class TestConfigHelpers:

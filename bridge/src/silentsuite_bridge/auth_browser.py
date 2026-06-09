@@ -13,13 +13,16 @@ In the future, this will redirect to app.silentsuite.io/bridge-auth.
 """
 
 import html as html_mod
+import hmac
 import http.server
 import json
 import logging
+import secrets
 import socket
 import threading
 import urllib.parse
 import webbrowser
+from dataclasses import dataclass
 
 from etebase import Account, Client
 
@@ -27,6 +30,54 @@ from . import config
 from .accounts import store_authenticated_account
 
 logger = logging.getLogger("silentsuite-bridge.auth")
+
+
+@dataclass(frozen=True)
+class AuthenticatedAccount:
+    """Result of a successful bridge account authentication."""
+
+    username: str
+    server_url: str
+
+
+class AuthenticationError(Exception):
+    """User-safe authentication failure for bridge login flows."""
+
+
+def _auth_error_message(exc):
+    error_text = str(exc)
+    if "401" in error_text or "Unauthorized" in error_text:
+        return "Invalid email or password."
+    if "404" in error_text:
+        return "Account not found."
+    return "Authentication failed. Check the server URL and try again."
+
+
+def authenticate_and_store_account(email, password, server_url=None):
+    """Authenticate with Etebase and persist one bridge account."""
+    email = (email or "").strip()
+    server_url = (server_url or "").strip() or config.ETEBASE_SERVER_URL
+    if not email or not password:
+        raise ValueError("Email and password are required.")
+
+    try:
+        client = Client("silentsuite-bridge", server_url)
+        etebase = Account.login(client, email, password)
+    except Exception as exc:
+        raise AuthenticationError(_auth_error_message(exc)) from exc
+
+    # Preserve existing custom-server behavior for subsequent bridge operations.
+    if server_url != config.ETEBASE_SERVER_URL:
+        config.ETEBASE_SERVER_URL = server_url
+
+    result = store_authenticated_account(
+        email,
+        password,
+        etebase.save(None),
+        server_url,
+    )
+    logger.info("Authentication successful")
+    return AuthenticatedAccount(username=result.username, server_url=server_url)
 
 # Simple HTML auth page
 AUTH_PAGE_HTML = """<!DOCTYPE html>
@@ -141,6 +192,7 @@ AUTH_PAGE_HTML = """<!DOCTYPE html>
         </div>
         <div class="error" id="error"></div>
         <form id="loginForm" method="POST" action="/auth">
+            <input type="hidden" name="csrf_token" value="CSRF_TOKEN">
             <label for="email">Email</label>
             <input type="email" id="email" name="email" required autofocus
                    placeholder="you@example.com">
@@ -391,9 +443,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                 <button class="copy-btn" onclick="copyUrl(event, 'bridgeUrl')">Copy</button>
             </div>
             <p class="url-note">CalDAV and CardDAV share the same base URL &mdash; this is normal. Your app will discover calendars and contacts automatically.</p>
-            <div class="bookmark-box">
-                &#11088; Bookmark <a href="DASHBOARD_URL">DASHBOARD_URL</a> to find these details later
-            </div>
+            DASHBOARD_BOOKMARK
             <div class="next-step">
                 You're signed in. You can close this tab &mdash; the bridge is already running in the background and will keep syncing on its own.
             </div>
@@ -571,26 +621,41 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
 
     server_instance = None
 
+    @staticmethod
+    def _valid_csrf(provided, expected):
+        return bool(provided) and bool(expected) and hmac.compare_digest(provided, expected)
+
     def log_message(self, format, *args):
         logger.debug("Auth server: %s", format % args)
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/auth"):
             html = AUTH_PAGE_HTML.replace("SERVER_URL", html_mod.escape(config.ETEBASE_SERVER_URL))
+            html = html.replace("CSRF_TOKEN", html_mod.escape(self.server.csrf_token))
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(html.encode())
         elif self.path.startswith("/success"):
-            params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            email = params.get("email", [""])[0].strip()
-            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
+            email = getattr(self.server, "authenticated_email", "") or ""
+            if not email:
+                self.send_error(404)
+                return
             bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+            if config.is_dashboard_enabled():
+                dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+                dashboard_bookmark = (
+                    '<div class="bookmark-box">&#11088; Bookmark '
+                    f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
+                    "to find these details later</div>"
+                )
+            else:
+                dashboard_bookmark = '<div class="bookmark-box">Dashboard is disabled for remote bridge binds.</div>'
 
             page = SUCCESS_PAGE_HTML
             page = page.replace("USER_EMAIL", html_mod.escape(email))
             page = page.replace("BRIDGE_URL", html_mod.escape(bridge_url))
-            page = page.replace("DASHBOARD_URL", html_mod.escape(dashboard_url))
+            page = page.replace("DASHBOARD_BOOKMARK", dashboard_bookmark)
 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -610,54 +675,36 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             email = params.get("email", [""])[0].strip()
             password = params.get("password", [""])[0]
             server_url = params.get("server_url", [config.ETEBASE_SERVER_URL])[0].strip()
-            if not server_url:
-                server_url = config.ETEBASE_SERVER_URL
-
-            if not email or not password:
-                self._json_response(400, {
+            csrf_token = params.get("csrf_token", [""])[0]
+            if not self._valid_csrf(csrf_token, self.server.csrf_token):
+                self._json_response(403, {
                     "success": False,
-                    "error": "Email and password are required.",
+                    "error": "Invalid CSRF token.",
                 })
                 return
 
-            # Authenticate with Etebase
             try:
-                client = Client("silentsuite-bridge", server_url)
-                etebase = Account.login(client, email, password)
-            except Exception as e:
-                error_msg = str(e)
-                if "401" in error_msg or "Unauthorized" in error_msg:
-                    error_msg = "Invalid email or password."
-                elif "404" in error_msg:
-                    error_msg = "Account not found."
-                else:
-                    error_msg = f"Authentication failed: {error_msg}"
-
-                logger.warning("Auth failed for %s: %s", email, error_msg)
+                result = authenticate_and_store_account(email, password, server_url)
+            except ValueError as exc:
+                self._json_response(400, {
+                    "success": False,
+                    "error": str(exc),
+                })
+                return
+            except AuthenticationError as exc:
+                error_msg = str(exc)
+                logger.warning("Auth failed: %s", error_msg)
                 self._json_response(401, {
                     "success": False,
                     "error": error_msg,
                 })
                 return
 
-            # Update runtime config if a custom server URL was provided
-            if server_url != config.ETEBASE_SERVER_URL:
-                config.ETEBASE_SERVER_URL = server_url
-
-            result = store_authenticated_account(
-                email,
-                password,
-                etebase.save(None),
-                server_url,
-            )
-
-            logger.info("Authentication successful for %s", result.username)
-
             # Store the email and server URL for the success handler
             self.server.authenticated_email = result.username
-            self.server.authenticated_server_url = server_url
+            self.server.authenticated_server_url = result.server_url
 
-            redirect_url = f"/success?email={urllib.parse.quote(result.username)}"
+            redirect_url = "/success"
             self._json_response(200, {
                 "success": True,
                 "redirect": redirect_url,
@@ -683,7 +730,7 @@ def _find_free_port():
         return s.getsockname()[1]
 
 
-def browser_login():
+def browser_login(running_bridge=False):
     """Run the browser-based login flow.
 
     Starts a temporary HTTP server, opens the browser to the login page,
@@ -698,6 +745,7 @@ def browser_login():
     server.auth_complete = threading.Event()
     server.authenticated_email = None
     server.authenticated_server_url = config.ETEBASE_SERVER_URL
+    server.csrf_token = secrets.token_urlsafe(32)
 
     auth_url = f"http://127.0.0.1:{port}/"
 
@@ -731,13 +779,19 @@ def browser_login():
     email = server.authenticated_email
     if email:
         used_server = server.authenticated_server_url
-        dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/.web/"
         base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
-        print(f"\n  Login successful! Now start the bridge daemon:")
-        print(f"    ./silentsuite-bridge")
+        if running_bridge:
+            print(f"\n  Login successful! The bridge is already running.")
+        else:
+            print(f"\n  Login successful! Now start the bridge daemon:")
+            print(f"    ./silentsuite-bridge")
         print()
         print(f"  Etebase server: {used_server}")
-        print(f"  Dashboard will be available at: {dashboard_url}")
+        if config.is_dashboard_enabled():
+            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+            print(f"  Dashboard will be available at: {dashboard_url}")
+        else:
+            print("  Dashboard is disabled for remote bridge binds.")
         print(f"  CalDAV/CardDAV URL for your apps: {base_url}")
         print(f"\n  Full setup guides: https://docs.silentsuite.io/user-guide/apps/dav-bridge\n")
 

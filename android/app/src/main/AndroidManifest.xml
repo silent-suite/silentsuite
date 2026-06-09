@@ -305,7 +305,7 @@
 
         <activity
             android:name=".ui.DebugInfoActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="@string/debug_info_title">
         </activity>
 

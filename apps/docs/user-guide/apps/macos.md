@@ -5,7 +5,7 @@ Sync SilentSuite with the native macOS Calendar and Contacts apps through the [S
 ## Prerequisites
 
 1. The [SilentSuite Bridge](./dav-bridge.md) running on your Mac.
-2. Your **account credentials** from the bridge's web UI at `http://localhost:37358/.web/`.
+2. Your **account credentials** from the bridge's web UI at `http://localhost:37358/`.
 
 ## Add Calendar Account
 
@@ -53,4 +53,4 @@ macOS may limit sync to recent events. Open **Calendar > Preferences > Accounts*
 
 ### Connection refused
 
-Make sure the SilentSuite Bridge is running. Open `http://localhost:37358/.web/` in Safari to verify.
+Make sure the SilentSuite Bridge is running. Open `http://localhost:37358/` in Safari to verify.

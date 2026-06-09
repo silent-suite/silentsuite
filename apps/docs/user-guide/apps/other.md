@@ -4,7 +4,7 @@ Any app that supports CalDAV or CardDAV can sync with SilentSuite through the [S
 
 ## What You Need
 
-Before configuring your app, make sure the [SilentSuite Bridge](./dav-bridge.md) is installed and running. Then gather these connection details from the bridge dashboard at `http://localhost:37358/.web/`:
+Before configuring your app, make sure the [SilentSuite Bridge](./dav-bridge.md) is installed and running. Then gather these connection details from the bridge dashboard at `http://localhost:37358/`:
 
 | Field | Value |
 |---|---|
@@ -76,7 +76,7 @@ Some apps require different URL formats. If the default URL does not work, try t
 
 ### App cannot find any calendars or contacts
 
-1. Verify the bridge is running: open `http://localhost:37358/.web/` in your browser.
+1. Verify the bridge is running: open `http://localhost:37358/` in your browser.
 2. Check that you are using the correct URL format. Try the root URL (`http://localhost:37358/`) if the full path does not work, or vice versa.
 3. Make sure your username and password are correct. They are the same credentials you use to log into SilentSuite.
 

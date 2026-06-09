@@ -15,6 +15,18 @@ import {
   isCacheEnabled as isLocalCacheEnabled,
   type CachedItem,
 } from '@/app/lib/data-cache'
+import {
+  createSafeOperationalError,
+  getSafeErrorDetails,
+} from '@/app/lib/privacy-safe-errors'
+
+function reportSyncError(operation: string, err: unknown) {
+  Sentry.captureException(createSafeOperationalError('sync-provider', operation), {
+    tags: { component: 'sync-provider', operation },
+    extra: getSafeErrorDetails(err),
+  })
+  logger.error(`[sync-provider] ${operation} failed`, getSafeErrorDetails(err))
+}
 
 /**
  * SyncProvider orchestrates:
@@ -78,10 +90,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         setSyncStatus('synced')
         setLastSynced(new Date())
       } catch (err) {
-        Sentry.captureException(err)
-        console.error('[sync-provider] Init failed:', err)
+        reportSyncError('init', err)
         setSyncStatus('error')
-        setError(err instanceof Error ? err.message : 'Sync initialization failed')
+        setError('Sync initialization failed')
       }
     }
 
@@ -113,7 +124,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             useTaskStore.getState().syncFromRemote(tasks)
             logger.log(`[sync-provider] Hydrated ${tasks.length} tasks from cache`)
           } catch (err) {
-            logger.warn('[sync-provider] Failed to hydrate tasks from cache', err)
+            logger.warn('[sync-provider] Failed to hydrate tasks from cache', getSafeErrorDetails(err))
           }
         }
 
@@ -126,7 +137,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             useContactStore.getState().syncFromRemote(contacts)
             logger.log(`[sync-provider] Hydrated ${contacts.length} contacts from cache`)
           } catch (err) {
-            logger.warn('[sync-provider] Failed to hydrate contacts from cache', err)
+            logger.warn('[sync-provider] Failed to hydrate contacts from cache', getSafeErrorDetails(err))
           }
         }
 
@@ -139,11 +150,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             useCalendarStore.getState().syncFromRemote(events)
             logger.log(`[sync-provider] Hydrated ${events.length} events from cache`)
           } catch (err) {
-            logger.warn('[sync-provider] Failed to hydrate calendar events from cache', err)
+            logger.warn('[sync-provider] Failed to hydrate calendar events from cache', getSafeErrorDetails(err))
           }
         }
       } catch (err) {
-        logger.warn('[sync-provider] Cache hydration failed', err)
+        logger.warn('[sync-provider] Cache hydration failed', getSafeErrorDetails(err))
       }
     }
 
@@ -166,7 +177,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         try {
           await cacheReplaceItemsForType(type, records)
         } catch (err) {
-          logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, err)
+          logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
         }
       }
 
@@ -186,8 +197,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           await mirrorToCache('tasks', taskItems)
         }
       } catch (err) {
-        Sentry.captureException(err)
-        console.error('[sync-provider] Failed to load tasks:', err)
+        reportSyncError('load tasks', err)
       }
 
       // Load contacts
@@ -204,8 +214,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           await mirrorToCache('contacts', contactItems)
         }
       } catch (err) {
-        Sentry.captureException(err)
-        console.error('[sync-provider] Failed to load contacts:', err)
+        reportSyncError('load contacts', err)
       }
 
       // Load calendar events
@@ -222,8 +231,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           await mirrorToCache('calendar', eventItems)
         }
       } catch (err) {
-        Sentry.captureException(err)
-        console.error('[sync-provider] Failed to load calendar events:', err)
+        reportSyncError('load calendar events', err)
       }
 
       // Load and subscribe account-level preferences after the Etebase item
@@ -232,8 +240,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       try {
         await usePreferencesSyncStore.getState().initialize()
       } catch (err) {
-        Sentry.captureException(err)
-        console.error('[sync-provider] Failed to initialize preferences sync:', err)
+        reportSyncError('initialize preferences sync', err)
       }
     }
 
@@ -258,8 +265,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             useTaskStore.getState().syncFromRemote(tasks)
           } catch (err) {
-            Sentry.captureException(err)
-            console.error('[sync-provider] Failed to sync tasks:', err)
+            reportSyncError('sync tasks', err)
           }
         } else if (collectionType === 'etebase.vcard') {
           try {
@@ -271,8 +277,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             useContactStore.getState().syncFromRemote(contacts)
           } catch (err) {
-            Sentry.captureException(err)
-            console.error('[sync-provider] Failed to sync contacts:', err)
+            reportSyncError('sync contacts', err)
           }
         } else if (collectionType === 'etebase.vevent') {
           try {
@@ -284,16 +289,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             useCalendarStore.getState().syncFromRemote(events)
           } catch (err) {
-            Sentry.captureException(err)
-            console.error('[sync-provider] Failed to sync calendar events:', err)
+            reportSyncError('sync calendar events', err)
           }
         } else if (collectionType === 'silentsuite.preferences') {
           try {
             const preferenceItems = await refresher('preferences', event.collectionUid)
             await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
           } catch (err) {
-            Sentry.captureException(err)
-            console.error('[sync-provider] Failed to sync preferences:', err)
+            reportSyncError('sync preferences', err)
           }
         }
 

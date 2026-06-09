@@ -28,11 +28,13 @@ The `install.sh` script will:
 7. Pull Docker images and start the two containers (PostgreSQL and the SilentSuite server).
 8. Wait for health checks to pass.
 
-The server listens on `127.0.0.1:3735`. It is **not** reachable from the network until you put a reverse proxy in front of it.
+Docker publishes the server on host loopback at `127.0.0.1:3735`. It is **not** reachable from the network until you put a reverse proxy in front of it.
 
 ## Set Up a Reverse Proxy
 
 Pick whatever you already run. Examples (Caddy, nginx, Traefik, Cloudflare Tunnel) are in [SELF-HOSTING.md → Reverse Proxy Examples](https://github.com/silent-suite/silentsuite/blob/main/self-host/SELF-HOSTING.md#reverse-proxy-examples). Forward HTTPS traffic for your domain to `localhost:3735`.
+
+Use the full examples in `SELF-HOSTING.md` when copy-pasting proxy config; they include security headers and `TRUSTED_PROXY_IPS` guidance for Docker-network proxies.
 
 ## Connect Your Apps
 

@@ -57,7 +57,7 @@ Then:
 
 ### "Could not find any calendars"
 
-Make sure the bridge is running. Verify by opening `http://localhost:37358/.web/` in your browser. If the dashboard loads, the bridge is working.
+Make sure the bridge is running. Verify by opening `http://localhost:37358/` in your browser. If the dashboard loads, the bridge is working.
 
 ### Password rejected
 
@@ -72,4 +72,4 @@ Thunderbird's CalDAV sync interval is 30 minutes by default. To change it: right
 If Thunderbird can't connect, check:
 1. Is the bridge running? Look for the tray icon or run `silentsuite-bridge --version`.
 2. Start the bridge: `silentsuite-bridge`
-3. Check the dashboard: `http://localhost:37358/.web/`
+3. Check the dashboard: `http://localhost:37358/`

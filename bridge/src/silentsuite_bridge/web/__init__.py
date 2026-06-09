@@ -11,8 +11,10 @@ Integrates with Radicale's web module system.
 """
 
 import html
+import hmac
 import json
 import logging
+import secrets
 import threading
 import time
 from collections import deque
@@ -35,6 +37,145 @@ _bridge_status = {
     "collections_scope": "all configured accounts",
 }
 _bridge_status_lock = threading.RLock()
+# Process-local token protects localhost dashboard POSTs from cross-site form/script submissions.
+_dashboard_csrf_token = secrets.token_urlsafe(32)
+
+
+def _json_response(status, payload):
+    return (
+        status,
+        {"Content-Type": "application/json"},
+        json.dumps(payload).encode(),
+    )
+
+
+def _has_valid_csrf(environ):
+    token = environ.get("HTTP_X_SILENTSUITE_CSRF", "")
+    return bool(token) and hmac.compare_digest(token, _dashboard_csrf_token)
+
+
+def _csrf_error():
+    return _json_response(403, {"error": "Invalid dashboard CSRF token"})
+
+
+def _read_json_body(environ):
+    content_length = int(environ.get("CONTENT_LENGTH", 0) or 0)
+    body = environ["wsgi.input"].read(content_length) if content_length else b""
+    try:
+        return json.loads(body), None
+    except (json.JSONDecodeError, ValueError):
+        return None, _json_response(400, {"error": "Invalid JSON"})
+
+
+def _account_mutation_response(action, result):
+    if action == "logout":
+        if result.existed:
+            message = f"Logged out {result.username}. Local bridge cache was kept."
+            log_sync_event("info", f"Logged out account: {result.username}")
+        else:
+            message = f"No configured account found for {result.username}; nothing changed."
+            log_sync_event("info", f"Logout requested for unknown account: {result.username}")
+        return _json_response(200, {
+            "ok": True,
+            "username": result.username,
+            "existed": result.existed,
+            "syncStopped": result.sync_stopped,
+            "message": message,
+        })
+
+    if result.existed:
+        if result.cache_cleared:
+            message = f"Removed {result.username}. Local bridge cache for this account was deleted."
+            log_message = f"Removed account and cleared cache: {result.username}"
+        else:
+            message = f"Removed {result.username}. No local bridge cache rows were found for this account."
+            log_message = f"Removed account with no cache rows: {result.username}"
+        log_sync_event("info", log_message)
+    else:
+        message = f"No configured account found for {result.username}; nothing changed."
+        log_sync_event("info", f"Remove requested for unknown account: {result.username}")
+    return _json_response(200, {
+        "ok": True,
+        "username": result.username,
+        "existed": result.existed,
+        "syncStopped": result.sync_stopped,
+        "cacheCleared": result.cache_cleared,
+        "message": message,
+    })
+
+
+def _handle_account_mutation(environ, action):
+    data, error_response = _read_json_body(environ)
+    if error_response:
+        return error_response
+
+    username = data.get("username") if isinstance(data, dict) else None
+    username = (username or "").strip()
+    if not username:
+        return _json_response(400, {"error": "Account username is required"})
+
+    try:
+        from .. import accounts
+
+        if action == "logout":
+            result = accounts.logout_account(username)
+        else:
+            result = accounts.remove_account(username)
+    except ValueError as exc:
+        return _json_response(400, {"error": str(exc)})
+    except Exception:
+        logger.warning("Dashboard account %s failed", action)
+        return _json_response(500, {"error": f"Failed to {action} account"})
+
+    return _account_mutation_response(action, result)
+
+
+def _handle_account_login(environ):
+    data, error_response = _read_json_body(environ)
+    if error_response:
+        return error_response
+    if not isinstance(data, dict):
+        return _json_response(400, {"error": "JSON object is required"})
+
+    email = (data.get("email") or "").strip()
+    password = data.get("password") or ""
+    server_url = (data.get("serverUrl") or "").strip()
+    if not email or not password:
+        return _json_response(400, {"error": "Email and password are required"})
+
+    try:
+        from ..auth_browser import AuthenticationError, authenticate_and_store_account
+        from ..radicale.storage import refresh_sync_thread
+
+        result = authenticate_and_store_account(email, password, server_url)
+    except AuthenticationError as exc:
+        logger.warning("Dashboard account sign-in failed: %s", exc)
+        return _json_response(401, {"error": str(exc)})
+    except ValueError as exc:
+        return _json_response(400, {"error": str(exc)})
+    except Exception:
+        logger.warning("Dashboard account sign-in failed")
+        return _json_response(500, {"error": "Account sign-in failed"})
+
+    sync_started = True
+    message = "Account added or re-authenticated. The bridge will start syncing it now."
+    try:
+        refresh_sync_thread(result.username)
+    except Exception:
+        sync_started = False
+        message = "Account added, but sync could not start automatically. Restart the bridge if sync does not begin."
+        logger.exception("Dashboard account sync refresh failed after sign-in")
+        log_sync_event("error", "Account sign-in succeeded, but sync did not start automatically")
+
+    log_sync_event("info", f"Account added or re-authenticated: {result.username}")
+    logger.info("Account added or re-authenticated: %s", result.username)
+    return _json_response(200, {
+        "ok": True,
+        "username": result.username,
+        "serverUrl": result.server_url,
+        "syncStarted": sync_started,
+        "message": message,
+    })
 
 
 def log_sync_event(event_type, message):
@@ -85,13 +226,28 @@ def _aggregate_collections(collections_iterable):
     return totals
 
 
+def _account_fingerprint(creds, username):
+    stored_session = creds.get_etebase(username)
+    if not stored_session:
+        return None
+
+    server_url = creds.get_server_url(username) or config.ETEBASE_SERVER_URL
+    try:
+        from etebase import Account, Client, pretty_fingerprint
+
+        account = Account.restore(Client("silentsuite-bridge", server_url), stored_session, None)
+        return pretty_fingerprint(account.get_invitation_manager().pubkey)
+    except Exception:
+        logger.warning("Failed to compute bridge account fingerprint", exc_info=True)
+        return None
+
+
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SilentSuite Bridge</title>
-    <meta http-equiv="refresh" content="30">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -197,6 +353,135 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             margin-bottom: 10px;
             overflow-wrap: anywhere;
         }
+        .fingerprint-box {
+            background: #0b0b0b;
+            border: 1px solid #242424;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin-bottom: 8px;
+        }
+        .fingerprint-box label {
+            color: #666;
+            display: block;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .fingerprint-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .fingerprint-row code {
+            color: #fff;
+            display: block;
+            font-size: 12px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .fingerprint-row code.hidden { color: #777; font-family: inherit; }
+        .fingerprint-actions {
+            display: flex;
+            flex-shrink: 0;
+            gap: 6px;
+        }
+        .fingerprint-help {
+            color: #777;
+            font-size: 11px;
+            line-height: 1.4;
+            margin-top: 6px;
+        }
+        .section-title-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .section-title-row h3 { margin-bottom: 0; }
+        .account-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+        .account-action-btn {
+            background: #242424;
+            color: #fff;
+            border: 1px solid #3a3a3a;
+            border-radius: 6px;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .account-action-btn:hover { background: #333; }
+        .account-action-btn:disabled { opacity: 0.6; cursor: default; }
+        .account-action-btn.primary {
+            background: #1a7f37;
+            border-color: #238636;
+        }
+        .account-action-btn.primary:hover { background: #238636; }
+        .account-action-btn.danger {
+            border-color: #5a2020;
+            color: #ff8a8a;
+        }
+        .account-action-status {
+            min-height: 18px;
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        .login-panel {
+            background: #0f1712;
+            border: 1px solid #1f3f2d;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+        .login-panel.hidden { display: none; }
+        .login-panel h4 {
+            color: #fff;
+            font-size: 16px;
+            margin-bottom: 6px;
+        }
+        .login-panel p {
+            color: #9ca3af;
+            font-size: 13px;
+            line-height: 1.5;
+            margin-bottom: 14px;
+        }
+        .login-panel label {
+            display: block;
+            color: #ccc;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+        .login-panel input {
+            width: 100%;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 15px;
+            padding: 10px 12px;
+            margin-bottom: 12px;
+        }
+        .login-panel input:focus {
+            border-color: #34d399;
+            outline: none;
+        }
+        .login-panel details { margin-bottom: 12px; }
+        .login-panel summary {
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+        .login-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
 
         .log-section { margin-top: 8px; }
         .log-section h3 {
@@ -236,6 +521,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </style>
 </head>
 <body>
+    <script>window.SILENTSUITE_DASHBOARD_CSRF = '{{CSRF_TOKEN}}';</script>
     <div class="container">
         <h1>SilentSuite Bridge</h1>
         <div class="version">v{{VERSION}}</div>
@@ -260,7 +546,30 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
 
             <div class="url-section">
-                <h3>Configured Accounts</h3>
+                <div class="section-title-row">
+                    <h3>Configured Accounts</h3>
+                    <button id="addAccountBtn" class="account-action-btn primary" onclick="showLoginPanel()">Add / Re-authenticate Account</button>
+                </div>
+                <div id="accountActionStatus" class="account-action-status" role="status"></div>
+                <div id="dashboardLoginPanel" class="login-panel {{LOGIN_PANEL_CLASS}}" data-required="{{LOGIN_REQUIRED}}">
+                    <h4>{{LOGIN_TITLE}}</h4>
+                    <p>{{LOGIN_COPY}}</p>
+                    <form id="dashboardLoginForm" onsubmit="submitDashboardLogin(event)">
+                        <label for="dashboardEmail">Email</label>
+                        <input type="email" id="dashboardEmail" name="email" required autofocus placeholder="you@example.com">
+                        <label for="dashboardPassword">Password</label>
+                        <input type="password" id="dashboardPassword" name="password" required placeholder="Your account password">
+                        <details>
+                            <summary>Advanced</summary>
+                            <label for="dashboardServerUrl">Server URL</label>
+                            <input type="url" id="dashboardServerUrl" name="serverUrl" value="{{SERVER_URL}}" placeholder="https://server.silentsuite.io">
+                        </details>
+                        <div class="login-actions">
+                            <button id="dashboardLoginSubmit" class="account-action-btn primary" type="submit">Sign in</button>
+                            <button class="account-action-btn" type="button" onclick="hideLoginPanel()">Cancel</button>
+                        </div>
+                    </form>
+                </div>
                 {{ACCOUNT_LIST}}
             </div>
         </div>
@@ -285,11 +594,119 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 // fallback if value doesn't match any option
                 if (sel.selectedIndex === -1) sel.value = '900';
             })();
+            function setAccountStatus(message, isError) {
+                var el = document.getElementById('accountActionStatus');
+                if (!el) return;
+                el.textContent = message || '';
+                el.style.color = isError ? '#ff8a8a' : '#888';
+            }
+            function handleJsonResponse(response) {
+                return response.json().then(function(data) {
+                    if (!response.ok) {
+                        throw new Error(data.error || data.message || 'Request failed');
+                    }
+                    return data;
+                });
+            }
+            function showLoginPanel() {
+                var panel = document.getElementById('dashboardLoginPanel');
+                if (!panel) return;
+                panel.classList.remove('hidden');
+                var email = document.getElementById('dashboardEmail');
+                if (email) email.focus();
+            }
+            function hideLoginPanel() {
+                var panel = document.getElementById('dashboardLoginPanel');
+                if (panel && panel.getAttribute('data-required') !== 'true') {
+                    panel.classList.add('hidden');
+                }
+            }
+            function submitDashboardLogin(event) {
+                event.preventDefault();
+                var form = document.getElementById('dashboardLoginForm');
+                var btn = document.getElementById('dashboardLoginSubmit');
+                var formData = new FormData(form);
+                btn.disabled = true;
+                setAccountStatus('Signing in...', false);
+                fetch('/.web/api/accounts/login', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF},
+                    body: JSON.stringify({
+                        email: formData.get('email'),
+                        password: formData.get('password'),
+                        serverUrl: formData.get('serverUrl')
+                    })
+                })
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        setAccountStatus(data.message || 'Account added. Reloading dashboard...', false);
+                        var password = document.getElementById('dashboardPassword');
+                        if (password) password.value = '';
+                        setTimeout(function() { window.location.href = '/'; }, 900);
+                    })
+                    .catch(function(error) {
+                        setAccountStatus(error.message || 'Account sign-in failed.', true);
+                        btn.disabled = false;
+                    });
+            }
+            function accountAction(path, button, confirmMessage) {
+                var account = button.getAttribute('data-account');
+                if (!account || !confirm(confirmMessage.replace('{account}', account))) return;
+                button.disabled = true;
+                setAccountStatus('Updating account...', false);
+                fetch(path, {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF},
+                    body: JSON.stringify({username: account})
+                })
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        setAccountStatus(data.message || 'Account updated.', false);
+                        setTimeout(function() { location.reload(); }, 900);
+                    })
+                    .catch(function(error) {
+                        setAccountStatus(error.message || 'Account update failed.', true);
+                        button.disabled = false;
+                    });
+            }
+            function logoutAccount(button) {
+                accountAction(
+                    '/.web/api/accounts/logout',
+                    button,
+                    'Log out {account}? Local bridge credentials will be removed, but the local cache is kept so re-login can reuse it.'
+                );
+            }
+            function removeAccount(button) {
+                accountAction(
+                    '/.web/api/accounts/remove',
+                    button,
+                    'Remove {account}? This deletes local bridge credentials and that account\'s local decrypted bridge cache on this computer. Other accounts are not affected.'
+                );
+            }
+            function toggleFingerprint(id, button) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                var copyBtn = document.querySelector('[data-copy-target="' + id + '"]');
+                var revealed = el.getAttribute('data-revealed') === 'true';
+                if (revealed) {
+                    el.textContent = 'Hidden until revealed';
+                    el.classList.add('hidden');
+                    el.setAttribute('data-revealed', 'false');
+                    button.textContent = 'Reveal';
+                    if (copyBtn) copyBtn.disabled = true;
+                } else {
+                    el.textContent = el.getAttribute('data-fingerprint') || '';
+                    el.classList.remove('hidden');
+                    el.setAttribute('data-revealed', 'true');
+                    button.textContent = 'Hide';
+                    if (copyBtn) copyBtn.disabled = false;
+                }
+            }
             function triggerSync() {
                 var btn = document.getElementById('syncNowBtn');
                 btn.textContent = 'Syncing...';
                 btn.disabled = true;
-                fetch('/.web/api/sync', {method:'POST'})
+                fetch('/.web/api/sync', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
                     .then(function(r) { return r.json(); })
                     .then(function() { btn.textContent = 'Done!'; setTimeout(function() { location.reload(); }, 1000); })
                     .catch(function() { btn.textContent = 'Error'; })
@@ -298,7 +715,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             function updateInterval() {
                 var val = document.getElementById('syncInterval').value;
                 var st = document.getElementById('syncIntervalStatus');
-                fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({syncInterval: parseInt(val)})})
+                fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({syncInterval: parseInt(val)})})
                     .then(function(r) { return r.json(); })
                     .then(function() { st.textContent = 'Saved'; setTimeout(function() { st.textContent = ''; }, 2000); })
                     .catch(function() { st.textContent = 'Error'; });
@@ -398,6 +815,14 @@ def _render_dashboard():
         collections_scope = _bridge_status.get("collections_scope") or "all configured accounts"
         status_error = _bridge_status.get("error")
 
+    if not users:
+        state = "disconnected"
+        last_sync = None
+        cols = {"calendars": 0, "contacts": 0, "tasks": 0}
+        account_cols = {}
+        collections_scope = "no configured accounts"
+        status_error = None
+
     status_map = {
         "starting": "Starting...",
         "connected": "Connected",
@@ -433,15 +858,49 @@ def _render_dashboard():
         log_html = '<div class="log-empty">No sync activity yet</div>'
 
     if users:
+        login_panel_class = "hidden"
+        login_required = "false"
+        login_title = "Add or re-authenticate an account"
+        login_copy = "Sign in with your SilentSuite account. Existing accounts stay configured; signing in again refreshes credentials for that account."
         account_html = ""
         for index, user in enumerate(users):
             dav_url = f"{base_url}/{user}/"
             server_url = creds.get_server_url(user)
             url_id = f"davUrl{index}"
+            fingerprint = _account_fingerprint(creds, user)
+            fingerprint_id = f"accountFingerprint{index}"
+            if fingerprint:
+                fingerprint_html = (
+                    '<div class="fingerprint-box">'
+                    '<label>Account fingerprint</label>'
+                    '<div class="fingerprint-row">'
+                    '<div>'
+                    f'<code id="{fingerprint_id}" class="hidden" data-revealed="false" '
+                    f'data-fingerprint="{esc(fingerprint)}">Hidden until revealed</code>'
+                    '<div class="fingerprint-help">Compare this with Android and the web app. '
+                    'It is not a recovery secret.</div>'
+                    '</div>'
+                    '<div class="fingerprint-actions">'
+                    f'<button class="copy-btn" onclick="toggleFingerprint(\'{fingerprint_id}\', this)">Reveal</button>'
+                    f'<button class="copy-btn" data-copy-target="{fingerprint_id}" '
+                    f'onclick="copy(event, \'{fingerprint_id}\')" disabled>Copy</button>'
+                    '</div>'
+                    '</div>'
+                    '</div>'
+                )
+            else:
+                fingerprint_html = (
+                    '<div class="fingerprint-box">'
+                    '<label>Account fingerprint</label>'
+                    '<div class="fingerprint-help">Fingerprint unavailable. Re-authenticate this account if it does not appear.</div>'
+                    '</div>'
+                )
+            account_attr = esc(user)
             account_html += (
                 '<div class="account-card">'
                 f'<h4>{esc(user)}</h4>'
                 f'<div class="account-meta">Server: <code>{esc(server_url)}</code></div>'
+                f'{fingerprint_html}'
                 '<div class="url-box">'
                 '<div>'
                 '<label>CalDAV/CardDAV URL</label>'
@@ -449,10 +908,20 @@ def _render_dashboard():
                 '</div>'
                 f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
                 '</div>'
+                '<div class="account-actions">'
+                f'<button class="account-action-btn" data-account="{account_attr}" '
+                'onclick="logoutAccount(this)">Log out</button>'
+                f'<button class="account-action-btn danger" data-account="{account_attr}" '
+                'onclick="removeAccount(this)">Remove account</button>'
+                '</div>'
                 '</div>'
             )
     else:
-        account_html = '<div class="log-empty">No accounts configured</div>'
+        login_panel_class = ""
+        login_required = "true"
+        login_title = "Set up your bridge account"
+        login_copy = "Sign in here to store this account locally, start its sync thread, and reveal your CalDAV/CardDAV URL."
+        account_html = '<div class="log-empty">No accounts configured yet. Sign in above to get started.</div>'
 
     page = DASHBOARD_HTML
     page = page.replace("{{VERSION}}", esc(__version__))
@@ -464,6 +933,12 @@ def _render_dashboard():
     page = page.replace("{{COLLECTIONS}}", esc(col_text))
     page = page.replace("{{ACCOUNT_LIST}}", account_html)
     page = page.replace("{{SYNC_LOG}}", log_html)
+    page = page.replace("{{CSRF_TOKEN}}", esc(_dashboard_csrf_token))
+    page = page.replace("{{LOGIN_PANEL_CLASS}}", login_panel_class)
+    page = page.replace("{{LOGIN_REQUIRED}}", login_required)
+    page = page.replace("{{LOGIN_TITLE}}", esc(login_title))
+    page = page.replace("{{LOGIN_COPY}}", esc(login_copy))
+    page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
 
     # Sync interval display
     interval = config.SYNC_INTERVAL
@@ -487,13 +962,16 @@ class Web(BaseWeb):
 
     def get(self, environ, base_prefix, path, user):
         """Serve the dashboard for GET requests to the root."""
-        if path == "/.web/" or path == "/.web":
+        if path in ("", "/"):
             html = _render_dashboard()
             return (
                 200,
                 {"Content-Type": "text/html; charset=utf-8"},
                 html.encode(),
             )
+
+        if path == "/.web/" or path == "/.web":
+            return (302, {"Location": "/"}, b"")
 
         # API endpoint for JSON status
         if path == "/.web/api/status":
@@ -551,6 +1029,10 @@ class Web(BaseWeb):
 
         # Diagnostic: dump all cached items
         if path == "/.web/api/dump":
+            if not config.DASHBOARD_DUMP_ENABLED:
+                return (404, {}, b"Not found")
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
             from ..local_cache import models, db
             try:
                 with db.database_proxy:
@@ -580,10 +1062,11 @@ class Web(BaseWeb):
                     json.dumps(result, indent=2).encode(),
                 )
             except Exception as e:
+                logger.warning("Dashboard dump failed: %s", e.__class__.__name__)
                 return (
                     500,
                     {"Content-Type": "application/json"},
-                    json.dumps({"error": str(e)}).encode(),
+                    json.dumps({"error": "Failed to dump dashboard diagnostics"}).encode(),
                 )
 
         # API endpoint for current settings
@@ -599,13 +1082,12 @@ class Web(BaseWeb):
 
     def post(self, environ, base_prefix, path, user):
         """Handle POST requests for API endpoints."""
-        from ..radicale.storage import get_sync_thread, _sync_threads
-
-        content_length = int(environ.get("CONTENT_LENGTH", 0) or 0)
-        body = environ["wsgi.input"].read(content_length) if content_length else b""
-
         # Trigger immediate sync
         if path == "/.web/api/sync":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            from ..radicale.storage import _sync_threads
+
             for thread in _sync_threads.values():
                 if thread.is_alive():
                     thread.force_sync()
@@ -617,16 +1099,30 @@ class Web(BaseWeb):
                 json.dumps({"ok": True}).encode(),
             )
 
+        # Inline dashboard account login/setup
+        if path == "/.web/api/accounts/login":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            return _handle_account_login(environ)
+
+        # Local account actions
+        if path == "/.web/api/accounts/logout":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            return _handle_account_mutation(environ, "logout")
+
+        if path == "/.web/api/accounts/remove":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            return _handle_account_mutation(environ, "remove")
+
         # Update settings
         if path == "/.web/api/settings":
-            try:
-                data = json.loads(body)
-            except (json.JSONDecodeError, ValueError):
-                return (
-                    400,
-                    {"Content-Type": "application/json"},
-                    json.dumps({"error": "Invalid JSON"}).encode(),
-                )
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            data, error_response = _read_json_body(environ)
+            if error_response:
+                return error_response
 
             if "syncInterval" in data:
                 new_interval = int(data["syncInterval"])
@@ -642,6 +1138,8 @@ class Web(BaseWeb):
                 config.SYNC_INTERVAL = new_interval
 
                 # Update all running SyncThreads
+                from ..radicale.storage import _sync_threads
+
                 for thread in _sync_threads.values():
                     if thread.is_alive():
                         thread.set_interval(new_interval)

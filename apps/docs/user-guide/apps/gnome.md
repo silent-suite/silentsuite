@@ -40,7 +40,7 @@ If GNOME Online Accounts doesn't show CalDAV/CardDAV:
 
 ### No calendars appear
 
-1. Ensure the bridge is running: `http://localhost:37358/.web/`
+1. Ensure the bridge is running: `http://localhost:37358/`
 2. GNOME may take a moment to discover collections. Wait 30 seconds and refresh.
 3. Try restarting `gnome-calendar`.
 

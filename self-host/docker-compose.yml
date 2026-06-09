@@ -43,6 +43,8 @@ services:
       # Open registration toggle. "true" blocks new signups (use after the
       # operator's admin account is registered). Default "false" allows signup.
       ETEBASE_DISABLE_SIGNUP: ${ETEBASE_DISABLE_SIGNUP:-false}
+      # Only these reverse proxy IPs may set X-Forwarded-* headers.
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-127.0.0.1}
     volumes:
       - server_data:/data
       - ./success.html:/app/etebase_server/templates/success.html:ro

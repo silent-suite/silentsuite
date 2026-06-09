@@ -33,7 +33,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 class NewAccountWizardActivity : BaseActivity() {
     private lateinit var account: Account
@@ -230,7 +229,7 @@ class WizardFragment : Fragment() {
                 // failures from the very first FS-cache write escaped the coroutine and crashed
                 // the app via the default uncaught-exception handler. Log first so the next
                 // logcat capture pinpoints the failure class even if the dialog is dismissed.
-                Logger.log.severe("createCollections failed: ${e.javaClass.name}: ${e.message}")
+                Logger.log.severe("createCollections failed: ${e.javaClass.name}")
                 reportErrorHelper(requireContext(), e)
             } finally {
                 loadingModel.setLoading(false)
@@ -251,10 +250,9 @@ class WizardFragment : Fragment() {
             // Issue #119: this is the very first on-disk Etebase write per username. If the
             // per-username cols/<colUid>/items directory creation fails, surface enough detail
             // to disambiguate the cause before the exception propagates up to createCollections.
-            val colsPath = File(File(requireContext().filesDir, accountHolder.account.name), "cols").absolutePath
             Logger.log.severe(
-                "etebaseLocalCache.collectionSet failed for colUid=${col.uid} path=$colsPath: " +
-                        "${e.javaClass.name}: ${e.message}"
+                "etebaseLocalCache.collectionSet failed under app files dir: " +
+                        e.javaClass.name
             )
             throw e
         }

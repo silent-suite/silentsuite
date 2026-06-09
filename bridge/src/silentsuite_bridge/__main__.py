@@ -50,7 +50,10 @@ def build_radicale_configuration():
     """
     from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
 
+    config.validate_network_config()
+
     configuration = Configuration(DEFAULT_CONFIG_SCHEMA)
+    web_type = "silentsuite_bridge.web" if config.is_dashboard_enabled() else "none"
     configuration.update(
         {
             "server": {
@@ -63,7 +66,7 @@ def build_radicale_configuration():
                 "type": "silentsuite_bridge.radicale.storage",
             },
             "web": {
-                "type": "silentsuite_bridge.web",
+                "type": web_type,
             },
             "logging": {
                 "level": config.LOG_LEVEL.lower(),
@@ -76,31 +79,47 @@ def build_radicale_configuration():
     return configuration
 
 
-def check_credentials():
-    """Check if any user credentials exist. If not, run browser login."""
+def _dashboard_url():
+    return f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+
+
+def _open_dashboard_later(url, delay=1.0):
+    """Open the dashboard after Radicale has had a moment to bind."""
+    import threading
+    import webbrowser
+
+    def open_dashboard():
+        try:
+            webbrowser.open(url)
+        except Exception:
+            logger.debug("Could not open dashboard automatically")
+
+    threading.Timer(delay, open_dashboard).start()
+
+
+def check_credentials(open_browser=True):
+    """Check whether startup can proceed with current account state."""
     from .radicale.creds import Credentials
 
     creds = Credentials()
     users = creds.list_users()
 
     if not users:
-        logger.info("No users configured — starting browser login...")
-        print("\nNo account configured yet. Opening browser to sign in...\n")
+        if config.is_dashboard_enabled():
+            dashboard_url = _dashboard_url()
+            logger.info("No users configured; starting bridge dashboard setup")
+            print("\nNo account configured yet. Open the bridge dashboard to sign in:")
+            print(f"  {dashboard_url}\n")
+            if open_browser:
+                _open_dashboard_later(dashboard_url)
+            return True
 
-        from .auth_browser import browser_login
+        logger.error("No users configured and bridge dashboard is disabled")
+        print("\nNo account configured and the bridge dashboard is disabled for this bind.")
+        print("Run `silentsuite-bridge --login` or `silentsuite-bridge --manual-login` first.\n")
+        return False
 
-        email = browser_login()
-        if not email:
-            logger.error("Login cancelled or failed.")
-            return False
-
-        # Re-check after login
-        creds = Credentials()
-        users = creds.list_users()
-        if not users:
-            return False
-
-    logger.info("Found %d configured user(s): %s", len(users), ", ".join(users))
+    logger.info("Found %d configured user(s)", len(users))
     return True
 
 
@@ -163,18 +182,17 @@ def _initial_status_check():
                     totals[key] += value
                 synced += 1
                 update_status("connected", collections=collections, account=user)
-                log_sync_event("info", f"Initial sync complete for {user}")
+                log_sync_event("info", "Initial sync complete")
                 logger.info(
-                    "Initial sync for %s: %d calendars, %d contacts, %d tasks",
-                    user,
+                    "Initial sync complete: %d calendars, %d contacts, %d tasks",
                     collections["calendars"],
                     collections["contacts"],
                     collections["tasks"],
                 )
         except Exception as e:
-            logger.warning("Initial status check failed for %s: %s", user, e)
-            errors.append(f"{user}: {e}")
-            log_sync_event("error", f"Initial sync failed for {user}: {e}")
+            logger.warning("Initial status check failed for a configured account: %s", e)
+            errors.append(str(e))
+            log_sync_event("error", f"Initial sync failed for an account: {e}")
 
     if synced:
         update_status(
@@ -185,10 +203,10 @@ def _initial_status_check():
         if errors:
             log_sync_event(
                 "error",
-                f"Initial sync skipped {len(errors)} account(s): {'; '.join(errors)}",
+                f"Initial sync skipped {len(errors)} account(s)",
             )
     elif errors:
-        update_status("error", error="; ".join(errors))
+        update_status("error", error=f"Initial status check failed for {len(errors)} account(s)")
     else:
         update_status("disconnected")
 
@@ -204,13 +222,15 @@ def run_server():
         __version__,
         config.SERVER_HOSTS,
     )
+    if config.is_remote_bind_configured():
+        logger.warning(
+            "Remote bridge bind enabled by SILENTSUITE_ALLOW_REMOTE=1. "
+            "DAV traffic is plaintext HTTP unless protected by your own proxy/VPN."
+        )
+        logger.warning("Bridge dashboard disabled while remote bind is configured.")
     logger.info("Etebase server: %s", config.ETEBASE_SERVER_URL)
     logger.info("Data directory: %s", config.DATA_DIR)
-    logger.info(
-        "CalDAV/CardDAV URL: http://%s:%d/<username>/",
-        config.LISTEN_ADDRESS,
-        config.LISTEN_PORT,
-    )
+    logger.info("CalDAV/CardDAV host(s): %s", config.SERVER_HOSTS)
 
     # Run initial sync so dashboard shows correct status immediately
     _initial_status_check()
@@ -263,6 +283,8 @@ def main():
         print("  SILENTSUITE_SERVER_URL       Etebase server URL")
         print("  SILENTSUITE_LISTEN_ADDRESS   Listen address (default: 127.0.0.1)")
         print("  SILENTSUITE_LISTEN_PORT      Listen port (default: 37358)")
+        print("  SILENTSUITE_SERVER_HOSTS     Radicale host specs (default: listen address:port)")
+        print("  SILENTSUITE_ALLOW_REMOTE     Allow non-loopback bind and disable dashboard")
         print("  SILENTSUITE_DATA_DIR         Data directory path")
         print("  SILENTSUITE_LOG_LEVEL        Log level (default: INFO)")
         print("  SILENTSUITE_LOG_FILE         Log file path")
@@ -279,6 +301,12 @@ def main():
             sys.exit(1)
 
     configure_logging()
+    try:
+        config.validate_network_config()
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
     config.ensure_data_dir()
 
     action_count = sum(1 for flag in _ACCOUNT_ACTION_FLAGS if flag in sys.argv)

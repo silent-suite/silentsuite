@@ -25,47 +25,37 @@ The bridge exposes every SilentSuite calendar, task list, and address book as it
 
 ## Install
 
-### One-Line Installer (Recommended)
+### Installer Status
 
-**Linux / macOS:**
+Bridge installer scripts are not yet published as stable `main`/release-tagged endpoints. Until they are, download bridge binaries from the [GitHub releases](https://github.com/silent-suite/silentsuite/releases) page instead of piping an installer URL into your shell.
 
-```bash
-curl -fsSL https://silentsuite.io/bridge/install.sh | sh
-```
+::: warning
+Do not run installer commands from the public `dev` branch. Those scripts may contain unreleased changes and are not part of the stable docs flow.
+:::
 
-**Windows (PowerShell):**
-
-```powershell
-irm https://silentsuite.io/bridge/install.ps1 | iex
-```
-
-The installer will:
+When stable installers are published, they will:
 1. Download the correct binary for your OS and architecture
 2. Install it to `~/.local/bin/`
 3. Optionally set up auto-start
-4. Open the browser for first-time login
-
-::: info
-The bridge install URLs are coming soon. The binary distribution pipeline is being finalized. Check back shortly or watch the [GitHub releases](https://github.com/silent-suite/silentsuite/releases) for updates.
-:::
+4. Open the bridge dashboard for first-time login
 
 ## First-Time Setup
 
-### 1. Log In
+### 1. Start The Bridge And Log In
 
 After installation, run:
 
 ```bash
-silentsuite-bridge --login
+silentsuite-bridge
 ```
 
-This opens your browser to a login page. Enter your account email and password. The bridge authenticates with the server and stores your session locally.
+This starts the local bridge and opens the dashboard at `http://localhost:37358/`. If your browser does not open automatically, open that URL yourself. Enter your account email and password in the dashboard setup form; the bridge authenticates with the server, stores your session locally, and starts syncing.
 
-Running `silentsuite-bridge --login` again adds another account or re-authenticates the same account. It does not remove accounts that are already configured.
+`silentsuite-bridge --login` is still available as a fallback or advanced path. Running it adds another account or re-authenticates the same account; it does not remove accounts that are already configured.
 
 ### 2. Note Your Connection URLs
 
-After successful login, the browser shows your CalDAV/CardDAV URLs:
+After successful login, the dashboard shows your CalDAV/CardDAV URLs:
 
 | Field | Value |
 |---|---|
@@ -75,7 +65,7 @@ After successful login, the browser shows your CalDAV/CardDAV URLs:
 | **Password** | Your account password |
 
 You can always find these URLs by:
-- Opening the dashboard at `http://localhost:37358/.web/`
+- Opening the dashboard at `http://localhost:37358/`
 - Using the system tray menu account entries (Copy CalDAV URL / Copy CardDAV URL)
 
 ## Multi-Account Use
@@ -97,6 +87,8 @@ http://localhost:37358/personal@example.com/
 
 Use the matching account email and password in your calendar/contact client. A client authenticated as one account cannot access another account's DAV path.
 
+You can add or re-authenticate accounts from the dashboard with **Add / Re-authenticate Account**. It shows the dashboard sign-in form and starts syncing the account after login succeeds; you do not need to restart the bridge.
+
 To remove only the local login/session for one account while keeping its local cache for future re-login:
 
 ```bash
@@ -113,13 +105,9 @@ silentsuite-bridge --remove-account work@example.com
 The bridge local cache contains decrypted calendar, contact, and task data. Use `--remove-account` when retiring a shared or untrusted machine.
 :::
 
-### 3. Start the Bridge
+### 3. Keep The Bridge Running
 
-```bash
-silentsuite-bridge
-```
-
-The bridge will:
+Leave `silentsuite-bridge` running. The bridge will:
 - Start the CalDAV/CardDAV server on `localhost:37358`
 - Show a system tray icon (green = connected, yellow = warning, red = error)
 - Sync automatically in the background
@@ -129,7 +117,7 @@ The bridge will:
 The bridge serves a status dashboard at:
 
 ```
-http://localhost:37358/.web/
+http://localhost:37358/
 ```
 
 The dashboard shows:
@@ -137,7 +125,10 @@ The dashboard shows:
 - All configured accounts
 - Last sync time
 - Per-account CalDAV/CardDAV URLs with copy buttons
+- Add / Re-authenticate, Log out, and Remove account actions
 - Recent sync log
+
+Use **Log out** to remove local bridge credentials while keeping that account's local cache for re-login. Use **Remove account** to delete local bridge credentials and that account's decrypted local bridge cache on this computer. Other configured accounts are not affected.
 
 ## Auto-Start
 
@@ -195,7 +186,7 @@ silentsuite-bridge --no-tray          # Start without system tray
 
 ### Bridge won't start
 
-Check that you've logged in first:
+On the default localhost bind, the bridge can start before an account is configured so you can log in through `http://localhost:37358/`. If you intentionally configured a remote/non-loopback bind, the dashboard is disabled for safety and you must add an account first with:
 
 ```bash
 silentsuite-bridge --login
@@ -203,7 +194,7 @@ silentsuite-bridge --login
 
 ### Can't connect from your app
 
-1. Verify the bridge is running: open `http://localhost:37358/.web/` in your browser
+1. Verify the bridge is running: open `http://localhost:37358/` in your browser
 2. Check the tray icon color (green = OK, red = error)
 3. Check the dashboard sync log for errors
 

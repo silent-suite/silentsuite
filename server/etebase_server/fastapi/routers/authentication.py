@@ -1,3 +1,4 @@
+import logging
 import typing as t
 from datetime import datetime
 
@@ -28,6 +29,7 @@ from ..utils import BaseModel, get_user_username_email_kwargs, msgpack_decode, m
 
 User = get_typed_user_model()
 authentication_router = APIRouter(route_class=MsgpackRoute)
+logger = logging.getLogger("etebase_server.fastapi.authentication")
 
 
 class LoginChallengeIn(BaseModel):
@@ -154,7 +156,10 @@ def validate_login_request(
 ):
     enc_key = get_encryption_key(bytes(user.userinfo.salt))
     box = nacl.secret.SecretBox(enc_key)
-    challenge_data = msgpack_decode(box.decrypt(validated_data.challenge))
+    try:
+        challenge_data = msgpack_decode(box.decrypt(validated_data.challenge))
+    except nacl.exceptions.CryptoError:
+        raise HttpError("invalid_challenge", "Invalid challenge data.", status.HTTP_400_BAD_REQUEST)
     now = int(datetime.now().timestamp())
     if validated_data.action != expected_action:
         raise HttpError("wrong_action", f'Expected "{expected_action}" but got something else')
@@ -246,8 +251,9 @@ def signup_save(data: SignupIn, request: Request) -> UserType:
                 raise e
             except django_exceptions.ValidationError as e:
                 transform_validation_error("user", e)
-            except Exception as e:
-                raise HttpError("generic", str(e))
+            except Exception:
+                logger.exception("Unexpected signup error while creating user")
+                raise HttpError("generic", "An error occurred during signup. Please try again.")
 
         if hasattr(instance, "userinfo"):
             raise HttpError("user_exists", "User already exists", status_code=status.HTTP_409_CONFLICT)

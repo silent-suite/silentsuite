@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import * as Sentry from '@sentry/nextjs'
+import { createSafeOperationalError, getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 
 export default function TasksError({
   error,
@@ -11,8 +12,10 @@ export default function TasksError({
   reset: () => void
 }) {
   useEffect(() => {
-    console.error('Tasks error boundary caught:', error)
-    Sentry.captureException(error)
+    console.error('Tasks error boundary caught', getSafeErrorDetails(error))
+    Sentry.captureException(createSafeOperationalError('error-boundary', 'tasks'), {
+      extra: { ...getSafeErrorDetails(error), digest: error.digest },
+    })
   }, [error])
 
   return (

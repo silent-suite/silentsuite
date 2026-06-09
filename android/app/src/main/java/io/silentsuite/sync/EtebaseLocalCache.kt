@@ -11,12 +11,11 @@ import java.io.File
 import java.util.*
 
 class EtebaseLocalCache private constructor(context: Context, username: String) {
-    // Issue #119: log the resolved filesDir + username before the JNI FileSystemCache.create
-    // call. Native errors here don't propagate as EtebaseException, so without this breadcrumb
-    // a mangled username (e.g. one containing '@' or '.') is invisible from logcat alone.
+    // Issue #119: log the resolved filesDir before the JNI FileSystemCache.create call.
+    // Native errors here don't propagate as EtebaseException, so keep a non-secret breadcrumb.
     private val fsCache: FileSystemCache = run {
         val filesDirPath = context.filesDir.absolutePath
-        Logger.log.info("FileSystemCache.create filesDir=$filesDirPath username=$username")
+        Logger.log.info("FileSystemCache.create filesDir=$filesDirPath usernameProvided=${username.isNotEmpty()}")
         FileSystemCache.create(filesDirPath, username)
     }
     private val filesDir: File = File(context.filesDir, username)
@@ -154,11 +153,11 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
                         "etebase_session",
                     ).filter { accountManager.getUserData(settings.account, it) != null }
                     Logger.log.severe(
-                        "Etebase session is null: account=${settings.account.name} " +
+                        "Etebase session is null: " +
                                 "sessionOverrideProvided=${sessionOverride != null} " +
                                 "userDataKeys=$userDataKeys"
                     )
-                    throw IllegalStateException("Etebase session is null for account ${settings.account.name}")
+                    throw IllegalStateException("Etebase session is null")
                 }
             return Account.restore(client, session, null)
         }

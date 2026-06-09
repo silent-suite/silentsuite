@@ -30,7 +30,7 @@ from ..local_cache import Etebase
 from ..local_cache import models as cache_models
 from ..local_cache.models import HrefMapper, ItemEntity
 from ..web import log_sync_event, update_status
-from .etesync_cache import etesync_for_user
+from .etesync_cache import etesync_for_user, forget_etesync_user
 
 logger = logging.getLogger("silentsuite-bridge.storage")
 
@@ -109,7 +109,7 @@ class SyncThread(threading.Thread):
                     etesync.sync()
                     self.last_sync_duration = time.time() - self.sync_started_at
                     self.is_syncing = False
-                    logger.debug("Sync completed for user %s", self.user)
+                    logger.debug("Sync completed for configured account")
 
                     # Update dashboard status with collection counts
                     collections = {"calendars": 0, "contacts": 0, "tasks": 0}
@@ -128,9 +128,9 @@ class SyncThread(threading.Thread):
                         collections=collections,
                         account=self.user,
                     )
-                    log_sync_event("sync", f"Synced for {self.user}")
+                    log_sync_event("sync", "Synced account")
             except Exception as e:
-                logger.exception("Sync error for user %s: %s", self.user, e)
+                logger.exception("Sync error for configured account: %s", e)
                 self._exception = e
                 update_status("error", error=str(e))
                 log_sync_event("error", f"Sync failed: {e}")
@@ -157,8 +157,21 @@ def start_sync_thread(user):
         thread = SyncThread(user, daemon=True)
         _sync_threads[user] = thread
         thread.start()
-        logger.info("Started SyncThread for user %s (interval=%ds)", user, thread.interval)
+        logger.info("Started SyncThread (interval=%ds)", thread.interval)
         return thread
+
+
+def refresh_sync_thread(user):
+    """Start or wake one user's SyncThread after credentials changed."""
+    with _sync_threads_lock:
+        existing = _sync_threads.get(user)
+        had_live_thread = existing is not None and existing.is_alive()
+
+    forget_etesync_user(user)
+    thread = start_sync_thread(user)
+    if had_live_thread and thread.is_alive():
+        thread.force_sync()
+    return thread
 
 
 def get_sync_thread(user):
@@ -181,7 +194,7 @@ def stop_sync_thread(user, timeout=2.0):
 
     thread.stop()
     if thread is threading.current_thread():
-        logger.warning("SyncThread for user %s cannot join itself", user)
+        logger.warning("SyncThread cannot join itself")
         return False
     thread.join(timeout)
 
@@ -190,10 +203,10 @@ def stop_sync_thread(user, timeout=2.0):
         if current is not thread:
             return True
         if thread.is_alive():
-            logger.warning("Timed out stopping SyncThread for user %s", user)
+            logger.warning("Timed out stopping SyncThread")
             return False
         del _sync_threads[user]
-        logger.info("Stopped SyncThread for user %s", user)
+        logger.info("Stopped SyncThread")
         return True
 
 
@@ -555,9 +568,8 @@ class Storage(BaseStorage):
         """Discover collections and items under the given path."""
         if not self._path_belongs_to_user(path):
             logger.warning(
-                "Rejecting DAV path %s authenticated as %s",
+                "Rejecting DAV path %s authenticated as configured account",
                 path,
-                self.user,
             )
             return
 
@@ -622,9 +634,8 @@ class Storage(BaseStorage):
         attributes = _get_attributes_from_path(href)
         if not self._path_belongs_to_user(href):
             logger.warning(
-                "Rejecting collection create for path %s authenticated as %s",
+                "Rejecting collection create for path %s authenticated as configured account",
                 href,
-                self.user,
             )
             raise ComponentNotFoundError(href)
 
@@ -685,8 +696,8 @@ class Storage(BaseStorage):
             cache_col.dirty = False
             cache_col.save()
 
-        logger.info("Created collection %s (type=%s, name=%s)", col.uid, col_type, meta.get("name"))
-        log_sync_event("sync", f"Created collection {meta.get('name', col.uid)}")
+        logger.info("Created collection (type=%s)", col_type)
+        log_sync_event("sync", "Created collection")
 
         # Upload any items that came with the collection
         collection = Collection(self, posixpath.join("/", attributes[0], col.uid))
@@ -704,13 +715,13 @@ class Storage(BaseStorage):
             return
 
         sync_thread = start_sync_thread(user)
-        logger.info("acquire_lock(%s, user=%s): pre-yield sync", mode, user)
+        logger.info("acquire_lock(%s): pre-yield sync", mode)
         sync_thread.force_sync()
         try:
             sync_thread.wait_for_sync(20)
         except Exception as e:
             logger.warning(
-                "Sync failed for user %s, continuing with local cache: %s", user, e
+                "Sync failed for configured account, continuing with local cache: %s", e
             )
 
         with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
@@ -727,7 +738,7 @@ class Storage(BaseStorage):
                     etesync.push_collection_list()
                     for col in etesync.list():
                         if etesync.collection_is_dirty(col.uid):
-                            logger.info("acquire_lock: pushing dirty collection %s", col.uid[:8])
+                            logger.info("acquire_lock: pushing dirty collection")
                             etesync.push_collection(col.uid)
                     logger.info("acquire_lock(w): inline push done")
                 except Exception as e:

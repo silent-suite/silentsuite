@@ -23,11 +23,18 @@ The first user to sign up in the SilentSuite app becomes the server admin.
 
 ## 2. Set Up Your Reverse Proxy
 
-The SilentSuite server listens on `127.0.0.1:3735`. You need a reverse proxy to handle HTTPS and forward traffic to it.
+Docker publishes the SilentSuite server on host loopback at `127.0.0.1:3735`. You need a reverse proxy to handle HTTPS and forward traffic to it.
 
 **Caddy** (easiest -- automatic HTTPS):
 ```
 sync.example.com {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
     reverse_proxy localhost:3735
 }
 ```
@@ -40,6 +47,12 @@ server {
 
     ssl_certificate     /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 
     location / {
         proxy_pass http://127.0.0.1:3735;
@@ -64,6 +77,10 @@ If your reverse proxy runs in Docker, connect it to the SilentSuite network:
 docker network connect silentsuite-server_silentsuite <proxy_container>
 ```
 Then use `silentsuite-server:3735` as the upstream instead of `localhost:3735`.
+Set `TRUSTED_PROXY_IPS` in `.env` to the proxy container's exact IP so the server
+only trusts forwarded headers from that proxy. Multiple values are
+comma-separated, for example `TRUSTED_PROXY_IPS=127.0.0.1,172.18.0.5`. Uvicorn
+matches exact IPs here; CIDR ranges are not supported.
 
 See the [SELF-HOSTING.md](https://github.com/silent-suite/silentsuite/blob/main/self-host/SELF-HOSTING.md) in the repo for more reverse proxy examples (Traefik, security headers).
 
