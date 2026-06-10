@@ -307,6 +307,7 @@
 
     <string name="setting_up_encryption">Setting up your account</string>
     <string name="setting_up_encryption_content">Setting up end-to-end encryption…</string>
+    <string name="setup_state_expired">Setup expired before it could finish. Please try signing in again.</string>
 
     <string name="account_creation_failed">Account creation failed</string>
     <string name="wrong_encryption_password">Wrong encryption password</string>

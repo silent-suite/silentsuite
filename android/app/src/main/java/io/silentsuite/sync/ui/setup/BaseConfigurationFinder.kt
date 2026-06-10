@@ -13,7 +13,6 @@ import com.etebase.client.Client
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.log.Logger
-import java.io.Serializable
 import java.net.URI
 
 class BaseConfigurationFinder(protected val context: Context, protected val credentials: LoginCredentials) {
@@ -51,10 +50,7 @@ class BaseConfigurationFinder(protected val context: Context, protected val cred
     class Configuration
     // We have to use URI here because HttpUrl is not serializable!
 
-    (val url: URI?, val userName: String, val etebaseSession: String?, var error: Throwable?) : Serializable {
-        var rawPassword: String? = null
-        var password: String? = null
-
+    (val url: URI?, val userName: String, val etebaseSession: String?, var error: Throwable?) {
         val isFailed: Boolean
             get() = this.error != null
 
