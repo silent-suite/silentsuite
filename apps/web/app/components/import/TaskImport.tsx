@@ -7,7 +7,7 @@ import type { VTodo } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
-import { parseICalDate } from './import-mappers'
+import { isCompletedVTodo, parseICalDate } from './import-mappers'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
@@ -48,10 +48,11 @@ function extractVTodos(ical: string): VTodo[] {
   let todoLines: string[] = []
 
   for (const line of lines) {
-    if (line.trim() === 'BEGIN:VTODO') {
+    const normalized = line.trim().toUpperCase()
+    if (normalized === 'BEGIN:VTODO') {
       inTodo = true
       todoLines = ['BEGIN:VTODO']
-    } else if (line.trim() === 'END:VTODO') {
+    } else if (normalized === 'END:VTODO') {
       todoLines.push('END:VTODO')
       todos.push(parseVTodo(todoLines.join('\r\n')))
       inTodo = false
@@ -221,6 +222,7 @@ export default function TaskImport({ onImportComplete, heading }: TaskImportProp
         description: task.description ?? '',
         due_date: task.due ? parseICalDate(task.due) : null,
         priority: mapPriorityToStore(task.priority),
+        completed: isCompletedVTodo(task),
         listId: selectedListId,
       }))
       const count = await importTasks(newTasks)

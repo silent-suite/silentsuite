@@ -13,6 +13,7 @@ interface NewTask {
   description?: string
   due_date?: Date | null
   priority?: Priority
+  completed?: boolean
   listId?: string
 }
 
@@ -54,7 +55,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           description: newTask.description ?? '',
           due_date: newTask.due_date ?? null,
           priority: newTask.priority ?? 'medium',
-          completed: false,
+          completed: newTask.completed ?? false,
           listId: newTask.listId ?? defaultTaskListId(),
           created_at: now,
           updated_at: now,
@@ -192,7 +193,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             description: nt.description ?? '',
             due_date: nt.due_date ?? null,
             priority: nt.priority ?? 'medium',
-            completed: false,
+            completed: nt.completed ?? false,
             listId: nt.listId ?? defaultTaskListId(),
             created_at: now,
             updated_at: now,

@@ -114,4 +114,16 @@ describe('useTaskStore', () => {
     expect(updatedContent).toContain('STATUS:COMPLETED')
     expect(updatedContent).toContain('PERCENT-COMPLETE:100')
   })
+
+  it('preserves completed state during task import', async () => {
+    await useTaskStore.getState().importTasks([
+      { title: 'Already done', completed: true },
+      { title: 'Still open', completed: false },
+    ])
+
+    const { tasks } = useTaskStore.getState()
+    expect(tasks).toHaveLength(2)
+    expect(tasks[0]!.completed).toBe(true)
+    expect(tasks[1]!.completed).toBe(false)
+  })
 })

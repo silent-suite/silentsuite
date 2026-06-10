@@ -143,7 +143,8 @@ function parseProperty(line: string): ParsedProperty {
   const value = line.slice(colonIdx + 1);
 
   const semiIdx = left.indexOf(';');
-  const name = (semiIdx === -1 ? left : left.slice(0, semiIdx)).toUpperCase();
+  const rawName = semiIdx === -1 ? left : left.slice(0, semiIdx);
+  const name = rawName.slice(rawName.lastIndexOf('.') + 1).toUpperCase();
   const params: Record<string, string> = {};
 
   if (semiIdx !== -1) {
@@ -151,7 +152,9 @@ function parseProperty(line: string): ParsedProperty {
     for (const part of splitParams(paramStr)) {
       const eqIdx = part.indexOf('=');
       if (eqIdx !== -1) {
-        params[part.slice(0, eqIdx).toUpperCase()] = part.slice(eqIdx + 1);
+        const key = part.slice(0, eqIdx).toUpperCase();
+        const paramValue = part.slice(eqIdx + 1);
+        params[key] = params[key] ? `${params[key]},${paramValue}` : paramValue;
       }
     }
   }
@@ -161,6 +164,36 @@ function parseProperty(line: string): ParsedProperty {
 
 function getTypeParam(params: Record<string, string>): string {
   return (params['TYPE'] ?? 'other').toLowerCase();
+}
+
+function normalizeTelephoneValue(value: string): string {
+  if (!value.toLowerCase().startsWith('tel:')) return value;
+  const rawValue = value.slice(4);
+  try {
+    return decodeURIComponent(rawValue);
+  } catch {
+    return rawValue;
+  }
+}
+
+function splitStructuredValue(value: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let escaped = false;
+
+  for (const ch of value) {
+    if (ch === ';' && !escaped) {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+
+    escaped = ch === '\\' && !escaped;
+  }
+
+  parts.push(current);
+  return parts;
 }
 
 // ── Parser ──
@@ -190,7 +223,7 @@ export function parseVCard(vcardStr: string): VCard {
         vcard.fn = unescapeText(prop.value);
         break;
       case 'N': {
-        const parts = prop.value.split(';');
+        const parts = splitStructuredValue(prop.value);
         vcard.n = {
           family: unescapeText(parts[0] ?? ''),
           given: unescapeText(parts[1] ?? ''),
@@ -200,13 +233,13 @@ export function parseVCard(vcardStr: string): VCard {
         break;
       }
       case 'TEL':
-        tels.push({ type: getTypeParam(prop.params), value: prop.value });
+        tels.push({ type: getTypeParam(prop.params), value: normalizeTelephoneValue(prop.value) });
         break;
       case 'EMAIL':
         emails.push({ type: getTypeParam(prop.params), value: prop.value });
         break;
       case 'ADR': {
-        const adrParts = prop.value.split(';');
+        const adrParts = splitStructuredValue(prop.value);
         adrs.push({
           type: getTypeParam(prop.params),
           street: unescapeText(adrParts[2] ?? ''),
