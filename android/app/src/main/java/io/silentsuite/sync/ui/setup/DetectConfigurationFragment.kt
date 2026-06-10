@@ -38,7 +38,17 @@ class DetectConfigurationFragment : DialogFragment() {
         Logger.log.fine("DetectConfigurationFragment: loading")
 
         if (savedInstanceState == null) {
-            findConfiguration(requireArguments().getParcelable(ARG_LOGIN_CREDENTIALS)!!)
+            val credentials = SetupSecretHolder.getLoginCredentials()
+            if (credentials == null) {
+                Logger.log.warning("Setup login credentials expired before configuration detection")
+                SetupSecretHolder.clearLoginCredentials()
+                parentFragmentManager.beginTransaction()
+                        .add(NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
+                        .commitAllowingStateLoss()
+                dismissAllowingStateLoss()
+            } else {
+                findConfiguration(credentials)
+            }
         }
     }
 
@@ -69,6 +79,7 @@ class DetectConfigurationFragment : DialogFragment() {
         } else
             Logger.log.severe("Configuration detection failed")
 
+        SetupSecretHolder.clearLoginCredentials()
         dismissAllowingStateLoss()
     }
 
@@ -99,14 +110,6 @@ class DetectConfigurationFragment : DialogFragment() {
     }
 
     companion object {
-        protected val ARG_LOGIN_CREDENTIALS = "credentials"
-
-        fun newInstance(credentials: LoginCredentials): DetectConfigurationFragment {
-            val frag = DetectConfigurationFragment()
-            val args = Bundle(1)
-            args.putParcelable(ARG_LOGIN_CREDENTIALS, credentials)
-            frag.arguments = args
-            return frag
-        }
+        fun newInstance(): DetectConfigurationFragment = DetectConfigurationFragment()
     }
 }

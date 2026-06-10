@@ -28,6 +28,7 @@ import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.BaseActivity
+import io.silentsuite.sync.ui.setup.SetupSecretHolder
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +44,7 @@ class NewAccountWizardActivity : BaseActivity() {
 
         val extras = requireNotNull(intent.extras) { "NewAccountWizardActivity requires intent extras" }
         account = requireNotNull(extras.getParcelable(EXTRA_ACCOUNT)) { "NewAccountWizardActivity requires EXTRA_ACCOUNT" }
-        val etebaseSession = extras.getString(EXTRA_ETEBASE_SESSION)
+        val etebaseSession = SetupSecretHolder.consumePendingSession(account.name)
 
         setContentView(R.layout.etebase_fragment_activity)
 
@@ -71,12 +72,10 @@ class NewAccountWizardActivity : BaseActivity() {
 
     companion object {
         private val EXTRA_ACCOUNT = "account"
-        private val EXTRA_ETEBASE_SESSION = "etebaseSession"
 
-        fun newIntent(context: Context, account: Account, etebaseSession: String? = null): Intent {
+        fun newIntent(context: Context, account: Account): Intent {
             val intent = Intent(context, NewAccountWizardActivity::class.java)
             intent.putExtra(EXTRA_ACCOUNT, account)
-            if (etebaseSession != null) intent.putExtra(EXTRA_ETEBASE_SESSION, etebaseSession)
             return intent
         }
     }

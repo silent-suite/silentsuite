@@ -44,8 +44,17 @@ class LoginCredentialsChangeFragment : DialogFragment() {
         account = requireArguments().getParcelable(ARG_ACCOUNT)!!
 
         if (savedInstanceState == null) {
-            val credentials = requireArguments().getParcelable<LoginCredentials>(ARG_LOGIN_CREDENTIALS)!!
-            findConfiguration(credentials)
+            val credentials = SetupSecretHolder.getLoginCredentials()
+            if (credentials == null) {
+                Logger.log.warning("Updated login credentials expired before configuration detection")
+                SetupSecretHolder.clearLoginCredentials()
+                parentFragmentManager.beginTransaction()
+                        .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
+                        .commitAllowingStateLoss()
+                dismissAllowingStateLoss()
+            } else {
+                findConfiguration(credentials)
+            }
         }
     }
 
@@ -72,6 +81,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
                     settings = AccountSettings(requireActivity(), account)
                 } catch (e: InvalidAccountException) {
                     Logger.log.log(Level.INFO, "Account is invalid or doesn't exist (anymore)", e)
+                    SetupSecretHolder.clearLoginCredentials()
                     requireActivity().finish()
                     return
                 }
@@ -81,6 +91,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
         } else
             Logger.log.severe("Configuration detection failed")
 
+        SetupSecretHolder.clearLoginCredentials()
         dismissAllowingStateLoss()
     }
 
@@ -117,14 +128,13 @@ class LoginCredentialsChangeFragment : DialogFragment() {
     }
 
     companion object {
-        protected val ARG_LOGIN_CREDENTIALS = "credentials"
         protected val ARG_ACCOUNT = "account"
 
         fun newInstance(account: Account, credentials: LoginCredentials): LoginCredentialsChangeFragment {
+            SetupSecretHolder.setLoginCredentials(credentials)
             val frag = LoginCredentialsChangeFragment()
             val args = Bundle(1)
             args.putParcelable(ARG_ACCOUNT, account)
-            args.putParcelable(ARG_LOGIN_CREDENTIALS, credentials)
             frag.arguments = args
             return frag
         }

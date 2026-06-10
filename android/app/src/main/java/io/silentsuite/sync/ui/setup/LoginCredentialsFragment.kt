@@ -66,8 +66,10 @@ class LoginCredentialsFragment : Fragment() {
         val login = v.findViewById<View>(R.id.login) as Button
         login.setOnClickListener {
             val credentials = validateLoginData()
-            if (credentials != null)
-                DetectConfigurationFragment.newInstance(credentials).show(requireFragmentManager(), null)
+            if (credentials != null) {
+                SetupSecretHolder.setLoginCredentials(credentials)
+                DetectConfigurationFragment.newInstance().show(requireFragmentManager(), null)
+            }
         }
 
         val forgotPassword = v.findViewById<View>(R.id.forgot_password) as TextView
