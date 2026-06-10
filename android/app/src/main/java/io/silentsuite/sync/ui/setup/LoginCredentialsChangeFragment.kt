@@ -81,6 +81,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
                     settings = AccountSettings(requireActivity(), account)
                 } catch (e: InvalidAccountException) {
                     Logger.log.log(Level.INFO, "Account is invalid or doesn't exist (anymore)", e)
+                    SetupSecretHolder.clearLoginCredentials()
                     requireActivity().finish()
                     return
                 }
