@@ -234,4 +234,83 @@ describe('parsing raw vCard strings', () => {
     expect(vcard.email).toHaveLength(1);
     expect(vcard.org).toBe('Smith & Co');
   });
+
+  it('parses iPhone grouped contact properties', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'PRODID:-//Apple Inc.//iOS 18.1//EN',
+      'N:Halber Meister;Bene;;;',
+      'FN:Bene Halber Meister',
+      'item1.TEL;type=pref:+4917671231328',
+      'item1.X-ABLabel:',
+      'item2.EMAIL;type=INTERNET;type=pref:bene@example.com',
+      'item3.ADR;type=HOME:;;Main Street 1;Berlin;;10115;Germany',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.tel).toEqual([{ type: 'pref', value: '+4917671231328' }]);
+    expect(vcard.email).toEqual([{ type: 'internet,pref', value: 'bene@example.com' }]);
+    expect(vcard.adr).toHaveLength(1);
+    expect(vcard.adr![0]!.type).toBe('home');
+    expect(vcard.adr![0]!.street).toBe('Main Street 1');
+  });
+
+  it('preserves repeated iPhone TYPE parameters', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'FN:Bene',
+      'TEL;type=CELL;type=VOICE;type=pref:+4915128724408',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.tel).toEqual([{ type: 'cell,voice,pref', value: '+4915128724408' }]);
+  });
+
+  it('preserves repeated TYPE parameters on grouped iPhone phone properties', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'FN:Bene',
+      'item5.TEL;type=CELL;type=VOICE;type=pref:+4915128724408',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.tel).toEqual([{ type: 'cell,voice,pref', value: '+4915128724408' }]);
+  });
+
+  it('normalizes vCard 4 tel URI values', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:4.0',
+      'FN:Bene',
+      'TEL;VALUE=uri:tel:%2B4912345678',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.tel).toEqual([{ type: 'other', value: '+4912345678' }]);
+  });
+
+  it('does not split escaped semicolons in structured name and address values', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'FN:Jane Doe',
+      'N:Doe\\;Smith;Jane;;;',
+      'ADR;TYPE=home:;;Main\\; Side Street 1;Berlin;;10115;Germany',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.n?.family).toBe('Doe;Smith');
+    expect(vcard.n?.given).toBe('Jane');
+    expect(vcard.adr).toHaveLength(1);
+    expect(vcard.adr![0]!.street).toBe('Main; Side Street 1');
+    expect(vcard.adr![0]!.city).toBe('Berlin');
+  });
 });
