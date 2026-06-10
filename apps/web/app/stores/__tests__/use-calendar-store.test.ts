@@ -144,6 +144,24 @@ describe('useCalendarStore.importEvents', () => {
     expect(ical).toContain('DTSTART;VALUE=DATE:')
   })
 
+  it('preserves recurrence exceptions during event import', async () => {
+    const exception = new Date('2026-06-03T09:00:00Z')
+
+    await useCalendarStore.getState().importEvents([
+      {
+        title: 'Daily standup',
+        startDate: new Date('2026-06-01T09:00:00Z'),
+        endDate: new Date('2026-06-01T09:30:00Z'),
+        recurrenceRule: 'FREQ=DAILY;COUNT=3',
+        exceptions: [exception],
+      },
+    ])
+
+    const { events } = useCalendarStore.getState()
+    expect(events[0]!.exceptions).toEqual([exception])
+    expect(serializeCalendarEvent(events[0]!)).toContain('EXDATE:')
+  })
+
   it('routes mixed-calendar imports to each target collection', async () => {
     etebaseMock.state.account = {}
     etebaseMock.state.createItemsBatch.mockImplementation(async (_type: unknown, contents: unknown[]) => (

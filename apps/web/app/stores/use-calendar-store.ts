@@ -20,6 +20,7 @@ interface NewCalendarEvent {
   endDate: Date
   allDay?: boolean
   recurrenceRule?: string | null
+  exceptions?: Date[]
   alarms?: VAlarm[]
   calendarId?: string
   timezone?: string
@@ -173,7 +174,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       endDate: newEvent.endDate,
       allDay: newEvent.allDay ?? false,
       recurrenceRule: newEvent.recurrenceRule ?? null,
-      exceptions: [],
+      exceptions: newEvent.exceptions ?? [],
       alarms: newEvent.alarms ?? [],
       calendarId: newEvent.calendarId ?? defaultCalendarId(),
       timezone: newEvent.timezone,
@@ -499,7 +500,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         endDate: ne.endDate,
         allDay: ne.allDay ?? false,
         recurrenceRule: ne.recurrenceRule ?? null,
-        exceptions: [],
+        exceptions: ne.exceptions ?? [],
         alarms: ne.alarms ?? [],
         calendarId: ne.calendarId ?? defaultCalendarId(),
         timezone: ne.timezone,
