@@ -61,6 +61,69 @@ class ContactTest {
     }
 
     @Test
+    fun testVCard4TelephoneUriValue() {
+        val vcard = "BEGIN:VCARD\n" +
+                "VERSION:4.0\n" +
+                "FN:Telephone URI\n" +
+                "TEL;VALUE=uri;TYPE=cell:tel:+15551234567\n" +
+                "END:VCARD"
+        val c = Contact.fromReader(StringReader(vcard), null).first()
+
+        assertEquals(1, c.phoneNumbers.size)
+        val phone = c.phoneNumbers.first.property
+        assertEquals("+15551234567", phone.text)
+        assertTrue(phone.types.contains(TelephoneType.CELL))
+    }
+
+    @Test
+    fun testVCard4TelephoneImplicitUriValue() {
+        val vcard = "BEGIN:VCARD\n" +
+                "VERSION:4.0\n" +
+                "FN:Implicit Telephone URI\n" +
+                "TEL;TYPE=cell:tel:+155****4567\n" +
+                "END:VCARD"
+        val c = Contact.fromReader(StringReader(vcard), null).first()
+
+        assertEquals(1, c.phoneNumbers.size)
+        val phone = c.phoneNumbers.first.property
+        assertEquals("+155****4567", phone.text)
+        assertTrue(phone.types.contains(TelephoneType.CELL))
+    }
+
+    @Test
+    fun testVCard4TelephoneUriKeepsExtension() {
+        val vcard = "BEGIN:VCARD\n" +
+                "VERSION:4.0\n" +
+                "FN:Telephone URI Extension\n" +
+                "TEL;VALUE=uri;TYPE=work:tel:+155****4567;ext=89\n" +
+                "END:VCARD"
+        val c = Contact.fromReader(StringReader(vcard), null).first()
+
+        assertEquals(1, c.phoneNumbers.size)
+        val phone = c.phoneNumbers.first.property
+        assertEquals("+155****4567;ext=89", phone.text)
+        assertTrue(phone.types.contains(TelephoneType.WORK))
+    }
+
+    @Test
+    fun testVCard4GroupedTelephoneUriKeepsLabelAndType() {
+        val vcard = "BEGIN:VCARD\n" +
+                "VERSION:4.0\n" +
+                "FN:Grouped Telephone URI\n" +
+                "item1.TEL;VALUE=uri;TYPE=cell,pref:tel:+15551234567\n" +
+                "item1.X-ABLabel:Mobile\n" +
+                "END:VCARD"
+        val c = Contact.fromReader(StringReader(vcard), null).first()
+
+        assertEquals(1, c.phoneNumbers.size)
+        val phone = c.phoneNumbers.first
+        assertEquals("Mobile", phone.label)
+        assertEquals("+15551234567", phone.property.text)
+        assertTrue(phone.property.types.contains(TelephoneType.CELL))
+        assertTrue(phone.property.types.contains(TelephoneType.PREF))
+    }
+
+    @Test
     fun testGenerateOrganizationOnly() {
         val c = Contact()
         c.uid = UUID.randomUUID().toString()

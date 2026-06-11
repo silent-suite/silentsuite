@@ -331,9 +331,13 @@
     <string name="import_dialog_title">Import</string>
     <string name="import_dialog_failed_title">Import Failed</string>
     <string name="import_dialog_failed_body">Reason: %s\nReport to developers?</string>
+    <string name="import_dialog_failed_generic">The import could not be completed. Please try again or report the problem.</string>
+    <string name="import_dialog_contacts_parse_failed">The selected contacts file could not be parsed. Please export it again or try importing it in the web app.</string>
+    <string name="import_dialog_unexpected_failure">The import could not be completed. Please try again or report the problem.</string>
     <string name="import_dialog_loading_file">Loading file (may take a while)...</string>
     <string name="import_dialog_adding_entries">Adding entries...</string>
-    <string name="import_dialog_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped (failed): %4$d</string>
+    <string name="import_dialog_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped: %4$d</string>
+    <string name="import_dialog_partial_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped: %4$d\nFailed: %5$d\n\nSome entries could not be imported.</string>
     <string name="import_permission_required">Reading storage permission is required for import.</string>
     <string name="import_account_top_notice">Please choose an account to import all of its entries from.</string>
     <string name="choose_file">Choose file</string>
