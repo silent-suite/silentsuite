@@ -49,7 +49,7 @@ pnpm build
 git push origin your-branch-name
 ```
 
-Open a pull request on GitHub against the `main` branch.
+Open a pull request on GitHub against the `dev` branch.
 
 ## PR Description
 
