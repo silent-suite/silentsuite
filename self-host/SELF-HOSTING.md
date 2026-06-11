@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-
 bash install.sh --version v0.1.0-beta
 ```
 
-When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `verify.sh`, and `success.html` from the requested tag's archive — the entire self-host config moves together as one release.
+When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `verify.sh`, `close-signups.sh`, and `success.html` from the requested tag's archive — the entire self-host config moves together as one release.
 
 ## Manual Setup
 
