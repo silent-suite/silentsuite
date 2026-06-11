@@ -31,7 +31,11 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
             if (!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(settings))
                 return
 
-            RefreshCollections(account, CollectionInfo.Type.CALENDAR).run()
+            RefreshCollections(
+                account,
+                CollectionInfo.Type.CALENDAR,
+                extras.getBoolean(EXTRA_FORCE_COLLECTION_REFRESH, false),
+            ).run()
 
             updateLocalCalendars(provider, account, settings)
 

@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.ListFragment
 import androidx.fragment.app.activityViewModels
@@ -21,7 +22,9 @@ import com.etebase.client.FetchOptions
 import com.etebase.client.SignedInvitation
 import com.etebase.client.Utils
 import io.silentsuite.sync.R
+import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.requestSync
+import kotlinx.coroutines.CancellationException
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -92,10 +95,20 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
                     invitationsModel.reject(model.value!!, invitation)
                 }
                 .setPositiveButton(R.string.invitations_accept) { dialogInterface, i ->
-                    invitationsModel.accept(model.value!!, invitation)
-                    val applicationContext = activity?.applicationContext
-                    if (applicationContext != null) {
-                        requestSync(applicationContext, model.value!!.account)
+                    val accountHolder = model.value!!
+                    val applicationContext = requireContext().applicationContext
+                    val account = accountHolder.account
+                    invitationsModel.accept(accountHolder, invitation) { result ->
+                        result.onSuccess {
+                            requestSync(applicationContext, account, forceCollectionRefresh = true)
+                            Toast.makeText(applicationContext, R.string.invitations_accept_success_syncing, Toast.LENGTH_LONG).show()
+                            activity?.finish()
+                        }.onFailure {
+                            Logger.log.warning("Invitation acceptance failed: ${it.javaClass.name}")
+                            context?.let { fragmentContext ->
+                                Toast.makeText(fragmentContext, R.string.invitations_accept_error, Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }
                 }
                 .show()
@@ -148,14 +161,26 @@ class InvitationsViewModel : ViewModel() {
         }
     }
 
-    fun accept(accountCollectionHolder: AccountHolder, invitation: SignedInvitation) {
+    fun accept(accountCollectionHolder: AccountHolder, invitation: SignedInvitation, onComplete: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                val invitationManager = accountCollectionHolder.etebase.invitationManager
-                invitationManager.accept(invitation)
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    val invitationManager = accountCollectionHolder.etebase.invitationManager
+                    invitationManager.accept(invitation)
+                }
+                Result.success(Unit)
+            } catch (e: Exception) {
+                if (e is CancellationException) {
+                    throw e
+                }
+                Result.failure(e)
             }
-            val ret = invitations.value!!.filter { it != invitation }
-            invitations.value = ret
+
+            if (result.isSuccess) {
+                val ret = invitations.value.orEmpty().filter { it != invitation }
+                invitations.value = ret
+            }
+            onComplete(result)
         }
     }
 

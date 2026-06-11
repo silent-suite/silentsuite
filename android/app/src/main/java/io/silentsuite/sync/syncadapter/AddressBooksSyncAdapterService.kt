@@ -39,7 +39,11 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
             if (!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(settings))
                 return
 
-            RefreshCollections(account, CollectionInfo.Type.ADDRESS_BOOK).run()
+            RefreshCollections(
+                account,
+                CollectionInfo.Type.ADDRESS_BOOK,
+                extras.getBoolean(EXTRA_FORCE_COLLECTION_REFRESH, false),
+            ).run()
 
             updateLocalAddressBooks(contactsProvider, account, settings)
 

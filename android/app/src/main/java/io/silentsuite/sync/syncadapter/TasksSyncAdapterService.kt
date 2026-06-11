@@ -53,7 +53,11 @@ class TasksSyncAdapterService: SyncAdapterService() {
             if (!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(accountSettings))
                 return
 
-            RefreshCollections(account, CollectionInfo.Type.TASKS).run()
+            RefreshCollections(
+                account,
+                CollectionInfo.Type.TASKS,
+                extras.getBoolean(EXTRA_FORCE_COLLECTION_REFRESH, false),
+            ).run()
 
             updateLocalTaskLists(taskProvider, account, accountSettings)
 

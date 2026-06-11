@@ -153,7 +153,11 @@ abstract class SyncAdapterService : Service() {
             return true
         }
 
-        inner class RefreshCollections internal constructor(private val account: Account, private val serviceType: CollectionInfo.Type) {
+        inner class RefreshCollections internal constructor(
+            private val account: Account,
+            private val serviceType: CollectionInfo.Type,
+            private val forceRefresh: Boolean = false,
+        ) {
             private val context: Context
 
             init {
@@ -162,7 +166,7 @@ abstract class SyncAdapterService : Service() {
 
             @Throws(InvalidAccountException::class)
             internal fun run() {
-                Logger.log.info("Refreshing " + serviceType + " collections of service #" + serviceType.toString())
+                Logger.log.info("Refreshing " + serviceType + " collections of service #" + serviceType.toString() + if (forceRefresh) " (forced)" else "")
 
                 val settings = AccountSettings(context, account)
                 HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
@@ -172,13 +176,16 @@ abstract class SyncAdapterService : Service() {
                         val now = System.currentTimeMillis()
                         val lastCollectionsFetch = collectionLastFetchMap[account.name] ?: 0
 
-                        if (abs(now - lastCollectionsFetch) <= cacheAge) {
+                        if (!forceRefresh && abs(now - lastCollectionsFetch) <= cacheAge) {
                             return@synchronized
                         }
 
                         val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
                         val colMgr = etebase.collectionManager
-                        var stoken = etebaseLocalCache.loadStoken()
+                        // Post-invite acceptance must not depend on the previous collection-list
+                        // cursor: a full list refresh makes newly accepted shared collections
+                        // visible even when an old stoken would otherwise hide the membership change.
+                        var stoken = if (forceRefresh) null else etebaseLocalCache.loadStoken()
                         var done = false
                         while (!done) {
                             val colList = colMgr.list(COLLECTION_TYPES, FetchOptions().stoken(stoken))
