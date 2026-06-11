@@ -11,6 +11,7 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 | [Code Conventions](./code-conventions.md) | Style guide and patterns we follow |
 | [Testing](./testing.md) | How to run and write tests |
 | [Pull Request Guide](./pull-request-guide.md) | How to submit changes |
+| [Translation Guide](../../TRANSLATING.md) | Help translate the web app safely and consistently |
 
 ---
 
@@ -19,6 +20,7 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 1. **Read the [Development Setup](./dev-setup.md) guide** to get the project running locally.
 2. **Check existing issues** on [GitHub](https://github.com/silent-suite/silentsuite/issues) for something to work on, or open a new issue to discuss your idea before writing code.
 3. **Follow the [Pull Request Guide](./pull-request-guide.md)** when submitting changes.
+4. **For translations, read the [Translation Guide](../../TRANSLATING.md)** before adding or updating locale files.
 
 ## Code of Conduct
 
