@@ -45,6 +45,26 @@ export {
 } from './etebase/collections.js';
 export type { CollectionMeta, CollectionMetaUpdate, ItemListResponse } from './etebase/collections.js';
 
+// Sharing / invitations
+export {
+  listIncomingInvitations,
+  listOutgoingInvitations,
+  acceptInvitation,
+  rejectInvitation,
+  fetchUserProfile,
+  inviteToCollection,
+  listCollectionMembers,
+  removeCollectionMember,
+  leaveCollection,
+  modifyCollectionMemberAccess,
+} from './etebase/sharing.js';
+export type {
+  SharingAccessLevel,
+  ListSharingOptions,
+  UserProfile,
+  CollectionMember,
+} from './etebase/sharing.js';
+
 // Sync engine
 export { SyncEngine } from './etebase/sync.js';
 export type { StokenAdvanceEvent } from './etebase/sync.js';
