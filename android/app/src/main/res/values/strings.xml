@@ -214,6 +214,8 @@
     <string name="invitations_accept_reject_dialog">Would you like to accept or reject the invitation?</string>
     <string name="invitations_accept">Accept</string>
     <string name="invitations_reject">Reject</string>
+    <string name="invitations_accept_success_syncing">Invitation accepted. Syncing shared collections…</string>
+    <string name="invitations_accept_error">Couldn\'t accept invitation. Please try again.</string>
 
     <!-- JournalItemActivity -->
     <string name="about">About</string>
