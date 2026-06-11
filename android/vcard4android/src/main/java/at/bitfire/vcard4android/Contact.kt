@@ -168,8 +168,9 @@ class Contact {
                     is Title -> c.jobTitle = StringUtils.trimToNull(prop.value)
                     is Role -> c.jobDescription = StringUtils.trimToNull(prop.value)
 
-                    is Telephone -> if (!prop.text.isNullOrBlank())
-                        c.phoneNumbers += LabeledProperty(prop, findLabel(prop.group))
+                    is Telephone -> telephoneWithText(prop)?.let {
+                        c.phoneNumbers += LabeledProperty(it, findLabel(it.group))
+                    }
                     is Email -> if (!prop.value.isNullOrBlank())
                         c.emails += LabeledProperty(prop, findLabel(prop.group))
                     is Impp -> c.impps += LabeledProperty(prop, findLabel(prop.group))
@@ -275,6 +276,19 @@ class Contact {
             } catch(e: URISyntaxException) {
                 Constants.log.warning("Invalid URI for UID: $uriString")
                 uriString
+            }
+        }
+
+        private fun telephoneWithText(telephone: Telephone): Telephone? {
+            val existingText = StringUtils.trimToNull(telephone.text)
+            if (existingText != null)
+                return telephone
+
+            val uri = telephone.uri ?: return null
+            val text = StringUtils.trimToNull(uri.toString().removePrefix("tel:").removePrefix("TEL:")) ?: return null
+            return Telephone(text).also { normalized ->
+                normalized.group = telephone.group
+                normalized.parameters = ezvcard.parameter.VCardParameters(telephone.parameters)
             }
         }
 
