@@ -32,23 +32,29 @@ class ResultFragment : DialogFragment() {
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         if (result!!.isFailed) {
+            val failureMessage = result!!.failureMessage ?: getString(R.string.import_dialog_failed_generic)
             return AlertDialog.Builder(requireActivity())
                     .setTitle(R.string.import_dialog_failed_title)
                     .setIcon(R.drawable.ic_error_dark)
-                    .setMessage(getString(R.string.import_dialog_failed_body, result!!.e!!.localizedMessage))
+                    .setMessage(getString(R.string.import_dialog_failed_body, failureMessage))
                     .setNegativeButton(android.R.string.no) { dialog, which ->
                         // dismiss
                     }
                     .setPositiveButton(android.R.string.yes) { dialog, which ->
                         // TODO(Phase2): Report to Sentry once integrated
-                        Logger.log.severe("Import failed: ${result!!.e}")
+                        Logger.log.severe("Import failed: ${result!!.e!!.javaClass.name}")
                     }
                     .create()
         } else {
+            val message = if (result!!.failed > 0) {
+                getString(R.string.import_dialog_partial_success, result!!.total, result!!.added, result!!.updated, result!!.skipped, result!!.failed)
+            } else {
+                getString(R.string.import_dialog_success, result!!.total, result!!.added, result!!.updated, result!!.skipped)
+            }
             return AlertDialog.Builder(requireActivity())
                     .setTitle(R.string.import_dialog_title)
                     .setIcon(R.drawable.ic_import_export_black)
-                    .setMessage(getString(R.string.import_dialog_success, result!!.total, result!!.added, result!!.updated, result!!.skipped))
+                    .setMessage(message)
                     .setPositiveButton(android.R.string.ok) { dialog, which ->
                         // dismiss
                     }
@@ -60,7 +66,9 @@ class ResultFragment : DialogFragment() {
         var total: Long = 0
         var added: Long = 0
         var updated: Long = 0
+        var failed: Long = 0
         var e: Exception? = null
+        var failureMessage: String? = null
 
         val isFailed: Boolean
             get() = e != null
@@ -69,7 +77,7 @@ class ResultFragment : DialogFragment() {
             get() = total - (added + updated)
 
         override fun toString(): String {
-            return "ResultFragment.ImportResult(total=" + this.total + ", added=" + this.added + ", updated=" + this.updated + ", e=" + this.e + ")"
+            return "ResultFragment.ImportResult(total=" + this.total + ", added=" + this.added + ", updated=" + this.updated + ", failed=" + this.failed + ", e=" + this.e?.javaClass?.name + ")"
         }
     }
 

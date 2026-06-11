@@ -59,6 +59,16 @@ Include in your PR description:
 - **Why** the change is needed (link the issue if there is one).
 - **How** to test it.
 
+You can also copy this short template and fill it in:
+
+```md
+## What changed?
+- Added/changed/fixed ...
+
+## How I checked it
+- Docs-only change / ran ... / not run because ...
+```
+
 ## Review Process
 
 - A maintainer will review your PR and may request changes.

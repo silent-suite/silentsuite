@@ -14,6 +14,7 @@ import at.bitfire.ical4android.*
 import at.bitfire.vcard4android.BatchOperation
 import at.bitfire.vcard4android.Contact
 import at.bitfire.vcard4android.ContactsStorageException
+import ezvcard.io.CannotParseException
 import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
@@ -160,6 +161,11 @@ class ImportFragment : DialogFragment() {
         }
     }
 
+    private fun safeFailureResult(messageResId: Int, fallbackMessage: String): ImportResult = ImportResult().also {
+        it.e = Exception(fallbackMessage)
+        it.failureMessage = context?.getString(messageResId) ?: fallbackMessage
+    }
+
     private inner class ImportEntriesLoader : Runnable {
         private fun finishParsingFile(length: Int) {
             if (activity == null) {
@@ -183,9 +189,18 @@ class ImportFragment : DialogFragment() {
         }
 
         override fun run() {
-            val result = loadInBackground()
+            val result = try {
+                loadInBackground()
+            } catch (e: RuntimeException) {
+                Logger.log.severe("Import failed unexpectedly: ${e.javaClass.name}")
+                safeFailureResult(
+                        R.string.import_dialog_unexpected_failure,
+                        "The import could not be completed. Please try again or report the problem."
+                )
+            }
 
-            requireActivity().runOnUiThread { loadFinished(result) }
+            val importActivity = activity ?: return
+            importActivity.runOnUiThread { loadFinished(result) }
         }
 
         fun loadInBackground(): ImportResult {
@@ -346,14 +361,14 @@ class ImportFragment : DialogFragment() {
                             for (contact in contacts.filter { contact -> !contact.group }) {
                                 try {
                                     var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
+                                    var addedContact = false
 
                                     if (localContact != null) {
                                         localContact.updateAsDirty(contact)
-                                        result.updated++
                                     } else {
                                         localContact = LocalContact(localAddressBook, contact, contact.uid, null)
                                         localContact.createAsDirty()
-                                        result.added++
+                                        addedContact = true
                                     }
 
                                     uidToLocalId[contact.uid] = localContact.id!!
@@ -364,7 +379,13 @@ class ImportFragment : DialogFragment() {
                                         localContact.addToGroup(batch, localAddressBook.findOrCreateGroup(category))
                                     }
                                     batch.commit()
+
+                                    if (addedContact)
+                                        result.added++
+                                    else
+                                        result.updated++
                                 } catch (e: ContactsStorageException) {
+                                    result.failed++
                                     Logger.log.warning("Contact import entry failed: ${e.javaClass.name}")
                                 }
 
@@ -389,6 +410,7 @@ class ImportFragment : DialogFragment() {
                                         result.added++
                                     }
                                 } catch (e: ContactsStorageException) {
+                                    result.failed++
                                     Logger.log.warning("Contact group import entry failed: ${e.javaClass.name}")
                                 }
 
@@ -407,15 +429,24 @@ class ImportFragment : DialogFragment() {
                 return result
             } catch (e: FileNotFoundException) {
                 result.e = e
+                result.failureMessage = this@ImportFragment.context?.getString(R.string.import_dialog_failed_generic)
+                return result
+            } catch (e: CannotParseException) {
+                Logger.log.warning("Contact import parse failed: ${e.javaClass.name}")
+                result.e = e
+                result.failureMessage = this@ImportFragment.context?.getString(R.string.import_dialog_contacts_parse_failed)
                 return result
             } catch (e: InvalidCalendarException) {
                 result.e = e
+                result.failureMessage = this@ImportFragment.context?.getString(R.string.import_dialog_failed_generic)
                 return result
             } catch (e: IOException) {
                 result.e = e
+                result.failureMessage = this@ImportFragment.context?.getString(R.string.import_dialog_failed_generic)
                 return result
             } catch (e: ContactsStorageException) {
                 result.e = e
+                result.failureMessage = this@ImportFragment.context?.getString(R.string.import_dialog_failed_generic)
                 return result
             }
 

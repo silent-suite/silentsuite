@@ -101,6 +101,7 @@ Useful feedback right now:
 - Android APK testing across device models and Android versions
 - Bridge compatibility reports for Thunderbird, Apple Calendar, Evolution, GNOME Calendar, and other DAV clients
 - Self-hosting verification on fresh servers
+- Web app translation proposals and review from fluent human translators
 - Docs and trust review for vague privacy claims or confusing setup steps
 
 Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with logs/screenshots where useful. Do not paste secrets, passwords, or private calendar/contact data.
@@ -114,6 +115,7 @@ Bug reports, feature requests, and PRs are welcome.
 - [User Guide](./docs/user-guide/)
 - [Self-Hosting](./docs/self-hosting/)
 - [Contributing](./docs/contributing/)
+- [Translating SilentSuite](./TRANSLATING.md)
 - [docs.silentsuite.io](https://docs.silentsuite.io)
 
 ## Follow along
