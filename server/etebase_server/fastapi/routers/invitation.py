@@ -170,7 +170,16 @@ def incoming_accept(
 
     with transaction.atomic():
         user = invitation.user
-        collection_type_obj, _ = models.CollectionType.objects.get_or_create(uid=data.collectionType, owner=user)
+        if invitation.collection.members.filter(user=user).exists():
+            raise HttpError(
+                "already_member",
+                "User is already a member of this collection",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        collection_type_obj, _ = models.CollectionType.objects.get_or_create(
+            uid=data.collectionType,
+            defaults={"owner": user},
+        )
 
         models.CollectionMember.objects.create(
             collection=invitation.collection,
@@ -201,6 +210,13 @@ def outgoing_create(
 
     if not is_collection_admin(collection, user):
         raise PermissionDenied("admin_access_required", "User is not an admin of this collection")
+
+    if collection.members.filter(user=to_user).exists():
+        raise HttpError(
+            "already_member",
+            "User is already a member of this collection",
+            status_code=status.HTTP_409_CONFLICT,
+        )
 
     member = collection.members.get(user=user)
 
