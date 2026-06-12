@@ -81,6 +81,7 @@ export default function SharingSettingsPage() {
   const [memberAccessDrafts, setMemberAccessDrafts] = useState<AccessDrafts>({})
   const [loadingInvites, setLoadingInvites] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const currentUsername = (account as any)?.user?.username ?? (account as any)?.username ?? null
 
   const collectionCards = useMemo<CollectionCard[]>(() => {
     const cards: CollectionCard[] = []
@@ -312,9 +313,11 @@ export default function SharingSettingsPage() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => handleLoadMembers(card)} className="rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
-                    Load members
-                  </button>
+                  {card.accessLevel === 1 && (
+                    <button type="button" onClick={() => handleLoadMembers(card)} className="rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                      Load members
+                    </button>
+                  )}
                   {card.accessLevel !== 1 && (
                     <button type="button" onClick={() => handleLeave(card)} className="rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
                       Leave collection
@@ -323,54 +326,69 @@ export default function SharingSettingsPage() {
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input
-                  value={inviteUsernames[card.uid] ?? ''}
-                  onChange={(event) => setInviteUsernames((current) => ({ ...current, [card.uid]: event.target.value }))}
-                  placeholder="friend@example.com"
-                  className="min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
-                />
-                <select
-                  value={inviteAccessLevels[card.uid] ?? 'readOnly'}
-                  onChange={(event) => setInviteAccessLevels((current) => ({ ...current, [card.uid]: event.target.value as CollectionAccessLevel }))}
-                  className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
-                >
-                  {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-                <button type="button" onClick={() => handleInvite(card)} className="rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))]">
-                  Invite
-                </button>
-              </div>
+              {card.accessLevel === 1 ? (
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input
+                    value={inviteUsernames[card.uid] ?? ''}
+                    onChange={(event) => setInviteUsernames((current) => ({ ...current, [card.uid]: event.target.value }))}
+                    placeholder="friend@example.com"
+                    className="min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
+                  />
+                  <select
+                    value={inviteAccessLevels[card.uid] ?? 'readOnly'}
+                    onChange={(event) => setInviteAccessLevels((current) => ({ ...current, [card.uid]: event.target.value as CollectionAccessLevel }))}
+                    className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
+                  >
+                    {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={() => handleInvite(card)} className="rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))]">
+                    Invite
+                  </button>
+                </div>
+              ) : (
+                <p className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-xs text-[rgb(var(--muted))]">
+                  Shared with {accessLevelLabel(card.accessLevel).toLowerCase()} access. Only admins can invite accounts or manage members.
+                </p>
+              )}
 
               {members[card.uid] && (
                 <ul className="space-y-2 text-xs text-[rgb(var(--muted))]">
                   {members[card.uid].map((member) => {
                     const draftKey = `${card.uid}:${member.username}`
+                    const isCurrentUser = currentUsername === member.username
                     return (
                       <li key={member.username} className="flex flex-col gap-2 rounded border border-[rgb(var(--border))] px-2 py-2 sm:flex-row sm:items-center sm:justify-between">
-                        <span className="font-medium text-[rgb(var(--foreground))]">{member.username}</span>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <select
-                            value={memberAccessDrafts[draftKey] ?? accessLevelValue(member.accessLevel)}
-                            onChange={(event) => setMemberAccessDrafts((current) => ({
-                              ...current,
-                              [draftKey]: event.target.value as CollectionAccessLevel,
-                            }))}
-                            className="rounded border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-xs text-[rgb(var(--foreground))]"
-                          >
-                            {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
-                              <option key={value} value={value}>{label}</option>
-                            ))}
-                          </select>
-                          <button type="button" onClick={() => handleChangeMemberAccess(card, member)} className="rounded border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
-                            Save
-                          </button>
-                          <button type="button" onClick={() => handleRemoveMember(card, member.username)} className="rounded border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
-                            Remove
-                          </button>
-                        </div>
+                        <span className="font-medium text-[rgb(var(--foreground))]">
+                          {member.username}{isCurrentUser ? ' (you)' : ''}
+                        </span>
+                        {isCurrentUser ? (
+                          <span className="text-xs text-[rgb(var(--muted))]">
+                            {accessLevelLabel(member.accessLevel)} · Manage your own access from another admin account.
+                          </span>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <select
+                              value={memberAccessDrafts[draftKey] ?? accessLevelValue(member.accessLevel)}
+                              onChange={(event) => setMemberAccessDrafts((current) => ({
+                                ...current,
+                                [draftKey]: event.target.value as CollectionAccessLevel,
+                              }))}
+                              className="rounded border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-xs text-[rgb(var(--foreground))]"
+                            >
+                              {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
+                                <option key={value} value={value}>{label}</option>
+                              ))}
+                            </select>
+                            <button type="button" onClick={() => handleChangeMemberAccess(card, member)} className="rounded border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                              Save
+                            </button>
+                            <button type="button" onClick={() => handleRemoveMember(card, member.username)} className="rounded border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                              Remove
+                            </button>
+                          </div>
+                        )}
                       </li>
                     )
                   })}
