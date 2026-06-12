@@ -156,6 +156,7 @@ a = Analysis(
         "silentsuite_bridge.radicale",
         "silentsuite_bridge.radicale.auth",
         "silentsuite_bridge.radicale.storage",
+        "silentsuite_bridge.radicale.rights",
         "silentsuite_bridge.radicale.creds",
         "silentsuite_bridge.radicale.etesync_cache",
         "silentsuite_bridge.web",
