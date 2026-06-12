@@ -65,6 +65,9 @@ def build_radicale_configuration():
             "storage": {
                 "type": "silentsuite_bridge.radicale.storage",
             },
+            "rights": {
+                "type": "silentsuite_bridge.radicale.rights",
+            },
             "web": {
                 "type": web_type,
             },
