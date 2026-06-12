@@ -14,6 +14,10 @@ SilentSuite Bridge (local)
 SilentSuite Server
 ```
 
+::: warning Local-only bridge
+Keep the bridge bound to your local machine unless you fully understand the risk: DAV clients can access decrypted local calendar, contact, and task data through the bridge.
+:::
+
 The bridge handles encryption/decryption locally. Your data is still end-to-end encrypted -- the bridge just presents it as standard CalDAV/CardDAV to your apps.
 
 **Supported data types:**
