@@ -22,6 +22,13 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 3. **Follow the [Pull Request Guide](./pull-request-guide.md)** when submitting changes.
 4. **For translations, read the [Translation Guide](../../TRANSLATING.md)** before adding or updating locale files.
 
+## First PR Checklist
+
+- Keep the PR focused on one issue only.
+- Mention the issue number in the PR description.
+- Include screenshots for visual or docs changes when helpful.
+- Say what you tested, or state that the change is docs-only.
+
 ## Code of Conduct
 
 Be respectful, constructive, and inclusive. We're building privacy tools for everyone.
