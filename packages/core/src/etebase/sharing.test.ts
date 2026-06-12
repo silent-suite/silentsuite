@@ -2,6 +2,7 @@ import * as Etebase from 'etebase';
 import { describe, expect, it, vi } from 'vitest';
 import {
   acceptInvitation,
+  cancelOutgoingInvitation,
   fetchUserProfile,
   inviteToCollection,
   leaveCollection,
@@ -46,19 +47,22 @@ describe('sharing invitation wrappers', () => {
     expect(listOutgoing).toHaveBeenCalledWith({ iterator: null, limit: undefined });
   });
 
-  it('accepts and rejects invitations without exposing invite contents', async () => {
+  it('accepts, rejects, and cancels invitations without exposing invite contents', async () => {
     const invitation = { uid: 'invite-1' } as Etebase.SignedInvitation;
     const accept = vi.fn().mockResolvedValue({});
     const reject = vi.fn().mockResolvedValue({});
+    const disinvite = vi.fn().mockResolvedValue({});
     const account = {
-      getInvitationManager: vi.fn().mockReturnValue({ accept, reject }),
+      getInvitationManager: vi.fn().mockReturnValue({ accept, reject, disinvite }),
     } as any;
 
     await acceptInvitation(account, invitation);
     await rejectInvitation(account, invitation);
+    await cancelOutgoingInvitation(account, invitation);
 
     expect(accept).toHaveBeenCalledWith(invitation);
     expect(reject).toHaveBeenCalledWith(invitation);
+    expect(disinvite).toHaveBeenCalledWith(invitation);
   });
 
   it('fetches a user profile and invites with the fetched public key', async () => {

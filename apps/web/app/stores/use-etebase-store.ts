@@ -379,6 +379,16 @@ interface EtebaseActions {
   listIncomingInvitations: () => Promise<any[]>
 
   /**
+   * List pending outgoing sharing invitations for the current account.
+   */
+  listOutgoingInvitations: () => Promise<any[]>
+
+  /**
+   * Cancel an outgoing sharing invitation before it is accepted.
+   */
+  cancelOutgoingInvitation: (invitation: any) => Promise<boolean>
+
+  /**
    * Accept an incoming sharing invitation, then reconcile collections so the shared collection appears.
    */
   acceptInvitation: (invitation: any) => Promise<boolean>
@@ -782,6 +792,38 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       console.error('[etebase-store] Failed to list incoming invitations', getSafeErrorDetails(err))
       showErrorToast('Failed to load sharing invitations. Please try again.')
       return []
+    }
+  },
+
+  listOutgoingInvitations: async () => {
+    const { account } = get()
+    if (!account) return []
+
+    try {
+      const core = await import('@silentsuite/core')
+      return await core.listOutgoingInvitations(account)
+    } catch (err) {
+      console.error('[etebase-store] Failed to list outgoing invitations', getSafeErrorDetails(err))
+      showErrorToast('Failed to load sent sharing invitations. Please try again.')
+      return []
+    }
+  },
+
+  cancelOutgoingInvitation: async (invitation: any) => {
+    const { account } = get()
+    if (!account) {
+      logger.warn('[etebase-store] Cannot cancel outgoing invitation: no account')
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      await core.cancelOutgoingInvitation(account, invitation)
+      return true
+    } catch (err) {
+      console.error('[etebase-store] Failed to cancel outgoing invitation', getSafeErrorDetails(err))
+      showErrorToast('Failed to cancel sharing invitation. Please try again.')
+      return false
     }
   },
 
