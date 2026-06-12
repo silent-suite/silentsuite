@@ -51,6 +51,7 @@ export {
   listOutgoingInvitations,
   acceptInvitation,
   rejectInvitation,
+  cancelOutgoingInvitation,
   fetchUserProfile,
   inviteToCollection,
   listCollectionMembers,

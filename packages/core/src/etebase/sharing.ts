@@ -99,6 +99,17 @@ export async function rejectInvitation(
 }
 
 /**
+ * Cancel an outgoing invitation that has not been accepted yet.
+ */
+export async function cancelOutgoingInvitation(
+  account: Etebase.Account,
+  invitation: Etebase.SignedInvitation,
+): Promise<void> {
+  const invitationManager = account.getInvitationManager();
+  await invitationManager.disinvite(invitation);
+}
+
+/**
  * Fetch a user's public invitation profile before creating an invite.
  */
 export async function fetchUserProfile(account: Etebase.Account, username: string): Promise<UserProfile> {
