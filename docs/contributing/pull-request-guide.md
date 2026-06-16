@@ -69,6 +69,8 @@ You can also copy this short template and fill it in:
 - Docs-only change / ran ... / not run because ...
 ```
 
+For docs-only PRs, it is okay to write `Docs-only change; no app tests run.` If you previewed the docs locally, mention that too.
+
 ## Review Process
 
 - A maintainer will review your PR and may request changes.
