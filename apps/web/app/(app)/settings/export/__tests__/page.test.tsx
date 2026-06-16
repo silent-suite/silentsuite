@@ -117,10 +117,12 @@ vi.mock('jszip', () => {
     .fn()
     .mockResolvedValue(new Blob(['zip'], { type: 'application/zip' }))
   return {
-    default: vi.fn(() => ({
-      file: mockFile,
-      generateAsync: mockGenerateAsync,
-    })),
+    default: vi.fn(function MockJSZip() {
+      return {
+        file: mockFile,
+        generateAsync: mockGenerateAsync,
+      }
+    }),
   }
 })
 
@@ -136,6 +138,7 @@ describe('ExportPage', () => {
 
   beforeEach(() => {
     clickedLink = null
+    vi.restoreAllMocks()
     vi.clearAllMocks()
     // Mock document.createElement to capture the download link
     const originalCreateElement = document.createElement.bind(document)
