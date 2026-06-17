@@ -16,8 +16,63 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  # ─────────────────────────────────────────────────────────────────────
+  # PR / dev / main builds — unsigned, no signing secrets accessible.
+  # Validates that the Android project compiles and assembles.
+  # ─────────────────────────────────────────────────────────────────────
+  build-pr:
+    name: Build (unsigned, PR/dev/main)
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: silentsuite-debug-${{ github.sha }}
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Release builds — signed, only on version tags.
+  # Uses a protected GitHub Environment so signing secrets are not
+  # accessible to PRs, forks, or non-tag pushes.
+  # ─────────────────────────────────────────────────────────────────────
+  build-release:
+    name: Build (signed, tag release)
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: android-release
     permissions:
       contents: write
     defaults:
@@ -80,8 +135,7 @@ jobs:
             android/app/build/outputs/bundle/release/*.aab
           retention-days: 30
 
-      - name: Rename Android artifacts for release (tag push only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Rename Android artifacts for release
         run: |
           mv app/build/outputs/apk/release/app-release.apk \
              "app/build/outputs/apk/release/silentsuite-android-${{ github.ref_name }}.apk"
@@ -94,8 +148,7 @@ jobs:
           sha256sum "silentsuite-android-${{ github.ref_name }}.aab" \
             > "silentsuite-android-${{ github.ref_name }}.aab.sha256"
 
-      - name: Attach Android artifacts to umbrella GitHub Release (tag push only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Attach Android artifacts to umbrella GitHub Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           tag_name: ${{ github.ref_name }}
