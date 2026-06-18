@@ -24,11 +24,25 @@ from silentsuite_bridge.web import (
 )
 
 
-def _post_environ(body=b"", csrf_token=None):
+# Default Host header matching a localhost variant so the SEC-R7.4 Host check
+# accepts the request. Tests that exercise the rejection path set this explicitly.
+_LOCAL_HOST = "localhost:37358"
+
+
+def _get_environ(host=_LOCAL_HOST):
+    environ = {}
+    if host is not None:
+        environ["HTTP_HOST"] = host
+    return environ
+
+
+def _post_environ(body=b"", csrf_token=None, host=_LOCAL_HOST):
     environ = {
         "CONTENT_LENGTH": str(len(body)),
         "wsgi.input": io.BytesIO(body),
     }
+    if host is not None:
+        environ["HTTP_HOST"] = host
     if csrf_token is not None:
         environ["HTTP_X_SILENTSUITE_CSRF"] = csrf_token
     return environ
@@ -56,6 +70,9 @@ def _wsgi_response(app, method, path):
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
         "SCRIPT_NAME": "",
+        # SEC-R7.4: the dashboard rejects non-local Host headers, so requests
+        # routed through the full WSGI stack must carry a localhost Host header.
+        "HTTP_HOST": "127.0.0.1:37358",
         "SERVER_NAME": "127.0.0.1",
         "SERVER_PORT": "37358",
         "SERVER_PROTOCOL": "HTTP/1.1",
@@ -210,7 +227,7 @@ def test_dump_api_returns_404_when_disabled(monkeypatch):
     monkeypatch.setattr(config, "DASHBOARD_DUMP_ENABLED", False)
     web = Web.__new__(Web)
 
-    status, headers, body = web.get({}, "", "/.web/api/dump", None)
+    status, headers, body = web.get(_get_environ(), "", "/.web/api/dump", None)
 
     assert status == 404
     assert headers == {}
@@ -221,7 +238,7 @@ def test_dump_api_requires_csrf_when_enabled(monkeypatch):
     monkeypatch.setattr(config, "DASHBOARD_DUMP_ENABLED", True)
     web = Web.__new__(Web)
 
-    status, headers, body = web.get({}, "", "/.web/api/dump", None)
+    status, headers, body = web.get(_get_environ(), "", "/.web/api/dump", None)
 
     assert status == 403
     assert headers["Content-Type"] == "application/json"
@@ -232,7 +249,7 @@ def test_root_route_serves_dashboard(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     web = Web.__new__(Web)
 
-    status, headers, body = web.get({}, "", "/", None)
+    status, headers, body = web.get(_get_environ(), "", "/", None)
 
     assert status == 200
     assert headers["Content-Type"] == "text/html; charset=utf-8"
@@ -245,12 +262,45 @@ def test_web_compat_route_serves_dashboard(path, tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     web = Web.__new__(Web)
 
-    status, headers, body = web.get({}, "", path, None)
+    status, headers, body = web.get(_get_environ(), "", path, None)
 
     assert status == 200
     assert headers["Content-Type"] == "text/html; charset=utf-8"
     assert b"SilentSuite Bridge" in body
     assert b"dashboardLoginForm" in body
+
+
+@pytest.mark.parametrize("path", ["/", "/.web", "/.web/api/status"])
+def test_dashboard_get_rejects_non_local_host(path, tmp_path, monkeypatch):
+    # SEC-R7.4: a non-local Host header (DNS-rebinding / cross-origin) is
+    # rejected before any dashboard processing.
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    web = Web.__new__(Web)
+
+    status, headers, body = web.get(
+        _get_environ(host="evil.example.com"), "", path, None
+    )
+
+    assert status == 403
+    assert headers["Content-Type"] == "application/json"
+    assert "non-local Host" in json.loads(body)["error"]
+
+
+def test_dashboard_post_rejects_non_local_host():
+    # SEC-R7.4: non-local Host headers are rejected on mutating endpoints
+    # before CSRF validation or body parsing.
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token, host="evil.example.com"),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+
+    assert status == 403
+    assert headers["Content-Type"] == "application/json"
+    assert "non-local Host" in json.loads(body)["error"]
 
 
 def test_radicale_root_redirect_terminates_at_dashboard(tmp_path, monkeypatch):

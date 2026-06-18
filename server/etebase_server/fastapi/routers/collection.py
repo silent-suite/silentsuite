@@ -159,8 +159,16 @@ class ItemDepIn(BaseModel):
     uid: str
     etag: str
 
-    def validate_db(self):
-        item = models.CollectionItem.objects.get(uid=self.uid)
+    def validate_db(self, collection: models.Collection):
+        try:
+            item = collection.items.get(uid=self.uid)
+        except models.CollectionItem.DoesNotExist:
+            raise ValidationError(
+                "wrong_etag",
+                "Dependency item not found in this collection.",
+                status_code=status.HTTP_409_CONFLICT,
+                field=self.uid,
+            )
         etag = self.etag
         if item.etag != etag:
             raise ValidationError(
@@ -175,12 +183,12 @@ class ItemBatchIn(BaseModel):
     items: t.List[CollectionItemIn]
     deps: t.Optional[t.List[ItemDepIn]] = None
 
-    def validate_db(self):
+    def validate_db(self, collection: models.Collection):
         if self.deps is not None:
             errors: t.List[HttpError] = []
             for dep in self.deps:
                 try:
-                    dep.validate_db()
+                    dep.validate_db(collection)
                 except ValidationError as e:
                     errors.append(e)
             if len(errors) > 0:
@@ -480,7 +488,7 @@ def item_bulk_common(
         if stoken and stoken != collection_object.stoken:
             raise HttpError("stale_stoken", "Stoken is too old", status_code=status.HTTP_409_CONFLICT)
 
-        data.validate_db()
+        data.validate_db(collection_object)
 
         errors: t.List[HttpError] = []
         for item in data.items:
