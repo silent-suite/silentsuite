@@ -4,8 +4,10 @@ import io
 import json
 
 import pytest
+from radicale.app import Application
 
 import silentsuite_bridge.auth_browser as auth_browser
+from silentsuite_bridge import __main__ as bridge_main
 import silentsuite_bridge.web as web_module
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.accounts import AccountOperationResult
@@ -41,6 +43,33 @@ def _reset_status():
         "collections_by_account": {},
         "collections_scope": "all configured accounts",
     })
+
+
+def _wsgi_response(app, method, path):
+    captured = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+        captured["headers"] = dict(headers)
+
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "SCRIPT_NAME": "",
+        "SERVER_NAME": "127.0.0.1",
+        "SERVER_PORT": "37358",
+        "SERVER_PROTOCOL": "HTTP/1.1",
+        "REMOTE_ADDR": "127.0.0.1",
+        "wsgi.version": (1, 0),
+        "wsgi.url_scheme": "http",
+        "wsgi.input": io.BytesIO(b""),
+        "wsgi.errors": io.StringIO(),
+        "wsgi.multithread": False,
+        "wsgi.multiprocess": False,
+        "wsgi.run_once": False,
+    }
+    body = b"".join(app(environ, start_response))
+    return captured["status"], captured["headers"], body
 
 
 def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
@@ -212,13 +241,43 @@ def test_root_route_serves_dashboard(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["/.web/", "/.web"])
-def test_web_compat_route_redirects_to_root(path):
+def test_web_compat_route_serves_dashboard(path, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     web = Web.__new__(Web)
 
     status, headers, body = web.get({}, "", path, None)
 
-    assert status == 302
-    assert headers["Location"] == "/"
+    assert status == 200
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"SilentSuite Bridge" in body
+    assert b"dashboardLoginForm" in body
+
+
+def test_radicale_root_redirect_terminates_at_dashboard(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(config, "DATABASE_FILE", str(tmp_path / "bridge_data.db"))
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
+    monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:37358")
+    monkeypatch.setattr(config, "is_dashboard_enabled", lambda: True)
+    app = Application(bridge_main.build_radicale_configuration())
+
+    status, headers, body = _wsgi_response(app, "GET", "/")
+
+    assert status == "302 Found"
+    assert headers["Location"] == "/.web"
+    assert body == b"Redirected to /.web"
+
+    status, headers, body = _wsgi_response(app, "GET", "/.web")
+
+    assert status == "200 OK"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"SilentSuite Bridge" in body
+
+    status, headers, body = _wsgi_response(app, "HEAD", "/.web")
+
+    assert status == "200 OK"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
     assert body == b""
 
 

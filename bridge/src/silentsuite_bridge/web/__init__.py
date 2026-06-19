@@ -961,17 +961,14 @@ class Web(BaseWeb):
         super().__init__(configuration)
 
     def get(self, environ, base_prefix, path, user):
-        """Serve the dashboard for GET requests to the root."""
-        if path in ("", "/"):
+        """Serve the dashboard for Radicale's web endpoint."""
+        if path in ("", "/", "/.web", "/.web/"):
             html = _render_dashboard()
             return (
                 200,
                 {"Content-Type": "text/html; charset=utf-8"},
                 html.encode(),
             )
-
-        if path == "/.web/" or path == "/.web":
-            return (302, {"Location": "/"}, b"")
 
         # API endpoint for JSON status
         if path == "/.web/api/status":
