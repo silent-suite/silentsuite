@@ -16,7 +16,7 @@ import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
-import { toAllDayEndPlainDate } from '../lib/all-day'
+import { isMultiDayTimedRange, toAllDayEndPlainDate, toTimedMonthEndPlainDate } from '../lib/all-day'
 
 import '@schedule-x/theme-default/dist/index.css'
 
@@ -154,15 +154,19 @@ function toScheduleXEvents(
   displayEvents: DisplayEvent[],
   calendarColors: Map<string, string>,
   userTz: string,
+  currentView: CalendarView,
 ): CalendarEventExternal[] {
   return displayEvents.map((e) => {
     const color = calendarColors.get(e.calendarId ?? 'default') ?? '#10b981'
+    const renderAsMonthBar = currentView === 'month' && !e.allDay && isMultiDayTimedRange(e.startDate, e.endDate)
     return {
       id: e.id,
       title: e.isRecurring ? `↻ ${e.title}` : e.title,
-      start: e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
+      start: e.allDay || renderAsMonthBar ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
       end: e.allDay
         ? toAllDayEndPlainDate(e.startDate, e.endDate)
+        : renderAsMonthBar
+          ? toTimedMonthEndPlainDate(e.startDate, e.endDate)
         : toScheduleXDateTime(e.endDate, userTz),
       description: e.description || undefined,
       location: e.location || undefined,
@@ -322,7 +326,10 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const displayEventMapRef = useRef(displayEventMap)
   displayEventMapRef.current = displayEventMap
 
-  const sxEvents = useMemo(() => toScheduleXEvents(displayEvents, calendarColors, userTz), [displayEvents, calendarColors, userTz])
+  const sxEvents = useMemo(
+    () => toScheduleXEvents(displayEvents, calendarColors, userTz, currentView),
+    [displayEvents, calendarColors, userTz, currentView],
+  )
 
   // Inject calendar color styles via useInsertionEffect (avoids dangerouslySetInnerHTML)
   useInsertionEffect(() => {
