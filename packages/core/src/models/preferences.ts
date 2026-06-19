@@ -3,18 +3,21 @@ export const SYNCED_PREFERENCE_KEYS = [
   'firstDayOfWeek',
   'defaultReminder',
   'defaultTimezone',
+  'dateFormat',
 ] as const;
 
 export type SyncedPreferenceKey = typeof SYNCED_PREFERENCE_KEYS[number];
 export type TimeFormat = '12h' | '24h';
 export type FirstDayOfWeek = 'monday' | 'sunday';
 export type DefaultReminder = 'none' | '5' | '15' | '30' | '60' | '1440';
+export type DateFormat = 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD' | 'system'
 
 export interface SyncedPreferenceValues {
   timeFormat: TimeFormat;
   firstDayOfWeek: FirstDayOfWeek;
   defaultReminder: DefaultReminder;
   defaultTimezone: string;
+  dateFormat: DateFormat;
 }
 
 export interface VersionedPreference<T> {
@@ -30,6 +33,7 @@ export interface SyncedPreferencesV1 {
     firstDayOfWeek: VersionedPreference<FirstDayOfWeek>;
     defaultReminder: VersionedPreference<DefaultReminder>;
     defaultTimezone: VersionedPreference<string>;
+    dateFormat: VersionedPreference<DateFormat>;
   };
 }
 
@@ -40,6 +44,7 @@ export const DEFAULT_SYNCED_PREFERENCES: SyncedPreferenceValues = {
   firstDayOfWeek: 'monday',
   defaultReminder: '15',
   defaultTimezone: 'UTC',
+  dateFormat: 'system',
 };
 
 const DEFAULT_TIMESTAMPS: SyncedPreferenceTimestamps = {
@@ -47,6 +52,7 @@ const DEFAULT_TIMESTAMPS: SyncedPreferenceTimestamps = {
   firstDayOfWeek: 0,
   defaultReminder: 0,
   defaultTimezone: 0,
+  dateFormat: 0,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -75,12 +81,17 @@ function defaultTimezone(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim().length > 0 ? value : fallback;
 }
 
+function dateFormat(value: unknown, fallback: DateFormat): DateFormat {
+  return value === 'DD/MM/YYYY' || value === 'MM/DD/YYYY' || value === 'YYYY-MM-DD' || value === 'system' ? value : fallback
+}
+
 function valuesWithDefaults(values: Partial<SyncedPreferenceValues> = {}): SyncedPreferenceValues {
   return {
     timeFormat: timeFormat(values.timeFormat, DEFAULT_SYNCED_PREFERENCES.timeFormat),
     firstDayOfWeek: firstDayOfWeek(values.firstDayOfWeek, DEFAULT_SYNCED_PREFERENCES.firstDayOfWeek),
     defaultReminder: defaultReminder(values.defaultReminder, DEFAULT_SYNCED_PREFERENCES.defaultReminder),
     defaultTimezone: defaultTimezone(values.defaultTimezone, DEFAULT_SYNCED_PREFERENCES.defaultTimezone),
+    dateFormat: dateFormat(values.dateFormat, DEFAULT_SYNCED_PREFERENCES.dateFormat),
   };
 }
 
@@ -95,6 +106,7 @@ export function createSyncedPreferences(
     firstDayOfWeek: timestamp(timestamps.firstDayOfWeek, now),
     defaultReminder: timestamp(timestamps.defaultReminder, now),
     defaultTimezone: timestamp(timestamps.defaultTimezone, now),
+    dateFormat: timestamp(timestamps.dateFormat, now),
   };
   const updatedAt = Math.max(...SYNCED_PREFERENCE_KEYS.map((key) => normalizedTimestamps[key]));
 
@@ -106,6 +118,7 @@ export function createSyncedPreferences(
       firstDayOfWeek: { value: normalizedValues.firstDayOfWeek, updatedAt: normalizedTimestamps.firstDayOfWeek },
       defaultReminder: { value: normalizedValues.defaultReminder, updatedAt: normalizedTimestamps.defaultReminder },
       defaultTimezone: { value: normalizedValues.defaultTimezone, updatedAt: normalizedTimestamps.defaultTimezone },
+      dateFormat: { value: normalizedValues.dateFormat, updatedAt: normalizedTimestamps.dateFormat },
     },
   };
 }
@@ -119,6 +132,7 @@ export function normalizeSyncedPreferences(input: unknown): SyncedPreferencesV1 
   const firstDayField = isRecord(fields.firstDayOfWeek) ? fields.firstDayOfWeek : {};
   const reminderField = isRecord(fields.defaultReminder) ? fields.defaultReminder : {};
   const timezoneField = isRecord(fields.defaultTimezone) ? fields.defaultTimezone : {};
+  const dateFormatField = isRecord(fields.dateFormat) ? fields.dateFormat : {};
 
   return createSyncedPreferences(
     {
@@ -126,12 +140,14 @@ export function normalizeSyncedPreferences(input: unknown): SyncedPreferencesV1 
       firstDayOfWeek: firstDayOfWeek(firstDayField.value, DEFAULT_SYNCED_PREFERENCES.firstDayOfWeek),
       defaultReminder: defaultReminder(reminderField.value, DEFAULT_SYNCED_PREFERENCES.defaultReminder),
       defaultTimezone: defaultTimezone(timezoneField.value, DEFAULT_SYNCED_PREFERENCES.defaultTimezone),
+      dateFormat: dateFormat(dateFormatField.value, DEFAULT_SYNCED_PREFERENCES.dateFormat),
     },
     {
       timeFormat: timestamp(timeFormatField.updatedAt, rootUpdatedAt),
       firstDayOfWeek: timestamp(firstDayField.updatedAt, rootUpdatedAt),
       defaultReminder: timestamp(reminderField.updatedAt, rootUpdatedAt),
       defaultTimezone: timestamp(timezoneField.updatedAt, rootUpdatedAt),
+      dateFormat: timestamp(dateFormatField.updatedAt, rootUpdatedAt),
     },
     0,
   );
@@ -144,6 +160,7 @@ export function getSyncedPreferenceValues(preferences: SyncedPreferencesV1): Syn
     firstDayOfWeek: normalized.fields.firstDayOfWeek.value,
     defaultReminder: normalized.fields.defaultReminder.value,
     defaultTimezone: normalized.fields.defaultTimezone.value,
+    dateFormat: normalized.fields.dateFormat.value,
   };
 }
 
@@ -154,6 +171,7 @@ export function getSyncedPreferenceTimestamps(preferences: SyncedPreferencesV1):
     firstDayOfWeek: normalized.fields.firstDayOfWeek.updatedAt,
     defaultReminder: normalized.fields.defaultReminder.updatedAt,
     defaultTimezone: normalized.fields.defaultTimezone.updatedAt,
+    dateFormat: normalized.fields.dateFormat.updatedAt,
   };
 }
 

@@ -6,6 +6,7 @@ import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { formatDate } from '@/app/lib/date'
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
@@ -57,7 +58,7 @@ function formatDueDate(date: Date): string {
   if (diffDays === -1) return 'Yesterday'
   if (diffDays < -1) return `${Math.abs(diffDays)}d overdue`
   if (diffDays <= 7) return `In ${diffDays}d`
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return formatDate(date, 'system', { month: 'short', day: 'numeric' })
 }
 
 function dueDateColor(date: Date): string {
