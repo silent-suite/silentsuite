@@ -2,6 +2,8 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { formatDate } from '@/app/lib/date'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -29,7 +31,7 @@ function formatDateRange(date: Date, view: 'week' | 'month'): string {
   const opts: Intl.DateTimeFormatOptions = { month: 'long', year: 'numeric' }
 
   if (view === 'month') {
-    return date.toLocaleDateString('en-US', opts)
+    return formatDate(date, 'system', opts)
   }
 
   // Week view: find Monday of the week
@@ -40,8 +42,8 @@ function formatDateRange(date: Date, view: 'week' | 'month'): string {
   const sunday = new Date(monday)
   sunday.setDate(monday.getDate() + 6)
 
-  const startMonth = monday.toLocaleDateString('en-US', { month: 'long' })
-  const endMonth = sunday.toLocaleDateString('en-US', { month: 'long' })
+  const startMonth = formatDate(monday, 'system', { month: 'long' })
+  const endMonth = formatDate(sunday, 'system', { month: 'long' })
 
   if (monday.getMonth() === sunday.getMonth()) {
     return `${startMonth} ${monday.getDate()}–${sunday.getDate()}, ${monday.getFullYear()}`

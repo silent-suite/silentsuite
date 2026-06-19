@@ -11,6 +11,7 @@ import type { CalendarEvent, VAlarm } from '@silentsuite/core'
 import { buildAlarmTrigger, parseAlarmTriggerMinutes } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { formatDate } from '@/app/lib/date'
 import { Globe } from 'lucide-react'
 import {
   formatDateForInputInZone,
@@ -87,13 +88,20 @@ function formatDateForInput(date: Date, tz: string | undefined): string {
 }
 
 function formatDateForDisplay(date: Date, tz: string | undefined): string {
-  return date.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    ...(tz ? { timeZone: tz } : {}),
-  })
+  const pref = usePreferencesStore.getState().dateFormat
+  if (pref === 'system') {
+    return date.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      ...(tz ? { timeZone: tz } : {}),
+    })
+  }
+
+  const weekday = date.toLocaleDateString(undefined, { weekday: 'short', ...(tz ? { timeZone: tz } : {}) })
+  const datePart = formatDate(date, pref)
+  return `${weekday} ${datePart}`
 }
 
 // ---------------------------------------------------------------------------

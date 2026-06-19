@@ -6,6 +6,8 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { expandRecurrence, type CalendarEvent } from '@silentsuite/core'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { formatDate } from '@/app/lib/date'
 
 const WEEKDAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 const FALLBACK_CALENDAR_COLOR = '#10b981'
@@ -33,13 +35,8 @@ function dateKey(date: Date): string {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
 }
 
-function formatDayLabel(date: Date): string {
-  return date.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  })
+function formatDayLabel(date: Date, dateFormat: import('@silentsuite/core').DateFormat): string {
+  return formatDate(date, dateFormat, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 function eventOverlapsDay(startDate: Date, endDate: Date, day: Date): boolean {
@@ -108,6 +105,7 @@ export function MiniCalendar() {
   const calendars = useCalendarListStore((s) => s.calendars)
 
   const today = useMemo(() => new Date(), [])
+  const dateFormat = usePreferencesStore((s) => s.dateFormat)
 
   const handleDayClick = useCallback(
     (date: Date) => {
@@ -193,10 +191,7 @@ export function MiniCalendar() {
     }))
   }, [miniYear, miniMonth, currentDate, events, today, calendarColors, visibleCalendarIds])
 
-  const monthLabel = new Date(miniYear, miniMonth).toLocaleString('default', {
-    month: 'long',
-    year: 'numeric',
-  })
+  const monthLabel = formatDate(new Date(miniYear, miniMonth), 'system', { month: 'long', year: 'numeric' })
 
   function navigateMiniMonth(offset: number) {
     setCurrentDate(new Date(miniYear, miniMonth + offset, 1))

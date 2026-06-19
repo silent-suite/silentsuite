@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { formatDate } from '@/app/lib/date'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import type { DefaultReminder } from '@silentsuite/core'
@@ -25,6 +26,8 @@ export default function AccountPage() {
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
   const notificationSound = usePreferencesStore((s) => s.notificationSound)
   const defaultTimezone = usePreferencesStore((s) => s.defaultTimezone)
+  const dateFormat = usePreferencesStore((s) => s.dateFormat)
+  const setDateFormat = usePreferencesStore((s) => s.setDateFormat)
   const setTimeFormat = usePreferencesStore((s) => s.setTimeFormat)
   const setFirstDayOfWeek = usePreferencesStore((s) => s.setFirstDayOfWeek)
   const setDefaultReminder = usePreferencesStore((s) => s.setDefaultReminder)
@@ -71,11 +74,12 @@ export default function AccountPage() {
 
   const email = account?.email ?? user?.email ?? '—'
   const createdAt = account?.createdAt
-    ? new Date(account.createdAt).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      })
+    ? (() => {
+        const d = new Date(account.createdAt)
+        return dateFormat === 'system'
+          ? formatDate(d, 'system', { year: 'numeric', month: 'long', day: 'numeric' })
+          : formatDate(d, dateFormat)
+      })()
     : '—'
   const status = isSelfHosted ? 'Self-Hosted' : (account?.provisioningStatus ?? 'Free trial')
 
@@ -204,6 +208,21 @@ export default function AccountPage() {
                   {allTimezones.map((tz) => (
                     <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
                   ))}
+                </select>
+              </div>
+
+              {/* Date Format */}
+              <div className="space-y-2">
+                <p className="text-xs text-[rgb(var(--muted))]">Date format</p>
+                <select
+                  value={dateFormat}
+                  onChange={(e) => setDateFormat(e.target.value as import('@silentsuite/core').DateFormat)}
+                  className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="system">System locale</option>
+                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                  <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                  <option value="YYYY-MM-DD">YYYY-MM-DD</option>
                 </select>
               </div>
 

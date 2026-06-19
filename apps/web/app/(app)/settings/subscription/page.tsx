@@ -5,6 +5,7 @@ import { Crown, Loader2, Check } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import dynamic from 'next/dynamic'
 import { BILLING_API_URL } from '@/app/lib/config'
+import { formatDate as formatDateUtil } from '@/app/lib/date'
 
 const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-form'), {
   loading: () => (
@@ -57,12 +58,8 @@ const STATUS_LABELS: Record<string, string> = {
   none: 'No Subscription',
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
+function formatDateStr(iso: string): string {
+  return formatDateUtil(new Date(iso), 'system', { year: 'numeric', month: 'long', day: 'numeric' })
 }
 
 function LoadingSkeleton() {
@@ -290,7 +287,7 @@ export default function SubscriptionPage() {
 
   const isCancelled = data.status === 'cancelled' || data.status === 'expired'
   const isActiveOrTrialing = data.status === 'active' || data.status === 'trialing'
-  const accessUntilFormatted = data.renewalDate ? formatDate(data.renewalDate) : 'the end of your current period'
+  const accessUntilFormatted = data.renewalDate ? formatDateStr(data.renewalDate) : 'the end of your current period'
   // Only show Early Adopter plans — Standard plans will be enabled later
   const availablePlans = REACTIVATION_PLANS.filter((p) => p.earlyOnly)
 
@@ -352,7 +349,7 @@ export default function SubscriptionPage() {
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Trial</p>
               <p className="text-sm text-[rgb(var(--foreground))]">
-                Ends {formatDate(data.trial.endsAt)} &mdash; {data.trial.daysRemaining} day
+                Ends {formatDateStr(data.trial.endsAt)} &mdash; {data.trial.daysRemaining} day
                 {data.trial.daysRemaining !== 1 ? 's' : ''} remaining
               </p>
             </div>
@@ -374,14 +371,14 @@ export default function SubscriptionPage() {
               <p className="text-xs text-[rgb(var(--muted))]">
                 {isCancelled || data.cancelAtPeriodEnd ? 'Access until' : 'Next billing'}
               </p>
-              <p className="text-sm text-[rgb(var(--foreground))]">{formatDate(data.renewalDate)}</p>
+              <p className="text-sm text-[rgb(var(--foreground))]">{formatDateStr(data.renewalDate)}</p>
             </div>
           )}
 
           {/* Cancel at period end notice */}
           {data.cancelAtPeriodEnd && !isCancelled && data.renewalDate && (
             <p className="text-xs text-amber-400">
-              Your subscription will be cancelled at the end of the current period ({formatDate(data.renewalDate)})
+              Your subscription will be cancelled at the end of the current period ({formatDateStr(data.renewalDate)})
             </p>
           )}
         </div>
@@ -551,7 +548,7 @@ export default function SubscriptionPage() {
                   You are now on the {changePlanSuccess.plan.endsWith('_annual') ? 'Annual' : 'Monthly'} plan.
                   {changePlanSuccess.prorated
                     ? ' The change is effective immediately and your account has been prorated.'
-                    : ` The change takes effect on ${formatDate(changePlanSuccess.effectiveDate)}.`}
+                    : ` The change takes effect on ${formatDateStr(changePlanSuccess.effectiveDate)}.`}
                 </p>
                 <Button
                   size="sm"
@@ -577,7 +574,7 @@ export default function SubscriptionPage() {
                       <p className="text-xs text-[rgb(var(--muted))]">
                         {isAnnualSwitch
                           ? 'You will be charged the prorated difference immediately.'
-                          : `Your new plan takes effect at your next billing date${data.renewalDate ? ` (${formatDate(data.renewalDate)})` : ''}.`}
+                          : `Your new plan takes effect at your next billing date${data.renewalDate ? ` (${formatDateStr(data.renewalDate)})` : ''}.`}
                       </p>
                     </div>
                     {changePlanError && (
