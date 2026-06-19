@@ -44,6 +44,49 @@ class ContactTest {
 
 
     @Test
+    fun fromReaderLenientParsesMultipleValidCards() {
+        val vcard = """
+            BEGIN:VCARD
+            VERSION:4.0
+            FN:Alice
+            END:VCARD
+            BEGIN:VCARD
+            VERSION:4.0
+            FN:Bob
+            END:VCARD
+        """.trimIndent()
+        val result = Contact.fromReaderLenient(StringReader(vcard), null)
+        assertEquals(2, result.contacts.size)
+        assertEquals(0, result.failed)
+        assertEquals(listOf("Alice", "Bob"), result.contacts.mapNotNull { it.displayName }.sorted())
+    }
+
+    @Test
+    fun fromReaderLenientRecoversValidCardsWhenOneIsMalformed() {
+        // The middle card has a property line with no colon, which is
+        // syntactically invalid and rejected by ez-vcard. The valid cards on
+        // either side must still be imported.
+        val vcard = """
+            BEGIN:VCARD
+            VERSION:4.0
+            FN:Alice
+            END:VCARD
+            BEGIN:VCARD
+            VERSION:4.0
+            NoColonLine
+            END:VCARD
+            BEGIN:VCARD
+            VERSION:4.0
+            FN:Bob
+            END:VCARD
+        """.trimIndent()
+        val result = Contact.fromReaderLenient(StringReader(vcard), null)
+        assertEquals(2, result.contacts.size)
+        assertEquals(1, result.failed)
+        assertEquals(listOf("Alice", "Bob"), result.contacts.mapNotNull { it.displayName }.sorted())
+    }
+
+    @Test
     fun testDropEmptyProperties() {
         val vcard = "BEGIN:VCARD\n" +
                 "VERSION:4.0\n" +

@@ -333,15 +333,17 @@ class ImportFragment : DialogFragment() {
                     } else if (enumType == CollectionInfo.Type.ADDRESS_BOOK) {
                         val uidToLocalId = HashMap<String?, Long>()
                         val downloader = ContactsSyncManager.ResourceDownloader(context)
-                        val contacts = Contact.fromReader(importReader, downloader)
+                        val parseResult = Contact.fromReaderLenient(importReader, downloader)
+                        val contacts = parseResult.contacts
+                        result.failed = parseResult.failed.toLong()
 
-                        if (contacts.isEmpty()) {
+                        if (contacts.isEmpty() && parseResult.failed == 0) {
                             Logger.log.warning("No contacts found in selected file.")
                             result.e = Exception("No contacts found in the selected file.")
                             return result
                         }
 
-                        result.total = contacts.size.toLong()
+                        result.total = (contacts.size + parseResult.failed).toLong()
 
                         finishParsingFile(contacts.size)
 

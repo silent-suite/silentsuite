@@ -74,7 +74,7 @@ class ResultFragment : DialogFragment() {
             get() = e != null
 
         val skipped: Long
-            get() = total - (added + updated)
+            get() = total - (added + updated + failed)
 
         override fun toString(): String {
             return "ResultFragment.ImportResult(total=" + this.total + ", added=" + this.added + ", updated=" + this.updated + ", failed=" + this.failed + ", e=" + this.e?.javaClass?.name + ")"
