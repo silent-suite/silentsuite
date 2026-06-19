@@ -39,6 +39,7 @@
     <style name="AppTheme.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
+        <item name="android:statusBarColor">@color/navy700</item>
     </style>
 
     <style name="AppTheme.Dialog.Alert" parent="Theme.AppCompat.DayNight.Dialog.Alert">

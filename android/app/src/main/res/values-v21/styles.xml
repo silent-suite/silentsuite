@@ -12,7 +12,11 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
+        <!-- Solid navy status bar matches the always-navy toolbar so the system
+             time/battery/connectivity icons (light by default) stay readable in
+             both light and dark themes. Previously transparent, which made light
+             status-bar icons invisible on the light offwhite background. -->
+        <item name="android:statusBarColor">@color/navy700</item>
     </style>
 
 </resources>
