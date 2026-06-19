@@ -17,6 +17,8 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 
 ## Before You Start
 
+If this is your first contribution, start with an issue labeled `good first issue`. These are intentionally small and should have exact files and acceptance criteria. If anything is unclear, ask in the issue before opening a PR.
+
 1. **Read the [Development Setup](./dev-setup.md) guide** to get the project running locally.
 2. **Check existing issues** on [GitHub](https://github.com/silent-suite/silentsuite/issues) for something to work on, or open a new issue to discuss your idea before writing code.
 3. **Follow the [Pull Request Guide](./pull-request-guide.md)** when submitting changes.
