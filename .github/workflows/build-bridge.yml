@@ -112,6 +112,17 @@ jobs:
       # -----------------------------------------------------------------------
       # 5. Install bridge + PyInstaller (native builds)
       # -----------------------------------------------------------------------
+      - name: Install OpenSSL (macOS, non-arm64)
+        if: runner.os == 'macOS' && matrix.os-label != 'macos-arm64'
+        shell: bash
+        run: |
+          # etebase-py 0.31.5 uses openssl-sys 0.9.58 which only supports OpenSSL 1.x.
+          brew install openssl@1.1 || brew install openssl@1.1 --build-from-source
+          echo "OPENSSL_DIR=$(brew --prefix openssl@1.1)" >> $GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@1.1)/lib" >> $GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@1.1)/include" >> $GITHUB_ENV
+          echo "OPENSSL_NO_VENDOR=1" >> $GITHUB_ENV
+
       - name: Install dependencies (native)
         if: "!matrix.qemu"
         working-directory: bridge
