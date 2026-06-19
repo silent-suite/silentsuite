@@ -10,6 +10,10 @@ export interface Task {
   due_date: Date | null;
   priority: Priority;
   completed: boolean;
+  /** User-defined labels/categories for grouping and filtering.
+   *  Round-tripped via the ICS CATEGORIES property (comma-separated).
+   *  Optional so existing callers keep compiling; deserialize paths default to []. */
+  categories?: string[];
   listId?: string;
   created_at: Date;
   updated_at: Date;
@@ -100,6 +104,7 @@ export function toVTodo(task: Task): string {
     priority: PRIORITY_TO_ICAL[task.priority],
     status: task.completed ? 'COMPLETED' : 'NEEDS-ACTION',
     percentComplete: task.completed ? 100 : 0,
+    categories: task.categories && task.categories.length > 0 ? task.categories : undefined,
     created: formatICalUtcDateTime(task.created_at),
     lastModified: formatICalUtcDateTime(task.updated_at),
   };
@@ -141,6 +146,8 @@ export function fromVTodo(vtodoStr: string): Task {
     due_date,
     priority: icalPriorityToModel(vtodo.priority),
     completed,
+    // Preserve CATEGORIES for round-trip; default to [] for legacy records
+    categories: vtodo.categories ?? [],
     created_at: vtodo.created ? parseICalDateValue(vtodo.created) : now,
     updated_at: vtodo.lastModified ? parseICalDateValue(vtodo.lastModified) : now,
   };

@@ -39,6 +39,7 @@ function makeFullContact(overrides?: Partial<Contact>): Contact {
     notes: 'Met at conference',
     birthday: '1990-01-15',
     photoUrl: 'https://example.com/photo.jpg',
+    categories: ['Friends', 'VIP'],
     created_at: new Date(2026, 0, 1, 0, 0, 0),
     updated_at: new Date(2026, 2, 14, 12, 0, 0),
     ...overrides,
@@ -63,6 +64,61 @@ function makeMinimalContact(): Contact {
     updated_at: new Date(2026, 2, 15, 0, 0, 0),
   };
 }
+
+// ── categories roundtrip (#291) ──
+
+describe('categories roundtrip (#291)', () => {
+  it('roundtrips multiple comma-separated categories', () => {
+    const original = makeFullContact({ categories: ['Friends', 'Work', 'Family'] });
+    const vcardStr = toVCard(original);
+
+    expect(vcardStr).toContain('CATEGORIES:Friends,Work,Family');
+
+    const restored = fromVCard(vcardStr);
+    expect(restored.categories).toEqual(['Friends', 'Work', 'Family']);
+  });
+
+  it('roundtrips a category containing an escaped comma', () => {
+    const original = makeFullContact({ categories: ['Team, Alpha', 'VIP'] });
+    const vcardStr = toVCard(original);
+
+    expect(vcardStr).toContain('CATEGORIES:Team\\, Alpha,VIP');
+
+    const restored = fromVCard(vcardStr);
+    expect(restored.categories).toEqual(['Team, Alpha', 'VIP']);
+  });
+
+  it('defaults categories to [] when deserializing a legacy vCard lacking CATEGORIES', () => {
+    const legacy = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:legacy-contact-nocat',
+      'FN:Legacy Contact',
+      'ORG:Old Corp',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const restored = deserializeContact(legacy);
+    expect(restored.categories).toEqual([]);
+  });
+
+  it('omits the CATEGORIES line when categories is empty', () => {
+    const contact = makeFullContact({ categories: [] });
+    const vcardStr = toVCard(contact);
+
+    expect(vcardStr).not.toContain('CATEGORIES');
+    expect(fromVCard(vcardStr).categories).toEqual([]);
+  });
+
+  it('omits the CATEGORIES line when categories is undefined', () => {
+    const contact = makeFullContact();
+    delete contact.categories;
+    const vcardStr = toVCard(contact);
+
+    expect(vcardStr).not.toContain('CATEGORIES');
+    expect(fromVCard(vcardStr).categories).toEqual([]);
+  });
+});
 
 // ── toVCard / fromVCard roundtrip ──
 
