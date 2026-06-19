@@ -10,7 +10,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
-        android:icon="@drawable/ic_save_dark"
+        android:icon="@drawable/ic_save_light"
         android:onClick="onCreateCollection"
         android:title="@string/create_collection_create"
         app:showAsAction="always" />

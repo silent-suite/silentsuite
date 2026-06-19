@@ -11,12 +11,12 @@
       xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item android:title="@string/view_collection_edit"
-        android:icon="@drawable/ic_edit_dark"
+        android:icon="@drawable/ic_edit_light"
         android:onClick="onEditCollection"
         app:showAsAction="always" />
 
     <item android:title="@string/view_collection_members"
-        android:icon="@drawable/ic_members_dark"
+        android:icon="@drawable/ic_members_light"
         android:onClick="onManageMembers"
         app:showAsAction="ifRoom"/>
 

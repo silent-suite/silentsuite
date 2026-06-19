@@ -12,12 +12,12 @@
 
     <item android:title="@string/view_collection_edit"
         android:id="@+id/on_edit"
-        android:icon="@drawable/ic_edit_dark"
+        android:icon="@drawable/ic_edit_light"
         app:showAsAction="always" />
 
     <item android:title="@string/view_collection_members"
         android:id="@+id/on_manage_members"
-        android:icon="@drawable/ic_members_dark"
+        android:icon="@drawable/ic_members_light"
         app:showAsAction="ifRoom"/>
 
     <item android:title="@string/view_collection_import"
