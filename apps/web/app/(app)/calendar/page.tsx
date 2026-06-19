@@ -1,11 +1,12 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Folder } from 'lucide-react'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { PullToRefresh } from '@/app/components/PullToRefresh'
+import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { CalendarViewSwitcher } from './components/CalendarViewSwitcher'
 import { CalendarGrid, type SlotClickEvent, type EventClickInfo } from './components/CalendarGrid'
 import { AgendaView } from './components/AgendaView'
@@ -101,6 +102,7 @@ export default function CalendarPage() {
 
   const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null)
   const [eventInstanceDate, setEventInstanceDate] = useState<Date | undefined>(undefined)
+  const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
 
   const dateLabel = useMemo(
     () => formatDateRange(currentDate, currentView),
@@ -223,6 +225,13 @@ export default function CalendarPage() {
             </button>
           </div>
           {/* On mobile, only agenda view is shown — hide the view switcher */}
+          <button
+            onClick={() => setCollectionSheetOpen(true)}
+            className="md:hidden rounded-md p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
+            aria-label="Manage calendars"
+          >
+            <Folder className="h-5 w-5" />
+          </button>
         </div>
         <h2 className="text-base font-semibold text-[rgb(var(--foreground))] px-1">{dateLabel}</h2>
       </div>
@@ -276,6 +285,13 @@ export default function CalendarPage() {
 
       {/* Mobile floating add button */}
       <FloatingAddButton />
+
+      {/* Mobile collection management sheet */}
+      <MobileCollectionSheet
+        type="calendar"
+        open={collectionSheetOpen}
+        onClose={() => setCollectionSheetOpen(false)}
+      />
     </div>
   )
 }
