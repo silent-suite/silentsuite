@@ -29,6 +29,39 @@ export function toAllDayEndPlainDate(startDate: Date, endDate: Date): Temporal.P
   return Temporal.PlainDate.compare(endPd, startPd) < 0 ? startPd : endPd
 }
 
+/** Return true when a timed event crosses at least one local calendar-day boundary. */
+export function isMultiDayTimedRange(startDate: Date, endDate: Date): boolean {
+  return (
+    startDate.getFullYear() !== endDate.getFullYear() ||
+    startDate.getMonth() !== endDate.getMonth() ||
+    startDate.getDate() !== endDate.getDate()
+  )
+}
+
+/** Compute the inclusive end date for rendering a timed multi-day event in month grids.
+ *
+ * Schedule-X renders spanning bars in the month grid for date-only events. Timed multi-day
+ * events should therefore be handed to month view as PlainDate ranges, while week view keeps
+ * their exact ZonedDateTime start/end. A timed appointment ending exactly at local midnight
+ * does not occupy that final day visually, so clamp the month bar to the prior date.
+ */
+export function toTimedMonthEndPlainDate(startDate: Date, endDate: Date): Temporal.PlainDate {
+  const startPd = dateToPlainDate(startDate)
+  let endPd = dateToPlainDate(endDate)
+
+  if (
+    endDate.getHours() === 0 &&
+    endDate.getMinutes() === 0 &&
+    endDate.getSeconds() === 0 &&
+    endDate.getMilliseconds() === 0 &&
+    Temporal.PlainDate.compare(endPd, startPd) > 0
+  ) {
+    endPd = endPd.subtract({ days: 1 })
+  }
+
+  return Temporal.PlainDate.compare(endPd, startPd) < 0 ? startPd : endPd
+}
+
 /** Convert an iCal-exclusive all-day end Date (next-day local-midnight) into a Date
  * representing the inclusive last day at local-midnight.
  *
