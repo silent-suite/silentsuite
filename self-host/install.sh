@@ -238,6 +238,7 @@ echo ""
 echo "Generating secure passwords..."
 DATABASE_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=')
 SUPER_PASS=$(openssl rand -base64 16 | tr -d '/+=')
+BOOTSTRAP_ADMIN_TOKEN=$(openssl rand -base64 32 | tr -d '/+=')
 
 # ── Write .env ─────────────────────────────────────────────────────────
 
@@ -267,6 +268,14 @@ SUPER_PASS=$SUPER_PASS
 # Open registration toggle. "false" allows new signups (default; needed for
 # the first admin to register). Flip to "true" once the admin is registered.
 ETEBASE_DISABLE_SIGNUP=false
+
+# One-time first-admin signup token. Use this only for the first signup by
+# entering https://$DOMAIN/?bootstrap_token=$BOOTSTRAP_ADMIN_TOKEN as the
+# server URL in the app. After the first account exists, the token is ignored.
+ETEBASE_BOOTSTRAP_ADMIN_TOKEN=$BOOTSTRAP_ADMIN_TOKEN
+
+# Hide the advanced Django /admin/ panel unless explicitly re-enabled.
+ETEBASE_DISABLE_DJANGO_ADMIN=true
 EOF
 
 chmod 600 .env
@@ -405,9 +414,10 @@ echo ""
 echo "  2. Point your DNS A record for $DOMAIN"
 echo "     to this server's public IP."
 echo ""
-echo "  3. Open https://app.silentsuite.io (or the mobile app)"
+echo "  3. Open https://app.silentsuite.io in a browser"
 echo "  4. On the signup page, expand 'Advanced Settings'"
-echo "  5. Enter https://$DOMAIN as the server URL"
+echo "  5. Enter this one-time first-admin server URL:"
+echo "       https://$DOMAIN/?bootstrap_token=$BOOTSTRAP_ADMIN_TOKEN"
 echo "  6. Create your account — you'll be the admin!"
 echo "  7. Immediately run ./close-signups.sh to block further registration."
 echo ""
@@ -441,10 +451,14 @@ ${C_RED}┌───────────────────────
 │  SECURITY: open registration is currently ENABLED.                  │
 └─────────────────────────────────────────────────────────────────────┘${C_RESET}
 
-  Anyone who reaches https://$DOMAIN/ before you do can grab an account
-  on this server. To stop that:
+  First signup is protected by a one-time bootstrap token generated into
+  your local .env file. Use this server URL for your first signup:
 
-    ${C_YELLOW}1. Sign up your own account at https://$DOMAIN/ now (step 6 above).${C_RESET}
+    ${C_YELLOW}https://$DOMAIN/?bootstrap_token=$BOOTSTRAP_ADMIN_TOKEN${C_RESET}
+
+  After your admin account exists, close general registration:
+
+    ${C_YELLOW}1. Sign up your own account now (step 6 above).${C_RESET}
     ${C_YELLOW}2. Run ${C_RESET}./close-signups.sh${C_YELLOW} from this directory.${C_RESET}
 
   ./close-signups.sh sets ETEBASE_DISABLE_SIGNUP=true in .env and recreates
