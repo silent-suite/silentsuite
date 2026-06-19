@@ -17,6 +17,9 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 
 ## Before You Start
 
+- Do not paste passwords, API keys, recovery phrases, `.env` values, or private calendar/contact/task content into issues, PRs, screenshots, or logs.
+- Redact sensitive values before posting debug output.
+
 1. **Read the [Development Setup](./dev-setup.md) guide** to get the project running locally.
 2. **Check existing issues** on [GitHub](https://github.com/silent-suite/silentsuite/issues) for something to work on, or open a new issue to discuss your idea before writing code.
 3. **Follow the [Pull Request Guide](./pull-request-guide.md)** when submitting changes.
