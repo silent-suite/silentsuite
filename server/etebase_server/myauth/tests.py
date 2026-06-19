@@ -37,7 +37,7 @@ class DjangoAppLoadTest(TestCase):
         self.assertIn("django.middleware.csrf.CsrfViewMiddleware", settings.MIDDLEWARE)
 
 
-@override_settings(ALLOWED_HOSTS=["*"], DEBUG=True)
+@override_settings(ALLOWED_HOSTS=["*"], DEBUG=True, SECURE_SSL_REDIRECT=False)
 class URLRoutingTest(TestCase):
     """Verify basic URL routing is configured."""
 

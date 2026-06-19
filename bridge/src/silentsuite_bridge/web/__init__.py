@@ -54,6 +54,37 @@ def _has_valid_csrf(environ):
     return bool(token) and hmac.compare_digest(token, _dashboard_csrf_token)
 
 
+# Localhost Host allowlist for defense-in-depth against DNS-rebinding and
+# cross-origin attacks on the dashboard (SEC-R7.4). The dashboard is
+# loopback-only by default, so only localhost variants are accepted.
+
+
+def _has_valid_host(environ):
+    """Check that the Host header matches a localhost variant.
+
+    Handles IPv4 (127.0.0.1:port), IPv6 ([::1]:port, [::1]), and bare
+    hostnames (localhost) correctly by stripping the port first.
+    """
+    raw = environ.get("HTTP_HOST", "")
+    # Strip port: split on the last colon only (IPv6 has colons in the address).
+    # For bracketed IPv6 like [::1]:37358, extract between [ and ].
+    if raw.startswith("["):
+        # IPv6 with port: [::1]:37358 or IPv6 without port: [::1]
+        bracket_end = raw.find("]")
+        if bracket_end > 0:
+            host = raw[1:bracket_end]
+        else:
+            host = ""
+    else:
+        # IPv4 or hostname, possibly with :port
+        host = raw.rsplit(":", 1)[0] if ":" in raw else raw
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _host_error():
+    return _json_response(403, {"error": "Dashboard access denied: non-local Host header"})
+
+
 def _csrf_error():
     return _json_response(403, {"error": "Invalid dashboard CSRF token"})
 
@@ -962,6 +993,10 @@ class Web(BaseWeb):
 
     def get(self, environ, base_prefix, path, user):
         """Serve the dashboard for Radicale's web endpoint."""
+        # SEC-R7.4: Reject non-local Host headers before any processing.
+        if not _has_valid_host(environ):
+            return _host_error()
+
         if path in ("", "/", "/.web", "/.web/"):
             html = _render_dashboard()
             return (
@@ -1079,6 +1114,11 @@ class Web(BaseWeb):
 
     def post(self, environ, base_prefix, path, user):
         """Handle POST requests for API endpoints."""
+        # SEC-R7.4: Reject non-local Host headers before any processing.
+        # Defense-in-depth against DNS-rebinding when ALLOW_REMOTE is enabled.
+        if not _has_valid_host(environ):
+            return _host_error()
+
         # Trigger immediate sync
         if path == "/.web/api/sync":
             if not _has_valid_csrf(environ):

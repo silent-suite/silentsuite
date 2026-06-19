@@ -221,6 +221,28 @@ if "DJANGO_MEDIA_ROOT" in os.environ:
 if env_flag("ETEBASE_DISABLE_SIGNUP"):
     ETEBASE_CREATE_USER_FUNC = "etebase_server.django.utils.create_user_blocked"
 
+# ──────────────────────────────────────────────────────────────────────
+# Production HTTPS and secure-cookie defaults (SEC-R7.8)
+#
+# These settings are applied when DEBUG=False. Self-hosters behind a TLS
+# proxy should set ETEBASE_BEHIND_PROXY=true so SECURE_PROXY_SSL_HEADER is
+# configured. All values can be overridden via the etebase_server_settings
+# module import below or by environment variables.
+# ──────────────────────────────────────────────────────────────────────
+if not DEBUG:
+    SECURE_SSL_REDIRECT = os.environ.get("ETEBASE_SECURE_SSL_REDIRECT", "true").lower() == "true"
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get("ETEBASE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+
+# Only set the proxy SSL header when explicitly behind a trusted reverse proxy.
+if os.environ.get("ETEBASE_BEHIND_PROXY", "").lower() in ("1", "true", "yes"):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Make an `etebase_server_settings` module available to override settings.
 try:
     from etebase_server_settings import *  # noqa: F403

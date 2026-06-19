@@ -36,7 +36,10 @@ def __renew_token(auth_token: AuthToken):
 
 
 def __get_authenticated_user(api_token: str):
-    api_token = api_token.split()[1]
+    parts = api_token.split()
+    if len(parts) != 2:
+        raise AuthenticationFailed(detail="Malformed Authorization header.")
+    api_token = parts[1]
     try:
         token: AuthToken = AuthToken.objects.select_related("user").get(key=api_token)
     except AuthToken.DoesNotExist:
