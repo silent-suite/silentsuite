@@ -50,15 +50,19 @@ vi.mock('@/app/stores/use-calendar-list-store', () => ({
   },
 }))
 
-vi.mock('@/app/stores/use-preferences-store', () => ({
-  usePreferencesStore: function usePreferencesStore<T>(selector: (state: {
-    defaultReminder: string
-    timeFormat: string
-    defaultTimezone: string
-  }) => T): T {
-    return selector({ defaultReminder: 'none', timeFormat: '24h', defaultTimezone: 'UTC' })
-  },
-}))
+vi.mock('@/app/stores/use-preferences-store', () => {
+  const state = {
+    defaultReminder: 'none',
+    timeFormat: '24h',
+    defaultTimezone: 'UTC',
+    dateFormat: 'system',
+  }
+  const usePreferencesStore = function usePreferencesStore<T>(selector: (currentState: typeof state) => T): T {
+    return selector(state)
+  }
+  usePreferencesStore.getState = () => state
+  return { usePreferencesStore }
+})
 
 vi.mock('@/app/providers/notification-provider', () => ({
   useNotifications: () => ({ permission: 'granted', requestPermission: mocks.requestPermission }),

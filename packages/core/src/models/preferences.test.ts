@@ -34,8 +34,9 @@ describe('synced preferences', () => {
       firstDayOfWeek: 'sunday',
       defaultReminder: '30',
       defaultTimezone: 'Europe/Amsterdam',
+      dateFormat: 'system',
     });
-    expect(restored.updatedAt).toBe(13);
+    expect(restored.updatedAt).toBe(99);
   });
 
   it('normalizes invalid remote values to safe defaults', () => {
@@ -55,6 +56,7 @@ describe('synced preferences', () => {
       firstDayOfWeek: 'monday',
       defaultReminder: '15',
       defaultTimezone: 'UTC',
+      dateFormat: 'system',
     });
   });
 
@@ -95,6 +97,7 @@ describe('synced preferences', () => {
       firstDayOfWeek: 'sunday',
       defaultReminder: '60',
       defaultTimezone: 'Europe/Amsterdam',
+      dateFormat: 'system',
     });
   });
 });

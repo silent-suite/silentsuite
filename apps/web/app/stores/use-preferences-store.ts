@@ -31,6 +31,7 @@ function zeroTimestamps(): SyncedPreferenceTimestamps {
     firstDayOfWeek: 0,
     defaultReminder: 0,
     defaultTimezone: 0,
+    dateFormat: 0,
   }
 }
 
@@ -44,8 +45,10 @@ interface PreferencesState {
   defaultReminder: DefaultReminder
   notificationSound: boolean
   defaultTimezone: string // IANA timezone, e.g. 'Europe/Amsterdam'
+  dateFormat: import('@silentsuite/core').DateFormat
   syncedPreferenceUpdatedAt: SyncedPreferenceTimestamps
   setTimeFormat: (format: TimeFormat) => void
+  setDateFormat: (format: import('@silentsuite/core').DateFormat) => void
   setFirstDayOfWeek: (day: FirstDayOfWeek) => void
   setDefaultReminder: (value: DefaultReminder) => void
   setNotificationSound: (enabled: boolean) => void
@@ -61,6 +64,10 @@ export const usePreferencesStore = create<PreferencesState>()(
       ...defaultSyncedValues(),
       notificationSound: true,
       syncedPreferenceUpdatedAt: zeroTimestamps(),
+      setDateFormat: (dateFormat) => set((state) => ({
+        dateFormat,
+        syncedPreferenceUpdatedAt: { ...state.syncedPreferenceUpdatedAt, dateFormat: Date.now() },
+      })),
       setTimeFormat: (timeFormat) => set((state) => ({
         timeFormat,
         syncedPreferenceUpdatedAt: { ...state.syncedPreferenceUpdatedAt, timeFormat: Date.now() },
@@ -92,6 +99,7 @@ export const usePreferencesStore = create<PreferencesState>()(
             firstDayOfWeek: state.firstDayOfWeek,
             defaultReminder: state.defaultReminder,
             defaultTimezone: state.defaultTimezone,
+            dateFormat: (state as any).dateFormat,
           },
           state.syncedPreferenceUpdatedAt,
           0,
@@ -106,10 +114,12 @@ export const usePreferencesStore = create<PreferencesState>()(
           || values.firstDayOfWeek !== state.firstDayOfWeek
           || values.defaultReminder !== state.defaultReminder
           || values.defaultTimezone !== state.defaultTimezone
+          || values.dateFormat !== (state as any).dateFormat
           || timestamps.timeFormat !== state.syncedPreferenceUpdatedAt.timeFormat
           || timestamps.firstDayOfWeek !== state.syncedPreferenceUpdatedAt.firstDayOfWeek
           || timestamps.defaultReminder !== state.syncedPreferenceUpdatedAt.defaultReminder
           || timestamps.defaultTimezone !== state.syncedPreferenceUpdatedAt.defaultTimezone
+          || timestamps.dateFormat !== state.syncedPreferenceUpdatedAt.dateFormat
 
         if (changed) {
           set({ ...values, syncedPreferenceUpdatedAt: timestamps })

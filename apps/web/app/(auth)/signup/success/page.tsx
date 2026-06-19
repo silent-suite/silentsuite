@@ -6,6 +6,7 @@ import { CheckCircle, AlertTriangle, Lock } from 'lucide-react'
 import { MS_PER_DAY } from '@/app/lib/constants'
 import { Button } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { formatDate as formatDateUtil } from '@/app/lib/date'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
@@ -193,13 +194,7 @@ function SignupSuccessInner() {
   }
 
   // --- Default: no Stripe params (direct navigation) ---
-  const trialEndDate = new Date(
-    Date.now() + 30 * MS_PER_DAY,
-  ).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  })
+  const trialEndDate = formatDateUtil(new Date(Date.now() + 30 * MS_PER_DAY), 'system', { day: 'numeric', month: 'long', year: 'numeric' })
 
   return (
     <div className="max-w-md mx-auto space-y-6 text-center">

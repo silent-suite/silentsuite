@@ -2,6 +2,8 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, Plus, Folder } from 'lucide-react'
+import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { formatDate } from '@/app/lib/date'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -26,11 +28,11 @@ function snapTo30Min(date: Date): Date {
   return snapped
 }
 
-function formatDateRange(date: Date, view: 'week' | 'month'): string {
+function formatDateRange(date: Date, view: 'week' | 'month', dateFormat: import('@silentsuite/core').DateFormat): string {
   const opts: Intl.DateTimeFormatOptions = { month: 'long', year: 'numeric' }
 
   if (view === 'month') {
-    return date.toLocaleDateString('en-US', opts)
+    return formatDate(date, dateFormat, opts)
   }
 
   // Week view: find Monday of the week
@@ -41,8 +43,8 @@ function formatDateRange(date: Date, view: 'week' | 'month'): string {
   const sunday = new Date(monday)
   sunday.setDate(monday.getDate() + 6)
 
-  const startMonth = monday.toLocaleDateString('en-US', { month: 'long' })
-  const endMonth = sunday.toLocaleDateString('en-US', { month: 'long' })
+  const startMonth = formatDate(monday, 'system', { month: 'long' })
+  const endMonth = formatDate(sunday, 'system', { month: 'long' })
 
   if (monday.getMonth() === sunday.getMonth()) {
     return `${startMonth} ${monday.getDate()}–${sunday.getDate()}, ${monday.getFullYear()}`
@@ -99,14 +101,15 @@ export default function CalendarPage() {
   const selectedEventId = useCalendarStore((s) => s.selectedEventId)
   const setSelectedEvent = useCalendarStore((s) => s.setSelectedEvent)
   const calendars = useCalendarListStore((s) => s.calendars)
+  const dateFormat = usePreferencesStore((s) => s.dateFormat)
 
   const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null)
   const [eventInstanceDate, setEventInstanceDate] = useState<Date | undefined>(undefined)
   const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
 
   const dateLabel = useMemo(
-    () => formatDateRange(currentDate, currentView),
-    [currentDate, currentView],
+    () => formatDateRange(currentDate, currentView, dateFormat),
+    [currentDate, currentView, dateFormat],
   )
 
   const visibleCalendarIds = useMemo(
