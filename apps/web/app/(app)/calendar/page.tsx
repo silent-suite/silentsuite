@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Search as SearchIcon } from 'lucide-react'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -120,6 +120,11 @@ export default function CalendarPage() {
     [events, visibleCalendarIds],
   )
 
+  // Search
+  const searchQuery = useCalendarStore((s) => s.searchQuery)
+  const setSearchQuery = useCalendarStore((s) => s.setSearchQuery)
+  const filteredEvents = useCalendarStore((s) => s.getFilteredEvents())
+
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
     if (!canWrite) return
     setCreateDialog({
@@ -232,6 +237,59 @@ export default function CalendarPage() {
         <CalendarSkeleton />
       ) : (
         <>
+          {/* Search bar */}
+          <div className="px-1">
+            <div className="hidden md:block">
+              <div className="relative max-w-md">
+                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search events..."
+                  aria-label="Search events"
+                  className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] pl-9 pr-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+              </div>
+              {searchQuery.trim() !== '' && (
+                <div className="mt-2 max-w-md space-y-1">
+                  {filteredEvents.map((e) => (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onClick={() => {
+                        // Navigate calendar to event date and open event
+                        useCalendarStore.getState().setCurrentDate(new Date(e.startDate))
+                        useCalendarStore.getState().setSelectedEvent(e.id)
+                      }}
+                      className="w-full text-left rounded-md px-3 py-2 hover:bg-[rgb(var(--surface))]"
+                    >
+                      <div className="text-sm font-medium text-[rgb(var(--foreground))] truncate">{e.title || 'Untitled'}</div>
+                      <div className="text-xs text-[rgb(var(--muted))] truncate">{new Date(e.startDate).toLocaleString()}</div>
+                    </button>
+                  ))}
+                  {filteredEvents.length === 0 && (
+                    <div className="text-xs text-[rgb(var(--muted))]">No results</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Mobile search: inline above agenda */}
+            <div className="md:hidden mb-2">
+              <div className="relative">
+                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search events..."
+                  aria-label="Search events"
+                  className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] pl-9 pr-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+
           {/* Desktop: schedule-x grid */}
           <div className="hidden md:flex md:flex-1 md:min-h-0">
             <CalendarGrid events={visibleEvents} onSlotClick={handleSlotClick} onEventClick={handleEventClick} />
