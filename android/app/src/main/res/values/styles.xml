@@ -85,6 +85,8 @@
     <style name="AppTheme.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
+        <!-- Solid navy status bar so light system icons stay readable (see values-v21). -->
+        <item name="android:statusBarColor">@color/navy700</item>
     </style>
 
 
