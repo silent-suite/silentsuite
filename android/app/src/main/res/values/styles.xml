@@ -102,6 +102,34 @@
     <style name="login_type_headline">
         <item name="android:textSize">22sp</item>
     </style>
+
+    <!-- Unified secondary login links: consistent size, left alignment, ripple.
+         Used by forgot_password, create_account, and show_advanced (Custom server). -->
+    <style name="login_link">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:gravity">center_vertical|start</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingTop">6dp</item>
+        <item name="android:paddingBottom">6dp</item>
+        <item name="android:textColor">?attr/colorSecondary</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:background">?attr/selectableItemBackground</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <!-- Filled primary login button (backgroundTint + textColor set on the element
+         to avoid attr-namespace ambiguity in the style). -->
+    <style name="login_button" parent="Widget.MaterialComponents.Button">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">48dp</item>
+        <item name="android:layout_marginStart">8dp</item>
+        <item name="android:layout_marginEnd">8dp</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
     <style name="account_list_card">
         <item name="android:layout_width">match_parent</item>
     </style>

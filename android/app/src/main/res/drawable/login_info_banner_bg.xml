@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rounded background for the login info banner. Uses the theme-aware
+     infoColor so it adapts to light (#E0EDF4) and dark (#0F2A3D) themes. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/infoColor" />
+    <corners android:radius="8dp" />
+</shape>
