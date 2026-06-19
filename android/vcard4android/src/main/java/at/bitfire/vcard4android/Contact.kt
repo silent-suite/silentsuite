@@ -132,6 +132,36 @@ class Contact {
             return contacts
         }
 
+        /**
+         * Lenient variant of [fromReader] that parses each vCard block individually
+         * so a single malformed card does not fail the entire file. Returns the
+         * successfully parsed contacts plus a count of cards that could not be
+         * parsed. No personally-identifiable data is retained or logged — only
+         * the failed count is kept.
+         */
+        fun fromReaderLenient(reader: Reader, downloader: Downloader?): LenientParseResult {
+            val text = reader.readText()
+            val blocks = VCARD_BLOCK_REGEX.findAll(text).map { it.value }.toList()
+            if (blocks.isEmpty())
+                return LenientParseResult(emptyList(), 0)
+
+            val contacts = LinkedList<Contact>()
+            var failed = 0
+            for (block in blocks) {
+                try {
+                    contacts += fromVCard(Ezvcard.parse(block).first(), downloader)
+                } catch (e: Throwable) {
+                    failed++
+                }
+            }
+            return LenientParseResult(contacts, failed)
+        }
+
+        private val VCARD_BLOCK_REGEX = Regex("(?is)BEGIN:VCARD.*?END:VCARD")
+
+        /** Result of a lenient vCard parse: the parsed contacts and how many cards failed. */
+        class LenientParseResult(val contacts: List<Contact>, val failed: Int)
+
         private fun fromVCard(vCard: VCard, downloader: Downloader?): Contact {
             val c = Contact()
 

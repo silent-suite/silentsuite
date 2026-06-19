@@ -8,7 +8,7 @@ import org.junit.Test
 class ImportResultTest {
 
     @Test
-    fun skippedCountsEntriesThatWereNotAddedOrUpdated() {
+    fun skippedExcludesAddedUpdatedAndFailed() {
         val result = ResultFragment.ImportResult().also {
             it.total = 3
             it.added = 1
@@ -16,7 +16,20 @@ class ImportResultTest {
             it.failed = 1
         }
 
-        assertEquals(1, result.skipped)
+        // failed entries are no longer double-counted as skipped
+        assertEquals(0, result.skipped)
+    }
+
+    @Test
+    fun skippedCountsEntriesNotAddedUpdatedOrFailed() {
+        val result = ResultFragment.ImportResult().also {
+            it.total = 5
+            it.added = 1
+            it.updated = 1
+            it.failed = 1
+        }
+
+        assertEquals(2, result.skipped)
     }
 
     @Test
