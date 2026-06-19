@@ -26,6 +26,10 @@ export interface Contact {
   notes: string;
   birthday: string | null;
   photoUrl: string | null;
+  /** User-defined labels/categories for grouping and filtering.
+   *  Round-tripped via the vCard CATEGORIES property (comma-separated).
+   *  Optional so existing callers keep compiling; deserialize paths default to []. */
+  categories?: string[];
   listId?: string;
   created_at: Date;
   updated_at: Date;
@@ -46,6 +50,7 @@ export function toVCard(contact: Contact): string {
     },
     org: contact.organization || undefined,
     title: contact.title || undefined,
+    categories: contact.categories && contact.categories.length > 0 ? contact.categories : undefined,
     note: contact.notes || undefined,
     bday: contact.birthday ?? undefined,
     photo: contact.photoUrl ?? undefined,
@@ -90,6 +95,8 @@ export function fromVCard(vcardStr: string): Contact {
     notes: vcard.note ?? '',
     birthday: vcard.bday ?? null,
     photoUrl: vcard.photo ?? null,
+    // Preserve CATEGORIES for round-trip; default to [] for legacy records
+    categories: vcard.categories ?? [],
     created_at: now,
     updated_at: vcard.rev ? parseRevTimestamp(vcard.rev) : now,
   };

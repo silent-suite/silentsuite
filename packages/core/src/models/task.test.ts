@@ -19,6 +19,7 @@ function makeFullTask(overrides?: Partial<Task>): Task {
     due_date: new Date(2026, 2, 20, 17, 0, 0), // March 20, 2026 17:00
     priority: 'high',
     completed: false,
+    categories: ['Work', 'Urgent'],
     created_at: new Date(2026, 0, 1, 0, 0, 0),
     updated_at: new Date(2026, 2, 10, 12, 0, 0),
     ...overrides,
@@ -38,6 +39,61 @@ function makeMinimalTask(): Task {
     updated_at: new Date(2026, 2, 15, 0, 0, 0),
   };
 }
+
+// ── categories roundtrip (#291) ──
+
+describe('categories roundtrip (#291)', () => {
+  it('roundtrips multiple comma-separated categories', () => {
+    const original = makeFullTask({ categories: ['Work', 'Home', 'Errands'] });
+    const vtodo = toVTodo(original);
+
+    expect(vtodo).toContain('CATEGORIES:Work,Home,Errands');
+
+    const restored = fromVTodo(vtodo);
+    expect(restored.categories).toEqual(['Work', 'Home', 'Errands']);
+  });
+
+  it('roundtrips a category containing an escaped comma', () => {
+    const original = makeFullTask({ categories: ['Side, Project', 'Personal'] });
+    const vtodo = toVTodo(original);
+
+    expect(vtodo).toContain('CATEGORIES:Side\\, Project,Personal');
+
+    const restored = fromVTodo(vtodo);
+    expect(restored.categories).toEqual(['Side, Project', 'Personal']);
+  });
+
+  it('defaults categories to [] when deserializing a legacy record lacking CATEGORIES', () => {
+    const legacy = [
+      'BEGIN:VTODO',
+      'UID:legacy-task-nocat',
+      'SUMMARY:Legacy Task',
+      'PRIORITY:5',
+      'STATUS:NEEDS-ACTION',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const restored = deserializeTask(legacy);
+    expect(restored.categories).toEqual([]);
+  });
+
+  it('omits the CATEGORIES line when categories is empty', () => {
+    const task = makeFullTask({ categories: [] });
+    const vtodo = toVTodo(task);
+
+    expect(vtodo).not.toContain('CATEGORIES');
+    expect(fromVTodo(vtodo).categories).toEqual([]);
+  });
+
+  it('omits the CATEGORIES line when categories is undefined', () => {
+    const task = makeFullTask();
+    delete task.categories;
+    const vtodo = toVTodo(task);
+
+    expect(vtodo).not.toContain('CATEGORIES');
+    expect(fromVTodo(vtodo).categories).toEqual([]);
+  });
+});
 
 // ── toVTodo / fromVTodo roundtrip ──
 
