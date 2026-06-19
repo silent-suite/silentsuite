@@ -14,6 +14,9 @@ const storeMock = vi.hoisted(() => ({
     navigateToday: vi.fn(),
     selectedEventId: null as string | null,
     setSelectedEvent: vi.fn(),
+    searchQuery: '',
+    setSearchQuery: vi.fn(),
+    getFilteredEvents: () => storeMock.calendarState.events,
   },
   calendarListState: {
     calendars: [] as any[],
@@ -33,6 +36,10 @@ vi.mock('@/app/stores/use-calendar-list-store', () => ({
 
 vi.mock('@/app/stores/use-auth-store', () => ({
   useAuthStore: (selector: (state: typeof storeMock.authState) => unknown) => selector(storeMock.authState),
+}))
+
+vi.mock('@/app/stores/use-preferences-store', () => ({
+  usePreferencesStore: (selector: (state: { dateFormat: 'system' }) => unknown) => selector({ dateFormat: 'system' }),
 }))
 
 vi.mock('@/app/components/PullToRefresh', () => ({
@@ -74,6 +81,8 @@ describe('CalendarPage calendar visibility', () => {
       { id: 'hidden-event', calendarId: 'hidden-cal', title: 'Hidden event' },
     ]
     storeMock.calendarState.selectedEventId = null
+    storeMock.calendarState.searchQuery = ''
+    storeMock.calendarState.setSearchQuery.mockReset()
     storeMock.calendarListState.calendars = [
       { id: 'visible-cal', name: 'Visible', color: '#10b981', visible: true },
       { id: 'hidden-cal', name: 'Hidden', color: '#ef4444', visible: false },

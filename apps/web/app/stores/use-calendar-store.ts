@@ -33,6 +33,7 @@ interface CalendarState {
   currentView: CalendarView
   currentDate: Date
   selectedEventId: string | null
+  searchQuery: string
 }
 
 interface CalendarActions {
@@ -58,6 +59,8 @@ interface CalendarActions {
   navigateToday: () => void
   importEvents: (newEvents: NewCalendarEvent[]) => Promise<number>
   syncFromRemote: (events: CalendarEvent[]) => void
+  setSearchQuery: (q: string) => void
+  getFilteredEvents: () => CalendarEvent[]
 }
 
 function addDays(date: Date, days: number): Date {
@@ -159,6 +162,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
   currentView: 'week',
   currentDate: new Date(),
   selectedEventId: null,
+  searchQuery: '',
 
   createEvent: async (newEvent: NewCalendarEvent) => {
     if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
@@ -550,6 +554,20 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
 
   syncFromRemote: (remoteEvents: CalendarEvent[]) => {
     set({ events: remoteEvents, syncStatus: 'synced' })
+  },
+
+  setSearchQuery: (q: string) => set({ searchQuery: q }),
+
+  getFilteredEvents: () => {
+    const { events, searchQuery } = get()
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return events
+    return events.filter((e) => {
+      const title = (e.title ?? '').toLowerCase()
+      const desc = (e.description ?? '').toLowerCase()
+      const loc = (e.location ?? '').toLowerCase()
+      return title.includes(q) || desc.includes(q) || loc.includes(q)
+    })
   },
 }))
 
