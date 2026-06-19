@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, Plus, Folder } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Folder, Search as SearchIcon } from 'lucide-react'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate } from '@/app/lib/date'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
@@ -125,6 +125,21 @@ export default function CalendarPage() {
     [events, visibleCalendarIds],
   )
 
+  // Search
+  const searchQuery = useCalendarStore((s) => s.searchQuery)
+  const setSearchQuery = useCalendarStore((s) => s.setSearchQuery)
+  const filteredEvents = useCalendarStore((s) => s.getFilteredEvents())
+  const calendarColors = useMemo(() => {
+    const colors = new Map<string, string>()
+    for (const calendar of calendars) colors.set(calendar.id, calendar.color)
+    if (!colors.has('default')) colors.set('default', '#10b981')
+    return colors
+  }, [calendars])
+  const visibleSearchResults = useMemo(
+    () => filteredEvents.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')),
+    [filteredEvents, visibleCalendarIds],
+  )
+
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
     if (!canWrite) return
     setCreateDialog({
@@ -244,6 +259,73 @@ export default function CalendarPage() {
         <CalendarSkeleton />
       ) : (
         <>
+          {/* Search bar */}
+          <div className="px-1">
+            <div className="hidden md:block">
+              <div className="relative max-w-md">
+                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search events..."
+                  aria-label="Search events"
+                  className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] pl-9 pr-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+              </div>
+              {searchQuery.trim() !== '' && (
+                <div className="mt-2 max-w-md space-y-1">
+                  {visibleSearchResults.map((e) => {
+                    const calendarId = e.calendarId ?? 'default'
+                    const calendarName = calendars.find((calendar) => calendar.id === calendarId)?.name
+                    return (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={() => {
+                          // Navigate calendar to event date and open event
+                          useCalendarStore.getState().setCurrentDate(new Date(e.startDate))
+                          useCalendarStore.getState().setSelectedEvent(e.id)
+                        }}
+                        className="w-full text-left rounded-md px-3 py-2 hover:bg-[rgb(var(--surface))]"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span
+                            aria-hidden="true"
+                            className="h-2.5 w-2.5 shrink-0 rounded-full"
+                            style={{ backgroundColor: calendarColors.get(calendarId) ?? '#10b981' }}
+                          />
+                          <span className="text-sm font-medium text-[rgb(var(--foreground))] truncate">{e.title || 'Untitled'}</span>
+                        </div>
+                        <div className="ml-4 text-xs text-[rgb(var(--muted))] truncate">
+                          {calendarName ? `${calendarName} · ` : ''}{formatDate(e.startDate, dateFormat, { dateStyle: 'medium', timeStyle: e.allDay ? undefined : 'short' })}
+                        </div>
+                      </button>
+                    )
+                  })}
+                  {visibleSearchResults.length === 0 && (
+                    <div className="text-xs text-[rgb(var(--muted))]">No results</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Mobile search: inline above agenda */}
+            <div className="md:hidden mb-2">
+              <div className="relative">
+                <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[rgb(var(--muted))]" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search events..."
+                  aria-label="Search events"
+                  className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] pl-9 pr-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Desktop: schedule-x grid */}
           <div className="hidden md:flex md:flex-1 md:min-h-0">
             <CalendarGrid events={visibleEvents} onSlotClick={handleSlotClick} onEventClick={handleEventClick} />
