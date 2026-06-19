@@ -23,6 +23,9 @@ def create_application(prefix="", middlewares=[]):
     app = FastAPI(
         title="Etebase",
         description="The Etebase server API documentation",
+        openapi_url="/openapi.json" if settings.DEBUG else None,
+        docs_url="/docs" if settings.DEBUG else None,
+        redoc_url="/redoc" if settings.DEBUG else None,
         externalDocs={
             "url": "https://docs.etebase.com",
             "description": "Docs about the API specifications and clients.",

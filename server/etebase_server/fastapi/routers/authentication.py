@@ -1,3 +1,4 @@
+import hmac
 import logging
 import typing as t
 from datetime import datetime
@@ -234,6 +235,16 @@ def dashboard_url(request: Request, user: UserType = Depends(get_authenticated_u
 def signup_save(data: SignupIn, request: Request) -> UserType:
     user_data = data.user
     with transaction.atomic():
+        bootstrap_token = settings.ETEBASE_BOOTSTRAP_ADMIN_TOKEN
+        if bootstrap_token and not models.UserInfo.objects.exists():
+            supplied_token = request.query_params.get("bootstrap_token", "")
+            if not hmac.compare_digest(bootstrap_token.encode("utf-8"), supplied_token.encode("utf-8")):
+                raise HttpError(
+                    "bootstrap_token_required",
+                    "A valid bootstrap token is required for the first account on this server.",
+                    status.HTTP_403_FORBIDDEN,
+                )
+
         try:
             user_queryset = get_user_queryset(User.objects.all(), CallbackContext(request.path_params))
             instance = user_queryset.get(**{User.USERNAME_FIELD: user_data.username.lower()})

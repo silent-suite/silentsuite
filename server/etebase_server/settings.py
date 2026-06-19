@@ -15,6 +15,13 @@ import os
 
 from .utils import get_secret_from_file
 
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in ("true", "1", "yes")
+
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SOURCE_DIR)
@@ -33,6 +40,8 @@ SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 DEBUG = os.environ.get('ETEBASE_DEBUG', 'false').lower() == 'true'
 
 ALLOWED_HOSTS = []
+ETEBASE_DISABLE_DJANGO_ADMIN = env_flag("ETEBASE_DISABLE_DJANGO_ADMIN")
+ETEBASE_BOOTSTRAP_ADMIN_TOKEN = os.environ.get("ETEBASE_BOOTSTRAP_ADMIN_TOKEN", "")
 
 # Database
 # https://docs.djangoproject.com/en/2.0/ref/settings/#databases
@@ -209,7 +218,7 @@ if "DJANGO_MEDIA_ROOT" in os.environ:
 # Self-host operators flip this on (via close-signups.sh) once their admin
 # is registered. Replaces the etebase-server.ini-only path so the toggle is
 # runtime-driven without an image rebuild.
-if os.environ.get("ETEBASE_DISABLE_SIGNUP", "").lower() in ("true", "1", "yes"):
+if env_flag("ETEBASE_DISABLE_SIGNUP"):
     ETEBASE_CREATE_USER_FUNC = "etebase_server.django.utils.create_user_blocked"
 
 # Make an `etebase_server_settings` module available to override settings.
