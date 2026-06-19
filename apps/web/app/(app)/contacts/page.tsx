@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
-  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List,
+  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder,
 } from 'lucide-react'
 import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
@@ -11,6 +11,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { ContactsEmptyState, SearchEmptyState, ContactDetailEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
+import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import type { Contact } from '@silentsuite/core'
@@ -1050,6 +1051,7 @@ export default function ContactsPage() {
   const contactLists = useContactListStore((s) => s.lists)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showNewForm, setShowNewForm] = useState(false)
+  const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
 
   // Filter contacts by visible lists
   const visibleListIds = useMemo(() => new Set(contactLists.filter(l => l.visible).map(l => l.id)), [contactLists])
@@ -1086,16 +1088,26 @@ export default function ContactsPage() {
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Contacts</h2>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowNewForm(true)}
-          disabled={!canWrite}
-          className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
-          title={!canWrite ? 'Subscription required' : undefined}
-        >
-          <Plus className="h-4 w-4" />
-          New Contact
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setCollectionSheetOpen(true)}
+            className="md:hidden rounded-md p-1.5 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+            aria-label="Manage address books"
+          >
+            <Folder className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowNewForm(true)}
+            disabled={!canWrite}
+            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
+            title={!canWrite ? 'Subscription required' : undefined}
+          >
+            <Plus className="h-4 w-4" />
+            New Contact
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -1153,6 +1165,13 @@ export default function ContactsPage() {
           )}
         </div>
       )}
+
+      {/* Mobile collection management sheet */}
+      <MobileCollectionSheet
+        type="contacts"
+        open={collectionSheetOpen}
+        onClose={() => setCollectionSheetOpen(false)}
+      />
     </div>
   )
 }

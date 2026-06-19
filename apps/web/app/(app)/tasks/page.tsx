@@ -1,13 +1,14 @@
 'use client'
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List } from 'lucide-react'
+import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List, Folder } from 'lucide-react'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
+import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { TasksEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
@@ -721,6 +722,7 @@ export default function TasksPage() {
   const taskLists = useTaskListStore((s) => s.lists)
   const [showDialog, setShowDialog] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
+  const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
 
   // Filter tasks by visible lists
   const visibleListIds = useMemo(() => new Set(taskLists.filter(l => l.visible).map(l => l.id)), [taskLists])
@@ -746,15 +748,24 @@ export default function TasksPage() {
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Tasks</h2>
         </div>
-        <button
-          onClick={() => setShowDialog(true)}
-          disabled={!canWrite}
-          className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
-          title={!canWrite ? 'Subscription required' : undefined}
-        >
-          <Plus className="h-4 w-4" />
-          New task
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setCollectionSheetOpen(true)}
+            className="md:hidden rounded-md p-1.5 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+            aria-label="Manage task lists"
+          >
+            <Folder className="h-5 w-5" />
+          </button>
+          <button
+            onClick={() => setShowDialog(true)}
+            disabled={!canWrite}
+            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
+            title={!canWrite ? 'Subscription required' : undefined}
+          >
+            <Plus className="h-4 w-4" />
+            New task
+          </button>
+        </div>
       </div>
 
       {/* Quick add */}
@@ -791,6 +802,13 @@ export default function TasksPage() {
           onClose={() => setEditTask(null)}
         />
       )}
+
+      {/* Mobile collection management sheet */}
+      <MobileCollectionSheet
+        type="tasks"
+        open={collectionSheetOpen}
+        onClose={() => setCollectionSheetOpen(false)}
+      />
     </div>
   )
 }
