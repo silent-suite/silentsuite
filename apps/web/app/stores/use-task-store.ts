@@ -15,6 +15,7 @@ interface NewTask {
   due_date?: Date | null
   priority?: Priority
   completed?: boolean
+  categories?: string[]
   listId?: string
 }
 
@@ -57,6 +58,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           due_date: newTask.due_date ?? null,
           priority: newTask.priority ?? 'medium',
           completed: newTask.completed ?? false,
+          categories: newTask.categories ?? [],
           listId: newTask.listId ?? defaultTaskListId(),
           created_at: now,
           updated_at: now,
@@ -195,6 +197,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             due_date: nt.due_date ?? null,
             priority: nt.priority ?? 'medium',
             completed: nt.completed ?? false,
+            categories: nt.categories ?? [],
             listId: nt.listId ?? defaultTaskListId(),
             created_at: now,
             updated_at: now,

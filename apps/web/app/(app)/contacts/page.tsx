@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
-  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder,
+  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder, Tag,
 } from 'lucide-react'
+import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -278,6 +279,7 @@ function ContactForm({
   const [title, setTitle] = useState('')
   const [birthday, setBirthday] = useState('')
   const [notes, setNotes] = useState('')
+  const [categories, setCategories] = useState<string[]>([])
 
   const handlePhotoChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -307,11 +309,12 @@ function ContactForm({
         birthday: birthday || null,
         notes,
         photoUrl,
+        categories,
         listId: selectedListId,
       })
       onSaved(contact.id)
     },
-    [given, family, prefix, suffix, phones, emails, addresses, organization, title, birthday, notes, photoUrl, selectedListId, createContact, onSaved],
+    [given, family, prefix, suffix, phones, emails, addresses, organization, title, birthday, notes, photoUrl, categories, selectedListId, createContact, onSaved],
   )
 
   // Validate name on blur — show error if both given and family are empty
@@ -514,6 +517,17 @@ function ContactForm({
             <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Personal</legend>
             <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} aria-label="Birthday" className={INPUT_CLASS} />
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" aria-label="Notes" rows={3} className={`${INPUT_CLASS} resize-none`} />
+          </fieldset>
+
+          {/* Labels / categories */}
+          <fieldset className="space-y-2">
+            <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Labels</legend>
+            <LabelEditor
+              labels={categories}
+              onChange={setCategories}
+              placeholder="Add label"
+              aria-label="Contact labels"
+            />
           </fieldset>
 
           {/* Actions */}
@@ -858,6 +872,11 @@ function ContactDetail({
               )}
             </DetailSection>
           )}
+          {contact.categories && contact.categories.length > 0 && (
+            <DetailSection icon={<Tag className="h-4 w-4" />} title="Labels">
+              <LabelChips labels={contact.categories} />
+            </DetailSection>
+          )}
         </div>
         {deleteConfirmDialog}
       </div>
@@ -1014,6 +1033,17 @@ function ContactDetail({
             onChange={(v) => handleFieldUpdate({ notes: v })}
             placeholder="Notes"
             multiline
+          />
+        </DetailSection>
+
+        {/* Labels */}
+        <DetailSection icon={<Tag className="h-4 w-4" />} title="Labels">
+          <LabelEditor
+            labels={contact.categories ?? []}
+            onChange={(next) => handleFieldUpdate({ categories: next })}
+            disabled={!canWrite}
+            placeholder="Add label"
+            aria-label="Contact labels"
           />
         </DetailSection>
       </div>

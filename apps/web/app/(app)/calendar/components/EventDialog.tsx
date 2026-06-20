@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays } from 'lucide-react'
+import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays, Tag } from 'lucide-react'
+import { LabelEditor } from '@/app/components/LabelEditor'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
@@ -172,6 +173,9 @@ export function EventDialog({
   const [recurrenceRule, setRecurrenceRule] = useState<string | null>(
     isEdit ? event.recurrenceRule : null,
   )
+  const [categories, setCategories] = useState<string[]>(
+    isEdit ? (event.categories ?? []) : [],
+  )
   const [alarms, setAlarms] = useState<string[]>(() => {
     if (isEdit && event.alarms && event.alarms.length > 0) {
       return event.alarms
@@ -313,6 +317,7 @@ export function EventDialog({
         if (newStart.getTime() !== event.startDate.getTime()) patch.startDate = newStart
         if (effectiveEnd.getTime() !== event.endDate.getTime()) patch.endDate = effectiveEnd
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
+        if (categories.join(' ') !== (event.categories ?? []).join(' ')) patch.categories = categories
         if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
         if (selectedCalendarId !== (event.calendarId ?? defaultCalendarId)) patch.calendarId = selectedCalendarId
 
@@ -353,6 +358,7 @@ export function EventDialog({
           endDate: effectiveEnd,
           allDay,
           recurrenceRule,
+          categories,
           timezone,
           calendarId: selectedCalendarId,
           alarms: alarms
@@ -375,6 +381,7 @@ export function EventDialog({
     location,
     allDay,
     recurrenceRule,
+    categories,
     alarms,
     selectedCalendarId,
     timezone,
@@ -616,6 +623,18 @@ export function EventDialog({
                   aria-label="Event location"
                   readOnly={!canWrite}
                   className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                />
+              </div>
+
+              {/* ---- Labels / categories ---- */}
+              <div className="flex items-start gap-3">
+                <Tag className="mt-2.5 h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                <LabelEditor
+                  labels={categories}
+                  onChange={setCategories}
+                  disabled={!canWrite}
+                  placeholder="Add label"
+                  aria-label="Event labels"
                 />
               </div>
 

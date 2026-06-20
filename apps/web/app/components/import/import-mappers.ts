@@ -11,6 +11,7 @@ export interface ImportEventPayload {
   recurrenceRule: string | null
   exceptions: Date[]
   alarms: NonNullable<VEvent['valarms']>
+  categories: string[]
   calendarId: string
   timezone: string | undefined
 }
@@ -73,6 +74,7 @@ export function vEventToImportEvent(
     recurrenceRule: event.rrule ?? null,
     exceptions,
     alarms: event.valarms ?? [],
+    categories: event.categories ?? [],
     calendarId,
     timezone: isAllDay ? undefined : startTzid,
   }

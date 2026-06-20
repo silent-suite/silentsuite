@@ -20,6 +20,33 @@ describe('vEventToImportEvent', () => {
     expect(payload.calendarId).toBe('cal-1')
   })
 
+  it('preserves CATEGORIES labels in the import payload', () => {
+    const event: VEvent = {
+      uid: 'cat@example',
+      summary: 'Tagged event',
+      dtstart: '20260601T090000',
+      dtend: '20260601T100000',
+      categories: ['Work', 'Urgent'],
+    }
+
+    const payload = vEventToImportEvent(event, 'cal-1')
+
+    expect(payload.categories).toEqual(['Work', 'Urgent'])
+  })
+
+  it('defaults categories to an empty array when the source has none', () => {
+    const event: VEvent = {
+      uid: 'nocat@example',
+      summary: 'Untagged event',
+      dtstart: '20260601T090000',
+      dtend: '20260601T100000',
+    }
+
+    const payload = vEventToImportEvent(event, 'cal-1')
+
+    expect(payload.categories).toEqual([])
+  })
+
   it('drops timezone for all-day events (DATE-only, no TZID per RFC 5545)', () => {
     const event: VEvent = {
       uid: 'b@example',

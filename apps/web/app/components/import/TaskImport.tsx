@@ -223,6 +223,7 @@ export default function TaskImport({ onImportComplete, heading }: TaskImportProp
         due_date: task.due ? parseICalDate(task.due) : null,
         priority: mapPriorityToStore(task.priority),
         completed: isCompletedVTodo(task),
+        categories: task.categories ?? [],
         listId: selectedListId,
       }))
       const count = await importTasks(newTasks)

@@ -22,6 +22,7 @@ interface NewCalendarEvent {
   recurrenceRule?: string | null
   exceptions?: Date[]
   alarms?: VAlarm[]
+  categories?: string[]
   calendarId?: string
   timezone?: string
 }
@@ -180,6 +181,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       recurrenceRule: newEvent.recurrenceRule ?? null,
       exceptions: newEvent.exceptions ?? [],
       alarms: newEvent.alarms ?? [],
+      categories: newEvent.categories ?? [],
       calendarId: newEvent.calendarId ?? defaultCalendarId(),
       timezone: newEvent.timezone,
       created: now,
@@ -506,6 +508,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         recurrenceRule: ne.recurrenceRule ?? null,
         exceptions: ne.exceptions ?? [],
         alarms: ne.alarms ?? [],
+        categories: ne.categories ?? [],
         calendarId: ne.calendarId ?? defaultCalendarId(),
         timezone: ne.timezone,
         created: now,
@@ -566,7 +569,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       const title = (e.title ?? '').toLowerCase()
       const desc = (e.description ?? '').toLowerCase()
       const loc = (e.location ?? '').toLowerCase()
-      return title.includes(q) || desc.includes(q) || loc.includes(q)
+      const cats = (e.categories ?? []).join(' ').toLowerCase()
+      return title.includes(q) || desc.includes(q) || loc.includes(q) || cats.includes(q)
     })
   },
 }))

@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List, Folder } from 'lucide-react'
+import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List, Folder, Tag } from 'lucide-react'
+import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
@@ -182,6 +183,7 @@ function TaskDialog({
       : '',
   )
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
+  const [categories, setCategories] = useState<string[]>(task?.categories ?? [])
   const [selectedListId, setSelectedListId] = useState(task?.listId ?? defaultListId)
 
   useEffect(() => {
@@ -214,6 +216,7 @@ function TaskDialog({
         description,
         due_date: parsedDue,
         priority,
+        categories,
         listId: selectedListId,
       })
     } else if (task) {
@@ -222,11 +225,12 @@ function TaskDialog({
         description,
         due_date: parsedDue,
         priority,
+        categories,
         listId: selectedListId,
       })
     }
     onClose()
-  }, [title, description, dueDate, priority, selectedListId, mode, task, createTask, updateTask, onClose])
+  }, [title, description, dueDate, priority, categories, selectedListId, mode, task, createTask, updateTask, onClose])
 
   return (
     <>
@@ -341,6 +345,17 @@ function TaskDialog({
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Labels / categories */}
+            <div className="flex items-start gap-3">
+              <Tag className="mt-2.5 h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+              <LabelEditor
+                labels={categories}
+                onChange={setCategories}
+                placeholder="Add label"
+                aria-label="Task labels"
+              />
             </div>
 
             {/* Description / Notes */}
@@ -619,6 +634,7 @@ function TaskItem({ task }: { task: Task }) {
               {task.title || 'Untitled task'}
             </span>
           )}
+          {!expanded && <LabelChips labels={task.categories} className="mt-1" />}
         </div>
 
         {/* Badges */}
@@ -678,6 +694,16 @@ function TaskItem({ task }: { task: Task }) {
             readOnly={!canWrite}
             className={`w-full resize-none rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-1 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
           />
+          <div className="flex items-start gap-2">
+            <Tag className="mt-2.5 h-3.5 w-3.5 shrink-0 text-[rgb(var(--muted))]" />
+            <LabelEditor
+              labels={task.categories ?? []}
+              onChange={(next) => canWrite && updateTask(task.id, { categories: next })}
+              disabled={!canWrite}
+              placeholder="Add label"
+              aria-label="Task labels"
+            />
+          </div>
         </div>
       )}
 
