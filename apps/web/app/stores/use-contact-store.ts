@@ -20,6 +20,7 @@ interface NewContact {
   notes?: string
   birthday?: string | null
   photoUrl?: string | null
+  categories?: string[]
   listId?: string
 }
 
@@ -74,6 +75,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
           notes: newContact.notes ?? '',
           birthday: newContact.birthday ?? null,
           photoUrl: newContact.photoUrl ?? null,
+          categories: newContact.categories ?? [],
           listId: newContact.listId ?? defaultContactListId(),
           created_at: now,
           updated_at: now,
@@ -188,6 +190,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
             notes: nc.notes ?? '',
             birthday: nc.birthday ?? null,
             photoUrl: nc.photoUrl ?? null,
+            categories: nc.categories ?? [],
             listId: nc.listId ?? defaultContactListId(),
             created_at: now,
             updated_at: now,
@@ -245,6 +248,7 @@ export function getFilteredContacts(contacts: Contact[], query: string): Contact
     const searchable = [
       c.displayName, c.name.given, c.name.family, c.organization,
       ...c.emails.map((e) => e.value), ...c.phones.map((p) => p.value),
+      ...(c.categories ?? []),
     ].join(' ').toLowerCase()
     return searchable.includes(q)
   })

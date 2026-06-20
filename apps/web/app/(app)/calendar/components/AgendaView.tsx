@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import { Clock, MapPin } from 'lucide-react'
 import { CalendarEmptyState } from '@/app/components/empty-state'
+import { LabelChips } from '@/app/components/LabelEditor'
 import type { CalendarEvent } from '@silentsuite/core'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { resolveUserTimezone, shortTimezoneLabel } from '@/app/lib/tz'
@@ -99,6 +100,7 @@ export function AgendaView({ events, currentDate, onEventClick }: AgendaViewProp
                   {event.description}
                 </p>
               )}
+              <LabelChips labels={event.categories} className="mt-1.5" />
             </div>
           </div>
         </button>
