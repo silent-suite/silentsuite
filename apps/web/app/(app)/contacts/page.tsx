@@ -1,11 +1,11 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
   StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder, Tag,
 } from 'lucide-react'
-import { useTranslations } from 'next-intl'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
@@ -1074,6 +1074,7 @@ function ContactSkeleton() {
 // ── Page ──
 
 export default function ContactsPage() {
+  const t = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())
   const contacts = useContactStore((s) => s.contacts)
   const isLoading = useContactStore((s) => s.isLoading)
@@ -1123,8 +1124,8 @@ export default function ContactsPage() {
           <button
             type="button"
             onClick={() => setCollectionSheetOpen(true)}
-            className="md:hidden rounded-md p-1.5 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
-            aria-label="Manage address books"
+            className="touch-target md:hidden rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+            aria-label={t('manageAddressBooks')}
           >
             <Folder className="h-5 w-5" />
           </button>

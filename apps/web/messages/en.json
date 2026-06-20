@@ -41,5 +41,10 @@
     "taskLabels": "Task labels",
     "contactLabels": "Contact labels",
     "sectionTitle": "Labels"
+  },
+  "Collections": {
+    "manageCalendars": "Manage calendars",
+    "manageAddressBooks": "Manage address books",
+    "manageTaskLists": "Manage task lists"
   }
 }

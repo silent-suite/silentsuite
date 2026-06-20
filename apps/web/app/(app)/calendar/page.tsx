@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { ChevronLeft, ChevronRight, Plus, Folder, Search as SearchIcon } from 'lucide-react'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
-import { formatDate } from '@/app/lib/date'
+import { formatDate, startOfWeek, getWeekNumber } from '@/app/lib/date'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -28,31 +29,33 @@ function snapTo30Min(date: Date): Date {
   return snapped
 }
 
-function formatDateRange(date: Date, view: 'week' | 'month', dateFormat: import('@silentsuite/core').DateFormat): string {
+function formatDateRange(
+  date: Date,
+  view: 'week' | 'month',
+  dateFormat: import('@silentsuite/core').DateFormat,
+  firstDay: import('@silentsuite/core').FirstDayOfWeek,
+): string {
   const opts: Intl.DateTimeFormatOptions = { month: 'long', year: 'numeric' }
 
   if (view === 'month') {
     return formatDate(date, dateFormat, opts)
   }
 
-  // Week view: find Monday of the week
-  const day = date.getDay()
-  const mondayOffset = day === 0 ? -6 : 1 - day
-  const monday = new Date(date)
-  monday.setDate(date.getDate() + mondayOffset)
-  const sunday = new Date(monday)
-  sunday.setDate(monday.getDate() + 6)
+  // Week view: derive the week start/end from the first-day preference
+  const weekStart = startOfWeek(date, firstDay)
+  const weekEnd = new Date(weekStart)
+  weekEnd.setDate(weekStart.getDate() + 6)
 
-  const startMonth = formatDate(monday, 'system', { month: 'long' })
-  const endMonth = formatDate(sunday, 'system', { month: 'long' })
+  const startMonth = formatDate(weekStart, 'system', { month: 'long' })
+  const endMonth = formatDate(weekEnd, 'system', { month: 'long' })
 
-  if (monday.getMonth() === sunday.getMonth()) {
-    return `${startMonth} ${monday.getDate()}–${sunday.getDate()}, ${monday.getFullYear()}`
+  if (weekStart.getMonth() === weekEnd.getMonth()) {
+    return `${startMonth} ${weekStart.getDate()}–${weekEnd.getDate()}, ${weekStart.getFullYear()}`
   }
-  if (monday.getFullYear() === sunday.getFullYear()) {
-    return `${startMonth} ${monday.getDate()} – ${endMonth} ${sunday.getDate()}, ${monday.getFullYear()}`
+  if (weekStart.getFullYear() === weekEnd.getFullYear()) {
+    return `${startMonth} ${weekStart.getDate()} – ${endMonth} ${weekEnd.getDate()}, ${weekStart.getFullYear()}`
   }
-  return `${startMonth} ${monday.getDate()}, ${monday.getFullYear()} – ${endMonth} ${sunday.getDate()}, ${sunday.getFullYear()}`
+  return `${startMonth} ${weekStart.getDate()}, ${weekStart.getFullYear()} – ${endMonth} ${weekEnd.getDate()}, ${weekEnd.getFullYear()}`
 }
 
 function CalendarSkeleton() {
@@ -90,6 +93,7 @@ interface CreateDialogState {
 }
 
 export default function CalendarPage() {
+  const t = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())
   const events = useCalendarStore((s) => s.events)
   const isLoading = useCalendarStore((s) => s.isLoading)
@@ -102,14 +106,23 @@ export default function CalendarPage() {
   const setSelectedEvent = useCalendarStore((s) => s.setSelectedEvent)
   const calendars = useCalendarListStore((s) => s.calendars)
   const dateFormat = usePreferencesStore((s) => s.dateFormat)
+  const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
 
   const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null)
   const [eventInstanceDate, setEventInstanceDate] = useState<Date | undefined>(undefined)
   const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
 
   const dateLabel = useMemo(
-    () => formatDateRange(currentDate, currentView, dateFormat),
-    [currentDate, currentView, dateFormat],
+    () => formatDateRange(currentDate, currentView, dateFormat, firstDayOfWeek),
+    [currentDate, currentView, dateFormat, firstDayOfWeek],
+  )
+
+  // Active calendar-week indicator (#292). Shown in week view; respects the
+  // first-day-of-week preference (ISO-8601 for Monday-start). Updates as the
+  // user navigates because it derives from currentDate.
+  const weekNumber = useMemo(
+    () => (currentView === 'week' ? getWeekNumber(currentDate, firstDayOfWeek) : null),
+    [currentView, currentDate, firstDayOfWeek],
   )
 
   const visibleCalendarIds = useMemo(
@@ -195,6 +208,14 @@ export default function CalendarPage() {
             <ChevronRight className="h-5 w-5" />
           </button>
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{dateLabel}</h2>
+          {weekNumber !== null && (
+            <span
+              className="rounded-md bg-[rgb(var(--surface))] px-2 py-0.5 text-xs font-medium text-[rgb(var(--muted))]"
+              title="Calendar week"
+            >
+              Week {weekNumber}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <CalendarViewSwitcher />
@@ -223,20 +244,20 @@ export default function CalendarPage() {
           <div className="flex items-center gap-1">
             <button
               onClick={navigateBackward}
-              className="rounded-md p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
+              className="max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
               aria-label="Previous"
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
             <button
               onClick={navigateToday}
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] active:bg-[rgb(var(--border))] transition-colors"
+              className="max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center rounded-md px-3 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] active:bg-[rgb(var(--border))] transition-colors"
             >
               Today
             </button>
             <button
               onClick={navigateForward}
-              className="rounded-md p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
+              className="max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
               aria-label="Next"
             >
               <ChevronRight className="h-5 w-5" />
@@ -245,13 +266,23 @@ export default function CalendarPage() {
           {/* On mobile, only agenda view is shown — hide the view switcher */}
           <button
             onClick={() => setCollectionSheetOpen(true)}
-            className="md:hidden rounded-md p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
-            aria-label="Manage calendars"
+            className="touch-target md:hidden rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
+            aria-label={t('manageCalendars')}
           >
             <Folder className="h-5 w-5" />
           </button>
         </div>
-        <h2 className="text-base font-semibold text-[rgb(var(--foreground))] px-1">{dateLabel}</h2>
+        <div className="flex items-center gap-2 px-1">
+          <h2 className="text-base font-semibold text-[rgb(var(--foreground))]">{dateLabel}</h2>
+          {weekNumber !== null && (
+            <span
+              className="rounded-md bg-[rgb(var(--surface))] px-2 py-0.5 text-xs font-medium text-[rgb(var(--muted))]"
+              title="Calendar week"
+            >
+              Week {weekNumber}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Content */}

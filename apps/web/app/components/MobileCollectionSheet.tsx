@@ -44,7 +44,7 @@ export function MobileCollectionSheet({ type, open, onClose }: MobileCollectionS
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1.5 text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+            className="touch-target rounded-md text-[rgb(var(--muted))] hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
             aria-label="Close collections"
           >
             <X className="h-5 w-5" />
