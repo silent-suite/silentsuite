@@ -223,20 +223,20 @@ export default function CalendarPage() {
           <div className="flex items-center gap-1">
             <button
               onClick={navigateBackward}
-              className="rounded-md p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
+              className="touch-target rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
               aria-label="Previous"
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
             <button
               onClick={navigateToday}
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] active:bg-[rgb(var(--border))] transition-colors"
+              className="touch-target rounded-md px-3 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] active:bg-[rgb(var(--border))] transition-colors"
             >
               Today
             </button>
             <button
               onClick={navigateForward}
-              className="rounded-md p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
+              className="touch-target rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
               aria-label="Next"
             >
               <ChevronRight className="h-5 w-5" />
@@ -245,7 +245,7 @@ export default function CalendarPage() {
           {/* On mobile, only agenda view is shown — hide the view switcher */}
           <button
             onClick={() => setCollectionSheetOpen(true)}
-            className="md:hidden rounded-md p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
+            className="touch-target md:hidden rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
             aria-label="Manage calendars"
           >
             <Folder className="h-5 w-5" />

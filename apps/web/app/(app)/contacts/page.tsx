@@ -1092,7 +1092,7 @@ export default function ContactsPage() {
           <button
             type="button"
             onClick={() => setCollectionSheetOpen(true)}
-            className="md:hidden rounded-md p-1.5 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+            className="touch-target md:hidden rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
             aria-label="Manage address books"
           >
             <Folder className="h-5 w-5" />
