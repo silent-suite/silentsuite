@@ -72,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-
 bash install.sh --version v0.1.0-beta
 ```
 
-When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `verify.sh`, and `success.html` from the requested tag's archive — the entire self-host config moves together as one release.
+When pinned, the installer fetches all of `docker-compose.yml`, `update.sh`, `verify.sh`, `close-signups.sh`, and `success.html` from the requested tag's archive — the entire self-host config moves together as one release.
 
 ## Manual Setup
 
@@ -214,15 +214,26 @@ not already include them:
 
 Once your server is running and your reverse proxy is configured:
 
-1. Open [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile app
+1. Open [app.silentsuite.io](https://app.silentsuite.io) in a browser for the first signup
 2. On the signup page, expand **Advanced Settings**
-3. Enter `https://sync.example.com` (your domain) as the server URL
+3. Enter the one-time first-admin URL printed by the installer as the server URL:
+   `https://sync.example.com/?bootstrap_token=YOUR_TOKEN`
 4. Create your account and start syncing
 5. **Run `./close-signups.sh`** from your install directory — see below.
 
 ## Closing Open Signups
 
-The server ships with `ETEBASE_DISABLE_SIGNUP=false` so your first account can be created from the SilentSuite app. **The window between server-up and admin-registered is unsafe** — anyone who reaches your server URL during that gap can grab an account.
+The server ships with `ETEBASE_DISABLE_SIGNUP=false` so your first account can be created from the SilentSuite app. The installer also generates `ETEBASE_BOOTSTRAP_ADMIN_TOKEN` in `.env`; while the server has zero users, the first signup must include that token in the server URL query string:
+
+```text
+https://sync.example.com/?bootstrap_token=YOUR_TOKEN
+```
+
+This keeps a random visitor from racing you for the first account if they discover the server URL during setup. Once any user exists, the token is no longer required; you should still close signups immediately after creating your admin account. After that first browser signup, you can connect the mobile app with the normal server URL (`https://sync.example.com`).
+
+If you configure self-hosting manually instead of using `install.sh`, generate and set a strong `ETEBASE_BOOTSTRAP_ADMIN_TOKEN` yourself before first boot. Leaving it empty preserves the old open-first-signup behavior for compatibility and does **not** protect the first account from a public first-signup race.
+
+Because the bootstrap token is passed in the server URL, it may appear in local browser history, terminal scrollback, or reverse-proxy access logs. Complete the first signup promptly; after the first app account exists, the token is ignored. If you suspect it was exposed before signup, rotate `ETEBASE_BOOTSTRAP_ADMIN_TOKEN` in `.env`, clear any leaked URL from logs/history where practical, and recreate the server container before trying again.
 
 Once your admin account is registered, close signups:
 
@@ -255,7 +266,7 @@ Within a single pinned release, `./update.sh` re-pulls the pinned images and rec
 
 ## Admin Panel
 
-Access the admin panel at `https://your-domain/admin/` using the credentials from `.env`.
+The advanced Django admin panel is disabled by default in self-host installs (`ETEBASE_DISABLE_DJANGO_ADMIN=true`) because normal operators do not need it exposed on the public sync domain. If you need it for recovery or advanced maintenance, set `ETEBASE_DISABLE_DJANGO_ADMIN=false` in `.env`, recreate the server container, and protect `/admin/` with your reverse proxy or Cloudflare Access before exposing it.
 
 ## Backup and Restore
 

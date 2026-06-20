@@ -27,6 +27,7 @@ from etebase_server.fastapi.conftest import (
     msgpack_post,
     perform_login,
 )
+from etebase_server.myauth.models import get_typed_user_model
 
 
 @pytest.mark.django_db(transaction=True)
@@ -170,14 +171,17 @@ class TestLogin:
 
 @pytest.mark.django_db(transaction=True)
 class TestSignup:
-    def test_signup_creates_a_new_user(self, auth_client, login_pubkey, encryption_pubkey, user_salt):
-        body = {
-            "user": {"username": "test_user_new", "email": "new@example.com"},
+    def _signup_body(self, username, email, login_pubkey, encryption_pubkey, user_salt):
+        return {
+            "user": {"username": username, "email": email},
             "salt": user_salt,
             "loginPubkey": login_pubkey,
             "pubkey": encryption_pubkey,
             "encryptedContent": b"\x00" * 64,
         }
+
+    def test_signup_creates_a_new_user(self, auth_client, login_pubkey, encryption_pubkey, user_salt):
+        body = self._signup_body("test_user_new", "new@example.com", login_pubkey, encryption_pubkey, user_salt)
 
         response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
 
@@ -193,13 +197,7 @@ class TestSignup:
         self, auth_client, user_factory, login_pubkey, encryption_pubkey, user_salt
     ):
         user_factory(username="test_user_alice")
-        body = {
-            "user": {"username": "test_user_alice", "email": "alice@example.com"},
-            "salt": user_salt,
-            "loginPubkey": login_pubkey,
-            "pubkey": encryption_pubkey,
-            "encryptedContent": b"\x00" * 64,
-        }
+        body = self._signup_body("test_user_alice", "alice@example.com", login_pubkey, encryption_pubkey, user_salt)
 
         response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
 
@@ -209,13 +207,7 @@ class TestSignup:
     def test_signup_unexpected_creation_error_returns_safe_detail(
         self, auth_client, login_pubkey, encryption_pubkey, user_salt
     ):
-        body = {
-            "user": {"username": "test_user_error", "email": "error@example.com"},
-            "salt": user_salt,
-            "loginPubkey": login_pubkey,
-            "pubkey": encryption_pubkey,
-            "encryptedContent": b"\x00" * 64,
-        }
+        body = self._signup_body("test_user_error", "error@example.com", login_pubkey, encryption_pubkey, user_salt)
 
         with patch(
             "etebase_server.fastapi.routers.authentication.create_user",
@@ -228,6 +220,63 @@ class TestSignup:
         assert decoded["code"] == "generic"
         assert decoded["detail"] == "An error occurred during signup. Please try again."
         assert "raw database hostname secret" not in decoded["detail"]
+
+    @override_settings(ETEBASE_BOOTSTRAP_ADMIN_TOKEN="bootstrap-secret")
+    def test_first_signup_requires_bootstrap_token_when_configured(
+        self, auth_client, login_pubkey, encryption_pubkey, user_salt
+    ):
+        body = self._signup_body("test_user_bootstrap", "bootstrap@example.com", login_pubkey, encryption_pubkey, user_salt)
+
+        missing_response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
+        wrong_response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/?bootstrap_token=wrong", body)
+        unicode_wrong_response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/?bootstrap_token=ünïcödé", body)
+
+        user_model = get_typed_user_model()
+        assert missing_response.status_code == 403
+        assert wrong_response.status_code == 403
+        assert unicode_wrong_response.status_code == 403
+        assert decode_response(missing_response)["code"] == "bootstrap_token_required"
+        assert decode_response(wrong_response)["code"] == "bootstrap_token_required"
+        assert decode_response(unicode_wrong_response)["code"] == "bootstrap_token_required"
+        assert not user_model.objects.filter(username="test_user_bootstrap").exists()
+
+    @override_settings(ETEBASE_BOOTSTRAP_ADMIN_TOKEN="bootstrap-secret")
+    def test_first_signup_accepts_valid_bootstrap_token(
+        self, auth_client, login_pubkey, encryption_pubkey, user_salt
+    ):
+        body = self._signup_body("test_user_bootstrap", "bootstrap@example.com", login_pubkey, encryption_pubkey, user_salt)
+
+        response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/?bootstrap_token=bootstrap-secret", body)
+
+        assert response.status_code in (200, 201)
+        assert decode_response(response)["user"]["username"] == "test_user_bootstrap"
+
+    @override_settings(ETEBASE_BOOTSTRAP_ADMIN_TOKEN="bootstrap-secret")
+    def test_bootstrap_token_still_required_when_only_django_superuser_exists(
+        self, auth_client, user_factory, login_pubkey, encryption_pubkey, user_salt
+    ):
+        user_factory(username="admin", email="admin@example.com", with_userinfo=False)
+        body = self._signup_body("test_user_bootstrap", "bootstrap@example.com", login_pubkey, encryption_pubkey, user_salt)
+
+        missing_response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
+        token_response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/?bootstrap_token=bootstrap-secret", body)
+
+        assert missing_response.status_code == 403
+        assert decode_response(missing_response)["code"] == "bootstrap_token_required"
+        assert token_response.status_code in (200, 201)
+        assert decode_response(token_response)["user"]["username"] == "test_user_bootstrap"
+
+    @override_settings(ETEBASE_BOOTSTRAP_ADMIN_TOKEN="bootstrap-secret")
+    def test_bootstrap_token_not_required_after_first_app_user_exists(
+        self, auth_client, user_factory, login_pubkey, encryption_pubkey, user_salt
+    ):
+        user_factory(username="existing_user", email="existing@example.com")
+        body = self._signup_body("second_user", "second@example.com", login_pubkey, encryption_pubkey, user_salt)
+
+        response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
+
+        assert response.status_code in (200, 201)
+        assert decode_response(response)["user"]["username"] == "second_user"
 
 
 @pytest.mark.django_db(transaction=True)

@@ -6,8 +6,9 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { expandRecurrence, type CalendarEvent } from '@silentsuite/core'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { formatDate, weekStartIndex, weekdayLabels } from '@/app/lib/date'
 
-const WEEKDAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 const FALLBACK_CALENDAR_COLOR = '#10b981'
 const MAX_DOTS_PER_DAY = 4
 
@@ -33,13 +34,8 @@ function dateKey(date: Date): string {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`
 }
 
-function formatDayLabel(date: Date): string {
-  return date.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  })
+function formatDayLabel(date: Date, dateFormat: import('@silentsuite/core').DateFormat): string {
+  return formatDate(date, dateFormat, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
 }
 
 function eventOverlapsDay(startDate: Date, endDate: Date, day: Date): boolean {
@@ -108,6 +104,9 @@ export function MiniCalendar() {
   const calendars = useCalendarListStore((s) => s.calendars)
 
   const today = useMemo(() => new Date(), [])
+  const dateFormat = usePreferencesStore((s) => s.dateFormat)
+  const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
+  const weekdays = useMemo(() => weekdayLabels(firstDayOfWeek), [firstDayOfWeek])
 
   const handleDayClick = useCallback(
     (date: Date) => {
@@ -140,9 +139,9 @@ export function MiniCalendar() {
 
   const days = useMemo((): DayCell[] => {
     const firstOfMonth = new Date(miniYear, miniMonth, 1)
-    // Monday = 0, Sunday = 6
-    let startDow = firstOfMonth.getDay() - 1
-    if (startDow < 0) startDow = 6
+    // Number of leading cells from the previous month, honoring the first-day
+    // preference (0 when the month starts on the configured first day).
+    const startDow = (firstOfMonth.getDay() - weekStartIndex(firstDayOfWeek) + 7) % 7
 
     const cellDates: { date: Date; inCurrentMonth: boolean }[] = []
 
@@ -191,12 +190,9 @@ export function MiniCalendar() {
       isSelected: isSameDay(cell.date, currentDate),
       eventDotColors: dotsByDay.get(dateKey(cell.date)) ?? [],
     }))
-  }, [miniYear, miniMonth, currentDate, events, today, calendarColors, visibleCalendarIds])
+  }, [miniYear, miniMonth, currentDate, events, today, calendarColors, visibleCalendarIds, firstDayOfWeek])
 
-  const monthLabel = new Date(miniYear, miniMonth).toLocaleString('default', {
-    month: 'long',
-    year: 'numeric',
-  })
+  const monthLabel = formatDate(new Date(miniYear, miniMonth), 'system', { month: 'long', year: 'numeric' })
 
   function navigateMiniMonth(offset: number) {
     setCurrentDate(new Date(miniYear, miniMonth + offset, 1))
@@ -227,7 +223,7 @@ export function MiniCalendar() {
 
       {/* Weekday headers */}
       <div className="grid grid-cols-7 mb-1">
-        {WEEKDAY_LABELS.map((label) => (
+        {weekdays.map((label) => (
           <div key={label} className="text-center text-[10px] font-medium text-[rgb(var(--muted))]">
             {label}
           </div>
@@ -240,7 +236,7 @@ export function MiniCalendar() {
           <button
             key={i}
             onClick={() => handleDayClick(cell.date)}
-            aria-label={formatDayLabel(cell.date)}
+            aria-label={formatDayLabel(cell.date, dateFormat)}
             className={`relative flex h-7 w-full items-center justify-center rounded text-[11px] transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
               cell.isToday
                 ? 'bg-[rgb(var(--primary))] font-bold text-white'

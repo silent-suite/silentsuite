@@ -24,6 +24,7 @@ from silentsuite_bridge.radicale.storage import (
     Storage,
     _get_attributes_from_path,
 )
+from silentsuite_bridge.radicale.rights import Rights as BridgeRights
 from tests.conftest import (
     SAMPLE_VCALENDAR_VEVENT,
     SAMPLE_VCALENDAR_VTODO,
@@ -212,6 +213,55 @@ class TestAcquireLockForcesSync:
             pass
 
         mock_start.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Rights
+# ---------------------------------------------------------------------------
+
+
+class TestBridgeRights:
+    def _rights(self):
+        from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
+
+        configuration = Configuration(DEFAULT_CONFIG_SCHEMA)
+        configuration.update(
+            {"auth": {"type": "silentsuite_bridge.radicale.auth"}},
+            source="test",
+            privileged=True,
+        )
+        return BridgeRights(configuration)
+
+    @patch("silentsuite_bridge.radicale.rights.etesync_for_user")
+    def test_read_only_shared_collection_grants_read_without_write(self, mock_etesync_ctx):
+        mock_collection = MagicMock(read_only=True)
+        mock_etesync = MagicMock()
+        mock_etesync.get.return_value = mock_collection
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(return_value=(mock_etesync, False))
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+        rights = self._rights()
+
+        assert rights.authorization("user@example.com", "/user@example.com/shared-col") == "r"
+
+    @patch("silentsuite_bridge.radicale.rights.etesync_for_user")
+    def test_writable_collection_keeps_owner_write_permission(self, mock_etesync_ctx):
+        mock_collection = MagicMock(read_only=False)
+        mock_etesync = MagicMock()
+        mock_etesync.get.return_value = mock_collection
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(return_value=(mock_etesync, False))
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+        rights = self._rights()
+
+        assert rights.authorization("user@example.com", "/user@example.com/owned-col") == "rw"
+
+    @patch("silentsuite_bridge.radicale.rights.etesync_for_user")
+    def test_new_collection_paths_preserve_base_permission(self, mock_etesync_ctx):
+        mock_etesync_ctx.side_effect = RuntimeError("missing cache")
+        rights = self._rights()
+
+        assert rights.authorization("user@example.com", "/user@example.com/new-col") == "rw"
 
 
 # ---------------------------------------------------------------------------

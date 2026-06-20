@@ -14,9 +14,10 @@ import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { expandRecurrence } from '@silentsuite/core'
-import type { CalendarEvent, DateRange } from '@silentsuite/core'
+import type { CalendarEvent, DateRange, FirstDayOfWeek } from '@silentsuite/core'
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
-import { toAllDayEndPlainDate } from '../lib/all-day'
+import { startOfWeek, endOfWeek } from '@/app/lib/date'
+import { isMultiDayTimedRange, toAllDayEndPlainDate, toTimedMonthEndPlainDate } from '../lib/all-day'
 
 import '@schedule-x/theme-default/dist/index.css'
 
@@ -62,27 +63,23 @@ interface DisplayEvent {
   calendarId?: string
 }
 
-/** Get the visible date range for the current view */
-function getViewRange(currentDate: Date, view: CalendarView): DateRange {
+/** Get the visible date range for the current view, honoring the first-day preference */
+function getViewRange(currentDate: Date, view: CalendarView, firstDay: FirstDayOfWeek): DateRange {
   const d = new Date(currentDate)
   switch (view) {
     case 'week': {
-      const day = d.getDay()
-      const mondayOffset = day === 0 ? -6 : 1 - day
-      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate() + mondayOffset)
+      const start = startOfWeek(d, firstDay)
       const end = new Date(start)
       end.setDate(start.getDate() + 6)
       end.setHours(23, 59, 59, 999)
       return { start, end }
     }
     case 'month': {
-      const start = new Date(d.getFullYear(), d.getMonth(), 1)
-      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999)
+      const monthStart = new Date(d.getFullYear(), d.getMonth(), 1)
+      const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999)
       // Extend to cover partial weeks at start/end of month
-      const startDay = start.getDay()
-      start.setDate(start.getDate() - (startDay === 0 ? 6 : startDay - 1))
-      const endDay = end.getDay()
-      if (endDay !== 0) end.setDate(end.getDate() + (7 - endDay))
+      const start = startOfWeek(monthStart, firstDay)
+      const end = endOfWeek(monthEnd, firstDay)
       return { start, end }
     }
   }
@@ -154,15 +151,19 @@ function toScheduleXEvents(
   displayEvents: DisplayEvent[],
   calendarColors: Map<string, string>,
   userTz: string,
+  currentView: CalendarView,
 ): CalendarEventExternal[] {
   return displayEvents.map((e) => {
     const color = calendarColors.get(e.calendarId ?? 'default') ?? '#10b981'
+    const renderAsMonthBar = currentView === 'month' && !e.allDay && isMultiDayTimedRange(e.startDate, e.endDate)
     return {
       id: e.id,
       title: e.isRecurring ? `↻ ${e.title}` : e.title,
-      start: e.allDay ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
+      start: e.allDay || renderAsMonthBar ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
       end: e.allDay
         ? toAllDayEndPlainDate(e.startDate, e.endDate)
+        : renderAsMonthBar
+          ? toTimedMonthEndPlainDate(e.startDate, e.endDate)
         : toScheduleXDateTime(e.endDate, userTz),
       description: e.description || undefined,
       location: e.location || undefined,
@@ -292,6 +293,9 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const use12h = timeFormat !== '24h'
   const defaultTimezone = usePreferencesStore((s) => s.defaultTimezone)
   const userTz = useMemo(() => resolveUserTimezone(defaultTimezone), [defaultTimezone])
+  const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
+  // Schedule-X WeekDay enum: MONDAY = 1 … SUNDAY = 7 (not 0-indexed).
+  const sxFirstDayOfWeek = firstDayOfWeek === 'sunday' ? 7 : 1
 
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
@@ -308,7 +312,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const [eventsPlugin] = useState(() => createEventsServicePlugin())
 
   // Expand recurring events for the visible range
-  const viewRange = useMemo(() => getViewRange(currentDate, currentView), [currentDate, currentView])
+  const viewRange = useMemo(() => getViewRange(currentDate, currentView, firstDayOfWeek), [currentDate, currentView, firstDayOfWeek])
   const displayEvents = useMemo(() => expandEventsForRange(events, viewRange), [events, viewRange])
 
   // Keep a ref map to look up display events by schedule-x id
@@ -322,7 +326,10 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const displayEventMapRef = useRef(displayEventMap)
   displayEventMapRef.current = displayEventMap
 
-  const sxEvents = useMemo(() => toScheduleXEvents(displayEvents, calendarColors, userTz), [displayEvents, calendarColors, userTz])
+  const sxEvents = useMemo(
+    () => toScheduleXEvents(displayEvents, calendarColors, userTz, currentView),
+    [displayEvents, calendarColors, userTz, currentView],
+  )
 
   // Inject calendar color styles via useInsertionEffect (avoids dangerouslySetInnerHTML)
   useInsertionEffect(() => {
@@ -465,6 +472,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const initialLocaleRef = useRef(timeFormat === '24h' ? 'en-GB' : 'en-US')
   // Capture initial timezone for Schedule-X config (changes are pushed via signal below)
   const initialTimezoneRef = useRef(userTz)
+  // Capture initial first-day-of-week for Schedule-X config (changes pushed via signal below)
+  const initialFirstDayRef = useRef(sxFirstDayOfWeek)
 
   // Memoize the event click handler
   const handleEventClick = useCallback(
@@ -499,7 +508,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     defaultView: initialViewRef.current,
     isDark: resolvedTheme === 'dark',
     locale: initialLocaleRef.current,
-    firstDayOfWeek: 1, // Monday — must match getViewRange() and formatDateRange()
+    // Derived from the firstDayOfWeek preference; live changes pushed via signal below.
+    firstDayOfWeek: initialFirstDayRef.current,
     dayBoundaries: { start: '06:00', end: '22:00' },
     timezone: initialTimezoneRef.current,
     weekOptions: {
@@ -528,6 +538,23 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       // Schedule-X internals may not be ready
     }
   }, [calendar, userTz])
+
+  // Push first-day-of-week changes to the Schedule-X config signal so the grid
+  // AND the date picker re-render when the user updates the preference in
+  // Settings — without a full page reload. config.firstDayOfWeek is shared
+  // between the calendar and its date picker, so this fixes both at once.
+  useEffect(() => {
+    if (!calendar) return
+    try {
+      const app = (calendar as any).$app
+      const fdowSignal = app?.config?.firstDayOfWeek
+      if (fdowSignal && fdowSignal.value !== sxFirstDayOfWeek) {
+        fdowSignal.value = sxFirstDayOfWeek
+      }
+    } catch {
+      // Schedule-X internals may not be ready
+    }
+  }, [calendar, sxFirstDayOfWeek])
 
   // Sync view AND date changes from store → Schedule-X via internal API.
   // CalendarApp has NO public navigation methods. We access the private $app
@@ -602,7 +629,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
 
         // Compare with the store's expected range for the current view
         const storeState = useCalendarStore.getState()
-        const storeRange = getViewRange(storeState.currentDate, storeState.currentView)
+        const currentFirstDay = usePreferencesStore.getState().firstDayOfWeek
+        const storeRange = getViewRange(storeState.currentDate, storeState.currentView, currentFirstDay)
 
         // Allow 1-day tolerance (month views may extend into adjacent months)
         const startDiff = Math.abs(sxRangeStart.getTime() - storeRange.start.getTime())

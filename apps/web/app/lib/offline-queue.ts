@@ -45,6 +45,27 @@ type CountListener = (count: number) => void
 
 let dbPromise: Promise<IDBDatabase> | null = null
 const listeners = new Set<CountListener>()
+let encryptedQueuePersistenceAvailableForTests = false
+
+function isEncryptedQueuePersistenceAvailable(): boolean {
+  // Production has no encrypted offline-queue content store yet. Keep content
+  // persistence fail-closed until a real encrypted queue envelope exists.
+  return encryptedQueuePersistenceAvailableForTests
+}
+
+function hasPersistedPlaintextContent(entry: Pick<QueueEntry, 'content'>): boolean {
+  return typeof entry.content === 'string'
+}
+
+function assertCanPersistEntry(
+  entry: Pick<QueueEntry, 'type' | 'collectionType' | 'content'>,
+): void {
+  if (!hasPersistedPlaintextContent(entry)) return
+  if (isEncryptedQueuePersistenceAvailable()) return
+  throw new Error(
+    `Offline queue refuses to persist plaintext ${entry.collectionType} ${entry.type} content without encrypted local persistence.`,
+  )
+}
 
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise
@@ -96,6 +117,7 @@ function notifyListeners(): void {
 async function compact(
   incoming: Omit<QueueEntry, 'id' | 'createdAt' | 'retryCount' | 'status'>,
 ): Promise<string | null> {
+  assertCanPersistEntry(incoming)
   const entries = await getAll()
   const pending = entries.filter((e) => e.status === 'pending')
 
@@ -202,6 +224,7 @@ export async function enqueue(
     retryCount: 0,
     status: 'pending',
   }
+  assertCanPersistEntry(record)
   return new Promise<string>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
     tx.objectStore(STORE_NAME).put(record)
@@ -217,15 +240,28 @@ export async function enqueue(
 export async function getAll(): Promise<QueueEntry[]> {
   const db = await openDB()
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const request = tx.objectStore(STORE_NAME).getAll()
+    // Use a readwrite transaction so legacy plaintext records can be purged
+    // atomically before callers observe the queue.
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    const request = store.getAll()
+    let safeEntries: QueueEntry[] = []
     request.onsuccess = () => {
       const entries = (request.result as QueueEntry[]).sort(
         (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
       )
-      resolve(entries)
+      if (!isEncryptedQueuePersistenceAvailable()) {
+        safeEntries = entries.filter((entry) => !hasPersistedPlaintextContent(entry))
+        for (const entry of entries) {
+          if (hasPersistedPlaintextContent(entry)) store.delete(entry.id)
+        }
+        return
+      }
+      safeEntries = entries
     }
     request.onerror = () => reject(request.error)
+    tx.oncomplete = () => resolve(safeEntries)
+    tx.onerror = () => reject(tx.error)
   })
 }
 
@@ -248,6 +284,7 @@ export async function remove(id: string): Promise<void> {
 }
 
 async function updateEntry(entry: QueueEntry): Promise<void> {
+  assertCanPersistEntry(entry)
   const db = await openDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
@@ -263,6 +300,19 @@ async function updateEntry(entry: QueueEntry): Promise<void> {
 export async function getFailedCount(): Promise<number> {
   const entries = await getAll()
   return entries.filter((e) => e.status === 'failed').length
+}
+
+export async function clearAll(): Promise<void> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    tx.objectStore(STORE_NAME).clear()
+    tx.oncomplete = () => {
+      notifyListeners()
+      resolve()
+    }
+    tx.onerror = () => reject(tx.error)
+  })
 }
 
 export async function clearFailed(): Promise<void> {
@@ -382,4 +432,9 @@ export async function _resetForTests(): Promise<void> {
   listeners.clear()
   enqueueListeners.clear()
   counter = 0
+  encryptedQueuePersistenceAvailableForTests = false
+}
+
+export function _setEncryptedQueuePersistenceAvailableForTests(available: boolean): void {
+  encryptedQueuePersistenceAvailableForTests = available
 }

@@ -11,7 +11,7 @@
       xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item android:id="@+id/sync_now"
-          android:icon="@drawable/ic_sync_dark"
+          android:icon="@drawable/ic_sync_light"
           android:title="@string/account_synchronize_now"
           app:showAsAction="always"/>
 

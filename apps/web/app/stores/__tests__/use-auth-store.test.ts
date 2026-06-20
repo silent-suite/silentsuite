@@ -6,11 +6,14 @@ vi.stubGlobal('fetch', vi.fn())
 
 // Mock data-cache (used on logout). We use vi.hoisted so the mock fn is
 // declared before vi.mock factory runs (vi.mock is hoisted to the top).
-const { dataCacheClearAll } = vi.hoisted(() => {
-  return { dataCacheClearAll: vi.fn(async () => {}) }
+const { dataCacheClearAll, offlineQueueClearAll } = vi.hoisted(() => {
+  return { dataCacheClearAll: vi.fn(async () => {}), offlineQueueClearAll: vi.fn(async () => {}) }
 })
 vi.mock('@/app/lib/data-cache', () => ({
   clearAll: dataCacheClearAll,
+}))
+vi.mock('@/app/lib/offline-queue', () => ({
+  clearAll: offlineQueueClearAll,
 }))
 
 // In-memory store for secure storage mock
@@ -62,6 +65,7 @@ describe('useAuthStore', () => {
     resetStore()
     vi.mocked(fetch).mockReset()
     dataCacheClearAll.mockClear()
+    offlineQueueClearAll.mockClear()
     secureStore = {}
     localStorage.clear()
     sessionStorage.clear()
@@ -485,6 +489,48 @@ describe('useAuthStore', () => {
     await useAuthStore.getState().logout()
 
     expect(dataCacheClearAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('logout clears the offline queue', async () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+
+    await useAuthStore.getState().logout()
+
+    expect(offlineQueueClearAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('login clears the offline queue after Etebase credentials succeed but before storing a new session', async () => {
+    const { secureSet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureSet).mockClear()
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false }),
+    } as Response)
+
+    await useAuthStore.getState().login('test@example.com', 'password123')
+
+    expect(offlineQueueClearAll).toHaveBeenCalledTimes(1)
+    expect(secureSet).toHaveBeenCalledWith('etebase_session', 'mock-saved-session')
+    expect(offlineQueueClearAll.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(secureSet).mock.invocationCallOrder[0],
+    )
+    expect(secureStore.etebase_session).toBe('mock-saved-session')
+  })
+
+  it('login does not clear the current offline queue when Etebase authentication fails', async () => {
+    const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('unauthorized'))
+
+    await useAuthStore.getState().login('test@example.com', 'wrong-password')
+
+    expect(offlineQueueClearAll).not.toHaveBeenCalled()
+    expect(secureStore.etebase_session).toBeUndefined()
+    expect(useAuthStore.getState().error).toBe('Invalid email or password. Please try again.')
   })
 
   it('logout still completes when the data-cache wipe throws', async () => {

@@ -338,7 +338,7 @@ function StepCreateAccount({
             className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
           />
           <span className="text-xs text-[rgb(var(--muted))] leading-relaxed">
-            Send me product updates and feature announcements (~8/year)
+            Send me product updates and feature announcements
             <br />
             <span className="text-[rgb(var(--muted))]/70">We will never share your email. Unsubscribe anytime.</span>
           </span>

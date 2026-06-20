@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import 'temporal-polyfill/global'
-import { toAllDayEndPlainDate, inclusiveAllDayEndDate } from '../all-day'
+import {
+  isMultiDayTimedRange,
+  toAllDayEndPlainDate,
+  inclusiveAllDayEndDate,
+  toTimedMonthEndPlainDate,
+} from '../all-day'
 
 describe('toAllDayEndPlainDate', () => {
   it('returns the start day for a single-day event with iCal-exclusive DTEND', () => {
@@ -80,5 +85,44 @@ describe('inclusiveAllDayEndDate', () => {
     expect(inclusive.getFullYear()).toBe(2026)
     expect(inclusive.getMonth()).toBe(11)
     expect(inclusive.getDate()).toBe(31)
+  })
+})
+
+describe('timed multi-day month rendering helpers', () => {
+  it('detects timed ranges that cross a local date boundary', () => {
+    expect(
+      isMultiDayTimedRange(
+        new Date(2026, 4, 5, 22, 0),
+        new Date(2026, 4, 6, 1, 0),
+      ),
+    ).toBe(true)
+
+    expect(
+      isMultiDayTimedRange(
+        new Date(2026, 4, 5, 9, 0),
+        new Date(2026, 4, 5, 17, 0),
+      ),
+    ).toBe(false)
+  })
+
+  it('uses the end date as the inclusive month-bar end for timed multi-day appointments', () => {
+    const start = new Date(2026, 4, 5, 9, 0)
+    const end = new Date(2026, 4, 7, 11, 30)
+
+    expect(toTimedMonthEndPlainDate(start, end).toString()).toBe('2026-05-07')
+  })
+
+  it('does not paint a timed appointment onto a final midnight-only day', () => {
+    const start = new Date(2026, 4, 5, 9, 0)
+    const end = new Date(2026, 4, 7, 0, 0, 0, 0)
+
+    expect(toTimedMonthEndPlainDate(start, end).toString()).toBe('2026-05-06')
+  })
+
+  it('clamps malformed timed month ranges to the start day', () => {
+    const start = new Date(2026, 4, 5, 9, 0)
+    const end = new Date(2026, 4, 4, 11, 0)
+
+    expect(toTimedMonthEndPlainDate(start, end).toString()).toBe('2026-05-05')
   })
 })

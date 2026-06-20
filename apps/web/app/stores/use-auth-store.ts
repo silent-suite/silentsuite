@@ -7,6 +7,7 @@ import { BILLING_API_URL } from '@/app/lib/config'
 import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
 import { secureGet, secureSet, secureRemove, secureClear, migrateFromLocalStorage } from '@/app/lib/secure-storage'
 import { clearAll as clearLocalDataCache } from '@/app/lib/data-cache'
+import { clearAll as clearOfflineQueue } from '@/app/lib/offline-queue'
 
 export interface User {
   isAdmin?: boolean
@@ -425,6 +426,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
       const { authToken, savedSession } = await etebaseLogIn(email, password, serverUrl)
+      // A successful Etebase login may be an account switch in the same browser
+      // profile. The offline queue can contain item UIDs/collection UIDs and,
+      // in future encrypted-cache mode, mutation content. Clear it after the
+      // credentials are verified but before storing a new Etebase session, so
+      // failed login attempts do not destroy the current account's offline work
+      // and queued work from one account cannot replay into another account.
+      await clearOfflineQueue()
       await secureSet('etebase_session', savedSession)
 
       if (isSelfHosted || isCustomServer(serverUrl)) {
@@ -513,6 +521,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await clearLocalDataCache()
     } catch (err) {
       logger.warn('[auth-store] Failed to clear local data cache during logout:', err)
+    }
+
+    // Clear the offline mutation queue as well. Queue entries are scoped to
+    // the current Etebase account/collections and must not survive logout or
+    // replay after a later account switch.
+    try {
+      await clearOfflineQueue()
+    } catch (err) {
+      logger.warn('[auth-store] Failed to clear offline queue during logout:', err)
     }
 
     // Clear signup-in-progress flag

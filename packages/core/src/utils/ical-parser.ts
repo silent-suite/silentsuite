@@ -20,6 +20,8 @@ export interface VEvent {
   transp?: string;
   status?: string;
   valarms?: VAlarm[];
+  /** CATEGORIES (RFC 5545) — comma-separated user labels */
+  categories?: string[];
   /** Raw DTSTART parameters like TZID or VALUE */
   dtstartParams?: Record<string, string>;
   /** Raw DTEND parameters */
@@ -38,6 +40,8 @@ export interface VTodo {
   created?: string;
   lastModified?: string;
   percentComplete?: number;
+  /** CATEGORIES (RFC 5545) — comma-separated user labels */
+  categories?: string[];
 }
 
 export interface VAlarm {
@@ -62,6 +66,25 @@ function unescapeText(text: string): string {
     .replace(/\\,/g, ',')
     .replace(/\\;/g, ';')
     .replace(/\\\\/g, '\\');
+}
+
+/** Split a multi-valued iCalendar text property on unescaped commas, then
+ *  unescape each value. Used for CATEGORIES and similar list properties. */
+function splitCommaValues(value: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let escaped = false;
+  for (const ch of value) {
+    if (ch === ',' && !escaped) {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+    escaped = ch === '\\' && !escaped;
+  }
+  parts.push(current);
+  return parts.map((p) => unescapeText(p));
 }
 
 // ── Line folding ──
@@ -284,6 +307,9 @@ export function parseVEvent(ical: string): VEvent {
       case 'STATUS':
         event.status = prop.value;
         break;
+      case 'CATEGORIES':
+        event.categories = splitCommaValues(prop.value).map((c) => c.trim()).filter((c) => c.length > 0);
+        break;
     }
     i++;
   }
@@ -355,6 +381,9 @@ export function generateVEvent(event: VEvent): string {
   if (event.lastModified) lines.push(foldLine(`LAST-MODIFIED:${event.lastModified}`));
   if (event.transp) lines.push(foldLine(`TRANSP:${event.transp}`));
   if (event.status) lines.push(foldLine(`STATUS:${event.status}`));
+  if (event.categories && event.categories.length > 0) {
+    lines.push(foldLine(`CATEGORIES:${event.categories.map(escapeText).join(',')}`));
+  }
 
   if (event.valarms) {
     for (const alarm of event.valarms) {
@@ -428,6 +457,9 @@ export function parseVTodo(ical: string): VTodo {
       case 'PERCENT-COMPLETE':
         todo.percentComplete = parseInt(prop.value, 10);
         break;
+      case 'CATEGORIES':
+        todo.categories = splitCommaValues(prop.value).map((c) => c.trim()).filter((c) => c.length > 0);
+        break;
     }
   }
 
@@ -471,6 +503,9 @@ export function generateVTodo(todo: VTodo): string {
   if (todo.created) lines.push(foldLine(`CREATED:${todo.created}`));
   if (todo.lastModified) lines.push(foldLine(`LAST-MODIFIED:${todo.lastModified}`));
   if (todo.percentComplete !== undefined) lines.push(foldLine(`PERCENT-COMPLETE:${todo.percentComplete}`));
+  if (todo.categories && todo.categories.length > 0) {
+    lines.push(foldLine(`CATEGORIES:${todo.categories.map(escapeText).join(',')}`));
+  }
 
   lines.push('END:VTODO');
   return lines.join('\r\n');

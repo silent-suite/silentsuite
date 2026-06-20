@@ -22,6 +22,7 @@ function makeFullEvent(overrides?: Partial<CalendarEvent>): CalendarEvent {
     recurrenceRule: null,
     exceptions: [],
     alarms: [],
+    categories: ['Work', 'Planning'],
     created: new Date(2026, 0, 1, 0, 0, 0),
     updated: new Date(2026, 2, 10, 12, 0, 0),
     ...overrides,
@@ -45,6 +46,62 @@ function makeMinimalEvent(): CalendarEvent {
     updated: new Date(2026, 2, 15, 0, 0, 0),
   };
 }
+
+// ── categories roundtrip (#291) ──
+
+describe('categories roundtrip (#291)', () => {
+  it('roundtrips multiple comma-separated categories', () => {
+    const original = makeFullEvent({ categories: ['Work', 'Planning', 'Q1'] });
+    const ical = toVEvent(original);
+
+    expect(ical).toContain('CATEGORIES:Work,Planning,Q1');
+
+    const restored = fromVEvent(ical);
+    expect(restored.categories).toEqual(['Work', 'Planning', 'Q1']);
+  });
+
+  it('roundtrips a category containing an escaped comma', () => {
+    const original = makeFullEvent({ categories: ['Travel, Inc.', 'Personal'] });
+    const ical = toVEvent(original);
+
+    // Comma inside a value must be escaped as \,
+    expect(ical).toContain('CATEGORIES:Travel\\, Inc.,Personal');
+
+    const restored = fromVEvent(ical);
+    expect(restored.categories).toEqual(['Travel, Inc.', 'Personal']);
+  });
+
+  it('defaults categories to [] when deserializing a legacy record lacking CATEGORIES', () => {
+    const legacy = [
+      'BEGIN:VEVENT',
+      'UID:legacy-nocat',
+      'DTSTART:20260315T100000',
+      'DTEND:20260315T110000',
+      'SUMMARY:Legacy Event',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const restored = deserializeCalendarEvent(legacy);
+    expect(restored.categories).toEqual([]);
+  });
+
+  it('omits the CATEGORIES line when categories is empty', () => {
+    const event = makeFullEvent({ categories: [] });
+    const ical = toVEvent(event);
+
+    expect(ical).not.toContain('CATEGORIES');
+    expect(fromVEvent(ical).categories).toEqual([]);
+  });
+
+  it('omits the CATEGORIES line when categories is undefined', () => {
+    const event = makeFullEvent();
+    delete event.categories;
+    const ical = toVEvent(event);
+
+    expect(ical).not.toContain('CATEGORIES');
+    expect(fromVEvent(ical).categories).toEqual([]);
+  });
+});
 
 // ── toVEvent / fromVEvent roundtrip ──
 

@@ -7,6 +7,7 @@ import {
   getFailedCount,
   replay,
   clearFailed,
+  clearAll,
   retryFailed,
   remove,
   onCountChange,
@@ -17,11 +18,14 @@ import {
   MAX_QUEUE_SIZE,
   STALE_THRESHOLD_MS,
   _resetForTests,
+  _setEncryptedQueuePersistenceAvailableForTests,
 } from '../offline-queue'
 
 beforeEach(async () => {
+  process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
   // Close existing connection and reset module state
   await _resetForTests()
+  _setEncryptedQueuePersistenceAvailableForTests(true)
   // Clear all IndexedDB databases
   await new Promise<void>((resolve) => {
     const req = indexedDB.deleteDatabase('silentsuite-offline-queue')
@@ -60,6 +64,101 @@ describe('offline-queue', () => {
       expect(await getPendingCount()).toBe(1)
       await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: 'uid-2' })
       expect(await getPendingCount()).toBe(2)
+    })
+  })
+
+  describe('privacy guard', () => {
+    async function readRawMutations(): Promise<unknown[]> {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('silentsuite-offline-queue', 1)
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains('mutations')) {
+            req.result.createObjectStore('mutations', { keyPath: 'id' })
+          }
+        }
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+      try {
+        if (!db.objectStoreNames.contains('mutations')) return []
+        return await new Promise<unknown[]>((resolve, reject) => {
+          const tx = db.transaction('mutations', 'readonly')
+          const req = tx.objectStore('mutations').getAll()
+          req.onsuccess = () => resolve(req.result ?? [])
+          req.onerror = () => reject(req.error)
+        })
+      } finally {
+        db.close()
+      }
+    }
+
+    it('refuses to persist plaintext PIM content without encrypted local persistence', async () => {
+      _setEncryptedQueuePersistenceAvailableForTests(false)
+      const sentinel = 'BEGIN:VCALENDAR\nSUMMARY:PRIVATE_SENTINEL_CALENDAR_EVENT\nEND:VCALENDAR'
+
+      await expect(
+        enqueue({ type: 'create', collectionType: 'calendar', content: sentinel, tempId: 'temp-private' }),
+      ).rejects.toThrow(/refuses to persist plaintext calendar create content/)
+
+      expect(JSON.stringify(await readRawMutations())).not.toContain('PRIVATE_SENTINEL_CALENDAR_EVENT')
+      expect(await getAll()).toHaveLength(0)
+    })
+
+    it('still persists content-free deletes without encrypted local persistence', async () => {
+      _setEncryptedQueuePersistenceAvailableForTests(false)
+
+      await enqueue({ type: 'delete', collectionType: 'contacts', collectionUid: 'address-book', itemUid: 'contact-1' })
+
+      const all = await getAll()
+      expect(all).toHaveLength(1)
+      expect(all[0].type).toBe('delete')
+      expect(all[0].content).toBeUndefined()
+    })
+
+    it('purges legacy plaintext content already present in IndexedDB', async () => {
+      await clearAll()
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('silentsuite-offline-queue', 1)
+        req.onupgradeneeded = () => {
+          if (!req.result.objectStoreNames.contains('mutations')) {
+            req.result.createObjectStore('mutations', { keyPath: 'id' })
+          }
+        }
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('mutations', 'readwrite')
+        tx.objectStore('mutations').put({
+          id: 'legacy-plaintext',
+          type: 'update',
+          collectionType: 'tasks',
+          collectionUid: 'tasks',
+          itemUid: 'task-1',
+          content: 'BEGIN:VTODO\nSUMMARY:PRIVATE_SENTINEL_TASK\nEND:VTODO',
+          createdAt: Date.now(),
+          retryCount: 0,
+          status: 'pending',
+        })
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+      db.close()
+
+      _setEncryptedQueuePersistenceAvailableForTests(false)
+
+      expect(await getAll()).toHaveLength(0)
+      expect(JSON.stringify(await readRawMutations())).not.toContain('PRIVATE_SENTINEL_TASK')
+    })
+
+    it('clearAll removes queued mutations for logout/account switch cleanup', async () => {
+      await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: 'tasks', itemUid: 'task-1' })
+      expect(await getPendingCount()).toBe(1)
+
+      await clearAll()
+
+      expect(await getAll()).toHaveLength(0)
+      expect(await getPendingCount()).toBe(0)
     })
   })
 
@@ -199,6 +298,7 @@ describe('offline-queue', () => {
 
       // Close the connection and clear cached promise (simulates a new page load)
       await _resetForTests()
+      _setEncryptedQueuePersistenceAvailableForTests(true)
 
       // Re-read from IndexedDB — this opens a fresh connection
       const all = await getAll()
@@ -509,6 +609,7 @@ describe('offline-queue', () => {
 
       // Simulate module reset (like a page reload)
       await _resetForTests()
+      _setEncryptedQueuePersistenceAvailableForTests(true)
 
       // Verify entries persist across resets
       const count = await getPendingCount()

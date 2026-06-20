@@ -13,6 +13,10 @@ export interface CalendarEvent {
   recurrenceRule: string | null;
   exceptions: Date[];
   alarms: VAlarm[];
+  /** User-defined labels/categories for grouping and filtering.
+   *  Round-tripped via the ICS CATEGORIES property (comma-separated).
+   *  Optional so existing callers keep compiling; deserialize paths default to []. */
+  categories?: string[];
   calendarId?: string;
   /** IANA timezone for this event (e.g. 'America/New_York'). When absent,
    *  falls back to user default timezone, then local system timezone. */
@@ -153,6 +157,7 @@ export function toVEvent(event: CalendarEvent): string {
           )
         : undefined,
     valarms: event.alarms.length > 0 ? event.alarms : undefined,
+    categories: event.categories && event.categories.length > 0 ? event.categories : undefined,
     created: formatICalDateTime(event.created),
     lastModified: formatICalDateTime(event.updated),
   };
@@ -202,6 +207,8 @@ export function fromVEvent(veventStr: string): CalendarEvent {
     recurrenceRule: vevent.rrule ?? null,
     exceptions,
     alarms: vevent.valarms ?? [],
+    // Preserve CATEGORIES for round-trip; default to [] for legacy records
+    categories: vevent.categories ?? [],
     // Preserve the TZID from DTSTART so we can round-trip it correctly
     timezone: startTzid ?? undefined,
     created: vevent.created ? parseICalDateValue(vevent.created).date : now,

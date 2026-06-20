@@ -64,6 +64,7 @@ import com.google.android.material.navigation.NavigationView
 import com.google.android.material.snackbar.Snackbar
 // Modified by Silent Suite - ACRA removed, will be replaced with Sentry in Phase 2
 import androidx.lifecycle.viewModelScope
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,6 +87,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     private var syncStatusSnackbar: Snackbar? = null
     private var syncStatusObserver: Any? = null
+    private var syncActiveObserver: Any? = null
+    private var swipeRefreshLayout: SwipeRefreshLayout? = null
     private var accountListExpanded = false
     private var pendingExportKind: AndroidExportKind? = null
 
@@ -161,6 +164,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         // Setup navigation view
         val navigationView = findViewById<NavigationView>(R.id.nav_view)
         navigationView.setNavigationItemSelectedListener(this)
+
+        // Pull-to-refresh: trigger a manual sync for the account (issue #297).
+        swipeRefreshLayout = findViewById(R.id.account_swipe_refresh)
+        swipeRefreshLayout?.apply {
+            setColorSchemeResources(
+                    R.color.teal400, R.color.teal500, R.color.teal600, R.color.teal700)
+            setOnRefreshListener { onAccountSwipeRefresh() }
+        }
 
         // Setup nav header with account switcher
         setupNavHeader(navigationView)
@@ -318,6 +329,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         super.onResume()
         onStatusChanged(SYNC_OBSERVER_TYPE_SETTINGS)
         syncStatusObserver = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_SETTINGS, this)
+        // Drive the pull-to-refresh spinner from active sync state so it clears
+        // reliably when the sync finishes (success or error).
+        syncActiveObserver = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_ACTIVE) { _ ->
+            swipeRefreshLayout?.post { updateSwipeRefreshState() }
+        }
+        updateSwipeRefreshState()
     }
 
     override fun onPause() {
@@ -326,6 +343,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             ContentResolver.removeStatusChangeListener(syncStatusObserver)
             syncStatusObserver = null
         }
+        syncActiveObserver?.let { ContentResolver.removeStatusChangeListener(it) }
+        syncActiveObserver = null
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -855,8 +874,30 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
 
     private fun requestSync() {
+        if (isSyncActive()) return        // don't stack a duplicate concurrent sync
         requestSync(applicationContext, account)
         Snackbar.make(findViewById(R.id.coordinator), R.string.account_synchronizing_now, Snackbar.LENGTH_LONG).show()
+    }
+
+    /** Pull-to-refresh handler for the account screen. */
+    private fun onAccountSwipeRefresh() {
+        if (!ContentResolver.getMasterSyncAutomatically()) {
+            // onStatusChanged (SETTINGS observer) already surfaces this state via a Snackbar.
+            swipeRefreshLayout?.isRefreshing = false
+            return
+        }
+        requestSync()
+    }
+
+    /** Syncs the refresh indicator with the current sync state (called by the ACTIVE observer). */
+    private fun updateSwipeRefreshState() {
+        swipeRefreshLayout?.isRefreshing = isSyncActive()
+    }
+
+    private fun isSyncActive(): Boolean {
+        val authorities = mutableListOf(App.addressBooksAuthority, CalendarContract.AUTHORITY)
+        TaskProviderHandling.getWantedTaskSyncProvider(this)?.authority?.let { authorities.add(it) }
+        return authorities.any { ContentResolver.isSyncActive(account, it) }
     }
 
     private fun loadSubscriptionStatus() {

@@ -38,6 +38,8 @@ export interface VCard {
   adr?: VCardAddress[];
   org?: string;
   title?: string;
+  /** CATEGORIES (RFC 2426/6350) — comma-separated user labels */
+  categories?: string[];
   note?: string;
   bday?: string;
   photo?: string;
@@ -60,6 +62,25 @@ function unescapeText(text: string): string {
     .replace(/\\,/g, ',')
     .replace(/\\;/g, ';')
     .replace(/\\\\/g, '\\');
+}
+
+/** Split a multi-valued vCard text property on unescaped commas, then
+ *  unescape each value. Used for CATEGORIES and similar list properties. */
+function splitCommaValues(value: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let escaped = false;
+  for (const ch of value) {
+    if (ch === ',' && !escaped) {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+    escaped = ch === '\\' && !escaped;
+  }
+  parts.push(current);
+  return parts.map((p) => unescapeText(p));
 }
 
 // ── Line folding ──
@@ -256,6 +277,9 @@ export function parseVCard(vcardStr: string): VCard {
       case 'TITLE':
         vcard.title = unescapeText(prop.value);
         break;
+      case 'CATEGORIES':
+        vcard.categories = splitCommaValues(prop.value).map((c) => c.trim()).filter((c) => c.length > 0);
+        break;
       case 'NOTE':
         vcard.note = unescapeText(prop.value);
         break;
@@ -369,6 +393,9 @@ export function generateVCard(vcard: VCard): string {
 
   if (vcard.org) lines.push(foldLine(`ORG:${escapeText(vcard.org)}`));
   if (vcard.title) lines.push(foldLine(`TITLE:${escapeText(vcard.title)}`));
+  if (vcard.categories && vcard.categories.length > 0) {
+    lines.push(foldLine(`CATEGORIES:${vcard.categories.map(escapeText).join(',')}`));
+  }
   if (vcard.note) lines.push(foldLine(`NOTE:${escapeText(vcard.note)}`));
   if (vcard.bday) lines.push(foldLine(`BDAY:${vcard.bday}`));
   if (vcard.photo) {

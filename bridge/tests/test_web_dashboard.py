@@ -4,8 +4,10 @@ import io
 import json
 
 import pytest
+from radicale.app import Application
 
 import silentsuite_bridge.auth_browser as auth_browser
+from silentsuite_bridge import __main__ as bridge_main
 import silentsuite_bridge.web as web_module
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.accounts import AccountOperationResult
@@ -22,11 +24,25 @@ from silentsuite_bridge.web import (
 )
 
 
-def _post_environ(body=b"", csrf_token=None):
+# Default Host header matching a localhost variant so the SEC-R7.4 Host check
+# accepts the request. Tests that exercise the rejection path set this explicitly.
+_LOCAL_HOST = "localhost:37358"
+
+
+def _get_environ(host=_LOCAL_HOST):
+    environ = {}
+    if host is not None:
+        environ["HTTP_HOST"] = host
+    return environ
+
+
+def _post_environ(body=b"", csrf_token=None, host=_LOCAL_HOST):
     environ = {
         "CONTENT_LENGTH": str(len(body)),
         "wsgi.input": io.BytesIO(body),
     }
+    if host is not None:
+        environ["HTTP_HOST"] = host
     if csrf_token is not None:
         environ["HTTP_X_SILENTSUITE_CSRF"] = csrf_token
     return environ
@@ -41,6 +57,36 @@ def _reset_status():
         "collections_by_account": {},
         "collections_scope": "all configured accounts",
     })
+
+
+def _wsgi_response(app, method, path):
+    captured = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+        captured["headers"] = dict(headers)
+
+    environ = {
+        "REQUEST_METHOD": method,
+        "PATH_INFO": path,
+        "SCRIPT_NAME": "",
+        # SEC-R7.4: the dashboard rejects non-local Host headers, so requests
+        # routed through the full WSGI stack must carry a localhost Host header.
+        "HTTP_HOST": "127.0.0.1:37358",
+        "SERVER_NAME": "127.0.0.1",
+        "SERVER_PORT": "37358",
+        "SERVER_PROTOCOL": "HTTP/1.1",
+        "REMOTE_ADDR": "127.0.0.1",
+        "wsgi.version": (1, 0),
+        "wsgi.url_scheme": "http",
+        "wsgi.input": io.BytesIO(b""),
+        "wsgi.errors": io.StringIO(),
+        "wsgi.multithread": False,
+        "wsgi.multiprocess": False,
+        "wsgi.run_once": False,
+    }
+    body = b"".join(app(environ, start_response))
+    return captured["status"], captured["headers"], body
 
 
 def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
@@ -181,7 +227,7 @@ def test_dump_api_returns_404_when_disabled(monkeypatch):
     monkeypatch.setattr(config, "DASHBOARD_DUMP_ENABLED", False)
     web = Web.__new__(Web)
 
-    status, headers, body = web.get({}, "", "/.web/api/dump", None)
+    status, headers, body = web.get(_get_environ(), "", "/.web/api/dump", None)
 
     assert status == 404
     assert headers == {}
@@ -192,7 +238,7 @@ def test_dump_api_requires_csrf_when_enabled(monkeypatch):
     monkeypatch.setattr(config, "DASHBOARD_DUMP_ENABLED", True)
     web = Web.__new__(Web)
 
-    status, headers, body = web.get({}, "", "/.web/api/dump", None)
+    status, headers, body = web.get(_get_environ(), "", "/.web/api/dump", None)
 
     assert status == 403
     assert headers["Content-Type"] == "application/json"
@@ -203,7 +249,7 @@ def test_root_route_serves_dashboard(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     web = Web.__new__(Web)
 
-    status, headers, body = web.get({}, "", "/", None)
+    status, headers, body = web.get(_get_environ(), "", "/", None)
 
     assert status == 200
     assert headers["Content-Type"] == "text/html; charset=utf-8"
@@ -212,13 +258,76 @@ def test_root_route_serves_dashboard(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["/.web/", "/.web"])
-def test_web_compat_route_redirects_to_root(path):
+def test_web_compat_route_serves_dashboard(path, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     web = Web.__new__(Web)
 
-    status, headers, body = web.get({}, "", path, None)
+    status, headers, body = web.get(_get_environ(), "", path, None)
 
-    assert status == 302
-    assert headers["Location"] == "/"
+    assert status == 200
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"SilentSuite Bridge" in body
+    assert b"dashboardLoginForm" in body
+
+
+@pytest.mark.parametrize("path", ["/", "/.web", "/.web/api/status"])
+def test_dashboard_get_rejects_non_local_host(path, tmp_path, monkeypatch):
+    # SEC-R7.4: a non-local Host header (DNS-rebinding / cross-origin) is
+    # rejected before any dashboard processing.
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    web = Web.__new__(Web)
+
+    status, headers, body = web.get(
+        _get_environ(host="evil.example.com"), "", path, None
+    )
+
+    assert status == 403
+    assert headers["Content-Type"] == "application/json"
+    assert "non-local Host" in json.loads(body)["error"]
+
+
+def test_dashboard_post_rejects_non_local_host():
+    # SEC-R7.4: non-local Host headers are rejected on mutating endpoints
+    # before CSRF validation or body parsing.
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token, host="evil.example.com"),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+
+    assert status == 403
+    assert headers["Content-Type"] == "application/json"
+    assert "non-local Host" in json.loads(body)["error"]
+
+
+def test_radicale_root_redirect_terminates_at_dashboard(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(config, "DATABASE_FILE", str(tmp_path / "bridge_data.db"))
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+    monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
+    monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:37358")
+    monkeypatch.setattr(config, "is_dashboard_enabled", lambda: True)
+    app = Application(bridge_main.build_radicale_configuration())
+
+    status, headers, body = _wsgi_response(app, "GET", "/")
+
+    assert status == "302 Found"
+    assert headers["Location"] == "/.web"
+    assert body == b"Redirected to /.web"
+
+    status, headers, body = _wsgi_response(app, "GET", "/.web")
+
+    assert status == "200 OK"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
+    assert b"SilentSuite Bridge" in body
+
+    status, headers, body = _wsgi_response(app, "HEAD", "/.web")
+
+    assert status == "200 OK"
+    assert headers["Content-Type"] == "text/html; charset=utf-8"
     assert body == b""
 
 

@@ -68,10 +68,12 @@ function preferencesChanged(
     || current.firstDayOfWeek !== previous.firstDayOfWeek
     || current.defaultReminder !== previous.defaultReminder
     || current.defaultTimezone !== previous.defaultTimezone
+    || current.dateFormat !== previous.dateFormat
     || current.syncedPreferenceUpdatedAt.timeFormat !== previous.syncedPreferenceUpdatedAt.timeFormat
     || current.syncedPreferenceUpdatedAt.firstDayOfWeek !== previous.syncedPreferenceUpdatedAt.firstDayOfWeek
     || current.syncedPreferenceUpdatedAt.defaultReminder !== previous.syncedPreferenceUpdatedAt.defaultReminder
     || current.syncedPreferenceUpdatedAt.defaultTimezone !== previous.syncedPreferenceUpdatedAt.defaultTimezone
+    || current.syncedPreferenceUpdatedAt.dateFormat !== previous.syncedPreferenceUpdatedAt.dateFormat
 }
 
 function preferencesCollectionUid(): string | undefined {

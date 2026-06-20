@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { ETEBASE_SERVER_URL } from '@/app/lib/config'
 import type {
+  CollectionAccessLevel,
   CollectionType,
   SyncChangeEvent,
 } from '@silentsuite/core'
@@ -373,6 +374,56 @@ interface EtebaseActions {
   reconcileCollections: () => Promise<void>
 
   /**
+   * List pending incoming sharing invitations for the current account.
+   */
+  listIncomingInvitations: () => Promise<any[]>
+
+  /**
+   * List pending outgoing sharing invitations for the current account.
+   */
+  listOutgoingInvitations: () => Promise<any[]>
+
+  /**
+   * Cancel an outgoing sharing invitation before it is accepted.
+   */
+  cancelOutgoingInvitation: (invitation: any) => Promise<boolean>
+
+  /**
+   * Accept an incoming sharing invitation, then reconcile collections so the shared collection appears.
+   */
+  acceptInvitation: (invitation: any) => Promise<boolean>
+
+  /**
+   * Reject an incoming sharing invitation.
+   */
+  rejectInvitation: (invitation: any) => Promise<boolean>
+
+  /**
+   * Invite another user to an existing collection.
+   */
+  inviteToCollection: (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => Promise<boolean>
+
+  /**
+   * List members for a collection.
+   */
+  listCollectionMembers: (type: CollectionTypeKey, collectionUid: string) => Promise<any[]>
+
+  /**
+   * Remove a member from a collection.
+   */
+  removeCollectionMember: (type: CollectionTypeKey, collectionUid: string, username: string) => Promise<boolean>
+
+  /**
+   * Leave a shared collection as the current account.
+   */
+  leaveCollection: (type: CollectionTypeKey, collectionUid: string) => Promise<boolean>
+
+  /**
+   * Change a member's access level.
+   */
+  modifyCollectionMemberAccess: (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => Promise<boolean>
+
+  /**
    * Delete every item inside a collection while keeping the collection itself.
    */
   deleteItemsInCollection: (type: CollectionTypeKey, collectionUid: string) => Promise<number>
@@ -727,6 +778,181 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       throw err
     } finally {
       syncEngine?.resume?.()
+    }
+  },
+
+  listIncomingInvitations: async () => {
+    const { account } = get()
+    if (!account) return []
+
+    try {
+      const core = await import('@silentsuite/core')
+      return await core.listIncomingInvitations(account)
+    } catch (err) {
+      console.error('[etebase-store] Failed to list incoming invitations', getSafeErrorDetails(err))
+      showErrorToast('Failed to load sharing invitations. Please try again.')
+      return []
+    }
+  },
+
+  listOutgoingInvitations: async () => {
+    const { account } = get()
+    if (!account) return []
+
+    try {
+      const core = await import('@silentsuite/core')
+      return await core.listOutgoingInvitations(account)
+    } catch (err) {
+      console.error('[etebase-store] Failed to list outgoing invitations', getSafeErrorDetails(err))
+      showErrorToast('Failed to load sent sharing invitations. Please try again.')
+      return []
+    }
+  },
+
+  cancelOutgoingInvitation: async (invitation: any) => {
+    const { account } = get()
+    if (!account) {
+      logger.warn('[etebase-store] Cannot cancel outgoing invitation: no account')
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      await core.cancelOutgoingInvitation(account, invitation)
+      return true
+    } catch (err) {
+      console.error('[etebase-store] Failed to cancel outgoing invitation', getSafeErrorDetails(err))
+      showErrorToast('Failed to cancel sharing invitation. Please try again.')
+      return false
+    }
+  },
+
+  acceptInvitation: async (invitation: any) => {
+    const { account } = get()
+    if (!account) {
+      logger.warn('[etebase-store] Cannot accept invitation: no account')
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      await core.acceptInvitation(account, invitation)
+      await get().reconcileCollections()
+      return true
+    } catch (err) {
+      console.error('[etebase-store] Failed to accept invitation', getSafeErrorDetails(err))
+      showErrorToast('Failed to accept sharing invitation. Please try again.')
+      return false
+    }
+  },
+
+  rejectInvitation: async (invitation: any) => {
+    const { account } = get()
+    if (!account) {
+      logger.warn('[etebase-store] Cannot reject invitation: no account')
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      await core.rejectInvitation(account, invitation)
+      return true
+    } catch (err) {
+      console.error('[etebase-store] Failed to reject invitation', getSafeErrorDetails(err))
+      showErrorToast('Failed to reject sharing invitation. Please try again.')
+      return false
+    }
+  },
+
+  inviteToCollection: async (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => {
+    const { account, collections } = get()
+    const collection = resolveCollection(collections, type, collectionUid)
+    if (!account || !collection) {
+      logger.warn(`[etebase-store] Cannot invite to ${type} collection ${collectionUid}: missing account or collection`)
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      await core.inviteToCollection(account, collection, username, accessLevel)
+      return true
+    } catch (err) {
+      console.error('[etebase-store] Failed to create sharing invitation', getSafeErrorDetails(err))
+      showErrorToast('Failed to create sharing invitation. Please verify the username and try again.')
+      return false
+    }
+  },
+
+  listCollectionMembers: async (type: CollectionTypeKey, collectionUid: string) => {
+    const { account, collections } = get()
+    const collection = resolveCollection(collections, type, collectionUid)
+    if (!account || !collection) return []
+
+    try {
+      const core = await import('@silentsuite/core')
+      return await core.listCollectionMembers(account, collection)
+    } catch (err) {
+      console.error('[etebase-store] Failed to list collection members', getSafeErrorDetails(err))
+      showErrorToast('Failed to load collection members. Please try again.')
+      return []
+    }
+  },
+
+  removeCollectionMember: async (type: CollectionTypeKey, collectionUid: string, username: string) => {
+    const { account, collections } = get()
+    const collection = resolveCollection(collections, type, collectionUid)
+    if (!account || !collection) {
+      logger.warn(`[etebase-store] Cannot remove member from ${type} collection ${collectionUid}: missing account or collection`)
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      await core.removeCollectionMember(account, collection, username)
+      return true
+    } catch (err) {
+      console.error('[etebase-store] Failed to remove collection member', getSafeErrorDetails(err))
+      showErrorToast('Failed to remove collection member. Please try again.')
+      return false
+    }
+  },
+
+  leaveCollection: async (type: CollectionTypeKey, collectionUid: string) => {
+    const { account, collections } = get()
+    const collection = resolveCollection(collections, type, collectionUid)
+    if (!account || !collection) {
+      logger.warn(`[etebase-store] Cannot leave ${type} collection ${collectionUid}: missing account or collection`)
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      await core.leaveCollection(account, collection)
+      await get().reconcileCollections()
+      return true
+    } catch (err) {
+      console.error('[etebase-store] Failed to leave collection', getSafeErrorDetails(err))
+      showErrorToast('Failed to leave shared collection. Please try again.')
+      return false
+    }
+  },
+
+  modifyCollectionMemberAccess: async (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => {
+    const { account, collections } = get()
+    const collection = resolveCollection(collections, type, collectionUid)
+    if (!account || !collection) {
+      logger.warn(`[etebase-store] Cannot modify member access for ${type} collection ${collectionUid}: missing account or collection`)
+      return false
+    }
+
+    try {
+      const core = await import('@silentsuite/core')
+      await core.modifyCollectionMemberAccess(account, collection, username, accessLevel)
+      return true
+    } catch (err) {
+      console.error('[etebase-store] Failed to change collection member access', getSafeErrorDetails(err))
+      showErrorToast('Failed to update collection member access. Please try again.')
+      return false
     }
   },
 

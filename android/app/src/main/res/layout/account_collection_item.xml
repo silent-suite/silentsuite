@@ -7,6 +7,7 @@
   -->
 
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -64,6 +65,7 @@
         android:layout_marginRight="8dp"
         android:contentDescription="@string/account_collection_shared_indicator"
         android:src="@drawable/ic_members_dark"
+        app:tint="?attr/colorControlNormal"
         android:visibility="gone" />
 
     <ImageView
@@ -72,7 +74,8 @@
         android:layout_height="24dp"
         android:layout_marginRight="8dp"
         android:contentDescription="@string/account_collection_read_only_indicator"
-        android:src="@drawable/ic_readonly_dark" />
+        android:src="@drawable/ic_readonly_dark" 
+        app:tint="?attr/colorControlNormal" />
 
     <View
         android:id="@+id/color"

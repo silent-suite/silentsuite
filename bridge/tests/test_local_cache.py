@@ -202,6 +202,30 @@ class TestCollectionWrapper:
         col = Collection(mgr, cache_col)
         assert col.col_type == "etebase.vcard"
 
+    def test_read_only_reflects_shared_collection_access_level(self, mem_db, user):
+        mock_col = _make_mock_collection("shared-col", "etebase.vevent")
+        mock_col.access_level = 1
+        mgr = self._simple_col_mgr(mock_col)
+        cache_col = CollectionEntity.create(
+            local_user=user, uid="shared-col", eb_col=b"\x00" * 8
+        )
+
+        col = Collection(mgr, cache_col)
+
+        assert col.read_only is True
+
+    def test_read_write_shared_collection_is_not_read_only(self, mem_db, user):
+        mock_col = _make_mock_collection("shared-rw-col", "etebase.vevent")
+        mock_col.access_level = 0
+        mgr = self._simple_col_mgr(mock_col)
+        cache_col = CollectionEntity.create(
+            local_user=user, uid="shared-rw-col", eb_col=b"\x00" * 8
+        )
+
+        col = Collection(mgr, cache_col)
+
+        assert col.read_only is False
+
     def test_meta(self, mem_db, user):
         mock_col = _make_mock_collection("col-1", "etebase.vevent", meta={"name": "My Cal"})
         mgr = self._simple_col_mgr(mock_col)

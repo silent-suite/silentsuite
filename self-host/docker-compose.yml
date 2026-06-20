@@ -43,6 +43,11 @@ services:
       # Open registration toggle. "true" blocks new signups (use after the
       # operator's admin account is registered). Default "false" allows signup.
       ETEBASE_DISABLE_SIGNUP: ${ETEBASE_DISABLE_SIGNUP:-false}
+      # One-time first-admin signup token. When set, the first signup must use
+      # https://YOUR_DOMAIN/?bootstrap_token=TOKEN as the server URL.
+      ETEBASE_BOOTSTRAP_ADMIN_TOKEN: ${ETEBASE_BOOTSTRAP_ADMIN_TOKEN:-}
+      # Hide the advanced Django admin panel unless explicitly re-enabled.
+      ETEBASE_DISABLE_DJANGO_ADMIN: ${ETEBASE_DISABLE_DJANGO_ADMIN:-true}
       # Only these reverse proxy IPs may set X-Forwarded-* headers.
       TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-127.0.0.1}
     volumes:

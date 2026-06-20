@@ -4,8 +4,10 @@ import {
   generateVEvent,
   parseVCalendar,
   generateVCalendar,
+  parseVTodo,
+  generateVTodo,
 } from './ical-parser.js';
-import type { VEvent, VAlarm } from './ical-parser.js';
+import type { VEvent, VAlarm, VTodo } from './ical-parser.js';
 
 // ── Helpers ──
 
@@ -753,5 +755,162 @@ describe('property parsing', () => {
     expect(event.dtstart).toBe('20260315T100000');
     // The TZID value includes the quotes since the parser doesn't strip them
     expect(event.dtstartParams).toBeDefined();
+  });
+});
+
+// ── CATEGORIES (#291) ──
+
+describe('CATEGORIES (VEvent)', () => {
+  it('parses a single CATEGORIES value', () => {
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:cat-1',
+      'DTSTART:20260315T100000',
+      'CATEGORIES:Work',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = parseVEvent(ical);
+    expect(event.categories).toEqual(['Work']);
+  });
+
+  it('parses multiple comma-separated CATEGORIES', () => {
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:cat-2',
+      'DTSTART:20260315T100000',
+      'CATEGORIES:Work,Personal,Travel',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = parseVEvent(ical);
+    expect(event.categories).toEqual(['Work', 'Personal', 'Travel']);
+  });
+
+  it('unescapes commas within a single category value', () => {
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:cat-3',
+      'DTSTART:20260315T100000',
+      'CATEGORIES:Travel\\, Inc.,Personal',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = parseVEvent(ical);
+    expect(event.categories).toEqual(['Travel, Inc.', 'Personal']);
+  });
+
+  it('emits CATEGORIES joined by commas with each value escaped', () => {
+    const event: VEvent = {
+      uid: 'cat-gen',
+      dtstart: '20260315T100000',
+      categories: ['Work', 'Travel, Inc.'],
+    };
+
+    const generated = generateVEvent(event);
+    expect(generated).toContain('CATEGORIES:Work,Travel\\, Inc.');
+  });
+
+  it('roundtrips CATEGORIES through generate/parse', () => {
+    const original: VEvent = {
+      uid: 'cat-rt',
+      dtstart: '20260315T100000',
+      categories: ['Work', 'Personal', 'Side, Project'],
+    };
+
+    const generated = generateVEvent(original);
+    const parsed = parseVEvent(generated);
+    expect(parsed.categories).toEqual(original.categories);
+  });
+
+  it('defaults categories to undefined when CATEGORIES is absent', () => {
+    const ical = [
+      'BEGIN:VEVENT',
+      'UID:cat-none',
+      'DTSTART:20260315T100000',
+      'END:VEVENT',
+    ].join('\r\n');
+
+    const event = parseVEvent(ical);
+    expect(event.categories).toBeUndefined();
+  });
+
+  it('omits CATEGORIES line when categories is empty or undefined', () => {
+    const without: VEvent = { uid: 'cat-omit', dtstart: '20260315T100000' };
+    expect(generateVEvent(without)).not.toContain('CATEGORIES');
+
+    const empty: VEvent = { uid: 'cat-omit2', dtstart: '20260315T100000', categories: [] };
+    expect(generateVEvent(empty)).not.toContain('CATEGORIES');
+  });
+});
+
+describe('CATEGORIES (VTodo)', () => {
+  it('parses multiple comma-separated CATEGORIES from a VTODO', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:todo-cat-1',
+      'SUMMARY:Task with labels',
+      'CATEGORIES:Work,Urgent',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.categories).toEqual(['Work', 'Urgent']);
+  });
+
+  it('unescapes commas within a single VTODO category value', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:todo-cat-2',
+      'SUMMARY:Escaped',
+      'CATEGORIES:Side\\, Project,Personal',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.categories).toEqual(['Side, Project', 'Personal']);
+  });
+
+  it('emits CATEGORIES in a generated VTODO', () => {
+    const todo: VTodo = {
+      uid: 'todo-cat-gen',
+      summary: 'Labelled task',
+      categories: ['Work', 'Home'],
+    };
+
+    const generated = generateVTodo(todo);
+    expect(generated).toContain('CATEGORIES:Work,Home');
+  });
+
+  it('roundtrips CATEGORIES through VTODO generate/parse', () => {
+    const original: VTodo = {
+      uid: 'todo-cat-rt',
+      summary: 'Roundtrip',
+      categories: ['Errands', 'Weekend, Fun'],
+    };
+
+    const generated = generateVTodo(original);
+    const parsed = parseVTodo(generated);
+    expect(parsed.categories).toEqual(original.categories);
+  });
+
+  it('defaults categories to undefined when VTODO lacks CATEGORIES', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:todo-cat-none',
+      'SUMMARY:No labels',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.categories).toBeUndefined();
+  });
+
+  it('omits CATEGORIES line when VTODO categories is empty or undefined', () => {
+    const without: VTodo = { uid: 'todo-cat-omit', summary: 'x' };
+    expect(generateVTodo(without)).not.toContain('CATEGORIES');
+
+    const empty: VTodo = { uid: 'todo-cat-omit2', summary: 'x', categories: [] };
+    expect(generateVTodo(empty)).not.toContain('CATEGORIES');
   });
 });

@@ -1,11 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@silentsuite/ui'
 import { toVEvent, toVTodo, toVCard, type CalendarEvent, type Task, type Contact } from '@silentsuite/core'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { useTaskListStore } from '@/app/stores/use-task-list-store'
+import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import {
   showErrorToast,
   showWarningToast,
@@ -19,6 +22,9 @@ import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
  * before kicking off the ZIP export.
  */
 const LARGE_EXPORT_THRESHOLD = 1000
+
+/** Sentinel value meaning "export every collection of this type". */
+const ALL_COLLECTIONS = 'all'
 
 function downloadFile(content: string | Blob | Uint8Array, filename: string, mimeType: string) {
   const blob =
@@ -87,19 +93,81 @@ function reportError(label: string, err: unknown) {
   showErrorToast(`${label} failed. Please try again.`)
 }
 
+/** Reduce an arbitrary collection name to a filename-safe slug.
+ * e.g. "Work & Travel!!" -> "work-travel". Falls back to "collection" if the
+ * name contains no usable characters. */
+function sanitizeCollectionName(name: string): string {
+  return (
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'collection'
+  )
+}
+
+/** Build a download filename for a single-type export. When `collectionId` is
+ * `ALL_COLLECTIONS` the legacy aggregate filename is used; otherwise the
+ * sanitized collection name is appended so each exported file is
+ * distinguishable. */
+function buildExportFilename(
+  prefix: 'calendar' | 'tasks' | 'contacts',
+  extension: 'ics' | 'vcf',
+  collectionId: string,
+  collections: ReadonlyArray<{ id: string; name: string }>,
+): string {
+  if (collectionId === ALL_COLLECTIONS) {
+    return `silentsuite-${prefix}.${extension}`
+  }
+  const collection = collections.find((c) => c.id === collectionId)
+  const slug = sanitizeCollectionName(collection?.name ?? collectionId)
+  return `silentsuite-${prefix}-${slug}.${extension}`
+}
+
 export default function ExportPage() {
   const tasks = useTaskStore((s) => s.tasks)
   const contacts = useContactStore((s) => s.contacts)
   const events = useCalendarStore((s) => s.events)
 
+  const calendars = useCalendarListStore((s) => s.calendars)
+  const taskLists = useTaskListStore((s) => s.lists)
+  const contactLists = useContactListStore((s) => s.lists)
+
+  const [selectedCalendarId, setSelectedCalendarId] = useState(ALL_COLLECTIONS)
+  const [selectedTaskListId, setSelectedTaskListId] = useState(ALL_COLLECTIONS)
+  const [selectedContactListId, setSelectedContactListId] = useState(ALL_COLLECTIONS)
+
   const [isExportingAll, setIsExportingAll] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
 
+  const filteredEvents = useMemo(
+    () =>
+      selectedCalendarId === ALL_COLLECTIONS
+        ? events
+        : events.filter((event) => (event.calendarId ?? 'default') === selectedCalendarId),
+    [events, selectedCalendarId],
+  )
+  const filteredTasks = useMemo(
+    () =>
+      selectedTaskListId === ALL_COLLECTIONS
+        ? tasks
+        : tasks.filter((task) => (task.listId ?? 'default') === selectedTaskListId),
+    [tasks, selectedTaskListId],
+  )
+  const filteredContacts = useMemo(
+    () =>
+      selectedContactListId === ALL_COLLECTIONS
+        ? contacts
+        : contacts.filter((contact) => (contact.listId ?? 'default') === selectedContactListId),
+    [contacts, selectedContactListId],
+  )
+
   function exportCalendar() {
     try {
-      const { vcomponents, skipped } = serializeEvents(events)
+      const { vcomponents, skipped } = serializeEvents(filteredEvents)
       const ics = buildCalendarIcs(vcomponents)
-      downloadFile(ics, 'silentsuite-calendar.ics', 'text/calendar')
+      const filename = buildExportFilename('calendar', 'ics', selectedCalendarId, calendars)
+      downloadFile(ics, filename, 'text/calendar')
       reportSkipped('event', skipped)
     } catch (err) {
       reportError('Calendar export', err)
@@ -108,9 +176,10 @@ export default function ExportPage() {
 
   function exportTasks() {
     try {
-      const { vcomponents, skipped } = serializeTasks(tasks)
+      const { vcomponents, skipped } = serializeTasks(filteredTasks)
       const ics = buildCalendarIcs(vcomponents)
-      downloadFile(ics, 'silentsuite-tasks.ics', 'text/calendar')
+      const filename = buildExportFilename('tasks', 'ics', selectedTaskListId, taskLists)
+      downloadFile(ics, filename, 'text/calendar')
       reportSkipped('task', skipped)
     } catch (err) {
       reportError('Tasks export', err)
@@ -119,9 +188,10 @@ export default function ExportPage() {
 
   function exportContacts() {
     try {
-      const { vcomponents, skipped } = serializeContacts(contacts)
+      const { vcomponents, skipped } = serializeContacts(filteredContacts)
       const vcf = vcomponents.join('\n')
-      downloadFile(vcf, 'silentsuite-contacts.vcf', 'text/vcard')
+      const filename = buildExportFilename('contacts', 'vcf', selectedContactListId, contactLists)
+      downloadFile(vcf, filename, 'text/vcard')
       reportSkipped('contact', skipped)
     } catch (err) {
       reportError('Contacts export', err)
@@ -131,6 +201,9 @@ export default function ExportPage() {
   async function exportAll() {
     if (isExportingAll) return
 
+    // The ZIP is intentionally an all-data export: it always includes every
+    // calendar, task list, and address book regardless of the per-type
+    // selections above. Per-collection exports use the individual buttons.
     const totalItems = events.length + tasks.length + contacts.length
 
     setIsExportingAll(true)
@@ -197,50 +270,129 @@ export default function ExportPage() {
         Download your data in standard formats (ICS, VCF). Your data is always yours.
       </p>
 
-      <div className="flex flex-col gap-3">
-        <Button
-          className="w-full sm:w-auto"
-          disabled={events.length === 0 || isExportingAll}
-          onClick={exportCalendar}
-        >
-          <Download className="mr-2 h-4 w-4" />
-          Export Calendar ({events.length} {events.length === 1 ? 'event' : 'events'})
-        </Button>
-        <Button
-          className="w-full sm:w-auto"
-          disabled={tasks.length === 0 || isExportingAll}
-          onClick={exportTasks}
-        >
-          <Download className="mr-2 h-4 w-4" />
-          Export Tasks ({tasks.length} {tasks.length === 1 ? 'task' : 'tasks'})
-        </Button>
-        <Button
-          className="w-full sm:w-auto"
-          disabled={contacts.length === 0 || isExportingAll}
-          onClick={exportContacts}
-        >
-          <Download className="mr-2 h-4 w-4" />
-          Export Contacts ({contacts.length} {contacts.length === 1 ? 'contact' : 'contacts'})
-        </Button>
-        <Button
-          variant="outline"
-          className="w-full sm:w-auto"
-          disabled={exportAllDisabled}
-          onClick={exportAll}
-          aria-busy={isExportingAll}
-        >
-          {isExportingAll ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Preparing… {exportProgress}%
-            </>
-          ) : (
-            <>
-              <Download className="mr-2 h-4 w-4" />
-              Export All Data (.zip)
-            </>
-          )}
-        </Button>
+      <div className="flex flex-col gap-5">
+        {/* Calendar */}
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="export-calendar-select"
+            className="text-sm font-medium text-[rgb(var(--foreground))]"
+          >
+            Calendar
+          </label>
+          <select
+            id="export-calendar-select"
+            aria-label="Calendar collection"
+            value={selectedCalendarId}
+            onChange={(e) => setSelectedCalendarId(e.target.value)}
+            className="w-full max-w-xs rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          >
+            <option value={ALL_COLLECTIONS}>All calendars</option>
+            {calendars.map((calendar) => (
+              <option key={calendar.id} value={calendar.id}>
+                {calendar.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            className="w-full sm:w-auto"
+            disabled={filteredEvents.length === 0 || isExportingAll}
+            onClick={exportCalendar}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export Calendar ({filteredEvents.length} {filteredEvents.length === 1 ? 'event' : 'events'})
+          </Button>
+        </div>
+
+        {/* Tasks */}
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="export-tasks-select"
+            className="text-sm font-medium text-[rgb(var(--foreground))]"
+          >
+            Task list
+          </label>
+          <select
+            id="export-tasks-select"
+            aria-label="Task list collection"
+            value={selectedTaskListId}
+            onChange={(e) => setSelectedTaskListId(e.target.value)}
+            className="w-full max-w-xs rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          >
+            <option value={ALL_COLLECTIONS}>All task lists</option>
+            {taskLists.map((list) => (
+              <option key={list.id} value={list.id}>
+                {list.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            className="w-full sm:w-auto"
+            disabled={filteredTasks.length === 0 || isExportingAll}
+            onClick={exportTasks}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export Tasks ({filteredTasks.length} {filteredTasks.length === 1 ? 'task' : 'tasks'})
+          </Button>
+        </div>
+
+        {/* Contacts */}
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="export-contacts-select"
+            className="text-sm font-medium text-[rgb(var(--foreground))]"
+          >
+            Address book
+          </label>
+          <select
+            id="export-contacts-select"
+            aria-label="Address book collection"
+            value={selectedContactListId}
+            onChange={(e) => setSelectedContactListId(e.target.value)}
+            className="w-full max-w-xs rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          >
+            <option value={ALL_COLLECTIONS}>All address books</option>
+            {contactLists.map((list) => (
+              <option key={list.id} value={list.id}>
+                {list.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            className="w-full sm:w-auto"
+            disabled={filteredContacts.length === 0 || isExportingAll}
+            onClick={exportContacts}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export Contacts ({filteredContacts.length} {filteredContacts.length === 1 ? 'contact' : 'contacts'})
+          </Button>
+        </div>
+
+        {/* All-data ZIP — always exports every collection, independent of the
+            per-type selections above. */}
+        <div className="flex flex-col gap-1 border-t border-[rgb(var(--border))] pt-5">
+          <Button
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={exportAllDisabled}
+            onClick={exportAll}
+            aria-busy={isExportingAll}
+          >
+            {isExportingAll ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Preparing… {exportProgress}%
+              </>
+            ) : (
+              <>
+                <Download className="mr-2 h-4 w-4" />
+                Export All Data (.zip)
+              </>
+            )}
+          </Button>
+          <p className="text-xs text-[rgb(var(--muted))]">
+            Includes every calendar, task list, and address book in a single archive.
+          </p>
+        </div>
       </div>
     </div>
   )

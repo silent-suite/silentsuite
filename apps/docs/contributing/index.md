@@ -17,10 +17,22 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 
 ## Before You Start
 
+If this is your first contribution, start with an issue labeled `good first issue`. These are intentionally small and should have exact files and acceptance criteria. If anything is unclear, ask in the issue before opening a PR.
+
+- Do not paste passwords, API keys, recovery phrases, `.env` values, or private calendar/contact/task content into issues, PRs, screenshots, or logs.
+- Redact sensitive values before posting debug output.
+
 1. **Read the [Development Setup](./dev-setup.md) guide** to get the project running locally.
 2. **Check existing issues** on [GitHub](https://github.com/silent-suite/silentsuite/issues) for something to work on, or open a new issue to discuss your idea before writing code.
 3. **Follow the [Pull Request Guide](./pull-request-guide.md)** when submitting changes.
 4. **For translations, read the [Translation Guide](https://github.com/silent-suite/silentsuite/blob/main/TRANSLATING.md)** before adding or updating locale files.
+
+## First PR Checklist
+
+- Keep the PR focused on one issue only.
+- Mention the issue number in the PR description.
+- Include screenshots for visual or docs changes when helpful.
+- Say what you tested, or state that the change is docs-only.
 
 ## Code of Conduct
 

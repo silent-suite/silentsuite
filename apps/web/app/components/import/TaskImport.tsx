@@ -12,6 +12,7 @@ import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import type { Priority } from '@silentsuite/core'
+import { normalizeLabels } from '@/app/components/LabelEditor'
 
 interface TaskImportProps {
   onImportComplete: (count: number) => void
@@ -223,6 +224,7 @@ export default function TaskImport({ onImportComplete, heading }: TaskImportProp
         due_date: task.due ? parseICalDate(task.due) : null,
         priority: mapPriorityToStore(task.priority),
         completed: isCompletedVTodo(task),
+        categories: normalizeLabels(task.categories ?? []),
         listId: selectedListId,
       }))
       const count = await importTasks(newTasks)

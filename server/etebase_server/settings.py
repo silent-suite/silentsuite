@@ -15,6 +15,13 @@ import os
 
 from .utils import get_secret_from_file
 
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in ("true", "1", "yes")
+
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SOURCE_DIR)
@@ -33,6 +40,8 @@ SECRET_FILE = os.path.join(BASE_DIR, "secret.txt")
 DEBUG = os.environ.get('ETEBASE_DEBUG', 'false').lower() == 'true'
 
 ALLOWED_HOSTS = []
+ETEBASE_DISABLE_DJANGO_ADMIN = env_flag("ETEBASE_DISABLE_DJANGO_ADMIN")
+ETEBASE_BOOTSTRAP_ADMIN_TOKEN = os.environ.get("ETEBASE_BOOTSTRAP_ADMIN_TOKEN", "")
 
 # Database
 # https://docs.djangoproject.com/en/2.0/ref/settings/#databases
@@ -209,8 +218,30 @@ if "DJANGO_MEDIA_ROOT" in os.environ:
 # Self-host operators flip this on (via close-signups.sh) once their admin
 # is registered. Replaces the etebase-server.ini-only path so the toggle is
 # runtime-driven without an image rebuild.
-if os.environ.get("ETEBASE_DISABLE_SIGNUP", "").lower() in ("true", "1", "yes"):
+if env_flag("ETEBASE_DISABLE_SIGNUP"):
     ETEBASE_CREATE_USER_FUNC = "etebase_server.django.utils.create_user_blocked"
+
+# ──────────────────────────────────────────────────────────────────────
+# Production HTTPS and secure-cookie defaults (SEC-R7.8)
+#
+# These settings are applied when DEBUG=False. Self-hosters behind a TLS
+# proxy should set ETEBASE_BEHIND_PROXY=true so SECURE_PROXY_SSL_HEADER is
+# configured. All values can be overridden via the etebase_server_settings
+# module import below or by environment variables.
+# ──────────────────────────────────────────────────────────────────────
+if not DEBUG:
+    SECURE_SSL_REDIRECT = os.environ.get("ETEBASE_SECURE_SSL_REDIRECT", "true").lower() == "true"
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get("ETEBASE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_REFERRER_POLICY = "same-origin"
+
+# Only set the proxy SSL header when explicitly behind a trusted reverse proxy.
+if os.environ.get("ETEBASE_BEHIND_PROXY", "").lower() in ("1", "true", "yes"):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # Make an `etebase_server_settings` module available to override settings.
 try:

@@ -314,3 +314,93 @@ describe('parsing raw vCard strings', () => {
     expect(vcard.adr![0]!.city).toBe('Berlin');
   });
 });
+
+// ── CATEGORIES (#291) ──
+
+describe('CATEGORIES', () => {
+  it('parses a single CATEGORIES value', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:vcf-cat-1',
+      'FN:Jane Doe',
+      'CATEGORIES:Work',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.categories).toEqual(['Work']);
+  });
+
+  it('parses multiple comma-separated CATEGORIES', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:vcf-cat-2',
+      'FN:Jane Doe',
+      'CATEGORIES:Friends,Work,Family',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.categories).toEqual(['Friends', 'Work', 'Family']);
+  });
+
+  it('unescapes commas within a single category value', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:vcf-cat-3',
+      'FN:Jane Doe',
+      'CATEGORIES:Team\\, Alpha,VIP',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.categories).toEqual(['Team, Alpha', 'VIP']);
+  });
+
+  it('emits CATEGORIES joined by commas with each value escaped', () => {
+    const vcard: VCard = {
+      uid: 'vcf-cat-gen',
+      fn: 'Jane Doe',
+      categories: ['Work', 'Team, Alpha'],
+    };
+
+    const generated = generateVCard(vcard);
+    expect(generated).toContain('CATEGORIES:Work,Team\\, Alpha');
+  });
+
+  it('roundtrips CATEGORIES through generate/parse', () => {
+    const original: VCard = {
+      uid: 'vcf-cat-rt',
+      fn: 'Jane Doe',
+      categories: ['Friends', 'VIP', 'Team, Alpha'],
+    };
+
+    const generated = generateVCard(original);
+    const parsed = parseVCard(generated);
+    expect(parsed.categories).toEqual(original.categories);
+  });
+
+  it('defaults categories to undefined when CATEGORIES is absent', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:vcf-cat-none',
+      'FN:Jane Doe',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const vcard = parseVCard(raw);
+    expect(vcard.categories).toBeUndefined();
+  });
+
+  it('omits CATEGORIES line when categories is empty or undefined', () => {
+    const without: VCard = { uid: 'vcf-cat-omit', fn: 'Jane Doe' };
+    expect(generateVCard(without)).not.toContain('CATEGORIES');
+
+    const empty: VCard = { uid: 'vcf-cat-omit2', fn: 'Jane Doe', categories: [] };
+    expect(generateVCard(empty)).not.toContain('CATEGORIES');
+  });
+});
