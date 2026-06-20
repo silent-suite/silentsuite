@@ -34,6 +34,20 @@ describe('vEventToImportEvent', () => {
     expect(payload.categories).toEqual(['Work', 'Urgent'])
   })
 
+  it('normalizes CATEGORIES labels in the import payload', () => {
+    const event: VEvent = {
+      uid: 'norm@example',
+      summary: 'Tagged event',
+      dtstart: '20260601T090000',
+      dtend: '20260601T100000',
+      categories: [' Work ', 'work', 'Home'],
+    }
+
+    const payload = vEventToImportEvent(event, 'cal-1')
+
+    expect(payload.categories).toEqual(['Work', 'Home'])
+  })
+
   it('defaults categories to an empty array when the source has none', () => {
     const event: VEvent = {
       uid: 'nocat@example',

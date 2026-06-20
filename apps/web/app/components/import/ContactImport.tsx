@@ -11,6 +11,7 @@ import { useContactStore } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { normalizeLabels } from '@/app/components/LabelEditor'
 
 interface ContactImportProps {
   onImportComplete: (count: number) => void
@@ -140,7 +141,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         notes: contact.note ?? '',
         birthday: contact.bday ?? null,
         photoUrl: contact.photo ?? null,
-        categories: contact.categories ?? [],
+        categories: normalizeLabels(contact.categories ?? []),
         listId: selectedListId,
       }))
       const count = await importContacts(newContacts)

@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List, Folder, Tag } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
@@ -165,6 +166,7 @@ function TaskDialog({
   const activeListId = useTaskListStore((s) => s.activeListId)
   const titleRef = useRef<HTMLInputElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const t = useTranslations('Labels')
 
   // Focus trap: keep Tab cycling within the dialog
   useFocusTrap(dialogRef)
@@ -353,8 +355,7 @@ function TaskDialog({
               <LabelEditor
                 labels={categories}
                 onChange={setCategories}
-                placeholder="Add label"
-                aria-label="Task labels"
+                aria-label={t('taskLabels')}
               />
             </div>
 
@@ -528,6 +529,7 @@ function TaskItem({ task }: { task: Task }) {
   const deleteTask = useTaskStore((s) => s.deleteTask)
   const toggleComplete = useTaskStore((s) => s.toggleComplete)
   const canWrite = useAuthStore((s) => s.canWrite())
+  const t = useTranslations('Labels')
 
   const [expanded, setExpanded] = useState(false)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -700,8 +702,7 @@ function TaskItem({ task }: { task: Task }) {
               labels={task.categories ?? []}
               onChange={(next) => canWrite && updateTask(task.id, { categories: next })}
               disabled={!canWrite}
-              placeholder="Add label"
-              aria-label="Task labels"
+              aria-label={t('taskLabels')}
             />
           </div>
         </div>

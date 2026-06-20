@@ -1,5 +1,6 @@
 import { parseICalDateValue } from '@silentsuite/core'
 import type { VEvent, VTodo } from '@silentsuite/core/utils/ical-parser'
+import { normalizeLabels } from '@/app/components/LabelEditor'
 
 export interface ImportEventPayload {
   title: string
@@ -74,7 +75,7 @@ export function vEventToImportEvent(
     recurrenceRule: event.rrule ?? null,
     exceptions,
     alarms: event.valarms ?? [],
-    categories: event.categories ?? [],
+    categories: normalizeLabels(event.categories ?? []),
     calendarId,
     timezone: isAllDay ? undefined : startTzid,
   }

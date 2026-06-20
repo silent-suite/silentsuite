@@ -5,6 +5,7 @@ import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
   StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder, Tag,
 } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
@@ -243,6 +244,7 @@ function ContactForm({
   const photoInputRef = useRef<HTMLInputElement>(null)
   const modalRef = useRef<HTMLDivElement>(null)
   const [nameError, setNameError] = useState(false)
+  const t = useTranslations('Labels')
 
   // Focus trap: keep Tab cycling within the modal
   useFocusTrap(modalRef)
@@ -521,12 +523,11 @@ function ContactForm({
 
           {/* Labels / categories */}
           <fieldset className="space-y-2">
-            <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">Labels</legend>
+            <legend className="text-xs font-medium uppercase tracking-wide text-[rgb(var(--muted))]">{t('sectionTitle')}</legend>
             <LabelEditor
               labels={categories}
               onChange={setCategories}
-              placeholder="Add label"
-              aria-label="Contact labels"
+              aria-label={t('contactLabels')}
             />
           </fieldset>
 
@@ -641,6 +642,7 @@ function ContactDetail({
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const t = useTranslations('Labels')
 
   const handlePhotoChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -873,7 +875,7 @@ function ContactDetail({
             </DetailSection>
           )}
           {contact.categories && contact.categories.length > 0 && (
-            <DetailSection icon={<Tag className="h-4 w-4" />} title="Labels">
+            <DetailSection icon={<Tag className="h-4 w-4" />} title={t('sectionTitle')}>
               <LabelChips labels={contact.categories} />
             </DetailSection>
           )}
@@ -1037,13 +1039,12 @@ function ContactDetail({
         </DetailSection>
 
         {/* Labels */}
-        <DetailSection icon={<Tag className="h-4 w-4" />} title="Labels">
+        <DetailSection icon={<Tag className="h-4 w-4" />} title={t('sectionTitle')}>
           <LabelEditor
             labels={contact.categories ?? []}
             onChange={(next) => handleFieldUpdate({ categories: next })}
             disabled={!canWrite}
-            placeholder="Add label"
-            aria-label="Contact labels"
+            aria-label={t('contactLabels')}
           />
         </DetailSection>
       </div>

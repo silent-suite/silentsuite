@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { Tag, X } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 
 // ---------------------------------------------------------------------------
 // Shared label / category chip components (#291)
@@ -41,9 +42,9 @@ export function LabelChips({
   if (!labels || labels.length === 0) return null
   return (
     <div className={`flex flex-wrap gap-1.5 ${className}`}>
-      {labels.map((label) => (
+      {labels.map((label, index) => (
         <span
-          key={label}
+          key={`${label}-${index}`}
           className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
         >
           <Tag className="h-3 w-3" />
@@ -62,8 +63,8 @@ export function LabelEditor({
   labels,
   onChange,
   disabled = false,
-  placeholder = 'Add label…',
-  'aria-label': ariaLabel = 'Labels',
+  placeholder,
+  'aria-label': ariaLabel,
 }: {
   labels: string[]
   onChange: (next: string[]) => void
@@ -71,6 +72,7 @@ export function LabelEditor({
   placeholder?: string
   'aria-label'?: string
 }) {
+  const t = useTranslations('Labels')
   const [input, setInput] = useState('')
 
   const commit = useCallback(
@@ -104,9 +106,9 @@ export function LabelEditor({
 
   return (
     <div className="flex flex-1 flex-wrap items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500">
-      {labels.map((label) => (
+      {labels.map((label, index) => (
         <span
-          key={label}
+          key={`${label}-${index}`}
           className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
         >
           <Tag className="h-3 w-3" />
@@ -115,8 +117,8 @@ export function LabelEditor({
             <button
               type="button"
               onClick={() => remove(label)}
-              className="rounded-full p-0.5 hover:text-red-500 transition-colors"
-              aria-label={`Remove label ${label}`}
+              className="rounded-full p-1 hover:text-red-500 transition-colors max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center max-md:-my-2 max-md:-mx-1.5"
+              aria-label={t('removeLabel', { label })}
             >
               <X className="h-3 w-3" />
             </button>
@@ -130,8 +132,8 @@ export function LabelEditor({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           onBlur={() => input.trim() && commit(input)}
-          placeholder={labels.length === 0 ? placeholder : ''}
-          aria-label={ariaLabel}
+          placeholder={labels.length === 0 ? (placeholder ?? t('addLabelPlaceholder')) : ''}
+          aria-label={ariaLabel ?? t('editorAriaLabel')}
           className="min-w-[6rem] flex-1 bg-transparent text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none"
         />
       )}

@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
 import { EventDialog } from '../EventDialog'
+import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 
 const mocks = vi.hoisted(() => ({
   createEvent: vi.fn(),
@@ -72,7 +73,7 @@ vi.mock('@/app/lib/use-focus-trap', () => ({
   useFocusTrap: vi.fn(),
 }))
 
-function makeEvent(): CalendarEvent {
+function makeEvent(overrides?: Partial<CalendarEvent>): CalendarEvent {
   return {
     id: 'event-item-1',
     uid: 'stable-event-uid',
@@ -89,6 +90,7 @@ function makeEvent(): CalendarEvent {
     timezone: 'UTC',
     created: new Date('2026-06-01T08:00:00Z'),
     updated: new Date('2026-06-01T08:00:00Z'),
+    ...overrides,
   }
 }
 
@@ -104,7 +106,7 @@ describe('EventDialog edit calendar selection', () => {
   })
 
   it('includes calendarId in the edit patch when the selected calendar changes', async () => {
-    render(<EventDialog mode="edit" event={makeEvent()} onClose={mocks.onClose} />)
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent()} onClose={mocks.onClose} />)
 
     fireEvent.click(screen.getByRole('button', { name: /Family/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Done' }))
@@ -116,5 +118,27 @@ describe('EventDialog edit calendar selection', () => {
       )
     })
     expect(mocks.onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('emits a categories update when labels split from ["WorkHome"] to ["Work","Home"]', async () => {
+    const event = makeEvent({ categories: ['WorkHome'] })
+
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    // Replace the single "WorkHome" label with two labels "Work" and "Home".
+    fireEvent.click(screen.getByLabelText('Remove label WorkHome'))
+    const input = screen.getByLabelText('Event labels')
+    fireEvent.change(input, { target: { value: 'Work' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.change(input, { target: { value: 'Home' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    await waitFor(() => {
+      expect(mocks.updateEvent).toHaveBeenCalledWith(
+        'event-item-1',
+        expect.objectContaining({ categories: ['Work', 'Home'] }),
+      )
+    })
   })
 })

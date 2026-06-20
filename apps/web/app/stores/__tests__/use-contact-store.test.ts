@@ -149,5 +149,52 @@ describe('useContactStore', () => {
       expect(result).toHaveLength(1)
       expect(result[0]!.displayName).toBe('Alice Johnson')
     })
+
+    it('matches by categories/labels', () => {
+      const tagged: Contact[] = [
+        {
+          id: 't1',
+          uid: 't1',
+          displayName: 'Carol King',
+          name: { prefix: '', given: 'Carol', family: 'King', suffix: '' },
+          phones: [],
+          emails: [],
+          addresses: [],
+          organization: '',
+          title: '',
+          notes: '',
+          birthday: null,
+          photoUrl: null,
+          categories: ['Work', 'VIP'],
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+        {
+          id: 't2',
+          uid: 't2',
+          displayName: 'Dan Lee',
+          name: { prefix: '', given: 'Dan', family: 'Lee', suffix: '' },
+          phones: [],
+          emails: [],
+          addresses: [],
+          organization: '',
+          title: '',
+          notes: '',
+          birthday: null,
+          photoUrl: null,
+          categories: ['Family'],
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]
+
+      const work = getFilteredContacts(tagged, 'work')
+      expect(work).toHaveLength(1)
+      expect(work[0]!.displayName).toBe('Carol King')
+
+      const vip = getFilteredContacts(tagged, 'vip')
+      expect(vip).toHaveLength(1)
+      expect(vip[0]!.displayName).toBe('Carol King')
+    })
   })
 })

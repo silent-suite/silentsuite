@@ -331,3 +331,40 @@ describe('useCalendarStore.updateEvent calendar moves', () => {
     expect(useCalendarStore.getState().selectedEventId).toBe('master-new')
   })
 })
+
+describe('useCalendarStore.getFilteredEvents', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('matches events by categories/labels', () => {
+    const work = makeRecurringEvent({
+      id: 'work-1',
+      uid: 'work-uid',
+      title: 'Strategy sync',
+      recurrenceRule: null,
+      categories: ['Work', 'VIP'],
+    })
+    const personal = makeRecurringEvent({
+      id: 'personal-1',
+      uid: 'personal-uid',
+      title: 'Yoga class',
+      recurrenceRule: null,
+      categories: ['Health'],
+    })
+    useCalendarStore.setState({ events: [work, personal] })
+
+    useCalendarStore.getState().setSearchQuery('work')
+    expect(useCalendarStore.getState().getFilteredEvents().map((e) => e.id)).toEqual(['work-1'])
+
+    useCalendarStore.getState().setSearchQuery('vip')
+    expect(useCalendarStore.getState().getFilteredEvents().map((e) => e.id)).toEqual(['work-1'])
+
+    useCalendarStore.getState().setSearchQuery('health')
+    expect(useCalendarStore.getState().getFilteredEvents().map((e) => e.id)).toEqual(['personal-1'])
+
+    // Empty query returns everything
+    useCalendarStore.getState().setSearchQuery('')
+    expect(useCalendarStore.getState().getFilteredEvents()).toHaveLength(2)
+  })
+})

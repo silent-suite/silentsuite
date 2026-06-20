@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays, Tag } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { LabelEditor } from '@/app/components/LabelEditor'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -127,6 +128,7 @@ export function EventDialog({
 
   const canWrite = useAuthStore((s) => s.canWrite())
   const notifications = useNotifications()
+  const t = useTranslations('Labels')
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
   const timeFormat = usePreferencesStore((s) => s.timeFormat)
   const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
@@ -317,7 +319,7 @@ export function EventDialog({
         if (newStart.getTime() !== event.startDate.getTime()) patch.startDate = newStart
         if (effectiveEnd.getTime() !== event.endDate.getTime()) patch.endDate = effectiveEnd
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
-        if (categories.join(' ') !== (event.categories ?? []).join(' ')) patch.categories = categories
+        if (JSON.stringify(categories) !== JSON.stringify(event.categories ?? [])) patch.categories = categories
         if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
         if (selectedCalendarId !== (event.calendarId ?? defaultCalendarId)) patch.calendarId = selectedCalendarId
 
@@ -633,8 +635,7 @@ export function EventDialog({
                   labels={categories}
                   onChange={setCategories}
                   disabled={!canWrite}
-                  placeholder="Add label"
-                  aria-label="Event labels"
+                  aria-label={t('eventLabels')}
                 />
               </div>
 

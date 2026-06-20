@@ -32,5 +32,14 @@
       "copied": "Fingerprint copied",
       "copyFailed": "Copy failed"
     }
+  },
+  "Labels": {
+    "addLabelPlaceholder": "Add label\u2026",
+    "editorAriaLabel": "Labels",
+    "removeLabel": "Remove label {label}",
+    "eventLabels": "Event labels",
+    "taskLabels": "Task labels",
+    "contactLabels": "Contact labels",
+    "sectionTitle": "Labels"
   }
 }
