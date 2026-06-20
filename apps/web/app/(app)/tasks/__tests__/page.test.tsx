@@ -1,16 +1,24 @@
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TasksPage from '../page'
+import { renderWithIntl } from '@/src/__tests__/render-with-intl'
+import messages from '@/messages/en.json'
+import type { Task } from '@silentsuite/core'
+import type { TaskList } from '@/app/stores/use-task-list-store'
 
 // Mobile reachability smoke test for the Tasks page (epic #295). jsdom does not
 // evaluate CSS media queries, so these assert that the primary create action and
 // the collection switcher render with their accessible labels and carry the
 // expected responsive / touch-target classes, complementing manual width QA.
+// Accessible names that are backed by next-intl messages are resolved from the
+// message catalog so the tests do not couple to English copy.
+
+const manageTaskLists = messages.Collections.manageTaskLists
 
 const storeMock = vi.hoisted(() => ({
   taskState: {
-    tasks: [] as any[],
+    tasks: [] as Task[],
     isLoading: true,
     createTask: vi.fn(),
     updateTask: vi.fn(),
@@ -18,7 +26,7 @@ const storeMock = vi.hoisted(() => ({
     toggleComplete: vi.fn(),
   },
   taskListState: {
-    lists: [] as any[],
+    lists: [] as TaskList[],
     activeListId: null as string | null,
   },
   syncState: {
@@ -60,7 +68,7 @@ describe('TasksPage mobile reachability', () => {
   })
 
   it('exposes the primary create action on all widths', () => {
-    render(<TasksPage />)
+    renderWithIntl(<TasksPage />)
     const createButton = screen.getByRole('button', { name: 'New task' })
     expect(createButton).toBeInTheDocument()
     // Not hidden behind a desktop-only breakpoint.
@@ -69,13 +77,13 @@ describe('TasksPage mobile reachability', () => {
   })
 
   it('exposes an inline quick-add on mobile', () => {
-    render(<TasksPage />)
+    renderWithIntl(<TasksPage />)
     expect(screen.getByPlaceholderText('Add a task...')).toBeInTheDocument()
   })
 
   it('exposes a mobile collection switcher with a 44px touch target', () => {
-    render(<TasksPage />)
-    const folderButton = screen.getByRole('button', { name: 'Manage task lists' })
+    renderWithIntl(<TasksPage />)
+    const folderButton = screen.getByRole('button', { name: manageTaskLists })
     expect(folderButton).toBeInTheDocument()
     // Mobile-only control that meets the minimum touch target.
     expect(folderButton.className).toContain('md:hidden')

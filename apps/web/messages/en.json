@@ -32,5 +32,10 @@
       "copied": "Fingerprint copied",
       "copyFailed": "Copy failed"
     }
+  },
+  "Collections": {
+    "manageCalendars": "Manage calendars",
+    "manageAddressBooks": "Manage address books",
+    "manageTaskLists": "Manage task lists"
   }
 }

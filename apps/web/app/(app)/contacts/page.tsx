@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
   StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder,
@@ -1043,6 +1044,7 @@ function ContactSkeleton() {
 // ── Page ──
 
 export default function ContactsPage() {
+  const t = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())
   const contacts = useContactStore((s) => s.contacts)
   const isLoading = useContactStore((s) => s.isLoading)
@@ -1093,7 +1095,7 @@ export default function ContactsPage() {
             type="button"
             onClick={() => setCollectionSheetOpen(true)}
             className="touch-target md:hidden rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
-            aria-label="Manage address books"
+            aria-label={t('manageAddressBooks')}
           >
             <Folder className="h-5 w-5" />
           </button>

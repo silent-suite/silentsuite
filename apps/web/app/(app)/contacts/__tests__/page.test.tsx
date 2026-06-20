@@ -1,16 +1,24 @@
-import { render, screen } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ContactsPage from '../page'
+import { renderWithIntl } from '@/src/__tests__/render-with-intl'
+import messages from '@/messages/en.json'
+import type { Contact } from '@silentsuite/core'
+import type { ContactList } from '@/app/stores/use-contact-list-store'
 
 // Mobile reachability smoke test for the Contacts page (epic #295). jsdom does
 // not evaluate CSS media queries, so these assert that the primary create
 // action, search, and the collection switcher render with their accessible
 // labels and carry the expected responsive / touch-target classes,
-// complementing manual width QA.
+// complementing manual width QA. Accessible names that are backed by next-intl
+// messages are resolved from the message catalog so the tests do not couple to
+// English copy.
+
+const manageAddressBooks = messages.Collections.manageAddressBooks
 
 const storeMock = vi.hoisted(() => ({
   contactState: {
-    contacts: [] as any[],
+    contacts: [] as Contact[],
     isLoading: true,
     searchQuery: '',
     setSearchQuery: vi.fn(),
@@ -19,7 +27,7 @@ const storeMock = vi.hoisted(() => ({
     deleteContact: vi.fn(),
   },
   contactListState: {
-    lists: [] as any[],
+    lists: [] as ContactList[],
     activeListId: null as string | null,
   },
   syncState: {
@@ -59,7 +67,7 @@ describe('ContactsPage mobile reachability', () => {
   })
 
   it('exposes the primary create action on all widths', () => {
-    render(<ContactsPage />)
+    renderWithIntl(<ContactsPage />)
     const createButton = screen.getByRole('button', { name: 'New Contact' })
     expect(createButton).toBeInTheDocument()
     // Not hidden behind a desktop-only breakpoint.
@@ -68,13 +76,13 @@ describe('ContactsPage mobile reachability', () => {
   })
 
   it('exposes search on mobile', () => {
-    render(<ContactsPage />)
+    renderWithIntl(<ContactsPage />)
     expect(screen.getByLabelText('Search contacts')).toBeInTheDocument()
   })
 
   it('exposes a mobile collection switcher with a 44px touch target', () => {
-    render(<ContactsPage />)
-    const folderButton = screen.getByRole('button', { name: 'Manage address books' })
+    renderWithIntl(<ContactsPage />)
+    const folderButton = screen.getByRole('button', { name: manageAddressBooks })
     expect(folderButton).toBeInTheDocument()
     // Mobile-only control that meets the minimum touch target.
     expect(folderButton.className).toContain('md:hidden')
