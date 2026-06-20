@@ -7,9 +7,8 @@ import { expandRecurrence, type CalendarEvent } from '@silentsuite/core'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
-import { formatDate } from '@/app/lib/date'
+import { formatDate, weekStartIndex, weekdayLabels } from '@/app/lib/date'
 
-const WEEKDAY_LABELS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
 const FALLBACK_CALENDAR_COLOR = '#10b981'
 const MAX_DOTS_PER_DAY = 4
 
@@ -106,6 +105,8 @@ export function MiniCalendar() {
 
   const today = useMemo(() => new Date(), [])
   const dateFormat = usePreferencesStore((s) => s.dateFormat)
+  const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
+  const weekdays = useMemo(() => weekdayLabels(firstDayOfWeek), [firstDayOfWeek])
 
   const handleDayClick = useCallback(
     (date: Date) => {
@@ -138,9 +139,9 @@ export function MiniCalendar() {
 
   const days = useMemo((): DayCell[] => {
     const firstOfMonth = new Date(miniYear, miniMonth, 1)
-    // Monday = 0, Sunday = 6
-    let startDow = firstOfMonth.getDay() - 1
-    if (startDow < 0) startDow = 6
+    // Number of leading cells from the previous month, honoring the first-day
+    // preference (0 when the month starts on the configured first day).
+    const startDow = (firstOfMonth.getDay() - weekStartIndex(firstDayOfWeek) + 7) % 7
 
     const cellDates: { date: Date; inCurrentMonth: boolean }[] = []
 
@@ -189,7 +190,7 @@ export function MiniCalendar() {
       isSelected: isSameDay(cell.date, currentDate),
       eventDotColors: dotsByDay.get(dateKey(cell.date)) ?? [],
     }))
-  }, [miniYear, miniMonth, currentDate, events, today, calendarColors, visibleCalendarIds])
+  }, [miniYear, miniMonth, currentDate, events, today, calendarColors, visibleCalendarIds, firstDayOfWeek])
 
   const monthLabel = formatDate(new Date(miniYear, miniMonth), 'system', { month: 'long', year: 'numeric' })
 
@@ -222,7 +223,7 @@ export function MiniCalendar() {
 
       {/* Weekday headers */}
       <div className="grid grid-cols-7 mb-1">
-        {WEEKDAY_LABELS.map((label) => (
+        {weekdays.map((label) => (
           <div key={label} className="text-center text-[10px] font-medium text-[rgb(var(--muted))]">
             {label}
           </div>
