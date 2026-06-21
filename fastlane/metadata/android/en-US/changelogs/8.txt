@@ -1,0 +1,9 @@
+SilentSuite v0.3.0-beta
+
+- Added encrypted sharing invitation/member management support.
+- Added labels/categories for events, tasks, and contacts.
+- Added pull-to-refresh manual sync on Android collection and account screens.
+- Improved Android .vcf contact import reliability with privacy-safe failure counts.
+- Polished Android status bar, toolbar icons, dark-theme icon tints, and login screen.
+- Added calendar search, date/week preferences, per-collection export, and mobile web collection management.
+- Hardened offline queue privacy, Android signing workflows, bridge, server, and self-hosting.
