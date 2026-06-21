@@ -55,7 +55,12 @@ services:
       - ./success.html:/app/etebase_server/templates/success.html:ro
       - ./etebase-server.ini:/etc/etebase-server/etebase-server.ini:ro
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:3735/')\""]
+      # Treat any non-5xx HTTP response as healthy. The server runs behind a
+      # TLS-terminating reverse proxy and Django's SECURE_SSL_REDIRECT (enabled
+      # when debug=false) 301-redirects this in-container plain-HTTP probe to
+      # https://, which urllib would follow and fail against the plaintext port.
+      # http.client does not follow redirects, so a 301 here still means "up".
+      test: ["CMD-SHELL", "python -c \"import http.client,sys; c=http.client.HTTPConnection('localhost',3735,timeout=5); c.request('GET','/'); sys.exit(0 if c.getresponse().status<500 else 1)\""]
       interval: 30s
       timeout: 10s
       retries: 3
