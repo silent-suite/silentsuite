@@ -680,6 +680,44 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     }
   }, [sxEvents, eventsPlugin])
 
+  // #331: Reveal the full title on short/clipped calendar events.
+  // Schedule-X clips event text with `overflow: hidden`, so a short event's
+  // title can be unreadable. The DOM still holds the full text, so mirror it
+  // into a native `title` tooltip on each event element so hovering shows the
+  // complete title (and time). A MutationObserver keeps titles in sync across
+  // re-renders, sync updates, and view switches.
+  useEffect(() => {
+    const root = document.querySelector('.sx-silentsuite-calendar')
+    if (!root) return
+
+    const selector = '.sx__time-grid-event, .sx__month-grid-event, .sx__day-grid-event'
+    const applyAll = () => {
+      root.querySelectorAll(selector).forEach((el) => {
+        const text = (el.textContent || '').replace(/\s+/g, ' ').trim()
+        if (text && el.getAttribute('title') !== text) {
+          el.setAttribute('title', text)
+        }
+      })
+    }
+
+    let raf = 0
+    const schedule = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        applyAll()
+      })
+    }
+
+    applyAll()
+    const observer = new MutationObserver(schedule)
+    observer.observe(root, { childList: true, subtree: true })
+    return () => {
+      if (raf) cancelAnimationFrame(raf)
+      observer.disconnect()
+    }
+  }, [sxEvents, currentView])
+
   /** Find the time grid scrollable container and calculate time from Y */
   const getTimeFromY = useCallback(
     (clientY: number, gridEl: HTMLElement): number => {
