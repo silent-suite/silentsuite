@@ -863,7 +863,7 @@ function StepChoosePlan({
           </div>
         ) : provisionError ? (
           <div className="space-y-4 text-center">
-            <p className="text-sm text-red-400">{provisionError}</p>
+            <p className="text-sm text-red-600 dark:text-red-400">{provisionError}</p>
             <button
               onClick={onBack}
               className="text-sm text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 transition-colors"

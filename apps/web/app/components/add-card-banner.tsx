@@ -274,7 +274,7 @@ export default function AddCardBanner({ daysRemaining, onCardAdded }: AddCardBan
     <>
       <div className="flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
         <div className="flex items-center gap-3">
-          <Clock className="h-4 w-4 text-amber-400" />
+          <Clock className="h-4 w-4 text-amber-700 dark:text-amber-400" />
           <div>
             <p className="text-sm text-amber-700 dark:text-amber-400">
               {daysRemaining} day{daysRemaining !== 1 ? 's' : ''} left in your trial

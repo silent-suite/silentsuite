@@ -509,7 +509,7 @@ export default function SubscriptionPage() {
                             <button
                               onClick={() => handleCryptoCheckout(plan.id)}
                               disabled={cryptoCheckoutLoading || reactivating !== null}
-                              className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm font-medium text-amber-600 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
+                              className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm font-medium text-amber-700 dark:text-amber-400 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
                             >
                               {cryptoCheckoutLoading ? 'Opening...' : 'Pay crypto'}
                             </button>
