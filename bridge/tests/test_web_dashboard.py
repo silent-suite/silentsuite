@@ -200,6 +200,21 @@ def test_render_dashboard_escapes_account_action_attributes(tmp_path, monkeypatc
     assert "removeAccount('" not in html
 
 
+def test_add_account_button_bound_via_add_event_listener(tmp_path, monkeypatch):
+    """#333: the Add/Re-authenticate button must not rely on an inline onclick
+    resolving a global showLoginPanel function - bind via addEventListener."""
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+
+    html = _render_dashboard()
+
+    assert 'onclick="showLoginPanel()"' not in html
+    assert "addEventListener('click', showLoginPanel)" in html
+    # CSRF must be injected as a JSON string literal (no surrounding single quotes
+    # in the template) so it is always valid JS.
+    assert "window.SILENTSUITE_DASHBOARD_CSRF = {{CSRF_TOKEN}}" not in html
+
+
 def test_forget_account_status_removes_one_accounts_counts():
     _reset_status()
     update_status(
