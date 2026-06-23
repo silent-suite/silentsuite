@@ -939,6 +939,7 @@ def _render_dashboard():
                 '</div>'
                 f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
                 '</div>'
+                '<div style="font-size:12px;color:#f59e0b;margin-top:6px;">For calendar/contact apps only. Copy it into your app &mdash; do not open it in a web browser, which can expose your password in the address bar.</div>'
                 '<div class="account-actions">'
                 f'<button class="account-action-btn" data-account="{account_attr}" '
                 'onclick="logoutAccount(this)">Log out</button>'
