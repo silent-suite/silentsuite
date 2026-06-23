@@ -515,6 +515,13 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     weekOptions: {
       gridHeight: 800,
       eventWidth: 95,
+      // Concurrent (overlapping) events — e.g. from different collections — must
+      // render in side-by-side columns instead of stacking on top of each other.
+      // Schedule-X defaults eventOverlap to true, which paints each event at full
+      // eventWidth and lets them visually hide one another. Setting it to false
+      // makes Schedule-X divide the day column among concurrent events so both
+      // are visible. See issue #330.
+      eventOverlap: false,
     },
     plugins: [eventsPlugin],
     callbacks: {
