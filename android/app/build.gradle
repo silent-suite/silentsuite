@@ -30,6 +30,7 @@ android {
         debug {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+            testProguardFile 'proguard-rules.txt'
 
             /*
              * To override the server's url (for example when developing),
@@ -46,6 +47,7 @@ android {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+            testProguardFile 'proguard-rules.txt'
             buildConfigField 'String', 'DEBUG_REMOTE_URL', 'null'
 
             // Configure Kotlin compiler optimisations for releases
