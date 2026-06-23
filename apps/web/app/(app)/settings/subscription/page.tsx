@@ -11,7 +11,7 @@ const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-
   loading: () => (
     <div className="flex flex-col items-center justify-center py-8">
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-      <p className="mt-3 text-sm text-slate-400">Loading payment form...</p>
+      <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading payment form...</p>
     </div>
   ),
   ssr: false,
@@ -42,11 +42,11 @@ interface SubscriptionData {
 
 const STATUS_STYLES: Record<string, string> = {
   active: 'bg-[rgb(var(--primary))]/20 text-[rgb(var(--primary))]',
-  trialing: 'bg-amber-500/20 text-amber-400',
-  past_due: 'bg-red-500/20 text-red-400',
-  cancelled: 'bg-neutral-500/20 text-neutral-400',
-  expired: 'bg-neutral-500/20 text-neutral-400',
-  none: 'bg-neutral-500/20 text-neutral-400',
+  trialing: 'bg-amber-500/20 text-amber-700 dark:text-amber-400',
+  past_due: 'bg-red-500/20 text-red-700 dark:text-red-400',
+  cancelled: 'bg-neutral-500/20 text-neutral-600 dark:text-neutral-400',
+  expired: 'bg-neutral-500/20 text-neutral-600 dark:text-neutral-400',
+  none: 'bg-neutral-500/20 text-neutral-600 dark:text-neutral-400',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -107,7 +107,7 @@ function CancelDialog({
           </Button>
           <Button
             size="sm"
-            className="border-red-500 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+            className="border-red-500 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
             onClick={onConfirm}
             disabled={cancelling}
           >
@@ -306,12 +306,12 @@ export default function SubscriptionPage() {
       {/* Trial banner */}
       {showTrialBanner && (
         <div className="flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <p className="text-sm text-amber-400">
+          <p className="text-sm text-amber-700 dark:text-amber-400">
             {data.trial.daysRemaining} day{data.trial.daysRemaining !== 1 ? 's' : ''} remaining in your trial
           </p>
           <button
             onClick={() => setBannerDismissed(true)}
-            className="text-amber-400 hover:text-amber-300 text-sm font-medium"
+            className="text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 text-sm font-medium"
           >
             Dismiss
           </button>
@@ -377,7 +377,7 @@ export default function SubscriptionPage() {
 
           {/* Cancel at period end notice */}
           {data.cancelAtPeriodEnd && !isCancelled && data.renewalDate && (
-            <p className="text-xs text-amber-400">
+            <p className="text-xs text-amber-700 dark:text-amber-400">
               Your subscription will be cancelled at the end of the current period ({formatDateStr(data.renewalDate)})
             </p>
           )}
@@ -394,7 +394,7 @@ export default function SubscriptionPage() {
             <Button
               variant="outline"
               size="sm"
-              className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+              className="border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10"
               onClick={() => setShowCancelDialog(true)}
             >
               Cancel subscription
@@ -477,9 +477,9 @@ export default function SubscriptionPage() {
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <h3 className="font-medium text-white">{plan.name}</h3>
+                              <h3 className="font-medium text-[rgb(var(--foreground))]">{plan.name}</h3>
                               {'badge' in plan && plan.badge && (
-                                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                                   {plan.badge}
                                 </span>
                               )}
@@ -488,7 +488,7 @@ export default function SubscriptionPage() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <span className="text-2xl font-bold text-white">&euro;{plan.price}</span>
+                          <span className="text-2xl font-bold text-[rgb(var(--foreground))]">&euro;{plan.price}</span>
                           <span className="text-sm text-[rgb(var(--muted))]">{plan.period}</span>
                         </div>
                       </div>
@@ -509,13 +509,13 @@ export default function SubscriptionPage() {
                             <button
                               onClick={() => handleCryptoCheckout(plan.id)}
                               disabled={cryptoCheckoutLoading || reactivating !== null}
-                              className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
+                              className="rounded-lg border border-amber-500/40 px-3 py-2 text-sm font-medium text-amber-600 transition-colors hover:bg-amber-500/10 disabled:opacity-50"
                             >
                               {cryptoCheckoutLoading ? 'Opening...' : 'Pay crypto'}
                             </button>
                           </div>
                           {cryptoCheckoutError && (
-                            <p className="mt-2 text-xs text-red-400">{cryptoCheckoutError}</p>
+                            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{cryptoCheckoutError}</p>
                           )}
                         </div>
                       )}
@@ -578,7 +578,7 @@ export default function SubscriptionPage() {
                       </p>
                     </div>
                     {changePlanError && (
-                      <p className="text-xs text-red-400">{changePlanError}</p>
+                      <p className="text-xs text-red-600 dark:text-red-400">{changePlanError}</p>
                     )}
                     <div className="flex gap-3 pt-2">
                       <Button
@@ -652,12 +652,12 @@ export default function SubscriptionPage() {
                             <div className="flex items-center gap-2">
                               <h3 className="font-medium text-[rgb(var(--foreground))]">{plan.name}</h3>
                               {isCurrent && (
-                                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                                <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                                   <Check className="h-3 w-3" /> Current
                                 </span>
                               )}
                               {'badge' in plan && plan.badge && !isCurrent && (
-                                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
                                   {plan.badge}
                                 </span>
                               )}
@@ -666,7 +666,7 @@ export default function SubscriptionPage() {
                           </div>
                         </div>
                         <div className="text-right shrink-0">
-                          <span className={`text-2xl font-bold ${isCurrent ? 'text-emerald-400' : 'text-[rgb(var(--foreground))]'}`}>
+                          <span className={`text-2xl font-bold ${isCurrent ? 'text-emerald-600 dark:text-emerald-400' : 'text-[rgb(var(--foreground))]'}`}>
                             &euro;{plan.price}
                           </span>
                           <span className="text-sm text-[rgb(var(--muted))]">{plan.period}</span>
@@ -700,7 +700,7 @@ export default function SubscriptionPage() {
       {/* Success toast */}
       {changePlanToast && (
         <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 shadow-lg backdrop-blur-sm">
-          <p className="text-sm font-medium text-emerald-400">{changePlanToast}</p>
+          <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{changePlanToast}</p>
         </div>
       )}
     </div>

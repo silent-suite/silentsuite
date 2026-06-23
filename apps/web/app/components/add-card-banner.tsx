@@ -10,7 +10,7 @@ const StripePaymentForm = dynamic(() => import('./stripe-payment-form'), {
   loading: () => (
     <div className="flex flex-col items-center justify-center py-8">
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-      <p className="mt-3 text-sm text-slate-400">Loading payment form...</p>
+      <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading payment form...</p>
     </div>
   ),
   ssr: false,
@@ -72,7 +72,7 @@ function PriceDisplay({ interval }: { interval: BillingInterval }) {
   return (
     <span className="text-sm font-medium text-[rgb(var(--foreground))]">
       &euro;36<span className="text-[rgb(var(--muted))]">/yr</span>
-      <span className="ml-1 text-xs text-emerald-500">(&euro;3/mo)</span>
+      <span className="ml-1 text-xs text-emerald-600 dark:text-emerald-500">(&euro;3/mo)</span>
     </span>
   )
 }
@@ -201,7 +201,7 @@ function AddCardModal({
 
             {error && (
               <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                <p className="text-sm text-red-400">{error}</p>
+                <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
               </div>
             )}
 
@@ -276,7 +276,7 @@ export default function AddCardBanner({ daysRemaining, onCardAdded }: AddCardBan
         <div className="flex items-center gap-3">
           <Clock className="h-4 w-4 text-amber-400" />
           <div>
-            <p className="text-sm text-amber-400">
+            <p className="text-sm text-amber-700 dark:text-amber-400">
               {daysRemaining} day{daysRemaining !== 1 ? 's' : ''} left in your trial
             </p>
             <p className="text-xs text-[rgb(var(--muted))]">
