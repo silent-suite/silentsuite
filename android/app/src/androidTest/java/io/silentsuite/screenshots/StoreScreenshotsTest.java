@@ -88,9 +88,13 @@ public class StoreScreenshotsTest {
     }
 
     private static void launchApp() {
-        InstrumentationRegistry.getInstrumentation()
-                .getUiAutomation()
-                .executeShellCommand("monkey -p " + PACKAGE + " -c android.intent.category.LAUNCHER 1");
+        try {
+            InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation()
+                    .executeShellCommand("monkey -p " + PACKAGE + " -c android.intent.category.LAUNCHER 1");
+        } catch (Exception e) {
+            // Shell command may throw if the process is transitioning; ignore
+        }
         device.wait(Until.hasObject(By.pkg(PACKAGE).depth(0)), LAUNCH_TIMEOUT);
         SystemClock.sleep(2000);
     }
@@ -201,15 +205,13 @@ public class StoreScreenshotsTest {
 
     /**
      * Screenshot 1: Welcome / encryption promise screen.
-     * Forces a fresh install state (clears app data) to show the welcome screen.
+     * On a fresh emulator install the app has no data, so it naturally shows
+     * the welcome screen. Do NOT call pm clear here: it kills the app process,
+     * which also kills the instrumentation test running inside it.
      */
     @Test
     public void test01_welcome() {
-        InstrumentationRegistry.getInstrumentation()
-                .getUiAutomation()
-                .executeShellCommand("pm clear " + PACKAGE);
-        sleep(1000);
-        launchApp();
+        // The app was already launched in @BeforeClass. Just wait and capture.
         sleep(2500);
         capture("1-welcome");
     }
