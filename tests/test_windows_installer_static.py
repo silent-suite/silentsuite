@@ -35,6 +35,30 @@ def test_windows_installer_has_top_level_error_log_and_interactive_pause():
     assert re.search(r"catch\s*\{", script, re.IGNORECASE)
 
 
+def test_windows_installer_fails_closed_on_checksum_mismatch():
+    script = read(INSTALLER)
+    checksum_block = script[script.index("# --- Verify SHA256 checksum ---"):script.index("# --- Install binary ---")]
+
+    assert "No checksum asset found" in checksum_block
+    assert "refusing to install an unverified binary" in checksum_block
+    assert "Invalid checksum content" in checksum_block
+    assert "Could not verify checksum" in checksum_block
+    assert "Write-Warn" not in checksum_block
+
+    mismatch_match = re.search(
+        r"if\s*\(\$ExpectedHash\s+-ne\s+\$ActualHash\)\s*\{(?P<body>.*?)\n\s*\}\s*else\s*\{(?P<else_body>.*?)\n\s*\}",
+        checksum_block,
+        re.DOTALL,
+    )
+    assert mismatch_match, "installer should explicitly compare expected and actual SHA256 hashes"
+    mismatch_body = mismatch_match.group("body")
+    else_body = mismatch_match.group("else_body")
+
+    assert "Remove-Item $TmpFile" in mismatch_body
+    assert "Write-Err" in mismatch_body
+    assert "Write-Ok \"Checksum verified\"" in else_body
+
+
 def test_bridge_docs_link_direct_windows_asset_and_visible_error_recovery():
     docs = read(DOCS)
 
