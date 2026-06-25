@@ -42,6 +42,7 @@ import org.junit.Test;
 import org.junit.runners.MethodSorters;
 
 import java.io.File;
+import java.util.List;
 
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.uiautomator.By;
@@ -162,6 +163,47 @@ public class StoreScreenshotsTest {
         return false;
     }
 
+    private boolean tapRes(String resId) {
+        UiObject2 obj = device.wait(Until.findObject(By.res(PACKAGE, resId)), NAV_TIMEOUT);
+        if (obj != null) {
+            obj.click();
+            sleep(1000);
+            return true;
+        }
+        return false;
+    }
+
+    private void fillLoginFields() {
+        UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
+        if (emailField != null) {
+            emailField.click();
+            sleep(300);
+            emailField.setText(testEmail);
+            sleep(300);
+        }
+
+        // The password input itself is the second EditText inside a TextInputLayout
+        // (R.id.url_password belongs to the layout), so address EditText widgets.
+        List<UiObject2> editTexts = device.findObjects(By.clazz("android.widget.EditText"));
+        if (editTexts.size() >= 2) {
+            UiObject2 passField = editTexts.get(1);
+            passField.click();
+            sleep(300);
+            passField.setText(testPassword);
+            sleep(300);
+        }
+    }
+
+    private void requireLoggedIn(String screenName) {
+        if (!loggedIn) {
+            tryLogin();
+        }
+        UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), 1000);
+        if (!loggedIn || emailField != null) {
+            throw new AssertionError("Cannot capture " + screenName + ": login did not complete");
+        }
+    }
+
     /**
      * Attempt to log in with the test account credentials (if provided).
      * Types email + password into the login fields and taps Log In.
@@ -172,10 +214,10 @@ public class StoreScreenshotsTest {
             return; // no credentials, skip login
         }
 
-        // Make sure we are on the login screen
+        launchApp();
+
         UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
         if (emailField == null) {
-            // Maybe we are already logged in, or need to reach login
             tapText("Get Started");
             sleep(1000);
             tapText("Add account");
@@ -183,47 +225,34 @@ public class StoreScreenshotsTest {
             emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
         }
         if (emailField == null) {
-            return; // cannot reach login
+            return;
         }
 
-        // Type email
-        emailField.click();
-        sleep(300);
-        emailField.setText(testEmail);
-        sleep(300);
+        fillLoginFields();
+        tapRes("login");
 
-        // Type password
-        UiObject2 passField = device.wait(Until.findObject(By.res(PACKAGE, "url_password")), NAV_TIMEOUT);
-        if (passField != null) {
-            passField.click();
-            sleep(300);
-            passField.setText(testPassword);
-            sleep(300);
-        }
+        // Wait for the server login/encryption flow to advance.
+        sleep(5000);
 
-        // Tap Log In
-        tapText("Log In");
-
-        // Wait for the collections/accounts screen to appear (login success)
-        // The encryption password step may appear; if so, the test password is also
-        // the encryption password, so handle it.
-        sleep(3000);
-
-        // Handle the encryption password prompt if it appears
-        UiObject2 encPass = device.wait(Until.findObject(By.res(PACKAGE, "url_password")), 3000);
+        // Handle the encryption password prompt if it appears.
         UiObject2 encLabel = device.wait(Until.findObject(By.textContains("Encryption Password")), 2000);
-        if (encLabel != null && encPass != null) {
-            encPass.click();
-            sleep(300);
-            encPass.setText(testPassword);
-            sleep(300);
+        if (encLabel != null) {
+            List<UiObject2> editTexts = device.findObjects(By.clazz("android.widget.EditText"));
+            if (!editTexts.isEmpty()) {
+                UiObject2 encPass = editTexts.get(editTexts.size() - 1);
+                encPass.click();
+                sleep(300);
+                encPass.setText(testPassword);
+                sleep(300);
+            }
             tapText("Finish");
-            sleep(3000);
+            tapText("FINISH");
+            sleep(5000);
         }
 
-        // Check if we landed on the accounts/collections screen
-        UiObject2 collections = device.wait(Until.findObject(By.textContains("SilentSuite")), 5000);
-        loggedIn = collections != null;
+        // Successful login leaves the LoginActivity and no longer shows the email field.
+        UiObject2 stillLogin = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), 1000);
+        loggedIn = stillLogin == null && PACKAGE.equals(device.getCurrentPackageName());
     }
 
     /**
@@ -278,9 +307,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test03_collections() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("collections");
         launchApp(); // relaunch to land on accounts/collections
         sleep(2000);
         capture("3-collections");
@@ -291,9 +318,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test04_fingerprint() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("fingerprint");
         // Open the account overflow menu and tap "Verify encryption fingerprint"
         tapDescContains("More");
         sleep(800);
@@ -309,9 +334,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test05_sharing_members() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("sharing members");
         // Tap the first collection to open its detail, then Manage Members
         UiObject2 collection = device.wait(Until.findObject(By.textContains("Calendar")), NAV_TIMEOUT);
         if (collection == null) {
@@ -335,9 +358,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test06_invitations() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("invitations");
         // Open navigation drawer
         device.pressBack();
         sleep(500);
@@ -363,9 +384,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test07_collection_detail() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("collection detail");
         launchApp();
         sleep(2000);
         UiObject2 collection = device.wait(Until.findObject(By.textContains("Calendar")), NAV_TIMEOUT);
@@ -386,9 +405,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test08_import() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("import");
         tapDescContains("More");
         sleep(800);
         tapText("Import");
