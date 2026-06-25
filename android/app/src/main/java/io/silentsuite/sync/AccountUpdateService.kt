@@ -60,12 +60,7 @@ class AccountUpdateService : Service() {
         }
 
         fun removeRefreshingStatusListener(listener: RefreshingStatusListener) {
-            val iterator = refreshingStatusListeners.iterator()
-            while (iterator.hasNext()) {
-                val item = iterator.next().get()
-                if (listener == item)
-                    iterator.remove()
-            }
+            refreshingStatusListeners.removeAll { it.get() == null || it.get() == listener }
         }
     }
 
