@@ -143,6 +143,49 @@ public class StoreScreenshotsTest {
         return value;
     }
 
+    private static String shellTextArg(String value) {
+        // Android's input text command treats %s as a space. The screenshot
+        // credentials do not contain spaces, but keep this safe and shell-quoted.
+        String escaped = value.replace("'", "'\''").replace(" ", "%s");
+        return "'" + escaped + "'";
+    }
+
+    private static void shellCommand(String command) {
+        try {
+            InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation()
+                    .executeShellCommand(command)
+                    .close();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void coordinateLoginFallback() {
+        // Last-resort automation for API 35 where Material TextInput nodes are
+        // visible but not reliably exposed by resource id or text selector.
+        int w = device.getDisplayWidth();
+        int h = device.getDisplayHeight();
+        int emailY = Math.round(h * 0.315f);
+        int passwordY = Math.round(h * 0.395f);
+        int loginY = h - 75;
+
+        device.click(w / 2, emailY);
+        sleep(300);
+        shellCommand("input text " + shellTextArg(testEmail));
+        sleep(300);
+
+        device.click(w / 2, passwordY);
+        sleep(300);
+        shellCommand("input text " + shellTextArg(testPassword));
+        sleep(300);
+
+        device.pressBack();
+        sleep(500);
+        device.click(w / 2, loginY);
+        sleep(1000);
+    }
+
+
     private void sleep(long ms) {
         SystemClock.sleep(ms);
     }
@@ -259,6 +302,7 @@ public class StoreScreenshotsTest {
         }
 
         fillLoginFields();
+        coordinateLoginFallback();
         device.pressBack(); // hide keyboard so the bottom login button is clickable
         sleep(500);
         if (!tapRes("login") && !tapText("LOG IN") && !tapText("Log In")) {
