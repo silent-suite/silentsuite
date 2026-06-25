@@ -124,7 +124,7 @@ public class StoreScreenshotsTest {
     private static void launchPrefilledLogin() {
         Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
         Intent intent = new Intent(targetContext, LoginActivity.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         intent.putExtra(LoginActivity.EXTRA_INITIAL_USERNAME, testEmail);
         intent.putExtra(LoginActivity.EXTRA_INITIAL_PASSWORD, testPassword);
         targetContext.startActivity(intent);
@@ -188,7 +188,7 @@ public class StoreScreenshotsTest {
             onView(allOf(isAssignableFrom(EditText.class), withHint("Email")))
                     .perform(replaceText(testEmail), closeSoftKeyboard());
             sleep(300);
-            onView(allOf(isAssignableFrom(EditText.class), withHint("Password")))
+            onView(withId(io.silentsuite.sync.R.id.login_password))
                     .perform(replaceText(testPassword), closeSoftKeyboard());
             sleep(300);
             onView(withId(io.silentsuite.sync.R.id.login)).perform(click());
@@ -278,28 +278,29 @@ public class StoreScreenshotsTest {
     private void fillLoginFields() {
         // Prefer visible EditText widgets. Material TextInputLayout resource IDs are
         // not reliably exposed to UIAutomator on API 35, but the child EditTexts are.
-        List<UiObject2> editTexts = device.findObjects(By.clazz("android.widget.EditText"));
-        if (editTexts.size() >= 2) {
-            UiObject2 emailField = editTexts.get(0);
-            emailField.click();
+        UiObject2 emailById = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), 1500);
+        if (emailById != null) {
+            emailById.click();
             sleep(300);
-            emailField.setText(testEmail);
+            emailById.setText(testEmail);
             sleep(300);
+        }
 
-            UiObject2 passField = editTexts.get(1);
-            passField.click();
+        UiObject2 passById = device.wait(Until.findObject(By.res(PACKAGE, "login_password")), 1500);
+        if (passById != null) {
+            passById.click();
             sleep(300);
-            passField.setText(testPassword);
+            passById.setText(testPassword);
             sleep(300);
             return;
         }
 
-        // Fallback for devices that expose the email field by resource id.
-        UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
-        if (emailField != null) {
-            emailField.click();
+        List<UiObject2> editTexts = device.findObjects(By.clazz("android.widget.EditText"));
+        if (editTexts.size() >= 2) {
+            UiObject2 passField = editTexts.get(1);
+            passField.click();
             sleep(300);
-            emailField.setText(testEmail);
+            passField.setText(testPassword);
             sleep(300);
         }
     }
