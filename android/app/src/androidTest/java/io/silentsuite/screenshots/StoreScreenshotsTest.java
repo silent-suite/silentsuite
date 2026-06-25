@@ -187,23 +187,38 @@ public class StoreScreenshotsTest {
         return false;
     }
 
+    private boolean isLoginScreen() {
+        return device.hasObject(By.textContains("Add account"))
+                || device.hasObject(By.text("LOG IN"))
+                || device.hasObject(By.text("Log In"))
+                || (device.hasObject(By.textContains("Email")) && device.hasObject(By.textContains("Password")));
+    }
+
     private void fillLoginFields() {
+        // Prefer visible EditText widgets. Material TextInputLayout resource IDs are
+        // not reliably exposed to UIAutomator on API 35, but the child EditTexts are.
+        List<UiObject2> editTexts = device.findObjects(By.clazz("android.widget.EditText"));
+        if (editTexts.size() >= 2) {
+            UiObject2 emailField = editTexts.get(0);
+            emailField.click();
+            sleep(300);
+            emailField.setText(testEmail);
+            sleep(300);
+
+            UiObject2 passField = editTexts.get(1);
+            passField.click();
+            sleep(300);
+            passField.setText(testPassword);
+            sleep(300);
+            return;
+        }
+
+        // Fallback for devices that expose the email field by resource id.
         UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
         if (emailField != null) {
             emailField.click();
             sleep(300);
             emailField.setText(testEmail);
-            sleep(300);
-        }
-
-        // The password input itself is the second EditText inside a TextInputLayout
-        // (R.id.url_password belongs to the layout), so address EditText widgets.
-        List<UiObject2> editTexts = device.findObjects(By.clazz("android.widget.EditText"));
-        if (editTexts.size() >= 2) {
-            UiObject2 passField = editTexts.get(1);
-            passField.click();
-            sleep(300);
-            passField.setText(testPassword);
             sleep(300);
         }
     }
@@ -212,11 +227,11 @@ public class StoreScreenshotsTest {
         if (!loggedIn) {
             tryLogin();
         }
-        UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), 1000);
-        if (!loggedIn || emailField != null) {
+        if (!loggedIn || isLoginScreen()) {
             throw new AssertionError("Cannot capture " + screenName + ": login did not complete (credentials present="
                     + (testEmail != null && !testEmail.isEmpty() && testPassword != null && !testPassword.isEmpty())
-                    + ", currentPackage=" + device.getCurrentPackageName() + ")");
+                    + ", currentPackage=" + device.getCurrentPackageName()
+                    + ", loginScreen=" + isLoginScreen() + ")");
         }
     }
 
@@ -232,15 +247,14 @@ public class StoreScreenshotsTest {
 
         launchApp();
 
-        UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
-        if (emailField == null) {
+        // If we are not already on the login screen, try to navigate there.
+        if (!isLoginScreen()) {
             tapText("Get Started");
             sleep(1000);
             tapText("Add account");
             sleep(1000);
-            emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
         }
-        if (emailField == null) {
+        if (!isLoginScreen()) {
             return;
         }
 
@@ -249,13 +263,16 @@ public class StoreScreenshotsTest {
         sleep(500);
         if (!tapRes("login") && !tapText("LOG IN") && !tapText("Log In")) {
             // Fallback for MaterialButton instances that expose neither stable
-            // resource id nor text to UiAutomator on API 35.
+            // resource id nor text to UIAutomator on API 35.
             device.click(device.getDisplayWidth() / 2, device.getDisplayHeight() - 115);
             sleep(1000);
         }
 
-        // Wait for the server login/encryption flow to advance.
-        sleep(5000);
+        // Wait for the server login/encryption flow to advance off the login screen.
+        long deadline = SystemClock.uptimeMillis() + 30000;
+        while (SystemClock.uptimeMillis() < deadline && isLoginScreen()) {
+            sleep(1000);
+        }
 
         // Handle the encryption password prompt if it appears.
         UiObject2 encLabel = device.wait(Until.findObject(By.textContains("Encryption Password")), 2000);
@@ -268,14 +285,15 @@ public class StoreScreenshotsTest {
                 encPass.setText(testPassword);
                 sleep(300);
             }
-            tapText("Finish");
-            tapText("FINISH");
+            device.pressBack();
+            sleep(500);
+            if (!tapText("Finish")) {
+                tapText("FINISH");
+            }
             sleep(5000);
         }
 
-        // Successful login leaves the LoginActivity and no longer shows the email field.
-        UiObject2 stillLogin = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), 1000);
-        loggedIn = stillLogin == null && PACKAGE.equals(device.getCurrentPackageName());
+        loggedIn = PACKAGE.equals(device.getCurrentPackageName()) && !isLoginScreen();
     }
 
     /**
