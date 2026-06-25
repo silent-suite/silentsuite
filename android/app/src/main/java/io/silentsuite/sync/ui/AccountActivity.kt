@@ -669,6 +669,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private lateinit var account: Account
         private var davService: AccountUpdateService.InfoBinder? = null
         private var syncStatusListener: Any? = null
+        private var serviceBound = false
 
         fun initialize(context: Context, account: Account) {
             this.context = context.applicationContext
@@ -690,7 +691,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         override fun onCleared() {
             davService?.removeRefreshingStatusListener(this)
-            context.unbindService(this)
+            if (serviceBound) {
+                context.unbindService(this)
+                serviceBound = false
+            }
 
             if (syncStatusListener != null) {
                 ContentResolver.removeStatusChangeListener(syncStatusListener)
@@ -699,6 +703,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
+            serviceBound = true
             davService = service as AccountUpdateService.InfoBinder
             davService!!.addRefreshingStatusListener(this, false)
 
@@ -707,6 +712,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         override fun onServiceDisconnected(name: ComponentName) {
             davService = null
+            serviceBound = false
         }
 
         override fun onDavRefreshStatusChanged(id: Long, refreshing: Boolean) {
