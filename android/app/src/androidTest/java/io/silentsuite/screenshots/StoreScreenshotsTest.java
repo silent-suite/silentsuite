@@ -51,6 +51,8 @@ import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 
+import io.silentsuite.sync.ui.setup.LoginActivity;
+
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
@@ -114,6 +116,17 @@ public class StoreScreenshotsTest {
             throw new AssertionError("No launch intent for " + PACKAGE);
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        targetContext.startActivity(intent);
+        device.wait(Until.hasObject(By.pkg(PACKAGE).depth(0)), LAUNCH_TIMEOUT);
+        SystemClock.sleep(2000);
+    }
+
+    private static void launchPrefilledLogin() {
+        Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent intent = new Intent(targetContext, LoginActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.putExtra(LoginActivity.EXTRA_INITIAL_USERNAME, testEmail);
+        intent.putExtra(LoginActivity.EXTRA_INITIAL_PASSWORD, testPassword);
         targetContext.startActivity(intent);
         device.wait(Until.hasObject(By.pkg(PACKAGE).depth(0)), LAUNCH_TIMEOUT);
         SystemClock.sleep(2000);
@@ -313,22 +326,16 @@ public class StoreScreenshotsTest {
             return; // no credentials, skip login
         }
 
-        launchApp();
+        launchPrefilledLogin();
 
-        // If we are not already on the login screen, try to navigate there.
-        if (!isLoginScreen()) {
-            tapText("Get Started");
-            sleep(1000);
-            tapText("Add account");
-            sleep(1000);
-        }
         if (!isLoginScreen()) {
             return;
         }
 
+        // LoginActivity prefilled the credentials via optional extras. The fallback
+        // entry methods remain as backup if a future app version drops prefill.
         fillLoginFields();
         espressoLoginFallback();
-        coordinateLoginFallback();
         device.pressBack(); // hide keyboard so the bottom login button is clickable
         sleep(500);
         if (!tapRes("login") && !tapText("LOG IN") && !tapText("Log In")) {
