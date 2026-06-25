@@ -30,6 +30,7 @@ android {
         debug {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+            testProguardFile 'proguard-rules.txt'
 
             /*
              * To override the server's url (for example when developing),
@@ -46,6 +47,7 @@ android {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+            testProguardFile 'proguard-rules.txt'
             buildConfigField 'String', 'DEBUG_REMOTE_URL', 'null'
 
             // Configure Kotlin compiler optimisations for releases
@@ -178,14 +180,14 @@ dependencies {
     implementation project(':ical4android')
     implementation project(':vcard4android')
     // for tests
-    androidTestImplementation('androidx.test:runner:1.1.0-alpha4') {
-        exclude group: 'com.android.support', module: 'support-annotations'
-    }
-    androidTestImplementation('androidx.test:rules:1.1.0-alpha4') {
-        exclude group: 'com.android.support', module: 'support-annotations'
-    }
-    androidTestImplementation 'junit:junit:4.12'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:rules:1.6.1'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'junit:junit:4.13.2'
     androidTestImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
-    testImplementation 'junit:junit:4.12'
+    // UIAutomator for store screenshot capture instrumentation tests
+    androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+    androidTestImplementation 'net.sf.kxml:kxml2:2.3.0'
+    testImplementation 'junit:junit:4.13.2'
     testImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
 }

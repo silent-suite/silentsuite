@@ -1,0 +1,10 @@
+{
+  "1-encryption-promise.png":      {"capture": "1-add-account.png",         "caption": "Encrypted before it leaves your device"},
+  "2-native-apps-sync.png":        {"capture": "2-sync-overview.png",        "caption": "Uses your calendar and contacts apps"},
+  "3-self-host-server.png":        {"capture": "3-navigation-drawer.png",    "caption": "Host it on your own server"},
+  "4-encrypted-sharing.png":       {"capture": "4-encryption-fingerprint.png","caption": "Share collections, end to end encrypted"},
+  "5-encryption-fingerprint.png": {"capture": "4-encryption-fingerprint.png","caption": "Verify your encryption fingerprint"},
+  "6-collections-overview.png":   {"capture": "2-sync-overview.png",        "caption": "Shared and read-only at a glance"},
+  "7-invitation-accept.png":      {"capture": "3-navigation-drawer.png",    "caption": "Accept invites to encrypted collections"},
+  "8-import-refresh.png":          {"capture": "1-add-account.png",         "caption": "Import and refresh, simply"}
+}

@@ -1,5 +1,5 @@
 repository: https://github.com/silent-suite/silentsuite
-release_source: https://github.com/silent-suite/silentsuite/releases/download/v0.2.0-beta/silentsuite-android-v0.2.0-beta.apk
+release_source: https://github.com/silent-suite/silentsuite/releases/download/v0.3.0-beta/silentsuite-android-v0.3.0-beta.apk
 pubkey: npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35
 name: SilentSuite
 summary: Zero-knowledge calendar, contacts, and tasks sync for Android
@@ -20,10 +20,10 @@ tags:
   - sync
 license: GPL-3.0-only
 website: https://silentsuite.io
-icon: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/icon.png
+icon: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/icon.png
 images:
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-main.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-account.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-create-calendar.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.2.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-view-collection.png
-release_notes: android/fastlane/metadata/android/en-US/changelogs/6.txt
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-add-account.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-sync-overview.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-navigation-drawer.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-encryption-fingerprint.png
+release_notes: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/changelogs/8.txt

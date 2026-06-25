@@ -31,7 +31,7 @@ const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-
   loading: () => (
     <div className="flex flex-col items-center justify-center py-8">
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-      <p className="mt-3 text-sm text-slate-400">Loading payment form...</p>
+      <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading payment form...</p>
     </div>
   ),
   ssr: false,
@@ -199,7 +199,7 @@ function PriceDisplay({ interval }: { interval: BillingInterval }) {
   return (
     <span className="text-sm text-[rgb(var(--muted))]">
       Then <span className="font-semibold text-[rgb(var(--foreground))]">&euro;3.00/month</span> billed annually. Cancel anytime before day 30, no charge.
-      <span className="ml-1 text-xs font-medium text-emerald-400">Save 17%</span>
+      <span className="ml-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">Save 17%</span>
     </span>
   )
 }
@@ -282,7 +282,7 @@ function StepCreateAccount({
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.email && (
-            <p id="signup-email-error" role="alert" className="text-xs text-red-400">{errors.email.message}</p>
+            <p id="signup-email-error" role="alert" className="text-xs text-red-600 dark:text-red-400">{errors.email.message}</p>
           )}
         </div>
 
@@ -302,7 +302,7 @@ function StepCreateAccount({
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.password && (
-            <p id="signup-password-error" role="alert" className="text-xs text-red-400">{errors.password.message}</p>
+            <p id="signup-password-error" role="alert" className="text-xs text-red-600 dark:text-red-400">{errors.password.message}</p>
           )}
           <PasswordStrength password={password} />
         </div>
@@ -323,7 +323,7 @@ function StepCreateAccount({
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.confirmPassword && (
-            <p id="signup-confirm-password-error" role="alert" className="text-xs text-red-400">
+            <p id="signup-confirm-password-error" role="alert" className="text-xs text-red-600 dark:text-red-400">
               {errors.confirmPassword.message}
             </p>
           )}
@@ -369,7 +369,7 @@ function StepCreateAccount({
 
         {submitError && (
           <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-            <p className="text-sm text-red-400">{submitError}</p>
+            <p className="text-sm text-red-600 dark:text-red-400">{submitError}</p>
           </div>
         )}
 
@@ -532,7 +532,7 @@ function CryptoPaymentPanel({
           This Bitcoin invoice expired. Go back and start a new Bitcoin invoice.
         </div>
       ) : status === 'error' ? (
-        <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-400">
+        <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
           <p>{error ?? 'Could not load Bitcoin payment details.'}</p>
           <Link href={session.checkoutUrl} onClick={handleExternalCheckout} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-500/10 dark:text-red-200">
             Open in BTCPay instead
@@ -787,7 +787,7 @@ function StepChoosePlan({
 
         {(paymentMethodError || provisionError) && (
           <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-            <p className="text-sm text-red-400">{paymentMethodError ?? provisionError}</p>
+            <p className="text-sm text-red-600 dark:text-red-400">{paymentMethodError ?? provisionError}</p>
           </div>
         )}
 
@@ -863,10 +863,10 @@ function StepChoosePlan({
           </div>
         ) : provisionError ? (
           <div className="space-y-4 text-center">
-            <p className="text-sm text-red-400">{provisionError}</p>
+            <p className="text-sm text-red-600 dark:text-red-400">{provisionError}</p>
             <button
               onClick={onBack}
-              className="text-sm text-emerald-500 hover:text-emerald-400 transition-colors"
+              className="text-sm text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 transition-colors"
             >
               Go back and try again
             </button>
@@ -953,7 +953,7 @@ function StepChoosePlan({
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <h3 className="text-xl sm:text-2xl font-bold text-[rgb(var(--foreground))] leading-tight">30-day free trial</h3>
-                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400 uppercase tracking-wide">
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
                   Recommended
                 </span>
               </div>
@@ -999,10 +999,10 @@ function StepChoosePlan({
       {/* Error display */}
       {provisionError && (
         <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-          <p className="text-sm text-red-400">{provisionError}</p>
+          <p className="text-sm text-red-600 dark:text-red-400">{provisionError}</p>
           <button
             onClick={onClearError}
-            className="mt-2 text-xs text-red-400 hover:text-red-300 underline"
+            className="mt-2 text-xs text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 underline"
           >
             Dismiss
           </button>
@@ -1067,7 +1067,7 @@ function StepSelfHostSupport({ onNext }: { onNext: (choice: 'free' | 'support') 
       {/* Support option */}
       <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 ring-1 ring-amber-500/20 flex flex-col relative overflow-hidden">
         <div className="absolute top-3 right-3">
-          <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-medium text-amber-400">
+          <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-400">
             Optional
           </span>
         </div>
@@ -1156,7 +1156,7 @@ function StepAdminInfo({ serverUrl, onNext }: { serverUrl: string; onNext: () =>
             href={adminUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 text-sm font-medium text-emerald-500 hover:text-emerald-400 transition-colors"
+            className="flex items-center gap-2 text-sm font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-500 dark:hover:text-emerald-400 transition-colors"
           >
             {adminUrl}
             <ExternalLink className="h-3.5 w-3.5" />

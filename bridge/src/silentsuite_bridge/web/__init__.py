@@ -552,7 +552,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </style>
 </head>
 <body>
-    <script>window.SILENTSUITE_DASHBOARD_CSRF = '{{CSRF_TOKEN}}';</script>
+    <script>window.SILENTSUITE_DASHBOARD_CSRF = {{CSRF_TOKEN}};</script>
     <div class="container">
         <h1>SilentSuite Bridge</h1>
         <div class="version">v{{VERSION}}</div>
@@ -579,7 +579,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div class="url-section">
                 <div class="section-title-row">
                     <h3>Configured Accounts</h3>
-                    <button id="addAccountBtn" class="account-action-btn primary" onclick="showLoginPanel()">Add / Re-authenticate Account</button>
+                    <button id="addAccountBtn" class="account-action-btn primary">Add / Re-authenticate Account</button>
                 </div>
                 <div id="accountActionStatus" class="account-action-status" role="status"></div>
                 <div id="dashboardLoginPanel" class="login-panel {{LOGIN_PANEL_CLASS}}" data-required="{{LOGIN_REQUIRED}}">
@@ -621,6 +621,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <script>
             (function() {
                 var sel = document.getElementById('syncInterval');
+                if (!sel) return;
                 sel.value = '{{SYNC_INTERVAL}}';
                 // fallback if value doesn't match any option
                 if (sel.selectedIndex === -1) sel.value = '900';
@@ -771,6 +772,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             }
             pollProgress();
             setInterval(pollProgress, 2000);
+            // Bind the 'Add / Re-authenticate Account' button via addEventListener
+            // rather than an inline onclick, so the handler does not depend on
+            // inline-onclick resolving a global function (the failure mode behind
+            // 'showLoginPanel is not defined at HTMLButtonElement.onclick'). #333.
+            (function() {
+                var addAccountBtn = document.getElementById('addAccountBtn');
+                if (addAccountBtn) addAccountBtn.addEventListener('click', showLoginPanel);
+            })();
         </script>
 
         <div class="status-card log-section">
@@ -939,6 +948,7 @@ def _render_dashboard():
                 '</div>'
                 f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
                 '</div>'
+                '<div style="font-size:12px;color:#f59e0b;margin-top:6px;">For calendar/contact apps only. Copy it into your app &mdash; do not open it in a web browser, which can expose your password in the address bar.</div>'
                 '<div class="account-actions">'
                 f'<button class="account-action-btn" data-account="{account_attr}" '
                 'onclick="logoutAccount(this)">Log out</button>'
@@ -964,7 +974,9 @@ def _render_dashboard():
     page = page.replace("{{COLLECTIONS}}", esc(col_text))
     page = page.replace("{{ACCOUNT_LIST}}", account_html)
     page = page.replace("{{SYNC_LOG}}", log_html)
-    page = page.replace("{{CSRF_TOKEN}}", esc(_dashboard_csrf_token))
+    # JSON-encode the CSRF token so it is always a valid JS string literal
+    # (defence-in-depth: no dependency on the token charset for JS-safety).
+    page = page.replace("{{CSRF_TOKEN}}", json.dumps(_dashboard_csrf_token))
     page = page.replace("{{LOGIN_PANEL_CLASS}}", login_panel_class)
     page = page.replace("{{LOGIN_REQUIRED}}", login_required)
     page = page.replace("{{LOGIN_TITLE}}", esc(login_title))
