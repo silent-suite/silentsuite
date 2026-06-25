@@ -86,8 +86,8 @@ public class StoreScreenshotsTest {
             captureDir.mkdirs();
         }
 
-        testEmail = args.getString("testEmail", null);
-        testPassword = args.getString("testPassword", null);
+        testEmail = cleanArg(args.getString("testEmail", null));
+        testPassword = cleanArg(args.getString("testPassword", null));
 
         launchApp();
     }
@@ -127,6 +127,20 @@ public class StoreScreenshotsTest {
             throw new AssertionError("Failed to save screenshot: " + out.getAbsolutePath());
         }
         SystemClock.sleep(400);
+    }
+
+    private static String cleanArg(String value) {
+        if (value == null) {
+            return null;
+        }
+        value = value.trim();
+        if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+            return value.substring(1, value.length() - 1);
+        }
+        if (value.length() >= 2 && value.startsWith("'") && value.endsWith("'")) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     private void sleep(long ms) {
