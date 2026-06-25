@@ -30,6 +30,9 @@
 
 package io.silentsuite.screenshots;
 
+import android.content.Context;
+import android.content.Intent;
+import android.widget.EditText;
 import android.os.Bundle;
 import android.os.SystemClock;
 
@@ -40,12 +43,24 @@ import org.junit.Test;
 import org.junit.runners.MethodSorters;
 
 import java.io.File;
+import java.util.List;
 
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
+
+import io.silentsuite.sync.ui.setup.LoginActivity;
+
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
+import static androidx.test.espresso.action.ViewActions.replaceText;
+import static androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom;
+import static androidx.test.espresso.matcher.ViewMatchers.withHint;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static org.hamcrest.Matchers.allOf;
 
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class StoreScreenshotsTest {
@@ -83,8 +98,8 @@ public class StoreScreenshotsTest {
             captureDir.mkdirs();
         }
 
-        testEmail = args.getString("testEmail", null);
-        testPassword = args.getString("testPassword", null);
+        testEmail = cleanArg(args.getString("testEmail", null));
+        testPassword = cleanArg(args.getString("testPassword", null));
 
         launchApp();
     }
@@ -95,18 +110,37 @@ public class StoreScreenshotsTest {
     }
 
     private static void launchApp() {
-        try {
-            InstrumentationRegistry.getInstrumentation()
-                    .getUiAutomation()
-                    .executeShellCommand("monkey -p " + PACKAGE + " -c android.intent.category.LAUNCHER 1");
-        } catch (Exception e) {
-            // Shell command may throw if the process is transitioning; ignore
+        Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent intent = targetContext.getPackageManager().getLaunchIntentForPackage(PACKAGE);
+        if (intent == null) {
+            throw new AssertionError("No launch intent for " + PACKAGE);
         }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        targetContext.startActivity(intent);
+        device.wait(Until.hasObject(By.pkg(PACKAGE).depth(0)), LAUNCH_TIMEOUT);
+        SystemClock.sleep(2000);
+    }
+
+    private static void launchPrefilledLogin() {
+        Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent intent = new Intent(targetContext, LoginActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.putExtra(LoginActivity.EXTRA_INITIAL_USERNAME, testEmail);
+        intent.putExtra(LoginActivity.EXTRA_INITIAL_PASSWORD, testPassword);
+        targetContext.startActivity(intent);
         device.wait(Until.hasObject(By.pkg(PACKAGE).depth(0)), LAUNCH_TIMEOUT);
         SystemClock.sleep(2000);
     }
 
     private void capture(String name) {
+        String currentPackage = device.getCurrentPackageName();
+        if (!PACKAGE.equals(currentPackage)) {
+            launchApp();
+            currentPackage = device.getCurrentPackageName();
+        }
+        if (!PACKAGE.equals(currentPackage)) {
+            throw new AssertionError("Cannot capture " + name + ": current package is " + currentPackage);
+        }
         if (!captureDir.exists()) {
             captureDir.mkdirs();
         }
@@ -117,6 +151,78 @@ public class StoreScreenshotsTest {
         }
         SystemClock.sleep(400);
     }
+
+    private static String cleanArg(String value) {
+        if (value == null) {
+            return null;
+        }
+        value = value.trim();
+        if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+            return value.substring(1, value.length() - 1);
+        }
+        if (value.length() >= 2 && value.startsWith("'") && value.endsWith("'")) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
+    }
+
+    private static String shellTextArg(String value) {
+        // Android's input text command treats %s as a space. The screenshot
+        // credentials do not contain spaces, but keep this safe and shell-quoted.
+        String escaped = value.replace("'", "'\''").replace(" ", "%s");
+        return "'" + escaped + "'";
+    }
+
+    private static void shellCommand(String command) {
+        try {
+            InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation()
+                    .executeShellCommand(command)
+                    .close();
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void espressoLoginFallback() {
+        try {
+            onView(allOf(isAssignableFrom(EditText.class), withHint("Email")))
+                    .perform(replaceText(testEmail), closeSoftKeyboard());
+            sleep(300);
+            onView(allOf(isAssignableFrom(EditText.class), withHint("Password")))
+                    .perform(replaceText(testPassword), closeSoftKeyboard());
+            sleep(300);
+            onView(withId(io.silentsuite.sync.R.id.login)).perform(click());
+            sleep(1000);
+        } catch (Throwable ignored) {
+            // Fall back to UIAutomator/coordinate automation below.
+        }
+    }
+
+    private void coordinateLoginFallback() {
+        // Last-resort automation for API 35 where Material TextInput nodes are
+        // visible but not reliably exposed by resource id or text selector.
+        int w = device.getDisplayWidth();
+        int h = device.getDisplayHeight();
+        int emailY = Math.round(h * 0.315f);
+        int passwordY = Math.round(h * 0.395f);
+        int loginY = h - 75;
+
+        device.click(w / 2, emailY);
+        sleep(300);
+        shellCommand("input text " + shellTextArg(testEmail));
+        sleep(300);
+
+        device.click(w / 2, passwordY);
+        sleep(300);
+        shellCommand("input text " + shellTextArg(testPassword));
+        sleep(300);
+
+        device.pressBack();
+        sleep(500);
+        device.click(w / 2, loginY);
+        sleep(1000);
+    }
+
 
     private void sleep(long ms) {
         SystemClock.sleep(ms);
@@ -152,6 +258,64 @@ public class StoreScreenshotsTest {
         return false;
     }
 
+    private boolean tapRes(String resId) {
+        UiObject2 obj = device.wait(Until.findObject(By.res(PACKAGE, resId)), NAV_TIMEOUT);
+        if (obj != null) {
+            obj.click();
+            sleep(1000);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isLoginScreen() {
+        return device.hasObject(By.textContains("Add account"))
+                || device.hasObject(By.text("LOG IN"))
+                || device.hasObject(By.text("Log In"))
+                || (device.hasObject(By.textContains("Email")) && device.hasObject(By.textContains("Password")));
+    }
+
+    private void fillLoginFields() {
+        // Prefer visible EditText widgets. Material TextInputLayout resource IDs are
+        // not reliably exposed to UIAutomator on API 35, but the child EditTexts are.
+        List<UiObject2> editTexts = device.findObjects(By.clazz("android.widget.EditText"));
+        if (editTexts.size() >= 2) {
+            UiObject2 emailField = editTexts.get(0);
+            emailField.click();
+            sleep(300);
+            emailField.setText(testEmail);
+            sleep(300);
+
+            UiObject2 passField = editTexts.get(1);
+            passField.click();
+            sleep(300);
+            passField.setText(testPassword);
+            sleep(300);
+            return;
+        }
+
+        // Fallback for devices that expose the email field by resource id.
+        UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
+        if (emailField != null) {
+            emailField.click();
+            sleep(300);
+            emailField.setText(testEmail);
+            sleep(300);
+        }
+    }
+
+    private void requireLoggedIn(String screenName) {
+        if (!loggedIn) {
+            tryLogin();
+        }
+        if (!loggedIn || isLoginScreen()) {
+            throw new AssertionError("Cannot capture " + screenName + ": login did not complete (credentials present="
+                    + (testEmail != null && !testEmail.isEmpty() && testPassword != null && !testPassword.isEmpty())
+                    + ", currentPackage=" + device.getCurrentPackageName()
+                    + ", loginScreen=" + isLoginScreen() + ")");
+        }
+    }
+
     /**
      * Attempt to log in with the test account credentials (if provided).
      * Types email + password into the login fields and taps Log In.
@@ -162,58 +326,51 @@ public class StoreScreenshotsTest {
             return; // no credentials, skip login
         }
 
-        // Make sure we are on the login screen
-        UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
-        if (emailField == null) {
-            // Maybe we are already logged in, or need to reach login
-            tapText("Get Started");
+        launchPrefilledLogin();
+
+        if (!isLoginScreen()) {
+            return;
+        }
+
+        // LoginActivity prefilled the credentials via optional extras. The fallback
+        // entry methods remain as backup if a future app version drops prefill.
+        fillLoginFields();
+        espressoLoginFallback();
+        device.pressBack(); // hide keyboard so the bottom login button is clickable
+        sleep(500);
+        if (!tapRes("login") && !tapText("LOG IN") && !tapText("Log In")) {
+            // Fallback for MaterialButton instances that expose neither stable
+            // resource id nor text to UIAutomator on API 35.
+            device.click(device.getDisplayWidth() / 2, device.getDisplayHeight() - 115);
             sleep(1000);
-            tapText("Add account");
+        }
+
+        // Wait for the server login/encryption flow to advance off the login screen.
+        long deadline = SystemClock.uptimeMillis() + 30000;
+        while (SystemClock.uptimeMillis() < deadline && isLoginScreen()) {
             sleep(1000);
-            emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
-        }
-        if (emailField == null) {
-            return; // cannot reach login
         }
 
-        // Type email
-        emailField.click();
-        sleep(300);
-        emailField.setText(testEmail);
-        sleep(300);
-
-        // Type password
-        UiObject2 passField = device.wait(Until.findObject(By.res(PACKAGE, "url_password")), NAV_TIMEOUT);
-        if (passField != null) {
-            passField.click();
-            sleep(300);
-            passField.setText(testPassword);
-            sleep(300);
-        }
-
-        // Tap Log In
-        tapText("Log In");
-
-        // Wait for the collections/accounts screen to appear (login success)
-        // The encryption password step may appear; if so, the test password is also
-        // the encryption password, so handle it.
-        sleep(3000);
-
-        // Handle the encryption password prompt if it appears
-        UiObject2 encPass = device.wait(Until.findObject(By.res(PACKAGE, "url_password")), 3000);
+        // Handle the encryption password prompt if it appears.
         UiObject2 encLabel = device.wait(Until.findObject(By.textContains("Encryption Password")), 2000);
-        if (encLabel != null && encPass != null) {
-            encPass.click();
-            sleep(300);
-            encPass.setText(testPassword);
-            sleep(300);
-            tapText("Finish");
-            sleep(3000);
+        if (encLabel != null) {
+            List<UiObject2> editTexts = device.findObjects(By.clazz("android.widget.EditText"));
+            if (!editTexts.isEmpty()) {
+                UiObject2 encPass = editTexts.get(editTexts.size() - 1);
+                encPass.click();
+                sleep(300);
+                encPass.setText(testPassword);
+                sleep(300);
+            }
+            device.pressBack();
+            sleep(500);
+            if (!tapText("Finish")) {
+                tapText("FINISH");
+            }
+            sleep(5000);
         }
 
-        // Check if we landed on the accounts/collections screen
-        UiObject2 collections = device.wait(Until.findObject(By.textContains("SilentSuite")), 5000);
-        loggedIn = collections != null;
+        loggedIn = PACKAGE.equals(device.getCurrentPackageName()) && !isLoginScreen();
     }
 
     /**
@@ -268,9 +425,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test03_collections() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("collections");
         launchApp(); // relaunch to land on accounts/collections
         sleep(2000);
         capture("3-collections");
@@ -281,9 +436,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test04_fingerprint() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("fingerprint");
         // Open the account overflow menu and tap "Verify encryption fingerprint"
         tapDescContains("More");
         sleep(800);
@@ -299,9 +452,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test05_sharing_members() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("sharing members");
         // Tap the first collection to open its detail, then Manage Members
         UiObject2 collection = device.wait(Until.findObject(By.textContains("Calendar")), NAV_TIMEOUT);
         if (collection == null) {
@@ -325,9 +476,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test06_invitations() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("invitations");
         // Open navigation drawer
         device.pressBack();
         sleep(500);
@@ -353,9 +502,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test07_collection_detail() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("collection detail");
         launchApp();
         sleep(2000);
         UiObject2 collection = device.wait(Until.findObject(By.textContains("Calendar")), NAV_TIMEOUT);
@@ -376,9 +523,7 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test08_import() {
-        if (!loggedIn) {
-            tryLogin();
-        }
+        requireLoggedIn("import");
         tapDescContains("More");
         sleep(800);
         tapText("Import");

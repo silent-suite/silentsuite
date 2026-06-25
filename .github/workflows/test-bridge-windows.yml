@@ -1,0 +1,121 @@
+name: Test Bridge (Windows)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'bridge/**'
+      - 'android/app/src/main/AndroidManifest.xml'
+      - 'android/app/src/main/java/io/silentsuite/sync/ui/setup/LoginActivity.kt'
+      - 'apps/docs/user-guide/apps/dav-bridge.md'
+      - 'tests/test_android_security_static.py'
+      - 'tests/test_release_versions_static.py'
+      - 'tests/test_windows_installer_static.py'
+      - '.github/workflows/test-bridge-windows.yml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'bridge/**'
+      - 'android/app/src/main/AndroidManifest.xml'
+      - 'android/app/src/main/java/io/silentsuite/sync/ui/setup/LoginActivity.kt'
+      - 'apps/docs/user-guide/apps/dav-bridge.md'
+      - 'tests/test_android_security_static.py'
+      - 'tests/test_release_versions_static.py'
+      - 'tests/test_windows_installer_static.py'
+      - '.github/workflows/test-bridge-windows.yml'
+
+jobs:
+  installer:
+    name: Installer and docs checks
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+
+      - name: Run static installer/docs regression tests
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pytest tests/test_windows_installer_static.py tests/test_release_versions_static.py tests/test_android_security_static.py -q
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force
+
+      - name: Analyze PowerShell installer
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path bridge/install.ps1 -Severity Error
+          $results | Format-Table -AutoSize
+          if ($results) { throw "PSScriptAnalyzer found errors in bridge/install.ps1" }
+
+      - name: Assert installer failures do not exit parent PowerShell
+        shell: pwsh
+        run: |
+          $script = Get-Content bridge/install.ps1 -Raw
+          $tokens = $null
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseInput($script, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | Format-List
+            throw "PowerShell parser errors in bridge/install.ps1"
+          }
+
+          $writeErr = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Write-Err'
+          }, $true)
+          if (-not $writeErr) { throw "Write-Err helper not found" }
+
+          $exitStatements = $writeErr.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.ExitStatementAst]
+          }, $true)
+          if ($exitStatements.Count -gt 0) {
+            throw "Write-Err must not call exit because irm ... | iex would close the user's terminal"
+          }
+
+  smoke:
+    name: Bridge CLI smoke test
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: "1.63.0"
+
+      - name: Install bridge package
+        working-directory: bridge
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+
+      - name: silentsuite-bridge --version
+        shell: pwsh
+        run: silentsuite-bridge --version
+
+      - name: silentsuite-bridge --help
+        shell: pwsh
+        run: silentsuite-bridge --help

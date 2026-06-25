@@ -187,6 +187,7 @@ dependencies {
     androidTestImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
     // UIAutomator for store screenshot capture instrumentation tests
     androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
     androidTestImplementation 'net.sf.kxml:kxml2:2.3.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"

@@ -18,6 +18,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL } from '@/app/lib/config'
+import { DISPLAY_VERSION } from '@/app/lib/constants'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
@@ -1580,7 +1581,7 @@ export default function SignupPage() {
       </div>
       {/* Build version indicator */}
       <div className="fixed bottom-2 left-2 text-[10px] text-slate-600 font-mono select-none pointer-events-none">
-        v0.3.0
+        v{DISPLAY_VERSION}
       </div>
     </div>
   )
