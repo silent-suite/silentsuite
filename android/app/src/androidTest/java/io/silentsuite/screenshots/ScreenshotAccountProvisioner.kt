@@ -23,7 +23,7 @@ object ScreenshotAccountProvisioner {
     @JvmStatic
     fun ensureAccount(context: Context, email: String?, password: String?): Boolean {
         if (email.isNullOrBlank() || password.isNullOrBlank()) {
-            return false
+            throw IllegalStateException("Screenshot account credentials missing")
         }
 
         val accountManager = AccountManager.get(context)
@@ -35,12 +35,12 @@ object ScreenshotAccountProvisioner {
 
         val config = BaseConfigurationFinder(context, LoginCredentials(null, email, password)).findInitialConfiguration()
         if (config.isFailed || config.etebaseSession.isNullOrBlank()) {
-            return false
+            throw IllegalStateException("Screenshot Etebase login/config failed: " + (config.error?.javaClass?.name ?: "empty session"))
         }
 
         val account = Account(config.userName, App.accountType)
         if (!accountManager.addAccountExplicitly(account, null, null)) {
-            return false
+            throw IllegalStateException("Screenshot Android account creation failed")
         }
 
         AccountSettings.setUserData(accountManager, account, config.url, config.userName)
