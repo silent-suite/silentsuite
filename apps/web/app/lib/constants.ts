@@ -5,6 +5,14 @@
  * are easy to find / change in one place.
  */
 
+// ── Display version ─────────────────────────────────────────────────────
+/**
+ * Human-facing build version shown in the UI (e.g. the signup page badge).
+ * Update this on release so displayed versions don't go stale. Keep in sync
+ * with the current release tag.
+ */
+export const DISPLAY_VERSION = '0.3.0-beta'
+
 // ── Time unit multipliers (ms) ──────────────────────────────────────────
 export const MS_PER_SECOND = 1_000
 export const MS_PER_MINUTE = 60 * MS_PER_SECOND

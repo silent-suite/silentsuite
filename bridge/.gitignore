@@ -31,6 +31,9 @@ htpasswd
 *.spec
 !silentsuite-bridge.spec
 
+# Generated at build time from the release tag (see silentsuite-bridge.spec)
+src/silentsuite_bridge/_version.py
+
 # OS
 .DS_Store
 Thumbs.db
