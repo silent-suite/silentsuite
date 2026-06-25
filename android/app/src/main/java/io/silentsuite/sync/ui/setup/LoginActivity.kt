@@ -8,6 +8,7 @@
 
 package io.silentsuite.sync.ui.setup
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
@@ -33,16 +34,25 @@ class LoginActivity : BaseActivity() {
         super.onCreate(savedInstanceState)
 
         if (savedInstanceState == null) {
-            // first call, show login screen directly (welcome dialog removed)
-            // Optional extras are only for debug screenshot instrumentation.
-            // Do not accept plaintext credential prefill extras in release builds.
-            val initialUsername = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_USERNAME) else null
-            val initialPassword = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_PASSWORD) else null
-            supportFragmentManager.beginTransaction()
-                    .replace(android.R.id.content, LoginCredentialsFragment.newInstance(initialUsername, initialPassword))
-                    .commit()
+            showLoginFragment(intent)
         }
 
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        showLoginFragment(intent)
+    }
+
+    private fun showLoginFragment(intent: Intent) {
+        // Optional extras are only for debug screenshot instrumentation.
+        // Do not accept plaintext credential prefill extras in release builds.
+        val initialUsername = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_USERNAME) else null
+        val initialPassword = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_PASSWORD) else null
+        supportFragmentManager.beginTransaction()
+                .replace(android.R.id.content, LoginCredentialsFragment.newInstance(initialUsername, initialPassword))
+                .commit()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
