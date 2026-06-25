@@ -327,26 +327,30 @@ public class StoreScreenshotsTest {
             return; // no credentials, skip login
         }
 
+        Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        if (ScreenshotAccountProvisioner.ensureAccount(targetContext, testEmail, testPassword)) {
+            loggedIn = true;
+            launchApp();
+            sleep(5000);
+            return;
+        }
+
+        // Fallback to the visual login path if programmatic setup fails.
         launchPrefilledLogin();
 
         if (!isLoginScreen()) {
             return;
         }
 
-        // LoginActivity prefilled the credentials via optional extras. The fallback
-        // entry methods remain as backup if a future app version drops prefill.
         fillLoginFields();
         espressoLoginFallback();
         device.pressBack(); // hide keyboard so the bottom login button is clickable
         sleep(500);
         if (!tapRes("login") && !tapText("LOG IN") && !tapText("Log In")) {
-            // Fallback for MaterialButton instances that expose neither stable
-            // resource id nor text to UIAutomator on API 35.
             device.click(device.getDisplayWidth() / 2, device.getDisplayHeight() - 115);
             sleep(1000);
         }
 
-        // Wait for the server login/encryption flow to advance off the login screen.
         long deadline = SystemClock.uptimeMillis() + 30000;
         while (SystemClock.uptimeMillis() < deadline && isLoginScreen()) {
             sleep(1000);
