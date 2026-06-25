@@ -12,10 +12,49 @@
 import os
 import sys
 import glob
+import re
 from pathlib import Path
 import importlib.util
 
 from PyInstaller.utils.hooks import copy_metadata
+
+
+# ---------------------------------------------------------------------------
+# Release version stamping
+# ---------------------------------------------------------------------------
+# PyInstaller binaries do not ship Python package metadata, so a frozen build
+# cannot read its version from importlib.metadata. To make `--version` report
+# the released version, we freeze it into _version.py at build time. The source
+# is, in order of preference:
+#   1. SILENTSUITE_BRIDGE_VERSION  (set explicitly by CI tag builds)
+#   2. GITHUB_REF_NAME             (the pushed git tag, e.g. "v0.3.0-beta")
+# When neither is set (local dev build), _version.py is left absent and the
+# package falls back to importlib.metadata / pyproject.toml.
+def stamp_version():
+    spec_dir = Path(globals().get("SPECPATH", os.getcwd()))
+    target = spec_dir / "src" / "silentsuite_bridge" / "_version.py"
+    raw = os.environ.get("SILENTSUITE_BRIDGE_VERSION", "").strip()
+    if not raw:
+        ref = os.environ.get("GITHUB_REF_NAME", "").strip()
+        # Only treat the ref as a version when it looks like a release tag.
+        if ref.startswith("v") and any(ch.isdigit() for ch in ref):
+            raw = ref
+    if not raw:
+        if target.exists() and "Generated at build time from the release tag" in target.read_text(encoding="utf-8"):
+            target.unlink()
+            print(f"[spec] Removed stale generated version stamp: {target}")
+        return
+    version = raw.lstrip("v")
+    if not re.match(r"^\d+\.\d+\.\d+(?:[-.][A-Za-z0-9][A-Za-z0-9.-]*)?$", version):
+        raise SystemExit(f"Invalid SILENTSUITE_BRIDGE_VERSION/GITHUB_REF_NAME for Python stamp: {raw!r}")
+    target.write_text(
+        '# Generated at build time from the release tag. Do not edit or commit.\n'
+        f'VERSION = {version!r}\n'
+    )
+    print(f"[spec] Stamped bridge version: {version} -> {target}")
+
+
+stamp_version()
 
 
 def safe_copy_metadata(package_name):

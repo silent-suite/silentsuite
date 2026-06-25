@@ -23,6 +23,11 @@ jobs:
   build:
     name: Build (${{ matrix.os-label }})
     runs-on: ${{ matrix.runner }}
+    # On a tag push, stamp the release version into the binary from the tag.
+    # The spec file (silentsuite-bridge.spec) reads this and freezes it into
+    # _version.py. Empty on non-tag builds, which fall back to pyproject.
+    env:
+      SILENTSUITE_BRIDGE_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -157,7 +162,19 @@ jobs:
         run: |
           BINARY="dist/silentsuite-bridge${{ matrix.exe-suffix }}"
           echo "--- Smoke test: $BINARY --version ---"
-          "$BINARY" --version
+          OUT="$(env -u SILENTSUITE_BRIDGE_VERSION "$BINARY" --version)"
+          echo "$OUT"
+          EXPECTED_VERSION="${SILENTSUITE_BRIDGE_VERSION#v}"
+          if [[ -n "$EXPECTED_VERSION" && "$OUT" != *"$EXPECTED_VERSION"* ]]; then
+            echo "ERROR: bridge did not report release version $EXPECTED_VERSION" >&2
+            exit 1
+          fi
+          case "$OUT" in
+            *0.1.0*)
+              echo "ERROR: bridge reported the stale 0.1.0 version" >&2
+              exit 1
+              ;;
+          esac
           echo "Smoke test passed."
 
       # -----------------------------------------------------------------------
@@ -171,6 +188,7 @@ jobs:
           options: >-
             --platform linux/arm64
             -v ${{ github.workspace }}:/workspace
+            -e SILENTSUITE_BRIDGE_VERSION=${{ env.SILENTSUITE_BRIDGE_VERSION }}
           run: |
             set -e
             echo "=== Installing system deps ==="
@@ -190,7 +208,19 @@ jobs:
               --distpath dist/ \
               --workpath build/
             echo "=== Smoke test ==="
-            dist/silentsuite-bridge --version
+            OUT="$(env -u SILENTSUITE_BRIDGE_VERSION dist/silentsuite-bridge --version)"
+            echo "$OUT"
+            EXPECTED_VERSION="${SILENTSUITE_BRIDGE_VERSION#v}"
+            if [ -n "$EXPECTED_VERSION" ] && ! printf '%s' "$OUT" | grep -F "$EXPECTED_VERSION" >/dev/null; then
+              echo "ERROR: bridge did not report release version $EXPECTED_VERSION" >&2
+              exit 1
+            fi
+            case "$OUT" in
+              *0.1.0*)
+                echo "ERROR: bridge reported the stale 0.1.0 version" >&2
+                exit 1
+                ;;
+            esac
             echo "=== Rename + checksum (inside container to avoid permission issues) ==="
             mv dist/silentsuite-bridge dist/${{ matrix.asset-name }}
             sha256sum dist/${{ matrix.asset-name }} > dist/${{ matrix.asset-name }}.sha256

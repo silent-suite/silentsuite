@@ -37,7 +37,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest
-          python -m pytest tests/test_windows_installer_static.py -q
+          python -m pytest tests/test_windows_installer_static.py tests/test_release_versions_static.py -q
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
