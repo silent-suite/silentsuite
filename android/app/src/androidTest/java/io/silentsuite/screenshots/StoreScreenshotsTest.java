@@ -32,6 +32,7 @@ package io.silentsuite.screenshots;
 
 import android.content.Context;
 import android.content.Intent;
+import android.widget.EditText;
 import android.os.Bundle;
 import android.os.SystemClock;
 
@@ -49,6 +50,15 @@ import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
+
+import static androidx.test.espresso.Espresso.onView;
+import static androidx.test.espresso.action.ViewActions.click;
+import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
+import static androidx.test.espresso.action.ViewActions.replaceText;
+import static androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom;
+import static androidx.test.espresso.matcher.ViewMatchers.withHint;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
+import static org.hamcrest.Matchers.allOf;
 
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class StoreScreenshotsTest {
@@ -157,6 +167,21 @@ public class StoreScreenshotsTest {
                     .executeShellCommand(command)
                     .close();
         } catch (Exception ignored) {
+        }
+    }
+
+    private void espressoLoginFallback() {
+        try {
+            onView(allOf(isAssignableFrom(EditText.class), withHint("Email")))
+                    .perform(replaceText(testEmail), closeSoftKeyboard());
+            sleep(300);
+            onView(allOf(isAssignableFrom(EditText.class), withHint("Password")))
+                    .perform(replaceText(testPassword), closeSoftKeyboard());
+            sleep(300);
+            onView(withId(io.silentsuite.sync.R.id.login)).perform(click());
+            sleep(1000);
+        } catch (Throwable ignored) {
+            // Fall back to UIAutomator/coordinate automation below.
         }
     }
 
@@ -302,6 +327,7 @@ public class StoreScreenshotsTest {
         }
 
         fillLoginFields();
+        espressoLoginFallback();
         coordinateLoginFallback();
         device.pressBack(); // hide keyboard so the bottom login button is clickable
         sleep(500);
