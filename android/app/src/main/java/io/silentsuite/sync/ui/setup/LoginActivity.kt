@@ -23,15 +23,24 @@ import io.silentsuite.sync.ui.WebViewActivity
  */
 class LoginActivity : BaseActivity() {
 
+    companion object {
+        const val EXTRA_INITIAL_USERNAME = "io.silentsuite.sync.extra.INITIAL_USERNAME"
+        const val EXTRA_INITIAL_PASSWORD = "io.silentsuite.sync.extra.INITIAL_PASSWORD"
+    }
 
     public override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (savedInstanceState == null)
-        // first call, show login screen directly (welcome dialog removed)
+        if (savedInstanceState == null) {
+            // first call, show login screen directly (welcome dialog removed)
+            // Optional extras are used by screenshot instrumentation to prefill
+            // credentials without brittle keyboard/UIAutomator text entry.
+            val initialUsername = intent.getStringExtra(EXTRA_INITIAL_USERNAME)
+            val initialPassword = intent.getStringExtra(EXTRA_INITIAL_PASSWORD)
             supportFragmentManager.beginTransaction()
-                    .replace(android.R.id.content, LoginCredentialsFragment())
+                    .replace(android.R.id.content, LoginCredentialsFragment.newInstance(initialUsername, initialPassword))
                     .commit()
+        }
 
     }
 
