@@ -692,8 +692,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         override fun onCleared() {
             davService?.removeRefreshingStatusListener(this)
             if (serviceBound) {
-                context.unbindService(this)
-                serviceBound = false
+                try {
+                    context.unbindService(this)
+                } catch (e: IllegalArgumentException) {
+                    // The service connection can be reported as connected while Android
+                    // has already dropped the registration during fast activity teardown.
+                    Logger.log.fine("Account update service was already unbound")
+                } finally {
+                    serviceBound = false
+                }
             }
 
             if (syncStatusListener != null) {
