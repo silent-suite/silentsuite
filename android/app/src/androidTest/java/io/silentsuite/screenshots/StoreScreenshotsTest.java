@@ -30,6 +30,8 @@
 
 package io.silentsuite.screenshots;
 
+import android.content.Context;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.SystemClock;
 
@@ -95,18 +97,26 @@ public class StoreScreenshotsTest {
     }
 
     private static void launchApp() {
-        try {
-            InstrumentationRegistry.getInstrumentation()
-                    .getUiAutomation()
-                    .executeShellCommand("monkey -p " + PACKAGE + " -c android.intent.category.LAUNCHER 1");
-        } catch (Exception e) {
-            // Shell command may throw if the process is transitioning; ignore
+        Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        Intent intent = targetContext.getPackageManager().getLaunchIntentForPackage(PACKAGE);
+        if (intent == null) {
+            throw new AssertionError("No launch intent for " + PACKAGE);
         }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        targetContext.startActivity(intent);
         device.wait(Until.hasObject(By.pkg(PACKAGE).depth(0)), LAUNCH_TIMEOUT);
         SystemClock.sleep(2000);
     }
 
     private void capture(String name) {
+        String currentPackage = device.getCurrentPackageName();
+        if (!PACKAGE.equals(currentPackage)) {
+            launchApp();
+            currentPackage = device.getCurrentPackageName();
+        }
+        if (!PACKAGE.equals(currentPackage)) {
+            throw new AssertionError("Cannot capture " + name + ": current package is " + currentPackage);
+        }
         if (!captureDir.exists()) {
             captureDir.mkdirs();
         }
