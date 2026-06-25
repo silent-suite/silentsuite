@@ -32,7 +32,6 @@ package io.silentsuite.screenshots;
 
 import android.os.Bundle;
 import android.os.SystemClock;
-import android.os.Environment;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -54,7 +53,7 @@ public class StoreScreenshotsTest {
     private static final String PACKAGE = "io.silentsuite.android";
     private static final long LAUNCH_TIMEOUT = 20000;
     private static final long NAV_TIMEOUT = 6000;
-    private static final String CAPTURE_DIR_NAME = "SilentSuiteScreenshots";
+    private static final String DEFAULT_CAPTURE_DIR = "/sdcard/Download/SilentSuiteScreenshots";
 
     private static UiDevice device;
     private static File captureDir;
@@ -66,16 +65,24 @@ public class StoreScreenshotsTest {
     public static void setUp() {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
 
-        // Capture directory on external storage (pulled via adb)
-        File storage = Environment.getExternalStorageDirectory();
-        captureDir = new File(storage, CAPTURE_DIR_NAME);
+        // Read instrumentation arguments (passed by CI).
+        Bundle args = InstrumentationRegistry.getArguments();
+        String screenshotDir = args.getString("screenshotDir", DEFAULT_CAPTURE_DIR);
+        captureDir = new File(screenshotDir);
+
+        // Create the directory both through shell (works on scoped storage paths)
+        // and File.mkdirs() (works for app-owned paths). UiDevice.takeScreenshot
+        // fails with ENOENT if the parent directory is missing.
+        try {
+            InstrumentationRegistry.getInstrumentation()
+                    .getUiAutomation()
+                    .executeShellCommand("mkdir -p " + screenshotDir);
+        } catch (Exception ignored) {
+        }
         if (!captureDir.exists()) {
             captureDir.mkdirs();
         }
 
-        // Read test account credentials from instrumentation arguments
-        // (passed by CI: -e testEmail ... -e testPassword ...)
-        Bundle args = InstrumentationRegistry.getArguments();
         testEmail = args.getString("testEmail", null);
         testPassword = args.getString("testPassword", null);
 
@@ -100,8 +107,14 @@ public class StoreScreenshotsTest {
     }
 
     private void capture(String name) {
+        if (!captureDir.exists()) {
+            captureDir.mkdirs();
+        }
         File out = new File(captureDir, name + ".png");
-        device.takeScreenshot(out);
+        boolean ok = device.takeScreenshot(out);
+        if (!ok) {
+            throw new AssertionError("Failed to save screenshot: " + out.getAbsolutePath());
+        }
         SystemClock.sleep(400);
     }
 
