@@ -29,19 +29,41 @@ The bridge exposes every SilentSuite calendar, task list, and address book as it
 
 ## Install
 
+### Windows
+
+Download the current Windows bridge binary directly:
+
+- [Download SilentSuite Bridge for Windows x86_64](https://github.com/silent-suite/silentsuite/releases/latest/download/silentsuite-bridge-windows-x86_64.exe)
+- [Windows SHA256 checksum](https://github.com/silent-suite/silentsuite/releases/latest/download/silentsuite-bridge-windows-x86_64.exe.sha256)
+
+Save the file in Downloads. You can either keep the release file name or rename it to `silentsuite-bridge.exe`, then run it from an already-open PowerShell or Windows Terminal window so any first-run errors stay visible:
+
+```powershell
+cd $env:USERPROFILE\Downloads
+.\silentsuite-bridge-windows-x86_64.exe --version
+.\silentsuite-bridge-windows-x86_64.exe --login
+```
+
+If you renamed the file, use `./silentsuite-bridge.exe` instead.
+
+If Windows SmartScreen appears, choose **More info** and only continue if the publisher/file name matches the SilentSuite release you downloaded.
+
 ### Installer Status
 
-Bridge installer scripts are not yet published as stable `main`/release-tagged endpoints. Until they are, download bridge binaries from the [GitHub releases](https://github.com/silent-suite/silentsuite/releases) page instead of piping an installer URL into your shell.
+Bridge installer scripts are being hardened. If you use a PowerShell installer command, run it from an already-open PowerShell or Windows Terminal window, not from the Run dialog or by double-clicking a `.ps1` file.
 
 ::: warning
 Do not run installer commands from the public `dev` branch. Those scripts may contain unreleased changes and are not part of the stable docs flow.
 :::
 
-When stable installers are published, they will:
-1. Download the correct binary for your OS and architecture
-2. Install it to `~/.local/bin/`
-3. Optionally set up auto-start
-4. Open the bridge dashboard for first-time login
+If a PowerShell window closes before you can read the error, reopen PowerShell and run the diagnostic form instead. It downloads the installer to a temporary file and runs it with `-File`, so failures stay visible and are also written to `%LOCALAPPDATA%\SilentSuite\install.log`.
+
+```powershell
+irm https://raw.githubusercontent.com/silent-suite/silentsuite/main/bridge/install.ps1 -OutFile $env:TEMP\silentsuite-bridge-install.ps1
+powershell -ExecutionPolicy Bypass -File $env:TEMP\silentsuite-bridge-install.ps1
+```
+
+All downloads are also available from the [GitHub releases](https://github.com/silent-suite/silentsuite/releases) page.
 
 ## First-Time Setup
 
