@@ -150,21 +150,28 @@ function Invoke-SilentSuiteBridgeInstall {
 
     # --- Verify SHA256 checksum ---
     $ChecksumAsset = $Release.assets | Where-Object { $_.name -eq "$AssetName.sha256" } | Select-Object -First 1
-    if ($ChecksumAsset) {
-        try {
-            $ExpectedLine = (Invoke-WebRequest -Uri $ChecksumAsset.browser_download_url -UseBasicParsing).Content.Trim()
-            $ExpectedHash = ($ExpectedLine -split '\s+')[0].ToUpper()
-            $ActualHash = (Get-FileHash -Path $TmpFile -Algorithm SHA256).Hash.ToUpper()
-            if ($ExpectedHash -ne $ActualHash) {
-                Remove-Item $TmpFile -Force -ErrorAction SilentlyContinue
-                Write-Err "Checksum mismatch! Expected $ExpectedHash, got $ActualHash"
-            }
-            Write-Ok "Checksum verified"
-        } catch {
-            Write-Warn "Could not verify checksum: $_"
+    if (-not $ChecksumAsset) {
+        Remove-Item $TmpFile -Force -ErrorAction SilentlyContinue
+        Write-Err "No checksum asset found for $AssetName; refusing to install an unverified binary"
+    }
+
+    try {
+        $ExpectedLine = (Invoke-WebRequest -Uri $ChecksumAsset.browser_download_url -UseBasicParsing).Content.Trim()
+        $ExpectedHash = ($ExpectedLine -split '\s+')[0].ToUpper()
+        if ($ExpectedHash -notmatch '^[0-9A-F]{64}$') {
+            Write-Err "Invalid checksum content for $AssetName.sha256"
         }
+        $ActualHash = (Get-FileHash -Path $TmpFile -Algorithm SHA256).Hash.ToUpper()
+    } catch {
+        Remove-Item $TmpFile -Force -ErrorAction SilentlyContinue
+        Write-Err "Could not verify checksum: $_"
+    }
+
+    if ($ExpectedHash -ne $ActualHash) {
+        Remove-Item $TmpFile -Force -ErrorAction SilentlyContinue
+        Write-Err "Checksum mismatch! Expected $ExpectedHash, got $ActualHash"
     } else {
-        Write-Warn "No checksum asset found for $AssetName"
+        Write-Ok "Checksum verified"
     }
 
     # --- Install binary ---

@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 
+import io.silentsuite.sync.BuildConfig
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.BaseActivity
@@ -33,10 +34,10 @@ class LoginActivity : BaseActivity() {
 
         if (savedInstanceState == null) {
             // first call, show login screen directly (welcome dialog removed)
-            // Optional extras are used by screenshot instrumentation to prefill
-            // credentials without brittle keyboard/UIAutomator text entry.
-            val initialUsername = intent.getStringExtra(EXTRA_INITIAL_USERNAME)
-            val initialPassword = intent.getStringExtra(EXTRA_INITIAL_PASSWORD)
+            // Optional extras are only for debug screenshot instrumentation.
+            // Do not accept plaintext credential prefill extras in release builds.
+            val initialUsername = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_USERNAME) else null
+            val initialPassword = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_PASSWORD) else null
             supportFragmentManager.beginTransaction()
                     .replace(android.R.id.content, LoginCredentialsFragment.newInstance(initialUsername, initialPassword))
                     .commit()
