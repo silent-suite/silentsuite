@@ -214,7 +214,9 @@ public class StoreScreenshotsTest {
         }
         UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), 1000);
         if (!loggedIn || emailField != null) {
-            throw new AssertionError("Cannot capture " + screenName + ": login did not complete");
+            throw new AssertionError("Cannot capture " + screenName + ": login did not complete (credentials present="
+                    + (testEmail != null && !testEmail.isEmpty() && testPassword != null && !testPassword.isEmpty())
+                    + ", currentPackage=" + device.getCurrentPackageName() + ")");
         }
     }
 
@@ -243,7 +245,14 @@ public class StoreScreenshotsTest {
         }
 
         fillLoginFields();
-        tapRes("login");
+        device.pressBack(); // hide keyboard so the bottom login button is clickable
+        sleep(500);
+        if (!tapRes("login") && !tapText("LOG IN") && !tapText("Log In")) {
+            // Fallback for MaterialButton instances that expose neither stable
+            // resource id nor text to UiAutomator on API 35.
+            device.click(device.getDisplayWidth() / 2, device.getDisplayHeight() - 115);
+            sleep(1000);
+        }
 
         // Wait for the server login/encryption flow to advance.
         sleep(5000);
