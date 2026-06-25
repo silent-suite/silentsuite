@@ -7,7 +7,6 @@ import android.content.ContentResolver
 import android.provider.CalendarContract
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
-import io.silentsuite.sync.Constants
 import io.silentsuite.sync.ui.ActiveAccountManager
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder
 import io.silentsuite.sync.ui.setup.LoginCredentials
@@ -46,10 +45,13 @@ object ScreenshotAccountProvisioner {
         AccountSettings.setUserData(accountManager, account, config.url, config.userName)
         val settings = AccountSettings(context, account)
         settings.etebaseSession = config.etebaseSession
-        settings.setSyncInterval(App.addressBooksAuthority, Constants.DEFAULT_SYNC_INTERVAL.toLong())
-        settings.setSyncInterval(CalendarContract.AUTHORITY, Constants.DEFAULT_SYNC_INTERVAL.toLong())
-        ContentResolver.setIsSyncable(account, App.addressBooksAuthority, 1)
-        ContentResolver.setIsSyncable(account, CalendarContract.AUTHORITY, 1)
+        // Store screenshots exercise the UI and Etebase account session, not Android's
+        // background sync adapters. Keep background sync disabled during instrumentation
+        // so calendar/contact sync cannot crash or race the capture flow.
+        ContentResolver.setIsSyncable(account, App.addressBooksAuthority, 0)
+        ContentResolver.setIsSyncable(account, CalendarContract.AUTHORITY, 0)
+        ContentResolver.setSyncAutomatically(account, App.addressBooksAuthority, false)
+        ContentResolver.setSyncAutomatically(account, CalendarContract.AUTHORITY, false)
         ActiveAccountManager.setActiveAccount(context, account)
         return true
     }
