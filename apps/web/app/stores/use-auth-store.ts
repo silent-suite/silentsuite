@@ -16,10 +16,9 @@ export interface User {
   planId: string
   emailVerified?: boolean
   /**
-   * ISO timestamp of when the user completed (or was assumed to have completed)
-   * onboarding. NULL means the user has not yet been onboarded and should see
-   * the OnboardingModal. Hydrated from the billing API in /auth/refresh,
-   * /account, and the response of POST /account/onboarded.
+   * Legacy account metadata from the old first-run onboarding flow. The web app
+   * no longer shows an onboarding window at startup, but we still hydrate the
+   * field for backward compatibility with existing billing API responses.
    */
   onboardedAt?: string | null
 }
@@ -78,13 +77,9 @@ interface AuthState {
   fetchSubscription: () => Promise<void>
   retryBillingConnection: () => Promise<boolean>
   /**
-   * Mark the current user as onboarded. POSTs to the billing API
-   * (idempotent), then updates the local user state with the returned
-   * timestamp. Self-hosted users skip the network call and just set a
-   * local timestamp. Network failures are logged and swallowed: leaving
-   * onboardedAt null means the popup will retry next session, which is
-   * the correct degraded behaviour. Returns true on success, false if
-   * the network call failed.
+   * Mark the current user as onboarded in legacy account metadata. Kept for
+   * compatibility with existing billing API state; the web app no longer uses
+   * this as a startup UI gate.
    */
   markOnboarded: () => Promise<boolean>
   setUser: (user: User | null) => void
@@ -410,8 +405,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         email: pending.email,
         planId: pending.provisionedUser.planId,
         isAdmin: pending.provisionedUser.isAdmin,
-        // A brand-new account is by definition not onboarded yet — the
-        // OnboardingModal needs onboardedAt === null to fire on first login.
+        // A brand-new account has no legacy onboarding timestamp yet. The web
+        // app no longer uses this field to show a startup modal.
         onboardedAt: null,
       },
       isAuthenticated: true,
@@ -643,9 +638,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
       const hasEtebaseSession = !!(await secureGet('etebase_session'))
       if (hasEtebaseSession) {
-        // Degraded users get a non-null onboardedAt so they don't get the
-        // popup pushed at them while billing is down — they may already be
-        // onboarded, we just can't tell. Better to err on the quiet side.
+        // Preserve the legacy onboardedAt metadata shape while billing is down;
+        // startup UI no longer depends on this field.
         set({
           user: { id: 'degraded', email: '', planId: 'unknown', isAdmin: false, onboardedAt: new Date().toISOString() },
           isAuthenticated: true,
@@ -712,14 +706,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return false
     }
 
-    // Already onboarded — nothing to do, treat as success so callers can
-    // chain UI dismissal without worrying about the state.
+    // Already onboarded — nothing to do, treat as success for any legacy callers.
     if (current.onboardedAt) return true
 
-    // Self-hosted has no billing API to call. Just stamp locally so the
-    // modal hides for the rest of the session and doesn't reappear on
-    // restoreSession (which also sets onboardedAt: null for self-hosted —
-    // the localStorage flash-suppressor in the modal covers that case).
+    // Self-hosted has no billing API to call. Stamp locally only for legacy
+    // callers that still want an onboardedAt timestamp in memory.
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined) || current.id === 'self-hosted') {
       set({ user: { ...current, onboardedAt: new Date().toISOString() } })
@@ -733,10 +724,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
       })
       if (!res.ok) {
-        // Don't update local state on failure: leaving onboardedAt null
-        // means the modal will re-appear next session, which is the
-        // correct degraded behaviour. A localStorage hint in the modal
-        // suppresses the flash within this session.
+        // Don't update local legacy metadata on failure.
         logger.warn('[auth-store] markOnboarded failed:', res.status)
         return false
       }

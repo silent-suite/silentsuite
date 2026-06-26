@@ -408,7 +408,7 @@ describe('useAuthStore', () => {
       const result = await useAuthStore.getState().markOnboarded()
 
       expect(result).toBe(false)
-      // onboardedAt stays null so the modal will retry next session.
+      // onboardedAt stays null when legacy metadata update fails.
       expect(useAuthStore.getState().user!.onboardedAt).toBeNull()
     })
 
@@ -617,8 +617,8 @@ describe('useAuthStore', () => {
       const state = useAuthStore.getState()
       expect(state.isAuthenticated).toBe(true)
       expect(state.subscriptionStatus).toBe('billing_unavailable')
-      // Degraded users get a non-null onboardedAt so we don't pop the
-      // OnboardingModal at users while billing is unreachable.
+      // Degraded users keep a non-null legacy onboardedAt timestamp for
+      // backward compatibility with existing account metadata expectations.
       expect(state.user).toMatchObject({ id: 'degraded', email: '', planId: 'unknown', isAdmin: false })
       expect(state.user!.onboardedAt).toEqual(expect.any(String))
     })
