@@ -95,8 +95,8 @@ function snapTo30Min(date: Date): Date {
   return snapped
 }
 
-const DEFAULT_DAY_START_HOUR = 0
-const DEFAULT_DAY_END_HOUR = 24
+const DEFAULT_DAY_START_HOUR = 7
+const DEFAULT_DAY_END_HOUR = 23
 
 /** Find the display event under the cursor by matching click coordinates to day column + time */
 function findEventAtPosition(
@@ -619,27 +619,37 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     return () => cancelAnimationFrame(raf)
   }, [currentView, displayEvents.length, events.length, sxEvents.length])
 
-  // #331: Reveal the full title on short/clipped calendar events.
-  // Schedule-X clips event text with `overflow: hidden`, so a short event's
-  // title can be unreadable. The DOM still holds the full text, so mirror it
-  // into a native `title` tooltip on each event element so hovering shows the
-  // complete title (and time). A MutationObserver keeps titles in sync across
-  // re-renders, sync updates, and view switches.
+  // #331: Reveal the full title on short/clipped calendar events and mark event
+  // chips by rendered height so CSS can hide low-priority metadata before it
+  // gets half-clipped. Schedule-X lays out timed events with inline heights, so
+  // this must be measured after render rather than inferred from duration.
   useEffect(() => {
     const root = document.querySelector('.sx-silentsuite-calendar')
     if (!root) return
 
     const selector = '.sx__time-grid-event, .sx__month-grid-event, .sx__day-grid-event'
+    let raf = 0
+    let resizeObserver: ResizeObserver | null = null
+
     const applyAll = () => {
       root.querySelectorAll(selector).forEach((el) => {
         const text = (el.textContent || '').replace(/\s+/g, ' ').trim()
         if (text && el.getAttribute('title') !== text) {
           el.setAttribute('title', text)
         }
+
+        if (el.classList.contains('sx__time-grid-event')) {
+          const timedEvent = el as HTMLElement
+          resizeObserver?.observe(timedEvent)
+          const height = timedEvent.getBoundingClientRect().height
+          const size = height < 34 ? 'tiny' : height < 58 ? 'small' : height < 92 ? 'medium' : 'large'
+          if (timedEvent.dataset.ssEventSize !== size) {
+            timedEvent.dataset.ssEventSize = size
+          }
+        }
       })
     }
 
-    let raf = 0
     const schedule = () => {
       if (raf) return
       raf = requestAnimationFrame(() => {
@@ -648,11 +658,13 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       })
     }
 
+    resizeObserver = new ResizeObserver(schedule)
     applyAll()
     const observer = new MutationObserver(schedule)
     observer.observe(root, { childList: true, subtree: true })
     return () => {
       if (raf) cancelAnimationFrame(raf)
+      resizeObserver.disconnect()
       observer.disconnect()
     }
   }, [sxEvents, currentView])
@@ -666,7 +678,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       const pixelsPerHour = gridEl.scrollHeight / totalHours
       return dayStartHour + relativeY / pixelsPerHour
     },
-    [],
+    [dayStartHour, dayEndHour],
   )
 
   /** Find which day column the X coordinate is within */

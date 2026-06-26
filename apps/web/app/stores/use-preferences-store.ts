@@ -42,6 +42,31 @@ function normalizeValues(values: Partial<SyncedPreferenceValues>): SyncedPrefere
   return getSyncedPreferenceValues(createSyncedPreferences({ ...defaultSyncedValues(), ...values }, zeroTimestamps(), 0))
 }
 
+interface PersistedPreferencesState extends Partial<SyncedPreferenceValues> {
+  syncedPreferenceUpdatedAt?: Partial<SyncedPreferenceTimestamps>
+}
+
+function migrateStoredPreferences(persisted: unknown): unknown {
+  if (!persisted || typeof persisted !== 'object') return persisted
+  const state = persisted as PersistedPreferencesState
+
+  const dayStartWasOldDefault = state.dayStartHour === 0
+  const dayEndWasOldDefault = state.dayEndHour === 24
+  const dayBoundsWereNeverChanged =
+    (state.syncedPreferenceUpdatedAt?.dayStartHour ?? 0) === 0
+    && (state.syncedPreferenceUpdatedAt?.dayEndHour ?? 0) === 0
+
+  if (dayStartWasOldDefault && dayEndWasOldDefault && dayBoundsWereNeverChanged) {
+    return {
+      ...state,
+      dayStartHour: DEFAULT_SYNCED_PREFERENCES.dayStartHour,
+      dayEndHour: DEFAULT_SYNCED_PREFERENCES.dayEndHour,
+    }
+  }
+
+  return persisted
+}
+
 interface PreferencesState {
   timeFormat: TimeFormat
   firstDayOfWeek: FirstDayOfWeek
@@ -155,6 +180,8 @@ export const usePreferencesStore = create<PreferencesState>()(
     }),
     {
       name: 'silentsuite-preferences',
+      version: 2,
+      migrate: migrateStoredPreferences,
     },
   ),
 )

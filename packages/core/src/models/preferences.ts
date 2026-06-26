@@ -52,8 +52,8 @@ export const DEFAULT_SYNCED_PREFERENCES: SyncedPreferenceValues = {
   defaultReminder: '15',
   defaultTimezone: 'UTC',
   dateFormat: 'system',
-  dayStartHour: 0,
-  dayEndHour: 24,
+  dayStartHour: 7,
+  dayEndHour: 23,
 };
 
 const DEFAULT_TIMESTAMPS: SyncedPreferenceTimestamps = {
