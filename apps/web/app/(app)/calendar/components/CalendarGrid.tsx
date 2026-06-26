@@ -95,8 +95,8 @@ function snapTo30Min(date: Date): Date {
   return snapped
 }
 
-const DEFAULT_DAY_START_HOUR = 0
-const DEFAULT_DAY_END_HOUR = 24
+const DEFAULT_DAY_START_HOUR = 7
+const DEFAULT_DAY_END_HOUR = 23
 
 /** Find the display event under the cursor by matching click coordinates to day column + time */
 function findEventAtPosition(

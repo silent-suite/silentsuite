@@ -257,6 +257,7 @@
   border-radius: 6px !important;
   border: none !important;
   margin: 1px 3px !important;
+  padding: 0 !important;
   overflow: hidden;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
   transition: box-shadow 0.15s ease, transform 0.1s ease;
@@ -269,13 +270,58 @@
 }
 
 .sx-silentsuite-calendar .sx__time-grid-event-inner {
-  padding: 2px 8px !important;
-  font-size: 0.75rem;
+  height: 100%;
+  min-height: 0;
+  padding: 3px 8px !important;
+  font-size: 0.72rem;
   font-weight: 500;
-  line-height: 1.25;
+  line-height: 1.15;
   border-radius: 6px !important;
   border: none !important;
   border-left: none !important;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 1px;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event-title,
+.sx-silentsuite-calendar .sx__time-grid-event-time,
+.sx-silentsuite-calendar .sx__time-grid-event-people,
+.sx-silentsuite-calendar .sx__time-grid-event-location {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sx-silentsuite-calendar .sx__title-and-time-compact {
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+}
+
+.sx-silentsuite-calendar .sx__title-and-time-compact .sx__time-grid-event-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sx-silentsuite-calendar .sx__title-and-time-compact .sx__time-grid-event-time {
+  flex: 0 0 auto;
+}
+
+/* For 30-minute/short events Schedule-X uses the compact title+time row.
+   Keep those chips single-line so location/extra metadata cannot be half-clipped. */
+.sx-silentsuite-calendar .sx__time-grid-event-inner:has(.sx__title-and-time-compact) {
+  justify-content: center;
+  padding-block: 2px !important;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event-inner:has(.sx__title-and-time-compact) .sx__time-grid-event-location,
+.sx-silentsuite-calendar .sx__time-grid-event-inner:has(.sx__title-and-time-compact) .sx__time-grid-event-people {
+  display: none !important;
 }
 
 .sx-silentsuite-calendar .sx__time-grid-event-inner::before {
