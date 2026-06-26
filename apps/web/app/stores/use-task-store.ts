@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import type { Task, Priority, SyncStatus } from '@silentsuite/core'
+import type { Task, TaskStatus, Priority, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
@@ -12,9 +12,14 @@ import { useTaskListStore } from '@/app/stores/use-task-list-store'
 interface NewTask {
   title: string
   description?: string
+  start_date?: Date | null
   due_date?: Date | null
   priority?: Priority
   completed?: boolean
+  status?: TaskStatus
+  percent_complete?: number
+  location?: string
+  url?: string
   categories?: string[]
   listId?: string
 }
@@ -55,9 +60,14 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           uid: tempId,
           title: newTask.title,
           description: newTask.description ?? '',
+          start_date: newTask.start_date ?? null,
           due_date: newTask.due_date ?? null,
           priority: newTask.priority ?? 'medium',
           completed: newTask.completed ?? false,
+          status: newTask.status ?? (newTask.completed ? 'completed' : 'needs-action'),
+          percent_complete: newTask.percent_complete ?? (newTask.completed ? 100 : 0),
+          location: newTask.location ?? '',
+          url: newTask.url ?? '',
           categories: newTask.categories ?? [],
           listId: newTask.listId ?? defaultTaskListId(),
           created_at: now,
@@ -156,7 +166,14 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         if (index === -1) return
 
         const task = tasks[index]!
-        const updated = { ...task, completed: !task.completed, updated_at: new Date() }
+        const nextCompleted = !task.completed
+        const updated = {
+          ...task,
+          completed: nextCompleted,
+          status: nextCompleted ? 'completed' as const : 'needs-action' as const,
+          percent_complete: nextCompleted ? 100 : 0,
+          updated_at: new Date(),
+        }
         const next = [...tasks]
         next[index] = updated
         set({ tasks: next })
@@ -194,9 +211,14 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             uid: tempId,
             title: nt.title,
             description: nt.description ?? '',
+            start_date: nt.start_date ?? null,
             due_date: nt.due_date ?? null,
             priority: nt.priority ?? 'medium',
             completed: nt.completed ?? false,
+            status: nt.status ?? (nt.completed ? 'completed' : 'needs-action'),
+            percent_complete: nt.percent_complete ?? (nt.completed ? 100 : 0),
+            location: nt.location ?? '',
+            url: nt.url ?? '',
             categories: nt.categories ?? [],
             listId: nt.listId ?? defaultTaskListId(),
             created_at: now,

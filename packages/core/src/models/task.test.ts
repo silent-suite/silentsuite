@@ -132,6 +132,42 @@ describe('toVTodo / fromVTodo roundtrip', () => {
     expect(restored.id).toBe('my-id');
     expect(restored.uid).toBe('my-id');
   });
+  it('roundtrips structured task.org-style fields through VTODO', () => {
+    const original = makeFullTask({
+      start_date: new Date(2026, 2, 18, 0, 0, 0),
+      due_date: new Date(2026, 2, 20, 0, 0, 0),
+      status: 'in-process',
+      percent_complete: 45,
+      location: 'Office',
+      url: 'https://example.com/tasks/1',
+    });
+    const ical = toVTodo(original);
+
+    expect(ical).toContain('DTSTART;VALUE=DATE:20260318');
+    expect(ical).toContain('DUE;VALUE=DATE:20260320');
+    expect(ical).toContain('STATUS:IN-PROCESS');
+    expect(ical).toContain('PERCENT-COMPLETE:45');
+    expect(ical).toContain('LOCATION:Office');
+    expect(ical).toContain('URL:https://example.com/tasks/1');
+
+    const restored = fromVTodo(ical);
+    expect(restored.start_date!.getFullYear()).toBe(2026);
+    expect(restored.start_date!.getMonth()).toBe(2);
+    expect(restored.start_date!.getDate()).toBe(18);
+    expect(restored.status).toBe('in-process');
+    expect(restored.percent_complete).toBe(45);
+    expect(restored.location).toBe('Office');
+    expect(restored.url).toBe('https://example.com/tasks/1');
+    expect(restored.completed).toBe(false);
+  });
+
+  it('serializes cancelled tasks and clamps incomplete percent complete', () => {
+    const task = makeFullTask({ status: 'cancelled', percent_complete: 125, completed: false });
+    const vtodo = toVTodo(task);
+
+    expect(vtodo).toContain('STATUS:CANCELLED');
+    expect(vtodo).toContain('PERCENT-COMPLETE:100');
+  });
 });
 
 // ── Priority mapping ──

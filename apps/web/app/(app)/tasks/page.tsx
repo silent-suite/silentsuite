@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List, Folder, Tag } from 'lucide-react'
+import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List, Folder, Tag, MapPin, Link, BarChart3, CircleDot } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useTaskStore } from '@/app/stores/use-task-store'
@@ -15,7 +15,7 @@ import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { TasksEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
-import type { Task, Priority } from '@silentsuite/core'
+import type { Task, TaskStatus, Priority } from '@silentsuite/core'
 
 // ── Priority config ──
 
@@ -47,6 +47,15 @@ const PRIORITY_LABELS: Record<Priority, string> = {
   urgent: 'Urgent',
 }
 
+const STATUS_LABELS: Record<TaskStatus, string> = {
+  'needs-action': 'Needs action',
+  'in-process': 'In progress',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+}
+
+const STATUS_OPTIONS: TaskStatus[] = ['needs-action', 'in-process', 'completed', 'cancelled']
+
 // ── Helpers ──
 
 function formatDueDate(date: Date): string {
@@ -72,6 +81,23 @@ function dueDateColor(date: Date): string {
   if (diffDays < 0) return 'text-red-400'
   if (diffDays === 0) return 'text-amber-400'
   return 'text-[rgb(var(--muted))]'
+}
+
+function dateInputValue(date: Date | null | undefined): string {
+  return date
+    ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    : ''
+}
+
+function parseDateInput(value: string): Date | null {
+  if (!value) return null
+  const [y, m, d] = value.split('-').map(Number)
+  return new Date(y!, m! - 1, d!)
+}
+
+function normalizeTaskProgress(status: TaskStatus, percent: number): { completed: boolean; percent_complete: number } {
+  if (status === 'completed') return { completed: true, percent_complete: 100 }
+  return { completed: false, percent_complete: Math.max(0, Math.min(99, Math.round(percent))) }
 }
 
 function sortTasks(tasks: Task[]): Task[] {
@@ -179,12 +205,13 @@ function TaskDialog({
 
   const [title, setTitle] = useState(task?.title ?? '')
   const [description, setDescription] = useState(task?.description ?? '')
-  const [dueDate, setDueDate] = useState<string>(
-    task?.due_date
-      ? `${task.due_date.getFullYear()}-${String(task.due_date.getMonth() + 1).padStart(2, '0')}-${String(task.due_date.getDate()).padStart(2, '0')}`
-      : '',
-  )
+  const [startDate, setStartDate] = useState<string>(dateInputValue(task?.start_date))
+  const [dueDate, setDueDate] = useState<string>(dateInputValue(task?.due_date))
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
+  const [status, setStatus] = useState<TaskStatus>(task?.status ?? (task?.completed ? 'completed' : 'needs-action'))
+  const [percentComplete, setPercentComplete] = useState(task?.percent_complete ?? (task?.completed ? 100 : 0))
+  const [location, setLocation] = useState(task?.location ?? '')
+  const [url, setUrl] = useState(task?.url ?? '')
   const [categories, setCategories] = useState<string[]>(task?.categories ?? [])
   const [selectedListId, setSelectedListId] = useState(task?.listId ?? defaultListId)
 
@@ -205,19 +232,21 @@ function TaskDialog({
     const trimmed = title.trim()
     if (!trimmed) return
 
-    const parsedDue = dueDate
-      ? (() => {
-          const [y, m, d] = dueDate.split('-').map(Number)
-          return new Date(y!, m! - 1, d!)
-        })()
-      : null
+    const parsedStart = parseDateInput(startDate)
+    const parsedDue = parseDateInput(dueDate)
+    const progress = normalizeTaskProgress(status, percentComplete)
 
     if (mode === 'create') {
       createTask({
         title: trimmed,
         description,
+        start_date: parsedStart,
         due_date: parsedDue,
         priority,
+        status,
+        ...progress,
+        location,
+        url,
         categories,
         listId: selectedListId,
       })
@@ -225,14 +254,19 @@ function TaskDialog({
       updateTask(task.id, {
         title: trimmed,
         description,
+        start_date: parsedStart,
         due_date: parsedDue,
         priority,
+        status,
+        ...progress,
+        location,
+        url,
         categories,
         listId: selectedListId,
       })
     }
     onClose()
-  }, [title, description, dueDate, priority, categories, selectedListId, mode, task, createTask, updateTask, onClose])
+  }, [title, description, startDate, dueDate, priority, status, percentComplete, location, url, categories, selectedListId, mode, task, createTask, updateTask, onClose])
 
   return (
     <>
@@ -277,29 +311,95 @@ function TaskDialog({
               className="w-full text-base font-medium bg-transparent text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none border-b border-[rgb(var(--border))] pb-2"
             />
 
-            {/* Due date */}
-            <div className="flex items-center gap-3">
-              <Calendar className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-[rgb(var(--muted))]">Due date</span>
+            {/* Dates */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex items-center gap-3">
+                <Calendar className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                <span className="sr-only">Start date</span>
+                <div className="flex flex-1 items-center gap-2">
+                  <span className="text-sm text-[rgb(var(--muted))]">Start</span>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    aria-label="Start date"
+                    className="min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </label>
+              <label className="flex items-center gap-3">
+                <Calendar className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                <span className="sr-only">Due date</span>
+                <div className="flex flex-1 items-center gap-2">
+                  <span className="text-sm text-[rgb(var(--muted))]">Due</span>
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    aria-label="Due date"
+                    className="min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </label>
+            </div>
+
+            {/* Status and progress */}
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+              <label className="flex items-center gap-3">
+                <CircleDot className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                <span className="sr-only">Task status</span>
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as TaskStatus)}
+                  aria-label="Task status"
+                  className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  {STATUS_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{STATUS_LABELS[option]}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                <span className="text-sm text-[rgb(var(--muted))]">Progress</span>
                 <input
-                  type="date"
-                  value={dueDate}
-                  onChange={(e) => setDueDate(e.target.value)}
-                  aria-label="Due date"
-                  className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={percentComplete}
+                  onChange={(e) => setPercentComplete(Number(e.target.value))}
+                  aria-label="Percent complete"
+                  className="w-20 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
-                {dueDate && (
-                  <button
-                    type="button"
-                    onClick={() => setDueDate('')}
-                    className="rounded p-1 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
-                    aria-label="Clear due date"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+              </label>
+            </div>
+
+            {/* Location and URL */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex items-center gap-3">
+                <MapPin className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                <span className="sr-only">Location</span>
+                <input
+                  type="text"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="Location"
+                  aria-label="Location"
+                  className="min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </label>
+              <label className="flex items-center gap-3">
+                <Link className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                <span className="sr-only">URL</span>
+                <input
+                  type="url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="URL"
+                  aria-label="URL"
+                  className="min-w-0 flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </label>
             </div>
 
             {/* Priority */}
