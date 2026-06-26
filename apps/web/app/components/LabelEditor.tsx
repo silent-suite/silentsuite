@@ -1,8 +1,13 @@
 'use client'
 
-import { useCallback, useState } from 'react'
-import { Tag, X } from 'lucide-react'
+import { useCallback, useRef, useState, type FormEvent } from 'react'
+import { Palette, Tag, X } from 'lucide-react'
 import { useTranslations } from 'next-intl'
+import {
+  getLabelColor,
+  labelTextColor,
+  useLabelColorStore,
+} from '@/app/stores/use-label-color-store'
 
 // ---------------------------------------------------------------------------
 // Shared label / category chip components (#291)
@@ -43,15 +48,73 @@ export function LabelChips({
   return (
     <div className={`flex flex-wrap gap-1.5 ${className}`}>
       {labels.map((label, index) => (
-        <span
+        <LabelChip
           key={`${label}-${index}`}
-          className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
-        >
-          <Tag className="h-3 w-3" />
-          {label}
-        </span>
+          label={label}
+        />
       ))}
     </div>
+  )
+}
+
+function LabelChip({
+  label,
+  disabled = false,
+  onRemove,
+  changeColorLabel,
+  removeLabel,
+}: {
+  label: string
+  disabled?: boolean
+  onRemove?: () => void
+  changeColorLabel?: string
+  removeLabel?: string
+}) {
+  const colors = useLabelColorStore((state) => state.colors)
+  const setLabelColor = useLabelColorStore((state) => state.setLabelColor)
+  const colorInputRef = useRef<HTMLInputElement>(null)
+  const color = getLabelColor(label, colors)
+  const handleColorInput = useCallback((event: FormEvent<HTMLInputElement>) => {
+    setLabelColor(label, event.currentTarget.value)
+  }, [label, setLabelColor])
+
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium shadow-sm ring-1 ring-black/5"
+      style={{ backgroundColor: color, color: labelTextColor(color) }}
+    >
+      <Tag className="h-3 w-3" />
+      {label}
+      {onRemove && !disabled && (
+        <>
+          <button
+            type="button"
+            onClick={() => colorInputRef.current?.click()}
+            className="rounded-full p-1 transition-colors hover:bg-black/10 focus:outline-none focus:ring-1 focus:ring-white/80 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center max-md:-my-2 max-md:-mx-1.5"
+            aria-label={changeColorLabel}
+          >
+            <Palette className="h-3 w-3" />
+          </button>
+          <input
+            ref={colorInputRef}
+            type="color"
+            value={color}
+            onInput={handleColorInput}
+            onChange={handleColorInput}
+            className="sr-only"
+            aria-label={changeColorLabel}
+          />
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded-full p-1 transition-colors hover:bg-black/10 focus:outline-none focus:ring-1 focus:ring-white/80 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center max-md:-my-2 max-md:-mx-1.5"
+            aria-label={removeLabel}
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </>
+      )}
+    </span>
   )
 }
 
@@ -107,23 +170,14 @@ export function LabelEditor({
   return (
     <div className="flex flex-1 flex-wrap items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500">
       {labels.map((label, index) => (
-        <span
+        <LabelChip
           key={`${label}-${index}`}
-          className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
-        >
-          <Tag className="h-3 w-3" />
-          {label}
-          {!disabled && (
-            <button
-              type="button"
-              onClick={() => remove(label)}
-              className="rounded-full p-1 hover:text-red-500 transition-colors max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center max-md:-my-2 max-md:-mx-1.5"
-              aria-label={t('removeLabel', { label })}
-            >
-              <X className="h-3 w-3" />
-            </button>
-          )}
-        </span>
+          label={label}
+          disabled={disabled}
+          onRemove={() => remove(label)}
+          changeColorLabel={t('changeLabelColor', { label })}
+          removeLabel={t('removeLabel', { label })}
+        />
       ))}
       {!disabled && (
         <input
