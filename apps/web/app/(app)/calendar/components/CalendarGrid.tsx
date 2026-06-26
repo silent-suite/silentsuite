@@ -13,6 +13,7 @@ import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-s
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
 import type { CalendarEvent, DateRange, FirstDayOfWeek } from '@silentsuite/core'
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
@@ -599,6 +600,24 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       // events service may not be ready yet
     }
   }, [sxEvents, eventsPlugin])
+
+  // Log the first browser paint after Schedule-X receives events. This keeps
+  // the sync-speed investigation grounded in a visible-calendar milestone,
+  // without logging event titles, times, labels, or other PIM content.
+  const firstEventsPaintLoggedRef = useRef(false)
+  useEffect(() => {
+    if (firstEventsPaintLoggedRef.current || sxEvents.length === 0) return
+    firstEventsPaintLoggedRef.current = true
+    const raf = requestAnimationFrame(() => {
+      logCalendarPaintTiming({
+        scheduleXEventCount: sxEvents.length,
+        displayEventCount: displayEvents.length,
+        rawEventCount: events.length,
+        view: currentView,
+      })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [currentView, displayEvents.length, events.length, sxEvents.length])
 
   // #331: Reveal the full title on short/clipped calendar events.
   // Schedule-X clips event text with `overflow: hidden`, so a short event's

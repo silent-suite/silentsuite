@@ -13,8 +13,14 @@ import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
   isCacheEnabled as isLocalCacheEnabled,
+  getCacheCapabilityStatus,
   type CachedItem,
 } from '@/app/lib/data-cache'
+import {
+  logSyncTiming,
+  markCalendarSyncStart,
+  nowMs,
+} from '@/app/lib/sync-timing'
 import {
   createSafeOperationalError,
   getSafeErrorDetails,
@@ -44,9 +50,11 @@ async function deserializeCalendarItemsIncrementally(
   deserializeCalendarEvent: (content: string) => CalendarEvent,
   source: 'cache' | 'server',
 ): Promise<{ events: CalendarEvent[]; errors: unknown[] }> {
+  const startedAt = nowMs()
   const { priority, backlog } = partitionCalendarItemsForFastPaint(items)
   const allEvents: CalendarEvent[] = []
   const errors: unknown[] = []
+  let firstStoreUpdateLogged = false
 
   async function processGroup(group: CalendarContentItem[], groupName: 'priority' | 'backlog') {
     for (let start = 0; start < group.length; start += CALENDAR_DESERIALIZE_CHUNK_SIZE) {
@@ -66,6 +74,17 @@ async function deserializeCalendarItemsIncrementally(
       if (chunkEvents.length > 0) {
         allEvents.push(...chunkEvents)
         useCalendarStore.getState().upsertFromRemote(chunkEvents)
+        if (!firstStoreUpdateLogged) {
+          firstStoreUpdateLogged = true
+          logSyncTiming('calendar-first-store-update', startedAt, {
+            source,
+            group: groupName,
+            chunkEventCount: chunkEvents.length,
+            totalItemCount: items.length,
+            priorityItemCount: priority.length,
+            backlogItemCount: backlog.length,
+          })
+        }
         logger.debug(
           `[sync-provider] Loaded ${chunkEvents.length} ${source} calendar events from ${groupName} chunk`,
         )
@@ -84,6 +103,14 @@ async function deserializeCalendarItemsIncrementally(
   // Final replace is still required: it preserves full-history search while
   // dropping items that were deleted remotely after the previous local state.
   useCalendarStore.getState().syncFromRemote(allEvents)
+  logSyncTiming('calendar-deserialize-complete', startedAt, {
+    source,
+    totalItemCount: items.length,
+    priorityItemCount: priority.length,
+    backlogItemCount: backlog.length,
+    eventCount: allEvents.length,
+    errorCount: errors.length,
+  })
   return { events: allEvents, errors }
 }
 
@@ -124,8 +151,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     let unsubStatus: (() => void) | null = null
 
     async function init() {
+      const initStartedAt = markCalendarSyncStart()
       try {
         setSyncStatus('syncing')
+        const cacheStatus = getCacheCapabilityStatus()
+        logSyncTiming('cache-capability', initStartedAt, { ...cacheStatus })
 
         // Cache-first hydration: when the feature flag is on, paint the UI
         // from IndexedDB before the network sync starts. This is best-effort
@@ -135,7 +165,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         }
 
         // Restore session, create/fetch collections, load items, start SyncEngine
+        const etebaseInitStartedAt = nowMs()
         await etebaseInitialize()
+        logSyncTiming('etebase-initialize', etebaseInitStartedAt)
 
         // Now load items from each collection into the data stores
         const loadHadErrors = await loadItemsIntoStores()
@@ -154,6 +186,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           setError(null)
         }
         setLastSynced(new Date())
+        logSyncTiming('initial-sync-complete', initStartedAt, { hadErrors: loadHadErrors })
       } catch (err) {
         reportSyncError('init', err)
         setSyncStatus('error')
@@ -172,6 +205,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
      * Failures here are non-fatal; we just skip the optimistic paint.
      */
     async function hydrateFromCache() {
+      const cacheHydrateStartedAt = nowMs()
       try {
         const [taskItems, contactItems, eventItems, core] = await Promise.all([
           cacheGetItemsByType('tasks'),
@@ -206,6 +240,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        logSyncTiming('cache-read', cacheHydrateStartedAt, {
+          taskItemCount: taskItems.length,
+          contactItemCount: contactItems.length,
+          calendarItemCount: eventItems.length,
+        })
+
         if (eventItems.length > 0) {
           try {
             const { events, errors } = await deserializeCalendarItemsIncrementally(
@@ -228,8 +268,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             logger.warn('[sync-provider] Failed to hydrate calendar events from cache', getSafeErrorDetails(err))
           }
         }
+        logSyncTiming('cache-hydrate-complete', cacheHydrateStartedAt, {
+          taskItemCount: taskItems.length,
+          contactItemCount: contactItems.length,
+          calendarItemCount: eventItems.length,
+        })
       } catch (err) {
         logger.warn('[sync-provider] Cache hydration failed', getSafeErrorDetails(err))
+        logSyncTiming('cache-hydrate-failed', cacheHydrateStartedAt)
       }
     }
 
@@ -243,6 +289,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         items: { uid: string; content: string; collectionUid: string }[],
       ) {
         if (!cacheEnabled || items.length === 0) return
+        const mirrorStartedAt = nowMs()
         const records: CachedItem[] = items.map((it) => ({
           itemUid: it.uid,
           collectionType: type,
@@ -252,16 +299,21 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         }))
         try {
           await cacheReplaceItemsForType(type, records)
+          logSyncTiming('cache-mirror', mirrorStartedAt, { type, itemCount: items.length })
         } catch (err) {
           logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
+          logSyncTiming('cache-mirror-failed', mirrorStartedAt, { type, itemCount: items.length })
         }
       }
 
       // Load calendar events first so the calendar can paint before unrelated
       // task/contact deserialization work on large accounts.
       try {
+        const calendarFetchStartedAt = nowMs()
         const eventItems = await etebase.fetchAllItems('calendar')
+        logSyncTiming('calendar-fetch', calendarFetchStartedAt, { itemCount: eventItems.length })
         if (eventItems.length > 0) {
+          const calendarImportStartedAt = nowMs()
           const { deserializeCalendarEvent } = await import('@silentsuite/core')
           const { events, errors } = await deserializeCalendarItemsIncrementally(
             eventItems,
@@ -269,6 +321,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             'server',
           )
           logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
+          logSyncTiming('calendar-load', calendarImportStartedAt, {
+            itemCount: eventItems.length,
+            eventCount: events.length,
+            errorCount: errors.length,
+          })
           if (errors.length > 0) {
             hadErrors = true
             reportSyncError('load calendar event chunk', errors[0])
@@ -282,6 +339,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
       // Load tasks
       try {
+        const taskLoadStartedAt = nowMs()
         const taskItems = await etebase.fetchAllItems('tasks')
         if (taskItems.length > 0) {
           const { deserializeTask } = await import('@silentsuite/core')
@@ -293,7 +351,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           })
           useTaskStore.getState().syncFromRemote(tasks)
           logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
+          logSyncTiming('tasks-load', taskLoadStartedAt, { itemCount: taskItems.length, taskCount: tasks.length })
           await mirrorToCache('tasks', taskItems)
+        } else {
+          logSyncTiming('tasks-load', taskLoadStartedAt, { itemCount: 0, taskCount: 0 })
         }
       } catch (err) {
         hadErrors = true
@@ -302,6 +363,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
       // Load contacts
       try {
+        const contactLoadStartedAt = nowMs()
         const contactItems = await etebase.fetchAllItems('contacts')
         if (contactItems.length > 0) {
           const { deserializeContact } = await import('@silentsuite/core')
@@ -311,7 +373,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           })
           useContactStore.getState().syncFromRemote(contacts)
           logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
+          logSyncTiming('contacts-load', contactLoadStartedAt, { itemCount: contactItems.length, contactCount: contacts.length })
           await mirrorToCache('contacts', contactItems)
+        } else {
+          logSyncTiming('contacts-load', contactLoadStartedAt, { itemCount: 0, contactCount: 0 })
         }
       } catch (err) {
         hadErrors = true
@@ -322,7 +387,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       // cache is ready. Preferences stay in their own local store because one
       // field, notificationSound, is intentionally device-local.
       try {
+        const preferencesStartedAt = nowMs()
         await usePreferencesSyncStore.getState().initialize()
+        logSyncTiming('preferences-initialize', preferencesStartedAt)
       } catch (err) {
         hadErrors = true
         reportSyncError('initialize preferences sync', err)
