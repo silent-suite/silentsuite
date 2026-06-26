@@ -6,6 +6,7 @@ import {
   getSyncedPreferenceTimestamps,
   getSyncedPreferenceValues,
   mergeSyncedPreferences,
+  type DayBoundaryHour,
   type DefaultReminder,
   type FirstDayOfWeek,
   type SyncedPreferencesV1,
@@ -32,6 +33,8 @@ function zeroTimestamps(): SyncedPreferenceTimestamps {
     defaultReminder: 0,
     defaultTimezone: 0,
     dateFormat: 0,
+    dayStartHour: 0,
+    dayEndHour: 0,
   }
 }
 
@@ -46,9 +49,12 @@ interface PreferencesState {
   notificationSound: boolean
   defaultTimezone: string // IANA timezone, e.g. 'Europe/Amsterdam'
   dateFormat: import('@silentsuite/core').DateFormat
+  dayStartHour: DayBoundaryHour
+  dayEndHour: DayBoundaryHour
   syncedPreferenceUpdatedAt: SyncedPreferenceTimestamps
   setTimeFormat: (format: TimeFormat) => void
   setDateFormat: (format: import('@silentsuite/core').DateFormat) => void
+  setDayBounds: (start: DayBoundaryHour, end: DayBoundaryHour) => void
   setFirstDayOfWeek: (day: FirstDayOfWeek) => void
   setDefaultReminder: (value: DefaultReminder) => void
   setNotificationSound: (enabled: boolean) => void
@@ -72,6 +78,19 @@ export const usePreferencesStore = create<PreferencesState>()(
         timeFormat,
         syncedPreferenceUpdatedAt: { ...state.syncedPreferenceUpdatedAt, timeFormat: Date.now() },
       })),
+      setDayBounds: (start, end) => set((state) => {
+        const { dayStartHour, dayEndHour } = normalizeValues({ dayStartHour: start, dayEndHour: end })
+        const now = Date.now()
+        return {
+          dayStartHour,
+          dayEndHour,
+          syncedPreferenceUpdatedAt: {
+            ...state.syncedPreferenceUpdatedAt,
+            dayStartHour: now,
+            dayEndHour: now,
+          },
+        }
+      }),
       setFirstDayOfWeek: (firstDayOfWeek) => set((state) => ({
         firstDayOfWeek,
         syncedPreferenceUpdatedAt: { ...state.syncedPreferenceUpdatedAt, firstDayOfWeek: Date.now() },
@@ -100,6 +119,8 @@ export const usePreferencesStore = create<PreferencesState>()(
             defaultReminder: state.defaultReminder,
             defaultTimezone: state.defaultTimezone,
             dateFormat: (state as any).dateFormat,
+            dayStartHour: state.dayStartHour,
+            dayEndHour: state.dayEndHour,
           },
           state.syncedPreferenceUpdatedAt,
           0,
@@ -115,11 +136,15 @@ export const usePreferencesStore = create<PreferencesState>()(
           || values.defaultReminder !== state.defaultReminder
           || values.defaultTimezone !== state.defaultTimezone
           || values.dateFormat !== (state as any).dateFormat
+          || values.dayStartHour !== state.dayStartHour
+          || values.dayEndHour !== state.dayEndHour
           || timestamps.timeFormat !== state.syncedPreferenceUpdatedAt.timeFormat
           || timestamps.firstDayOfWeek !== state.syncedPreferenceUpdatedAt.firstDayOfWeek
           || timestamps.defaultReminder !== state.syncedPreferenceUpdatedAt.defaultReminder
           || timestamps.defaultTimezone !== state.syncedPreferenceUpdatedAt.defaultTimezone
           || timestamps.dateFormat !== state.syncedPreferenceUpdatedAt.dateFormat
+          || timestamps.dayStartHour !== state.syncedPreferenceUpdatedAt.dayStartHour
+          || timestamps.dayEndHour !== state.syncedPreferenceUpdatedAt.dayEndHour
 
         if (changed) {
           set({ ...values, syncedPreferenceUpdatedAt: timestamps })

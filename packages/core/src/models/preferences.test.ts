@@ -21,6 +21,8 @@ describe('synced preferences', () => {
         firstDayOfWeek: 11,
         defaultReminder: 12,
         defaultTimezone: 13,
+        dayStartHour: 14,
+        dayEndHour: 15,
       },
       99,
     );
@@ -35,6 +37,8 @@ describe('synced preferences', () => {
       defaultReminder: '30',
       defaultTimezone: 'Europe/Amsterdam',
       dateFormat: 'system',
+      dayStartHour: 0,
+      dayEndHour: 24,
     });
     expect(restored.updatedAt).toBe(99);
   });
@@ -57,7 +61,18 @@ describe('synced preferences', () => {
       defaultReminder: '15',
       defaultTimezone: 'UTC',
       dateFormat: 'system',
+      dayStartHour: 0,
+      dayEndHour: 24,
     });
+  });
+
+
+  it('accepts valid day bounds and falls back when start is not before end', () => {
+    const valid = createSyncedPreferences({ dayStartHour: 7, dayEndHour: 19 }, {}, 42);
+    expect(getSyncedPreferenceValues(valid)).toMatchObject({ dayStartHour: 7, dayEndHour: 19 });
+
+    const invalid = createSyncedPreferences({ dayStartHour: 22, dayEndHour: 6 }, {}, 42);
+    expect(getSyncedPreferenceValues(invalid)).toMatchObject({ dayStartHour: 0, dayEndHour: 24 });
   });
 
   it('merges by newest timestamp per field', () => {
@@ -98,6 +113,8 @@ describe('synced preferences', () => {
       defaultReminder: '60',
       defaultTimezone: 'Europe/Amsterdam',
       dateFormat: 'system',
+      dayStartHour: 0,
+      dayEndHour: 24,
     });
   });
 });
