@@ -17,6 +17,7 @@ import {
   clearAll,
   ensureFingerprint,
   isCacheEnabled,
+  getCacheCapabilityStatus,
   CACHE_SCHEMA_VERSION,
   _resetForTests,
   _setEncryptedCacheAvailableForTests,
@@ -52,6 +53,27 @@ describe('data-cache', () => {
       _setEncryptedCacheAvailableForTests(false)
 
       expect(isCacheEnabled()).toBe(false)
+
+      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
+    })
+
+    it('reports privacy-safe cache capability diagnostics', () => {
+      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
+      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
+      _setEncryptedCacheAvailableForTests(true)
+
+      expect(getCacheCapabilityStatus()).toEqual({
+        featureFlagEnabled: true,
+        encryptedEnvelopeAvailable: true,
+        enabled: true,
+      })
+
+      _setEncryptedCacheAvailableForTests(false)
+      expect(getCacheCapabilityStatus()).toEqual({
+        featureFlagEnabled: true,
+        encryptedEnvelopeAvailable: false,
+        enabled: false,
+      })
 
       process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
     })

@@ -379,13 +379,33 @@ export async function ensureFingerprint(accountFingerprint: string): Promise<boo
 
 // ── Feature flag helper ──
 
+export interface CacheCapabilityStatus {
+  featureFlagEnabled: boolean
+  encryptedEnvelopeAvailable: boolean
+  enabled: boolean
+}
+
+/**
+ * Privacy-safe cache capability status for sync timing diagnostics. Contains
+ * only booleans; no account identifiers, item contents, or collection IDs.
+ */
+export function getCacheCapabilityStatus(): CacheCapabilityStatus {
+  const featureFlagEnabled = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED === 'true'
+  const encryptedEnvelopeAvailable = hasEncryptedCacheEnvelope()
+  return {
+    featureFlagEnabled,
+    encryptedEnvelopeAvailable,
+    enabled: featureFlagEnabled && encryptedEnvelopeAvailable,
+  }
+}
+
 /**
  * Returns true only when the local cache feature is enabled and encrypted
  * cache storage is available. Off by default, and fail-closed if the flag is
  * enabled before encryption exists.
  */
 export function isCacheEnabled(): boolean {
-  return process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED === 'true' && hasEncryptedCacheEnvelope()
+  return getCacheCapabilityStatus().enabled
 }
 
 // ── Test helpers ──
