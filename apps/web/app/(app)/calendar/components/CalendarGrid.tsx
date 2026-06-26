@@ -17,6 +17,10 @@ import type { CalendarEvent, DateRange, FirstDayOfWeek } from '@silentsuite/core
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
 import { expandEventsForRange, toScheduleXEvents, type DisplayEvent } from '../lib/calendar-grid-events'
+import {
+  toScheduleXDayBoundariesExternal,
+  toScheduleXDayBoundariesInternal,
+} from '../lib/calendar-day-boundaries'
 
 import '@schedule-x/theme-default/dist/index.css'
 
@@ -92,10 +96,6 @@ function snapTo30Min(date: Date): Date {
 
 const DEFAULT_DAY_START_HOUR = 0
 const DEFAULT_DAY_END_HOUR = 24
-
-function formatDayBoundary(hour: number): string {
-  return `${String(hour).padStart(2, '0')}:00`
-}
 
 /** Find the display event under the cursor by matching click coordinates to day column + time */
 function findEventAtPosition(
@@ -371,7 +371,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const initialTimezoneRef = useRef(userTz)
   // Capture initial first-day-of-week for Schedule-X config (changes pushed via signal below)
   const initialFirstDayRef = useRef(sxFirstDayOfWeek)
-  const initialDayBoundariesRef = useRef({ start: formatDayBoundary(dayStartHour), end: formatDayBoundary(dayEndHour) })
+  const initialDayBoundariesRef = useRef(toScheduleXDayBoundariesExternal(dayStartHour, dayEndHour))
 
   // Memoize the event click handler
   const handleEventClick = useCallback(
@@ -467,7 +467,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     try {
       const app = (calendar as any).$app
       const boundariesSignal = app?.config?.dayBoundaries
-      const next = { start: formatDayBoundary(dayStartHour), end: formatDayBoundary(dayEndHour) }
+      const next = toScheduleXDayBoundariesInternal(dayStartHour, dayEndHour)
       if (boundariesSignal) {
         boundariesSignal.value = next
       }
