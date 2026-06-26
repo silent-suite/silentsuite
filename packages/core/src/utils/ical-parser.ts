@@ -32,6 +32,8 @@ export interface VTodo {
   uid: string;
   summary?: string;
   description?: string;
+  dtstart?: string;
+  dtstartParams?: Record<string, string>;
   due?: string;
   dueParams?: Record<string, string>;
   priority?: number;
@@ -40,6 +42,8 @@ export interface VTodo {
   created?: string;
   lastModified?: string;
   percentComplete?: number;
+  location?: string;
+  url?: string;
   /** CATEGORIES (RFC 5545) — comma-separated user labels */
   categories?: string[];
 }
@@ -433,6 +437,12 @@ export function parseVTodo(ical: string): VTodo {
       case 'DESCRIPTION':
         todo.description = unescapeText(prop.value);
         break;
+      case 'DTSTART':
+        todo.dtstart = prop.value;
+        if (Object.keys(prop.params).length > 0) {
+          todo.dtstartParams = prop.params;
+        }
+        break;
       case 'DUE':
         todo.due = prop.value;
         if (Object.keys(prop.params).length > 0) {
@@ -456,6 +466,12 @@ export function parseVTodo(ical: string): VTodo {
         break;
       case 'PERCENT-COMPLETE':
         todo.percentComplete = parseInt(prop.value, 10);
+        break;
+      case 'LOCATION':
+        todo.location = unescapeText(prop.value);
+        break;
+      case 'URL':
+        todo.url = prop.value;
         break;
       case 'CATEGORIES':
         todo.categories = splitCommaValues(prop.value).map((c) => c.trim()).filter((c) => c.length > 0);
@@ -486,6 +502,17 @@ export function generateVTodo(todo: VTodo): string {
   if (todo.summary) lines.push(foldLine(`SUMMARY:${escapeText(todo.summary)}`));
   if (todo.description) lines.push(foldLine(`DESCRIPTION:${escapeText(todo.description)}`));
 
+  if (todo.dtstart) {
+    if (todo.dtstartParams && Object.keys(todo.dtstartParams).length > 0) {
+      const paramStr = Object.entries(todo.dtstartParams)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(';');
+      lines.push(foldLine(`DTSTART;${paramStr}:${todo.dtstart}`));
+    } else {
+      lines.push(foldLine(`DTSTART:${todo.dtstart}`));
+    }
+  }
+
   if (todo.due) {
     if (todo.dueParams && Object.keys(todo.dueParams).length > 0) {
       const paramStr = Object.entries(todo.dueParams)
@@ -503,6 +530,8 @@ export function generateVTodo(todo: VTodo): string {
   if (todo.created) lines.push(foldLine(`CREATED:${todo.created}`));
   if (todo.lastModified) lines.push(foldLine(`LAST-MODIFIED:${todo.lastModified}`));
   if (todo.percentComplete !== undefined) lines.push(foldLine(`PERCENT-COMPLETE:${todo.percentComplete}`));
+  if (todo.location) lines.push(foldLine(`LOCATION:${escapeText(todo.location)}`));
+  if (todo.url) lines.push(foldLine(`URL:${todo.url}`));
   if (todo.categories && todo.categories.length > 0) {
     lines.push(foldLine(`CATEGORIES:${todo.categories.map(escapeText).join(',')}`));
   }
