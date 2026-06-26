@@ -19,6 +19,17 @@ import {
   createSafeOperationalError,
   getSafeErrorDetails,
 } from '@/app/lib/privacy-safe-errors'
+import {
+  partitionCalendarItemsForFastPaint,
+  type CalendarContentItem,
+} from '@/app/lib/calendar-loading'
+import type { CalendarEvent } from '@silentsuite/core'
+
+const CALENDAR_DESERIALIZE_CHUNK_SIZE = 50
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
 
 function reportSyncError(operation: string, err: unknown) {
   Sentry.captureException(createSafeOperationalError('sync-provider', operation), {
@@ -26,6 +37,54 @@ function reportSyncError(operation: string, err: unknown) {
     extra: getSafeErrorDetails(err),
   })
   logger.error(`[sync-provider] ${operation} failed`, getSafeErrorDetails(err))
+}
+
+async function deserializeCalendarItemsIncrementally(
+  items: CalendarContentItem[],
+  deserializeCalendarEvent: (content: string) => CalendarEvent,
+  source: 'cache' | 'server',
+): Promise<{ events: CalendarEvent[]; errors: unknown[] }> {
+  const { priority, backlog } = partitionCalendarItemsForFastPaint(items)
+  const allEvents: CalendarEvent[] = []
+  const errors: unknown[] = []
+
+  async function processGroup(group: CalendarContentItem[], groupName: 'priority' | 'backlog') {
+    for (let start = 0; start < group.length; start += CALENDAR_DESERIALIZE_CHUNK_SIZE) {
+      const chunk = group.slice(start, start + CALENDAR_DESERIALIZE_CHUNK_SIZE)
+      const chunkEvents: CalendarEvent[] = []
+
+      for (const item of chunk) {
+        try {
+          const event = deserializeCalendarEvent(item.content)
+          chunkEvents.push({ ...event, id: item.uid, calendarId: item.collectionUid })
+        } catch (err) {
+          errors.push(err)
+          logger.warn(`[sync-provider] Failed to deserialize ${source} calendar item`, getSafeErrorDetails(err))
+        }
+      }
+
+      if (chunkEvents.length > 0) {
+        allEvents.push(...chunkEvents)
+        useCalendarStore.getState().upsertFromRemote(chunkEvents)
+        logger.debug(
+          `[sync-provider] Loaded ${chunkEvents.length} ${source} calendar events from ${groupName} chunk`,
+        )
+      }
+
+      if (start + CALENDAR_DESERIALIZE_CHUNK_SIZE < group.length) {
+        await yieldToBrowser()
+      }
+    }
+  }
+
+  await processGroup(priority, 'priority')
+  await yieldToBrowser()
+  await processGroup(backlog, 'backlog')
+
+  // Final replace is still required: it preserves full-history search while
+  // dropping items that were deleted remotely after the previous local state.
+  useCalendarStore.getState().syncFromRemote(allEvents)
+  return { events: allEvents, errors }
 }
 
 /**
@@ -79,7 +138,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         await etebaseInitialize()
 
         // Now load items from each collection into the data stores
-        await loadItemsIntoStores()
+        const loadHadErrors = await loadItemsIntoStores()
 
         // Wire SyncEngine change events
         unsubChange = wireChangeHandler()
@@ -87,7 +146,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // Wire SyncEngine status
         unsubStatus = wireStatusHandler()
 
-        setSyncStatus('synced')
+        if (loadHadErrors) {
+          setSyncStatus('error')
+          setError('Some synced items could not be loaded')
+        } else {
+          setSyncStatus('synced')
+          setError(null)
+        }
         setLastSynced(new Date())
       } catch (err) {
         reportSyncError('init', err)
@@ -143,12 +208,22 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (eventItems.length > 0) {
           try {
-            const events = eventItems.map((it) => {
-              const event = core.deserializeCalendarEvent(it.content)
-              return { ...event, id: it.itemUid, calendarId: it.collectionUid }
-            })
-            useCalendarStore.getState().syncFromRemote(events)
-            logger.log(`[sync-provider] Hydrated ${events.length} events from cache`)
+            const { events, errors } = await deserializeCalendarItemsIncrementally(
+              eventItems.map((it) => ({
+                uid: it.itemUid,
+                content: it.content,
+                collectionUid: it.collectionUid,
+              })),
+              core.deserializeCalendarEvent,
+              'cache',
+            )
+            if (errors.length > 0) {
+              setSyncStatus('error')
+              setError('Some cached calendar events could not be loaded')
+              reportSyncError('hydrate cached calendar events', errors[0])
+            } else {
+              logger.log(`[sync-provider] Hydrated ${events.length} events from cache`)
+            }
           } catch (err) {
             logger.warn('[sync-provider] Failed to hydrate calendar events from cache', getSafeErrorDetails(err))
           }
@@ -158,9 +233,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    async function loadItemsIntoStores() {
+    async function loadItemsIntoStores(): Promise<boolean> {
       const etebase = useEtebaseStore.getState()
       const cacheEnabled = isLocalCacheEnabled()
+      let hadErrors = false
 
       async function mirrorToCache(
         type: 'tasks' | 'contacts' | 'calendar',
@@ -181,6 +257,29 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      // Load calendar events first so the calendar can paint before unrelated
+      // task/contact deserialization work on large accounts.
+      try {
+        const eventItems = await etebase.fetchAllItems('calendar')
+        if (eventItems.length > 0) {
+          const { deserializeCalendarEvent } = await import('@silentsuite/core')
+          const { events, errors } = await deserializeCalendarItemsIncrementally(
+            eventItems,
+            deserializeCalendarEvent,
+            'server',
+          )
+          logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
+          if (errors.length > 0) {
+            hadErrors = true
+            reportSyncError('load calendar event chunk', errors[0])
+          }
+          await mirrorToCache('calendar', eventItems)
+        }
+      } catch (err) {
+        hadErrors = true
+        reportSyncError('load calendar events', err)
+      }
+
       // Load tasks
       try {
         const taskItems = await etebase.fetchAllItems('tasks')
@@ -197,6 +296,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           await mirrorToCache('tasks', taskItems)
         }
       } catch (err) {
+        hadErrors = true
         reportSyncError('load tasks', err)
       }
 
@@ -214,24 +314,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           await mirrorToCache('contacts', contactItems)
         }
       } catch (err) {
+        hadErrors = true
         reportSyncError('load contacts', err)
-      }
-
-      // Load calendar events
-      try {
-        const eventItems = await etebase.fetchAllItems('calendar')
-        if (eventItems.length > 0) {
-          const { deserializeCalendarEvent } = await import('@silentsuite/core')
-          const events = eventItems.map((item) => {
-            const event = deserializeCalendarEvent(item.content)
-            return { ...event, id: item.uid, calendarId: item.collectionUid }
-          })
-          useCalendarStore.getState().syncFromRemote(events)
-          logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
-          await mirrorToCache('calendar', eventItems)
-        }
-      } catch (err) {
-        reportSyncError('load calendar events', err)
       }
 
       // Load and subscribe account-level preferences after the Etebase item
@@ -240,8 +324,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       try {
         await usePreferencesSyncStore.getState().initialize()
       } catch (err) {
+        hadErrors = true
         reportSyncError('initialize preferences sync', err)
       }
+
+      return hadErrors
     }
 
     function wireChangeHandler(): (() => void) | null {
