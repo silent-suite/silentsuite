@@ -122,6 +122,7 @@ export type {
   FirstDayOfWeek,
   DefaultReminder,
   DateFormat,
+  DayBoundaryHour,
   SyncedPreferenceValues,
   SyncedPreferenceTimestamps,
   VersionedPreference,
