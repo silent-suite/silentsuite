@@ -312,6 +312,38 @@
   flex: 0 0 auto;
 }
 
+/* Keep timed events clean at every height. Schedule-X may render 30-minute and
+   60-minute chips too short for title, time, and location. The React wrapper
+   marks chips by measured height so we can hide lower-priority metadata before
+   it is visibly cut off. The full text remains available through the native
+   tooltip set on the event element. */
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="tiny"] .sx__time-grid-event-inner,
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="small"] .sx__time-grid-event-inner {
+  justify-content: center;
+  gap: 0;
+  padding-block: 2px !important;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="tiny"] .sx__time-grid-event-location,
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="tiny"] .sx__time-grid-event-people,
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="small"] .sx__time-grid-event-location,
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="small"] .sx__time-grid-event-people,
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="medium"] .sx__time-grid-event-location,
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="medium"] .sx__time-grid-event-people {
+  display: none !important;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="tiny"] .sx__title-and-time-compact,
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="small"] .sx__title-and-time-compact,
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="medium"] .sx__title-and-time-compact {
+  align-items: center;
+}
+
+.sx-silentsuite-calendar .sx__time-grid-event[data-ss-event-size="tiny"] .sx__time-grid-event-inner {
+  font-size: 0.68rem;
+  line-height: 1.05;
+}
+
 /* For 30-minute/short events Schedule-X uses the compact title+time row.
    Keep those chips single-line so location/extra metadata cannot be half-clipped. */
 .sx-silentsuite-calendar .sx__time-grid-event-inner:has(.sx__title-and-time-compact) {

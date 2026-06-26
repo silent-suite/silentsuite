@@ -48,9 +48,7 @@ interface PersistedPreferencesState extends Partial<SyncedPreferenceValues> {
 
 function migrateStoredPreferences(persisted: unknown): unknown {
   if (!persisted || typeof persisted !== 'object') return persisted
-  const root = persisted as { state?: PersistedPreferencesState }
-  const state = root.state
-  if (!state) return persisted
+  const state = persisted as PersistedPreferencesState
 
   const dayStartWasOldDefault = state.dayStartHour === 0
   const dayEndWasOldDefault = state.dayEndHour === 24
@@ -59,14 +57,14 @@ function migrateStoredPreferences(persisted: unknown): unknown {
     && (state.syncedPreferenceUpdatedAt?.dayEndHour ?? 0) === 0
 
   if (dayStartWasOldDefault && dayEndWasOldDefault && dayBoundsWereNeverChanged) {
-    root.state = {
+    return {
       ...state,
       dayStartHour: DEFAULT_SYNCED_PREFERENCES.dayStartHour,
       dayEndHour: DEFAULT_SYNCED_PREFERENCES.dayEndHour,
     }
   }
 
-  return root
+  return persisted
 }
 
 interface PreferencesState {
