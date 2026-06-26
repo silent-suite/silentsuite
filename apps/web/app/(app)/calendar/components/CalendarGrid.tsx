@@ -13,11 +13,10 @@ import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-s
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
-import { expandRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange, FirstDayOfWeek } from '@silentsuite/core'
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
-import { isMultiDayTimedRange, toAllDayEndPlainDate, toTimedMonthEndPlainDate } from '../lib/all-day'
+import { expandEventsForRange, toScheduleXEvents, type DisplayEvent } from '../lib/calendar-grid-events'
 
 import '@schedule-x/theme-default/dist/index.css'
 
@@ -46,23 +45,6 @@ function toScheduleXDateTime(date: Date, tz: string): Temporal.ZonedDateTime {
   return Temporal.Instant.fromEpochMilliseconds(date.getTime()).toZonedDateTimeISO(tz)
 }
 
-/** Expanded event used for display — may be a recurring instance */
-interface DisplayEvent {
-  id: string
-  /** The master event id (for recurring instances, this differs from id) */
-  masterId: string
-  title: string
-  description: string
-  location: string
-  startDate: Date
-  endDate: Date
-  allDay: boolean
-  isRecurring: boolean
-  /** The specific occurrence date for this instance */
-  instanceDate: Date
-  calendarId?: string
-}
-
 /** Get the visible date range for the current view, honoring the first-day preference */
 function getViewRange(currentDate: Date, view: CalendarView, firstDay: FirstDayOfWeek): DateRange {
   const d = new Date(currentDate)
@@ -83,97 +65,6 @@ function getViewRange(currentDate: Date, view: CalendarView, firstDay: FirstDayO
       return { start, end }
     }
   }
-}
-
-/** Expand recurring events into individual display events for the visible range */
-function expandEventsForRange(
-  events: CalendarEvent[],
-  range: DateRange,
-): DisplayEvent[] {
-  const result: DisplayEvent[] = []
-
-  for (const event of events) {
-    if (!event.recurrenceRule) {
-      // Non-recurring: include if it overlaps the range. For all-day events,
-      // endDate is iCal-exclusive (next-day midnight) so use strict `>` to avoid
-      // matching events whose visual last day is just before range.start.
-      const overlapsRangeStart = event.allDay
-        ? event.endDate > range.start
-        : event.endDate >= range.start
-      if (overlapsRangeStart && event.startDate <= range.end) {
-        result.push({
-          id: event.id,
-          masterId: event.id,
-          title: event.title,
-          description: event.description,
-          location: event.location,
-          startDate: event.startDate,
-          endDate: event.endDate,
-          allDay: event.allDay,
-          isRecurring: false,
-          instanceDate: event.startDate,
-          calendarId: event.calendarId,
-        })
-      }
-    } else {
-      // Recurring: expand occurrences
-      const duration = event.endDate.getTime() - event.startDate.getTime()
-      const occurrences = expandRecurrence(
-        event.recurrenceRule,
-        event.startDate,
-        range,
-        event.exceptions,
-      )
-
-      for (const occDate of occurrences) {
-        const occEnd = new Date(occDate.getTime() + duration)
-        result.push({
-          id: `${event.id}__${occDate.getTime()}`,
-          masterId: event.id,
-          title: event.title,
-          description: event.description,
-          location: event.location,
-          startDate: occDate,
-          endDate: occEnd,
-          allDay: event.allDay,
-          isRecurring: true,
-          instanceDate: occDate,
-          calendarId: event.calendarId,
-        })
-      }
-    }
-  }
-
-  return result
-}
-
-function toScheduleXEvents(
-  displayEvents: DisplayEvent[],
-  calendarColors: Map<string, string>,
-  userTz: string,
-  currentView: CalendarView,
-): CalendarEventExternal[] {
-  return displayEvents.map((e) => {
-    const color = calendarColors.get(e.calendarId ?? 'default') ?? '#10b981'
-    const renderAsMonthBar = currentView === 'month' && !e.allDay && isMultiDayTimedRange(e.startDate, e.endDate)
-    return {
-      id: e.id,
-      title: e.isRecurring ? `↻ ${e.title}` : e.title,
-      start: e.allDay || renderAsMonthBar ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
-      end: e.allDay
-        ? toAllDayEndPlainDate(e.startDate, e.endDate)
-        : renderAsMonthBar
-          ? toTimedMonthEndPlainDate(e.startDate, e.endDate)
-        : toScheduleXDateTime(e.endDate, userTz),
-      description: e.description || undefined,
-      location: e.location || undefined,
-      calendarId: e.calendarId ?? 'default',
-      _options: {
-        additionalClasses: [`sx-cal-color-${(e.calendarId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '_')}`],
-      },
-      _color: color,
-    }
-  })
 }
 
 /** Convert a Temporal.ZonedDateTime to a JS Date */
@@ -327,7 +218,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   displayEventMapRef.current = displayEventMap
 
   const sxEvents = useMemo(
-    () => toScheduleXEvents(displayEvents, calendarColors, userTz, currentView),
+    () => toScheduleXEvents(displayEvents, calendarColors, userTz, currentView, toScheduleXDateTime),
     [displayEvents, calendarColors, userTz, currentView],
   )
 
