@@ -175,6 +175,45 @@ This configures the bridge to start when you log in:
 silentsuite-bridge --remove-autostart
 ```
 
+## Uninstall
+
+### Windows PowerShell Installer
+
+If you installed the Bridge on Windows with the PowerShell installer, Docker is not involved. The installer downloads `silentsuite-bridge.exe` into your Windows user profile, adds that folder to your user `PATH`, and creates a per-user startup entry so the Bridge can run after you sign in.
+
+To remove the local Bridge app from Windows 11, open PowerShell as your normal Windows user and run:
+
+```powershell
+# Stop the Bridge if it is running
+Get-Process silentsuite-bridge -ErrorAction SilentlyContinue | Stop-Process -Force
+
+# Remove the startup entry
+& "$env:LOCALAPPDATA\SilentSuite\silentsuite-bridge.exe" --remove-autostart 2>$null
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "SilentSuiteBridge" -ErrorAction SilentlyContinue
+
+# Remove the installed Bridge executable and installer log
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\SilentSuite" -ErrorAction SilentlyContinue
+```
+
+Optional: remove the Bridge install folder from your user `PATH`:
+
+```powershell
+$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+$newPath = ($userPath -split ";" | Where-Object { $_ -and $_ -ne "$env:LOCALAPPDATA\SilentSuite" }) -join ";"
+[Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+```
+
+Then sign out and back in, or restart Windows.
+
+If you want to remove local Bridge account data before deleting the executable, list the configured accounts and remove each one first:
+
+```powershell
+& "$env:LOCALAPPDATA\SilentSuite\silentsuite-bridge.exe" --list-accounts
+& "$env:LOCALAPPDATA\SilentSuite\silentsuite-bridge.exe" --remove-account your@email.com
+```
+
+Uninstalling the local Bridge only removes the desktop sync helper from this computer. It does not cancel a hosted SilentSuite trial or subscription. Cancel the trial from your SilentSuite billing/account page if you do not want it to continue.
+
 ## Environment Variables
 
 | Variable | Default | Description |

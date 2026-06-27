@@ -89,7 +89,7 @@ export {
   serializeTask,
   deserializeTask,
 } from './models/task.js';
-export type { Task } from './models/task.js';
+export type { Task, TaskStatus } from './models/task.js';
 
 // Contact model
 export {
@@ -122,6 +122,7 @@ export type {
   FirstDayOfWeek,
   DefaultReminder,
   DateFormat,
+  DayBoundaryHour,
   SyncedPreferenceValues,
   SyncedPreferenceTimestamps,
   VersionedPreference,

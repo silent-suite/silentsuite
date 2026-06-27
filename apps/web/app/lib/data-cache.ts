@@ -29,6 +29,18 @@ export interface CachedItem {
   lastModified: number
 }
 
+type StoredCachedItem = Omit<CachedItem, 'content'> & {
+  /** AES-GCM encrypted JSON envelope for CachedItem.content. */
+  content: string
+}
+
+interface EncryptedContentEnvelope {
+  v: 1
+  alg: 'AES-GCM'
+  iv: string
+  data: string
+}
+
 export interface CachedCollection {
   collectionType: CollectionTypeKey
   collectionUid: string
@@ -45,29 +57,46 @@ export interface CacheMeta {
   lastInvalidatedAt: number | null
 }
 
-/** Bumped on shape changes to the cached records. */
-export const CACHE_SCHEMA_VERSION = 2
+/** Bumped when item content moved from plaintext records to AES-GCM envelopes. */
+export const CACHE_SCHEMA_VERSION = 3
 
 const DB_NAME = 'silentsuite-data-cache'
-const DB_VERSION = 2
+const DB_VERSION = 3
 const STORE_ITEMS = 'items'
 const STORE_COLLECTIONS = 'collections'
 const STORE_META = 'meta'
+const STORE_CRYPTO = 'crypto'
 
 const META_KEY = 'singleton'
+const CONTENT_KEY_ID = 'content-key'
 
 let dbPromise: Promise<IDBDatabase> | null = null
 let encryptedCacheAvailableForTests: boolean | null = null
+let contentKeyPromise: Promise<CryptoKey | null> | null = null
 
-function hasEncryptedCacheEnvelope(): boolean {
+function isWebCryptoAvailable(): boolean {
   if (encryptedCacheAvailableForTests !== null) return encryptedCacheAvailableForTests
-  return false
+  return typeof indexedDB !== 'undefined' &&
+    typeof crypto !== 'undefined' &&
+    typeof crypto.getRandomValues === 'function' &&
+    !!crypto.subtle &&
+    typeof crypto.subtle.generateKey === 'function'
 }
 
-function canWriteItemContent(operation: string): boolean {
-  if (hasEncryptedCacheEnvelope()) return true
-  logger.warn(`[data-cache] ${operation} skipped; encrypted cache envelope is unavailable`)
-  return false
+function hasEncryptedCacheEnvelope(): boolean {
+  return isWebCryptoAvailable()
+}
+
+function isLocalCacheFeatureEnabled(): boolean {
+  // The encrypted cache is now safe-by-default once WebCrypto is available.
+  // Keep an explicit opt-out for preview/debugging or emergency rollback.
+  return process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED !== 'false'
+}
+
+function createItemsStore(db: IDBDatabase): void {
+  const items = db.createObjectStore(STORE_ITEMS, { keyPath: 'itemUid' })
+  items.createIndex('byCollectionType', 'collectionType', { unique: false })
+  items.createIndex('byCollectionUid', 'collectionUid', { unique: false })
 }
 
 function openDB(): Promise<IDBDatabase> {
@@ -80,11 +109,12 @@ function openDB(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onupgradeneeded = (event) => {
       const db = request.result
-      if (!db.objectStoreNames.contains(STORE_ITEMS)) {
-        const items = db.createObjectStore(STORE_ITEMS, { keyPath: 'itemUid' })
-        items.createIndex('byCollectionType', 'collectionType', { unique: false })
-        items.createIndex('byCollectionUid', 'collectionUid', { unique: false })
+      // v3 moves cached item content to encrypted envelopes. Drop any legacy
+      // plaintext records instead of attempting in-place migration.
+      if (db.objectStoreNames.contains(STORE_ITEMS) && event.oldVersion < 3) {
+        db.deleteObjectStore(STORE_ITEMS)
       }
+      if (!db.objectStoreNames.contains(STORE_ITEMS)) createItemsStore(db)
       if (db.objectStoreNames.contains(STORE_COLLECTIONS) && event.oldVersion < 2) {
         db.deleteObjectStore(STORE_COLLECTIONS)
       }
@@ -93,6 +123,9 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_META)) {
         db.createObjectStore(STORE_META)
+      }
+      if (!db.objectStoreNames.contains(STORE_CRYPTO)) {
+        db.createObjectStore(STORE_CRYPTO)
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -121,6 +154,100 @@ function withStore<T>(
   )
 }
 
+async function getOrCreateContentKey(): Promise<CryptoKey | null> {
+  if (!isCacheEnabled()) return null
+  if (contentKeyPromise) return contentKeyPromise
+  contentKeyPromise = (async () => {
+    try {
+      const existing = await withStore<CryptoKey | undefined>(STORE_CRYPTO, 'readonly', (store) => store.get(CONTENT_KEY_ID))
+      if (existing) return existing
+      const key = await crypto.subtle.generateKey(
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt'],
+      )
+      await withStore(STORE_CRYPTO, 'readwrite', (store) => store.put(key, CONTENT_KEY_ID))
+      return key
+    } catch (err) {
+      logger.warn('[data-cache] encrypted content key unavailable', err)
+      contentKeyPromise = null
+      return null
+    }
+  })()
+  return contentKeyPromise
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+async function encryptContent(content: string): Promise<string | null> {
+  const key = await getOrCreateContentKey()
+  if (!key) return null
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const encoded = new TextEncoder().encode(content)
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded)
+  const envelope: EncryptedContentEnvelope = {
+    v: 1,
+    alg: 'AES-GCM',
+    iv: bytesToBase64(iv),
+    data: bytesToBase64(new Uint8Array(encrypted)),
+  }
+  return JSON.stringify(envelope)
+}
+
+async function decryptContent(envelopeJson: string): Promise<string | null> {
+  const key = await getOrCreateContentKey()
+  if (!key) return null
+  try {
+    const envelope = JSON.parse(envelopeJson) as EncryptedContentEnvelope
+    if (envelope.v !== 1 || envelope.alg !== 'AES-GCM') return null
+    const iv = base64ToBytes(envelope.iv) as Uint8Array<ArrayBuffer>
+    const data = base64ToBytes(envelope.data) as Uint8Array<ArrayBuffer>
+    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, data)
+    return new TextDecoder().decode(decrypted)
+  } catch (err) {
+    logger.warn('[data-cache] decrypt cached item failed', err)
+    return null
+  }
+}
+
+async function encryptItem(item: CachedItem): Promise<StoredCachedItem | null> {
+  const content = await encryptContent(item.content)
+  if (!content) return null
+  return { ...item, content }
+}
+
+async function decryptItem(item: StoredCachedItem): Promise<CachedItem | null> {
+  const content = await decryptContent(item.content)
+  if (content === null) return null
+  return { ...item, content }
+}
+
+async function encryptItems(items: CachedItem[]): Promise<StoredCachedItem[]> {
+  const encrypted: StoredCachedItem[] = []
+  for (const item of items) {
+    const stored = await encryptItem(item)
+    if (stored) encrypted.push(stored)
+  }
+  return encrypted
+}
+
+async function canWriteItemContent(operation: string): Promise<boolean> {
+  if (await getOrCreateContentKey()) return true
+  logger.warn(`[data-cache] ${operation} skipped; encrypted cache envelope is unavailable`)
+  return false
+}
+
 // ── Items ──
 
 /**
@@ -128,15 +255,22 @@ function withStore<T>(
  * Returns an empty array if the cache is empty or unavailable.
  */
 export async function getItemsByType(type: CollectionTypeKey): Promise<CachedItem[]> {
+  if (!isCacheEnabled()) return []
   try {
     const db = await openDB()
-    return await new Promise<CachedItem[]>((resolve, reject) => {
+    const stored = await new Promise<StoredCachedItem[]>((resolve, reject) => {
       const tx = db.transaction(STORE_ITEMS, 'readonly')
       const idx = tx.objectStore(STORE_ITEMS).index('byCollectionType')
       const req = idx.getAll(type)
-      req.onsuccess = () => resolve((req.result as CachedItem[]) ?? [])
+      req.onsuccess = () => resolve((req.result as StoredCachedItem[]) ?? [])
       req.onerror = () => reject(req.error)
     })
+    const items: CachedItem[] = []
+    for (const record of stored) {
+      const item = await decryptItem(record)
+      if (item) items.push(item)
+    }
+    return items
   } catch (err) {
     logger.warn('[data-cache] getItemsByType failed', err)
     return []
@@ -145,9 +279,11 @@ export async function getItemsByType(type: CollectionTypeKey): Promise<CachedIte
 
 /** Insert/update a single item. Failures are logged and swallowed. */
 export async function putItem(item: CachedItem): Promise<void> {
-  if (!canWriteItemContent('putItem')) return
+  if (!(await canWriteItemContent('putItem'))) return
   try {
-    await withStore(STORE_ITEMS, 'readwrite', (store) => store.put(item))
+    const stored = await encryptItem(item)
+    if (!stored) return
+    await withStore(STORE_ITEMS, 'readwrite', (store) => store.put(stored))
   } catch (err) {
     logger.warn('[data-cache] putItem failed', err)
   }
@@ -156,13 +292,15 @@ export async function putItem(item: CachedItem): Promise<void> {
 /** Bulk insert/update — single transaction for efficiency. */
 export async function putItems(items: CachedItem[]): Promise<void> {
   if (items.length === 0) return
-  if (!canWriteItemContent('putItems')) return
+  if (!(await canWriteItemContent('putItems'))) return
   try {
+    const storedItems = await encryptItems(items)
+    if (storedItems.length === 0) return
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_ITEMS, 'readwrite')
       const store = tx.objectStore(STORE_ITEMS)
-      for (const item of items) store.put(item)
+      for (const item of storedItems) store.put(item)
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
@@ -187,8 +325,9 @@ export async function replaceItemsForType(
   type: CollectionTypeKey,
   items: CachedItem[],
 ): Promise<void> {
-  if (!canWriteItemContent('replaceItemsForType')) return
+  if (!(await canWriteItemContent('replaceItemsForType'))) return
   try {
+    const storedItems = await encryptItems(items)
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_ITEMS, 'readwrite')
@@ -201,7 +340,7 @@ export async function replaceItemsForType(
           cursor.delete()
           cursor.continue()
         } else {
-          for (const item of items) store.put(item)
+          for (const item of storedItems) store.put(item)
         }
       }
       cursorReq.onerror = () => reject(cursorReq.error)
@@ -221,8 +360,9 @@ export async function replaceItemsForCollection(
   collectionUid: string,
   items: CachedItem[],
 ): Promise<void> {
-  if (!canWriteItemContent('replaceItemsForCollection')) return
+  if (!(await canWriteItemContent('replaceItemsForCollection'))) return
   try {
+    const storedItems = await encryptItems(items)
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_ITEMS, 'readwrite')
@@ -235,7 +375,7 @@ export async function replaceItemsForCollection(
           cursor.delete()
           cursor.continue()
         } else {
-          for (const item of items) store.put(item)
+          for (const item of storedItems) store.put(item)
         }
       }
       cursorReq.onerror = () => reject(cursorReq.error)
@@ -319,20 +459,22 @@ export async function putMeta(meta: CacheMeta): Promise<void> {
 // ── Whole-cache operations ──
 
 /**
- * Wipe everything — items, collections, meta. Called on logout, password
- * change, account fingerprint mismatch, or schema bump.
+ * Wipe everything — items, collections, meta, and the encrypted content key.
+ * Called on logout, password change, account fingerprint mismatch, or schema bump.
  */
 export async function clearAll(): Promise<void> {
   try {
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([STORE_ITEMS, STORE_COLLECTIONS, STORE_META], 'readwrite')
+      const tx = db.transaction([STORE_ITEMS, STORE_COLLECTIONS, STORE_META, STORE_CRYPTO], 'readwrite')
       tx.objectStore(STORE_ITEMS).clear()
       tx.objectStore(STORE_COLLECTIONS).clear()
       tx.objectStore(STORE_META).clear()
+      tx.objectStore(STORE_CRYPTO).clear()
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
+    contentKeyPromise = null
   } catch (err) {
     logger.warn('[data-cache] clearAll failed', err)
   }
@@ -379,13 +521,32 @@ export async function ensureFingerprint(accountFingerprint: string): Promise<boo
 
 // ── Feature flag helper ──
 
+export interface CacheCapabilityStatus {
+  featureFlagEnabled: boolean
+  encryptedEnvelopeAvailable: boolean
+  enabled: boolean
+}
+
+/**
+ * Privacy-safe cache capability status for sync timing diagnostics. Contains
+ * only booleans; no account identifiers, item contents, or collection IDs.
+ */
+export function getCacheCapabilityStatus(): CacheCapabilityStatus {
+  const featureFlagEnabled = isLocalCacheFeatureEnabled()
+  const encryptedEnvelopeAvailable = hasEncryptedCacheEnvelope()
+  return {
+    featureFlagEnabled,
+    encryptedEnvelopeAvailable,
+    enabled: featureFlagEnabled && encryptedEnvelopeAvailable,
+  }
+}
+
 /**
  * Returns true only when the local cache feature is enabled and encrypted
- * cache storage is available. Off by default, and fail-closed if the flag is
- * enabled before encryption exists.
+ * cache storage is available. Fail-closed if WebCrypto is unavailable.
  */
 export function isCacheEnabled(): boolean {
-  return process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED === 'true' && hasEncryptedCacheEnvelope()
+  return getCacheCapabilityStatus().enabled
 }
 
 // ── Test helpers ──
@@ -401,10 +562,12 @@ export async function _resetForTests(): Promise<void> {
     }
   }
   dbPromise = null
+  contentKeyPromise = null
   encryptedCacheAvailableForTests = null
 }
 
 /** Test-only hook that simulates encrypted cache availability. */
 export function _setEncryptedCacheAvailableForTests(value: boolean | null): void {
   encryptedCacheAvailableForTests = value
+  contentKeyPromise = null
 }

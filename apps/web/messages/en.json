@@ -36,6 +36,7 @@
   "Labels": {
     "addLabelPlaceholder": "Add label\u2026",
     "editorAriaLabel": "Labels",
+    "changeLabelColor": "Change label {label} color",
     "removeLabel": "Remove label {label}",
     "eventLabels": "Event labels",
     "taskLabels": "Task labels",

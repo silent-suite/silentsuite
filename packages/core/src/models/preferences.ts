@@ -4,6 +4,8 @@ export const SYNCED_PREFERENCE_KEYS = [
   'defaultReminder',
   'defaultTimezone',
   'dateFormat',
+  'dayStartHour',
+  'dayEndHour',
 ] as const;
 
 export type SyncedPreferenceKey = typeof SYNCED_PREFERENCE_KEYS[number];
@@ -11,6 +13,7 @@ export type TimeFormat = '12h' | '24h';
 export type FirstDayOfWeek = 'monday' | 'sunday';
 export type DefaultReminder = 'none' | '5' | '15' | '30' | '60' | '1440';
 export type DateFormat = 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD' | 'system'
+export type DayBoundaryHour = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24;
 
 export interface SyncedPreferenceValues {
   timeFormat: TimeFormat;
@@ -18,6 +21,8 @@ export interface SyncedPreferenceValues {
   defaultReminder: DefaultReminder;
   defaultTimezone: string;
   dateFormat: DateFormat;
+  dayStartHour: DayBoundaryHour;
+  dayEndHour: DayBoundaryHour;
 }
 
 export interface VersionedPreference<T> {
@@ -34,6 +39,8 @@ export interface SyncedPreferencesV1 {
     defaultReminder: VersionedPreference<DefaultReminder>;
     defaultTimezone: VersionedPreference<string>;
     dateFormat: VersionedPreference<DateFormat>;
+    dayStartHour: VersionedPreference<DayBoundaryHour>;
+    dayEndHour: VersionedPreference<DayBoundaryHour>;
   };
 }
 
@@ -45,6 +52,8 @@ export const DEFAULT_SYNCED_PREFERENCES: SyncedPreferenceValues = {
   defaultReminder: '15',
   defaultTimezone: 'UTC',
   dateFormat: 'system',
+  dayStartHour: 7,
+  dayEndHour: 23,
 };
 
 const DEFAULT_TIMESTAMPS: SyncedPreferenceTimestamps = {
@@ -53,6 +62,8 @@ const DEFAULT_TIMESTAMPS: SyncedPreferenceTimestamps = {
   defaultReminder: 0,
   defaultTimezone: 0,
   dateFormat: 0,
+  dayStartHour: 0,
+  dayEndHour: 0,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -85,13 +96,32 @@ function dateFormat(value: unknown, fallback: DateFormat): DateFormat {
   return value === 'DD/MM/YYYY' || value === 'MM/DD/YYYY' || value === 'YYYY-MM-DD' || value === 'system' ? value : fallback
 }
 
+function dayBoundaryHour(value: unknown, fallback: DayBoundaryHour): DayBoundaryHour {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 24
+    ? value as DayBoundaryHour
+    : fallback;
+}
+
+function normalizeDayBounds(start: DayBoundaryHour, end: DayBoundaryHour): { dayStartHour: DayBoundaryHour; dayEndHour: DayBoundaryHour } {
+  if (start < end) return { dayStartHour: start, dayEndHour: end };
+  return {
+    dayStartHour: DEFAULT_SYNCED_PREFERENCES.dayStartHour,
+    dayEndHour: DEFAULT_SYNCED_PREFERENCES.dayEndHour,
+  };
+}
+
 function valuesWithDefaults(values: Partial<SyncedPreferenceValues> = {}): SyncedPreferenceValues {
+  const dayBounds = normalizeDayBounds(
+    dayBoundaryHour(values.dayStartHour, DEFAULT_SYNCED_PREFERENCES.dayStartHour),
+    dayBoundaryHour(values.dayEndHour, DEFAULT_SYNCED_PREFERENCES.dayEndHour),
+  );
   return {
     timeFormat: timeFormat(values.timeFormat, DEFAULT_SYNCED_PREFERENCES.timeFormat),
     firstDayOfWeek: firstDayOfWeek(values.firstDayOfWeek, DEFAULT_SYNCED_PREFERENCES.firstDayOfWeek),
     defaultReminder: defaultReminder(values.defaultReminder, DEFAULT_SYNCED_PREFERENCES.defaultReminder),
     defaultTimezone: defaultTimezone(values.defaultTimezone, DEFAULT_SYNCED_PREFERENCES.defaultTimezone),
     dateFormat: dateFormat(values.dateFormat, DEFAULT_SYNCED_PREFERENCES.dateFormat),
+    ...dayBounds,
   };
 }
 
@@ -107,6 +137,8 @@ export function createSyncedPreferences(
     defaultReminder: timestamp(timestamps.defaultReminder, now),
     defaultTimezone: timestamp(timestamps.defaultTimezone, now),
     dateFormat: timestamp(timestamps.dateFormat, now),
+    dayStartHour: timestamp(timestamps.dayStartHour, now),
+    dayEndHour: timestamp(timestamps.dayEndHour, now),
   };
   const updatedAt = Math.max(...SYNCED_PREFERENCE_KEYS.map((key) => normalizedTimestamps[key]));
 
@@ -119,6 +151,8 @@ export function createSyncedPreferences(
       defaultReminder: { value: normalizedValues.defaultReminder, updatedAt: normalizedTimestamps.defaultReminder },
       defaultTimezone: { value: normalizedValues.defaultTimezone, updatedAt: normalizedTimestamps.defaultTimezone },
       dateFormat: { value: normalizedValues.dateFormat, updatedAt: normalizedTimestamps.dateFormat },
+      dayStartHour: { value: normalizedValues.dayStartHour, updatedAt: normalizedTimestamps.dayStartHour },
+      dayEndHour: { value: normalizedValues.dayEndHour, updatedAt: normalizedTimestamps.dayEndHour },
     },
   };
 }
@@ -133,6 +167,8 @@ export function normalizeSyncedPreferences(input: unknown): SyncedPreferencesV1 
   const reminderField = isRecord(fields.defaultReminder) ? fields.defaultReminder : {};
   const timezoneField = isRecord(fields.defaultTimezone) ? fields.defaultTimezone : {};
   const dateFormatField = isRecord(fields.dateFormat) ? fields.dateFormat : {};
+  const dayStartHourField = isRecord(fields.dayStartHour) ? fields.dayStartHour : {};
+  const dayEndHourField = isRecord(fields.dayEndHour) ? fields.dayEndHour : {};
 
   return createSyncedPreferences(
     {
@@ -141,6 +177,10 @@ export function normalizeSyncedPreferences(input: unknown): SyncedPreferencesV1 
       defaultReminder: defaultReminder(reminderField.value, DEFAULT_SYNCED_PREFERENCES.defaultReminder),
       defaultTimezone: defaultTimezone(timezoneField.value, DEFAULT_SYNCED_PREFERENCES.defaultTimezone),
       dateFormat: dateFormat(dateFormatField.value, DEFAULT_SYNCED_PREFERENCES.dateFormat),
+      ...normalizeDayBounds(
+        dayBoundaryHour(dayStartHourField.value, DEFAULT_SYNCED_PREFERENCES.dayStartHour),
+        dayBoundaryHour(dayEndHourField.value, DEFAULT_SYNCED_PREFERENCES.dayEndHour),
+      ),
     },
     {
       timeFormat: timestamp(timeFormatField.updatedAt, rootUpdatedAt),
@@ -148,6 +188,8 @@ export function normalizeSyncedPreferences(input: unknown): SyncedPreferencesV1 
       defaultReminder: timestamp(reminderField.updatedAt, rootUpdatedAt),
       defaultTimezone: timestamp(timezoneField.updatedAt, rootUpdatedAt),
       dateFormat: timestamp(dateFormatField.updatedAt, rootUpdatedAt),
+      dayStartHour: timestamp(dayStartHourField.updatedAt, rootUpdatedAt),
+      dayEndHour: timestamp(dayEndHourField.updatedAt, rootUpdatedAt),
     },
     0,
   );
@@ -161,6 +203,8 @@ export function getSyncedPreferenceValues(preferences: SyncedPreferencesV1): Syn
     defaultReminder: normalized.fields.defaultReminder.value,
     defaultTimezone: normalized.fields.defaultTimezone.value,
     dateFormat: normalized.fields.dateFormat.value,
+    dayStartHour: normalized.fields.dayStartHour.value,
+    dayEndHour: normalized.fields.dayEndHour.value,
   };
 }
 
@@ -172,6 +216,8 @@ export function getSyncedPreferenceTimestamps(preferences: SyncedPreferencesV1):
     defaultReminder: normalized.fields.defaultReminder.updatedAt,
     defaultTimezone: normalized.fields.defaultTimezone.updatedAt,
     dateFormat: normalized.fields.dateFormat.updatedAt,
+    dayStartHour: normalized.fields.dayStartHour.updatedAt,
+    dayEndHour: normalized.fields.dayEndHour.updatedAt,
   };
 }
 

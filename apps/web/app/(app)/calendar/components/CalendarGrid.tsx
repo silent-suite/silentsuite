@@ -13,11 +13,15 @@ import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-s
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
-import { expandRecurrence } from '@silentsuite/core'
+import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
 import type { CalendarEvent, DateRange, FirstDayOfWeek } from '@silentsuite/core'
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
-import { isMultiDayTimedRange, toAllDayEndPlainDate, toTimedMonthEndPlainDate } from '../lib/all-day'
+import { expandEventsForRange, toScheduleXEvents, type DisplayEvent } from '../lib/calendar-grid-events'
+import {
+  toScheduleXDayBoundariesExternal,
+  toScheduleXDayBoundariesInternal,
+} from '../lib/calendar-day-boundaries'
 
 import '@schedule-x/theme-default/dist/index.css'
 
@@ -46,23 +50,6 @@ function toScheduleXDateTime(date: Date, tz: string): Temporal.ZonedDateTime {
   return Temporal.Instant.fromEpochMilliseconds(date.getTime()).toZonedDateTimeISO(tz)
 }
 
-/** Expanded event used for display — may be a recurring instance */
-interface DisplayEvent {
-  id: string
-  /** The master event id (for recurring instances, this differs from id) */
-  masterId: string
-  title: string
-  description: string
-  location: string
-  startDate: Date
-  endDate: Date
-  allDay: boolean
-  isRecurring: boolean
-  /** The specific occurrence date for this instance */
-  instanceDate: Date
-  calendarId?: string
-}
-
 /** Get the visible date range for the current view, honoring the first-day preference */
 function getViewRange(currentDate: Date, view: CalendarView, firstDay: FirstDayOfWeek): DateRange {
   const d = new Date(currentDate)
@@ -83,97 +70,6 @@ function getViewRange(currentDate: Date, view: CalendarView, firstDay: FirstDayO
       return { start, end }
     }
   }
-}
-
-/** Expand recurring events into individual display events for the visible range */
-function expandEventsForRange(
-  events: CalendarEvent[],
-  range: DateRange,
-): DisplayEvent[] {
-  const result: DisplayEvent[] = []
-
-  for (const event of events) {
-    if (!event.recurrenceRule) {
-      // Non-recurring: include if it overlaps the range. For all-day events,
-      // endDate is iCal-exclusive (next-day midnight) so use strict `>` to avoid
-      // matching events whose visual last day is just before range.start.
-      const overlapsRangeStart = event.allDay
-        ? event.endDate > range.start
-        : event.endDate >= range.start
-      if (overlapsRangeStart && event.startDate <= range.end) {
-        result.push({
-          id: event.id,
-          masterId: event.id,
-          title: event.title,
-          description: event.description,
-          location: event.location,
-          startDate: event.startDate,
-          endDate: event.endDate,
-          allDay: event.allDay,
-          isRecurring: false,
-          instanceDate: event.startDate,
-          calendarId: event.calendarId,
-        })
-      }
-    } else {
-      // Recurring: expand occurrences
-      const duration = event.endDate.getTime() - event.startDate.getTime()
-      const occurrences = expandRecurrence(
-        event.recurrenceRule,
-        event.startDate,
-        range,
-        event.exceptions,
-      )
-
-      for (const occDate of occurrences) {
-        const occEnd = new Date(occDate.getTime() + duration)
-        result.push({
-          id: `${event.id}__${occDate.getTime()}`,
-          masterId: event.id,
-          title: event.title,
-          description: event.description,
-          location: event.location,
-          startDate: occDate,
-          endDate: occEnd,
-          allDay: event.allDay,
-          isRecurring: true,
-          instanceDate: occDate,
-          calendarId: event.calendarId,
-        })
-      }
-    }
-  }
-
-  return result
-}
-
-function toScheduleXEvents(
-  displayEvents: DisplayEvent[],
-  calendarColors: Map<string, string>,
-  userTz: string,
-  currentView: CalendarView,
-): CalendarEventExternal[] {
-  return displayEvents.map((e) => {
-    const color = calendarColors.get(e.calendarId ?? 'default') ?? '#10b981'
-    const renderAsMonthBar = currentView === 'month' && !e.allDay && isMultiDayTimedRange(e.startDate, e.endDate)
-    return {
-      id: e.id,
-      title: e.isRecurring ? `↻ ${e.title}` : e.title,
-      start: e.allDay || renderAsMonthBar ? toPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
-      end: e.allDay
-        ? toAllDayEndPlainDate(e.startDate, e.endDate)
-        : renderAsMonthBar
-          ? toTimedMonthEndPlainDate(e.startDate, e.endDate)
-        : toScheduleXDateTime(e.endDate, userTz),
-      description: e.description || undefined,
-      location: e.location || undefined,
-      calendarId: e.calendarId ?? 'default',
-      _options: {
-        additionalClasses: [`sx-cal-color-${(e.calendarId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '_')}`],
-      },
-      _color: color,
-    }
-  })
 }
 
 /** Convert a Temporal.ZonedDateTime to a JS Date */
@@ -199,8 +95,8 @@ function snapTo30Min(date: Date): Date {
   return snapped
 }
 
-const DAY_START_HOUR = 6
-const DAY_END_HOUR = 22
+const DEFAULT_DAY_START_HOUR = 7
+const DEFAULT_DAY_END_HOUR = 23
 
 /** Find the display event under the cursor by matching click coordinates to day column + time */
 function findEventAtPosition(
@@ -294,6 +190,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const defaultTimezone = usePreferencesStore((s) => s.defaultTimezone)
   const userTz = useMemo(() => resolveUserTimezone(defaultTimezone), [defaultTimezone])
   const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
+  const dayStartHour = usePreferencesStore((s) => s.dayStartHour ?? DEFAULT_DAY_START_HOUR)
+  const dayEndHour = usePreferencesStore((s) => s.dayEndHour ?? DEFAULT_DAY_END_HOUR)
   // Schedule-X WeekDay enum: MONDAY = 1 … SUNDAY = 7 (not 0-indexed).
   const sxFirstDayOfWeek = firstDayOfWeek === 'sunday' ? 7 : 1
 
@@ -327,7 +225,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   displayEventMapRef.current = displayEventMap
 
   const sxEvents = useMemo(
-    () => toScheduleXEvents(displayEvents, calendarColors, userTz, currentView),
+    () => toScheduleXEvents(displayEvents, calendarColors, userTz, currentView, toScheduleXDateTime),
     [displayEvents, calendarColors, userTz, currentView],
   )
 
@@ -474,6 +372,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const initialTimezoneRef = useRef(userTz)
   // Capture initial first-day-of-week for Schedule-X config (changes pushed via signal below)
   const initialFirstDayRef = useRef(sxFirstDayOfWeek)
+  const initialDayBoundariesRef = useRef(toScheduleXDayBoundariesExternal(dayStartHour, dayEndHour))
 
   // Memoize the event click handler
   const handleEventClick = useCallback(
@@ -510,7 +409,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     locale: initialLocaleRef.current,
     // Derived from the firstDayOfWeek preference; live changes pushed via signal below.
     firstDayOfWeek: initialFirstDayRef.current,
-    dayBoundaries: { start: '06:00', end: '22:00' },
+    dayBoundaries: initialDayBoundariesRef.current,
     timezone: initialTimezoneRef.current,
     weekOptions: {
       gridHeight: 800,
@@ -562,6 +461,21 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       // Schedule-X internals may not be ready
     }
   }, [calendar, sxFirstDayOfWeek])
+
+  // Push day-boundary preference changes into Schedule-X and our drag/select math.
+  useEffect(() => {
+    if (!calendar) return
+    try {
+      const app = (calendar as any).$app
+      const boundariesSignal = app?.config?.dayBoundaries
+      const next = toScheduleXDayBoundariesInternal(dayStartHour, dayEndHour)
+      if (boundariesSignal) {
+        boundariesSignal.value = next
+      }
+    } catch {
+      // Schedule-X internals may not be ready
+    }
+  }, [calendar, dayStartHour, dayEndHour])
 
   // Sync view AND date changes from store → Schedule-X via internal API.
   // CalendarApp has NO public navigation methods. We access the private $app
@@ -687,27 +601,55 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     }
   }, [sxEvents, eventsPlugin])
 
-  // #331: Reveal the full title on short/clipped calendar events.
-  // Schedule-X clips event text with `overflow: hidden`, so a short event's
-  // title can be unreadable. The DOM still holds the full text, so mirror it
-  // into a native `title` tooltip on each event element so hovering shows the
-  // complete title (and time). A MutationObserver keeps titles in sync across
-  // re-renders, sync updates, and view switches.
+  // Log the first browser paint after Schedule-X receives events. This keeps
+  // the sync-speed investigation grounded in a visible-calendar milestone,
+  // without logging event titles, times, labels, or other PIM content.
+  const firstEventsPaintLoggedRef = useRef(false)
+  useEffect(() => {
+    if (firstEventsPaintLoggedRef.current || sxEvents.length === 0) return
+    firstEventsPaintLoggedRef.current = true
+    const raf = requestAnimationFrame(() => {
+      logCalendarPaintTiming({
+        scheduleXEventCount: sxEvents.length,
+        displayEventCount: displayEvents.length,
+        rawEventCount: events.length,
+        view: currentView,
+      })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [currentView, displayEvents.length, events.length, sxEvents.length])
+
+  // #331: Reveal the full title on short/clipped calendar events and mark event
+  // chips by rendered height so CSS can hide low-priority metadata before it
+  // gets half-clipped. Schedule-X lays out timed events with inline heights, so
+  // this must be measured after render rather than inferred from duration.
   useEffect(() => {
     const root = document.querySelector('.sx-silentsuite-calendar')
     if (!root) return
 
     const selector = '.sx__time-grid-event, .sx__month-grid-event, .sx__day-grid-event'
+    let raf = 0
+    let resizeObserver: ResizeObserver | null = null
+
     const applyAll = () => {
       root.querySelectorAll(selector).forEach((el) => {
         const text = (el.textContent || '').replace(/\s+/g, ' ').trim()
         if (text && el.getAttribute('title') !== text) {
           el.setAttribute('title', text)
         }
+
+        if (el.classList.contains('sx__time-grid-event')) {
+          const timedEvent = el as HTMLElement
+          resizeObserver?.observe(timedEvent)
+          const height = timedEvent.getBoundingClientRect().height
+          const size = height < 34 ? 'tiny' : height < 58 ? 'small' : height < 92 ? 'medium' : 'large'
+          if (timedEvent.dataset.ssEventSize !== size) {
+            timedEvent.dataset.ssEventSize = size
+          }
+        }
       })
     }
 
-    let raf = 0
     const schedule = () => {
       if (raf) return
       raf = requestAnimationFrame(() => {
@@ -716,11 +658,13 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       })
     }
 
+    resizeObserver = new ResizeObserver(schedule)
     applyAll()
     const observer = new MutationObserver(schedule)
     observer.observe(root, { childList: true, subtree: true })
     return () => {
       if (raf) cancelAnimationFrame(raf)
+      resizeObserver.disconnect()
       observer.disconnect()
     }
   }, [sxEvents, currentView])
@@ -730,11 +674,11 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     (clientY: number, gridEl: HTMLElement): number => {
       const rect = gridEl.getBoundingClientRect()
       const relativeY = clientY - rect.top + gridEl.scrollTop
-      const totalHours = DAY_END_HOUR - DAY_START_HOUR
+      const totalHours = dayEndHour - dayStartHour
       const pixelsPerHour = gridEl.scrollHeight / totalHours
-      return DAY_START_HOUR + relativeY / pixelsPerHour
+      return dayStartHour + relativeY / pixelsPerHour
     },
-    [],
+    [dayStartHour, dayEndHour],
   )
 
   /** Find which day column the X coordinate is within */
@@ -789,18 +733,18 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       const snappedHour = Math.round(hour * 2) / 2
 
       const durationHours = dragMoveStartRef.current.duration / (60 * 60 * 1000)
-      const maxStartHour = DAY_END_HOUR - durationHours
-      const clampedHour = Math.max(DAY_START_HOUR, Math.min(snappedHour, maxStartHour))
+      const maxStartHour = dayEndHour - durationHours
+      const clampedHour = Math.max(dayStartHour, Math.min(snappedHour, maxStartHour))
       const clampedStart = buildDateFromHour(dayInfo.date, clampedHour)
       const clampedEnd = new Date(clampedStart.getTime() + dragMoveStartRef.current.duration)
 
-      const totalHours = DAY_END_HOUR - DAY_START_HOUR
+      const totalHours = dayEndHour - dayStartHour
       const pixelsPerHour = gridEl.scrollHeight / totalHours
       const gridRect = gridEl.getBoundingClientRect()
       const wrapperRect = wrapper.getBoundingClientRect()
 
       const topY =
-        (clampedHour - DAY_START_HOUR) * pixelsPerHour -
+        (clampedHour - dayStartHour) * pixelsPerHour -
         gridEl.scrollTop +
         gridRect.top -
         wrapperRect.top
@@ -863,8 +807,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       const hour = getTimeFromY(clientY, gridEl)
       const snappedHour = Math.round(hour * 2) / 2
       const durationHours = moveStart.duration / (60 * 60 * 1000)
-      const maxStartHour = DAY_END_HOUR - durationHours
-      const clampedHour = Math.max(DAY_START_HOUR, Math.min(snappedHour, maxStartHour))
+      const maxStartHour = dayEndHour - durationHours
+      const clampedHour = Math.max(dayStartHour, Math.min(snappedHour, maxStartHour))
       const newStart = buildDateFromHour(dayInfo.date, clampedHour)
       const newEnd = new Date(newStart.getTime() + moveStart.duration)
 
@@ -1028,12 +972,12 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         const origStartHour =
           origStart.getHours() + origStart.getMinutes() / 60
         const minEndHour = origStartHour + 0.5 // 30 min minimum
-        const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, DAY_END_HOUR))
+        const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, dayEndHour))
 
         const newEnd = buildDateFromHour(origStart, clampedEndHour)
 
         // Compute ghost overlay
-        const totalHours = DAY_END_HOUR - DAY_START_HOUR
+        const totalHours = dayEndHour - dayStartHour
         const pixelsPerHour = gridEl.scrollHeight / totalHours
         const gridRect = gridEl.getBoundingClientRect()
         const wrapperRect = wrapper.getBoundingClientRect()
@@ -1063,7 +1007,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         if (!dayInfo) return
 
         const topY =
-          (origStartHour - DAY_START_HOUR) * pixelsPerHour -
+          (origStartHour - dayStartHour) * pixelsPerHour -
           gridEl.scrollTop +
           gridRect.top -
           wrapperRect.top
@@ -1194,13 +1138,13 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       const snappedEnd = snapHour(Math.max(startHour, endHour))
 
       // Convert snapped hours back to pixel positions
-      const totalHours = DAY_END_HOUR - DAY_START_HOUR
+      const totalHours = dayEndHour - dayStartHour
       const pixelsPerHour = gridEl.scrollHeight / totalHours
       const gridRect = gridEl.getBoundingClientRect()
       const wrapperRect = wrapper.getBoundingClientRect()
 
-      const snappedTopY = (snappedStart - DAY_START_HOUR) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top
-      const snappedBottomY = (snappedEnd - DAY_START_HOUR) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top
+      const snappedTopY = (snappedStart - dayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top
+      const snappedBottomY = (snappedEnd - dayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top
 
       const colRect = dragStartRef.current.dayColRect
       if (!colRect) return
@@ -1253,7 +1197,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         const origStart = resizeStart.originalStart
         const origStartHour = origStart.getHours() + origStart.getMinutes() / 60
         const minEndHour = origStartHour + 0.5
-        const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, DAY_END_HOUR))
+        const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, dayEndHour))
         const newEnd = buildDateFromHour(origStart, clampedEndHour)
 
         if (newEnd.getTime() !== resizeStart.originalEnd.getTime()) {

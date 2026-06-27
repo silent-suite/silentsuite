@@ -17,6 +17,7 @@ import {
   clearAll,
   ensureFingerprint,
   isCacheEnabled,
+  getCacheCapabilityStatus,
   CACHE_SCHEMA_VERSION,
   _resetForTests,
   _setEncryptedCacheAvailableForTests,
@@ -34,6 +35,30 @@ beforeEach(async () => {
   })
 })
 
+
+async function getRawItem(uid: string): Promise<{ content: string } | undefined> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open('silentsuite-data-cache')
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('items', 'readonly')
+      const req = tx.objectStore('items').get(uid)
+      req.onsuccess = () => resolve(req.result as { content: string } | undefined)
+      req.onerror = () => reject(req.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+function restoreLocalCacheEnv(previous: string | undefined): void {
+  if (previous === undefined) delete process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
+  else process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
+}
+
 function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks', content = 'CONTENT', collectionUid = 'col-1'): CachedItem {
   return {
     itemUid: uid,
@@ -46,14 +71,50 @@ function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks'
 
 describe('data-cache', () => {
   describe('encryption guard', () => {
-    it('does not enable cache when the env flag is true but encryption is unavailable', () => {
+    it('enables cache by default when encrypted storage is available', () => {
+      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
+      delete process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
+      _setEncryptedCacheAvailableForTests(true)
+
+      expect(isCacheEnabled()).toBe(true)
+      expect(getCacheCapabilityStatus()).toEqual({
+        featureFlagEnabled: true,
+        encryptedEnvelopeAvailable: true,
+        enabled: true,
+      })
+
+      restoreLocalCacheEnv(previous)
+    })
+
+    it('does not enable cache when encryption is unavailable', () => {
       const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
       process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
       _setEncryptedCacheAvailableForTests(false)
 
       expect(isCacheEnabled()).toBe(false)
 
-      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
+      restoreLocalCacheEnv(previous)
+    })
+
+    it('reports privacy-safe cache capability diagnostics', () => {
+      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
+      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
+      _setEncryptedCacheAvailableForTests(true)
+
+      expect(getCacheCapabilityStatus()).toEqual({
+        featureFlagEnabled: true,
+        encryptedEnvelopeAvailable: true,
+        enabled: true,
+      })
+
+      _setEncryptedCacheAvailableForTests(false)
+      expect(getCacheCapabilityStatus()).toEqual({
+        featureFlagEnabled: true,
+        encryptedEnvelopeAvailable: false,
+        enabled: false,
+      })
+
+      restoreLocalCacheEnv(previous)
     })
 
     it('refuses plaintext item writes without an encrypted cache envelope', async () => {
@@ -74,12 +135,16 @@ describe('data-cache', () => {
       expect(items).toEqual([])
     })
 
-    it('persists and reads back a single item', async () => {
-      await putItem(makeItem('task-1', 'tasks', 'A'))
+    it('persists encrypted content and reads back the decrypted item', async () => {
+      await putItem(makeItem('task-1', 'tasks', 'PRIVATE TASK CONTENT'))
       const items = await getItemsByType('tasks')
       expect(items).toHaveLength(1)
       expect(items[0]!.itemUid).toBe('task-1')
-      expect(items[0]!.content).toBe('A')
+      expect(items[0]!.content).toBe('PRIVATE TASK CONTENT')
+
+      const raw = await getRawItem('task-1')
+      expect(raw?.content).not.toContain('PRIVATE TASK CONTENT')
+      expect(JSON.parse(raw!.content)).toMatchObject({ v: 1, alg: 'AES-GCM' })
     })
 
     it('bulk-inserts via putItems', async () => {

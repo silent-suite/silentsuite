@@ -2,14 +2,25 @@ import { parseVTodo, generateVTodo } from '../utils/ical-parser.js';
 import type { VTodo } from '../utils/ical-parser.js';
 import type { Priority } from './types.js';
 
+export type TaskStatus = 'needs-action' | 'in-process' | 'completed' | 'cancelled';
+
 export interface Task {
   id: string;
   uid: string;
   title: string;
   description: string;
+  start_date?: Date | null;
   due_date: Date | null;
   priority: Priority;
   completed: boolean;
+  /** RFC 5545 VTODO STATUS. `completed` remains for legacy callers and is kept in sync. */
+  status?: TaskStatus;
+  /** RFC 5545 PERCENT-COMPLETE, clamped to 0-100. */
+  percent_complete?: number;
+  /** RFC 5545 LOCATION for clients that support task places/contexts. */
+  location?: string;
+  /** RFC 5545 URL for the task's canonical link/reference. */
+  url?: string;
   /** User-defined labels/categories for grouping and filtering.
    *  Round-tripped via the ICS CATEGORIES property (comma-separated).
    *  Optional so existing callers keep compiling; deserialize paths default to []. */
@@ -32,6 +43,20 @@ const ICAL_TO_PRIORITY: Record<number, Priority> = {
   2: 'high',
   5: 'medium',
   9: 'low',
+};
+
+const TASK_STATUS_TO_ICAL: Record<TaskStatus, string> = {
+  'needs-action': 'NEEDS-ACTION',
+  'in-process': 'IN-PROCESS',
+  completed: 'COMPLETED',
+  cancelled: 'CANCELLED',
+};
+
+const ICAL_TO_TASK_STATUS: Record<string, TaskStatus> = {
+  'NEEDS-ACTION': 'needs-action',
+  'IN-PROCESS': 'in-process',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled',
 };
 
 function icalPriorityToModel(value: number | undefined): Priority {
@@ -93,6 +118,23 @@ function isDateOnly(value: string): boolean {
   return value.replace(/[^0-9TZ]/g, '').length <= 8;
 }
 
+function statusToICal(task: Task): string {
+  if (task.completed) return 'COMPLETED';
+  return TASK_STATUS_TO_ICAL[task.status ?? 'needs-action'];
+}
+
+function icalStatusToModel(value: string | undefined, completed: boolean): TaskStatus {
+  if (completed) return 'completed';
+  if (!value) return 'needs-action';
+  return ICAL_TO_TASK_STATUS[value.toUpperCase()] ?? 'needs-action';
+}
+
+function normalizePercent(value: number | undefined, completed: boolean): number {
+  if (completed) return 100;
+  if (value === undefined || Number.isNaN(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 /**
  * Convert a Task to an iCalendar VTODO string.
  */
@@ -102,12 +144,24 @@ export function toVTodo(task: Task): string {
     summary: task.title || undefined,
     description: task.description || undefined,
     priority: PRIORITY_TO_ICAL[task.priority],
-    status: task.completed ? 'COMPLETED' : 'NEEDS-ACTION',
-    percentComplete: task.completed ? 100 : 0,
+    status: statusToICal(task),
+    percentComplete: normalizePercent(task.percent_complete, task.completed),
+    location: task.location || undefined,
+    url: task.url || undefined,
     categories: task.categories && task.categories.length > 0 ? task.categories : undefined,
     created: formatICalUtcDateTime(task.created_at),
     lastModified: formatICalUtcDateTime(task.updated_at),
   };
+
+  if (task.start_date) {
+    const startDateOnly = task.start_date.getHours() === 0
+      && task.start_date.getMinutes() === 0
+      && task.start_date.getSeconds() === 0;
+    vtodo.dtstart = startDateOnly ? formatICalDate(task.start_date) : formatICalDateTime(task.start_date);
+    if (startDateOnly) {
+      vtodo.dtstartParams = { VALUE: 'DATE' };
+    }
+  }
 
   if (task.due_date) {
     const dueDateOnly = task.due_date.getHours() === 0
@@ -137,15 +191,21 @@ export function fromVTodo(vtodoStr: string): Task {
   const completed = vtodo.status?.toUpperCase() === 'COMPLETED'
     || vtodo.percentComplete === 100
     || (vtodo.status === undefined && vtodo.completed !== undefined);
+  const status = icalStatusToModel(vtodo.status, completed);
 
   return {
     id: vtodo.uid,
     uid: vtodo.uid,
     title: vtodo.summary ?? '',
     description: vtodo.description ?? '',
+    start_date: vtodo.dtstart ? parseICalDateValue(vtodo.dtstart) : null,
     due_date,
     priority: icalPriorityToModel(vtodo.priority),
     completed,
+    status,
+    percent_complete: normalizePercent(vtodo.percentComplete, completed),
+    location: vtodo.location ?? '',
+    url: vtodo.url ?? '',
     // Preserve CATEGORIES for round-trip; default to [] for legacy records
     categories: vtodo.categories ?? [],
     created_at: vtodo.created ? parseICalDateValue(vtodo.created) : now,

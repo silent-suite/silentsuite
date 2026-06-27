@@ -6,7 +6,7 @@ import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate } from '@/app/lib/date'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
-import type { DefaultReminder } from '@silentsuite/core'
+import type { DayBoundaryHour, DefaultReminder } from '@silentsuite/core'
 
 interface AccountDetails {
   id: string
@@ -27,12 +27,17 @@ export default function AccountPage() {
   const notificationSound = usePreferencesStore((s) => s.notificationSound)
   const defaultTimezone = usePreferencesStore((s) => s.defaultTimezone)
   const dateFormat = usePreferencesStore((s) => s.dateFormat)
+  const dayStartHour = usePreferencesStore((s) => s.dayStartHour)
+  const dayEndHour = usePreferencesStore((s) => s.dayEndHour)
   const setDateFormat = usePreferencesStore((s) => s.setDateFormat)
   const setTimeFormat = usePreferencesStore((s) => s.setTimeFormat)
   const setFirstDayOfWeek = usePreferencesStore((s) => s.setFirstDayOfWeek)
   const setDefaultReminder = usePreferencesStore((s) => s.setDefaultReminder)
   const setNotificationSound = usePreferencesStore((s) => s.setNotificationSound)
   const setDefaultTimezone = usePreferencesStore((s) => s.setDefaultTimezone)
+  const setDayBounds = usePreferencesStore((s) => s.setDayBounds)
+
+  const hourOptions = useMemo(() => Array.from({ length: 25 }, (_, hour) => hour as DayBoundaryHour), [])
 
   const allTimezones = useMemo(() => {
     try {
@@ -178,6 +183,42 @@ export default function AccountPage() {
                     Sunday
                   </button>
                 </div>
+              </div>
+
+              {/* Visible Day Bounds */}
+              <div className="space-y-2">
+                <p className="text-xs text-[rgb(var(--muted))]">Visible calendar day</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="space-y-1 text-xs text-[rgb(var(--muted))]">
+                    <span>Start</span>
+                    <select
+                      value={dayStartHour}
+                      onChange={(e) => setDayBounds(Number(e.target.value) as DayBoundaryHour, dayEndHour)}
+                      className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {hourOptions.slice(0, 24).map((hour) => (
+                        <option key={hour} value={hour} disabled={hour >= dayEndHour}>
+                          {String(hour).padStart(2, '0')}:00
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-xs text-[rgb(var(--muted))]">
+                    <span>End</span>
+                    <select
+                      value={dayEndHour}
+                      onChange={(e) => setDayBounds(dayStartHour, Number(e.target.value) as DayBoundaryHour)}
+                      className="w-full rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      {hourOptions.slice(1).map((hour) => (
+                        <option key={hour} value={hour} disabled={hour <= dayStartHour}>
+                          {String(hour).padStart(2, '0')}:00
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <p className="text-xs text-[rgb(var(--muted))]">Default is the full 00:00–24:00 day.</p>
               </div>
 
               {/* Default Reminder */}
