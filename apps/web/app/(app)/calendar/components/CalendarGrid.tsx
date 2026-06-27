@@ -28,9 +28,17 @@ import '@schedule-x/theme-default/dist/index.css'
 // Temporal polyfill — patches globalThis.Temporal and registers types
 import 'temporal-polyfill/global'
 
-const VIEW_MAP: Record<CalendarView, string> = {
+type CalendarGridDisplayView = CalendarView | 'threeDay'
+
+const VIEW_MAP: Record<CalendarGridDisplayView, string> = {
+  threeDay: 'week',
   week: 'week',
   month: 'month-grid',
+}
+
+function toScheduleXWeekday(date: Date): number {
+  const day = date.getDay()
+  return day === 0 ? 7 : day
 }
 
 function toPlainDate(date: Date): Temporal.PlainDate {
@@ -51,9 +59,16 @@ function toScheduleXDateTime(date: Date, tz: string): Temporal.ZonedDateTime {
 }
 
 /** Get the visible date range for the current view, honoring the first-day preference */
-function getViewRange(currentDate: Date, view: CalendarView, firstDay: FirstDayOfWeek): DateRange {
+function getViewRange(currentDate: Date, view: CalendarGridDisplayView, firstDay: FirstDayOfWeek): DateRange {
   const d = new Date(currentDate)
   switch (view) {
+    case 'threeDay': {
+      const start = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+      const end = new Date(start)
+      end.setDate(start.getDate() + 2)
+      end.setHours(23, 59, 59, 999)
+      return { start, end }
+    }
     case 'week': {
       const start = startOfWeek(d, firstDay)
       const end = new Date(start)
@@ -171,14 +186,16 @@ export interface EventClickInfo {
 
 interface CalendarGridProps {
   events: CalendarEvent[]
+  displayView?: CalendarGridDisplayView
   onSlotClick?: (event: SlotClickEvent) => void
   onEventClick?: (info: EventClickInfo) => void
 }
 
-export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGridProps) {
+export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }: CalendarGridProps) {
   const { resolvedTheme } = useTheme()
   const canWrite = useAuthStore((s) => s.canWrite())
   const currentView = useCalendarStore((s) => s.currentView)
+  const effectiveView = displayView ?? currentView
   const currentDate = useCalendarStore((s) => s.currentDate)
   const setSelectedEvent = useCalendarStore((s) => s.setSelectedEvent)
   const setCurrentView = useCalendarStore((s) => s.setCurrentView)
@@ -194,7 +211,17 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const dayEndHour = usePreferencesStore((s) => s.dayEndHour ?? DEFAULT_DAY_END_HOUR)
   // Schedule-X WeekDay enum: MONDAY = 1 … SUNDAY = 7 (not 0-indexed).
   const sxFirstDayOfWeek = firstDayOfWeek === 'sunday' ? 7 : 1
+  const currentDateTs = currentDate instanceof Date ? currentDate.getTime() : new Date(currentDate).getTime()
+  const currentDateForSx = useMemo(
+    () => (currentDate instanceof Date ? currentDate : new Date(currentDate)),
+    [currentDateTs],
+  )
+  const effectiveSxFirstDayOfWeek = effectiveView === 'threeDay'
+    ? toScheduleXWeekday(currentDateForSx)
+    : sxFirstDayOfWeek
+  const effectiveWeekDays = effectiveView === 'threeDay' ? 3 : 7
 
+  const rootRef = useRef<HTMLDivElement>(null)
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
   // Ref to prevent feedback loops between store↔Schedule-X sync
@@ -210,7 +237,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const [eventsPlugin] = useState(() => createEventsServicePlugin())
 
   // Expand recurring events for the visible range
-  const viewRange = useMemo(() => getViewRange(currentDate, currentView, firstDayOfWeek), [currentDate, currentView, firstDayOfWeek])
+  const viewRange = useMemo(() => getViewRange(currentDate, effectiveView, firstDayOfWeek), [currentDate, effectiveView, firstDayOfWeek])
   const displayEvents = useMemo(() => expandEventsForRange(events, viewRange), [events, viewRange])
 
   // Keep a ref map to look up display events by schedule-x id
@@ -225,8 +252,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   displayEventMapRef.current = displayEventMap
 
   const sxEvents = useMemo(
-    () => toScheduleXEvents(displayEvents, calendarColors, userTz, currentView, toScheduleXDateTime),
-    [displayEvents, calendarColors, userTz, currentView],
+    () => toScheduleXEvents(displayEvents, calendarColors, userTz, effectiveView === 'threeDay' ? 'week' : effectiveView, toScheduleXDateTime),
+    [displayEvents, calendarColors, userTz, effectiveView],
   )
 
   // Inject calendar color styles via useInsertionEffect (avoids dangerouslySetInnerHTML)
@@ -247,9 +274,8 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
 .${cls} * { color: #fff !important; }`
       })
       .join('\n')
-    return () => {
-      style.remove()
-    }
+    // Keep the shared style node in place across multiple CalendarGrid instances
+    // (desktop hidden grid + mobile 3-day grid can be mounted together).
   }, [calendarColors])
 
   const selectedDate = useMemo(() => toPlainDate(currentDate), [currentDate])
@@ -364,14 +390,14 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   const views = viewsRef.current
 
   // Capture initial view so useNextCalendarApp config doesn't change on view switch
-  const initialViewRef = useRef(VIEW_MAP[currentView])
+  const initialViewRef = useRef(VIEW_MAP[effectiveView])
   const initialDateRef = useRef(selectedDate)
   // Capture time format at mount — Schedule-X locale can't change after init
   const initialLocaleRef = useRef(timeFormat === '24h' ? 'en-GB' : 'en-US')
   // Capture initial timezone for Schedule-X config (changes are pushed via signal below)
   const initialTimezoneRef = useRef(userTz)
   // Capture initial first-day-of-week for Schedule-X config (changes pushed via signal below)
-  const initialFirstDayRef = useRef(sxFirstDayOfWeek)
+  const initialFirstDayRef = useRef(effectiveSxFirstDayOfWeek)
   const initialDayBoundariesRef = useRef(toScheduleXDayBoundariesExternal(dayStartHour, dayEndHour))
 
   // Memoize the event click handler
@@ -421,6 +447,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       // makes Schedule-X divide the day column among concurrent events so both
       // are visible. See issue #330.
       eventOverlap: false,
+      nDays: effectiveWeekDays,
     },
     plugins: [eventsPlugin],
     callbacks: {
@@ -445,22 +472,36 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
     }
   }, [calendar, userTz])
 
-  // Push first-day-of-week changes to the Schedule-X config signal so the grid
-  // AND the date picker re-render when the user updates the preference in
-  // Settings — without a full page reload. config.firstDayOfWeek is shared
-  // between the calendar and its date picker, so this fixes both at once.
+  // Push first-day-of-week changes to the Schedule-X config signal. Week/month
+  // use the user's preference; mobile 3-day mode anchors the first rendered
+  // column to currentDate so Schedule-X's nDays=3 range matches getViewRange().
   useEffect(() => {
     if (!calendar) return
     try {
       const app = (calendar as any).$app
       const fdowSignal = app?.config?.firstDayOfWeek
-      if (fdowSignal && fdowSignal.value !== sxFirstDayOfWeek) {
-        fdowSignal.value = sxFirstDayOfWeek
+      if (fdowSignal && fdowSignal.value !== effectiveSxFirstDayOfWeek) {
+        fdowSignal.value = effectiveSxFirstDayOfWeek
       }
     } catch {
       // Schedule-X internals may not be ready
     }
-  }, [calendar, sxFirstDayOfWeek])
+  }, [calendar, effectiveSxFirstDayOfWeek])
+
+  // Push the effective week column count through Schedule-X. The mobile 3-day
+  // view reuses the week renderer with nDays=3; normal week/month keep 7 days.
+  useEffect(() => {
+    if (!calendar) return
+    try {
+      const app = (calendar as any).$app
+      const weekOptionsSignal = app?.config?.weekOptions
+      if (weekOptionsSignal?.value && weekOptionsSignal.value.nDays !== effectiveWeekDays) {
+        weekOptionsSignal.value = { ...weekOptionsSignal.value, nDays: effectiveWeekDays }
+      }
+    } catch {
+      // Schedule-X internals may not be ready
+    }
+  }, [calendar, effectiveWeekDays])
 
   // Push day-boundary preference changes into Schedule-X and our drag/select math.
   useEffect(() => {
@@ -482,13 +523,11 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   // singleton which exposes calendarState.setView(viewName, date) and
   // calendarState.setRange(date). Both operate on Preact signals internally.
   //
-  // Use currentDate.getTime() as dependency to ensure React detects Date changes
+  // Use currentDateTs as dependency to ensure React detects Date changes
   // (Date objects compared by reference would miss updates).
-  const currentDateTs = currentDate instanceof Date ? currentDate.getTime() : new Date(currentDate).getTime()
-
   useEffect(() => {
     if (!calendar) return
-    const sxViewName = VIEW_MAP[currentView]
+    const sxViewName = VIEW_MAP[effectiveView]
     try {
       const app = (calendar as any).$app
       if (!app?.calendarState) return
@@ -514,7 +553,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       isSyncingToSxRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [calendar, currentView, currentDateTs])
+  }, [calendar, effectiveView, currentDateTs])
 
   // Reverse sync: Schedule-X → store.
   // Schedule-X maintains its own internal date state via Preact signals.
@@ -551,7 +590,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         // Compare with the store's expected range for the current view
         const storeState = useCalendarStore.getState()
         const currentFirstDay = usePreferencesStore.getState().firstDayOfWeek
-        const storeRange = getViewRange(storeState.currentDate, storeState.currentView, currentFirstDay)
+        const storeRange = getViewRange(storeState.currentDate, effectiveView, currentFirstDay)
 
         // Allow 1-day tolerance (month views may extend into adjacent months)
         const startDiff = Math.abs(sxRangeStart.getTime() - storeRange.start.getTime())
@@ -559,9 +598,11 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
 
         // SX is showing a different range — update store to match.
         // Pick a representative date from the SX range for currentDate:
-        // week view → Wednesday of the SX week; month view → middle of range.
+        // 3-day view → range start; week view → Wednesday; month view → middle.
         let newDate: Date
-        if (storeState.currentView === 'week') {
+        if (effectiveView === 'threeDay') {
+          newDate = new Date(sxRangeStart)
+        } else if (storeState.currentView === 'week') {
           newDate = new Date(sxRangeStart)
           newDate.setDate(newDate.getDate() + 3) // mid-week avoids boundary issues
         } else {
@@ -613,18 +654,18 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         scheduleXEventCount: sxEvents.length,
         displayEventCount: displayEvents.length,
         rawEventCount: events.length,
-        view: currentView,
+        view: effectiveView,
       })
     })
     return () => cancelAnimationFrame(raf)
-  }, [currentView, displayEvents.length, events.length, sxEvents.length])
+  }, [effectiveView, displayEvents.length, events.length, sxEvents.length])
 
   // #331: Reveal the full title on short/clipped calendar events and mark event
   // chips by rendered height so CSS can hide low-priority metadata before it
   // gets half-clipped. Schedule-X lays out timed events with inline heights, so
   // this must be measured after render rather than inferred from duration.
   useEffect(() => {
-    const root = document.querySelector('.sx-silentsuite-calendar')
+    const root = rootRef.current
     if (!root) return
 
     const selector = '.sx__time-grid-event, .sx__month-grid-event, .sx__day-grid-event'
@@ -667,7 +708,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       resizeObserver.disconnect()
       observer.disconnect()
     }
-  }, [sxEvents, currentView])
+  }, [sxEvents, effectiveView])
 
   /** Find the time grid scrollable container and calculate time from Y */
   const getTimeFromY = useCallback(
@@ -843,7 +884,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       lastClickPos.current = { x: e.clientX, y: e.clientY }
 
       // Only enable drag in day/week views
-      if (currentView === 'month') return
+      if (effectiveView === 'month') return
 
       const target = e.target as HTMLElement
       const wrapper = e.currentTarget as HTMLElement
@@ -924,7 +965,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
       isDraggingRef.current = false
       dragEndTimeRef.current = null
     },
-    [currentView, getDayColumnInfo, getTimeFromY, buildDateFromHour, viewRange, displayEvents],
+    [effectiveView, getDayColumnInfo, getTimeFromY, buildDateFromHour, viewRange, displayEvents],
   )
 
   const handleMouseMove = useCallback(
@@ -1304,7 +1345,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   // Phase 2C: Touch handlers for mobile long-press drag
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
-      if (currentView === 'month') return
+      if (effectiveView === 'month') return
       const touch = e.touches[0]
       const target = touch.target as HTMLElement
       if (!target.closest('.sx__time-grid-event')) return
@@ -1348,7 +1389,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
         if (navigator.vibrate) navigator.vibrate(50)
       }, 500)
     },
-    [currentView, viewRange, displayEvents, getTimeFromY],
+    [effectiveView, viewRange, displayEvents, getTimeFromY],
   )
 
   const handleTouchMove = useCallback(
@@ -1432,6 +1473,7 @@ export function CalendarGrid({ events, onSlotClick, onEventClick }: CalendarGrid
   return (
     <>
       <div
+        ref={rootRef}
         className="sx-silentsuite-calendar relative flex-1 min-h-0"
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

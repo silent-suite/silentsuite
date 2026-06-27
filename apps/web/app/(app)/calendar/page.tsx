@@ -29,9 +29,18 @@ function snapTo30Min(date: Date): Date {
   return snapped
 }
 
+type CalendarDateLabelView = 'week' | 'month' | 'threeDay'
+type MobileCalendarMode = 'agenda' | 'threeDay'
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date)
+  next.setDate(next.getDate() + days)
+  return next
+}
+
 function formatDateRange(
   date: Date,
-  view: 'week' | 'month',
+  view: CalendarDateLabelView,
   dateFormat: import('@silentsuite/core').DateFormat,
   firstDay: import('@silentsuite/core').FirstDayOfWeek,
 ): string {
@@ -39,6 +48,21 @@ function formatDateRange(
 
   if (view === 'month') {
     return formatDate(date, dateFormat, opts)
+  }
+
+  if (view === 'threeDay') {
+    const rangeStart = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+    const rangeEnd = addDays(rangeStart, 2)
+    const startMonth = formatDate(rangeStart, 'system', { month: 'short' })
+    const endMonth = formatDate(rangeEnd, 'system', { month: 'short' })
+
+    if (rangeStart.getFullYear() !== rangeEnd.getFullYear()) {
+      return `${startMonth} ${rangeStart.getDate()}, ${rangeStart.getFullYear()} – ${endMonth} ${rangeEnd.getDate()}, ${rangeEnd.getFullYear()}`
+    }
+    if (rangeStart.getMonth() !== rangeEnd.getMonth()) {
+      return `${startMonth} ${rangeStart.getDate()} – ${endMonth} ${rangeEnd.getDate()}, ${rangeStart.getFullYear()}`
+    }
+    return `${startMonth} ${rangeStart.getDate()}–${rangeEnd.getDate()}, ${rangeStart.getFullYear()}`
   }
 
   // Week view: derive the week start/end from the first-day preference
@@ -102,6 +126,7 @@ export default function CalendarPage() {
   const navigateForward = useCalendarStore((s) => s.navigateForward)
   const navigateBackward = useCalendarStore((s) => s.navigateBackward)
   const navigateToday = useCalendarStore((s) => s.navigateToday)
+  const setCurrentDate = useCalendarStore((s) => s.setCurrentDate)
   const selectedEventId = useCalendarStore((s) => s.selectedEventId)
   const setSelectedEvent = useCalendarStore((s) => s.setSelectedEvent)
   const calendars = useCalendarListStore((s) => s.calendars)
@@ -111,10 +136,15 @@ export default function CalendarPage() {
   const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null)
   const [eventInstanceDate, setEventInstanceDate] = useState<Date | undefined>(undefined)
   const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
+  const [mobileCalendarMode, setMobileCalendarMode] = useState<MobileCalendarMode>('agenda')
 
   const dateLabel = useMemo(
     () => formatDateRange(currentDate, currentView, dateFormat, firstDayOfWeek),
     [currentDate, currentView, dateFormat, firstDayOfWeek],
+  )
+  const mobileDateLabel = useMemo(
+    () => formatDateRange(currentDate, mobileCalendarMode === 'threeDay' ? 'threeDay' : currentView, dateFormat, firstDayOfWeek),
+    [currentDate, currentView, dateFormat, firstDayOfWeek, mobileCalendarMode],
   )
 
   // Active calendar-week indicator (#292). Shown in week view; respects the
@@ -182,6 +212,22 @@ export default function CalendarPage() {
     [selectedEventId, events],
   )
 
+  const handleMobileNavigateBackward = useCallback(() => {
+    if (mobileCalendarMode === 'threeDay') {
+      setCurrentDate(addDays(currentDate, -3))
+      return
+    }
+    navigateBackward()
+  }, [currentDate, mobileCalendarMode, navigateBackward, setCurrentDate])
+
+  const handleMobileNavigateForward = useCallback(() => {
+    if (mobileCalendarMode === 'threeDay') {
+      setCurrentDate(addDays(currentDate, 3))
+      return
+    }
+    navigateForward()
+  }, [currentDate, mobileCalendarMode, navigateForward, setCurrentDate])
+
   return (
     <div className="flex h-full flex-col gap-3">
       {/* Desktop toolbar */}
@@ -243,7 +289,7 @@ export default function CalendarPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1">
             <button
-              onClick={navigateBackward}
+              onClick={handleMobileNavigateBackward}
               className="max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
               aria-label="Previous"
             >
@@ -256,14 +302,13 @@ export default function CalendarPage() {
               Today
             </button>
             <button
-              onClick={navigateForward}
+              onClick={handleMobileNavigateForward}
               className="max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
               aria-label="Next"
             >
               <ChevronRight className="h-5 w-5" />
             </button>
           </div>
-          {/* On mobile, only agenda view is shown — hide the view switcher */}
           <button
             onClick={() => setCollectionSheetOpen(true)}
             className="touch-target md:hidden rounded-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))] transition-colors"
@@ -273,8 +318,8 @@ export default function CalendarPage() {
           </button>
         </div>
         <div className="flex items-center gap-2 px-1">
-          <h2 className="text-base font-semibold text-[rgb(var(--foreground))]">{dateLabel}</h2>
-          {weekNumber !== null && (
+          <h2 className="text-base font-semibold text-[rgb(var(--foreground))]">{mobileDateLabel}</h2>
+          {mobileCalendarMode !== 'threeDay' && weekNumber !== null && (
             <span
               className="rounded-md bg-[rgb(var(--surface))] px-2 py-0.5 text-xs font-medium text-[rgb(var(--muted))]"
               title="Calendar week"
@@ -282,6 +327,32 @@ export default function CalendarPage() {
               Week {weekNumber}
             </span>
           )}
+        </div>
+        <div className="flex items-center gap-1 px-1" role="group" aria-label="Mobile calendar view">
+          <button
+            type="button"
+            onClick={() => setMobileCalendarMode('agenda')}
+            aria-pressed={mobileCalendarMode === 'agenda'}
+            className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
+              mobileCalendarMode === 'agenda'
+                ? 'bg-[rgb(var(--primary))] text-white'
+                : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
+            }`}
+          >
+            Agenda
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileCalendarMode('threeDay')}
+            aria-pressed={mobileCalendarMode === 'threeDay'}
+            className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
+              mobileCalendarMode === 'threeDay'
+                ? 'bg-[rgb(var(--primary))] text-white'
+                : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
+            }`}
+          >
+            3 days
+          </button>
         </div>
       </div>
 
@@ -362,18 +433,30 @@ export default function CalendarPage() {
             <CalendarGrid events={visibleEvents} onSlotClick={handleSlotClick} onEventClick={handleEventClick} />
           </div>
 
-          {/* Mobile: agenda list view */}
-          <div className="flex flex-col flex-1 md:hidden">
-            <PullToRefresh>
-              <AgendaView
-                events={visibleEvents}
-                currentDate={currentDate}
-                onEventClick={(id) => {
-                  setSelectedEvent(id)
-                  setEventInstanceDate(undefined)
-                }}
-              />
-            </PullToRefresh>
+          {/* Mobile: agenda list view or 3-day grid */}
+          <div className="flex flex-col flex-1 min-h-0 md:hidden">
+            {mobileCalendarMode === 'agenda' ? (
+              <PullToRefresh>
+                <AgendaView
+                  events={visibleEvents}
+                  currentDate={currentDate}
+                  onEventClick={(id) => {
+                    setSelectedEvent(id)
+                    setEventInstanceDate(undefined)
+                  }}
+                />
+              </PullToRefresh>
+            ) : (
+              <div className="flex flex-1 min-h-[520px] overflow-hidden">
+                <CalendarGrid
+                  key="mobile-three-day-grid"
+                  displayView="threeDay"
+                  events={visibleEvents}
+                  onSlotClick={handleSlotClick}
+                  onEventClick={handleEventClick}
+                />
+              </div>
+            )}
           </div>
         </>
       )}
