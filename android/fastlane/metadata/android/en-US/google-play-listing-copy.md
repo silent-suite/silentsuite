@@ -1,4 +1,4 @@
-# Google Play listing paste copy for SilentSuite v0.3.0-beta
+# Store listing paste copy for SilentSuite v0.3.0-beta
 
 Use with the final 8 screenshots exported from Figma on 2026-06-27.
 
@@ -8,39 +8,23 @@ SilentSuite - Secure Data Sync
 
 ## Short description
 
-Private calendar, contacts, and tasks sync for Android
+End-to-end encrypted sync for calendar, contacts, and tasks
 
 ## Full description
 
-SilentSuite privately syncs your Android calendar, contacts, and tasks, so you can keep using the apps you like without giving up control of your data. Your content is encrypted on your device before sync, and your keys stay on your device.
+Your calendar, contacts, and tasks should stay in sync wherever you work: Android, macOS, Windows, Linux, and the web. SilentSuite keeps that data available across your devices while applying end-to-end encryption before anything leaves your device.
 
-SYNC YOUR ANDROID LIFE PRIVATELY
-SilentSuite works as an Android sync adapter. After you sign in, your encrypted calendars, contacts, and tasks appear in compatible Android apps, so you can keep using the calendar, contacts, and task apps you already like.
+Encryption and decryption happen on your device, and your keys stay there. The server stores only ciphertext, so it cannot read what you keep on it. This is what zero-knowledge means in practice: the privacy guarantee is a technical constraint, not a policy statement.
 
-ONLY YOUR DEVICES CAN READ IT
-Your plaintext data stays on your devices. The server stores encrypted sync data and the limited metadata needed to keep sync working, such as sync tokens and timestamps. It cannot decrypt your calendar events, address book, or task lists.
+SilentSuite is built to fit into each system you use. On Android it works as a native sync adapter for compatible calendar, contacts, and task apps. On macOS, Windows, and Linux it integrates through a lightweight desktop bridge, so your encrypted data can appear in the tools already built into your workflow. The web app gives you browser access when you are away from your own devices. iPhone support is coming soon.
 
-KEEP PERSONAL AND WORK SEPARATE
-Organize calendars, contacts, and tasks in one account. SilentSuite is designed for everyday productivity data, with private sync across your Android devices and no need to hand readable copies to a Big Tech account.
+The app is fully open source. Anyone can read the code, review the encryption, and confirm the privacy claims for themselves. There are no proprietary components to take on trust.
 
-NO VENDOR LOCK-IN
-Import and export your data anytime. SilentSuite is built around open standards and open source code, so you stay in control if you move devices, switch apps, or self-host later.
+You choose where your data lives. Use the hosted service, or run your own server on hardware you control. Your data stays portable: export it at any time in standard formats, with no lock-in.
 
-HOSTED OR SELF-HOSTED
-Start with a hosted silentsuite.io account, or connect to your own compatible SilentSuite server. The server, bridge, web app, and Android app are open source, so privacy claims can be inspected instead of merely trusted.
+This is a beta release. Calendar, contacts, and task sync are the focus of this version and form its stable core. Feedback and bug reports are welcome through the link in the app.
 
-WHAT WORKS TODAY
-- End-to-end encrypted calendar, contacts, and tasks sync
-- Works with compatible Android calendar, contacts, and tasks apps
-- Hosted account or custom server
-- Import and export for data portability
-- Open source, inspectable, and self-hostable
-
-WHAT YOU NEED
-To use this app, you need a silentsuite.io account or a compatible self-hosted server. A 7-day hosted trial is available at https://app.silentsuite.io/signup with no card required.
-
-BETA NOTE
-SilentSuite is actively improving. Calendar, contacts, and tasks sync are the core focus of this beta. Please report issues through the app, GitHub, or info@silentsuite.io so we can keep making the Android experience better.
+Requires a SilentSuite account. Self-hosting documentation is available at docs.silentsuite.io.
 
 ## Phone screenshot order
 
