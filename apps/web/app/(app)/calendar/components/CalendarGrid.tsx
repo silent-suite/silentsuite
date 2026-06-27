@@ -1477,6 +1477,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
       <div
         ref={rootRef}
         className="sx-silentsuite-calendar relative flex-1 min-h-0"
+        data-mobile-days={effectiveView === 'threeDay' ? '3' : effectiveView === 'sevenDay' ? '7' : undefined}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}

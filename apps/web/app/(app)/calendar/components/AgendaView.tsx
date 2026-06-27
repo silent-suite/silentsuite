@@ -1,18 +1,21 @@
 'use client'
 
 import { useMemo } from 'react'
-import { Clock, MapPin } from 'lucide-react'
+import { Clock, MapPin, Repeat2 } from 'lucide-react'
 import { CalendarEmptyState } from '@/app/components/empty-state'
 import { LabelChips } from '@/app/components/LabelEditor'
-import type { CalendarEvent } from '@silentsuite/core'
+import type { CalendarEvent, DateRange } from '@silentsuite/core'
+import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { resolveUserTimezone, shortTimezoneLabel } from '@/app/lib/tz'
+import { expandEventsForRange, type DisplayEvent } from '../lib/calendar-grid-events'
 
 interface AgendaViewProps {
   events: CalendarEvent[]
   currentDate: Date
+  calendars?: CalendarList[]
   mode?: 'day' | 'upcoming'
-  onEventClick?: (eventId: string) => void
+  onEventClick?: (eventId: string, instanceDate?: Date) => void
 }
 
 function formatTime(date: Date, tz: string): string {
@@ -42,54 +45,49 @@ function formatAgendaDate(date: Date, currentDate: Date, tz: string): string {
   })
 }
 
-function eventStart(event: CalendarEvent): Date {
-  return event.startDate instanceof Date ? event.startDate : new Date(event.startDate)
-}
-
-function eventEnd(event: CalendarEvent): Date {
-  return event.endDate instanceof Date ? event.endDate : new Date(event.endDate)
-}
-
-function compareEvents(a: CalendarEvent, b: CalendarEvent): number {
-  const aStart = eventStart(a)
-  const bStart = eventStart(b)
-  if (!isSameDay(aStart, bStart)) return aStart.getTime() - bStart.getTime()
+function compareEvents(a: DisplayEvent, b: DisplayEvent): number {
+  if (!isSameDay(a.startDate, b.startDate)) return a.startDate.getTime() - b.startDate.getTime()
   if (a.allDay && !b.allDay) return -1
   if (!a.allDay && b.allDay) return 1
-  return aStart.getTime() - bStart.getTime()
+  return a.startDate.getTime() - b.startDate.getTime()
 }
 
-export function AgendaView({ events, currentDate, mode = 'day', onEventClick }: AgendaViewProps) {
+function getAgendaRange(currentDate: Date, mode: 'day' | 'upcoming'): DateRange {
+  const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate())
+  const end = new Date(start)
+  if (mode === 'upcoming') {
+    // Wide enough to catch normal weekly/monthly recurrences while keeping expansion bounded.
+    end.setDate(start.getDate() + 180)
+  }
+  end.setHours(23, 59, 59, 999)
+  return { start, end }
+}
+
+function collectionFallback(calendarId: string): string {
+  return calendarId === 'default' ? 'Personal' : calendarId
+}
+
+export function AgendaView({ events, currentDate, calendars = [], mode = 'day', onEventClick }: AgendaViewProps) {
   const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
   const userTz = resolveUserTimezone(defaultTimezonePref)
-  const agendaEvents = useMemo(() => {
-    const currentDayStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate())
-    const currentDayEnd = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate(), 23, 59, 59, 999)
-
-    if (mode === 'upcoming') {
-      return events
-        .filter((event) => {
-          const end = eventEnd(event)
-          // Keep in-progress all-day and timed events, then show upcoming items across future days.
-          return event.allDay ? end > currentDayStart : end >= currentDayStart
-        })
-        .sort(compareEvents)
-        .slice(0, 6)
+  const calendarMeta = useMemo(() => {
+    const map = new Map<string, { name: string; color: string }>()
+    for (const calendar of calendars) {
+      map.set(calendar.id, { name: calendar.name, color: calendar.color })
     }
+    if (!map.has('default')) map.set('default', { name: 'Personal', color: '#10b981' })
+    return map
+  }, [calendars])
 
-    return events
-      .filter((e) => {
-        const start = eventStart(e)
-        const end = eventEnd(e)
-
-        // Event overlaps with current day if it starts before day ends AND ends after day starts.
-        // For all-day events, endDate follows iCal DTEND;VALUE=DATE convention (exclusive — the
-        // day *after* the last day of the event), so use `>` rather than `>=` to avoid bleeding
-        // a single-day event onto the morning of the next day.
-        const endComparison = e.allDay ? end > currentDayStart : end >= currentDayStart
-        return start <= currentDayEnd && endComparison
+  const agendaEvents = useMemo(() => {
+    const range = getAgendaRange(currentDate, mode)
+    return expandEventsForRange(events, range)
+      .filter((event) => {
+        const endComparison = event.allDay ? event.endDate > range.start : event.endDate >= range.start
+        return endComparison && event.startDate <= range.end
       })
       .sort(compareEvents)
+      .slice(0, mode === 'upcoming' ? 6 : undefined)
   }, [events, currentDate, mode])
 
   if (agendaEvents.length === 0) {
@@ -104,18 +102,23 @@ export function AgendaView({ events, currentDate, mode = 'day', onEventClick }: 
         </p>
       )}
       {agendaEvents.map((event, index) => {
-        const start = eventStart(event)
+        const calendarId = event.calendarId ?? 'default'
+        const collection = calendarMeta.get(calendarId) ?? { name: collectionFallback(calendarId), color: '#10b981' }
         return (
           <button
             key={event.id}
             type="button"
-            onClick={() => onEventClick?.(event.id)}
+            onClick={() => onEventClick?.(event.masterId, event.instanceDate)}
             className={`w-full text-left rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 transition-colors hover:border-[rgb(var(--primary))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
               mode === 'upcoming' && index === 5 ? 'max-[389px]:hidden' : ''
             }`}
           >
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[rgb(var(--primary))]" />
+              <div
+                className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: collection.color }}
+                aria-hidden="true"
+              />
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-sm font-medium text-[rgb(var(--foreground))] truncate">
@@ -123,7 +126,23 @@ export function AgendaView({ events, currentDate, mode = 'day', onEventClick }: 
                   </p>
                   {mode === 'upcoming' && (
                     <span className="shrink-0 text-xs text-[rgb(var(--muted))]">
-                      {formatAgendaDate(start, currentDate, userTz)}
+                      {formatAgendaDate(event.startDate, currentDate, userTz)}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[rgb(var(--muted))]">
+                  <span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-[rgb(var(--background))] px-2 py-0.5 font-medium">
+                    <span
+                      className="h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: collection.color }}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">{collection.name}</span>
+                  </span>
+                  {event.isRecurring && (
+                    <span className="inline-flex items-center gap-1">
+                      <Repeat2 className="h-3 w-3" />
+                      Repeats
                     </span>
                   )}
                 </div>

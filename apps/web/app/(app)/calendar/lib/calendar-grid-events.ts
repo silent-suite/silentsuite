@@ -18,6 +18,8 @@ export interface DisplayEvent {
   /** The specific occurrence date for this instance */
   instanceDate: Date
   calendarId?: string
+  categories?: string[]
+  timezone?: string
 }
 
 type CalendarGridView = 'week' | 'month'
@@ -50,6 +52,8 @@ export function expandEventsForRange(
           isRecurring: false,
           instanceDate: event.startDate,
           calendarId: event.calendarId,
+          categories: event.categories,
+          timezone: event.timezone,
         })
       }
     } else {
@@ -76,6 +80,8 @@ export function expandEventsForRange(
           isRecurring: true,
           instanceDate: occDate,
           calendarId: event.calendarId,
+          categories: event.categories,
+          timezone: event.timezone,
         })
       }
     }
