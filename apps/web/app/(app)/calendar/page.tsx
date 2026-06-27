@@ -29,8 +29,8 @@ function snapTo30Min(date: Date): Date {
   return snapped
 }
 
-type CalendarDateLabelView = 'week' | 'month' | 'threeDay'
-type MobileCalendarMode = 'agenda' | 'threeDay'
+type CalendarDateLabelView = 'week' | 'month' | 'threeDay' | 'sevenDay'
+type MobileCalendarMode = 'agenda' | 'threeDay' | 'sevenDay'
 
 function addDays(date: Date, days: number): Date {
   const next = new Date(date)
@@ -50,9 +50,9 @@ function formatDateRange(
     return formatDate(date, dateFormat, opts)
   }
 
-  if (view === 'threeDay') {
+  if (view === 'threeDay' || view === 'sevenDay') {
     const rangeStart = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-    const rangeEnd = addDays(rangeStart, 2)
+    const rangeEnd = addDays(rangeStart, view === 'threeDay' ? 2 : 6)
     const startMonth = formatDate(rangeStart, 'system', { month: 'short' })
     const endMonth = formatDate(rangeEnd, 'system', { month: 'short' })
 
@@ -143,7 +143,12 @@ export default function CalendarPage() {
     [currentDate, currentView, dateFormat, firstDayOfWeek],
   )
   const mobileDateLabel = useMemo(
-    () => formatDateRange(currentDate, mobileCalendarMode === 'threeDay' ? 'threeDay' : currentView, dateFormat, firstDayOfWeek),
+    () => formatDateRange(
+      currentDate,
+      mobileCalendarMode === 'agenda' ? currentView : mobileCalendarMode,
+      dateFormat,
+      firstDayOfWeek,
+    ),
     [currentDate, currentView, dateFormat, firstDayOfWeek, mobileCalendarMode],
   )
 
@@ -213,16 +218,16 @@ export default function CalendarPage() {
   )
 
   const handleMobileNavigateBackward = useCallback(() => {
-    if (mobileCalendarMode === 'threeDay') {
-      setCurrentDate(addDays(currentDate, -3))
+    if (mobileCalendarMode !== 'agenda') {
+      setCurrentDate(addDays(currentDate, mobileCalendarMode === 'threeDay' ? -3 : -7))
       return
     }
     navigateBackward()
   }, [currentDate, mobileCalendarMode, navigateBackward, setCurrentDate])
 
   const handleMobileNavigateForward = useCallback(() => {
-    if (mobileCalendarMode === 'threeDay') {
-      setCurrentDate(addDays(currentDate, 3))
+    if (mobileCalendarMode !== 'agenda') {
+      setCurrentDate(addDays(currentDate, mobileCalendarMode === 'threeDay' ? 3 : 7))
       return
     }
     navigateForward()
@@ -319,7 +324,7 @@ export default function CalendarPage() {
         </div>
         <div className="flex items-center gap-2 px-1">
           <h2 className="text-base font-semibold text-[rgb(var(--foreground))]">{mobileDateLabel}</h2>
-          {mobileCalendarMode !== 'threeDay' && weekNumber !== null && (
+          {mobileCalendarMode === 'agenda' && weekNumber !== null && (
             <span
               className="rounded-md bg-[rgb(var(--surface))] px-2 py-0.5 text-xs font-medium text-[rgb(var(--muted))]"
               title="Calendar week"
@@ -352,6 +357,18 @@ export default function CalendarPage() {
             }`}
           >
             3 days
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileCalendarMode('sevenDay')}
+            aria-pressed={mobileCalendarMode === 'sevenDay'}
+            className={`max-md:min-h-[44px] rounded-md px-3 text-sm font-medium transition-colors ${
+              mobileCalendarMode === 'sevenDay'
+                ? 'bg-[rgb(var(--primary))] text-white'
+                : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] active:bg-[rgb(var(--surface))]'
+            }`}
+          >
+            7 days
           </button>
         </div>
       </div>
@@ -433,13 +450,14 @@ export default function CalendarPage() {
             <CalendarGrid events={visibleEvents} onSlotClick={handleSlotClick} onEventClick={handleEventClick} />
           </div>
 
-          {/* Mobile: agenda list view or 3-day grid */}
+          {/* Mobile: upcoming agenda list or multi-day grid */}
           <div className="flex flex-col flex-1 min-h-0 md:hidden">
             {mobileCalendarMode === 'agenda' ? (
               <PullToRefresh>
                 <AgendaView
                   events={visibleEvents}
                   currentDate={currentDate}
+                  mode="upcoming"
                   onEventClick={(id) => {
                     setSelectedEvent(id)
                     setEventInstanceDate(undefined)
@@ -449,8 +467,8 @@ export default function CalendarPage() {
             ) : (
               <div className="flex flex-1 min-h-[520px] overflow-hidden">
                 <CalendarGrid
-                  key="mobile-three-day-grid"
-                  displayView="threeDay"
+                  key={mobileCalendarMode}
+                  displayView={mobileCalendarMode}
                   events={visibleEvents}
                   onSlotClick={handleSlotClick}
                   onEventClick={handleEventClick}

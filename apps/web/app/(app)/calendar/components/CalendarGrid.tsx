@@ -28,10 +28,11 @@ import '@schedule-x/theme-default/dist/index.css'
 // Temporal polyfill — patches globalThis.Temporal and registers types
 import 'temporal-polyfill/global'
 
-type CalendarGridDisplayView = CalendarView | 'threeDay'
+type CalendarGridDisplayView = CalendarView | 'threeDay' | 'sevenDay'
 
 const VIEW_MAP: Record<CalendarGridDisplayView, string> = {
   threeDay: 'week',
+  sevenDay: 'week',
   week: 'week',
   month: 'month-grid',
 }
@@ -62,10 +63,11 @@ function toScheduleXDateTime(date: Date, tz: string): Temporal.ZonedDateTime {
 function getViewRange(currentDate: Date, view: CalendarGridDisplayView, firstDay: FirstDayOfWeek): DateRange {
   const d = new Date(currentDate)
   switch (view) {
-    case 'threeDay': {
+    case 'threeDay':
+    case 'sevenDay': {
       const start = new Date(d.getFullYear(), d.getMonth(), d.getDate())
       const end = new Date(start)
-      end.setDate(start.getDate() + 2)
+      end.setDate(start.getDate() + (view === 'threeDay' ? 2 : 6))
       end.setHours(23, 59, 59, 999)
       return { start, end }
     }
@@ -216,7 +218,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
     () => (currentDate instanceof Date ? currentDate : new Date(currentDate)),
     [currentDateTs],
   )
-  const effectiveSxFirstDayOfWeek = effectiveView === 'threeDay'
+  const effectiveSxFirstDayOfWeek = effectiveView === 'threeDay' || effectiveView === 'sevenDay'
     ? toScheduleXWeekday(currentDateForSx)
     : sxFirstDayOfWeek
   const effectiveWeekDays = effectiveView === 'threeDay' ? 3 : 7
@@ -252,7 +254,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
   displayEventMapRef.current = displayEventMap
 
   const sxEvents = useMemo(
-    () => toScheduleXEvents(displayEvents, calendarColors, userTz, effectiveView === 'threeDay' ? 'week' : effectiveView, toScheduleXDateTime),
+    () => toScheduleXEvents(displayEvents, calendarColors, userTz, effectiveView === 'threeDay' || effectiveView === 'sevenDay' ? 'week' : effectiveView, toScheduleXDateTime),
     [displayEvents, calendarColors, userTz, effectiveView],
   )
 
@@ -489,7 +491,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
   }, [calendar, effectiveSxFirstDayOfWeek])
 
   // Push the effective week column count through Schedule-X. The mobile 3-day
-  // view reuses the week renderer with nDays=3; normal week/month keep 7 days.
+  // views reuse the week renderer with nDays=3 or nDays=7; normal week/month keep 7 days.
   useEffect(() => {
     if (!calendar) return
     try {
@@ -598,9 +600,9 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
 
         // SX is showing a different range — update store to match.
         // Pick a representative date from the SX range for currentDate:
-        // 3-day view → range start; week view → Wednesday; month view → middle.
+        // Mobile multi-day views → range start; week view → Wednesday; month view → middle.
         let newDate: Date
-        if (effectiveView === 'threeDay') {
+        if (effectiveView === 'threeDay' || effectiveView === 'sevenDay') {
           newDate = new Date(sxRangeStart)
         } else if (storeState.currentView === 'week') {
           newDate = new Date(sxRangeStart)
