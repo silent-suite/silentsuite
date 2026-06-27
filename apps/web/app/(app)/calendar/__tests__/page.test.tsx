@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CalendarPage from '../page'
@@ -28,6 +28,8 @@ const storeMock = vi.hoisted(() => ({
     navigateToday: vi.fn(),
     selectedEventId: null as string | null,
     setSelectedEvent: vi.fn(),
+    setCurrentDate: vi.fn(),
+    setCurrentView: vi.fn(),
     searchQuery: '',
     setSearchQuery: vi.fn(),
     getFilteredEvents: () => storeMock.calendarState.events,
@@ -53,7 +55,7 @@ vi.mock('@/app/stores/use-auth-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-preferences-store', () => ({
-  usePreferencesStore: (selector: (state: { dateFormat: 'system' }) => unknown) => selector({ dateFormat: 'system' }),
+  usePreferencesStore: (selector: (state: { dateFormat: 'system'; firstDayOfWeek: 'monday' }) => unknown) => selector({ dateFormat: 'system', firstDayOfWeek: 'monday' }),
 }))
 
 vi.mock('@/app/components/PullToRefresh', () => ({
@@ -65,8 +67,8 @@ vi.mock('../components/CalendarViewSwitcher', () => ({
 }))
 
 vi.mock('../components/CalendarGrid', () => ({
-  CalendarGrid: ({ events }: { events: { title: string }[] }) => (
-    <div data-testid="desktop-grid">
+  CalendarGrid: ({ events, displayView }: { events: { title: string }[]; displayView?: 'threeDay' }) => (
+    <div data-testid={displayView === 'threeDay' ? 'mobile-three-day-grid' : 'desktop-grid'} data-display-view={displayView ?? 'store'}>
       {events.map((event) => <span key={event.title}>{event.title}</span>)}
     </div>
   ),
@@ -92,16 +94,29 @@ vi.mock('@/app/components/MobileCollectionSheet', () => ({
   MobileCollectionSheet: ({ open }: { open: boolean }) => (open ? <div data-testid="collection-sheet" /> : null),
 }))
 
+function resetCalendarMocks() {
+  storeMock.calendarState.currentView = 'week'
+  storeMock.calendarState.currentDate = new Date('2026-06-01T12:00:00Z')
+  storeMock.calendarState.selectedEventId = null
+  storeMock.calendarState.searchQuery = ''
+  storeMock.calendarState.navigateForward.mockReset()
+  storeMock.calendarState.navigateBackward.mockReset()
+  storeMock.calendarState.navigateToday.mockReset()
+  storeMock.calendarState.setSelectedEvent.mockReset()
+  storeMock.calendarState.setCurrentDate.mockReset()
+  storeMock.calendarState.setCurrentView.mockReset()
+  storeMock.calendarState.setSearchQuery.mockReset()
+  storeMock.authState.canWrite.mockReturnValue(true)
+}
+
 describe('CalendarPage calendar visibility', () => {
   beforeEach(() => {
+    resetCalendarMocks()
     storeMock.calendarState.isLoading = false
     storeMock.calendarState.events = [
       { id: 'visible-event', calendarId: 'visible-cal', title: 'Visible event' },
       { id: 'hidden-event', calendarId: 'hidden-cal', title: 'Hidden event' },
     ]
-    storeMock.calendarState.selectedEventId = null
-    storeMock.calendarState.searchQuery = ''
-    storeMock.calendarState.setSearchQuery.mockReset()
     storeMock.calendarListState.calendars = [
       { id: 'visible-cal', name: 'Visible', color: '#10b981', visible: true },
       { id: 'hidden-cal', name: 'Hidden', color: '#ef4444', visible: false },
@@ -119,15 +134,25 @@ describe('CalendarPage calendar visibility', () => {
     expect(mobileAgenda.getByText('Visible event')).toBeInTheDocument()
     expect(mobileAgenda.queryByText('Hidden event')).not.toBeInTheDocument()
   })
+
+  it('keeps hidden calendar events out of the mobile 3-day grid', () => {
+    renderWithIntl(<CalendarPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+
+    const mobileGrid = within(screen.getByTestId('mobile-three-day-grid'))
+    expect(mobileGrid.getByText('Visible event')).toBeInTheDocument()
+    expect(mobileGrid.queryByText('Hidden event')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-agenda')).not.toBeInTheDocument()
+  })
 })
 
 describe('CalendarPage mobile reachability', () => {
   beforeEach(() => {
+    resetCalendarMocks()
     storeMock.calendarState.isLoading = true
     storeMock.calendarState.events = []
-    storeMock.calendarState.searchQuery = ''
     storeMock.calendarListState.calendars = []
-    storeMock.authState.canWrite.mockReturnValue(true)
   })
 
   it('exposes mobile nav buttons with a mobile-scoped 44px hit area', () => {
@@ -161,6 +186,50 @@ describe('CalendarPage mobile reachability', () => {
     expect(mobileToday).toBeDefined()
     expect(mobileToday!.className).toContain('max-md:min-w-[44px]')
     expect(mobileToday!.className).not.toContain('touch-target')
+  })
+
+  it('exposes mobile Agenda and 3-day view controls with accessible state', () => {
+    renderWithIntl(<CalendarPage />)
+
+    const agenda = screen.getByRole('button', { name: 'Agenda' })
+    const threeDays = screen.getByRole('button', { name: '3 days' })
+
+    expect(agenda.className).toContain('max-md:min-h-[44px]')
+    expect(threeDays.className).toContain('max-md:min-h-[44px]')
+    expect(agenda).toHaveAttribute('aria-pressed', 'true')
+    expect(threeDays).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(threeDays)
+
+    expect(threeDays).toHaveAttribute('aria-pressed', 'true')
+    expect(storeMock.calendarState.setCurrentView).not.toHaveBeenCalledWith('threeDay')
+  })
+
+  it('moves mobile 3-day navigation in 3-day increments without changing the desktop view', () => {
+    renderWithIntl(<CalendarPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+
+    const mobileNext = screen.getAllByRole('button', { name: 'Next' }).find((btn) => btn.className.includes('max-md:min-h-[44px]'))!
+    fireEvent.click(mobileNext)
+    expect(storeMock.calendarState.setCurrentDate).toHaveBeenLastCalledWith(new Date('2026-06-04T12:00:00Z'))
+    expect(storeMock.calendarState.navigateForward).not.toHaveBeenCalled()
+
+    const mobilePrevious = screen.getAllByRole('button', { name: 'Previous' }).find((btn) => btn.className.includes('max-md:min-h-[44px]'))!
+    fireEvent.click(mobilePrevious)
+    expect(storeMock.calendarState.setCurrentDate).toHaveBeenLastCalledWith(new Date('2026-05-29T12:00:00Z'))
+    expect(storeMock.calendarState.navigateBackward).not.toHaveBeenCalled()
+    expect(storeMock.calendarState.setCurrentView).not.toHaveBeenCalledWith('threeDay')
+  })
+
+  it('shows a short 3-day range label in mobile 3-day mode', () => {
+    storeMock.calendarState.currentDate = new Date('2026-12-31T12:00:00Z')
+
+    renderWithIntl(<CalendarPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+
+    expect(screen.getByText('Dec 31, 2026 – Jan 2, 2027')).toBeInTheDocument()
   })
 
   it('exposes a mobile collection switcher with a 44px touch target', () => {
