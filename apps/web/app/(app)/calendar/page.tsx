@@ -457,15 +457,16 @@ export default function CalendarPage() {
                 <AgendaView
                   events={visibleEvents}
                   currentDate={currentDate}
+                  calendars={calendars}
                   mode="upcoming"
-                  onEventClick={(id) => {
+                  onEventClick={(id, instanceDate) => {
                     setSelectedEvent(id)
-                    setEventInstanceDate(undefined)
+                    setEventInstanceDate(instanceDate)
                   }}
                 />
               </PullToRefresh>
             ) : (
-              <div className="flex flex-1 min-h-[520px] overflow-hidden">
+              <div className="mobile-calendar-grid-scroll flex flex-1 min-h-[520px] overflow-x-auto overflow-y-hidden pb-1">
                 <CalendarGrid
                   key={mobileCalendarMode}
                   displayView={mobileCalendarMode}
