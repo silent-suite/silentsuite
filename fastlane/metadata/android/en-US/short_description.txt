@@ -1,1 +1,1 @@
-Private calendar, contacts, and tasks sync for Android
+End-to-end encrypted sync for calendar, contacts, and tasks
