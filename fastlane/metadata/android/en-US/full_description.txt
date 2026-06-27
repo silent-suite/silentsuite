@@ -1,11 +1,17 @@
-SilentSuite is a zero-knowledge sync app for Android calendars, contacts, and tasks. It keeps your productivity data encrypted before it reaches the server, so SilentSuite cannot read your calendar events, address book, or task lists.
+SilentSuite privately syncs your Android calendar, contacts, and tasks, so you can keep using the apps you like without giving up control of your data. Your content is encrypted on your device before sync, and your keys stay on your device.
 
-<b>Use Your Existing Apps</b><br />SilentSuite works as an Android sync adapter. After you sign in, your encrypted SilentSuite collections appear in compatible calendar, contacts, and task apps on your phone. Use the Android apps you already like while keeping sync private.
+<b>Sync Your Android Life Privately</b><br />SilentSuite works as an Android sync adapter. After you sign in, your encrypted calendars, contacts, and tasks appear in compatible Android apps, so you can keep using the calendar, contacts, and task apps you already like.
 
-<b>Private By Design</b><br />Your plaintext data stays on your devices. Sync data is stored on the server as encrypted blobs, and your encryption keys do not leave your device. The server needs limited metadata, such as sync tokens and timestamps, so sync can work, but it cannot decrypt the contents of your calendars, contacts, or tasks.
+<b>Only Your Devices Can Read It</b><br />Your plaintext data stays on your devices. The server stores encrypted sync data and the limited metadata needed to keep sync working, such as sync tokens and timestamps. It cannot decrypt your calendar events, address book, or task lists.
 
-<b>Hosted Or Self-Hosted</b><br />You can use SilentSuite with a hosted silentsuite.io account, or point the app at your own self-hosted SilentSuite server. The server and client code are open source, so privacy claims can be inspected instead of merely trusted.
+<b>Keep Personal And Work Separate</b><br />Organize calendars, contacts, and tasks in one account. SilentSuite is designed for everyday productivity data, with private sync across your Android devices and no need to hand readable copies to a Big Tech account.
 
-<b>What You Need</b><br />To use this app, you need a silentsuite.io account or a compatible self-hosted server. Learn more at https://silentsuite.io/.
+<b>No Vendor Lock-In</b><br />Import and export your data anytime. SilentSuite is built around open standards and open source code, so you stay in control if you move devices, switch apps, or self-host later.
 
-<b>Beta Note</b><br />SilentSuite is actively improving. Calendar, contacts, and tasks sync are the core focus of this beta; please report issues so we can make the Android experience better.
+<b>Hosted Or Self-Hosted</b><br />Start with a hosted silentsuite.io account, or connect to your own compatible SilentSuite server. The server, bridge, web app, and Android app are open source, so privacy claims can be inspected instead of merely trusted.
+
+<b>What Works Today</b><br />• End-to-end encrypted calendar, contacts, and tasks sync<br />• Works with compatible Android calendar, contacts, and tasks apps<br />• Hosted account or custom server<br />• Import and export for data portability<br />• Open source, inspectable, and self-hostable
+
+<b>What You Need</b><br />To use this app, you need a silentsuite.io account or a compatible self-hosted server. A 7-day hosted trial is available at https://app.silentsuite.io/signup with no card required.
+
+<b>Beta Note</b><br />SilentSuite is actively improving. Calendar, contacts, and tasks sync are the core focus of this beta. Please report issues through the app, GitHub, or info@silentsuite.io so we can keep making the Android experience better.
