@@ -1,1 +1,1 @@
-Zero-knowledge calendar, contacts, and tasks sync for Android
+Private calendar, contacts, and tasks sync for Android
