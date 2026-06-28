@@ -1,0 +1,1 @@
+Fixes Google Play 16 KB native library compatibility by rebuilding native sync dependencies with 16 KB page-size support.
