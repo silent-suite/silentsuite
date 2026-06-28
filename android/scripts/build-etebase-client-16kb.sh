@@ -17,9 +17,12 @@ ORIGINAL_AAR_SHA256="${ORIGINAL_AAR_SHA256:-1d1ff77036911852b74f18f2854f86a73176
 ORIGINAL_AAR="$BUILD_DIR/client-2.3.2.aar"
 NATIVE_OUT="$BUILD_DIR/native"
 
-ABIS=(armeabi-v7a arm64-v8a x86 x86_64)
-TARGETS=(armv7-linux-androideabi aarch64-linux-android i686-linux-android x86_64-linux-android)
-CLANGS=(armv7a-linux-androideabi21-clang aarch64-linux-android21-clang i686-linux-android21-clang x86_64-linux-android21-clang)
+# Google Play's 16 KB page-size requirement applies to 64-bit Android
+# devices. Rebuild and replace only the 64-bit Etebase libraries; leave the
+# upstream 32-bit libraries untouched in the repacked AAR.
+ABIS=(arm64-v8a x86_64)
+TARGETS=(aarch64-linux-android x86_64-linux-android)
+CLANGS=(aarch64-linux-android21-clang x86_64-linux-android21-clang)
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
