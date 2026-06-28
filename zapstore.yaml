@@ -1,5 +1,5 @@
 repository: https://github.com/silent-suite/silentsuite
-release_source: https://github.com/silent-suite/silentsuite/releases/download/v0.3.0-beta/silentsuite-android-v0.3.0-beta.apk
+release_source: https://github.com/silent-suite/silentsuite/releases/download/v0.3.1-beta/silentsuite-android-v0.3.1-beta.apk
 pubkey: npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35
 name: SilentSuite
 summary: End-to-end encrypted sync for calendar, contacts, and tasks
@@ -26,14 +26,14 @@ tags:
   - sync
 license: GPL-3.0-only
 website: https://silentsuite.io
-icon: https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/icon.png
+icon: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/icon.png
 images:
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-calendar-contacts-tasks.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-personal-work.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-android-apps.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-import-export.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/phoneScreenshots/5-open-source.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/phoneScreenshots/6-encryption.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/phoneScreenshots/7-built-for-android.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/dev/android/fastlane/metadata/android/en-US/images/phoneScreenshots/8-server-choice.png
-release_notes: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/changelogs/8.txt
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-calendar-contacts-tasks.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-personal-work.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-android-apps.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-import-export.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/5-open-source.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/6-encryption.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/7-built-for-android.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/8-server-choice.png
+release_notes: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/changelogs/9.txt
