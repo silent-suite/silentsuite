@@ -1,0 +1,1 @@
+Fixes Android App Bundle packaging compatibility for devices and stores that require 16 KB native library alignment.

@@ -597,6 +597,82 @@
   border: 1px solid rgb(var(--border) / 0.25);
 }
 
+/* ---------------------------------------------------------------------------
+   17. MOBILE MULTI-DAY GRID – readable swipeable columns
+   --------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  .mobile-calendar-grid-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--muted) / 0.25) transparent;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days="3"] {
+    min-width: max(100%, 390px);
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days="7"] {
+    /* Seven columns are not readable when squeezed into a phone viewport.
+       Match common mobile calendar patterns: keep a vertical schedule grid,
+       but make the week swipe horizontally with usable day columns. */
+    min-width: 780px;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__time-axis {
+    width: 38px;
+    min-width: 38px;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__time-axis-hour {
+    font-size: 0.58rem;
+    padding-right: 6px;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__week-header {
+    padding: 6px 0 4px;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__week-header-day .sx__week-header-day-name {
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__week-header-day .sx__week-header-day-date {
+    width: 28px;
+    height: 28px;
+    font-size: 0.95rem;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__time-grid-event {
+    margin-inline: 2px !important;
+    border-radius: 5px !important;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__time-grid-event-inner {
+    padding: 2px 4px !important;
+    font-size: 0.66rem;
+    line-height: 1.08;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__time-grid-event-time,
+  .sx-silentsuite-calendar[data-mobile-days] .sx__time-grid-event-location,
+  .sx-silentsuite-calendar[data-mobile-days] .sx__time-grid-event-people {
+    display: none !important;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days] .sx__time-grid-event-title {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .sx-silentsuite-calendar[data-mobile-days="7"] .sx__time-grid-event-inner {
+    font-size: 0.62rem;
+  }
+}
+
 /* ==========================================================================
    General UI Polish (from UI/UX improvements branch)
    ========================================================================== */

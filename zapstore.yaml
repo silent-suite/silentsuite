@@ -1,16 +1,22 @@
 repository: https://github.com/silent-suite/silentsuite
-release_source: https://github.com/silent-suite/silentsuite/releases/download/v0.3.0-beta/silentsuite-android-v0.3.0-beta.apk
+release_source: https://github.com/silent-suite/silentsuite/releases/download/v0.3.1-beta/silentsuite-android-v0.3.1-beta.apk
 pubkey: npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35
 name: SilentSuite
-summary: Zero-knowledge calendar, contacts, and tasks sync for Android
+summary: End-to-end encrypted sync for calendar, contacts, and tasks
 description: |
-  SilentSuite is a zero-knowledge sync app for Android calendars, contacts, and tasks. It keeps your productivity data encrypted before it reaches the server, so SilentSuite cannot read your calendar events, address book, or task lists.
+  Your calendar, contacts, and tasks should stay in sync wherever you work: Android, macOS, Windows, Linux, and the web. SilentSuite keeps that data available across your devices while applying end-to-end encryption before anything leaves your device.
 
-  Use your existing Android calendar, contacts, and task apps while syncing private data through SilentSuite. Your plaintext data stays on your devices. Sync data is stored on the server as encrypted blobs, and your encryption keys do not leave your device.
+  Encryption and decryption happen on your device, and your keys stay there. The server stores only ciphertext, so it cannot read what you keep on it. This is what zero-knowledge means in practice: the privacy guarantee is a technical constraint, not a policy statement.
 
-  You can use SilentSuite with a hosted silentsuite.io account, or point the app at your own self-hosted SilentSuite server. The server and client code are open source, so privacy claims can be inspected instead of merely trusted.
+  SilentSuite is built to fit into each system you use. On Android it works as a native sync adapter for compatible calendar, contacts, and task apps. On macOS, Windows, and Linux it integrates through a lightweight desktop bridge, so your encrypted data can appear in the tools already built into your workflow. The web app gives you browser access when you are away from your own devices. iPhone support is coming soon.
 
-  Beta note: SilentSuite is actively improving. Calendar, contacts, and tasks sync are the core focus of this beta; please report issues so we can make the Android experience better.
+  The app is fully open source. Anyone can read the code, review the encryption, and confirm the privacy claims for themselves. There are no proprietary components to take on trust.
+
+  You choose where your data lives. Use the hosted service, or run your own server on hardware you control. Your data stays portable: export it at any time in standard formats, with no lock-in.
+
+  This is a beta release. Calendar, contacts, and task sync are the focus of this version and form its stable core. Feedback and bug reports are welcome through the link in the app.
+
+  Requires a SilentSuite account. Self-hosting documentation is available at docs.silentsuite.io.
 tags:
   - productivity
   - privacy
@@ -20,10 +26,14 @@ tags:
   - sync
 license: GPL-3.0-only
 website: https://silentsuite.io
-icon: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/icon.png
+icon: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/icon.png
 images:
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-add-account.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-sync-overview.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-navigation-drawer.png
-  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-encryption-fingerprint.png
-release_notes: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.0-beta/android/fastlane/metadata/android/en-US/changelogs/8.txt
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-calendar-contacts-tasks.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-personal-work.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-android-apps.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-import-export.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/5-open-source.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/6-encryption.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/7-built-for-android.png
+  - https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/images/phoneScreenshots/8-server-choice.png
+release_notes: https://raw.githubusercontent.com/silent-suite/silentsuite/v0.3.1-beta/android/fastlane/metadata/android/en-US/changelogs/9.txt
