@@ -4,6 +4,7 @@
 # Built application files
 *.apk
 *.ap_
+app/libs/client-*-16kb.aar
 
 # Files for the Dalvik VM
 *.dex
