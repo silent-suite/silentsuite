@@ -11,7 +11,7 @@ package io.silentsuite.sync.ui.setup
 import android.accounts.Account
 import android.app.Dialog
 import android.os.Bundle
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.lifecycleScope
 import io.silentsuite.sync.AccountSettings
@@ -99,7 +99,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
     class NothingDetectedFragment : DialogFragment() {
 
         override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-            return AlertDialog.Builder(requireActivity())
+            return MaterialAlertDialogBuilder(requireActivity())
                     .setTitle(R.string.setting_up_encryption)
                     .setIcon(R.drawable.ic_error_dark)
                     .setMessage(R.string.login_wrong_username_or_password)

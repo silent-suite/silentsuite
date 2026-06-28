@@ -3,7 +3,7 @@ package io.silentsuite.sync.ui
 import android.accounts.Account
 import android.app.Dialog
 import android.os.Bundle
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.DialogFragment
 import io.silentsuite.sync.model.CollectionInfo
 
@@ -17,7 +17,7 @@ class DeleteCollectionFragment : DialogFragment() {
     class ConfirmDeleteCollectionFragment : DialogFragment() {
 
         override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-            return AlertDialog.Builder(requireContext())
+            return MaterialAlertDialogBuilder(requireContext())
                     .setMessage("Legacy fragment — not functional")
                     .setPositiveButton(android.R.string.ok) { _, _ -> dismiss() }
                     .create()

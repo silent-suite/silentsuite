@@ -14,7 +14,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.etebase.client.Client
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.HttpClient
@@ -49,7 +49,7 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
 
     fun changePasswordError(e: Exception) {
         progress.dismiss()
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.wrong_encryption_password)
                 .setIcon(R.drawable.ic_error_dark)
                 .setMessage(e.localizedMessage)
@@ -77,7 +77,7 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
                 }
 
                 progress.dismiss()
-                AlertDialog.Builder(this@ChangeEncryptionPasswordActivity)
+                MaterialAlertDialogBuilder(this@ChangeEncryptionPasswordActivity)
                         .setTitle(R.string.change_encryption_password_success_title)
                         .setMessage(R.string.change_encryption_password_success_body)
                         .setPositiveButton(android.R.string.ok) { _, _ ->
@@ -115,7 +115,7 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
             return
         }
 
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.delete_collection_confirm_title)
                 .setMessage(R.string.change_encryption_password_are_you_sure)
                 .setPositiveButton(android.R.string.yes) { _, _ ->

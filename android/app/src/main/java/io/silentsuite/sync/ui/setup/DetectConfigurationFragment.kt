@@ -10,7 +10,7 @@ package io.silentsuite.sync.ui.setup
 
 import android.app.Dialog
 import android.os.Bundle
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.DialogFragment
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
@@ -86,7 +86,7 @@ class DetectConfigurationFragment : DialogFragment() {
     class NothingDetectedFragment : DialogFragment() {
 
         override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-            return AlertDialog.Builder(requireActivity())
+            return MaterialAlertDialogBuilder(requireActivity())
                     .setTitle(R.string.setting_up_encryption)
                     .setIcon(R.drawable.ic_error_dark)
                     .setMessage(requireArguments().getString(KEY_LOGS))

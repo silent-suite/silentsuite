@@ -8,7 +8,7 @@ import android.view.ViewGroup
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.ListFragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
@@ -82,7 +82,7 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
         val member = listAdapter?.getItem(position) as CollectionMember
 
         if (member.accessLevel == CollectionAccessLevel.Admin) {
-            AlertDialog.Builder(requireActivity())
+            MaterialAlertDialogBuilder(requireActivity())
                     .setIcon(R.drawable.ic_error_dark)
                     .setTitle(R.string.collection_members_remove_title)
                     .setMessage(R.string.collection_members_remove_admin)
@@ -90,7 +90,7 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
             return
         }
 
-        AlertDialog.Builder(requireActivity())
+        MaterialAlertDialogBuilder(requireActivity())
                 .setIcon(R.drawable.ic_info_dark)
                 .setTitle(R.string.collection_members_remove_title)
                 .setMessage(getString(R.string.collection_members_remove, member.username))

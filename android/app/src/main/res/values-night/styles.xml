@@ -34,6 +34,10 @@
 
         <!-- Force white text/icons on the dark ActionBar -->
         <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
+
+        <!-- Shared rounded dialog treatment for Material dialogs. -->
+        <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
+        <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
     </style>
 
     <style name="AppTheme.NoActionBar">
@@ -42,8 +46,19 @@
         <item name="android:statusBarColor">@color/navy700</item>
     </style>
 
-    <style name="AppTheme.Dialog.Alert" parent="Theme.AppCompat.DayNight.Dialog.Alert">
+    <style name="AppTheme.Dialog.Alert" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
         <item name="colorAccent">@color/teal400</item>
+        <item name="colorPrimary">@color/teal400</item>
+        <item name="colorSecondary">@color/teal400</item>
+        <item name="colorSurface">@color/navy600</item>
+        <item name="colorOnSurface">@android:color/white</item>
+        <item name="shapeAppearanceOverlay">@style/AppTheme.ShapeAppearance.Dialog</item>
+        <item name="buttonBarButtonStyle">@style/AppTheme.Dialog.Button</item>
+    </style>
+
+    <style name="AppTheme.Dialog.Button" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/teal400</item>
+        <item name="android:textAllCaps">true</item>
     </style>
 
     <!-- stepper (wizard) - dark variant -->
