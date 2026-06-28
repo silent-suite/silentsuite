@@ -20,8 +20,8 @@ android {
         minSdkVersion 21
         targetSdkVersion 35
 
-        versionCode 9
-        versionName "0.3.1-beta"
+        versionCode 10
+        versionName "0.3.2-beta"
 
         buildConfigField "boolean", "customCerts", "true"
     }
@@ -136,7 +136,29 @@ dependencies {
 
     // Legacy journalmanager dependency removed — Etebase-only sync
     def etebaseVersion = '2.3.2'
-    implementation "com.etebase:client:$etebaseVersion"
+    def etebase16KbAar = file("libs/client-${etebaseVersion}-16kb.aar")
+    def etebase16KbRequired = providers.gradleProperty('requireEtebase16Kb')
+            .map { it.toBoolean() }
+            .getOrElse(false)
+    def releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
+        def normalized = taskName.toLowerCase()
+        normalized == 'assemblerelease' || normalized.endsWith(':assemblerelease') ||
+                normalized == 'bundlerelease' || normalized.endsWith(':bundlerelease')
+    }
+
+    if (etebase16KbAar.exists()) {
+        implementation files(etebase16KbAar)
+        // Direct dependencies from com.etebase:client:2.3.2, kept explicit because
+        // a local AAR does not carry Maven transitive metadata. The upstream
+        // okhttp/logging-interceptor dependency is satisfied by this app's
+        // direct OkHttp dependencies below.
+        implementation 'androidx.annotation:annotation:1.1.0'
+    } else if (etebase16KbRequired || releaseBuildRequested) {
+        throw new GradleException("Missing ${etebase16KbAar}. Run android/scripts/build-etebase-client-16kb.sh before release builds, or pass -PrequireEtebase16Kb=false only for local non-release builds.")
+    } else {
+        logger.warn("Using Maven com.etebase:client:${etebaseVersion}; run android/scripts/build-etebase-client-16kb.sh to build the 16 KB-aligned local AAR.")
+        implementation "com.etebase:client:$etebaseVersion"
+    }
 
     // ACRA crash reporting removed - will be replaced with Sentry in Phase 2
     // def acraVersion = '5.7.0'
