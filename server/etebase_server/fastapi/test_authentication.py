@@ -204,6 +204,23 @@ class TestSignup:
         assert response.status_code == 409
         assert decode_response(response)["code"] == "user_exists"
 
+    def test_signup_for_existing_user_without_userinfo_returns_409(
+        self, auth_client, user_factory, login_pubkey, encryption_pubkey, user_salt
+    ):
+        user_factory(username="test_user_uninitialized", email="uninitialized@example.com", with_userinfo=False)
+        body = self._signup_body(
+            "test_user_uninitialized",
+            "attacker@example.com",
+            login_pubkey,
+            encryption_pubkey,
+            user_salt,
+        )
+
+        response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", body)
+
+        assert response.status_code == 409
+        assert decode_response(response)["code"] == "user_exists"
+
     def test_signup_unexpected_creation_error_returns_safe_detail(
         self, auth_client, login_pubkey, encryption_pubkey, user_salt
     ):
