@@ -17,6 +17,9 @@
              both light and dark themes. Previously transparent, which made light
              status-bar icons invisible on the light offwhite background. -->
         <item name="android:statusBarColor">@color/navy700</item>
+        <item name="android:navigationBarColor">@color/navy700</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
 </resources>

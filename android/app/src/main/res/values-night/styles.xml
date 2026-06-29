@@ -35,6 +35,12 @@
         <!-- Force white text/icons on the dark ActionBar -->
         <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
 
+        <!-- Solid navy system bars keep light status/navigation icons readable. -->
+        <item name="android:statusBarColor">@color/navy700</item>
+        <item name="android:navigationBarColor">@color/navy700</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+
         <!-- Shared rounded dialog treatment for Material dialogs. -->
         <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
         <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
@@ -44,6 +50,9 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:statusBarColor">@color/navy700</item>
+        <item name="android:navigationBarColor">@color/navy700</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <style name="AppTheme.Dialog.Alert" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
