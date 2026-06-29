@@ -40,6 +40,8 @@ function makeFormatTime(hour12: boolean, tz: string) {
 }
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 
+type EventTimeFormat = '12h' | '24h'
+
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
@@ -77,6 +79,57 @@ function formatTimeForInput(date: Date, tz: string | undefined): string {
     return `${h}:${m}`
   }
   return formatTimeForInputInZone(date, tz)
+}
+
+function normalizeTimeFormat(timeFormat: string): EventTimeFormat {
+  return timeFormat === '24h' ? '24h' : '12h'
+}
+
+export function formatEventTimeInput(value: string, timeFormat: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(value)
+  if (!match) return value
+
+  const hour = Number(match[1])
+  const minute = Number(match[2])
+  if (hour > 23 || minute > 59) return value
+
+  if (normalizeTimeFormat(timeFormat) === '24h') {
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  }
+
+  const meridiem = hour >= 12 ? 'PM' : 'AM'
+  const displayHour = hour % 12 === 0 ? 12 : hour % 12
+  return `${displayHour}:${String(minute).padStart(2, '0')} ${meridiem}`
+}
+
+export function parseEventTimeInput(input: string, timeFormat: string): string | null {
+  const value = input.trim().replace(/\s+/g, ' ')
+  if (!value) return null
+
+  const meridiemMatch = /^(\d{1,2})(?::([0-5]\d))?\s*([ap])\.?m\.?$/i.exec(value)
+  if (meridiemMatch) {
+    const rawHour = Number(meridiemMatch[1])
+    const minute = Number(meridiemMatch[2] ?? '00')
+    if (rawHour < 1 || rawHour > 12) return null
+    const meridiem = meridiemMatch[3]!.toLowerCase()
+    const hour = meridiem === 'p' ? (rawHour % 12) + 12 : rawHour % 12
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  }
+
+  const twentyFourHourMatch = /^(\d{1,2}):([0-5]\d)$/.exec(value)
+  if (!twentyFourHourMatch) return null
+
+  const hour = Number(twentyFourHourMatch[1])
+  const minute = Number(twentyFourHourMatch[2])
+  if (hour > 23) return null
+
+  if (normalizeTimeFormat(timeFormat) === '12h' && hour >= 1 && hour <= 12) {
+    return null
+  }
+
+  // 12-hour users may still paste or type a stored 24-hour HH:mm value;
+  // normalize it back to storage format and let the display formatter add AM/PM.
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 }
 
 function formatDateForInput(date: Date, tz: string | undefined): string {
@@ -168,10 +221,14 @@ export function EventDialog({
   const [location, setLocation] = useState(isEdit ? (event.location || '') : '')
   const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
   const [allDay, setAllDay] = useState(initialIsAllDay)
+  const initialStartTime = formatTimeForInput(defaultStart, initialFormTz)
+  const initialEndTime = formatTimeForInput(defaultEnd, initialFormTz)
   const [startDate, setStartDate] = useState(formatDateForInput(defaultStart, initialFormTz))
-  const [startTime, setStartTime] = useState(formatTimeForInput(defaultStart, initialFormTz))
+  const [startTime, setStartTime] = useState(initialStartTime)
+  const [startTimeInput, setStartTimeInput] = useState(() => formatEventTimeInput(initialStartTime, timeFormat))
   const [endDate, setEndDate] = useState(formatDateForInput(defaultEnd, initialFormTz))
-  const [endTime, setEndTime] = useState(formatTimeForInput(defaultEnd, initialFormTz))
+  const [endTime, setEndTime] = useState(initialEndTime)
+  const [endTimeInput, setEndTimeInput] = useState(() => formatEventTimeInput(initialEndTime, timeFormat))
   const [recurrenceRule, setRecurrenceRule] = useState<string | null>(
     isEdit ? event.recurrenceRule : null,
   )
@@ -201,6 +258,14 @@ export function EventDialog({
   const allTimezones = (() => {
     try { return Intl.supportedValuesOf('timeZone') } catch { return ['UTC'] }
   })()
+
+  useEffect(() => {
+    setStartTimeInput(formatEventTimeInput(startTime, timeFormat))
+  }, [startTime, timeFormat])
+
+  useEffect(() => {
+    setEndTimeInput(formatEventTimeInput(endTime, timeFormat))
+  }, [endTime, timeFormat])
 
   // Calendar selection
   const calendarLists = useCalendarListStore((s) => s.calendars)
@@ -471,17 +536,21 @@ export function EventDialog({
   const handleStartTimeChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value
-      setStartTime(value)
+      setStartTimeInput(value)
+      const parsedTime = parseEventTimeInput(value, timeFormat)
+      if (!parsedTime) return
+
+      setStartTime(parsedTime)
       // Auto-adjust end time to 30 min after start if on same day. Pure HH:MM
       // arithmetic via a synthetic local Date; format back as browser-local
       // since we only need the wall-clock string back.
       if (startDate === endDate) {
-        const [h, m] = value.split(':').map(Number)
+        const [h, m] = parsedTime.split(':').map(Number)
         const newEnd = new Date(2000, 0, 1, h, m + 30)
         setEndTime(formatTimeForInput(newEnd, undefined))
       }
     },
-    [startDate, endDate],
+    [startDate, endDate, timeFormat],
   )
 
   const handleEndDateChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -489,8 +558,19 @@ export function EventDialog({
   }, [])
 
   const handleEndTimeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setEndTime(e.target.value)
-  }, [])
+    const value = e.target.value
+    setEndTimeInput(value)
+    const parsedTime = parseEventTimeInput(value, timeFormat)
+    if (parsedTime) setEndTime(parsedTime)
+  }, [timeFormat])
+
+  const handleStartTimeBlur = useCallback(() => {
+    setStartTimeInput(formatEventTimeInput(startTime, timeFormat))
+  }, [startTime, timeFormat])
+
+  const handleEndTimeBlur = useCallback(() => {
+    setEndTimeInput(formatEventTimeInput(endTime, timeFormat))
+  }, [endTime, timeFormat])
 
   const handleAllDayToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setAllDay(e.target.checked)
@@ -536,71 +616,77 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const canSave = title.trim().length > 0
+  const focusRing = 'focus:outline-none focus:ring-2 focus:ring-emerald-500/80 focus:ring-offset-2 focus:ring-offset-[rgb(var(--background))]'
+  const fieldClass = `min-h-11 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-sm text-[rgb(var(--foreground))] shadow-sm shadow-black/5 transition-colors placeholder:text-[rgb(var(--muted))] hover:border-emerald-500/40 focus:border-emerald-500 ${focusRing}`
+  const compactFieldClass = `min-h-10 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] shadow-sm shadow-black/5 transition-colors hover:border-emerald-500/40 focus:border-emerald-500 ${focusRing}`
+  const disabledClass = !canWrite ? 'opacity-60 cursor-not-allowed' : ''
+  const sectionClass = 'rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))]/55 p-4 shadow-sm shadow-black/5 dark:bg-white/[0.03]'
+  const sectionTitleClass = 'text-[11px] font-semibold uppercase tracking-[0.16em] text-[rgb(var(--muted))]'
+  const iconClass = 'h-4 w-4 shrink-0 text-emerald-500/80'
 
   return (
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-[200] bg-black/60 dark:bg-black/70 transition-opacity backdrop-blur-[1px]"
+        className="fixed inset-0 z-[200] bg-slate-950/55 backdrop-blur-sm transition-opacity dark:bg-black/75"
         aria-hidden="true"
         onClick={onClose}
       />
 
       {/* Dialog container — centered on desktop, full-screen on mobile */}
-      <div className="fixed inset-0 z-[201] flex items-center justify-center p-0 sm:p-4">
+      <div className="fixed inset-0 z-[201] flex items-end justify-center p-0 sm:items-center sm:p-6">
         <div
           ref={dialogRef}
           role="dialog"
           aria-label={isEdit ? 'Edit event' : 'New event'}
           aria-modal="true"
-          className="flex h-full w-full flex-col bg-[rgb(var(--background))] text-[rgb(var(--foreground))] pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[85vh] sm:w-full sm:max-w-md sm:rounded-xl sm:border sm:border-[rgb(var(--border))] sm:shadow-xl dark:sm:shadow-2xl dark:sm:shadow-black/40"
+          className="flex h-full w-full flex-col overflow-hidden bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-2xl shadow-black/25 pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[88vh] sm:w-full sm:max-w-2xl sm:rounded-3xl sm:border sm:border-[rgb(var(--border))] dark:shadow-black/60"
         >
           {/* Mobile drag handle / swipe indicator */}
-          <div className="flex justify-center pt-2 pb-0 sm:hidden" aria-hidden="true">
-            <div className="h-1 w-10 rounded-full bg-[rgb(var(--border))]" />
+          <div className="flex justify-center bg-[rgb(var(--background))] pt-2 sm:hidden" aria-hidden="true">
+            <div className="h-1.5 w-12 rounded-full bg-[rgb(var(--border))]" />
           </div>
 
-          {/* ----------------------------------------------------------------- */}
-          {/* Header: Cancel | Title + Subtitle | Done (sticky for keyboard)    */}
-          {/* ----------------------------------------------------------------- */}
-          <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-2 border-b border-[rgb(var(--border))] bg-[rgb(var(--background))] px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-            {/* Cancel button */}
-            <button
-              onClick={onClose}
-              className="shrink-0 rounded-md px-2 py-1 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              Cancel
-            </button>
+          {/* Header */}
+          <div className="sticky top-0 z-10 shrink-0 border-b border-[rgb(var(--border))] bg-[rgb(var(--background))]/95 px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur sm:px-6">
+            <div className="flex items-center justify-between gap-3">
+              <button
+                onClick={onClose}
+                className={`shrink-0 rounded-full border border-transparent px-3 py-2 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:border-[rgb(var(--border))] hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] ${focusRing}`}
+              >
+                Cancel
+              </button>
 
-            {/* Center title + subtitle */}
-            <div className="flex min-w-0 flex-1 flex-col items-center">
-              <span className="text-sm font-semibold text-[rgb(var(--foreground))]">
-                {isEdit ? 'Edit Event' : 'New Event'}
-              </span>
-              <span className="max-w-full truncate text-xs text-[rgb(var(--muted))]">
-                {subtitle}
-              </span>
+              <div className="flex min-w-0 flex-1 flex-col items-center px-1 text-center">
+                <span className="text-base font-semibold tracking-tight text-[rgb(var(--foreground))]">
+                  {isEdit ? 'Edit event' : 'New event'}
+                </span>
+                <span className="mt-0.5 max-w-full truncate text-xs text-[rgb(var(--muted))] sm:text-sm">
+                  {subtitle}
+                </span>
+              </div>
+
+              <button
+                onClick={() => void handleSave()}
+                disabled={!canSave || saving || !canWrite}
+                className={`shrink-0 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
+                title={!canWrite ? 'Subscription required' : undefined}
+              >
+                {saving ? 'Saving…' : 'Done'}
+              </button>
             </div>
-
-            {/* Done button */}
-            <button
-              onClick={() => void handleSave()}
-              disabled={!canSave || saving || !canWrite}
-              className="shrink-0 rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
-              title={!canWrite ? 'Subscription required' : undefined}
-            >
-              {saving ? 'Saving…' : 'Done'}
-            </button>
           </div>
 
-          {/* ----------------------------------------------------------------- */}
-          {/* Body — scrollable                                                 */}
-          {/* ----------------------------------------------------------------- */}
-          <div className="flex-1 overflow-y-auto">
-            <div className="px-4 py-4 flex flex-col gap-4">
-              {/* ---- Title input ---- */}
-              <div className="flex items-center gap-3">
-                <Pencil className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+          {/* Body — scrollable */}
+          <div className="flex-1 overflow-y-auto overscroll-contain">
+            <div className="flex flex-col gap-4 px-4 py-5 sm:px-6 sm:py-6">
+              {/* Details */}
+              <section className={`${sectionClass} space-y-4`}>
+                <div className="flex items-center gap-2">
+                  <Pencil className={iconClass} />
+                  <span className={sectionTitleClass}>Details</span>
+                </div>
+
                 <input
                   ref={titleRef}
                   type="text"
@@ -610,160 +696,161 @@ export function EventDialog({
                   placeholder="Event title"
                   aria-label="Event title"
                   readOnly={!canWrite}
-                  className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                  className={`w-full ${fieldClass} text-base font-medium ${disabledClass}`}
                 />
-              </div>
 
-              {/* ---- Location input ---- */}
-              <div className="flex items-center gap-3">
-                <MapPin className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-                <input
-                  type="text"
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  placeholder="Add location"
-                  aria-label="Event location"
-                  readOnly={!canWrite}
-                  className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
-                />
-              </div>
-
-              {/* ---- Labels / categories ---- */}
-              <div className="flex items-start gap-3">
-                <Tag className="mt-2.5 h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-                <LabelEditor
-                  labels={categories}
-                  onChange={setCategories}
-                  disabled={!canWrite}
-                  aria-label={t('eventLabels')}
-                />
-              </div>
-
-              {/* ---- Calendar selector — colored pill buttons ---- */}
-              <div className="flex items-center gap-3">
-                <CalendarDays className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-                <div className="flex flex-wrap gap-1.5">
-                  {calendarLists.map((cal) => (
-                    <button
-                      key={cal.id}
-                      type="button"
-                      onClick={() => setSelectedCalendarId(cal.id)}
-                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors border ${
-                        selectedCalendarId === cal.id
-                          ? 'border-transparent text-white'
-                          : 'border-[rgb(var(--border))] text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] bg-[rgb(var(--surface))]'
-                      }`}
-                      style={selectedCalendarId === cal.id ? { backgroundColor: cal.color } : undefined}
-                    >
-                      <div
-                        className="h-2 w-2 rounded-full"
-                        style={{ backgroundColor: cal.color }}
-                      />
-                      {cal.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* ---- Divider ---- */}
-              <div className="border-t border-[rgb(var(--border))]" />
-
-              {/* ---- Schedule section ---- */}
-              <div className="flex flex-col gap-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-[rgb(var(--muted))]">
-                  Schedule
-                </span>
-
-                {/* All Day toggle */}
-                <label className="flex items-center justify-between cursor-pointer">
-                  <div className="flex items-center gap-3">
-                    <Clock className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-                    <span className="text-sm text-[rgb(var(--foreground))]">All Day</span>
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                  <div className="flex items-center gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-2.5">
+                    <MapPin className={iconClass} />
+                    <input
+                      type="text"
+                      value={location}
+                      onChange={(e) => setLocation(e.target.value)}
+                      placeholder="Add location"
+                      aria-label="Event location"
+                      readOnly={!canWrite}
+                      className={`min-w-0 flex-1 bg-transparent text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] ${focusRing} ${disabledClass}`}
+                    />
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={allDay}
-                    onChange={handleAllDayToggle}
-                    disabled={!canWrite}
-                    className={`h-4 w-4 rounded border-[rgb(var(--border))] accent-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
-                  />
-                </label>
 
-                {/* Starts row */}
-                <div className="flex items-center gap-3">
-                  <div className="h-4 w-4 shrink-0" /> {/* spacer to align with icons */}
-                  <div className="flex flex-1 items-center justify-between gap-2">
-                    <span className="text-sm text-[rgb(var(--muted))]">Starts</span>
+                  <div className="flex items-start gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-2.5 sm:min-w-[14rem]">
+                    <Tag className={`${iconClass} mt-1`} />
+                    <div className="min-w-0 flex-1">
+                      <LabelEditor
+                        labels={categories}
+                        onChange={setCategories}
+                        disabled={!canWrite}
+                        aria-label={t('eventLabels')}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {calendarLists.length > 0 && (
+                  <div className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-3">
                     <div className="flex items-center gap-2">
+                      <CalendarDays className={iconClass} />
+                      <span className="text-sm font-medium text-[rgb(var(--foreground))]">Calendar</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pl-0 sm:pl-6">
+                      {calendarLists.map((cal) => (
+                        <button
+                          key={cal.id}
+                          type="button"
+                          onClick={() => setSelectedCalendarId(cal.id)}
+                          className={`inline-flex min-h-9 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${focusRing} ${
+                            selectedCalendarId === cal.id
+                              ? 'border-transparent text-white shadow-sm shadow-black/10'
+                              : 'border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--muted))] hover:border-emerald-500/40 hover:text-[rgb(var(--foreground))]'
+                          }`}
+                          style={selectedCalendarId === cal.id ? { backgroundColor: cal.color } : undefined}
+                        >
+                          <div
+                            className="h-2.5 w-2.5 rounded-full ring-1 ring-white/40"
+                            style={{ backgroundColor: cal.color }}
+                          />
+                          {cal.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              {/* Schedule section */}
+              <section className={`${sectionClass} space-y-4`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Clock className={iconClass} />
+                    <span className={sectionTitleClass}>Schedule</span>
+                  </div>
+                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--background))]/70 px-3 py-2 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:border-emerald-500/40">
+                    <input
+                      type="checkbox"
+                      checked={allDay}
+                      onChange={handleAllDayToggle}
+                      disabled={!canWrite}
+                      className={`h-4 w-4 rounded border-[rgb(var(--border))] accent-emerald-500 ${disabledClass}`}
+                    />
+                    All day
+                  </label>
+                </div>
+
+                <div className="grid gap-3">
+                  <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
+                    <div className="grid gap-2 sm:grid-cols-[5rem_minmax(0,1fr)_7.5rem] sm:items-center">
+                      <span className="text-sm font-medium text-[rgb(var(--muted))]">Starts</span>
                       <input
                         type="date"
                         value={startDate}
                         onChange={handleStartDateChange}
                         aria-label="Start date"
                         readOnly={!canWrite}
-                        className={`rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                        className={`w-full ${compactFieldClass} ${disabledClass}`}
                       />
                       {!allDay && (
                         <input
-                          type="time"
-                          value={startTime}
+                          type="text"
+                          inputMode="text"
+                          pattern={timeFormat === '24h' ? '[0-2]?[0-9]:[0-5][0-9]' : undefined}
+                          placeholder={timeFormat === '24h' ? '14:00' : '2:00 PM'}
+                          value={startTimeInput}
                           onChange={handleStartTimeChange}
+                          onBlur={handleStartTimeBlur}
                           aria-label="Start time"
                           readOnly={!canWrite}
-                          className={`w-[6.5rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                          className={`w-full ${compactFieldClass} ${disabledClass}`}
                         />
                       )}
                     </div>
                   </div>
-                </div>
 
-                {/* Ends row */}
-                <div className="flex items-center gap-3">
-                  <div className="h-4 w-4 shrink-0" /> {/* spacer */}
-                  <div className="flex flex-1 items-center justify-between gap-2">
-                    <span className="text-sm text-[rgb(var(--muted))]">Ends</span>
-                    <div className="flex items-center gap-2">
+                  <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
+                    <div className="grid gap-2 sm:grid-cols-[5rem_minmax(0,1fr)_7.5rem] sm:items-center">
+                      <span className="text-sm font-medium text-[rgb(var(--muted))]">Ends</span>
                       <input
                         type="date"
                         value={endDate}
                         onChange={handleEndDateChange}
                         aria-label="End date"
                         readOnly={!canWrite}
-                        className={`rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                        className={`w-full ${compactFieldClass} ${disabledClass}`}
                       />
                       {!allDay && (
                         <input
-                          type="time"
-                          value={endTime}
+                          type="text"
+                          inputMode="text"
+                          pattern={timeFormat === '24h' ? '[0-2]?[0-9]:[0-5][0-9]' : undefined}
+                          placeholder={timeFormat === '24h' ? '14:30' : '2:30 PM'}
+                          value={endTimeInput}
                           onChange={handleEndTimeChange}
+                          onBlur={handleEndTimeBlur}
                           aria-label="End time"
                           readOnly={!canWrite}
-                          className={`w-[6.5rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                          className={`w-full ${compactFieldClass} ${disabledClass}`}
                         />
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* Repeat row */}
-                <div className="flex items-start gap-3">
-                  <Repeat className="mt-1.5 h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-                  <div className="flex-1">
+                <div className="flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
+                  <Repeat className={`${iconClass} mt-2`} />
+                  <div className="min-w-0 flex-1">
                     <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} />
                   </div>
                 </div>
 
-                {/* Timezone row — hidden for all-day events */}
                 {!allDay && (
-                  <div className="flex flex-col gap-1">
+                  <div className="space-y-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
                     <div className="flex items-center gap-3">
-                      <Globe className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+                      <Globe className={iconClass} />
                       <select
                         value={timezone}
                         onChange={(e) => setTimezone(e.target.value)}
                         disabled={!canWrite}
                         aria-label="Event timezone"
-                        className={`flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                        className={`min-w-0 flex-1 ${compactFieldClass} ${disabledClass}`}
                       >
                         {allTimezones.map((tz) => (
                           <option key={tz} value={tz}>{tz.replace(/_/g, ' ')}</option>
@@ -771,114 +858,118 @@ export function EventDialog({
                       </select>
                     </div>
                     {timezone !== userTz && (
-                      <span className="ml-7 text-[11px] text-[rgb(var(--muted))]">
+                      <span className="block pl-7 text-xs leading-relaxed text-[rgb(var(--muted))]">
                         Event anchored in {shortTimezoneLabel(timezone, buildStartDate())}; your calendar shows {shortTimezoneLabel(userTz, buildStartDate())}.
                       </span>
                     )}
                   </div>
                 )}
+              </section>
 
-                {/* ---- Notifications section ---- */}
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <Bell className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
-                      <span className="text-sm text-[rgb(var(--foreground))]">Reminders</span>
-                    </div>
-                    {canWrite && (
-                      <button
-                        type="button"
-                        onClick={() => setAlarms((prev) => [...prev, '15'])}
-                        className="text-xs text-emerald-500 hover:text-emerald-400 transition-colors"
-                      >
-                        + Add
-                      </button>
-                    )}
+              {/* Reminders */}
+              <section className={`${sectionClass} space-y-3`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Bell className={iconClass} />
+                    <span className={sectionTitleClass}>Reminders</span>
                   </div>
-
-                  {alarms.length === 0 && (
-                    <div className="ml-7 text-xs text-[rgb(var(--muted))]">No reminders</div>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      onClick={() => setAlarms((prev) => [...prev, '15'])}
+                      className={`rounded-full border border-emerald-500/30 px-3 py-1.5 text-xs font-semibold text-emerald-600 transition-colors hover:bg-emerald-500/10 dark:text-emerald-400 ${focusRing}`}
+                    >
+                      + Add
+                    </button>
                   )}
-
-                  {alarms.map((alarm, i) => (
-                    <div key={i} className="flex items-center gap-2 ml-7">
-                      <select
-                        value={alarm}
-                        onChange={(e) => {
-                          const next = [...alarms]
-                          next[i] = e.target.value
-                          setAlarms(next)
-                        }}
-                        className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                      >
-                        <option value="5">5 minutes before</option>
-                        <option value="15">15 minutes before</option>
-                        <option value="30">30 minutes before</option>
-                        <option value="60">1 hour before</option>
-                        <option value="1440">1 day before</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => setAlarms((prev) => prev.filter((_, j) => j !== i))}
-                        className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-500 transition-colors"
-                        aria-label="Remove reminder"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
                 </div>
 
-                {/* Notification permission prompt */}
+                {alarms.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-[rgb(var(--border))] bg-[rgb(var(--background))]/45 px-3 py-3 text-sm text-[rgb(var(--muted))]">
+                    No reminders
+                  </div>
+                )}
+
+                {alarms.map((alarm, i) => (
+                  <div key={i} className="flex items-center gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-2">
+                    <select
+                      value={alarm}
+                      onChange={(e) => {
+                        const next = [...alarms]
+                        next[i] = e.target.value
+                        setAlarms(next)
+                      }}
+                      className={`min-w-0 flex-1 ${compactFieldClass}`}
+                    >
+                      <option value="5">5 minutes before</option>
+                      <option value="15">15 minutes before</option>
+                      <option value="30">30 minutes before</option>
+                      <option value="60">1 hour before</option>
+                      <option value="1440">1 day before</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setAlarms((prev) => prev.filter((_, j) => j !== i))}
+                      className={`rounded-full p-2 text-[rgb(var(--muted))] transition-colors hover:bg-red-500/10 hover:text-red-500 ${focusRing}`}
+                      aria-label="Remove reminder"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+
                 {alarms.length > 0 && notifications.permission === 'default' && (
-                  <div className="ml-7 flex items-center gap-2 rounded-md bg-amber-500/10 border border-amber-500/20 px-3 py-2">
-                    <span className="text-xs text-amber-600 dark:text-amber-400">
+                  <div className="flex flex-col gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span className="text-sm text-amber-700 dark:text-amber-300">
                       Allow notifications to get reminders in this browser
                     </span>
                     <button
                       type="button"
                       onClick={() => void notifications.requestPermission()}
-                      className="rounded bg-amber-500 px-2 py-0.5 text-xs font-medium text-white hover:bg-amber-600 transition-colors"
+                      className={`rounded-full bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-600 ${focusRing}`}
                     >
                       Allow
                     </button>
                   </div>
                 )}
-              </div>
+              </section>
 
-              {/* ---- Divider ---- */}
-              <div className="border-t border-[rgb(var(--border))]" />
-
-              {/* ---- Description textarea ---- */}
-              <div className="flex items-start gap-3">
-                <AlignLeft className="mt-2 h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
+              {/* Description */}
+              <section className={`${sectionClass} space-y-3`}>
+                <div className="flex items-center gap-2">
+                  <AlignLeft className={iconClass} />
+                  <span className={sectionTitleClass}>Notes</span>
+                </div>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Add description"
                   aria-label="Event description"
-                  rows={3}
+                  rows={4}
                   readOnly={!canWrite}
-                  className={`flex-1 resize-none rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                  className={`w-full resize-none ${fieldClass} ${disabledClass}`}
                 />
-              </div>
+              </section>
+
+              {isEdit && canWrite && (
+                <section className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-red-600 dark:text-red-400">Delete event</h3>
+                      <p className="mt-1 text-xs text-[rgb(var(--muted))]">Remove this event from the selected calendar.</p>
+                    </div>
+                    <button
+                      onClick={handleDelete}
+                      className={`inline-flex items-center justify-center gap-2 rounded-full border border-red-500/30 px-4 py-2 text-sm font-semibold text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-400 ${focusRing}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Delete event
+                    </button>
+                  </div>
+                </section>
+              )}
             </div>
           </div>
-
-          {/* ----------------------------------------------------------------- */}
-          {/* Footer: Delete button (edit mode only)                            */}
-          {/* ----------------------------------------------------------------- */}
-          {isEdit && canWrite && (
-            <div className="shrink-0 border-t border-[rgb(var(--border))] px-4 py-3">
-              <button
-                onClick={handleDelete}
-                className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm text-red-500 hover:bg-red-500/10 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete event
-              </button>
-            </div>
-          )}
         </div>
       </div>
 

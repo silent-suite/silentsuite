@@ -80,6 +80,16 @@
 
         <!-- Force white text/icons on the dark ActionBar -->
         <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
+
+        <!-- Solid navy system bars keep light status/navigation icons readable. -->
+        <item name="android:statusBarColor">@color/navy700</item>
+        <item name="android:navigationBarColor">@color/navy700</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+
+        <!-- Shared rounded dialog treatment for Material dialogs. -->
+        <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
+        <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
     </style>
 
     <style name="AppTheme.NoActionBar">
@@ -87,13 +97,32 @@
         <item name="windowNoTitle">true</item>
         <!-- Solid navy status bar so light system icons stay readable (see values-v21). -->
         <item name="android:statusBarColor">@color/navy700</item>
+        <item name="android:navigationBarColor">@color/navy700</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
 
     <!-- dialogs -->
 
-    <style name="AppTheme.Dialog.Alert" parent="Theme.AppCompat.DayNight.Dialog.Alert">
+    <style name="AppTheme.Dialog.Alert" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
         <item name="colorAccent">@color/teal600</item>
+        <item name="colorPrimary">@color/teal600</item>
+        <item name="colorSecondary">@color/teal600</item>
+        <item name="colorSurface">@android:color/white</item>
+        <item name="colorOnSurface">@color/navy800</item>
+        <item name="shapeAppearanceOverlay">@style/AppTheme.ShapeAppearance.Dialog</item>
+        <item name="buttonBarButtonStyle">@style/AppTheme.Dialog.Button</item>
+    </style>
+
+    <style name="AppTheme.ShapeAppearance.Dialog" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">24dp</item>
+    </style>
+
+    <style name="AppTheme.Dialog.Button" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/teal600</item>
+        <item name="android:textAllCaps">true</item>
     </style>
 
 

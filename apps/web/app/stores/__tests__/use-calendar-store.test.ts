@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useCalendarStore } from '../use-calendar-store'
 import { serializeCalendarEvent, deserializeCalendarEvent } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
+import { expandEventsForRange } from '@/app/(app)/calendar/lib/calendar-grid-events'
 
 const etebaseMock = vi.hoisted(() => ({
   state: {
@@ -219,6 +220,37 @@ describe('useCalendarStore.updateRecurringEvent', () => {
     const uploadedContent = etebaseMock.state.createItem.mock.calls[0]![1] as string
     expect(uploadedContent).toContain(`UID:${created!.uid}`)
     expect(uploadedContent).not.toContain(`UID:${remoteItemUid}`)
+  })
+})
+
+describe('useCalendarStore.deleteRecurringEvent', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('adds an exception for This event and preserves the rest of the series', async () => {
+    const master = makeRecurringEvent({ recurrenceRule: 'FREQ=DAILY' })
+    const instanceDate = new Date('2026-06-03T09:00:00Z')
+    useCalendarStore.setState({ events: [master] })
+
+    await useCalendarStore.getState().deleteRecurringEvent(master.id, 'this', instanceDate)
+
+    const updatedMaster = useCalendarStore.getState().events[0]!
+    expect(updatedMaster.id).toBe(master.id)
+    expect(updatedMaster.exceptions).toEqual([instanceDate])
+    expect(serializeCalendarEvent(updatedMaster)).toContain('EXDATE:')
+
+    const displayedStarts = expandEventsForRange([updatedMaster], {
+      start: new Date('2026-06-01T00:00:00Z'),
+      end: new Date('2026-06-05T23:59:59Z'),
+    }).map((event) => event.startDate.toISOString())
+
+    expect(displayedStarts).toEqual([
+      '2026-06-01T09:00:00.000Z',
+      '2026-06-02T09:00:00.000Z',
+      '2026-06-04T09:00:00.000Z',
+      '2026-06-05T09:00:00.000Z',
+    ])
   })
 })
 

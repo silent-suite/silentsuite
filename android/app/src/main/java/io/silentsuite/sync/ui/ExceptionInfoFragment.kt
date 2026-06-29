@@ -11,7 +11,7 @@ package io.silentsuite.sync.ui
 import android.accounts.Account
 import android.app.Dialog
 import android.os.Bundle
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.DialogFragment
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
@@ -31,7 +31,7 @@ class ExceptionInfoFragment : DialogFragment() {
         else if (exception is IOException)
             title = R.string.exception_ioexception
 
-        val dialog = AlertDialog.Builder(requireContext())
+        val dialog = MaterialAlertDialogBuilder(requireContext())
                 .setIcon(R.drawable.ic_error_dark)
                 .setTitle(title)
                 .setMessage("${exception.javaClass.canonicalName}\n" + exception.localizedMessage)

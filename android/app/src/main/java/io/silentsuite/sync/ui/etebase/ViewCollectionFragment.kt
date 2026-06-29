@@ -6,7 +6,7 @@ import android.os.Bundle
 import android.view.*
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
@@ -118,7 +118,7 @@ class ViewCollectionFragment : Fragment() {
                         addToBackStack(EditCollectionFragment::class.java.name)
                     }
                 } else {
-                    val dialog = AlertDialog.Builder(requireContext())
+                    val dialog = MaterialAlertDialogBuilder(requireContext())
                             .setIcon(R.drawable.ic_info_dark)
                             .setTitle(R.string.not_allowed_title)
                             .setMessage(R.string.edit_owner_only_anon)
@@ -146,7 +146,7 @@ class ViewCollectionFragment : Fragment() {
 
     private fun startImport(cachedCollection: CachedCollection) {
         if (cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly) {
-            val dialog = AlertDialog.Builder(requireContext())
+            val dialog = MaterialAlertDialogBuilder(requireContext())
                     .setIcon(R.drawable.ic_info_dark)
                     .setTitle(R.string.not_allowed_title)
                     .setMessage(R.string.edit_owner_only_anon)

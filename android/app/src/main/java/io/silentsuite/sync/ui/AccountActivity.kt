@@ -25,7 +25,7 @@ import android.widget.*
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
 import androidx.appcompat.app.ActionBarDrawerToggle
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
@@ -368,7 +368,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
         view.findViewById<View>(R.id.body).visibility = View.GONE
         (view.findViewById<View>(R.id.fingerprint) as TextView).text = displayFingerprint
-        AlertDialog.Builder(this@AccountActivity)
+        MaterialAlertDialogBuilder(this@AccountActivity)
                 .setIcon(R.drawable.ic_fingerprint_dark)
                 .setTitle(R.string.show_fingperprint_title)
                 .setView(view)
@@ -458,7 +458,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     private fun showExportDialog() {
         val exportKinds = AndroidExportKind.values()
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.export_data_title)
             .setItems(exportKinds.map { it.displayName }.toTypedArray()) { _, which ->
                 createExportDocument(exportKinds[which])
@@ -528,7 +528,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             return
         }
 
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.account_delete_confirmation_title)
             .setMessage(R.string.account_delete_confirmation_text)
             .setPositiveButton(R.string.navigation_drawer_logout) { _, _ ->
@@ -564,7 +564,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             else -> 2
         }
 
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle(R.string.navigation_drawer_theme)
             .setSingleChoiceItems(themes, checkedItem) { dialog, which ->
                 val mode = when (which) {

@@ -3,12 +3,13 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from fastapi import APIRouter, Request, status
 
+from etebase_server.django import models
 from etebase_server.django.utils import CallbackContext, get_user_queryset
 from etebase_server.myauth.models import get_typed_user_model
 
 from ..exceptions import HttpError
 from ..msgpack import MsgpackRoute
-from .authentication import SignupIn, signup_save
+from .authentication import SignupIn
 
 test_reset_view_router = APIRouter(route_class=MsgpackRoute, tags=["test helpers"])
 User = get_typed_user_model()
@@ -30,7 +31,7 @@ def reset(data: SignupIn, request: Request):
         if hasattr(user, "userinfo"):
             user.userinfo.delete()
 
-        signup_save(data, request)
+        models.UserInfo.objects.create(**data.dict(exclude={"user"}), owner=user)
         # Delete all of the journal data for this user for a clear test env
         user.collection_set.all().delete()
         user.collectionmember_set.all().delete()

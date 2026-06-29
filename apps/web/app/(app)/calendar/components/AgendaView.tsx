@@ -18,8 +18,13 @@ interface AgendaViewProps {
   onEventClick?: (eventId: string, instanceDate?: Date) => void
 }
 
-function formatTime(date: Date, tz: string): string {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: tz })
+function formatTime(date: Date, tz: string, hour12: boolean): string {
+  return date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12,
+    timeZone: tz,
+  })
 }
 
 function isSameDay(a: Date, b: Date): boolean {
@@ -69,7 +74,9 @@ function collectionFallback(calendarId: string): string {
 
 export function AgendaView({ events, currentDate, calendars = [], mode = 'day', onEventClick }: AgendaViewProps) {
   const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
+  const timeFormat = usePreferencesStore((s) => s.timeFormat)
   const userTz = resolveUserTimezone(defaultTimezonePref)
+  const use12h = timeFormat !== '24h'
   const calendarMeta = useMemo(() => {
     const map = new Map<string, { name: string; color: string }>()
     for (const calendar of calendars) {
@@ -150,7 +157,7 @@ export function AgendaView({ events, currentDate, calendars = [], mode = 'day', 
                   <div className="mt-1 flex items-center gap-1 text-xs text-[rgb(var(--muted))]">
                     <Clock className="h-3 w-3" />
                     <span>
-                      {formatTime(event.startDate, userTz)} – {formatTime(event.endDate, userTz)}
+                      {formatTime(event.startDate, userTz, use12h)} – {formatTime(event.endDate, userTz, use12h)}
                     </span>
                     {event.timezone && event.timezone !== userTz && (
                       <span className="ml-1 rounded bg-[rgb(var(--surface-muted))] px-1 py-0.5 text-[10px] font-medium text-[rgb(var(--muted))]">

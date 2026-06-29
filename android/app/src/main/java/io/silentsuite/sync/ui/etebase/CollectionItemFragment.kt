@@ -8,7 +8,7 @@ import android.text.format.DateFormat
 import android.text.format.DateUtils
 import android.view.*
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentPagerAdapter
@@ -168,7 +168,7 @@ class CollectionItemFragment : Fragment() {
             }
         }
 
-        val dialog = AlertDialog.Builder(context)
+        val dialog = MaterialAlertDialogBuilder(context)
                 .setTitle(R.string.journal_item_restore_action)
                 .setIcon(R.drawable.ic_restore_black)
                 .setMessage(R.string.journal_item_restore_dialog_body)

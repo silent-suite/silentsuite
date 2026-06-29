@@ -10,7 +10,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ProgressBar
 import androidx.activity.viewModels
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
@@ -83,7 +83,7 @@ class NewAccountWizardActivity : BaseActivity() {
 
 
 fun reportErrorHelper(context: Context, e: Throwable) {
-    AlertDialog.Builder(context)
+    MaterialAlertDialogBuilder(context)
             .setIcon(R.drawable.ic_info_dark)
             .setTitle(R.string.exception)
             .setMessage(e.localizedMessage)

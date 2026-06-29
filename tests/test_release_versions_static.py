@@ -10,7 +10,7 @@ import json
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-CURRENT_RELEASE_VERSION = "0.3.1-beta"
+CURRENT_RELEASE_VERSION = "0.3.2-beta"
 
 PACKAGE_JSON_PATHS = [
     "package.json",
