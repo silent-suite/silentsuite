@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
-import { EventDialog } from '../EventDialog'
+import { EventDialog, formatEventTimeInput, parseEventTimeInput } from '../EventDialog'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 
 const mocks = vi.hoisted(() => ({
@@ -12,6 +12,12 @@ const mocks = vi.hoisted(() => ({
   deleteRecurringEvent: vi.fn(),
   onClose: vi.fn(),
   requestPermission: vi.fn(),
+  preferences: {
+    defaultReminder: 'none',
+    timeFormat: '24h',
+    defaultTimezone: 'UTC',
+    dateFormat: 'system',
+  },
   calendars: [
     { id: 'cal-a', name: 'Work', color: '#10b981', visible: true },
     { id: 'cal-b', name: 'Family', color: '#ef4444', visible: true },
@@ -52,16 +58,10 @@ vi.mock('@/app/stores/use-calendar-list-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-preferences-store', () => {
-  const state = {
-    defaultReminder: 'none',
-    timeFormat: '24h',
-    defaultTimezone: 'UTC',
-    dateFormat: 'system',
+  const usePreferencesStore = function usePreferencesStore<T>(selector: (currentState: typeof mocks.preferences) => T): T {
+    return selector(mocks.preferences)
   }
-  const usePreferencesStore = function usePreferencesStore<T>(selector: (currentState: typeof state) => T): T {
-    return selector(state)
-  }
-  usePreferencesStore.getState = () => state
+  usePreferencesStore.getState = () => mocks.preferences
   return { usePreferencesStore }
 })
 
@@ -103,6 +103,84 @@ describe('EventDialog edit calendar selection', () => {
     mocks.deleteRecurringEvent.mockReset()
     mocks.onClose.mockReset()
     mocks.requestPermission.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  it.each([
+    ['00:00', '00:00', '12:00 AM'],
+    ['09:05', '09:05', '9:05 AM'],
+    ['12:00', '12:00', '12:00 PM'],
+    ['14:00', '14:00', '2:00 PM'],
+    ['23:59', '23:59', '11:59 PM'],
+  ])('formats %s according to the account time preference', (stored, expected24h, expected12h) => {
+    expect(formatEventTimeInput(stored, '24h')).toBe(expected24h)
+    expect(formatEventTimeInput(stored, '12h')).toBe(expected12h)
+  })
+
+  it.each([
+    ['00:00', '24h', '00:00'],
+    ['09:05', '24h', '09:05'],
+    ['9:05', '24h', '09:05'],
+    ['12:00', '24h', '12:00'],
+    ['14:00', '24h', '14:00'],
+    ['23:59', '24h', '23:59'],
+    ['12:00 AM', '12h', '00:00'],
+    ['9:05 AM', '12h', '09:05'],
+    ['12:00 PM', '12h', '12:00'],
+    ['2:00 PM', '12h', '14:00'],
+    ['11:59 PM', '12h', '23:59'],
+    ['14:00', '12h', '14:00'],
+  ])('parses %s in %s mode back to HH:mm', (input, preference, expected) => {
+    expect(parseEventTimeInput(input, preference)).toBe(expected)
+  })
+
+  it('renders event dialog time controls as 24-hour text fields for the 24-hour preference', () => {
+    mocks.preferences.timeFormat = '24h'
+
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent({ startDate: new Date('2026-06-01T14:00:00Z'), endDate: new Date('2026-06-01T15:30:00Z') })} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Start time')).toHaveAttribute('type', 'text')
+    expect(screen.getByLabelText('Start time')).toHaveValue('14:00')
+    expect(screen.getByLabelText('End time')).toHaveValue('15:30')
+  })
+
+  it('renders event dialog time controls with AM/PM for the 12-hour preference', () => {
+    mocks.preferences.timeFormat = '12h'
+
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent({ startDate: new Date('2026-06-01T14:00:00Z'), endDate: new Date('2026-06-01T15:30:00Z') })} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Start time')).toHaveValue('2:00 PM')
+    expect(screen.getByLabelText('End time')).toHaveValue('3:30 PM')
+  })
+
+  it('accepts 24-hour typed values and saves unchanged HH:mm wall-clock times', async () => {
+    mocks.preferences.timeFormat = '24h'
+
+    renderWithIntl(
+      <EventDialog
+        mode="create"
+        startDate={new Date('2026-06-01T14:00:00Z')}
+        endDate={new Date('2026-06-01T14:30:00Z')}
+        onClose={mocks.onClose}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: '24-hour event' } })
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '16:45' } })
+    fireEvent.change(screen.getByLabelText('End time'), { target: { value: '17:30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    await waitFor(() => {
+      expect(mocks.createEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          startDate: new Date('2026-06-01T16:45:00Z'),
+          endDate: new Date('2026-06-01T17:30:00Z'),
+          timezone: 'UTC',
+        }),
+      )
+    })
   })
 
   it('includes calendarId in the edit patch when the selected calendar changes', async () => {
