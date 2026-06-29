@@ -6,6 +6,7 @@ import {
   deserializeCalendarEvent,
 } from './calendar-event.js';
 import type { CalendarEvent } from './calendar-event.js';
+import { expandRecurrence } from '../utils/recurrence.js';
 
 // ── Helpers ──
 
@@ -224,6 +225,41 @@ describe('recurring event', () => {
     expect(restored.exceptions).toHaveLength(2);
     expect(restored.exceptions[0]!.getDate()).toBe(17);
     expect(restored.exceptions[1]!.getDate()).toBe(19);
+  });
+
+  it('roundtrips timezone-aware EXDATE values so deleted occurrences stay removed after reload', () => {
+    const original = makeFullEvent({
+      startDate: new Date('2026-06-01T13:00:00.000Z'),
+      endDate: new Date('2026-06-01T14:00:00.000Z'),
+      timezone: 'America/New_York',
+      recurrenceRule: 'FREQ=DAILY;COUNT=5',
+      exceptions: [new Date('2026-06-03T13:00:00.000Z')],
+    });
+
+    const ical = toVEvent(original);
+    expect(ical).toContain('DTSTART;TZID=America/New_York:20260601T090000');
+    expect(ical).toContain('EXDATE;TZID=America/New_York:20260603T090000');
+
+    const restored = fromVEvent(ical);
+    expect(restored.timezone).toBe('America/New_York');
+    expect(restored.exceptions[0]!.toISOString()).toBe('2026-06-03T13:00:00.000Z');
+
+    const displayedStarts = expandRecurrence(
+      restored.recurrenceRule!,
+      restored.startDate,
+      {
+        start: new Date('2026-06-01T00:00:00.000Z'),
+        end: new Date('2026-06-05T23:59:59.000Z'),
+      },
+      restored.exceptions,
+    ).map((date) => date.toISOString());
+
+    expect(displayedStarts).toEqual([
+      '2026-06-01T13:00:00.000Z',
+      '2026-06-02T13:00:00.000Z',
+      '2026-06-04T13:00:00.000Z',
+      '2026-06-05T13:00:00.000Z',
+    ]);
   });
 
   it('roundtrips an all-day recurring event with EXDATE', () => {

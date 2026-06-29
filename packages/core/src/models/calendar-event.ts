@@ -156,6 +156,10 @@ export function toVEvent(event: CalendarEvent): string {
             tzid ? formatICalDateTimeLocal(d, tzid) : formatICalDate(d, event.allDay)
           )
         : undefined,
+    exdateParams:
+      event.exceptions.length > 0 && tzid
+        ? { TZID: tzid }
+        : undefined,
     valarms: event.alarms.length > 0 ? event.alarms : undefined,
     categories: event.categories && event.categories.length > 0 ? event.categories : undefined,
     created: formatICalDateTime(event.created),
@@ -189,8 +193,9 @@ export function fromVEvent(veventStr: string): CalendarEvent {
     ? parseICalDateValue(vevent.dtend, endTzid)
     : { date: new Date(startParsed.date.getTime()), allDay: startParsed.allDay };
 
+  const exdateTzid = vevent.exdateParams?.['TZID'] ?? (isAllDay ? undefined : startTzid);
   const exceptions = (vevent.exdate ?? []).map(
-    (d) => parseICalDateValue(d).date,
+    (d) => parseICalDateValue(d, exdateTzid).date,
   );
 
   const now = new Date();
