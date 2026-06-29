@@ -40,6 +40,8 @@ function makeFormatTime(hour12: boolean, tz: string) {
 }
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 
+type EventTimeFormat = '12h' | '24h'
+
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
@@ -77,6 +79,57 @@ function formatTimeForInput(date: Date, tz: string | undefined): string {
     return `${h}:${m}`
   }
   return formatTimeForInputInZone(date, tz)
+}
+
+function normalizeTimeFormat(timeFormat: string): EventTimeFormat {
+  return timeFormat === '24h' ? '24h' : '12h'
+}
+
+export function formatEventTimeInput(value: string, timeFormat: string): string {
+  const match = /^(\d{2}):(\d{2})$/.exec(value)
+  if (!match) return value
+
+  const hour = Number(match[1])
+  const minute = Number(match[2])
+  if (hour > 23 || minute > 59) return value
+
+  if (normalizeTimeFormat(timeFormat) === '24h') {
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  }
+
+  const meridiem = hour >= 12 ? 'PM' : 'AM'
+  const displayHour = hour % 12 === 0 ? 12 : hour % 12
+  return `${displayHour}:${String(minute).padStart(2, '0')} ${meridiem}`
+}
+
+export function parseEventTimeInput(input: string, timeFormat: string): string | null {
+  const value = input.trim().replace(/\s+/g, ' ')
+  if (!value) return null
+
+  const meridiemMatch = /^(\d{1,2})(?::([0-5]\d))?\s*([ap])\.?m\.?$/i.exec(value)
+  if (meridiemMatch) {
+    const rawHour = Number(meridiemMatch[1])
+    const minute = Number(meridiemMatch[2] ?? '00')
+    if (rawHour < 1 || rawHour > 12) return null
+    const meridiem = meridiemMatch[3]!.toLowerCase()
+    const hour = meridiem === 'p' ? (rawHour % 12) + 12 : rawHour % 12
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  }
+
+  const twentyFourHourMatch = /^(\d{1,2}):([0-5]\d)$/.exec(value)
+  if (!twentyFourHourMatch) return null
+
+  const hour = Number(twentyFourHourMatch[1])
+  const minute = Number(twentyFourHourMatch[2])
+  if (hour > 23) return null
+
+  if (normalizeTimeFormat(timeFormat) === '12h' && hour >= 1 && hour <= 12) {
+    return null
+  }
+
+  // 12-hour users may still paste or type a stored 24-hour HH:mm value;
+  // normalize it back to storage format and let the display formatter add AM/PM.
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 }
 
 function formatDateForInput(date: Date, tz: string | undefined): string {
@@ -168,10 +221,14 @@ export function EventDialog({
   const [location, setLocation] = useState(isEdit ? (event.location || '') : '')
   const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
   const [allDay, setAllDay] = useState(initialIsAllDay)
+  const initialStartTime = formatTimeForInput(defaultStart, initialFormTz)
+  const initialEndTime = formatTimeForInput(defaultEnd, initialFormTz)
   const [startDate, setStartDate] = useState(formatDateForInput(defaultStart, initialFormTz))
-  const [startTime, setStartTime] = useState(formatTimeForInput(defaultStart, initialFormTz))
+  const [startTime, setStartTime] = useState(initialStartTime)
+  const [startTimeInput, setStartTimeInput] = useState(() => formatEventTimeInput(initialStartTime, timeFormat))
   const [endDate, setEndDate] = useState(formatDateForInput(defaultEnd, initialFormTz))
-  const [endTime, setEndTime] = useState(formatTimeForInput(defaultEnd, initialFormTz))
+  const [endTime, setEndTime] = useState(initialEndTime)
+  const [endTimeInput, setEndTimeInput] = useState(() => formatEventTimeInput(initialEndTime, timeFormat))
   const [recurrenceRule, setRecurrenceRule] = useState<string | null>(
     isEdit ? event.recurrenceRule : null,
   )
@@ -201,6 +258,14 @@ export function EventDialog({
   const allTimezones = (() => {
     try { return Intl.supportedValuesOf('timeZone') } catch { return ['UTC'] }
   })()
+
+  useEffect(() => {
+    setStartTimeInput(formatEventTimeInput(startTime, timeFormat))
+  }, [startTime, timeFormat])
+
+  useEffect(() => {
+    setEndTimeInput(formatEventTimeInput(endTime, timeFormat))
+  }, [endTime, timeFormat])
 
   // Calendar selection
   const calendarLists = useCalendarListStore((s) => s.calendars)
@@ -471,17 +536,21 @@ export function EventDialog({
   const handleStartTimeChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value
-      setStartTime(value)
+      setStartTimeInput(value)
+      const parsedTime = parseEventTimeInput(value, timeFormat)
+      if (!parsedTime) return
+
+      setStartTime(parsedTime)
       // Auto-adjust end time to 30 min after start if on same day. Pure HH:MM
       // arithmetic via a synthetic local Date; format back as browser-local
       // since we only need the wall-clock string back.
       if (startDate === endDate) {
-        const [h, m] = value.split(':').map(Number)
+        const [h, m] = parsedTime.split(':').map(Number)
         const newEnd = new Date(2000, 0, 1, h, m + 30)
         setEndTime(formatTimeForInput(newEnd, undefined))
       }
     },
-    [startDate, endDate],
+    [startDate, endDate, timeFormat],
   )
 
   const handleEndDateChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -489,8 +558,19 @@ export function EventDialog({
   }, [])
 
   const handleEndTimeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setEndTime(e.target.value)
-  }, [])
+    const value = e.target.value
+    setEndTimeInput(value)
+    const parsedTime = parseEventTimeInput(value, timeFormat)
+    if (parsedTime) setEndTime(parsedTime)
+  }, [timeFormat])
+
+  const handleStartTimeBlur = useCallback(() => {
+    setStartTimeInput(formatEventTimeInput(startTime, timeFormat))
+  }, [startTime, timeFormat])
+
+  const handleEndTimeBlur = useCallback(() => {
+    setEndTimeInput(formatEventTimeInput(endTime, timeFormat))
+  }, [endTime, timeFormat])
 
   const handleAllDayToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setAllDay(e.target.checked)
@@ -705,12 +785,16 @@ export function EventDialog({
                       />
                       {!allDay && (
                         <input
-                          type="time"
-                          value={startTime}
+                          type="text"
+                          inputMode="text"
+                          pattern={timeFormat === '24h' ? '[0-2]?[0-9]:[0-5][0-9]' : undefined}
+                          placeholder={timeFormat === '24h' ? '14:00' : '2:00 PM'}
+                          value={startTimeInput}
                           onChange={handleStartTimeChange}
+                          onBlur={handleStartTimeBlur}
                           aria-label="Start time"
                           readOnly={!canWrite}
-                          className={`w-[6.5rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                          className={`w-[7rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                         />
                       )}
                     </div>
@@ -733,12 +817,16 @@ export function EventDialog({
                       />
                       {!allDay && (
                         <input
-                          type="time"
-                          value={endTime}
+                          type="text"
+                          inputMode="text"
+                          pattern={timeFormat === '24h' ? '[0-2]?[0-9]:[0-5][0-9]' : undefined}
+                          placeholder={timeFormat === '24h' ? '14:30' : '2:30 PM'}
+                          value={endTimeInput}
                           onChange={handleEndTimeChange}
+                          onBlur={handleEndTimeBlur}
                           aria-label="End time"
                           readOnly={!canWrite}
-                          className={`w-[6.5rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
+                          className={`w-[7rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 ${!canWrite ? 'opacity-60' : ''}`}
                         />
                       )}
                     </div>

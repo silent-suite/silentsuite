@@ -15,6 +15,7 @@ import { CalendarGrid, type SlotClickEvent, type EventClickInfo } from './compon
 import { AgendaView } from './components/AgendaView'
 import { EventDialog } from './components/EventDialog'
 import { FloatingAddButton } from './components/FloatingAddButton'
+import { resolveUserTimezone } from '@/app/lib/tz'
 
 /** Snap a Date to the nearest 30-minute boundary */
 function snapTo30Min(date: Date): Date {
@@ -27,6 +28,25 @@ function snapTo30Min(date: Date): Date {
     snapped.setMinutes(minutes + (30 - remainder), 0, 0)
   }
   return snapped
+}
+
+function formatSearchResultDate(
+  date: Date,
+  dateFormat: import('@silentsuite/core').DateFormat,
+  timeFormat: string,
+  timeZone: string,
+  allDay: boolean,
+): string {
+  const dateLabel = formatDate(date, dateFormat, { dateStyle: 'medium' })
+  if (allDay) return dateLabel
+
+  const timeLabel = date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: timeFormat !== '24h',
+    timeZone,
+  })
+  return `${dateLabel}, ${timeLabel}`
 }
 
 type CalendarDateLabelView = 'week' | 'month' | 'threeDay' | 'sevenDay'
@@ -131,7 +151,10 @@ export default function CalendarPage() {
   const setSelectedEvent = useCalendarStore((s) => s.setSelectedEvent)
   const calendars = useCalendarListStore((s) => s.calendars)
   const dateFormat = usePreferencesStore((s) => s.dateFormat)
+  const timeFormat = usePreferencesStore((s) => s.timeFormat)
+  const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
   const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
+  const userTz = resolveUserTimezone(defaultTimezonePref)
 
   const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null)
   const [eventInstanceDate, setEventInstanceDate] = useState<Date | undefined>(undefined)
@@ -417,7 +440,7 @@ export default function CalendarPage() {
                           <span className="text-sm font-medium text-[rgb(var(--foreground))] truncate">{e.title || 'Untitled'}</span>
                         </div>
                         <div className="ml-4 text-xs text-[rgb(var(--muted))] truncate">
-                          {calendarName ? `${calendarName} · ` : ''}{formatDate(e.startDate, dateFormat, { dateStyle: 'medium', timeStyle: e.allDay ? undefined : 'short' })}
+                          {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.startDate, dateFormat, timeFormat, userTz, e.allDay)}
                         </div>
                       </button>
                     )
