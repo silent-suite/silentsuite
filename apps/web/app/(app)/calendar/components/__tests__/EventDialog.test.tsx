@@ -141,4 +141,31 @@ describe('EventDialog edit calendar selection', () => {
       )
     })
   })
+
+  it('deletes only the selected recurring occurrence when This event is chosen', async () => {
+    const instanceDate = new Date('2026-06-03T09:00:00Z')
+    const recurringEvent = makeEvent({ recurrenceRule: 'FREQ=DAILY;COUNT=5' })
+
+    renderWithIntl(
+      <EventDialog
+        mode="edit"
+        event={recurringEvent}
+        instanceDate={instanceDate}
+        onClose={mocks.onClose}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Delete event/ }))
+
+    expect(screen.getByRole('dialog', { name: 'Delete recurring event' })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: /This event/ }))
+
+    expect(mocks.deleteRecurringEvent).toHaveBeenCalledWith(
+      recurringEvent.id,
+      'this',
+      instanceDate,
+    )
+    expect(mocks.onClose).toHaveBeenCalledTimes(1)
+  })
 })

@@ -67,7 +67,7 @@ export function RecurrenceScopeDialog({
   return (
     <>
       {/* Backdrop */}
-      <div className="fixed inset-0 z-[60] bg-black/40" onClick={onCancel} />
+      <div className="fixed inset-0 z-[300] bg-black/40" onClick={onCancel} />
 
       {/* Dialog */}
       <div
@@ -75,7 +75,7 @@ export function RecurrenceScopeDialog({
         role="dialog"
         aria-label={title}
         aria-modal="true"
-        className="fixed inset-0 z-[61] flex items-center justify-center p-4"
+        className="fixed inset-0 z-[301] flex items-center justify-center p-4"
       >
         <div className="w-full max-w-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] shadow-xl">
           <div className="p-4">
