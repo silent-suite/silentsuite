@@ -235,6 +235,7 @@
             android:name=".ui.setup.LoginActivity"
             android:exported="false"
             android:label="@string/login_title"
+            android:windowSoftInputMode="adjustResize"
             android:parentActivityName=".ui.AccountActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
