@@ -9,7 +9,7 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.ListFragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
@@ -87,7 +87,7 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
         view.findViewById<TextView>(R.id.body).text = getString(R.string.invitations_accept_reject_dialog)
         view.findViewById<TextView>(R.id.fingerprint).text = fingerprint
 
-        AlertDialog.Builder(requireContext())
+        MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.invitations_title)
                 .setIcon(R.drawable.ic_email_black)
                 .setView(view)

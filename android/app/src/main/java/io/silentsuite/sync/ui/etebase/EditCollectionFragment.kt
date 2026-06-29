@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.text.TextUtils
 import android.view.*
 import android.widget.EditText
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
@@ -145,7 +145,7 @@ class EditCollectionFragment : Fragment() {
         val meta = cachedCollection.meta
         val name = meta.name
 
-        AlertDialog.Builder(requireContext())
+        MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.delete_collection_confirm_title)
                 .setMessage(getString(R.string.delete_collection_confirm_warning, name))
                 .setPositiveButton(android.R.string.yes) { dialog, _ ->
@@ -176,7 +176,7 @@ class EditCollectionFragment : Fragment() {
             } catch (e: EtebaseException) {
                 Logger.log.warning("Collection edit failed: ${e.javaClass.name}")
                 context?.let { context ->
-                    AlertDialog.Builder(context)
+                    MaterialAlertDialogBuilder(context)
                             .setIcon(R.drawable.ic_info_dark)
                             .setTitle(R.string.exception)
                             .setMessage(e.localizedMessage)
@@ -243,7 +243,7 @@ class EditCollectionFragment : Fragment() {
                 } catch (e: EtebaseException) {
                     val context = context
                     if (context != null) {
-                        AlertDialog.Builder(requireContext())
+                        MaterialAlertDialogBuilder(requireContext())
                                 .setIcon(R.drawable.ic_info_dark)
                                 .setTitle(R.string.exception)
                                 .setMessage(e.localizedMessage)

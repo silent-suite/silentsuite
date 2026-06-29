@@ -3,7 +3,7 @@ package io.silentsuite.sync.ui.importlocal
 import android.app.Dialog
 import android.content.DialogInterface
 import android.os.Bundle
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.DialogFragment
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
@@ -33,7 +33,7 @@ class ResultFragment : DialogFragment() {
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         if (result!!.isFailed) {
             val failureMessage = result!!.failureMessage ?: getString(R.string.import_dialog_failed_generic)
-            return AlertDialog.Builder(requireActivity())
+            return MaterialAlertDialogBuilder(requireActivity())
                     .setTitle(R.string.import_dialog_failed_title)
                     .setIcon(R.drawable.ic_error_dark)
                     .setMessage(getString(R.string.import_dialog_failed_body, failureMessage))
@@ -51,7 +51,7 @@ class ResultFragment : DialogFragment() {
             } else {
                 getString(R.string.import_dialog_success, result!!.total, result!!.added, result!!.updated, result!!.skipped)
             }
-            return AlertDialog.Builder(requireActivity())
+            return MaterialAlertDialogBuilder(requireActivity())
                     .setTitle(R.string.import_dialog_title)
                     .setIcon(R.drawable.ic_import_export_black)
                     .setMessage(message)

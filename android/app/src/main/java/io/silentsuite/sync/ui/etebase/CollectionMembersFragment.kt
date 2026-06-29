@@ -9,7 +9,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
@@ -102,7 +102,7 @@ class CollectionMembersFragment : Fragment() {
 
     private fun addMemberClicked() {
         val view = View.inflate(requireContext(), R.layout.add_member_fragment, null)
-        val dialog = AlertDialog.Builder(requireContext())
+        val dialog = MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.collection_members_add)
                 .setIcon(R.drawable.ic_account_add_dark)
                 .setPositiveButton(android.R.string.yes) { _, _ ->
@@ -142,7 +142,7 @@ class AddMemberFragment : DialogFragment() {
                 val view = LayoutInflater.from(context).inflate(R.layout.fingerprint_alertdialog, null)
                 (view.findViewById<View>(R.id.body) as TextView).text = getString(R.string.trust_fingerprint_body, username)
                 (view.findViewById<View>(R.id.fingerprint) as TextView).text = fingerprint
-                AlertDialog.Builder(requireContext())
+                MaterialAlertDialogBuilder(requireContext())
                         .setIcon(R.drawable.ic_fingerprint_dark)
                         .setTitle(R.string.trust_fingerprint_title)
                         .setView(view)
@@ -152,7 +152,7 @@ class AddMemberFragment : DialogFragment() {
                                     withContext(Dispatchers.IO) {
                                         invitationManager.invite(cachedCollection.col, username, profile.pubkey, accessLevel)
                                     }
-                                    AlertDialog.Builder(requireContext())
+                                    MaterialAlertDialogBuilder(requireContext())
                                         .setTitle(R.string.collection_members_add)
                                         .setIcon(R.drawable.ic_account_add_dark)
                                         .setMessage(R.string.collection_members_add_success)
@@ -176,7 +176,7 @@ class AddMemberFragment : DialogFragment() {
     }
 
     private fun handleError(message: String) {
-        AlertDialog.Builder(requireContext())
+        MaterialAlertDialogBuilder(requireContext())
                 .setIcon(R.drawable.ic_error_dark)
                 .setTitle(R.string.collection_members_add_error)
                 .setMessage(message)
