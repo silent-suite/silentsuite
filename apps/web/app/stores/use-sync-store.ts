@@ -7,8 +7,11 @@ import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
 
+export type InitialSyncState = 'idle' | 'restoring' | 'hydrated-cache' | 'syncing' | 'synced' | 'empty' | 'offline' | 'error' | 'no-session'
+
 interface SyncState {
   syncStatus: SyncStatus
+  initialSyncState: InitialSyncState
   lastSyncedAt: Date | null
   isOnline: boolean
   error: string | null
@@ -18,6 +21,7 @@ interface SyncState {
 
 interface SyncActions {
   setSyncStatus: (status: SyncStatus) => void
+  setInitialSyncState: (state: InitialSyncState) => void
   setLastSynced: (date: Date) => void
   setOnline: (online: boolean) => void
   setError: (error: string | null) => void
@@ -32,7 +36,8 @@ interface SyncActions {
 }
 
 export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
-  syncStatus: 'synced',
+  syncStatus: 'syncing',
+  initialSyncState: 'idle',
   lastSyncedAt: null,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   error: null,
@@ -40,6 +45,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
   failedQueueCount: 0,
 
   setSyncStatus: (status) => set({ syncStatus: status }),
+  setInitialSyncState: (initialSyncState) => set({ initialSyncState }),
   setLastSynced: (date) => set({ lastSyncedAt: date }),
   setOnline: (online) => set({ isOnline: online }),
   setError: (error) => set({ error }),
@@ -258,7 +264,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       // Refresh counts to ensure UI is accurate after sync
       const pc = await getPendingCount()
       const fc = await getFailedCount()
-      set({ syncStatus: 'synced', lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
+      set({ syncStatus: 'synced', initialSyncState: 'synced', lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
     }).catch((err) => {
       console.error('[sync-store] Manual sync failed', getSafeErrorDetails(err))
       set({ syncStatus: 'error', error: 'Sync failed' })

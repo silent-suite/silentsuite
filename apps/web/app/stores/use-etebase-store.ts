@@ -80,6 +80,12 @@ type EtebaseCore = typeof import('@silentsuite/core')
 
 type CachedContentItem = { uid: string; content: string; collectionUid: string }
 
+export type EtebaseInitializeOutcome =
+  | { status: 'no-session' }
+  | { status: 'success'; itemCount: number }
+  | { status: 'offline'; error: unknown }
+  | { status: 'error'; error: unknown }
+
 const COLLECTION_DEFINITIONS: [CollectionTypeKey, string, string][] = [
   ['calendar', COLLECTION_TYPE_CALENDAR, 'Personal Calendar'],
   ['tasks', COLLECTION_TYPE_TASKS, 'Personal Tasks'],
@@ -344,7 +350,7 @@ interface EtebaseActions {
    * Restore Etebase session from localStorage, initialize collections,
    * load all items into data stores, and start the SyncEngine.
    */
-  initialize: () => Promise<void>
+  initialize: () => Promise<EtebaseInitializeOutcome>
 
   /**
    * Create an item in the given collection type.
@@ -493,7 +499,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const savedSession = await secureGet('etebase_session')
     if (!savedSession) {
       logger.debug('[etebase-store] No saved session, skipping initialization')
-      return
+      set({ isInitialized: false })
+      return { status: 'no-session' }
     }
 
     try {
@@ -584,14 +591,16 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       await engine.start(account)
       set({ syncEngine: engine, isInitialized: true })
       logger.debug('[etebase-store] SyncEngine started')
+      return { status: 'success', itemCount: itemCache.size }
     } catch (err) {
       console.error('[etebase-store] Initialization failed', getSafeErrorDetails(err))
       // Don't clear the session -- the user might be offline
       // They can retry on next page load
-      set({ isInitialized: true })
+      set({ isInitialized: false })
       if (!isOfflineError(err)) {
         showErrorToast('Failed to restore session. Please try signing in again.')
       }
+      return isOfflineError(err) ? { status: 'offline', error: err } : { status: 'error', error: err }
     }
   },
 
@@ -1359,8 +1368,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
         const collectionUid = itemCollectionMap.get(uid)
         if (collectionUid) results.push({ uid, content: contentStr, collectionUid })
-      } catch {
-        // Skip items that fail to decode
+      } catch (err) {
+        logger.warn(`[etebase-store] Failed to decode cached ${type} item`, getSafeErrorDetails(err))
       }
     }
 
@@ -1372,7 +1381,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const targetCollections = collectionUid
       ? [resolveCollection(collections, type, collectionUid)].filter(Boolean)
       : collections[type]
-    if (!account || targetCollections.length === 0) return []
+    if (!account || targetCollections.length === 0) {
+      logger.warn(`[etebase-store] Cannot refresh ${type}: missing account or collection`)
+      return get().fetchAllItems(type)
+    }
 
     try {
       const colManager = account.getCollectionManager()
@@ -1386,6 +1398,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         // Fetch ALL items (no stoken = full fetch)
         const itemManager = colManager.getItemManager(freshCollection)
         const collectionItems: { item: any; content: string }[] = []
+        let skippedDecodeCount = 0
 
         // Paginate through all items
         let stoken: string | undefined = undefined
@@ -1399,13 +1412,18 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
                 const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
                 collectionItems.push({ item, content: contentStr })
                 allResults.push({ uid: item.uid, content: contentStr, collectionUid: freshCollection.uid })
-              } catch {
-                // Skip items that fail to decode
+              } catch (err) {
+                skippedDecodeCount++
+                logger.warn(`[etebase-store] Failed to decode refreshed ${type} item`, getSafeErrorDetails(err))
               }
             }
           }
           stoken = response.stoken || undefined
           done = response.done
+        }
+
+        if (skippedDecodeCount > 0 && collectionItems.length === 0) {
+          throw new Error(`Refreshed ${type} collection contained only undecodable items`)
         }
 
         refreshed.push({ collection: freshCollection, items: collectionItems })
