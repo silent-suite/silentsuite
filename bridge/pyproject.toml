@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silentsuite-bridge"
-version = "0.3.1-beta"
+version = "0.3.2-beta"
 description = "SilentSuite Bridge — Local E2EE CalDAV/CardDAV sync daemon"
 readme = "README.md"
 license = "AGPL-3.0-only"

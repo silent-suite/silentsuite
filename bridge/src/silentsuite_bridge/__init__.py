@@ -13,7 +13,7 @@ from importlib import metadata as _metadata
 # Kept in sync with pyproject.toml [project].version. Used only as a
 # last-resort fallback when neither a build stamp nor package metadata is
 # available (e.g. running straight from source without an editable install).
-_FALLBACK_VERSION = "0.3.1-beta"
+_FALLBACK_VERSION = "0.3.2-beta"
 
 
 def _resolve_version() -> str:
