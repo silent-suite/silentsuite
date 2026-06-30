@@ -199,7 +199,7 @@ export default function CalendarPage() {
     () => events.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')),
     [events, visibleCalendarIds],
   )
-  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty' || initialSyncState === 'no-session'
+  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty'
   const shouldShowStartupState = !isLoading && visibleEvents.length === 0 && !initialLoadComplete
 
   // Search

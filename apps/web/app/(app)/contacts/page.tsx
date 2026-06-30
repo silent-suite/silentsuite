@@ -1104,7 +1104,7 @@ export default function ContactsPage() {
     [contacts, selectedId],
   )
 
-  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty' || initialSyncState === 'no-session'
+  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty'
   const shouldShowStartupState = listFilteredContacts.length === 0 && !isLoading && !initialLoadComplete
   const isEmpty = listFilteredContacts.length === 0 && !isLoading && initialLoadComplete
   const isEmptySearch = filtered.length === 0 && searchQuery.trim() !== '' && !isLoading && initialLoadComplete

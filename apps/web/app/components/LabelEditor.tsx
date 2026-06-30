@@ -139,6 +139,7 @@ export function LabelEditor({
 }) {
   const t = useTranslations('Labels')
   const [input, setInput] = useState('')
+  const [isSuggestionOpen, setSuggestionOpen] = useState(false)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
   const labelIndex = useLabelSuggestionsStore((state) => state.index)
   const suggestions = useMemo(
@@ -152,6 +153,7 @@ export function LabelEditor({
       if (next.length !== labels.length) onChange(next)
       setInput('')
       setActiveSuggestion(0)
+      setSuggestionOpen(false)
     },
     [labels, onChange],
   )
@@ -179,6 +181,7 @@ export function LabelEditor({
       } else if (e.key === 'Escape') {
         setInput('')
         setActiveSuggestion(0)
+        setSuggestionOpen(false)
       } else if (e.key === 'Backspace' && !input && labels.length > 0) {
         // Quick-delete the last chip when the input is empty
         remove(labels[labels.length - 1]!)
@@ -186,6 +189,8 @@ export function LabelEditor({
     },
     [input, labels, commit, remove, suggestions, activeSuggestion],
   )
+
+  const showSuggestions = !disabled && isSuggestionOpen && suggestions.length > 0
 
   return (
     <div className="relative flex flex-1 flex-wrap items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500">
@@ -206,17 +211,22 @@ export function LabelEditor({
           onChange={(e) => {
             setInput(e.target.value)
             setActiveSuggestion(0)
+            setSuggestionOpen(true)
           }}
           onKeyDown={handleKeyDown}
-          onBlur={() => input.trim() && commit(input)}
+          onFocus={() => setSuggestionOpen(true)}
+          onBlur={() => {
+            if (input.trim()) commit(input)
+            else setSuggestionOpen(false)
+          }}
           placeholder={labels.length === 0 ? (placeholder ?? t('addLabelPlaceholder')) : ''}
           aria-label={ariaLabel ?? t('editorAriaLabel')}
           aria-autocomplete="list"
-          aria-expanded={suggestions.length > 0}
+          aria-expanded={showSuggestions}
           className="min-w-[6rem] flex-1 bg-transparent text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none"
         />
       )}
-      {!disabled && suggestions.length > 0 && (
+      {showSuggestions && (
         <div
           role="listbox"
           aria-label={t('suggestionsAriaLabel')}
