@@ -287,7 +287,7 @@ export default function AddCardBanner({ daysRemaining, onCardAdded }: AddCardBan
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={() => setShowModal(true)}>
             <CreditCard className="h-3.5 w-3.5 mr-1.5" />
-            Add card
+            Add payment method
           </Button>
           <button onClick={() => setDismissed(true)} className="text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]">
             <X className="h-4 w-4" />
