@@ -419,7 +419,7 @@ export default function SubscriptionPage() {
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Trial type</p>
               <p className="text-sm text-[rgb(var(--foreground))]">
-                {data.trialPath === '7day' ? '7-day trial (no card)' : data.trialPath === '30day' ? '30-day trial' : 'Paid + 30-day bonus'}
+                {data.trialPath === '7day' ? '7-day trial (no card)' : data.trialPath === '30day' ? '30-day trial' : 'Paid + 14-day bonus'}
               </p>
             </div>
           )}
