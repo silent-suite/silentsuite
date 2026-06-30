@@ -17,7 +17,6 @@ const StripePaymentForm = dynamic(() => import('./stripe-payment-form'), {
 })
 
 type BillingInterval = 'monthly' | 'annual'
-type TrialPath = '30day' | 'immediate'
 
 interface AddCardBannerProps {
   daysRemaining: number
@@ -89,7 +88,6 @@ function AddCardModal({
   onCardAdded: () => void
 }) {
   const [interval, setInterval] = useState<BillingInterval>('monthly')
-  const [trialPath, setTrialPath] = useState<TrialPath>('30day')
   const [clientSecret, setClientSecret] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -104,7 +102,7 @@ function AddCardModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ planId, trialPath }),
+        body: JSON.stringify({ planId, trialPath: 'immediate' }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => null)
@@ -133,61 +131,24 @@ function AddCardModal({
 
         {!clientSecret ? (
           <>
-            {/* Plan selection */}
-            <div className="space-y-3">
-              {/* 30-day trial */}
-              <button
-                onClick={() => setTrialPath('30day')}
-                className={`w-full rounded-xl border p-4 text-left transition-all ${
-                  trialPath === '30day'
-                    ? 'border-emerald-500/50 bg-emerald-500/5'
-                    : 'border-[rgb(var(--border))] hover:border-slate-600/50'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="rounded-lg bg-[rgb(var(--border))] p-2 shrink-0">
-                    <Lock className="h-4 w-4 text-amber-400" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-[rgb(var(--foreground))]">30-day trial</h3>
-                    <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">First charge on day 30</p>
-                  </div>
-                  {trialPath === '30day' && (
-                    <div className="ml-auto shrink-0 rounded-full bg-emerald-500 p-0.5">
-                      <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                      </svg>
-                    </div>
-                  )}
+            {/* Pay now summary */}
+            <div className="rounded-xl border border-emerald-500/50 bg-emerald-500/5 p-4 text-left">
+              <div className="flex items-start gap-3">
+                <div className="rounded-lg bg-[rgb(var(--border))] p-2 shrink-0">
+                  <Zap className="h-4 w-4 text-amber-400" />
                 </div>
-              </button>
-
-              {/* Pay now + 30 bonus days */}
-              <button
-                onClick={() => setTrialPath('immediate')}
-                className={`w-full rounded-xl border p-4 text-left transition-all ${
-                  trialPath === 'immediate'
-                    ? 'border-emerald-500/50 bg-emerald-500/5'
-                    : 'border-[rgb(var(--border))] hover:border-slate-600/50'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="rounded-lg bg-[rgb(var(--border))] p-2 shrink-0">
-                    <Zap className="h-4 w-4 text-amber-400" />
-                  </div>
-                  <div>
-                    <h3 className="font-medium text-[rgb(var(--foreground))]">Pay now + 30 bonus days</h3>
-                    <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">Get an extra month free</p>
-                  </div>
-                  {trialPath === 'immediate' && (
-                    <div className="ml-auto shrink-0 rounded-full bg-emerald-500 p-0.5">
-                      <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                      </svg>
-                    </div>
-                  )}
+                <div>
+                  <h3 className="font-medium text-[rgb(var(--foreground))]">Pay now + 14 bonus days</h3>
+                  <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">
+                    Choose monthly or annual. Your card is charged now.
+                  </p>
                 </div>
-              </button>
+                <div className="ml-auto shrink-0 rounded-full bg-emerald-500 p-0.5">
+                  <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                  </svg>
+                </div>
+              </div>
             </div>
 
             {/* Billing toggle + price */}
@@ -228,9 +189,7 @@ function AddCardModal({
                 <PriceDisplay interval={interval} />
               </div>
               <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-                {trialPath === '30day'
-                  ? 'First charge in 30 days. Cancel anytime before.'
-                  : '30 bonus days included. Next charge in 30 days.'}
+                14 bonus days included after today&apos;s payment.
               </p>
             </div>
 
@@ -238,8 +197,8 @@ function AddCardModal({
             <StripePaymentForm
               clientSecret={clientSecret}
               onSuccess={onCardAdded}
-              submitLabel={trialPath === '30day' ? 'Start 30-day trial' : `Pay ${interval === 'monthly' ? '\u20AC3.60' : '\u20AC36'}`}
-              mode={trialPath === '30day' ? 'setup' : 'payment'}
+              submitLabel={`Pay ${interval === 'monthly' ? '\u20AC3.60' : '\u20AC36'}`}
+              mode="payment"
             />
 
             <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
@@ -287,7 +246,7 @@ export default function AddCardBanner({ daysRemaining, onCardAdded }: AddCardBan
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={() => setShowModal(true)}>
             <CreditCard className="h-3.5 w-3.5 mr-1.5" />
-            Add card
+            Add payment method
           </Button>
           <button onClick={() => setDismissed(true)} className="text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]">
             <X className="h-4 w-4" />

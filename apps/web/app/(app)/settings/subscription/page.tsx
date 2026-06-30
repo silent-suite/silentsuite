@@ -6,6 +6,7 @@ import { Button } from '@silentsuite/ui'
 import dynamic from 'next/dynamic'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { formatDate as formatDateUtil } from '@/app/lib/date'
+import AddCardBanner from '@/app/components/add-card-banner'
 
 const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-form'), {
   loading: () => (
@@ -24,6 +25,17 @@ interface CryptoCheckoutResponse {
   checkoutUrl: string
 }
 
+interface SubscriptionCapabilities {
+  trialActive: boolean
+  trialExpired: boolean
+  needsPaymentMethod: boolean
+  canSetupCard: boolean
+  canStartPaidSubscription: boolean
+  canReactivate: boolean
+  canRetryPayment: boolean
+  canResumeCancellation: boolean
+}
+
 interface SubscriptionData {
   plan: string | null
   planLabel: string
@@ -38,6 +50,7 @@ interface SubscriptionData {
   cancelAtPeriodEnd: boolean
   trialPath: '7day' | '30day' | 'immediate' | null
   earlyAdopter: boolean
+  capabilities?: SubscriptionCapabilities
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -60,6 +73,23 @@ const STATUS_LABELS: Record<string, string> = {
 
 function formatDateStr(iso: string): string {
   return formatDateUtil(new Date(iso), 'system', { year: 'numeric', month: 'long', day: 'numeric' })
+}
+
+function getCapabilities(data: SubscriptionData): SubscriptionCapabilities {
+  if (data.capabilities) return data.capabilities
+
+  const canSetupCard = data.trialPath === '7day' && data.trial.active
+  const canReactivate = data.status === 'cancelled' || data.status === 'expired' || data.status === 'none'
+  return {
+    trialActive: data.trial.active,
+    trialExpired: false,
+    needsPaymentMethod: canSetupCard,
+    canSetupCard,
+    canStartPaidSubscription: false,
+    canReactivate,
+    canRetryPayment: false,
+    canResumeCancellation: data.cancelAtPeriodEnd && data.status === 'active',
+  }
 }
 
 function LoadingSkeleton() {
@@ -136,6 +166,7 @@ export default function SubscriptionPage() {
   const [reactivating, setReactivating] = useState<string | null>(null)
   const [reactivateClientSecret, setReactivateClientSecret] = useState<string | null>(null)
   const [reactivatePlanId, setReactivatePlanId] = useState<string | null>(null)
+  const [reactivateError, setReactivateError] = useState<string | null>(null)
   const [showChangePlanDialog, setShowChangePlanDialog] = useState(false)
   const [changingPlan, setChangingPlan] = useState(false)
   const [changePlanSuccess, setChangePlanSuccess] = useState<{ plan: string; effectiveDate: string; prorated: boolean } | null>(null)
@@ -145,6 +176,7 @@ export default function SubscriptionPage() {
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
   const [cryptoCheckoutLoading, setCryptoCheckoutLoading] = useState(false)
   const [cryptoCheckoutError, setCryptoCheckoutError] = useState<string | null>(null)
+  const [paymentConfirmationPending, setPaymentConfirmationPending] = useState(false)
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -164,6 +196,12 @@ export default function SubscriptionPage() {
   useEffect(() => {
     fetchSubscription()
   }, [fetchSubscription])
+
+  useEffect(() => {
+    if (data?.status === 'active' || data?.status === 'trialing') {
+      setPaymentConfirmationPending(false)
+    }
+  }, [data?.status])
 
   async function handleCancel() {
     setCancelling(true)
@@ -185,6 +223,7 @@ export default function SubscriptionPage() {
 
   async function handleReactivate(planId: string) {
     setReactivating(planId)
+    setReactivateError(null)
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription/reactivate`, {
         method: 'POST',
@@ -196,9 +235,12 @@ export default function SubscriptionPage() {
         const { clientSecret } = await res.json()
         setReactivateClientSecret(clientSecret)
         setReactivatePlanId(planId)
+      } else {
+        const body = await res.json().catch(() => null)
+        setReactivateError(body?.detail ?? body?.error ?? 'Unable to set up payment. Please try again.')
       }
     } catch {
-      // API may not be running in dev
+      setReactivateError('Unable to reach billing service. Please try again.')
     } finally {
       setReactivating(null)
     }
@@ -279,14 +321,31 @@ export default function SubscriptionPage() {
     )
   }
 
+  const capabilities = getCapabilities(data)
   const showTrialBanner =
     !bannerDismissed &&
     data.trial.active &&
     data.trial.daysRemaining != null &&
-    data.trial.daysRemaining <= 7
+    data.trial.daysRemaining <= 7 &&
+    !capabilities.canSetupCard
 
   const isCancelled = data.status === 'cancelled' || data.status === 'expired'
-  const isActiveOrTrialing = data.status === 'active' || data.status === 'trialing'
+  const hasLiveSubscriptionActions = (data.status === 'active' || data.status === 'trialing')
+    && !data.cancelAtPeriodEnd
+    && !capabilities.canSetupCard
+    && !capabilities.trialExpired
+    && !capabilities.canRetryPayment
+    && !capabilities.canStartPaidSubscription
+  const canOpenPaidRecovery = !paymentConfirmationPending && (
+    capabilities.canRetryPayment
+    || capabilities.canStartPaidSubscription
+    || capabilities.canReactivate
+  )
+  const paidRecoveryLabel = capabilities.canRetryPayment
+    ? 'Retry payment'
+    : data.status === 'cancelled'
+      ? 'Reactivate'
+      : 'Subscribe'
   const accessUntilFormatted = data.renewalDate ? formatDateStr(data.renewalDate) : 'the end of your current period'
   // Only show Early Adopter plans — Standard plans will be enabled later
   const availablePlans = REACTIVATION_PLANS.filter((p) => p.earlyOnly)
@@ -360,7 +419,7 @@ export default function SubscriptionPage() {
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Trial type</p>
               <p className="text-sm text-[rgb(var(--foreground))]">
-                {data.trialPath === '7day' ? '7-day trial (no card)' : data.trialPath === '30day' ? '30-day trial' : 'Paid + 30-day bonus'}
+                {data.trialPath === '7day' ? '7-day trial (no card)' : data.trialPath === '30day' ? '30-day trial' : 'Paid + 14-day bonus'}
               </p>
             </div>
           )}
@@ -384,9 +443,27 @@ export default function SubscriptionPage() {
         </div>
       </section>
 
+      {capabilities.canSetupCard && data.trial.daysRemaining != null && (
+        <AddCardBanner daysRemaining={data.trial.daysRemaining} onCardAdded={fetchSubscription} />
+      )}
+
+      {paymentConfirmationPending && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+          <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Confirming your payment.</p>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">This usually takes a few seconds. We will update this page automatically.</p>
+        </div>
+      )}
+
+      {capabilities.canRetryPayment && !paymentConfirmationPending && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment incomplete. Please try again.</p>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">Your subscription will activate after payment is completed.</p>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div className="flex gap-3">
-        {isActiveOrTrialing && !data.cancelAtPeriodEnd && (
+        {hasLiveSubscriptionActions && (
           <>
             <Button variant="outline" size="sm" onClick={() => { setShowChangePlanDialog(true); setChangePlanSuccess(null); setSelectedChangePlan(null); setChangePlanError(null) }}>
               Change plan
@@ -401,9 +478,9 @@ export default function SubscriptionPage() {
             </Button>
           </>
         )}
-        {(isCancelled || data.status === 'none' || data.cancelAtPeriodEnd) && (
-          <Button size="sm" onClick={() => { setCryptoCheckoutError(null); setShowPlanSelection(true) }}>
-            Reactivate
+        {canOpenPaidRecovery && !capabilities.canSetupCard && !data.cancelAtPeriodEnd && (
+          <Button size="sm" onClick={() => { setReactivateError(null); setCryptoCheckoutError(null); setShowPlanSelection(true) }}>
+            {paidRecoveryLabel}
           </Button>
         )}
       </div>
@@ -418,10 +495,14 @@ export default function SubscriptionPage() {
                 <StripePaymentForm
                   clientSecret={reactivateClientSecret}
                   onSuccess={async () => {
+                    setPaymentConfirmationPending(true)
                     setReactivateClientSecret(null)
                     setReactivatePlanId(null)
                     setShowPlanSelection(false)
                     await fetchSubscription()
+                    for (const delayMs of [2000, 5000, 10000]) {
+                      window.setTimeout(() => { void fetchSubscription() }, delayMs)
+                    }
                   }}
                   submitLabel="Reactivate subscription"
                   mode="payment"
@@ -499,6 +580,9 @@ export default function SubscriptionPage() {
                       >
                         {reactivating === plan.id ? 'Setting up...' : 'Subscribe by card'}
                       </button>
+                      {reactivateError && (
+                        <p className="mt-2 text-sm text-red-600 dark:text-red-400">{reactivateError}</p>
+                      )}
                       {billingInterval === 'annual' && CRYPTO_CHECKOUT_ENABLED && (
                         <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
                           <div className="flex items-center justify-between gap-3">

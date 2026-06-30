@@ -9,6 +9,7 @@ import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
+import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
@@ -125,6 +126,7 @@ async function deserializeCalendarItemsIncrementally(
 export function SyncProvider({ children }: { children: React.ReactNode }) {
   const initializeSync = useSyncStore((s) => s.initializeSync)
   const setSyncStatus = useSyncStore((s) => s.setSyncStatus)
+  const setInitialSyncState = useSyncStore((s) => s.setInitialSyncState)
   const setLastSynced = useSyncStore((s) => s.setLastSynced)
   const setError = useSyncStore((s) => s.setError)
 
@@ -154,6 +156,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const initStartedAt = markCalendarSyncStart()
       try {
         setSyncStatus('syncing')
+        setInitialSyncState('restoring')
         const cacheStatus = getCacheCapabilityStatus()
         logSyncTiming('cache-capability', initStartedAt, { ...cacheStatus })
 
@@ -161,13 +164,37 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // from IndexedDB before the network sync starts. This is best-effort
         // — failures are logged and the normal init path proceeds.
         if (isLocalCacheEnabled()) {
-          await hydrateFromCache()
+          const hydrated = await hydrateFromCache()
+          if (hydrated) setInitialSyncState('hydrated-cache')
         }
 
         // Restore session, create/fetch collections, load items, start SyncEngine
         const etebaseInitStartedAt = nowMs()
-        await etebaseInitialize()
+        const initOutcome = await etebaseInitialize()
         logSyncTiming('etebase-initialize', etebaseInitStartedAt)
+
+        if (initOutcome.status === 'no-session') {
+          setInitialSyncState('no-session')
+          setSyncStatus('synced')
+          setError(null)
+          return
+        }
+
+        if (initOutcome.status === 'offline') {
+          setInitialSyncState('offline')
+          setSyncStatus('offline')
+          setError('Offline. Showing any cached encrypted data until sync can resume.')
+          return
+        }
+
+        if (initOutcome.status === 'error') {
+          setInitialSyncState('error')
+          setSyncStatus('error')
+          setError('Could not restore encrypted session')
+          return
+        }
+
+        setInitialSyncState('syncing')
 
         // Now load items from each collection into the data stores
         const loadHadErrors = await loadItemsIntoStores()
@@ -180,9 +207,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (loadHadErrors) {
           setSyncStatus('error')
+          setInitialSyncState('error')
           setError('Some synced items could not be loaded')
         } else {
           setSyncStatus('synced')
+          setInitialSyncState(hasVisibleDomainData() ? 'synced' : 'empty')
           setError(null)
         }
         setLastSynced(new Date())
@@ -190,6 +219,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         reportSyncError('init', err)
         setSyncStatus('error')
+        setInitialSyncState('error')
         setError('Sync initialization failed')
       }
     }
@@ -204,8 +234,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
      * Cheap (~10-50ms for a typical vault) and fully off the network path.
      * Failures here are non-fatal; we just skip the optimistic paint.
      */
-    async function hydrateFromCache() {
+    function hasVisibleDomainData(): boolean {
+      return useCalendarStore.getState().events.length > 0
+        || useTaskStore.getState().tasks.length > 0
+        || useContactStore.getState().contacts.length > 0
+    }
+
+    async function hydrateFromCache(): Promise<boolean> {
       const cacheHydrateStartedAt = nowMs()
+      let hydratedAny = false
       try {
         const [taskItems, contactItems, eventItems, core] = await Promise.all([
           cacheGetItemsByType('tasks'),
@@ -221,6 +258,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
               return { ...task, id: it.itemUid, listId: it.collectionUid }
             })
             useTaskStore.getState().syncFromRemote(tasks)
+            hydratedAny = tasks.length > 0 || hydratedAny
             logger.log(`[sync-provider] Hydrated ${tasks.length} tasks from cache`)
           } catch (err) {
             logger.warn('[sync-provider] Failed to hydrate tasks from cache', getSafeErrorDetails(err))
@@ -234,6 +272,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
               return { ...contact, id: it.itemUid, listId: it.collectionUid }
             })
             useContactStore.getState().syncFromRemote(contacts)
+            hydratedAny = contacts.length > 0 || hydratedAny
             logger.log(`[sync-provider] Hydrated ${contacts.length} contacts from cache`)
           } catch (err) {
             logger.warn('[sync-provider] Failed to hydrate contacts from cache', getSafeErrorDetails(err))
@@ -262,6 +301,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
               setError('Some cached calendar events could not be loaded')
               reportSyncError('hydrate cached calendar events', errors[0])
             } else {
+              hydratedAny = events.length > 0 || hydratedAny
               logger.log(`[sync-provider] Hydrated ${events.length} events from cache`)
             }
           } catch (err) {
@@ -277,6 +317,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         logger.warn('[sync-provider] Cache hydration failed', getSafeErrorDetails(err))
         logSyncTiming('cache-hydrate-failed', cacheHydrateStartedAt)
       }
+      return hydratedAny
     }
 
     async function loadItemsIntoStores(): Promise<boolean> {
@@ -331,6 +372,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             reportSyncError('load calendar event chunk', errors[0])
           }
           await mirrorToCache('calendar', eventItems)
+        } else {
+          useCalendarStore.getState().syncFromRemote([])
         }
       } catch (err) {
         hadErrors = true
@@ -354,6 +397,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           logSyncTiming('tasks-load', taskLoadStartedAt, { itemCount: taskItems.length, taskCount: tasks.length })
           await mirrorToCache('tasks', taskItems)
         } else {
+          useTaskStore.getState().syncFromRemote([])
           logSyncTiming('tasks-load', taskLoadStartedAt, { itemCount: 0, taskCount: 0 })
         }
       } catch (err) {
@@ -376,6 +420,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           logSyncTiming('contacts-load', contactLoadStartedAt, { itemCount: contactItems.length, contactCount: contacts.length })
           await mirrorToCache('contacts', contactItems)
         } else {
+          useContactStore.getState().syncFromRemote([])
           logSyncTiming('contacts-load', contactLoadStartedAt, { itemCount: 0, contactCount: 0 })
         }
       } catch (err) {
@@ -393,6 +438,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         hadErrors = true
         reportSyncError('initialize preferences sync', err)
+      }
+
+      // Load the encrypted label suggestion index from its dedicated Etebase
+      // collection. Plaintext labels only exist inside decrypted item content.
+      try {
+        const labelIndexStartedAt = nowMs()
+        await useLabelSuggestionsStore.getState().initialize()
+        logSyncTiming('label-index-initialize', labelIndexStartedAt)
+      } catch (err) {
+        hadErrors = true
+        reportSyncError('initialize label suggestions', err)
       }
 
       return hadErrors
@@ -452,6 +508,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           } catch (err) {
             reportSyncError('sync preferences', err)
           }
+        } else if (collectionType === 'silentsuite.labelindex') {
+          try {
+            const labelIndexItems = await refresher('labelIndex', event.collectionUid)
+            await useLabelSuggestionsStore.getState().loadFromRemote(labelIndexItems)
+          } catch (err) {
+            reportSyncError('sync label suggestions', err)
+          }
         }
 
         setLastSynced(new Date())
@@ -477,6 +540,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       if (unsubChange) unsubChange()
       if (unsubStatus) unsubStatus()
       usePreferencesSyncStore.getState().destroy()
+      useLabelSuggestionsStore.getState().destroy()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

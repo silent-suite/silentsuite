@@ -6,6 +6,7 @@ import {
   mergeSyncedPreferences,
   serializePreferences,
 } from './preferences.js';
+import { createLabelIndex, serializeLabelIndex } from './label-index.js';
 
 describe('synced preferences', () => {
   it('serializes only synced account preferences', () => {
@@ -66,6 +67,22 @@ describe('synced preferences', () => {
     });
   });
 
+  it('rejects label-index content instead of treating it as preferences', () => {
+    const labelIndexContent = serializeLabelIndex(createLabelIndex([
+      { label: 'Work', count: 1, lastUsedAt: 1 },
+    ], 1));
+
+    expect(() => deserializePreferences(labelIndexContent)).toThrow(/preferences kind/);
+  });
+
+  it.each(['DD/MM/YYYY', 'MM/DD/YYYY', 'DD.MM.YYYY', 'YYYY/MM/DD', 'YYYY-MM-DD', 'system'] as const)(
+    'accepts %s as a synced date format',
+    (dateFormat) => {
+      const preferences = createSyncedPreferences({ dateFormat }, {}, 42);
+
+      expect(getSyncedPreferenceValues(preferences).dateFormat).toBe(dateFormat);
+    },
+  );
 
   it('accepts valid day bounds and falls back when start is not before end', () => {
     const valid = createSyncedPreferences({ dayStartHour: 7, dayEndHour: 19 }, {}, 42);

@@ -8,11 +8,15 @@ Once set up, your SilentSuite data syncs directly into Android's system calendar
 
 ## Install
 
-Choose one of the install options below. Both deliver the same APK from the same GitHub release.
+Choose the install channel you want to keep using for updates.
 
-### Option 1: Obtainium (recommended)
+### Option 1: Google Play
 
-[Obtainium](https://github.com/ImranR98/Obtainium) is an open-source Android app that installs and auto-updates apps directly from their GitHub releases -- no Google Play, no tracking, no account needed.
+Install from Google Play if you want Play-managed updates. If you installed SilentSuite from Google Play, keep updating it from Google Play.
+
+### Option 2: Obtainium
+
+[Obtainium](https://github.com/ImranR98/Obtainium) is an open-source Android app that installs and auto-updates apps directly from GitHub releases -- no Google Play, no tracking, no account needed.
 
 1. Install Obtainium from [GitHub Releases](https://github.com/ImranR98/Obtainium/releases) or [F-Droid](https://f-droid.org/packages/dev.imranr.obtainium.fdroid/).
 2. In Obtainium, tap **Add App** and paste this URL:
@@ -21,13 +25,24 @@ Choose one of the install options below. Both deliver the same APK from the same
    ```
 3. Obtainium will detect the latest SilentSuite release and install the APK. It will notify you whenever a new release is published.
 
-### Option 2: Direct APK download
+### Option 3: Direct APK download
 
 Grab the latest APK directly from GitHub Releases:
 
 - [github.com/silent-suite/silentsuite/releases/latest](https://github.com/silent-suite/silentsuite/releases/latest)
 
 Look for the asset named `silentsuite-android-vX.Y.Z-beta.apk` and install it. You'll need to allow installation from unknown sources the first time.
+
+### Certificate hashes and channel switching
+
+Android only allows an app update when the installed app and the update APK are signed with the same certificate. Google Play uses Play App Signing, so the APK installed from Play can have a different certificate than the direct APK published through GitHub Releases, Zapstore, or F-Droid.
+
+SilentSuite's known Android signing certificate SHA-256 hashes are:
+
+- **Google Play app signing certificate:** `2e10d9ef90276e755bddf086391d7e0c933589c6d36e4e43fae59a7babcb8a49`
+- **Direct APK release certificate for GitHub Releases, Zapstore, and reproducible/developer-signed F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
+
+If you installed from Google Play, update through Google Play. If you installed from GitHub Releases, Zapstore, or F-Droid, update through that same direct APK channel. Switching between Google Play and direct APK channels may require uninstalling and reinstalling the app. A certificate mismatch warning in that situation is expected and does not by itself indicate a compromised build.
 
 ::: tip
 The SilentSuite Android app is a fork of the [EteSync Android app](https://github.com/etesync/android) with SilentSuite branding and `server.silentsuite.io` pre-configured as the default server. If you prefer, the original EteSync app from [Google Play](https://play.google.com/store/apps/details?id=com.etesync.syncadapter) or [F-Droid](https://f-droid.org/packages/com.etesync.syncadapter/) also works -- just enter the server URL manually.

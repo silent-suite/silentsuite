@@ -1,3 +1,5 @@
+export const PREFERENCES_KIND = 'silentsuite.preferences.v1';
+
 export const SYNCED_PREFERENCE_KEYS = [
   'timeFormat',
   'firstDayOfWeek',
@@ -12,7 +14,7 @@ export type SyncedPreferenceKey = typeof SYNCED_PREFERENCE_KEYS[number];
 export type TimeFormat = '12h' | '24h';
 export type FirstDayOfWeek = 'monday' | 'sunday';
 export type DefaultReminder = 'none' | '5' | '15' | '30' | '60' | '1440';
-export type DateFormat = 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'YYYY-MM-DD' | 'system'
+export type DateFormat = 'DD/MM/YYYY' | 'MM/DD/YYYY' | 'DD.MM.YYYY' | 'YYYY/MM/DD' | 'YYYY-MM-DD' | 'system'
 export type DayBoundaryHour = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24;
 
 export interface SyncedPreferenceValues {
@@ -31,6 +33,7 @@ export interface VersionedPreference<T> {
 }
 
 export interface SyncedPreferencesV1 {
+  kind: typeof PREFERENCES_KIND;
   schemaVersion: 1;
   updatedAt: number;
   fields: {
@@ -93,7 +96,14 @@ function defaultTimezone(value: unknown, fallback: string): string {
 }
 
 function dateFormat(value: unknown, fallback: DateFormat): DateFormat {
-  return value === 'DD/MM/YYYY' || value === 'MM/DD/YYYY' || value === 'YYYY-MM-DD' || value === 'system' ? value : fallback
+  return value === 'DD/MM/YYYY'
+    || value === 'MM/DD/YYYY'
+    || value === 'DD.MM.YYYY'
+    || value === 'YYYY/MM/DD'
+    || value === 'YYYY-MM-DD'
+    || value === 'system'
+    ? value
+    : fallback
 }
 
 function dayBoundaryHour(value: unknown, fallback: DayBoundaryHour): DayBoundaryHour {
@@ -143,6 +153,7 @@ export function createSyncedPreferences(
   const updatedAt = Math.max(...SYNCED_PREFERENCE_KEYS.map((key) => normalizedTimestamps[key]));
 
   return {
+    kind: PREFERENCES_KIND,
     schemaVersion: 1,
     updatedAt,
     fields: {
@@ -159,6 +170,9 @@ export function createSyncedPreferences(
 
 export function normalizeSyncedPreferences(input: unknown): SyncedPreferencesV1 {
   const root = isRecord(input) ? input : {};
+  if ('kind' in root && root.kind !== PREFERENCES_KIND) {
+    throw new Error('Invalid preferences kind');
+  }
   const fields = isRecord(root.fields) ? root.fields : {};
   const rootUpdatedAt = timestamp(root.updatedAt, 0);
 

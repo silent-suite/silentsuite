@@ -4,6 +4,8 @@ import {
   fromVEvent,
   serializeCalendarEvent,
   deserializeCalendarEvent,
+  buildAlarmTrigger,
+  parseAlarmTriggerMinutes,
 } from './calendar-event.js';
 import type { CalendarEvent } from './calendar-event.js';
 import { expandRecurrence } from '../utils/recurrence.js';
@@ -277,6 +279,15 @@ describe('recurring event', () => {
     expect(restored.allDay).toBe(true);
     expect(restored.recurrenceRule).toBe('FREQ=DAILY;COUNT=7');
     expect(restored.exceptions).toHaveLength(2);
+  });
+});
+
+// ── CalendarEvent with all fields populated ──
+
+describe('alarm trigger helpers', () => {
+  it('roundtrips custom minute offsets as simple negative-duration VALARMs', () => {
+    expect(parseAlarmTriggerMinutes('-PT11M')).toBe(11);
+    expect(buildAlarmTrigger(11)).toBe('-PT11M');
   });
 });
 
