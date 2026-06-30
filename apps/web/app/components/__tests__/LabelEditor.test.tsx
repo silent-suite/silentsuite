@@ -160,6 +160,55 @@ describe('LabelEditor', () => {
     expect(onChange).toHaveBeenCalledWith(['Workout'])
   })
 
+  it('opens recent suggestions on focus even before typing', () => {
+    useLabelSuggestionsStore.setState({
+      index: createLabelIndex([
+        { label: 'Work', count: 5, lastUsedAt: 10 },
+        { label: 'Home', count: 3, lastUsedAt: 9 },
+      ], 10),
+    })
+    renderWithIntl(<LabelEditor labels={[]} onChange={vi.fn()} />)
+
+    expect(screen.queryByRole('listbox', { name: 'Label suggestions' })).not.toBeInTheDocument()
+
+    fireEvent.focus(screen.getByLabelText('Labels'))
+
+    expect(screen.getByRole('option', { name: 'Work' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Home' })).toBeInTheDocument()
+  })
+
+  it('filters focused suggestions as the user types', () => {
+    useLabelSuggestionsStore.setState({
+      index: createLabelIndex([
+        { label: 'Work', count: 5, lastUsedAt: 10 },
+        { label: 'Home', count: 3, lastUsedAt: 9 },
+      ], 10),
+    })
+    renderWithIntl(<LabelEditor labels={[]} onChange={vi.fn()} />)
+    const input = screen.getByLabelText('Labels')
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'ho' } })
+
+    expect(screen.queryByRole('option', { name: 'Work' })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Home' })).toBeInTheDocument()
+  })
+
+  it('selects a focused suggestion by click', () => {
+    useLabelSuggestionsStore.setState({
+      index: createLabelIndex([
+        { label: 'Home', count: 3, lastUsedAt: 9 },
+      ], 10),
+    })
+    const onChange = vi.fn()
+    renderWithIntl(<LabelEditor labels={[]} onChange={onChange} />)
+
+    fireEvent.focus(screen.getByLabelText('Labels'))
+    fireEvent.mouseDown(screen.getByRole('option', { name: 'Home' }))
+
+    expect(onChange).toHaveBeenCalledWith(['Home'])
+  })
+
   it('does not suggest labels that are already selected', () => {
     useLabelSuggestionsStore.setState({
       index: createLabelIndex([
@@ -169,6 +218,7 @@ describe('LabelEditor', () => {
     })
 
     renderWithIntl(<LabelEditor labels={['Work']} onChange={vi.fn()} />)
+    fireEvent.focus(screen.getByLabelText('Labels'))
     expect(screen.queryByRole('option', { name: 'Work' })).not.toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Home' })).toBeInTheDocument()
   })

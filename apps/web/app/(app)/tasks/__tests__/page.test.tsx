@@ -95,6 +95,16 @@ describe('TasksPage mobile reachability', () => {
     expect(screen.queryByText('No tasks yet')).not.toBeInTheDocument()
   })
 
+  it('does not show an empty task state when the encrypted session is missing', () => {
+    storeMock.taskState.isLoading = false
+    storeMock.syncState.initialSyncState = 'no-session'
+
+    renderWithIntl(<TasksPage />)
+
+    expect(screen.getByText('Encrypted session needs to be restored')).toBeInTheDocument()
+    expect(screen.queryByText('No tasks yet')).not.toBeInTheDocument()
+  })
+
   it('exposes a mobile collection switcher with a 44px touch target', () => {
     renderWithIntl(<TasksPage />)
     const folderButton = screen.getByRole('button', { name: manageTaskLists })

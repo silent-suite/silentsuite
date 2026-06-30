@@ -285,6 +285,16 @@ describe('CalendarPage mobile reachability', () => {
     expect(screen.queryByTestId('mobile-agenda')).not.toBeInTheDocument()
   })
 
+  it('does not render the calendar as empty when the encrypted session is missing', () => {
+    storeMock.calendarState.isLoading = false
+    storeMock.syncState.initialSyncState = 'no-session'
+
+    renderWithIntl(<CalendarPage />)
+
+    expect(screen.getByText('Encrypted session needs to be restored')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-agenda')).not.toBeInTheDocument()
+  })
+
   it('exposes a mobile collection switcher with a 44px touch target', () => {
     renderWithIntl(<CalendarPage />)
 

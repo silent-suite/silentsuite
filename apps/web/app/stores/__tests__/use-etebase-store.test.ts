@@ -172,6 +172,50 @@ describe('useEtebaseStore.initialize outcomes', () => {
     expect(engine.start).toHaveBeenCalledWith(account)
   })
 
+  it('restores remote collections and items into cold-start caches and list stores', async () => {
+    vi.mocked(secureGet).mockResolvedValue('saved-session')
+    const account = { id: 'account' }
+    const calendarCollection = mockCollection('calendar-col', { name: 'Personal', color: '#10b981' })
+    const taskCollection = mockCollection('tasks-col', { name: 'Tasks', color: '#3b82f6' })
+    const contactCollection = mockCollection('contacts-col', { name: 'Contacts', color: '#8b5cf6' })
+    const preferencesCollection = mockCollection('preferences-col')
+    const labelIndexCollection = mockCollection('label-index-col')
+    coreMock.restoreSession.mockResolvedValue(account)
+    coreMock.getAccountFingerprint.mockReturnValue('fingerprint')
+    coreMock.listCollections.mockImplementation(async (_account: unknown, type: string) => {
+      if (type === 'etebase.vevent') return [calendarCollection]
+      if (type === 'etebase.vtodo') return [taskCollection]
+      if (type === 'etebase.vcard') return [contactCollection]
+      if (type === 'silentsuite.preferences') return [preferencesCollection]
+      if (type === 'silentsuite.labelindex') return [labelIndexCollection]
+      return []
+    })
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => ({
+      items: collection.uid === 'calendar-col' ? [mockItem('event-1', 'VEVENT')] : [],
+      stoken: null,
+      done: true,
+    }))
+    const engine = {
+      trackCollection: vi.fn(),
+      onStokenAdvance: vi.fn(),
+      start: vi.fn(async () => {}),
+      stop: vi.fn(),
+    }
+    coreMock.SyncEngine.mockImplementation(function MockSyncEngine() {
+      return engine
+    })
+
+    const outcome = await useEtebaseStore.getState().initialize()
+
+    expect(outcome).toEqual({ status: 'success', itemCount: 1 })
+    expect(useEtebaseStore.getState().itemCache.has('event-1')).toBe(true)
+    expect(useEtebaseStore.getState().itemTypeMap.get('event-1')).toBe('calendar')
+    expect(useEtebaseStore.getState().itemCollectionMap.get('event-1')).toBe('calendar-col')
+    expect(useCalendarListStore.getState().calendars.map((calendar) => calendar.id)).toEqual(['calendar-col'])
+    expect(useTaskListStore.getState().lists.map((list) => list.id)).toEqual(['tasks-col'])
+    expect(useContactListStore.getState().lists.map((list) => list.id)).toEqual(['contacts-col'])
+  })
+
   it('returns error without marking initialized on restore failure', async () => {
     vi.mocked(secureGet).mockResolvedValue('saved-session')
     coreMock.restoreSession.mockRejectedValue(new Error('bad session'))
@@ -692,6 +736,26 @@ describe('useEtebaseStore.refreshCollection', () => {
     expect(state.itemCache.get('existing')).toBe(existingItem)
     expect(state.itemCollectionMap.get('existing')).toBe('col-1')
     errorSpy.mockRestore()
+  })
+
+  it('throws when cached item content cannot be decoded instead of returning a false empty list', async () => {
+    const brokenItem = {
+      uid: 'broken-1',
+      getContent: vi.fn(async () => {
+        throw new Error('decode failed')
+      }),
+    }
+    useEtebaseStore.setState({
+      account: { id: 'account' } as any,
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      itemCache: new Map([['broken-1', brokenItem]]),
+      itemTypeMap: new Map([['broken-1', 'calendar']]),
+      itemCollectionMap: new Map([['broken-1', 'col-1']]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+
+    await expect(useEtebaseStore.getState().fetchAllItems('calendar')).rejects.toThrow('Could not decode cached events')
   })
 })
 

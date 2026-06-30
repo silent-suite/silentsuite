@@ -175,8 +175,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (initOutcome.status === 'no-session') {
           setInitialSyncState('no-session')
-          setSyncStatus('synced')
-          setError(null)
+          setSyncStatus('error')
+          setError('Encrypted session was not restored. Sign in again to unlock your data.')
           return
         }
 

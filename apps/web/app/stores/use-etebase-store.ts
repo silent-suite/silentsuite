@@ -1386,17 +1386,25 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   fetchAllItems: async (type: CollectionTypeKey) => {
     const { itemCache, itemTypeMap, itemCollectionMap } = get()
     const results: CachedContentItem[] = []
+    let matchingItemCount = 0
+    let failedDecodeCount = 0
 
     for (const [uid, item] of itemCache.entries()) {
       if (itemTypeMap.get(uid) !== type) continue
+      matchingItemCount++
       try {
         const content = await item.getContent()
         const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
         const collectionUid = itemCollectionMap.get(uid)
         if (collectionUid) results.push({ uid, content: contentStr, collectionUid })
       } catch (err) {
+        failedDecodeCount++
         logger.warn(`[etebase-store] Failed to decode cached ${type} item`, getSafeErrorDetails(err))
       }
+    }
+
+    if (failedDecodeCount > 0) {
+      throw new Error(`Could not decode cached ${collectionItemNoun(type)} (${failedDecodeCount}/${matchingItemCount} failed)`)
     }
 
     return results

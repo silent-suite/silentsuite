@@ -101,6 +101,16 @@ export function SyncStartupState({ state, error }: { state: SyncStartupStatus; e
     )
   }
 
+  if (state === 'no-session') {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title="Encrypted session needs to be restored"
+        description="You are signed in, but this browser has not restored the encrypted vault session yet. Sign in again to unlock your data instead of showing an empty workspace."
+      />
+    )
+  }
+
   return (
     <EmptyState
       icon={RefreshCw}
