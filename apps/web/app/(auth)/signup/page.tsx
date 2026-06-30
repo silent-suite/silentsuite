@@ -19,6 +19,7 @@ import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { DISPLAY_VERSION } from '@/app/lib/constants'
+import { findCommonEmailDomainTypo, normalizeEmailForComparison, signupEmailSchema } from '@/app/lib/email-recovery'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
@@ -71,9 +72,8 @@ const PLAN_PRICES: Record<PlanId, { monthly: number; annual: number; annualPerMo
 // Validation
 // ---------------------------------------------------------------------------
 
-const signupSchema = z
-  .object({
-    email: z.string().min(1, 'Please enter a valid email address'),
+const signupSchema = signupEmailSchema
+  .and(z.object({
     password: z
       .string()
       .min(8, 'Password must be at least 8 characters')
@@ -81,14 +81,10 @@ const signupSchema = z
       .regex(/[a-z]/, 'Must contain a lowercase letter')
       .regex(/[0-9]/, 'Must contain a number'),
     confirmPassword: z.string(),
-  })
+  }))
   .refine((data) => data.password === data.confirmPassword, {
     message: 'Passwords do not match',
     path: ['confirmPassword'],
-  })
-  .refine((data) => data.email.includes('@'), {
-    message: 'Please enter a valid email address',
-    path: ['email'],
   })
 
 type SignupFormData = z.infer<typeof signupSchema>
@@ -244,6 +240,7 @@ function StepCreateAccount({
   })
 
   const password = watch('password', '')
+  const emailTypoWarning = findCommonEmailDomainTypo(watch('email', ''))
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -271,19 +268,44 @@ function StepCreateAccount({
             htmlFor="email"
             className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
           >
-            Email address
+            Email
           </label>
           <Input
             id="email"
             type="email"
             autoFocus
             aria-invalid={!!errors.email}
-            aria-describedby={errors.email ? 'signup-email-error' : undefined}
+            aria-describedby={errors.email ? 'signup-email-error' : emailTypoWarning ? 'signup-email-warning' : undefined}
             {...register('email')}
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.email && (
             <p id="signup-email-error" role="alert" className="text-xs text-red-600 dark:text-red-400">{errors.email.message}</p>
+          )}
+          {!errors.email && emailTypoWarning && (
+            <p id="signup-email-warning" className="text-xs text-amber-600 dark:text-amber-300">{emailTypoWarning.message}</p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <label
+            htmlFor="confirmEmail"
+            className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
+          >
+            Confirm email
+          </label>
+          <Input
+            id="confirmEmail"
+            type="email"
+            aria-invalid={!!errors.confirmEmail}
+            aria-describedby={errors.confirmEmail ? 'signup-confirm-email-error' : undefined}
+            {...register('confirmEmail')}
+            className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
+          />
+          {errors.confirmEmail && (
+            <p id="signup-confirm-email-error" role="alert" className="text-xs text-red-600 dark:text-red-400">
+              {errors.confirmEmail.message}
+            </p>
           )}
         </div>
 
@@ -1327,7 +1349,7 @@ export default function SignupPage() {
       localStorage.removeItem('silentsuite-server-url')
     }
 
-    const identifier = data.email || ''
+    const identifier = normalizeEmailForComparison(data.email || '')
     const selfHosted = isSelfHosted || isCustomServer(normalizedUrl)
 
     if (selfHosted) {
