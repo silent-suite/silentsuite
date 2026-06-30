@@ -17,7 +17,7 @@
  */
 import { logger } from '@/app/lib/logger'
 
-export type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
+export type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'labelIndex'
 
 export interface CachedItem {
   itemUid: string

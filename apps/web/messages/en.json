@@ -38,6 +38,7 @@
     "editorAriaLabel": "Labels",
     "changeLabelColor": "Change label {label} color",
     "removeLabel": "Remove label {label}",
+    "suggestionsAriaLabel": "Label suggestions",
     "eventLabels": "Event labels",
     "taskLabels": "Task labels",
     "contactLabels": "Contact labels",

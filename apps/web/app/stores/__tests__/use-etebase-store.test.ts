@@ -95,7 +95,7 @@ function setupStoreWithMocks(itemManager: MockItemManager, syncEngine: MockSyncE
   }
   useEtebaseStore.setState({
     account: account as any,
-    collections: { calendar: [collection as any], tasks: [], contacts: [], preferences: [] },
+    collections: { calendar: [collection as any], tasks: [], contacts: [], preferences: [], labelIndex: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
@@ -113,7 +113,7 @@ function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemMana
   }
   useEtebaseStore.setState({
     account: account as any,
-    collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [] },
+    collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
@@ -200,7 +200,7 @@ describe('useEtebaseStore.createItemsBatch', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -373,7 +373,7 @@ describe('useEtebaseStore.moveItem', () => {
     offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -392,7 +392,7 @@ describe('useEtebaseStore.moveItem', () => {
     coreMock.deleteItem.mockResolvedValue(undefined)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map([['item-old', sourceItem]]),
       itemTypeMap: new Map([['item-old', 'calendar']]),
       itemCollectionMap: new Map([['item-old', 'col-1']]),
@@ -426,7 +426,7 @@ describe('useEtebaseStore.moveItem', () => {
     offlineQueueMock.isOfflineError.mockReturnValue(true)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map([['item-old', sourceItem]]),
       itemTypeMap: new Map([['item-old', 'calendar']]),
       itemCollectionMap: new Map([['item-old', 'col-1']]),
@@ -457,7 +457,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
   beforeEach(() => {
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -479,7 +479,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }, { uid: 'col-2' }] as any[], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [{ uid: 'col-1' }, { uid: 'col-2' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map([
         ['item-1', deleteItemOne],
         ['item-2', deleteItemTwo],
@@ -535,7 +535,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -573,7 +573,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(items.map((item) => [item.uid, item])),
       itemTypeMap: new Map(items.map((item) => [item.uid, 'calendar' as const])),
       itemCollectionMap: new Map(items.map((item) => [item.uid, 'col-1'])),
@@ -604,7 +604,7 @@ describe('useEtebaseStore.refreshCollection', () => {
   beforeEach(() => {
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -635,7 +635,7 @@ describe('useEtebaseStore.refreshCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map([
         ['old-col-1', staleItem],
         ['keep-col-2', survivorItem],
@@ -677,7 +677,7 @@ describe('useEtebaseStore.refreshCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map([['existing', existingItem]]),
       itemTypeMap: new Map([['existing', 'calendar']]),
       itemCollectionMap: new Map([['existing', 'col-1']]),
@@ -721,7 +721,7 @@ describe('useEtebaseStore.reconcileCollections', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -753,7 +753,7 @@ describe('useEtebaseStore.reconcileCollections', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [deletedCalendar] as any[], tasks: [taskCollection] as any[], contacts: [contactCollection] as any[], preferences: [] },
+      collections: { calendar: [deletedCalendar] as any[], tasks: [taskCollection] as any[], contacts: [contactCollection] as any[], preferences: [], labelIndex: [] },
       itemCache: new Map([['event-1', mockItem('event-1', 'deleted event')]]),
       itemTypeMap: new Map([['event-1', 'calendar']]),
       itemCollectionMap: new Map([['event-1', 'deleted-cal']]),
@@ -799,7 +799,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -823,7 +823,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [collection] as any[], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [collection] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       isInitialized: true,
     })
 
@@ -859,7 +859,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [], tasks: [collection] as any[], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [collection] as any[], contacts: [], preferences: [], labelIndex: [] },
       isInitialized: true,
     })
 
@@ -895,7 +895,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [], tasks: [], contacts: [collection] as any[], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [collection] as any[], preferences: [], labelIndex: [] },
       isInitialized: true,
     })
 
@@ -934,7 +934,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
         calendar: type === 'calendar' ? [collection] as any[] : [],
         tasks: type === 'tasks' ? [collection] as any[] : [],
         contacts: type === 'contacts' ? [collection] as any[] : [],
-        preferences: [],
+        preferences: [], labelIndex: [],
       },
       isInitialized: true,
     })

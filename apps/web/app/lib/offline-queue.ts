@@ -5,7 +5,7 @@
  */
 import { logger } from '@/app/lib/logger'
 
-type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
+type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'labelIndex'
 type MutationType = 'create' | 'update' | 'delete' | 'move'
 
 export interface QueueEntry {

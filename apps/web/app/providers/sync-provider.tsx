@@ -9,6 +9,7 @@ import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
+import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
@@ -439,6 +440,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         reportSyncError('initialize preferences sync', err)
       }
 
+      // Load the encrypted label suggestion index from its dedicated Etebase
+      // collection. Plaintext labels only exist inside decrypted item content.
+      try {
+        const labelIndexStartedAt = nowMs()
+        await useLabelSuggestionsStore.getState().initialize()
+        logSyncTiming('label-index-initialize', labelIndexStartedAt)
+      } catch (err) {
+        hadErrors = true
+        reportSyncError('initialize label suggestions', err)
+      }
+
       return hadErrors
     }
 
@@ -496,6 +508,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           } catch (err) {
             reportSyncError('sync preferences', err)
           }
+        } else if (collectionType === 'silentsuite.labelindex') {
+          try {
+            const labelIndexItems = await refresher('labelIndex', event.collectionUid)
+            await useLabelSuggestionsStore.getState().loadFromRemote(labelIndexItems)
+          } catch (err) {
+            reportSyncError('sync label suggestions', err)
+          }
         }
 
         setLastSynced(new Date())
@@ -521,6 +540,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       if (unsubChange) unsubChange()
       if (unsubStatus) unsubStatus()
       usePreferencesSyncStore.getState().destroy()
+      useLabelSuggestionsStore.getState().destroy()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

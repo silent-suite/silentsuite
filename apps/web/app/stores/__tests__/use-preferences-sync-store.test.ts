@@ -22,7 +22,7 @@ function resetStores() {
   usePreferencesStore.setState({ notificationSound: true })
   useEtebaseStore.setState({
     account: null,
-    collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+    collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
