@@ -165,17 +165,19 @@ export function LabelEditor({
     [labels, onChange],
   )
 
+  const showSuggestions = !disabled && isSuggestionOpen && suggestions.length > 0
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Enter' || e.key === ',') {
         e.preventDefault()
-        if (suggestions.length > 0 && (e.key === 'Enter' || !input.trim())) {
+        if (showSuggestions && (e.key === 'Enter' || !input.trim())) {
           commit(suggestions[activeSuggestion] ?? suggestions[0]!)
         } else if (input.trim()) commit(input)
-      } else if (e.key === 'ArrowDown' && suggestions.length > 0) {
+      } else if (e.key === 'ArrowDown' && showSuggestions) {
         e.preventDefault()
         setActiveSuggestion((current) => (current + 1) % suggestions.length)
-      } else if (e.key === 'ArrowUp' && suggestions.length > 0) {
+      } else if (e.key === 'ArrowUp' && showSuggestions) {
         e.preventDefault()
         setActiveSuggestion((current) => (current - 1 + suggestions.length) % suggestions.length)
       } else if (e.key === 'Escape') {
@@ -187,10 +189,8 @@ export function LabelEditor({
         remove(labels[labels.length - 1]!)
       }
     },
-    [input, labels, commit, remove, suggestions, activeSuggestion],
+    [input, labels, commit, remove, suggestions, activeSuggestion, showSuggestions],
   )
-
-  const showSuggestions = !disabled && isSuggestionOpen && suggestions.length > 0
 
   return (
     <div className="relative flex flex-1 flex-wrap items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500">

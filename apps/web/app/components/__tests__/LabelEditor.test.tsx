@@ -222,4 +222,24 @@ describe('LabelEditor', () => {
     expect(screen.queryByRole('option', { name: 'Work' })).not.toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Home' })).toBeInTheDocument()
   })
+
+  it('does not commit hidden suggestions after Escape closes the listbox', () => {
+    useLabelSuggestionsStore.setState({
+      index: createLabelIndex([
+        { label: 'Work', count: 5, lastUsedAt: 10 },
+      ], 10),
+    })
+    const onChange = vi.fn()
+    renderWithIntl(<LabelEditor labels={[]} onChange={onChange} />)
+    const input = screen.getByLabelText('Labels')
+
+    fireEvent.focus(input)
+    expect(screen.getByRole('option', { name: 'Work' })).toBeInTheDocument()
+
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('listbox', { name: 'Label suggestions' })).not.toBeInTheDocument()
+
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onChange).not.toHaveBeenCalled()
+  })
 })
