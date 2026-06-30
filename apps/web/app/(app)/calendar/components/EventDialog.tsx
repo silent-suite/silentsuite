@@ -9,7 +9,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { RecurrencePicker } from './RecurrencePicker'
 import { RecurrenceScopeDialog, type RecurrenceScope } from './RecurrenceScopeDialog'
-import type { CalendarEvent, VAlarm } from '@silentsuite/core'
+import type { CalendarEvent, DateFormat, VAlarm } from '@silentsuite/core'
 import { buildAlarmTrigger, parseAlarmTriggerMinutes } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
@@ -132,6 +132,102 @@ export function parseEventTimeInput(input: string, timeFormat: string): string |
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
 }
 
+function effectiveDateFormat(dateFormat: DateFormat): Exclude<DateFormat, 'system'> {
+  return dateFormat === 'system' ? 'YYYY-MM-DD' : dateFormat
+}
+
+export function dateFormatExample(dateFormat: DateFormat): string {
+  return formatEventDateInput('2026-06-09', dateFormat)
+}
+
+export function formatEventDateInput(isoDate: string, dateFormat: DateFormat): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate)
+  if (!match) return isoDate
+  const [, y, m, d] = match
+
+  switch (effectiveDateFormat(dateFormat)) {
+    case 'DD/MM/YYYY':
+      return `${d}/${m}/${y}`
+    case 'MM/DD/YYYY':
+      return `${m}/${d}/${y}`
+    case 'DD.MM.YYYY':
+      return `${d}.${m}.${y}`
+    case 'YYYY/MM/DD':
+      return `${y}/${m}/${d}`
+    case 'YYYY-MM-DD':
+      return `${y}-${m}-${d}`
+  }
+}
+
+function isValidIsoDate(y: number, m: number, d: number): boolean {
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false
+  if (y < 1 || m < 1 || m > 12 || d < 1 || d > 31) return false
+  const date = new Date(y, m - 1, d)
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d
+}
+
+export function parseEventDateInput(input: string, dateFormat: DateFormat): string | null {
+  const value = input.trim()
+  if (!value) return null
+
+  const format = effectiveDateFormat(dateFormat)
+  const separator = format.includes('.') ? '\\.' : format.includes('/') ? '/' : '-'
+  const match = new RegExp(`^(\\d{1,4})${separator}(\\d{1,2})${separator}(\\d{1,4})$`).exec(value)
+  if (!match) return null
+
+  const a = Number(match[1])
+  const b = Number(match[2])
+  const c = Number(match[3])
+  let y: number
+  let m: number
+  let d: number
+
+  switch (format) {
+    case 'DD/MM/YYYY':
+    case 'DD.MM.YYYY':
+      d = a; m = b; y = c
+      break
+    case 'MM/DD/YYYY':
+      m = a; d = b; y = c
+      break
+    case 'YYYY/MM/DD':
+    case 'YYYY-MM-DD':
+      y = a; m = b; d = c
+      break
+  }
+
+  if (y < 1000 || !isValidIsoDate(y, m, d)) return null
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+const PRESET_ALARM_MINUTES = ['5', '15', '30', '60', '1440'] as const
+
+function isPresetAlarm(value: string): boolean {
+  return PRESET_ALARM_MINUTES.includes(value as typeof PRESET_ALARM_MINUTES[number])
+}
+
+function normalizeAlarmMinutes(value: string): string | null {
+  const minutes = Number(value)
+  if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 525600) return null
+  return String(minutes)
+}
+
+function alarmLabel(value: string): string {
+  if (value === '60') return '1 hour before'
+  if (value === '1440') return '1 day before'
+  return `${value} minutes before`
+}
+
+function alarmToVAlarm(minutes: string, title: string): VAlarm | null {
+  const normalized = normalizeAlarmMinutes(minutes)
+  if (!normalized) return null
+  return {
+    action: 'DISPLAY' as const,
+    trigger: buildAlarmTrigger(Number(normalized)),
+    description: title.trim(),
+  }
+}
+
 function formatDateForInput(date: Date, tz: string | undefined): string {
   if (!tz) {
     const y = date.getFullYear()
@@ -184,6 +280,7 @@ export function EventDialog({
   const t = useTranslations('Labels')
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
   const timeFormat = usePreferencesStore((s) => s.timeFormat)
+  const dateFormat = usePreferencesStore((s) => s.dateFormat)
   const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
   const userTz = resolveUserTimezone(defaultTimezonePref)
   const defaultTimezone = userTz
@@ -223,10 +320,16 @@ export function EventDialog({
   const [allDay, setAllDay] = useState(initialIsAllDay)
   const initialStartTime = formatTimeForInput(defaultStart, initialFormTz)
   const initialEndTime = formatTimeForInput(defaultEnd, initialFormTz)
-  const [startDate, setStartDate] = useState(formatDateForInput(defaultStart, initialFormTz))
+  const initialStartDateIso = formatDateForInput(defaultStart, initialFormTz)
+  const initialEndDateIso = formatDateForInput(defaultEnd, initialFormTz)
+  const [startDate, setStartDate] = useState(initialStartDateIso)
+  const [startDateInput, setStartDateInput] = useState(() => formatEventDateInput(initialStartDateIso, dateFormat))
+  const [startDateError, setStartDateError] = useState<string | null>(null)
   const [startTime, setStartTime] = useState(initialStartTime)
   const [startTimeInput, setStartTimeInput] = useState(() => formatEventTimeInput(initialStartTime, timeFormat))
-  const [endDate, setEndDate] = useState(formatDateForInput(defaultEnd, initialFormTz))
+  const [endDate, setEndDate] = useState(initialEndDateIso)
+  const [endDateInput, setEndDateInput] = useState(() => formatEventDateInput(initialEndDateIso, dateFormat))
+  const [endDateError, setEndDateError] = useState<string | null>(null)
   const [endTime, setEndTime] = useState(initialEndTime)
   const [endTimeInput, setEndTimeInput] = useState(() => formatEventTimeInput(initialEndTime, timeFormat))
   const [recurrenceRule, setRecurrenceRule] = useState<string | null>(
@@ -266,6 +369,14 @@ export function EventDialog({
   useEffect(() => {
     setEndTimeInput(formatEventTimeInput(endTime, timeFormat))
   }, [endTime, timeFormat])
+
+  useEffect(() => {
+    if (!startDateError) setStartDateInput(formatEventDateInput(startDate, dateFormat))
+    if (!endDateError) setEndDateInput(formatEventDateInput(endDate, dateFormat))
+    // Re-render displayed dates when the account preference changes; regular
+    // typing is normalized on blur so partial-but-valid entries are not clobbered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFormat])
 
   // Calendar selection
   const calendarLists = useCalendarListStore((s) => s.calendars)
@@ -363,6 +474,7 @@ export function EventDialog({
 
   const handleSave = useCallback(async () => {
     if (!title.trim() || saving) return
+    if (startDateError || endDateError) return
 
     const newStart = buildStartDate()
     const newEnd = buildEndDate()
@@ -390,12 +502,8 @@ export function EventDialog({
 
         // Compare alarms
         const eventAlarms: VAlarm[] = alarms
-          .filter((a) => a !== 'none')
-          .map((a) => ({
-            action: 'DISPLAY' as const,
-            trigger: buildAlarmTrigger(parseInt(a)),
-            description: title.trim(),
-          }))
+          .map((a) => alarmToVAlarm(a, title))
+          .filter((a): a is VAlarm => a !== null)
         const existingTriggers = (event.alarms ?? []).map((a) => a.trigger).sort().join(',')
         const newTriggers = eventAlarms.map((a) => a.trigger).sort().join(',')
         if (existingTriggers !== newTriggers) {
@@ -429,12 +537,8 @@ export function EventDialog({
           timezone,
           calendarId: selectedCalendarId,
           alarms: alarms
-            .filter((a) => a !== 'none')
-            .map((a) => ({
-              action: 'DISPLAY' as const,
-              trigger: buildAlarmTrigger(parseInt(a)),
-              description: title.trim(),
-            })),
+            .map((a) => alarmToVAlarm(a, title))
+            .filter((a): a is VAlarm => a !== null),
         })
       }
 
@@ -454,6 +558,8 @@ export function EventDialog({
     timezone,
     defaultTimezone,
     saving,
+    startDateError,
+    endDateError,
     isEdit,
     isRecurring,
     event,
@@ -524,13 +630,23 @@ export function EventDialog({
   const handleStartDateChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value
-      setStartDate(value)
+      setStartDateInput(value)
+      const parsedDate = parseEventDateInput(value, dateFormat)
+      if (!parsedDate) {
+        setStartDateError(`Use ${dateFormatExample(dateFormat)} format`)
+        return
+      }
+
+      setStartDateError(null)
+      setStartDate(parsedDate)
       // If end date is before start date, push it forward
-      if (value > endDate) {
-        setEndDate(value)
+      if (parsedDate > endDate) {
+        setEndDate(parsedDate)
+        setEndDateInput(formatEventDateInput(parsedDate, dateFormat))
+        setEndDateError(null)
       }
     },
-    [endDate],
+    [dateFormat, endDate],
   )
 
   const handleStartTimeChange = useCallback(
@@ -554,8 +670,17 @@ export function EventDialog({
   )
 
   const handleEndDateChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setEndDate(e.target.value)
-  }, [])
+    const value = e.target.value
+    setEndDateInput(value)
+    const parsedDate = parseEventDateInput(value, dateFormat)
+    if (!parsedDate) {
+      setEndDateError(`Use ${dateFormatExample(dateFormat)} format`)
+      return
+    }
+
+    setEndDateError(null)
+    setEndDate(parsedDate)
+  }, [dateFormat])
 
   const handleEndTimeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
@@ -571,6 +696,14 @@ export function EventDialog({
   const handleEndTimeBlur = useCallback(() => {
     setEndTimeInput(formatEventTimeInput(endTime, timeFormat))
   }, [endTime, timeFormat])
+
+  const handleStartDateBlur = useCallback(() => {
+    if (!startDateError) setStartDateInput(formatEventDateInput(startDate, dateFormat))
+  }, [dateFormat, startDate, startDateError])
+
+  const handleEndDateBlur = useCallback(() => {
+    if (!endDateError) setEndDateInput(formatEventDateInput(endDate, dateFormat))
+  }, [dateFormat, endDate, endDateError])
 
   const handleAllDayToggle = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setAllDay(e.target.checked)
@@ -615,7 +748,8 @@ export function EventDialog({
   // Render
   // ---------------------------------------------------------------------------
 
-  const canSave = title.trim().length > 0
+  const canSave = title.trim().length > 0 && !startDateError && !endDateError
+  const datePlaceholder = dateFormatExample(dateFormat)
   const focusRing = 'focus:outline-none focus:ring-2 focus:ring-emerald-500/80 focus:ring-offset-2 focus:ring-offset-[rgb(var(--background))]'
   const fieldClass = `min-h-11 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-sm text-[rgb(var(--foreground))] shadow-sm shadow-black/5 transition-colors placeholder:text-[rgb(var(--muted))] hover:border-emerald-500/40 focus:border-emerald-500 ${focusRing}`
   const compactFieldClass = `min-h-10 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] shadow-sm shadow-black/5 transition-colors hover:border-emerald-500/40 focus:border-emerald-500 ${focusRing}`
@@ -780,14 +914,26 @@ export function EventDialog({
                   <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
                     <div className="grid gap-2 sm:grid-cols-[5rem_minmax(0,1fr)_7.5rem] sm:items-center">
                       <span className="text-sm font-medium text-[rgb(var(--muted))]">Starts</span>
-                      <input
-                        type="date"
-                        value={startDate}
-                        onChange={handleStartDateChange}
-                        aria-label="Start date"
-                        readOnly={!canWrite}
-                        className={`w-full ${compactFieldClass} ${disabledClass}`}
-                      />
+                      <div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder={datePlaceholder}
+                          value={startDateInput}
+                          onChange={handleStartDateChange}
+                          onBlur={handleStartDateBlur}
+                          aria-label="Start date"
+                          aria-invalid={startDateError ? 'true' : undefined}
+                          aria-describedby={startDateError ? 'start-date-error' : undefined}
+                          readOnly={!canWrite}
+                          className={`w-full ${compactFieldClass} ${disabledClass}`}
+                        />
+                        {startDateError && (
+                          <p id="start-date-error" className="mt-1 text-xs text-red-500" role="alert">
+                            {startDateError}
+                          </p>
+                        )}
+                      </div>
                       {!allDay && (
                         <input
                           type="text"
@@ -808,14 +954,26 @@ export function EventDialog({
                   <div className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
                     <div className="grid gap-2 sm:grid-cols-[5rem_minmax(0,1fr)_7.5rem] sm:items-center">
                       <span className="text-sm font-medium text-[rgb(var(--muted))]">Ends</span>
-                      <input
-                        type="date"
-                        value={endDate}
-                        onChange={handleEndDateChange}
-                        aria-label="End date"
-                        readOnly={!canWrite}
-                        className={`w-full ${compactFieldClass} ${disabledClass}`}
-                      />
+                      <div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder={datePlaceholder}
+                          value={endDateInput}
+                          onChange={handleEndDateChange}
+                          onBlur={handleEndDateBlur}
+                          aria-label="End date"
+                          aria-invalid={endDateError ? 'true' : undefined}
+                          aria-describedby={endDateError ? 'end-date-error' : undefined}
+                          readOnly={!canWrite}
+                          className={`w-full ${compactFieldClass} ${disabledClass}`}
+                        />
+                        {endDateError && (
+                          <p id="end-date-error" className="mt-1 text-xs text-red-500" role="alert">
+                            {endDateError}
+                          </p>
+                        )}
+                      </div>
                       {!allDay && (
                         <input
                           type="text"
@@ -890,33 +1048,68 @@ export function EventDialog({
                   </div>
                 )}
 
-                {alarms.map((alarm, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-2">
+                {alarms.map((alarm, i) => {
+                  const isCustomAlarm = !isPresetAlarm(alarm)
+                  return (
+                  <div key={i} className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-2 sm:flex-row sm:items-start">
                     <select
-                      value={alarm}
+                      value={isCustomAlarm ? 'custom' : alarm}
                       onChange={(e) => {
                         const next = [...alarms]
-                        next[i] = e.target.value
+                        next[i] = e.target.value === 'custom' ? '10' : e.target.value
                         setAlarms(next)
                       }}
-                      className={`min-w-0 flex-1 ${compactFieldClass}`}
+                      disabled={!canWrite}
+                      aria-label={`Reminder ${i + 1}`}
+                      className={`min-w-0 flex-1 ${compactFieldClass} ${disabledClass}`}
                     >
                       <option value="5">5 minutes before</option>
                       <option value="15">15 minutes before</option>
                       <option value="30">30 minutes before</option>
                       <option value="60">1 hour before</option>
                       <option value="1440">1 day before</option>
+                      <option value="custom">Custom…</option>
                     </select>
+                    {isCustomAlarm && (
+                      <label className="flex min-w-0 flex-1 items-center gap-2 text-sm text-[rgb(var(--muted))] sm:max-w-[14rem]">
+                        <input
+                          type="number"
+                          min="1"
+                          max="525600"
+                          step="1"
+                          value={alarm}
+                          onChange={(e) => {
+                            const next = [...alarms]
+                            next[i] = e.target.value
+                            setAlarms(next)
+                          }}
+                          onBlur={(e) => {
+                            const next = [...alarms]
+                            next[i] = normalizeAlarmMinutes(e.target.value) ?? '15'
+                            setAlarms(next)
+                          }}
+                          aria-label={`Custom reminder ${i + 1} minutes before`}
+                          readOnly={!canWrite}
+                          className={`w-24 ${compactFieldClass} ${disabledClass}`}
+                        />
+                        minutes before
+                      </label>
+                    )}
+                    {!isCustomAlarm && (
+                      <span className="sr-only">{alarmLabel(alarm)}</span>
+                    )}
                     <button
                       type="button"
                       onClick={() => setAlarms((prev) => prev.filter((_, j) => j !== i))}
-                      className={`rounded-full p-2 text-[rgb(var(--muted))] transition-colors hover:bg-red-500/10 hover:text-red-500 ${focusRing}`}
+                      disabled={!canWrite}
+                      className={`self-start rounded-full p-2 text-[rgb(var(--muted))] transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
                       aria-label="Remove reminder"
                     >
                       <X className="h-4 w-4" />
                     </button>
                   </div>
-                ))}
+                  )
+                })}
 
                 {alarms.length > 0 && notifications.permission === 'default' && (
                   <div className="flex flex-col gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
