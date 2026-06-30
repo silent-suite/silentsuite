@@ -862,7 +862,7 @@ export default function TasksPage() {
     [tasks, visibleListIds],
   )
   const sortedTasks = useMemo(() => sortTasks(filteredTasks), [filteredTasks])
-  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty' || initialSyncState === 'no-session'
+  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty'
   const shouldShowStartupState = tasks.length === 0 && !isLoading && !initialLoadComplete
   const isEmpty = tasks.length === 0 && !isLoading && initialLoadComplete
 

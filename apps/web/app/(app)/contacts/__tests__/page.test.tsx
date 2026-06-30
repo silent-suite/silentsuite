@@ -94,6 +94,16 @@ describe('ContactsPage mobile reachability', () => {
     expect(screen.queryByText('No contacts yet')).not.toBeInTheDocument()
   })
 
+  it('does not show an empty contact state when the encrypted session is missing', () => {
+    storeMock.contactState.isLoading = false
+    storeMock.syncState.initialSyncState = 'no-session'
+
+    renderWithIntl(<ContactsPage />)
+
+    expect(screen.getByText('Encrypted session needs to be restored')).toBeInTheDocument()
+    expect(screen.queryByText('No contacts yet')).not.toBeInTheDocument()
+  })
+
   it('exposes a mobile collection switcher with a 44px touch target', () => {
     renderWithIntl(<ContactsPage />)
     const folderButton = screen.getByRole('button', { name: manageAddressBooks })
