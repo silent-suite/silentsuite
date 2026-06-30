@@ -7,6 +7,7 @@ import dynamic from 'next/dynamic'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { formatDate as formatDateUtil } from '@/app/lib/date'
 import AddCardBanner from '@/app/components/add-card-banner'
+import { getPaidBonusAccessDate } from './bonus-access'
 
 const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-form'), {
   loading: () => (
@@ -347,6 +348,7 @@ export default function SubscriptionPage() {
       ? 'Reactivate'
       : 'Subscribe'
   const accessUntilFormatted = data.renewalDate ? formatDateStr(data.renewalDate) : 'the end of your current period'
+  const paidBonusAccessDate = getPaidBonusAccessDate(data)
   // Only show Early Adopter plans — Standard plans will be enabled later
   const availablePlans = REACTIVATION_PLANS.filter((p) => p.earlyOnly)
 
@@ -421,6 +423,14 @@ export default function SubscriptionPage() {
               <p className="text-sm text-[rgb(var(--foreground))]">
                 {data.trialPath === '7day' ? '7-day trial (no card)' : data.trialPath === '30day' ? '30-day trial' : 'Paid + 14-day bonus'}
               </p>
+            </div>
+          )}
+
+          {/* Paid bonus/access date */}
+          {paidBonusAccessDate && (
+            <div>
+              <p className="text-xs text-[rgb(var(--muted))]">Bonus access</p>
+              <p className="text-sm text-[rgb(var(--foreground))]">Included until {formatDateStr(paidBonusAccessDate)}</p>
             </div>
           )}
 
