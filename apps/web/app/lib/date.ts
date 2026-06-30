@@ -87,10 +87,14 @@ export function formatDate(input: Date | string | number, format: DateFormat = '
   switch (format) {
     case 'YYYY-MM-DD':
       return `${y}-${m}-${d}`
+    case 'YYYY/MM/DD':
+      return `${y}/${m}/${d}`
     case 'DD/MM/YYYY':
       return `${d}/${m}/${y}`
     case 'MM/DD/YYYY':
       return `${m}/${d}/${y}`
+    case 'DD.MM.YYYY':
+      return `${d}.${m}.${y}`
     case 'system':
     default:
       return date.toLocaleDateString(locale ?? undefined, options ?? { year: 'numeric', month: 'long', day: 'numeric' })

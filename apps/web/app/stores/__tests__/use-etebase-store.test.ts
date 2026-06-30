@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { secureGet } from '@/app/lib/secure-storage'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useCalendarStore } from '../use-calendar-store'
 import { useCalendarListStore } from '../use-calendar-list-store'
@@ -18,6 +19,10 @@ const coreMock = vi.hoisted(() => ({
   createItem: vi.fn(),
   deleteItem: vi.fn(),
   updateCollectionMeta: vi.fn(),
+  restoreSession: vi.fn(),
+  getAccountFingerprint: vi.fn(),
+  listItems: vi.fn(),
+  SyncEngine: vi.fn(),
 }))
 
 const toastStoreMock = vi.hoisted(() => ({
@@ -49,6 +54,10 @@ beforeEach(() => {
   coreMock.createItem.mockReset()
   coreMock.deleteItem.mockReset()
   coreMock.updateCollectionMeta.mockReset()
+  coreMock.restoreSession.mockReset()
+  coreMock.getAccountFingerprint.mockReset()
+  coreMock.listItems.mockReset()
+  coreMock.SyncEngine.mockReset()
   toastStoreMock.showErrorToast.mockReset()
 })
 
@@ -112,6 +121,68 @@ function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemMana
     syncEngine: syncEngine as any,
   })
 }
+
+describe('useEtebaseStore.initialize outcomes', () => {
+  beforeEach(() => {
+    vi.mocked(secureGet).mockReset().mockResolvedValue(null)
+    useEtebaseStore.setState({
+      account: null,
+      accountFingerprint: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('returns no-session without marking Etebase initialized', async () => {
+    vi.mocked(secureGet).mockResolvedValue(null)
+
+    const outcome = await useEtebaseStore.getState().initialize()
+
+    expect(outcome).toEqual({ status: 'no-session' })
+    expect(useEtebaseStore.getState().isInitialized).toBe(false)
+    expect(coreMock.restoreSession).not.toHaveBeenCalled()
+  })
+
+  it('returns success after restoring a saved session and loading collections', async () => {
+    vi.mocked(secureGet).mockResolvedValue('saved-session')
+    const account = { id: 'account' }
+    coreMock.restoreSession.mockResolvedValue(account)
+    coreMock.getAccountFingerprint.mockReturnValue('fingerprint')
+    coreMock.listCollections.mockImplementation(async (_account: unknown, type: string) => [mockCollection(`${type}-col`)])
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+    const engine = {
+      trackCollection: vi.fn(),
+      onStokenAdvance: vi.fn(),
+      start: vi.fn(async () => {}),
+      stop: vi.fn(),
+    }
+    coreMock.SyncEngine.mockImplementation(function MockSyncEngine() {
+      return engine
+    })
+
+    const outcome = await useEtebaseStore.getState().initialize()
+
+    expect(outcome).toEqual({ status: 'success', itemCount: 0 })
+    expect(useEtebaseStore.getState().isInitialized).toBe(true)
+    expect(useEtebaseStore.getState().accountFingerprint).toBe('fingerprint')
+    expect(engine.start).toHaveBeenCalledWith(account)
+  })
+
+  it('returns error without marking initialized on restore failure', async () => {
+    vi.mocked(secureGet).mockResolvedValue('saved-session')
+    coreMock.restoreSession.mockRejectedValue(new Error('bad session'))
+
+    const outcome = await useEtebaseStore.getState().initialize()
+
+    expect(outcome.status).toBe('error')
+    expect(useEtebaseStore.getState().isInitialized).toBe(false)
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to restore session. Please try signing in again.')
+  })
+})
 
 describe('useEtebaseStore.createItemsBatch', () => {
   beforeEach(() => {

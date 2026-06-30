@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
-import { EventDialog, formatEventTimeInput, parseEventTimeInput } from '../EventDialog'
+import { EventDialog, formatEventDateInput, formatEventTimeInput, parseEventDateInput, parseEventTimeInput } from '../EventDialog'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 
 const mocks = vi.hoisted(() => ({
@@ -136,6 +136,85 @@ describe('EventDialog edit calendar selection', () => {
     expect(parseEventTimeInput(input, preference)).toBe(expected)
   })
 
+  it.each([
+    ['2026-06-09', 'YYYY-MM-DD', '2026-06-09'],
+    ['2026-06-09', 'DD/MM/YYYY', '09/06/2026'],
+    ['2026-06-09', 'MM/DD/YYYY', '06/09/2026'],
+    ['2026-06-09', 'DD.MM.YYYY', '09.06.2026'],
+    ['2026-06-09', 'YYYY/MM/DD', '2026/06/09'],
+    ['2026-06-09', 'system', '2026-06-09'],
+  ] as const)('formats date input %s using %s', (isoDate, preference, expected) => {
+    expect(formatEventDateInput(isoDate, preference)).toBe(expected)
+  })
+
+  it.each([
+    ['09/06/2026', 'DD/MM/YYYY', '2026-06-09'],
+    ['06/09/2026', 'MM/DD/YYYY', '2026-06-09'],
+    ['09.06.2026', 'DD.MM.YYYY', '2026-06-09'],
+    ['2026/06/09', 'YYYY/MM/DD', '2026-06-09'],
+    ['2026-06-09', 'YYYY-MM-DD', '2026-06-09'],
+    ['2026-06-09', 'system', '2026-06-09'],
+  ] as const)('parses date input %s using %s', (input, preference, expected) => {
+    expect(parseEventDateInput(input, preference)).toBe(expected)
+  })
+
+  it('rejects invalid typed dates', () => {
+    expect(parseEventDateInput('31/02/2026', 'DD/MM/YYYY')).toBeNull()
+    expect(parseEventDateInput('2026/31/02', 'YYYY/MM/DD')).toBeNull()
+  })
+
+  it('renders event dialog date controls as preference-formatted text fields', () => {
+    mocks.preferences.dateFormat = 'DD.MM.YYYY'
+
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent({ startDate: new Date('2026-06-01T14:00:00Z'), endDate: new Date('2026-06-02T15:30:00Z') })} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Start date')).toHaveAttribute('type', 'text')
+    expect(screen.getByLabelText('Start date')).toHaveValue('01.06.2026')
+    expect(screen.getByLabelText('End date')).toHaveValue('02.06.2026')
+  })
+
+  it('normalizes typed preference-formatted dates on blur and saves ISO-backed dates', async () => {
+    mocks.preferences.dateFormat = 'YYYY/MM/DD'
+
+    renderWithIntl(
+      <EventDialog
+        mode="create"
+        startDate={new Date('2026-06-01T14:00:00Z')}
+        endDate={new Date('2026-06-01T14:30:00Z')}
+        onClose={mocks.onClose}
+      />,
+    )
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Date formatted event' } })
+    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2026/6/9' } })
+    fireEvent.blur(screen.getByLabelText('Start date'))
+    fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2026/6/10' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    expect(screen.getByLabelText('Start date')).toHaveValue('2026/06/09')
+    await waitFor(() => {
+      expect(mocks.createEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          startDate: new Date('2026-06-09T14:00:00Z'),
+          endDate: new Date('2026-06-10T14:30:00Z'),
+        }),
+      )
+    })
+  })
+
+  it('marks invalid typed dates and blocks save until corrected', () => {
+    mocks.preferences.dateFormat = 'DD/MM/YYYY'
+
+    renderWithIntl(<EventDialog mode="create" startDate={new Date('2026-06-01T14:00:00Z')} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Invalid date event' } })
+    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '31/02/2026' } })
+
+    expect(screen.getByLabelText('Start date')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('alert')).toHaveTextContent('Use 09/06/2026 format')
+    expect(screen.getByRole('button', { name: 'Done' })).toBeDisabled()
+  })
+
   it('renders event dialog time controls as 24-hour text fields for the 24-hour preference', () => {
     mocks.preferences.timeFormat = '24h'
 
@@ -216,6 +295,45 @@ describe('EventDialog edit calendar selection', () => {
       expect(mocks.updateEvent).toHaveBeenCalledWith(
         'event-item-1',
         expect.objectContaining({ categories: ['Work', 'Home'] }),
+      )
+    })
+  })
+
+  it('preserves imported custom minute reminders when saving unchanged', async () => {
+    const event = makeEvent({
+      alarms: [{ action: 'DISPLAY', trigger: '-PT11M', description: 'Existing event' }],
+    })
+
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Reminder 1')).toHaveValue('custom')
+    expect(screen.getByLabelText('Custom reminder 1 minutes before')).toHaveValue(11)
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed custom reminder' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    await waitFor(() => {
+      expect(mocks.updateEvent).toHaveBeenCalledWith(
+        'event-item-1',
+        expect.not.objectContaining({ alarms: expect.anything() }),
+      )
+    })
+  })
+
+  it('saves user-entered custom minute reminders as simple negative-duration VALARMs', async () => {
+    renderWithIntl(<EventDialog mode="create" startDate={new Date('2026-06-01T09:00:00Z')} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Custom reminder event' } })
+    fireEvent.click(screen.getByRole('button', { name: '+ Add' }))
+    fireEvent.change(screen.getByLabelText('Reminder 1'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByLabelText('Custom reminder 1 minutes before'), { target: { value: '11' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+
+    await waitFor(() => {
+      expect(mocks.createEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          alarms: [expect.objectContaining({ action: 'DISPLAY', trigger: '-PT11M' })],
+        }),
       )
     })
   })

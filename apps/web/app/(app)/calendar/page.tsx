@@ -8,6 +8,8 @@ import { formatDate, startOfWeek, getWeekNumber } from '@/app/lib/date'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { useSyncStore } from '@/app/stores/use-sync-store'
+import { SyncStartupState } from '@/app/components/empty-state'
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { CalendarViewSwitcher } from './components/CalendarViewSwitcher'
@@ -154,6 +156,8 @@ export default function CalendarPage() {
   const timeFormat = usePreferencesStore((s) => s.timeFormat)
   const defaultTimezonePref = usePreferencesStore((s) => s.defaultTimezone)
   const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
+  const initialSyncState = useSyncStore((s) => s.initialSyncState)
+  const syncError = useSyncStore((s) => s.error)
   const userTz = resolveUserTimezone(defaultTimezonePref)
 
   const [createDialog, setCreateDialog] = useState<CreateDialogState | null>(null)
@@ -195,6 +199,8 @@ export default function CalendarPage() {
     () => events.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')),
     [events, visibleCalendarIds],
   )
+  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty' || initialSyncState === 'no-session'
+  const shouldShowStartupState = !isLoading && visibleEvents.length === 0 && !initialLoadComplete
 
   // Search
   const searchQuery = useCalendarStore((s) => s.searchQuery)
@@ -399,6 +405,8 @@ export default function CalendarPage() {
       {/* Content */}
       {isLoading ? (
         <CalendarSkeleton />
+      ) : shouldShowStartupState ? (
+        <SyncStartupState state={initialSyncState} error={syncError} />
       ) : (
         <>
           {/* Search bar */}

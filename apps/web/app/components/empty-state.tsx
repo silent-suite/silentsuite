@@ -1,6 +1,6 @@
 'use client'
 
-import { CalendarDays, CheckSquare, Users, Search, type LucideIcon } from 'lucide-react'
+import { AlertTriangle, CalendarDays, CheckSquare, RefreshCw, Search, Users, type LucideIcon } from 'lucide-react'
 
 interface EmptyStateProps {
   icon: LucideIcon
@@ -74,6 +74,38 @@ export function SearchEmptyState({ query }: { query: string }) {
       icon={Search}
       title="No results found"
       description={`No contacts match "${query}". Try a different search term.`}
+    />
+  )
+}
+
+export type SyncStartupStatus = 'idle' | 'restoring' | 'hydrated-cache' | 'syncing' | 'synced' | 'empty' | 'offline' | 'error' | 'no-session'
+
+export function SyncStartupState({ state, error }: { state: SyncStartupStatus; error?: string | null }) {
+  if (state === 'error') {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title="Could not restore encrypted session"
+        description={error || 'Sign in again or retry when your connection is available.'}
+      />
+    )
+  }
+
+  if (state === 'offline') {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title="Waiting to sync encrypted data"
+        description="You appear to be offline. Cached data will stay visible when available; reconnect to finish sync."
+      />
+    )
+  }
+
+  return (
+    <EmptyState
+      icon={RefreshCw}
+      title={state === 'syncing' ? 'Syncing encrypted data…' : 'Restoring encrypted data…'}
+      description="SilentSuite is checking your encrypted session before showing an empty account."
     />
   )
 }
