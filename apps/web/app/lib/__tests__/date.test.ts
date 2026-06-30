@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   endOfWeek,
+  formatDate,
   getWeekNumber,
   startOfWeek,
   weekdayLabels,
@@ -27,6 +28,20 @@ describe('weekdayLabels', () => {
 
   it('orders labels from Sunday for sunday-start', () => {
     expect(weekdayLabels('sunday')).toEqual(['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'])
+  })
+})
+
+describe('formatDate', () => {
+  const date = new Date(2026, 5, 9)
+
+  it.each([
+    ['DD/MM/YYYY', '09/06/2026'],
+    ['MM/DD/YYYY', '06/09/2026'],
+    ['DD.MM.YYYY', '09.06.2026'],
+    ['YYYY/MM/DD', '2026/06/09'],
+    ['YYYY-MM-DD', '2026-06-09'],
+  ] as const)('formats %s', (format, expected) => {
+    expect(formatDate(date, format)).toBe(expected)
   })
 })
 

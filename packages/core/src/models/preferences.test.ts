@@ -66,6 +66,14 @@ describe('synced preferences', () => {
     });
   });
 
+  it.each(['DD/MM/YYYY', 'MM/DD/YYYY', 'DD.MM.YYYY', 'YYYY/MM/DD', 'YYYY-MM-DD', 'system'] as const)(
+    'accepts %s as a synced date format',
+    (dateFormat) => {
+      const preferences = createSyncedPreferences({ dateFormat }, {}, 42);
+
+      expect(getSyncedPreferenceValues(preferences).dateFormat).toBe(dateFormat);
+    },
+  );
 
   it('accepts valid day bounds and falls back when start is not before end', () => {
     const valid = createSyncedPreferences({ dayStartHour: 7, dayEndHour: 19 }, {}, 42);
