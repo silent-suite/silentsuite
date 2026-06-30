@@ -1,3 +1,5 @@
+export const PREFERENCES_KIND = 'silentsuite.preferences.v1';
+
 export const SYNCED_PREFERENCE_KEYS = [
   'timeFormat',
   'firstDayOfWeek',
@@ -31,6 +33,7 @@ export interface VersionedPreference<T> {
 }
 
 export interface SyncedPreferencesV1 {
+  kind: typeof PREFERENCES_KIND;
   schemaVersion: 1;
   updatedAt: number;
   fields: {
@@ -143,6 +146,7 @@ export function createSyncedPreferences(
   const updatedAt = Math.max(...SYNCED_PREFERENCE_KEYS.map((key) => normalizedTimestamps[key]));
 
   return {
+    kind: PREFERENCES_KIND,
     schemaVersion: 1,
     updatedAt,
     fields: {
@@ -159,6 +163,9 @@ export function createSyncedPreferences(
 
 export function normalizeSyncedPreferences(input: unknown): SyncedPreferencesV1 {
   const root = isRecord(input) ? input : {};
+  if ('kind' in root && root.kind !== PREFERENCES_KIND) {
+    throw new Error('Invalid preferences kind');
+  }
   const fields = isRecord(root.fields) ? root.fields : {};
   const rootUpdatedAt = timestamp(root.updatedAt, 0);
 

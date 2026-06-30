@@ -73,8 +73,9 @@ const COLLECTION_TYPE_CALENDAR = 'etebase.vevent'
 const COLLECTION_TYPE_TASKS = 'etebase.vtodo'
 const COLLECTION_TYPE_CONTACTS = 'etebase.vcard'
 const COLLECTION_TYPE_PREFERENCES = 'silentsuite.preferences'
+const COLLECTION_TYPE_LABEL_INDEX = 'silentsuite.labelindex'
 
-type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
+type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'labelIndex'
 type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
 type EtebaseCore = typeof import('@silentsuite/core')
 
@@ -85,6 +86,7 @@ const COLLECTION_DEFINITIONS: [CollectionTypeKey, string, string][] = [
   ['tasks', COLLECTION_TYPE_TASKS, 'Personal Tasks'],
   ['contacts', COLLECTION_TYPE_CONTACTS, 'Personal Contacts'],
   ['preferences', COLLECTION_TYPE_PREFERENCES, 'Preferences'],
+  ['labelIndex', COLLECTION_TYPE_LABEL_INDEX, 'Label Suggestions'],
 ]
 
 function collectionTypeToKey(ct: string): CollectionTypeKey | null {
@@ -92,6 +94,7 @@ function collectionTypeToKey(ct: string): CollectionTypeKey | null {
   if (ct === COLLECTION_TYPE_TASKS) return 'tasks'
   if (ct === COLLECTION_TYPE_CONTACTS) return 'contacts'
   if (ct === COLLECTION_TYPE_PREFERENCES) return 'preferences'
+  if (ct === COLLECTION_TYPE_LABEL_INDEX) return 'labelIndex'
   return null
 }
 
@@ -99,6 +102,7 @@ function keyToCollectionType(type: CollectionTypeKey): string {
   if (type === 'calendar') return COLLECTION_TYPE_CALENDAR
   if (type === 'tasks') return COLLECTION_TYPE_TASKS
   if (type === 'contacts') return COLLECTION_TYPE_CONTACTS
+  if (type === 'labelIndex') return COLLECTION_TYPE_LABEL_INDEX
   return COLLECTION_TYPE_PREFERENCES
 }
 
@@ -111,6 +115,7 @@ async function ensureCollectionsForAccount(
     tasks: [],
     contacts: [],
     preferences: [],
+    labelIndex: [],
   }
 
   for (const [key, colType, defaultName] of COLLECTION_DEFINITIONS) {
@@ -236,7 +241,7 @@ async function hydrateListStores(collections: Record<CollectionTypeKey, any[]>):
 }
 
 async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid: string, itemUids?: string[]): Promise<number> {
-  if (type === 'preferences') return 0
+  if (type === 'preferences' || type === 'labelIndex') return 0
 
   const itemUidSet = itemUids ? new Set(itemUids) : null
 
@@ -310,6 +315,7 @@ function collectionItemNoun(type: CollectionTypeKey): string {
   if (type === 'calendar') return 'events'
   if (type === 'tasks') return 'tasks'
   if (type === 'preferences') return 'preferences'
+  if (type === 'labelIndex') return 'label suggestions'
   return 'contacts'
 }
 
@@ -317,7 +323,25 @@ function collectionDisplayName(type: CollectionTypeKey): string {
   if (type === 'calendar') return 'calendar'
   if (type === 'tasks') return 'task list'
   if (type === 'contacts') return 'address book'
+  if (type === 'labelIndex') return 'label suggestions'
   return 'preferences'
+}
+
+async function recordLabelsFromContent(type: CollectionTypeKey, content: string): Promise<void> {
+  if (type !== 'calendar' && type !== 'tasks' && type !== 'contacts') return
+  try {
+    const core = await import('@silentsuite/core')
+    const labels = type === 'calendar'
+      ? core.deserializeCalendarEvent(content).categories
+      : type === 'tasks'
+        ? core.deserializeTask(content).categories
+        : core.deserializeContact(content).categories
+    if (!labels || labels.length === 0) return
+    const { useLabelSuggestionsStore } = await import('@/app/stores/use-label-suggestions-store')
+    await useLabelSuggestionsStore.getState().recordLabelsUsed(labels)
+  } catch (err) {
+    logger.warn(`[etebase-store] Failed to record ${type} label suggestions`, err)
+  }
 }
 
 interface EtebaseState {
@@ -482,7 +506,7 @@ interface EtebaseActions {
 export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) => ({
   account: null,
   accountFingerprint: null,
-  collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+  collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
   itemCache: new Map(),
   itemTypeMap: new Map(),
   itemCollectionMap: new Map(),
@@ -1067,6 +1091,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ itemCache, itemTypeMap, itemCollectionMap })
       // Write through to the local persistence cache so a reload paints it.
       void writeItemToCache(type, collection.uid, item.uid, content)
+      void recordLabelsFromContent(type, content)
       return item.uid
     } catch (err) {
       if (isOfflineError(err)) {
@@ -1240,6 +1265,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCache.set(itemUid, updated)
       set({ itemCache: newCache })
       void writeItemToCache(type, collection.uid, itemUid, content)
+      void recordLabelsFromContent(type, content)
     } catch (err) {
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
@@ -1472,7 +1498,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     set({
       account: null,
       accountFingerprint: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
