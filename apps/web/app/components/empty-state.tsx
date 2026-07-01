@@ -85,8 +85,8 @@ export function SyncStartupState({ state, error }: { state: SyncStartupStatus; e
     return (
       <EmptyState
         icon={AlertTriangle}
-        title="Some synced data could not be loaded"
-        description={error || 'Retry sync or refresh when your connection is available.'}
+        title="Could not restore encrypted session"
+        description={error || 'Sign in again or retry when your connection is available.'}
       />
     )
   }

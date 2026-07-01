@@ -7,22 +7,18 @@ import { Header } from '@/app/components/header'
 import { BottomNav } from '@/app/components/bottom-nav'
 import { ReadOnlyBanner, DegradedModeBanner } from '@/app/components/read-only-overlay'
 import { PendingSyncBanner } from '@/app/components/PendingSyncBanner'
-import { InitialSyncProgress } from '@/app/components/InitialSyncProgress'
 import { OfflineToast } from '@/app/components/OfflineToast'
 import { ToastContainer } from '@/app/components/Toast'
 import { EmailVerificationBanner } from '@/app/components/EmailVerificationBanner'
 import { SyncProvider } from '@/app/providers/sync-provider'
 import { NotificationProvider } from '@/app/providers/notification-provider'
-import { EncryptedSessionRecoveryScreen } from '@/app/components/EncryptedSessionRecoveryScreen'
 import { useAuthStore } from '@/app/stores/use-auth-store'
-import { useSyncStore } from '@/app/stores/use-sync-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const t = useTranslations('Navigation')
   const readOnly = useAuthStore((s) => s.isReadOnly())
   const degraded = useAuthStore((s) => s.isDegraded())
-  const initialSyncBlocker = useSyncStore((s) => s.initialSyncBlocker)
 
   return (
     <ProtectedRoute>
@@ -43,9 +39,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               {!isSelfHosted && degraded && <DegradedModeBanner />}
               {!isSelfHosted && readOnly && <ReadOnlyBanner />}
               <PendingSyncBanner />
-              <InitialSyncProgress />
               <main id="main-content" className="relative z-0 flex-1 overflow-auto p-3 pb-20 md:p-4 md:pb-4 page-transition">
-                {initialSyncBlocker ? <EncryptedSessionRecoveryScreen /> : children}
+                {children}
               </main>
             </div>
             <BottomNav />

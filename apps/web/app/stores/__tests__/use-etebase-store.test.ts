@@ -128,7 +128,7 @@ describe('useEtebaseStore.initialize outcomes', () => {
     useEtebaseStore.setState({
       account: null,
       accountFingerprint: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -169,12 +169,10 @@ describe('useEtebaseStore.initialize outcomes', () => {
     expect(outcome).toEqual({ status: 'success', itemCount: 0 })
     expect(useEtebaseStore.getState().isInitialized).toBe(true)
     expect(useEtebaseStore.getState().accountFingerprint).toBe('fingerprint')
-    expect(engine.start).not.toHaveBeenCalled()
-    await useEtebaseStore.getState().startSyncEngine()
     expect(engine.start).toHaveBeenCalledWith(account)
   })
 
-  it('restores remote collections without blocking on item enumeration and hydrates list stores', async () => {
+  it('restores remote collections and items into cold-start caches and list stores', async () => {
     vi.mocked(secureGet).mockResolvedValue('saved-session')
     const account = { id: 'account' }
     const calendarCollection = mockCollection('calendar-col', { name: 'Personal', color: '#10b981' })
@@ -209,8 +207,10 @@ describe('useEtebaseStore.initialize outcomes', () => {
 
     const outcome = await useEtebaseStore.getState().initialize()
 
-    expect(outcome).toEqual({ status: 'success', itemCount: 0 })
-    expect(coreMock.listItems).not.toHaveBeenCalled()
+    expect(outcome).toEqual({ status: 'success', itemCount: 1 })
+    expect(useEtebaseStore.getState().itemCache.has('event-1')).toBe(true)
+    expect(useEtebaseStore.getState().itemTypeMap.get('event-1')).toBe('calendar')
+    expect(useEtebaseStore.getState().itemCollectionMap.get('event-1')).toBe('calendar-col')
     expect(useCalendarListStore.getState().calendars.map((calendar) => calendar.id)).toEqual(['calendar-col'])
     expect(useTaskListStore.getState().lists.map((list) => list.id)).toEqual(['tasks-col'])
     expect(useContactListStore.getState().lists.map((list) => list.id)).toEqual(['contacts-col'])
@@ -225,202 +225,6 @@ describe('useEtebaseStore.initialize outcomes', () => {
     expect(outcome.status).toBe('error')
     expect(useEtebaseStore.getState().isInitialized).toBe(false)
     expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to restore session. Please try signing in again.')
-  })
-
-  it('incrementally loads a collection page-at-a-time and filters deleted items before callbacks', async () => {
-    const account = { id: 'account' }
-    const calendarCollection = mockCollection('calendar-col')
-    useEtebaseStore.setState({
-      account,
-      collections: { calendar: [calendarCollection], tasks: [], contacts: [], preferences: [], labelIndex: [] },
-      itemCache: new Map(),
-      itemTypeMap: new Map(),
-      itemCollectionMap: new Map(),
-      isInitialized: true,
-      syncEngine: null,
-    })
-    coreMock.listItems
-      .mockResolvedValueOnce({ items: [mockItem('event-1', 'VEVENT 1'), mockItem('deleted-event', 'DELETED', true)], stoken: 'next', done: false })
-      .mockResolvedValueOnce({ items: [mockItem('event-2', 'VEVENT 2')], stoken: null, done: true })
-    const pages: string[][] = []
-    const progress: number[] = []
-
-    const items = await useEtebaseStore.getState().loadCollectionItemsIncrementally('calendar', {
-      onItems: (pageItems, pageProgress) => {
-        pages.push(pageItems.map((item) => item.uid))
-        progress.push(pageProgress.loaded)
-      },
-    })
-
-    expect(coreMock.listItems).toHaveBeenCalledTimes(2)
-    expect(pages).toEqual([['event-1'], ['event-2']])
-    expect(progress).toEqual([1, 2])
-    expect(items.items.map((item) => item.uid)).toEqual(['event-1', 'event-2'])
-    expect(items).toMatchObject({
-      attemptedCount: 2,
-      decodedCount: 2,
-      decodeFailureCount: 0,
-      enumerationErrorCount: 0,
-      trustworthyForFullReplacement: true,
-    })
-    expect(useEtebaseStore.getState().itemCache.has('deleted-event')).toBe(false)
-    await expect(useEtebaseStore.getState().fetchAllItems('calendar')).resolves.toHaveLength(2)
-  })
-
-  it('incrementally preserves preferences and labelIndex items for fetchAllItems', async () => {
-    const account = { id: 'account' }
-    const preferencesCollection = mockCollection('preferences-col')
-    const labelIndexCollection = mockCollection('label-index-col')
-    useEtebaseStore.setState({
-      account,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [preferencesCollection], labelIndex: [labelIndexCollection] },
-      itemCache: new Map(),
-      itemTypeMap: new Map(),
-      itemCollectionMap: new Map(),
-      isInitialized: true,
-      syncEngine: null,
-    })
-    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => ({
-      items: collection.uid === 'preferences-col'
-        ? [mockItem('prefs-1', 'PREFS')]
-        : [mockItem('labels-1', 'LABELS')],
-      stoken: null,
-      done: true,
-    }))
-
-    await useEtebaseStore.getState().loadCollectionItemsIncrementally('preferences')
-    await useEtebaseStore.getState().loadCollectionItemsIncrementally('labelIndex')
-
-    expect(await useEtebaseStore.getState().fetchAllItems('preferences')).toEqual([
-      { uid: 'prefs-1', content: 'PREFS', collectionUid: 'preferences-col' },
-    ])
-    expect(await useEtebaseStore.getState().fetchAllItems('labelIndex')).toEqual([
-      { uid: 'labels-1', content: 'LABELS', collectionUid: 'label-index-col' },
-    ])
-  })
-
-  it('reports all-item decode failure without treating the collection as trustworthy empty', async () => {
-    const account = { id: 'account' }
-    const calendarCollection = mockCollection('calendar-col')
-    const existingItem = mockItem('existing-event', 'OLD VEVENT')
-    const brokenItem = {
-      uid: 'broken-event',
-      isDeleted: false,
-      getContent: vi.fn(async () => {
-        throw new Error('decode failed')
-      }),
-    }
-    useEtebaseStore.setState({
-      account,
-      collections: { calendar: [calendarCollection], tasks: [], contacts: [], preferences: [], labelIndex: [] },
-      itemCache: new Map([['existing-event', existingItem]]),
-      itemTypeMap: new Map([['existing-event', 'calendar']]),
-      itemCollectionMap: new Map([['existing-event', 'calendar-col']]),
-      isInitialized: true,
-      syncEngine: null,
-    })
-    coreMock.listItems.mockResolvedValueOnce({ items: [brokenItem], stoken: null, done: true })
-
-    const result = await useEtebaseStore.getState().loadCollectionItemsIncrementally('calendar')
-
-    expect(result.items).toEqual([])
-    expect(result).toMatchObject({
-      attemptedCount: 1,
-      decodedCount: 0,
-      decodeFailureCount: 1,
-      trustworthyForFullReplacement: false,
-    })
-    expect(useEtebaseStore.getState().itemCache.get('existing-event')).toBe(existingItem)
-  })
-
-  it('keeps successful calendar collection results when another collection fails enumeration', async () => {
-    const account = { id: 'account' }
-    const okCollection = mockCollection('ok-col')
-    const failedCollection = mockCollection('failed-col')
-    useEtebaseStore.setState({
-      account,
-      collections: { calendar: [okCollection, failedCollection], tasks: [], contacts: [], preferences: [], labelIndex: [] },
-      itemCache: new Map(),
-      itemTypeMap: new Map(),
-      itemCollectionMap: new Map(),
-      isInitialized: true,
-      syncEngine: null,
-    })
-    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
-      if (collection.uid === 'failed-col') throw new Error('list failed')
-      return { items: [mockItem('event-ok', 'VEVENT OK')], stoken: null, done: true }
-    })
-
-    const result = await useEtebaseStore.getState().loadCollectionItemsIncrementally('calendar')
-
-    expect(result.items).toEqual([{ uid: 'event-ok', content: 'VEVENT OK', collectionUid: 'ok-col' }])
-    expect(result.enumerationErrorCount).toBe(1)
-    expect(result.trustworthyForFullReplacement).toBe(false)
-    expect(result.collections.map((collection) => collection.trustworthyForReplacement)).toEqual([true, false])
-  })
-
-  it('allows trustworthy empty enumeration to remove stale cached items', async () => {
-    const account = { id: 'account' }
-    const calendarCollection = mockCollection('calendar-col')
-    useEtebaseStore.setState({
-      account,
-      collections: { calendar: [calendarCollection], tasks: [], contacts: [], preferences: [], labelIndex: [] },
-      itemCache: new Map([['stale-event', mockItem('stale-event', 'OLD')]]),
-      itemTypeMap: new Map([['stale-event', 'calendar']]),
-      itemCollectionMap: new Map([['stale-event', 'calendar-col']]),
-      isInitialized: true,
-      syncEngine: null,
-    })
-    coreMock.listItems.mockResolvedValueOnce({ items: [], stoken: null, done: true })
-
-    const result = await useEtebaseStore.getState().loadCollectionItemsIncrementally('calendar')
-
-    expect(result).toMatchObject({
-      attemptedCount: 0,
-      decodedCount: 0,
-      decodeFailureCount: 0,
-      enumerationErrorCount: 0,
-      trustworthyForFullReplacement: true,
-    })
-    expect(useEtebaseStore.getState().itemCache.has('stale-event')).toBe(false)
-  })
-})
-
-describe('useEtebaseStore.createItem', () => {
-  beforeEach(() => {
-    offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
-    useEtebaseStore.setState({
-      account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
-      itemCache: new Map(),
-      itemTypeMap: new Map(),
-      itemCollectionMap: new Map(),
-      isInitialized: false,
-      syncEngine: null,
-    })
-  })
-
-  it('routes labelIndex save failures to label-suggestion copy instead of preferences copy', async () => {
-    const account = { id: 'account' }
-    const labelCollection = { uid: 'label-col' }
-    coreMock.createItem.mockRejectedValueOnce(new Error('write failed'))
-    useEtebaseStore.setState({
-      account: account as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [labelCollection] as any[] },
-      isInitialized: true,
-    })
-
-    const result = await useEtebaseStore.getState().createItem('labelIndex', 'LABELS')
-
-    expect(result).toBeNull()
-    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith(
-      'Failed to save label suggestions. Please try again.',
-      { source: 'labelIndex', suppressDuringPassiveStartup: true },
-    )
-    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalledWith(
-      'Failed to save preferences. Please try again.',
-      expect.anything(),
-    )
   })
 })
 

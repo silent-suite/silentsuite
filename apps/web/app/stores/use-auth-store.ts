@@ -8,7 +8,6 @@ import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/con
 import { secureGet, secureSet, secureRemove, secureClear, migrateFromLocalStorage } from '@/app/lib/secure-storage'
 import { clearAll as clearLocalDataCache } from '@/app/lib/data-cache'
 import { clearAll as clearOfflineQueue } from '@/app/lib/offline-queue'
-import { clearLocalSyncSummary } from '@/app/lib/sync-summary'
 
 export interface User {
   isAdmin?: boolean
@@ -527,8 +526,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (err) {
       logger.warn('[auth-store] Failed to clear offline queue during logout:', err)
     }
-
-    clearLocalSyncSummary()
 
     // Clear signup-in-progress flag
     if (typeof window !== 'undefined') {

@@ -5,7 +5,6 @@ import { RefreshCw } from 'lucide-react'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { formatTimeAgo } from '@/app/lib/format-time-ago'
 import type { SyncStatus } from '@silentsuite/core'
-import type { InitialSyncProgressState } from '@/app/stores/use-sync-store'
 
 const dotStyles: Record<SyncStatus, string> = {
   synced: 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]',
@@ -21,18 +20,7 @@ const ariaLabels: Record<SyncStatus, string> = {
   error: 'Sync status: error',
 }
 
-function getProgressTooltip(progress: InitialSyncProgressState): string | null {
-  if (!progress.active) return null
-  if (progress.phase === 'calendar') return `Loading encrypted calendar data locally (${progress.calendar.loaded} events)`
-  if (progress.phase === 'tasks') return `Loading encrypted tasks locally (${progress.tasks.loaded} tasks)`
-  if (progress.phase === 'contacts') return `Loading encrypted contacts locally (${progress.contacts.loaded} contacts)`
-  if (progress.phase === 'preferences') return 'Finishing encrypted settings locally'
-  return 'Loading encrypted data locally in this browser'
-}
-
-function getTooltipText(status: SyncStatus, lastSyncedAt: Date | null, error: string | null, pendingCount: number, progress: InitialSyncProgressState): string {
-  const progressText = getProgressTooltip(progress)
-  if (progressText) return progressText
+function getTooltipText(status: SyncStatus, lastSyncedAt: Date | null, error: string | null, pendingCount: number): string {
   const queueSuffix = pendingCount > 0 ? ` (${pendingCount} queued)` : ''
   switch (status) {
     case 'synced':
@@ -52,7 +40,6 @@ export function SyncIndicator() {
   const error = useSyncStore((s) => s.error)
   const simulateSyncCycle = useSyncStore((s) => s.simulateSyncCycle)
   const pendingQueueCount = useSyncStore((s) => s.pendingQueueCount)
-  const initialSyncProgress = useSyncStore((s) => s.initialSyncProgress)
   const [showTooltip, setShowTooltip] = useState(false)
   const [tooltipText, setTooltipText] = useState('')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -69,15 +56,15 @@ export function SyncIndicator() {
   // Update tooltip text on an interval while visible so relative times stay fresh
   useEffect(() => {
     if (showTooltip) {
-      setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount, initialSyncProgress))
+      setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount))
       intervalRef.current = setInterval(() => {
-        setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount, initialSyncProgress))
+        setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount))
       }, 1000)
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [showTooltip, syncStatus, lastSyncedAt, error, pendingQueueCount, initialSyncProgress])
+  }, [showTooltip, syncStatus, lastSyncedAt, error, pendingQueueCount])
 
   return (
     <div
