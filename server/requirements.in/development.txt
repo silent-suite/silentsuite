@@ -1,3 +1,4 @@
+--constraint ../requirements.txt
 coverage
 pip-tools
 pywatchman
@@ -6,3 +7,4 @@ mypy
 django-stubs
 pytest
 pytest-django
+httpx2==2.5.0

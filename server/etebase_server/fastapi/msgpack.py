@@ -45,6 +45,8 @@ class MsgpackRoute(APIRoute):
         super().__init__(path, endpoint, *args, **kwargs)
 
     def _get_media_type_route_handler(self, media_type):
+        # This calls FastAPI's internal request handler factory; keep FastAPI pinned
+        # and exercise msgpack routes when upgrading FastAPI/Starlette.
         return get_request_handler(
             dependant=self.dependant,
             body_field=self.body_field,
