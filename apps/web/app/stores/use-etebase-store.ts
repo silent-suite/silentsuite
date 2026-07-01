@@ -370,7 +370,7 @@ function toastSourceForType(type: CollectionTypeKey): 'preferences' | 'labelInde
 function showSaveFailureToast(type: CollectionTypeKey): void {
   const source = toastSourceForType(type)
   const message = `Failed to save ${saveItemNoun(type)}. Please try again.`
-  if (source) showErrorToast(message, { source })
+  if (source) showErrorToast(message, { source, suppressDuringPassiveStartup: true })
   else showErrorToast(message)
 }
 

@@ -9,6 +9,7 @@ const etebase = vi.hoisted(() => ({
     initialize: vi.fn(),
     fetchAllItems: vi.fn(),
     loadCollectionItemsIncrementally: vi.fn(),
+    refreshCollection: vi.fn(),
     startSyncEngine: vi.fn(),
     onSyncChange: vi.fn(() => vi.fn()),
     onStatusChange: vi.fn(() => vi.fn()),
@@ -184,6 +185,7 @@ describe('SyncProvider restore recovery blockers', () => {
     etebase.state.initialize.mockReset().mockResolvedValue({ status: 'success' })
     etebase.state.fetchAllItems.mockReset().mockResolvedValue([])
     etebase.state.loadCollectionItemsIncrementally.mockReset().mockResolvedValue(incrementalResult())
+    etebase.state.refreshCollection.mockReset().mockResolvedValue([])
     etebase.state.startSyncEngine.mockReset().mockResolvedValue(undefined)
     etebase.state.onSyncChange.mockClear()
     etebase.state.onStatusChange.mockClear()
@@ -224,18 +226,51 @@ describe('SyncProvider restore recovery blockers', () => {
     expect(useSyncStore.getState().syncStatus).toBe('offline')
   })
 
-  it('keeps the app usable and clears the recovery blocker for post-restore load errors', async () => {
+  it('keeps the app usable and wires recovery when calendar enumeration fails', async () => {
     useSyncStore.setState({ initialSyncBlocker: 'missing-encrypted-session' })
+    calendarStore.events = [{ id: 'existing-event', title: 'Existing event' }]
     etebase.state.initialize.mockResolvedValueOnce({ status: 'success' })
     etebase.state.loadCollectionItemsIncrementally.mockRejectedValueOnce(new Error('calendar load failed'))
 
     render(<SyncProvider><div>content</div></SyncProvider>)
 
-    await waitFor(() => expect(useSyncStore.getState().error).toBe('Calendar data could not be loaded'))
-    expect(useSyncStore.getState().initialSyncState).toBe('error')
+    await waitFor(() => expect(etebase.state.startSyncEngine).toHaveBeenCalledTimes(1))
+    expect(useSyncStore.getState().error).toBe('Some synced items could not be loaded')
+    expect(useSyncStore.getState().initialSyncState).toBe('synced')
     expect(useSyncStore.getState().initialSyncBlocker).toBeNull()
     expect(useSyncStore.getState().initialSyncProgress.active).toBe(false)
-    expect(etebase.state.startSyncEngine).not.toHaveBeenCalled()
+    expect(etebase.state.onSyncChange).toHaveBeenCalledTimes(1)
+    expect(etebase.state.onStatusChange).toHaveBeenCalledTimes(1)
+    expect(calendarStore.syncFromRemote).not.toHaveBeenCalledWith([])
+  })
+
+  it('can recover a degraded calendar after a later SyncEngine change', async () => {
+    let syncHandler: ((event: { changeType: string; collectionType: string; collectionUid: string; itemUids: string[] }) => Promise<void>) | null = null
+    etebase.state.onSyncChange.mockImplementation((handler) => {
+      syncHandler = handler
+      return vi.fn()
+    })
+    etebase.state.initialize.mockResolvedValueOnce({ status: 'success' })
+    etebase.state.loadCollectionItemsIncrementally.mockImplementation(async (type: string) => {
+      if (type !== 'calendar') return incrementalResult()
+      return {
+        ...incrementalResult(),
+        enumerationErrorCount: 1,
+        trustworthyForFullReplacement: false,
+      }
+    })
+    etebase.state.refreshCollection.mockResolvedValueOnce([{ uid: 'event-1', content: 'VEVENT', collectionUid: 'calendar-1' }])
+    etebase.state.fetchAllItems.mockResolvedValueOnce([{ uid: 'event-1', content: 'VEVENT', collectionUid: 'calendar-1' }])
+
+    render(<SyncProvider><div>content</div></SyncProvider>)
+
+    await waitFor(() => expect(etebase.state.startSyncEngine).toHaveBeenCalledTimes(1))
+    expect(syncHandler).toBeTruthy()
+    await syncHandler!({ changeType: 'update', collectionType: 'etebase.vevent', collectionUid: 'calendar-1', itemUids: ['event-1'] })
+
+    expect(calendarStore.syncFromRemote).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'event-1', calendarId: 'calendar-1' }),
+    ])
   })
 
   it('wires SyncEngine when calendar loads but preferences startup fails', async () => {

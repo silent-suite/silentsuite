@@ -24,6 +24,7 @@ export type ToastCoalesceSource = 'preferences' | 'labelIndex' | 'internal-sync'
 interface ToastOptions {
   source?: ToastCoalesceSource
   passiveStartup?: boolean
+  suppressDuringPassiveStartup?: boolean
 }
 
 let passiveStartupCycle = 0
@@ -60,7 +61,9 @@ export function endPassiveStartupToastCycle() {
 }
 
 export function showErrorToast(message: string, options: ToastOptions = {}) {
-  if ((options.passiveStartup || passiveStartupCycleActive) && options.source) {
+  const isPassiveStartup = options.passiveStartup || passiveStartupCycleActive
+  if (isPassiveStartup && options.suppressDuringPassiveStartup) return
+  if (isPassiveStartup && options.source) {
     const key = `${passiveStartupCycle}:${options.source}:${message}`
     if (shownPassiveStartupToasts.has(key)) return
     shownPassiveStartupToasts.add(key)
