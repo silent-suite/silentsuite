@@ -79,7 +79,8 @@ type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'la
 type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
 type EtebaseCore = typeof import('@silentsuite/core')
 
-type CachedContentItem = { uid: string; content: string; collectionUid: string }
+export type CachedContentItem = { uid: string; content: string; collectionUid: string }
+export type IncrementalCollectionProgress = { loaded: number; done: boolean; collectionUid: string }
 
 export type EtebaseInitializeOutcome =
   | { status: 'no-session' }
@@ -486,6 +487,17 @@ interface EtebaseActions {
   fetchAllItems: (type: CollectionTypeKey) => Promise<CachedContentItem[]>
 
   /**
+   * Page through a collection type and update the local item cache as pages arrive.
+   */
+  loadCollectionItemsIncrementally: (
+    type: CollectionTypeKey,
+    options?: { onItems?: (items: CachedContentItem[], progress: IncrementalCollectionProgress) => Promise<void> | void },
+  ) => Promise<CachedContentItem[]>
+
+  /** Start the SyncEngine after initial page-at-a-time enumeration is complete. */
+  startSyncEngine: () => Promise<void>
+
+  /**
    * Re-fetch all items from the Etebase server for a collection type.
    * Updates the local cache and returns fresh content.
    * This is what the sync change handler should call.
@@ -557,37 +569,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ collections })
       await hydrateListStores(collections)
 
-      // 3. Load all items from each collection into the cache
-      const itemCache = new Map<string, any>()
-      const itemTypeMap = new Map<string, CollectionTypeKey>()
-      const itemCollectionMap = new Map<string, string>()
-
-      for (const [key] of COLLECTION_DEFINITIONS) {
-        const typedCollections = collections[key]
-
-        for (const collection of typedCollections) {
-          let stoken: string | null = null
-          let done = false
-
-          while (!done) {
-            const response = await core.listItems(account, collection, stoken)
-            for (const item of response.items) {
-              if (!item.isDeleted) {
-                itemCache.set(item.uid, item)
-                itemTypeMap.set(item.uid, key)
-                itemCollectionMap.set(item.uid, collection.uid)
-              }
-            }
-            stoken = response.stoken
-            done = response.done
-          }
-        }
-      }
-
-      set({ itemCache, itemTypeMap, itemCollectionMap })
-      logger.debug(`[etebase-store] Loaded ${itemCache.size} items into cache`)
-
-      // 4. Start SyncEngine
+      // 3. Prepare SyncEngine, but do not start polling yet. Initial item
+      // enumeration happens page-at-a-time in SyncProvider so visible calendar
+      // data can render before tasks/contacts/non-visible collections finish.
       const engine = new core.SyncEngine({
         serverUrl: serverUrl,
         pollIntervalMs: 30_000,
@@ -612,10 +596,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         })
       }
 
-      await engine.start(account)
       set({ syncEngine: engine, isInitialized: true })
-      logger.debug('[etebase-store] SyncEngine started')
-      return { status: 'success', itemCount: itemCache.size }
+      logger.debug('[etebase-store] SyncEngine prepared')
+      return { status: 'success', itemCount: 0 }
     } catch (err) {
       console.error('[etebase-store] Initialization failed', getSafeErrorDetails(err))
       // Don't clear the session -- the user might be offline
@@ -1408,6 +1391,73 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
 
     return results
+  },
+
+  loadCollectionItemsIncrementally: async (type, options: { onItems?: (items: CachedContentItem[], progress: IncrementalCollectionProgress) => Promise<void> | void } = {}) => {
+    const { account, collections } = get()
+    if (!account || collections[type].length === 0) {
+      logger.warn(`[etebase-store] Cannot load ${type}: missing account or collection`)
+      return get().fetchAllItems(type)
+    }
+
+    const core = await import('@silentsuite/core')
+    const newItemCache = new Map(get().itemCache)
+    const newItemTypeMap = new Map(get().itemTypeMap)
+    const newItemCollectionMap = new Map(get().itemCollectionMap)
+    const targetCollectionUids = new Set(collections[type].map((collection) => collection.uid))
+
+    for (const [uid, collectionUid] of newItemCollectionMap.entries()) {
+      if (targetCollectionUids.has(collectionUid)) {
+        newItemCache.delete(uid)
+        newItemTypeMap.delete(uid)
+        newItemCollectionMap.delete(uid)
+      }
+    }
+
+    let loaded = 0
+    const results: CachedContentItem[] = []
+
+    for (const collection of collections[type]) {
+      let stoken: string | null = null
+      let done = false
+
+      while (!done) {
+        const response = await core.listItems(account, collection, stoken)
+        const pageItems = response.items.filter((item: any) => !item.isDeleted)
+        const pageResults: CachedContentItem[] = []
+
+        for (const item of pageItems) {
+          newItemCache.set(item.uid, item)
+          newItemTypeMap.set(item.uid, type)
+          newItemCollectionMap.set(item.uid, collection.uid)
+          try {
+            const content = await item.getContent()
+            const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
+            const cached = { uid: item.uid, content: contentStr, collectionUid: collection.uid }
+            pageResults.push(cached)
+            results.push(cached)
+          } catch (err) {
+            logger.warn(`[etebase-store] Failed to decode incremental ${type} item`, getSafeErrorDetails(err))
+          }
+        }
+
+        loaded += pageResults.length
+        set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, itemCollectionMap: newItemCollectionMap })
+        stoken = response.stoken
+        done = response.done
+        await options.onItems?.(pageResults, { loaded, done, collectionUid: collection.uid })
+      }
+    }
+
+    logger.debug(`[etebase-store] Incrementally loaded ${results.length} ${type} items`)
+    return results
+  },
+
+  startSyncEngine: async () => {
+    const { account, syncEngine } = get()
+    if (!account || !syncEngine) return
+    await syncEngine.start(account)
+    logger.debug('[etebase-store] SyncEngine started')
   },
 
   refreshCollection: async (type: CollectionTypeKey, collectionUid?: string) => {

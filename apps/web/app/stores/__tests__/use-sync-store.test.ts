@@ -78,11 +78,20 @@ function resetStore() {
   useSyncStore.setState({
     syncStatus: 'synced',
     initialSyncState: 'synced',
+    initialSyncBlocker: null,
     lastSyncedAt: null,
     isOnline: true,
     error: null,
     pendingQueueCount: 0,
     failedQueueCount: 0,
+    initialSyncProgress: {
+      active: false,
+      phase: 'idle',
+      calendar: { loaded: 0, knownTotal: null, done: false },
+      tasks: { loaded: 0, knownTotal: null, done: false },
+      contacts: { loaded: 0, knownTotal: null, done: false },
+      message: null,
+    },
   })
 }
 
@@ -122,6 +131,39 @@ describe('useSyncStore', () => {
 
     useSyncStore.getState().setInitialSyncState('empty')
     expect(useSyncStore.getState().initialSyncState).toBe('empty')
+  })
+
+  it('tracks explicit initial sync blocker transitions', () => {
+    expect(useSyncStore.getState().initialSyncBlocker).toBeNull()
+
+    useSyncStore.getState().setInitialSyncBlocker('missing-encrypted-session')
+    expect(useSyncStore.getState().initialSyncBlocker).toBe('missing-encrypted-session')
+
+    useSyncStore.getState().setInitialSyncBlocker('encrypted-session-restore-failed')
+    expect(useSyncStore.getState().initialSyncBlocker).toBe('encrypted-session-restore-failed')
+
+    useSyncStore.getState().setInitialSyncBlocker(null)
+    expect(useSyncStore.getState().initialSyncBlocker).toBeNull()
+  })
+
+  it('tracks initial sync progress phases and counts', () => {
+    useSyncStore.getState().startInitialSyncProgress({ calendar: 3000 })
+    expect(useSyncStore.getState().initialSyncProgress.active).toBe(true)
+    expect(useSyncStore.getState().initialSyncProgress.calendar.knownTotal).toBe(3000)
+
+    useSyncStore.getState().setInitialSyncProgressPhase('calendar')
+    useSyncStore.getState().updateInitialSyncProgress('calendar', 600, undefined, false)
+    expect(useSyncStore.getState().initialSyncProgress.phase).toBe('calendar')
+    expect(useSyncStore.getState().initialSyncProgress.calendar.loaded).toBe(600)
+    expect(useSyncStore.getState().initialSyncProgress.calendar.done).toBe(false)
+
+    useSyncStore.getState().finishInitialSyncProgress()
+    expect(useSyncStore.getState().initialSyncProgress.active).toBe(false)
+    expect(useSyncStore.getState().initialSyncProgress.phase).toBe('complete')
+    expect(useSyncStore.getState().initialSyncProgress.contacts.done).toBe(true)
+
+    useSyncStore.getState().resetInitialSyncProgress()
+    expect(useSyncStore.getState().initialSyncProgress.phase).toBe('idle')
   })
 
   it('simulateSyncCycle transitions synced→syncing→synced', async () => {
