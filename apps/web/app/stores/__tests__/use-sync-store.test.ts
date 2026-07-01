@@ -50,10 +50,6 @@ vi.mock('@/app/stores/use-calendar-store', () => ({
   },
 }))
 
-vi.mock('@/app/stores/use-preferences-sync-store', () => ({
-  usePreferencesSyncStore: { getState: () => ({ loadFromRemote: vi.fn(), setRemoteItemUid: vi.fn() }) },
-}))
-
 vi.mock('@/app/lib/offline-queue', () => ({
   replay: vi.fn().mockResolvedValue([]),
   getPendingCount: vi.fn().mockResolvedValue(0),
@@ -158,11 +154,10 @@ describe('useSyncStore', () => {
     await flushPromises()
     expect(etebaseMock.state.reconcileCollections).toHaveBeenCalledTimes(1)
     expect(syncNow).toHaveBeenCalledTimes(1)
-    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(4)
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(3)
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('tasks')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('contacts')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('calendar')
-    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('preferences')
 
     const reconcileOrder = etebaseMock.state.reconcileCollections.mock.invocationCallOrder[0]!
     const firstRefreshOrder = etebaseMock.state.refreshCollection.mock.invocationCallOrder[0]!

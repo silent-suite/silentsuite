@@ -72,7 +72,6 @@ function getServerUrl(): string {
 const COLLECTION_TYPE_CALENDAR = 'etebase.vevent'
 const COLLECTION_TYPE_TASKS = 'etebase.vtodo'
 const COLLECTION_TYPE_CONTACTS = 'etebase.vcard'
-const COLLECTION_TYPE_PREFERENCES = 'silentsuite.preferences'
 
 type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
 type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
@@ -84,14 +83,12 @@ const COLLECTION_DEFINITIONS: [CollectionTypeKey, string, string][] = [
   ['calendar', COLLECTION_TYPE_CALENDAR, 'Personal Calendar'],
   ['tasks', COLLECTION_TYPE_TASKS, 'Personal Tasks'],
   ['contacts', COLLECTION_TYPE_CONTACTS, 'Personal Contacts'],
-  ['preferences', COLLECTION_TYPE_PREFERENCES, 'Preferences'],
 ]
 
 function collectionTypeToKey(ct: string): CollectionTypeKey | null {
   if (ct === COLLECTION_TYPE_CALENDAR) return 'calendar'
   if (ct === COLLECTION_TYPE_TASKS) return 'tasks'
   if (ct === COLLECTION_TYPE_CONTACTS) return 'contacts'
-  if (ct === COLLECTION_TYPE_PREFERENCES) return 'preferences'
   return null
 }
 
@@ -99,7 +96,7 @@ function keyToCollectionType(type: CollectionTypeKey): string {
   if (type === 'calendar') return COLLECTION_TYPE_CALENDAR
   if (type === 'tasks') return COLLECTION_TYPE_TASKS
   if (type === 'contacts') return COLLECTION_TYPE_CONTACTS
-  return COLLECTION_TYPE_PREFERENCES
+  return 'silentsuite.preferences'
 }
 
 async function ensureCollectionsForAccount(
