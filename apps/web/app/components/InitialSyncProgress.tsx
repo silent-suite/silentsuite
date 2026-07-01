@@ -15,7 +15,6 @@ const phaseLabels: Record<string, string> = {
   tasks: 'Loading tasks',
   contacts: 'Loading contacts',
   preferences: 'Finishing encrypted settings',
-  error: 'Sync needs attention',
 }
 
 function formatNumber(value: number): string {
@@ -39,7 +38,7 @@ export function formatInitialSyncCount(domain: InitialSyncDomain, progress: Doma
 export function InitialSyncProgress() {
   const progress = useSyncStore((s) => s.initialSyncProgress)
 
-  if (!progress.active || progress.phase === 'blocked') return null
+  if (!progress.active || progress.phase === 'blocked' || progress.phase === 'error') return null
 
   const activeDomain: InitialSyncDomain = progress.phase === 'tasks'
     ? 'tasks'
@@ -52,26 +51,20 @@ export function InitialSyncProgress() {
   return (
     <section
       aria-label="Initial encrypted data sync progress"
-      className="border-b border-[rgb(var(--border))] bg-emerald-500/10 px-4 py-3 text-sm text-[rgb(var(--foreground))]"
+      className="border-b border-[rgb(var(--border))] bg-[rgb(var(--surface))]/60 px-4 py-2 text-xs text-[rgb(var(--muted))]"
     >
-      <div className="mx-auto flex max-w-5xl flex-col gap-2">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="font-medium">{phaseLabels[progress.phase] ?? 'Loading encrypted data'}</p>
-            <p className="text-xs text-[rgb(var(--muted))]">
-              Encrypted data is loading and decrypting locally in this browser.
-            </p>
-          </div>
-          <p className="text-xs tabular-nums text-[rgb(var(--muted))]">
-            {formatInitialSyncCount(activeDomain, activeProgress)}
-          </p>
+      <div className="mx-auto flex max-w-5xl flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="font-medium text-[rgb(var(--foreground))]">{phaseLabels[progress.phase] ?? 'Loading encrypted data'}</span>
+          <span>Decrypting locally in this browser.</span>
+          <span className="tabular-nums">{formatInitialSyncCount(activeDomain, activeProgress)}</span>
         </div>
         {percent !== null && (
-          <div className="h-1.5 overflow-hidden rounded-full bg-[rgb(var(--surface))]" aria-hidden="true">
+          <div className="h-1 overflow-hidden rounded-full bg-[rgb(var(--border))]" aria-hidden="true">
             <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${percent}%` }} />
           </div>
         )}
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[rgb(var(--muted))]">
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
           {(Object.keys(domainLabels) as InitialSyncDomain[]).map((domain) => (
             <span key={domain}>
               {domainLabels[domain].label}: {formatInitialSyncCount(domain, progress[domain])}

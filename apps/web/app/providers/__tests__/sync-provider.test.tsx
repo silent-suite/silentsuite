@@ -7,6 +7,8 @@ const etebase = vi.hoisted(() => ({
   state: {
     initialize: vi.fn(),
     fetchAllItems: vi.fn(),
+    loadCollectionItemsIncrementally: vi.fn(),
+    startSyncEngine: vi.fn(),
     onSyncChange: vi.fn(() => vi.fn()),
     onStatusChange: vi.fn(() => vi.fn()),
     isInitialized: false,
@@ -118,6 +120,8 @@ describe('SyncProvider restore recovery blockers', () => {
     calendarStore.upsertFromRemote.mockClear()
     etebase.state.initialize.mockReset().mockResolvedValue({ status: 'success' })
     etebase.state.fetchAllItems.mockReset().mockResolvedValue([])
+    etebase.state.loadCollectionItemsIncrementally.mockReset().mockResolvedValue([])
+    etebase.state.startSyncEngine.mockReset().mockResolvedValue(undefined)
     etebase.state.onSyncChange.mockClear()
     etebase.state.onStatusChange.mockClear()
   })
@@ -151,15 +155,16 @@ describe('SyncProvider restore recovery blockers', () => {
     expect(useSyncStore.getState().syncStatus).toBe('offline')
   })
 
-  it('clears the recovery blocker for post-restore load errors', async () => {
+  it('keeps the app usable and clears the recovery blocker for post-restore load errors', async () => {
     useSyncStore.setState({ initialSyncBlocker: 'missing-encrypted-session' })
     etebase.state.initialize.mockResolvedValueOnce({ status: 'success' })
-    etebase.state.fetchAllItems.mockRejectedValueOnce(new Error('calendar load failed'))
+    etebase.state.loadCollectionItemsIncrementally.mockRejectedValueOnce(new Error('calendar load failed'))
 
     render(<SyncProvider><div>content</div></SyncProvider>)
 
     await waitFor(() => expect(useSyncStore.getState().error).toBe('Some synced items could not be loaded'))
-    expect(useSyncStore.getState().initialSyncState).toBe('error')
+    expect(useSyncStore.getState().initialSyncState).toBe('empty')
     expect(useSyncStore.getState().initialSyncBlocker).toBeNull()
+    expect(useSyncStore.getState().initialSyncProgress.active).toBe(false)
   })
 })

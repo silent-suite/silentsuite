@@ -225,9 +225,14 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (loadHadErrors) {
           setSyncStatus('error')
-          setInitialSyncState('error')
+          // A post-restore item or optional metadata load error should not
+          // put the app back into the encrypted-session recovery/blocked UI.
+          // Keep the visible domain stores usable and surface the problem via
+          // the sync indicator instead of hiding the calendar behind a false
+          // restore error screen.
+          setInitialSyncState(hasVisibleDomainData() ? 'synced' : 'empty')
           setInitialSyncBlocker(null)
-          setInitialSyncProgressPhase('error')
+          finishInitialSyncProgress()
           setError('Some synced items could not be loaded')
         } else {
           // Start SyncEngine only after initial enumeration has completed, so
