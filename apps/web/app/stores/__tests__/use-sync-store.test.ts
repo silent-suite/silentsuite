@@ -77,7 +77,6 @@ function resetStore() {
   calendarStoreMock.syncFromRemote.mockReset()
   useSyncStore.setState({
     syncStatus: 'synced',
-    initialSyncState: 'synced',
     lastSyncedAt: null,
     isOnline: true,
     error: null,
@@ -112,16 +111,6 @@ describe('useSyncStore', () => {
 
     useSyncStore.getState().setError(null)
     expect(useSyncStore.getState().error).toBeNull()
-  })
-
-  it('tracks explicit initial sync state transitions', () => {
-    expect(useSyncStore.getState().initialSyncState).toBe('synced')
-
-    useSyncStore.getState().setInitialSyncState('restoring')
-    expect(useSyncStore.getState().initialSyncState).toBe('restoring')
-
-    useSyncStore.getState().setInitialSyncState('empty')
-    expect(useSyncStore.getState().initialSyncState).toBe('empty')
   })
 
   it('simulateSyncCycle transitions synced→syncing→synced', async () => {

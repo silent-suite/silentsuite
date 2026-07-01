@@ -31,8 +31,6 @@ const storeMock = vi.hoisted(() => ({
   },
   syncState: {
     isOnline: true,
-    initialSyncState: 'synced' as const,
-    error: null as string | null,
   },
   authState: {
     canWrite: vi.fn(() => true),
@@ -66,8 +64,6 @@ vi.mock('@/app/components/MobileCollectionSheet', () => ({
 describe('TasksPage mobile reachability', () => {
   beforeEach(() => {
     storeMock.taskState.isLoading = true
-    storeMock.syncState.initialSyncState = 'synced'
-    storeMock.syncState.error = null
     storeMock.authState.canWrite.mockReturnValue(true)
   })
 
@@ -83,26 +79,6 @@ describe('TasksPage mobile reachability', () => {
   it('exposes an inline quick-add on mobile', () => {
     renderWithIntl(<TasksPage />)
     expect(screen.getByPlaceholderText('Add a task...')).toBeInTheDocument()
-  })
-
-  it('shows restore copy before rendering the normal empty task state', () => {
-    storeMock.taskState.isLoading = false
-    storeMock.syncState.initialSyncState = 'restoring'
-
-    renderWithIntl(<TasksPage />)
-
-    expect(screen.getByText('Restoring encrypted data…')).toBeInTheDocument()
-    expect(screen.queryByText('No tasks yet')).not.toBeInTheDocument()
-  })
-
-  it('does not show an empty task state when the encrypted session is missing', () => {
-    storeMock.taskState.isLoading = false
-    storeMock.syncState.initialSyncState = 'no-session'
-
-    renderWithIntl(<TasksPage />)
-
-    expect(screen.getByText('Encrypted session needs to be restored')).toBeInTheDocument()
-    expect(screen.queryByText('No tasks yet')).not.toBeInTheDocument()
   })
 
   it('exposes a mobile collection switcher with a 44px touch target', () => {

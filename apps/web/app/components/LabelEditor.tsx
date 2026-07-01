@@ -1,15 +1,13 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useRef, useState, type FormEvent } from 'react'
 import { Palette, Tag, X } from 'lucide-react'
 import { useTranslations } from 'next-intl'
-import { getLabelSuggestions } from '@silentsuite/core'
 import {
   getLabelColor,
   labelTextColor,
   useLabelColorStore,
 } from '@/app/stores/use-label-color-store'
-import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 
 // ---------------------------------------------------------------------------
 // Shared label / category chip components (#291)
@@ -139,21 +137,12 @@ export function LabelEditor({
 }) {
   const t = useTranslations('Labels')
   const [input, setInput] = useState('')
-  const [isSuggestionOpen, setSuggestionOpen] = useState(false)
-  const [activeSuggestion, setActiveSuggestion] = useState(0)
-  const labelIndex = useLabelSuggestionsStore((state) => state.index)
-  const suggestions = useMemo(
-    () => getLabelSuggestions(labelIndex, input, 6, labels),
-    [labelIndex, input, labels],
-  )
 
   const commit = useCallback(
     (raw: string) => {
       const next = normalizeLabels([...labels, raw])
       if (next.length !== labels.length) onChange(next)
       setInput('')
-      setActiveSuggestion(0)
-      setSuggestionOpen(false)
     },
     [labels, onChange],
   )
@@ -165,35 +154,21 @@ export function LabelEditor({
     [labels, onChange],
   )
 
-  const showSuggestions = !disabled && isSuggestionOpen && suggestions.length > 0
-
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Enter' || e.key === ',') {
         e.preventDefault()
-        if (showSuggestions && (e.key === 'Enter' || !input.trim())) {
-          commit(suggestions[activeSuggestion] ?? suggestions[0]!)
-        } else if (input.trim()) commit(input)
-      } else if (e.key === 'ArrowDown' && showSuggestions) {
-        e.preventDefault()
-        setActiveSuggestion((current) => (current + 1) % suggestions.length)
-      } else if (e.key === 'ArrowUp' && showSuggestions) {
-        e.preventDefault()
-        setActiveSuggestion((current) => (current - 1 + suggestions.length) % suggestions.length)
-      } else if (e.key === 'Escape') {
-        setInput('')
-        setActiveSuggestion(0)
-        setSuggestionOpen(false)
+        if (input.trim()) commit(input)
       } else if (e.key === 'Backspace' && !input && labels.length > 0) {
         // Quick-delete the last chip when the input is empty
         remove(labels[labels.length - 1]!)
       }
     },
-    [input, labels, commit, remove, suggestions, activeSuggestion, showSuggestions],
+    [input, labels, commit, remove],
   )
 
   return (
-    <div className="relative flex flex-1 flex-wrap items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500">
+    <div className="flex flex-1 flex-wrap items-center gap-1.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 focus-within:ring-2 focus-within:ring-emerald-500">
       {labels.map((label, index) => (
         <LabelChip
           key={`${label}-${index}`}
@@ -208,47 +183,13 @@ export function LabelEditor({
         <input
           type="text"
           value={input}
-          onChange={(e) => {
-            setInput(e.target.value)
-            setActiveSuggestion(0)
-            setSuggestionOpen(true)
-          }}
+          onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          onFocus={() => setSuggestionOpen(true)}
-          onBlur={() => {
-            if (input.trim()) commit(input)
-            else setSuggestionOpen(false)
-          }}
+          onBlur={() => input.trim() && commit(input)}
           placeholder={labels.length === 0 ? (placeholder ?? t('addLabelPlaceholder')) : ''}
           aria-label={ariaLabel ?? t('editorAriaLabel')}
-          aria-autocomplete="list"
-          aria-expanded={showSuggestions}
           className="min-w-[6rem] flex-1 bg-transparent text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none"
         />
-      )}
-      {showSuggestions && (
-        <div
-          role="listbox"
-          aria-label={t('suggestionsAriaLabel')}
-          className="absolute left-2 right-2 top-[calc(100%+0.25rem)] z-50 max-h-48 overflow-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-1 text-sm shadow-lg"
-        >
-          {suggestions.map((suggestion, index) => (
-            <button
-              key={suggestion}
-              type="button"
-              role="option"
-              aria-selected={index === activeSuggestion}
-              onMouseDown={(event) => {
-                event.preventDefault()
-                commit(suggestion)
-              }}
-              onMouseEnter={() => setActiveSuggestion(index)}
-              className={`block w-full px-3 py-1.5 text-left ${index === activeSuggestion ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'text-[rgb(var(--foreground))]'}`}
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
       )}
     </div>
   )

@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { secureGet } from '@/app/lib/secure-storage'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useCalendarStore } from '../use-calendar-store'
 import { useCalendarListStore } from '../use-calendar-list-store'
@@ -19,10 +18,6 @@ const coreMock = vi.hoisted(() => ({
   createItem: vi.fn(),
   deleteItem: vi.fn(),
   updateCollectionMeta: vi.fn(),
-  restoreSession: vi.fn(),
-  getAccountFingerprint: vi.fn(),
-  listItems: vi.fn(),
-  SyncEngine: vi.fn(),
 }))
 
 const toastStoreMock = vi.hoisted(() => ({
@@ -54,10 +49,6 @@ beforeEach(() => {
   coreMock.createItem.mockReset()
   coreMock.deleteItem.mockReset()
   coreMock.updateCollectionMeta.mockReset()
-  coreMock.restoreSession.mockReset()
-  coreMock.getAccountFingerprint.mockReset()
-  coreMock.listItems.mockReset()
-  coreMock.SyncEngine.mockReset()
   toastStoreMock.showErrorToast.mockReset()
 })
 
@@ -95,7 +86,7 @@ function setupStoreWithMocks(itemManager: MockItemManager, syncEngine: MockSyncE
   }
   useEtebaseStore.setState({
     account: account as any,
-    collections: { calendar: [collection as any], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+    collections: { calendar: [collection as any], tasks: [], contacts: [], preferences: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
@@ -113,7 +104,7 @@ function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemMana
   }
   useEtebaseStore.setState({
     account: account as any,
-    collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+    collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
@@ -121,112 +112,6 @@ function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemMana
     syncEngine: syncEngine as any,
   })
 }
-
-describe('useEtebaseStore.initialize outcomes', () => {
-  beforeEach(() => {
-    vi.mocked(secureGet).mockReset().mockResolvedValue(null)
-    useEtebaseStore.setState({
-      account: null,
-      accountFingerprint: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
-      itemCache: new Map(),
-      itemTypeMap: new Map(),
-      itemCollectionMap: new Map(),
-      isInitialized: false,
-      syncEngine: null,
-    })
-  })
-
-  it('returns no-session without marking Etebase initialized', async () => {
-    vi.mocked(secureGet).mockResolvedValue(null)
-
-    const outcome = await useEtebaseStore.getState().initialize()
-
-    expect(outcome).toEqual({ status: 'no-session' })
-    expect(useEtebaseStore.getState().isInitialized).toBe(false)
-    expect(coreMock.restoreSession).not.toHaveBeenCalled()
-  })
-
-  it('returns success after restoring a saved session and loading collections', async () => {
-    vi.mocked(secureGet).mockResolvedValue('saved-session')
-    const account = { id: 'account' }
-    coreMock.restoreSession.mockResolvedValue(account)
-    coreMock.getAccountFingerprint.mockReturnValue('fingerprint')
-    coreMock.listCollections.mockImplementation(async (_account: unknown, type: string) => [mockCollection(`${type}-col`)])
-    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
-    const engine = {
-      trackCollection: vi.fn(),
-      onStokenAdvance: vi.fn(),
-      start: vi.fn(async () => {}),
-      stop: vi.fn(),
-    }
-    coreMock.SyncEngine.mockImplementation(function MockSyncEngine() {
-      return engine
-    })
-
-    const outcome = await useEtebaseStore.getState().initialize()
-
-    expect(outcome).toEqual({ status: 'success', itemCount: 0 })
-    expect(useEtebaseStore.getState().isInitialized).toBe(true)
-    expect(useEtebaseStore.getState().accountFingerprint).toBe('fingerprint')
-    expect(engine.start).toHaveBeenCalledWith(account)
-  })
-
-  it('restores remote collections and items into cold-start caches and list stores', async () => {
-    vi.mocked(secureGet).mockResolvedValue('saved-session')
-    const account = { id: 'account' }
-    const calendarCollection = mockCollection('calendar-col', { name: 'Personal', color: '#10b981' })
-    const taskCollection = mockCollection('tasks-col', { name: 'Tasks', color: '#3b82f6' })
-    const contactCollection = mockCollection('contacts-col', { name: 'Contacts', color: '#8b5cf6' })
-    const preferencesCollection = mockCollection('preferences-col')
-    const labelIndexCollection = mockCollection('label-index-col')
-    coreMock.restoreSession.mockResolvedValue(account)
-    coreMock.getAccountFingerprint.mockReturnValue('fingerprint')
-    coreMock.listCollections.mockImplementation(async (_account: unknown, type: string) => {
-      if (type === 'etebase.vevent') return [calendarCollection]
-      if (type === 'etebase.vtodo') return [taskCollection]
-      if (type === 'etebase.vcard') return [contactCollection]
-      if (type === 'silentsuite.preferences') return [preferencesCollection]
-      if (type === 'silentsuite.labelindex') return [labelIndexCollection]
-      return []
-    })
-    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => ({
-      items: collection.uid === 'calendar-col' ? [mockItem('event-1', 'VEVENT')] : [],
-      stoken: null,
-      done: true,
-    }))
-    const engine = {
-      trackCollection: vi.fn(),
-      onStokenAdvance: vi.fn(),
-      start: vi.fn(async () => {}),
-      stop: vi.fn(),
-    }
-    coreMock.SyncEngine.mockImplementation(function MockSyncEngine() {
-      return engine
-    })
-
-    const outcome = await useEtebaseStore.getState().initialize()
-
-    expect(outcome).toEqual({ status: 'success', itemCount: 1 })
-    expect(useEtebaseStore.getState().itemCache.has('event-1')).toBe(true)
-    expect(useEtebaseStore.getState().itemTypeMap.get('event-1')).toBe('calendar')
-    expect(useEtebaseStore.getState().itemCollectionMap.get('event-1')).toBe('calendar-col')
-    expect(useCalendarListStore.getState().calendars.map((calendar) => calendar.id)).toEqual(['calendar-col'])
-    expect(useTaskListStore.getState().lists.map((list) => list.id)).toEqual(['tasks-col'])
-    expect(useContactListStore.getState().lists.map((list) => list.id)).toEqual(['contacts-col'])
-  })
-
-  it('returns error without marking initialized on restore failure', async () => {
-    vi.mocked(secureGet).mockResolvedValue('saved-session')
-    coreMock.restoreSession.mockRejectedValue(new Error('bad session'))
-
-    const outcome = await useEtebaseStore.getState().initialize()
-
-    expect(outcome.status).toBe('error')
-    expect(useEtebaseStore.getState().isInitialized).toBe(false)
-    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to restore session. Please try signing in again.')
-  })
-})
 
 describe('useEtebaseStore.createItemsBatch', () => {
   beforeEach(() => {
@@ -244,7 +129,7 @@ describe('useEtebaseStore.createItemsBatch', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -417,7 +302,7 @@ describe('useEtebaseStore.moveItem', () => {
     offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -436,7 +321,7 @@ describe('useEtebaseStore.moveItem', () => {
     coreMock.deleteItem.mockResolvedValue(undefined)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map([['item-old', sourceItem]]),
       itemTypeMap: new Map([['item-old', 'calendar']]),
       itemCollectionMap: new Map([['item-old', 'col-1']]),
@@ -470,7 +355,7 @@ describe('useEtebaseStore.moveItem', () => {
     offlineQueueMock.isOfflineError.mockReturnValue(true)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [sourceCollection, targetCollection] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map([['item-old', sourceItem]]),
       itemTypeMap: new Map([['item-old', 'calendar']]),
       itemCollectionMap: new Map([['item-old', 'col-1']]),
@@ -501,7 +386,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
   beforeEach(() => {
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -523,7 +408,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }, { uid: 'col-2' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [{ uid: 'col-1' }, { uid: 'col-2' }] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map([
         ['item-1', deleteItemOne],
         ['item-2', deleteItemTwo],
@@ -579,7 +464,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -617,7 +502,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(items.map((item) => [item.uid, item])),
       itemTypeMap: new Map(items.map((item) => [item.uid, 'calendar' as const])),
       itemCollectionMap: new Map(items.map((item) => [item.uid, 'col-1'])),
@@ -648,7 +533,7 @@ describe('useEtebaseStore.refreshCollection', () => {
   beforeEach(() => {
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -679,7 +564,7 @@ describe('useEtebaseStore.refreshCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map([
         ['old-col-1', staleItem],
         ['keep-col-2', survivorItem],
@@ -721,7 +606,7 @@ describe('useEtebaseStore.refreshCollection', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map([['existing', existingItem]]),
       itemTypeMap: new Map([['existing', 'calendar']]),
       itemCollectionMap: new Map([['existing', 'col-1']]),
@@ -736,26 +621,6 @@ describe('useEtebaseStore.refreshCollection', () => {
     expect(state.itemCache.get('existing')).toBe(existingItem)
     expect(state.itemCollectionMap.get('existing')).toBe('col-1')
     errorSpy.mockRestore()
-  })
-
-  it('throws when cached item content cannot be decoded instead of returning a false empty list', async () => {
-    const brokenItem = {
-      uid: 'broken-1',
-      getContent: vi.fn(async () => {
-        throw new Error('decode failed')
-      }),
-    }
-    useEtebaseStore.setState({
-      account: { id: 'account' } as any,
-      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
-      itemCache: new Map([['broken-1', brokenItem]]),
-      itemTypeMap: new Map([['broken-1', 'calendar']]),
-      itemCollectionMap: new Map([['broken-1', 'col-1']]),
-      isInitialized: true,
-      syncEngine: null,
-    })
-
-    await expect(useEtebaseStore.getState().fetchAllItems('calendar')).rejects.toThrow('Could not decode cached events')
   })
 })
 
@@ -785,7 +650,7 @@ describe('useEtebaseStore.reconcileCollections', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -817,7 +682,7 @@ describe('useEtebaseStore.reconcileCollections', () => {
 
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [deletedCalendar] as any[], tasks: [taskCollection] as any[], contacts: [contactCollection] as any[], preferences: [], labelIndex: [] },
+      collections: { calendar: [deletedCalendar] as any[], tasks: [taskCollection] as any[], contacts: [contactCollection] as any[], preferences: [] },
       itemCache: new Map([['event-1', mockItem('event-1', 'deleted event')]]),
       itemTypeMap: new Map([['event-1', 'calendar']]),
       itemCollectionMap: new Map([['event-1', 'deleted-cal']]),
@@ -863,7 +728,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     })
     useEtebaseStore.setState({
       account: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
@@ -887,7 +752,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [collection] as any[], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [collection] as any[], tasks: [], contacts: [], preferences: [] },
       isInitialized: true,
     })
 
@@ -923,7 +788,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [], tasks: [collection] as any[], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [collection] as any[], contacts: [], preferences: [] },
       isInitialized: true,
     })
 
@@ -959,7 +824,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     coreMock.updateCollectionMeta.mockResolvedValue(updatedCollection)
     useEtebaseStore.setState({
       account: account as any,
-      collections: { calendar: [], tasks: [], contacts: [collection] as any[], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [collection] as any[], preferences: [] },
       isInitialized: true,
     })
 
@@ -998,7 +863,7 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
         calendar: type === 'calendar' ? [collection] as any[] : [],
         tasks: type === 'tasks' ? [collection] as any[] : [],
         contacts: type === 'contacts' ? [collection] as any[] : [],
-        preferences: [], labelIndex: [],
+        preferences: [],
       },
       isInitialized: true,
     })

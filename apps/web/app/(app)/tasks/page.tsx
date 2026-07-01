@@ -12,7 +12,7 @@ import { formatDate } from '@/app/lib/date'
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
-import { SyncStartupState, TasksEmptyState } from '@/app/components/empty-state'
+import { TasksEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 import type { Task, TaskStatus, Priority } from '@silentsuite/core'
@@ -848,8 +848,6 @@ export default function TasksPage() {
   const tasks = useTaskStore((s) => s.tasks)
   const isLoading = useTaskStore((s) => s.isLoading)
   const isOnline = useSyncStore((s) => s.isOnline)
-  const initialSyncState = useSyncStore((s) => s.initialSyncState)
-  const syncError = useSyncStore((s) => s.error)
   const taskLists = useTaskListStore((s) => s.lists)
   const [showDialog, setShowDialog] = useState(false)
   const [editTask, setEditTask] = useState<Task | null>(null)
@@ -862,9 +860,7 @@ export default function TasksPage() {
     [tasks, visibleListIds],
   )
   const sortedTasks = useMemo(() => sortTasks(filteredTasks), [filteredTasks])
-  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty'
-  const shouldShowStartupState = tasks.length === 0 && !isLoading && !initialLoadComplete
-  const isEmpty = tasks.length === 0 && !isLoading && initialLoadComplete
+  const isEmpty = tasks.length === 0 && !isLoading
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -907,8 +903,6 @@ export default function TasksPage() {
       {/* Content */}
       {isLoading ? (
         <TaskSkeleton />
-      ) : shouldShowStartupState ? (
-        <SyncStartupState state={initialSyncState} error={syncError} />
       ) : isEmpty ? (
         <TasksEmptyState />
       ) : (
