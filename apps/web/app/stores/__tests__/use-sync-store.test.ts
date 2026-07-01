@@ -54,10 +54,6 @@ vi.mock('@/app/stores/use-preferences-sync-store', () => ({
   usePreferencesSyncStore: { getState: () => ({ loadFromRemote: vi.fn(), setRemoteItemUid: vi.fn() }) },
 }))
 
-vi.mock('@/app/stores/use-label-suggestions-store', () => ({
-  useLabelSuggestionsStore: { getState: () => ({ loadFromRemote: vi.fn() }) },
-}))
-
 vi.mock('@/app/lib/offline-queue', () => ({
   replay: vi.fn().mockResolvedValue([]),
   getPendingCount: vi.fn().mockResolvedValue(0),
@@ -82,20 +78,11 @@ function resetStore() {
   useSyncStore.setState({
     syncStatus: 'synced',
     initialSyncState: 'synced',
-    initialSyncBlocker: null,
     lastSyncedAt: null,
     isOnline: true,
     error: null,
     pendingQueueCount: 0,
     failedQueueCount: 0,
-    initialSyncProgress: {
-      active: false,
-      phase: 'idle',
-      calendar: { loaded: 0, knownTotal: null, done: false },
-      tasks: { loaded: 0, knownTotal: null, done: false },
-      contacts: { loaded: 0, knownTotal: null, done: false },
-      message: null,
-    },
   })
 }
 
@@ -135,39 +122,6 @@ describe('useSyncStore', () => {
 
     useSyncStore.getState().setInitialSyncState('empty')
     expect(useSyncStore.getState().initialSyncState).toBe('empty')
-  })
-
-  it('tracks explicit initial sync blocker transitions', () => {
-    expect(useSyncStore.getState().initialSyncBlocker).toBeNull()
-
-    useSyncStore.getState().setInitialSyncBlocker('missing-encrypted-session')
-    expect(useSyncStore.getState().initialSyncBlocker).toBe('missing-encrypted-session')
-
-    useSyncStore.getState().setInitialSyncBlocker('encrypted-session-restore-failed')
-    expect(useSyncStore.getState().initialSyncBlocker).toBe('encrypted-session-restore-failed')
-
-    useSyncStore.getState().setInitialSyncBlocker(null)
-    expect(useSyncStore.getState().initialSyncBlocker).toBeNull()
-  })
-
-  it('tracks initial sync progress phases and counts', () => {
-    useSyncStore.getState().startInitialSyncProgress({ calendar: 3000 })
-    expect(useSyncStore.getState().initialSyncProgress.active).toBe(true)
-    expect(useSyncStore.getState().initialSyncProgress.calendar.knownTotal).toBe(3000)
-
-    useSyncStore.getState().setInitialSyncProgressPhase('calendar')
-    useSyncStore.getState().updateInitialSyncProgress('calendar', 600, undefined, false)
-    expect(useSyncStore.getState().initialSyncProgress.phase).toBe('calendar')
-    expect(useSyncStore.getState().initialSyncProgress.calendar.loaded).toBe(600)
-    expect(useSyncStore.getState().initialSyncProgress.calendar.done).toBe(false)
-
-    useSyncStore.getState().finishInitialSyncProgress()
-    expect(useSyncStore.getState().initialSyncProgress.active).toBe(false)
-    expect(useSyncStore.getState().initialSyncProgress.phase).toBe('complete')
-    expect(useSyncStore.getState().initialSyncProgress.contacts.done).toBe(true)
-
-    useSyncStore.getState().resetInitialSyncProgress()
-    expect(useSyncStore.getState().initialSyncProgress.phase).toBe('idle')
   })
 
   it('simulateSyncCycle transitions synced→syncing→synced', async () => {
@@ -215,12 +169,11 @@ describe('useSyncStore', () => {
     await flushPromises()
     expect(etebaseMock.state.reconcileCollections).toHaveBeenCalledTimes(1)
     expect(syncNow).toHaveBeenCalledTimes(1)
-    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(5)
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(4)
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('tasks')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('contacts')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('calendar')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('preferences')
-    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('labelIndex')
 
     const reconcileOrder = etebaseMock.state.reconcileCollections.mock.invocationCallOrder[0]!
     const firstRefreshOrder = etebaseMock.state.refreshCollection.mock.invocationCallOrder[0]!

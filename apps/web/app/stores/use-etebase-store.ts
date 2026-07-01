@@ -79,27 +79,7 @@ type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'la
 type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
 type EtebaseCore = typeof import('@silentsuite/core')
 
-export type CachedContentItem = { uid: string; content: string; collectionUid: string }
-export type IncrementalCollectionProgress = { loaded: number; done: boolean; collectionUid: string }
-export type IncrementalCollectionResult = {
-  attemptedCount: number
-  decodedCount: number
-  decodeFailureCount: number
-  enumerationErrorCount: number
-  items: CachedContentItem[]
-  trustworthyForReplacement: boolean
-  errorCategory?: string
-}
-export type IncrementalLoadResult = {
-  type: CollectionTypeKey
-  attemptedCount: number
-  decodedCount: number
-  decodeFailureCount: number
-  enumerationErrorCount: number
-  items: CachedContentItem[]
-  collections: IncrementalCollectionResult[]
-  trustworthyForFullReplacement: boolean
-}
+type CachedContentItem = { uid: string; content: string; collectionUid: string }
 
 export type EtebaseInitializeOutcome =
   | { status: 'no-session' }
@@ -353,27 +333,6 @@ function collectionDisplayName(type: CollectionTypeKey): string {
   return 'preferences'
 }
 
-function saveItemNoun(type: CollectionTypeKey): string {
-  if (type === 'calendar') return 'event'
-  if (type === 'tasks') return 'task'
-  if (type === 'contacts') return 'contact'
-  if (type === 'labelIndex') return 'label suggestions'
-  return 'preferences'
-}
-
-function toastSourceForType(type: CollectionTypeKey): 'preferences' | 'labelIndex' | undefined {
-  if (type === 'preferences') return 'preferences'
-  if (type === 'labelIndex') return 'labelIndex'
-  return undefined
-}
-
-function showSaveFailureToast(type: CollectionTypeKey): void {
-  const source = toastSourceForType(type)
-  const message = `Failed to save ${saveItemNoun(type)}. Please try again.`
-  if (source) showErrorToast(message, { source, suppressDuringPassiveStartup: true })
-  else showErrorToast(message)
-}
-
 async function recordLabelsFromContent(type: CollectionTypeKey, content: string): Promise<void> {
   if (type !== 'calendar' && type !== 'tasks' && type !== 'contacts') return
   try {
@@ -527,17 +486,6 @@ interface EtebaseActions {
   fetchAllItems: (type: CollectionTypeKey) => Promise<CachedContentItem[]>
 
   /**
-   * Page through a collection type and update the local item cache as pages arrive.
-   */
-  loadCollectionItemsIncrementally: (
-    type: CollectionTypeKey,
-    options?: { onItems?: (items: CachedContentItem[], progress: IncrementalCollectionProgress) => Promise<void> | void },
-  ) => Promise<IncrementalLoadResult>
-
-  /** Start the SyncEngine after initial page-at-a-time enumeration is complete. */
-  startSyncEngine: () => Promise<void>
-
-  /**
    * Re-fetch all items from the Etebase server for a collection type.
    * Updates the local cache and returns fresh content.
    * This is what the sync change handler should call.
@@ -609,9 +557,37 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ collections })
       await hydrateListStores(collections)
 
-      // 3. Prepare SyncEngine, but do not start polling yet. Initial item
-      // enumeration happens page-at-a-time in SyncProvider so visible calendar
-      // data can render before tasks/contacts/non-visible collections finish.
+      // 3. Load all items from each collection into the cache
+      const itemCache = new Map<string, any>()
+      const itemTypeMap = new Map<string, CollectionTypeKey>()
+      const itemCollectionMap = new Map<string, string>()
+
+      for (const [key] of COLLECTION_DEFINITIONS) {
+        const typedCollections = collections[key]
+
+        for (const collection of typedCollections) {
+          let stoken: string | null = null
+          let done = false
+
+          while (!done) {
+            const response = await core.listItems(account, collection, stoken)
+            for (const item of response.items) {
+              if (!item.isDeleted) {
+                itemCache.set(item.uid, item)
+                itemTypeMap.set(item.uid, key)
+                itemCollectionMap.set(item.uid, collection.uid)
+              }
+            }
+            stoken = response.stoken
+            done = response.done
+          }
+        }
+      }
+
+      set({ itemCache, itemTypeMap, itemCollectionMap })
+      logger.debug(`[etebase-store] Loaded ${itemCache.size} items into cache`)
+
+      // 4. Start SyncEngine
       const engine = new core.SyncEngine({
         serverUrl: serverUrl,
         pollIntervalMs: 30_000,
@@ -636,9 +612,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         })
       }
 
+      await engine.start(account)
       set({ syncEngine: engine, isInitialized: true })
-      logger.debug('[etebase-store] SyncEngine prepared')
-      return { status: 'success', itemCount: 0 }
+      logger.debug('[etebase-store] SyncEngine started')
+      return { status: 'success', itemCount: itemCache.size }
     } catch (err) {
       console.error('[etebase-store] Initialization failed', getSafeErrorDetails(err))
       // Don't clear the session -- the user might be offline
@@ -1136,7 +1113,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to create ${type} item`, getSafeErrorDetails(err))
-        showSaveFailureToast(type)
+        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
       return null
     }
@@ -1308,7 +1285,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       } else {
         console.error(`[etebase-store] Failed to update ${type} item`, getSafeErrorDetails(err))
-        showSaveFailureToast(type)
+        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
       }
     }
   },
@@ -1431,133 +1408,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
 
     return results
-  },
-
-  loadCollectionItemsIncrementally: async (type, options: { onItems?: (items: CachedContentItem[], progress: IncrementalCollectionProgress) => Promise<void> | void } = {}) => {
-    const { account, collections } = get()
-    const emptyResult = (): IncrementalLoadResult => ({
-      type,
-      attemptedCount: 0,
-      decodedCount: 0,
-      decodeFailureCount: 0,
-      enumerationErrorCount: 0,
-      items: [],
-      collections: [],
-      trustworthyForFullReplacement: Boolean(account && collections[type].length > 0),
-    })
-    if (!account || collections[type].length === 0) {
-      logger.warn(`[etebase-store] Cannot load ${type}: missing account or collection`)
-      const fallbackItems = await get().fetchAllItems(type)
-      return {
-        ...emptyResult(),
-        attemptedCount: fallbackItems.length,
-        decodedCount: fallbackItems.length,
-        items: fallbackItems,
-        trustworthyForFullReplacement: false,
-      }
-    }
-
-    const core = await import('@silentsuite/core')
-    let loaded = 0
-    const results: CachedContentItem[] = []
-    const collectionResults: IncrementalCollectionResult[] = []
-
-    for (const collection of collections[type]) {
-      const collectionItems: CachedContentItem[] = []
-      const collectionItemObjects: any[] = []
-      let attemptedCount = 0
-      let decodeFailureCount = 0
-      let enumerationErrorCount = 0
-      let stoken: string | null = null
-      let done = false
-
-      try {
-        while (!done) {
-          const response = await core.listItems(account, collection, stoken)
-          const pageItems = response.items.filter((item: any) => !item.isDeleted)
-          const pageResults: CachedContentItem[] = []
-
-          for (const item of pageItems) {
-            attemptedCount++
-            collectionItemObjects.push(item)
-            try {
-              const content = await item.getContent()
-              const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
-              const cached = { uid: item.uid, content: contentStr, collectionUid: collection.uid }
-              pageResults.push(cached)
-              collectionItems.push(cached)
-              results.push(cached)
-            } catch (err) {
-              decodeFailureCount++
-              logger.warn(`[etebase-store] Failed to decode incremental ${type} item`, getSafeErrorDetails(err))
-            }
-          }
-
-          loaded += pageResults.length
-          stoken = response.stoken
-          done = response.done
-          await options.onItems?.(pageResults, { loaded, done, collectionUid: collection.uid })
-        }
-      } catch (err) {
-        enumerationErrorCount++
-        logger.warn(`[etebase-store] Failed to enumerate incremental ${type} collection`, getSafeErrorDetails(err))
-      }
-
-      const trustworthyForReplacement = enumerationErrorCount === 0 && decodeFailureCount === 0
-      if (trustworthyForReplacement) {
-        const newItemCache = new Map(get().itemCache)
-        const newItemTypeMap = new Map(get().itemTypeMap)
-        const newItemCollectionMap = new Map(get().itemCollectionMap)
-        for (const [uid, mappedCollectionUid] of newItemCollectionMap.entries()) {
-          if (mappedCollectionUid === collection.uid) {
-            newItemCache.delete(uid)
-            newItemTypeMap.delete(uid)
-            newItemCollectionMap.delete(uid)
-          }
-        }
-        for (const item of collectionItemObjects) {
-          newItemCache.set(item.uid, item)
-          newItemTypeMap.set(item.uid, type)
-          newItemCollectionMap.set(item.uid, collection.uid)
-        }
-        set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, itemCollectionMap: newItemCollectionMap })
-      }
-
-      collectionResults.push({
-        attemptedCount,
-        decodedCount: collectionItems.length,
-        decodeFailureCount,
-        enumerationErrorCount,
-        items: collectionItems,
-        trustworthyForReplacement,
-        errorCategory: enumerationErrorCount > 0 ? 'enumeration-failed' : decodeFailureCount > 0 ? 'decode-failed' : undefined,
-      })
-    }
-
-    const attemptedCount = collectionResults.reduce((sum, result) => sum + result.attemptedCount, 0)
-    const decodedCount = collectionResults.reduce((sum, result) => sum + result.decodedCount, 0)
-    const decodeFailureCount = collectionResults.reduce((sum, result) => sum + result.decodeFailureCount, 0)
-    const enumerationErrorCount = collectionResults.reduce((sum, result) => sum + result.enumerationErrorCount, 0)
-    const trustworthyForFullReplacement = collectionResults.every((result) => result.trustworthyForReplacement)
-
-    logger.debug(`[etebase-store] Incrementally loaded ${results.length} ${type} items`)
-    return {
-      type,
-      attemptedCount,
-      decodedCount,
-      decodeFailureCount,
-      enumerationErrorCount,
-      items: results,
-      collections: collectionResults,
-      trustworthyForFullReplacement,
-    }
-  },
-
-  startSyncEngine: async () => {
-    const { account, syncEngine } = get()
-    if (!account || !syncEngine) return
-    await syncEngine.start(account)
-    logger.debug('[etebase-store] SyncEngine started')
   },
 
   refreshCollection: async (type: CollectionTypeKey, collectionUid?: string) => {

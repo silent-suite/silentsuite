@@ -19,18 +19,6 @@ interface ToastActions {
   removeToast: (id: string) => void
 }
 
-export type ToastCoalesceSource = 'preferences' | 'labelIndex' | 'internal-sync'
-
-interface ToastOptions {
-  source?: ToastCoalesceSource
-  passiveStartup?: boolean
-  suppressDuringPassiveStartup?: boolean
-}
-
-let passiveStartupCycle = 0
-let passiveStartupCycleActive = false
-const shownPassiveStartupToasts = new Set<string>()
-
 export const useToastStore = create<ToastState & ToastActions>((set) => ({
   toasts: [],
 
@@ -49,25 +37,7 @@ export const useToastStore = create<ToastState & ToastActions>((set) => ({
 }))
 
 /** Show an error toast from anywhere (including non-React code like stores). */
-export function beginPassiveStartupToastCycle() {
-  passiveStartupCycle += 1
-  passiveStartupCycleActive = true
-  shownPassiveStartupToasts.clear()
-}
-
-export function endPassiveStartupToastCycle() {
-  passiveStartupCycleActive = false
-  shownPassiveStartupToasts.clear()
-}
-
-export function showErrorToast(message: string, options: ToastOptions = {}) {
-  const isPassiveStartup = options.passiveStartup || passiveStartupCycleActive
-  if (isPassiveStartup && options.suppressDuringPassiveStartup) return
-  if (isPassiveStartup && options.source) {
-    const key = `${passiveStartupCycle}:${options.source}:${message}`
-    if (shownPassiveStartupToasts.has(key)) return
-    shownPassiveStartupToasts.add(key)
-  }
+export function showErrorToast(message: string) {
   useToastStore.getState().addToast(message, 'error')
 }
 
