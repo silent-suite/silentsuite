@@ -4,50 +4,100 @@
 #
 #    pip-compile --output-file=requirements-dev.txt requirements.in/development.txt
 #
-asgiref==3.8.1
+anyio==4.14.1
     # via
+    #   -c requirements.txt
+    #   httpx2
+asgiref==3.11.1
+    # via
+    #   -c requirements.txt
     #   django
-    #   django-stubs
-build==1.2.1
+ast-serialize==0.6.0
+    # via mypy
+build==1.5.0
     # via pip-tools
-click==8.1.7
-    # via pip-tools
-coverage==7.5.3
-    # via -r requirements.in/development.txt
-django==5.0.6
+click==8.4.2
     # via
+    #   -c requirements.txt
+    #   pip-tools
+coverage==7.14.3
+    # via -r requirements.in/development.txt
+django==5.2.15
+    # via
+    #   -c requirements.txt
     #   django-stubs
     #   django-stubs-ext
-django-stubs==5.0.2
+django-stubs==6.0.6
     # via -r requirements.in/development.txt
-django-stubs-ext==5.0.2
+django-stubs-ext==6.0.6
     # via django-stubs
-mypy==1.10.0
+h11==0.16.0
+    # via
+    #   -c requirements.txt
+    #   httpcore2
+httpcore2==2.5.0
+    # via httpx2
+httpx2==2.5.0
     # via -r requirements.in/development.txt
-mypy-extensions==1.0.0
+idna==3.18
+    # via
+    #   -c requirements.txt
+    #   anyio
+    #   httpx2
+iniconfig==2.3.0
+    # via pytest
+librt==0.12.0
     # via mypy
-packaging==24.0
-    # via build
-pip-tools==7.4.1
+mypy==2.1.0
     # via -r requirements.in/development.txt
-pyproject-hooks==1.1.0
+mypy-extensions==1.1.0
+    # via mypy
+packaging==26.2
+    # via
+    #   build
+    #   pytest
+    #   wheel
+pathspec==1.1.1
+    # via mypy
+pip-tools==7.5.3
+    # via -r requirements.in/development.txt
+pluggy==1.6.0
+    # via pytest
+pygments==2.20.0
+    # via pytest
+pyproject-hooks==1.2.0
     # via
     #   build
     #   pip-tools
-pywatchman==2.0.0
-    # via -r requirements.in/development.txt
-ruff==0.4.8
-    # via -r requirements.in/development.txt
-sqlparse==0.5.0
-    # via django
-types-pyyaml==6.0.12.20240311
-    # via django-stubs
-typing-extensions==4.12.2
+pytest==9.1.1
     # via
+    #   -r requirements.in/development.txt
+    #   pytest-django
+pytest-django==4.12.0
+    # via -r requirements.in/development.txt
+pywatchman==4.0.0
+    # via -r requirements.in/development.txt
+ruff==0.15.20
+    # via -r requirements.in/development.txt
+sqlparse==0.5.5
+    # via
+    #   -c requirements.txt
+    #   django
+truststore==0.10.4
+    # via
+    #   httpcore2
+    #   httpx2
+types-pyyaml==6.0.12.20260518
+    # via django-stubs
+typing-extensions==4.15.0
+    # via
+    #   -c requirements.txt
+    #   anyio
     #   django-stubs
     #   django-stubs-ext
+    #   httpx2
     #   mypy
-wheel==0.43.0
+wheel==0.47.0
     # via pip-tools
 
 # The following packages are considered to be unsafe in a requirements file:

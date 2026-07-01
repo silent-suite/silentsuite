@@ -103,11 +103,11 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/silentsuite/silentsuite' },
+      { icon: 'github', link: 'https://github.com/silent-suite/silentsuite' },
     ],
 
     editLink: {
-      pattern: 'https://github.com/silentsuite/silentsuite/edit/main/apps/docs/:path',
+      pattern: 'https://github.com/silent-suite/silentsuite/edit/main/apps/docs/:path',
       text: 'Edit this page on GitHub',
     },
 

@@ -1,7 +1,7 @@
 django>=5.2,<6.0
 msgpack
 pynacl
-fastapi>=0.104
+fastapi==0.138.2
 pydantic>=2.0.0
 typing_extensions
 uvicorn[standard]
