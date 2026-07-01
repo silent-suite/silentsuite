@@ -11,6 +11,10 @@ import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 import {
+  beginPassiveStartupToastCycle,
+  endPassiveStartupToastCycle,
+} from '@/app/stores/use-toast-store'
+import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
   isCacheEnabled as isLocalCacheEnabled,
@@ -34,6 +38,44 @@ import { readLocalSyncSummary, writeLocalSyncSummary } from '@/app/lib/sync-summ
 import type { CalendarEvent } from '@silentsuite/core'
 
 const CALENDAR_DESERIALIZE_CHUNK_SIZE = 50
+
+type InitialDomainLoadResult = {
+  domain: 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'labelIndex'
+  visibility: 'visible' | 'internal'
+  status: 'loaded' | 'empty' | 'warning' | 'failed'
+  itemCount: number
+  decodedCount: number
+  decodeFailureCount: number
+  errorCategory?: string
+}
+
+type InitialLoadClassification = {
+  accountRestored: true
+  domains: InitialDomainLoadResult[]
+  visibleFatal: boolean
+  visibleWarnings: InitialDomainLoadResult[]
+  internalWarnings: InitialDomainLoadResult[]
+  safeToWireSyncEngine: boolean
+}
+
+function errorCategoryFrom(err: unknown): string {
+  const details = getSafeErrorDetails(err) as { name?: unknown; code?: unknown; status?: unknown }
+  if (typeof details.status === 'number') return `http-${details.status}`
+  if (typeof details.code === 'string') return details.code
+  if (typeof details.name === 'string') return details.name
+  return 'unknown'
+}
+
+function shouldWireSyncEngine(classification: Pick<InitialLoadClassification, 'visibleFatal'>): boolean {
+  return !classification.visibleFatal
+}
+
+function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
+  if (incoming.length === 0) return current
+  const byId = new Map(current.map((item) => [item.id, item]))
+  for (const item of incoming) byId.set(item.id, item)
+  return Array.from(byId.values())
+}
 
 function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0))
@@ -144,7 +186,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   const etebaseLoadIncrementally = useEtebaseStore((s) => s.loadCollectionItemsIncrementally)
   const etebaseOnSyncChange = useEtebaseStore((s) => s.onSyncChange)
   const etebaseOnStatusChange = useEtebaseStore((s) => s.onStatusChange)
-  const etebaseIsInitialized = useEtebaseStore((s) => s.isInitialized)
 
   const didInit = useRef(false)
 
@@ -182,7 +223,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // Restore session, create/fetch collections, load items, start SyncEngine
         const etebaseInitStartedAt = nowMs()
         const initOutcome = await etebaseInitialize()
-        logSyncTiming('etebase-initialize', etebaseInitStartedAt)
+        logSyncTiming('etebase-initialize', etebaseInitStartedAt, {
+          syncEnginePrepared: Boolean(useEtebaseStore.getState().syncEngine),
+          etebaseStoreInitialized: useEtebaseStore.getState().isInitialized,
+        })
 
         if (initOutcome.status === 'no-session') {
           setInitialSyncProgressPhase('blocked')
@@ -221,22 +265,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         } : undefined)
 
         // Now load items from each collection into the data stores
-        const loadHadErrors = await loadItemsIntoStores()
+        const classification = await loadItemsIntoStores()
 
-        if (loadHadErrors) {
+        if (!classification.safeToWireSyncEngine) {
           setSyncStatus('error')
-          // A post-restore item or optional metadata load error should not
-          // put the app back into the encrypted-session recovery/blocked UI.
-          // Keep the visible domain stores usable and surface the problem via
-          // the sync indicator instead of hiding the calendar behind a false
-          // restore error screen.
-          setInitialSyncState(hasVisibleDomainData() ? 'synced' : 'empty')
+          setInitialSyncState(hasVisibleDomainData() ? 'synced' : 'error')
           setInitialSyncBlocker(null)
           finishInitialSyncProgress()
-          setError('Some synced items could not be loaded')
+          setError('Calendar data could not be loaded')
         } else {
-          // Start SyncEngine only after initial enumeration has completed, so
-          // change handlers cannot full-replace stores from a partial item cache.
+          // Start SyncEngine after safe initial enumeration. Internal encrypted
+          // metadata warnings must not block visible calendar recovery.
           await useEtebaseStore.getState().startSyncEngine()
 
           // Wire SyncEngine change events
@@ -244,11 +283,23 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
           // Wire SyncEngine status
           unsubStatus = wireStatusHandler()
+          logSyncTiming('sync-engine-start', initStartedAt, {
+            syncEngineStarted: true,
+            changeHandlerWired: Boolean(unsubChange),
+            statusHandlerWired: Boolean(unsubStatus),
+            visibleWarningCount: classification.visibleWarnings.length,
+            internalWarningCount: classification.internalWarnings.length,
+          })
 
-          setSyncStatus('synced')
+          const hasWarnings = classification.visibleWarnings.length > 0 || classification.internalWarnings.length > 0
+          setSyncStatus(hasWarnings ? 'error' : 'synced')
           setInitialSyncState(hasVisibleDomainData() ? 'synced' : 'empty')
           setInitialSyncBlocker(null)
-          setError(null)
+          setError(classification.visibleWarnings.length > 0
+            ? 'Some synced items could not be loaded'
+            : classification.internalWarnings.length > 0
+              ? 'Some synced metadata could not be loaded'
+              : null)
           finishInitialSyncProgress()
           const currentFingerprint = useEtebaseStore.getState().accountFingerprint
           if (currentFingerprint) {
@@ -260,7 +311,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           }
           setLastSynced(new Date())
         }
-        logSyncTiming('initial-sync-complete', initStartedAt, { hadErrors: loadHadErrors })
+        logSyncTiming('initial-sync-complete', initStartedAt, {
+          visibleFatal: classification.visibleFatal,
+          visibleWarningCount: classification.visibleWarnings.length,
+          internalWarningCount: classification.internalWarnings.length,
+          safeToWireSyncEngine: classification.safeToWireSyncEngine,
+        })
       } catch (err) {
         reportSyncError('init', err)
         setSyncStatus('error')
@@ -368,9 +424,22 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       return hydratedAny
     }
 
-    async function loadItemsIntoStores(): Promise<boolean> {
+    async function loadItemsIntoStores(): Promise<InitialLoadClassification> {
       const cacheEnabled = isLocalCacheEnabled()
-      let hadErrors = false
+      const domains: InitialDomainLoadResult[] = []
+
+      const addDomain = (result: InitialDomainLoadResult) => {
+        domains.push(result)
+        logSyncTiming('initial-domain-load', nowMs(), {
+          domain: result.domain,
+          visibility: result.visibility,
+          status: result.status,
+          itemCount: result.itemCount,
+          decodedCount: result.decodedCount,
+          decodeFailureCount: result.decodeFailureCount,
+          errorCategory: result.errorCategory ?? null,
+        })
+      }
 
       async function mirrorToCache(
         type: 'tasks' | 'contacts' | 'calendar',
@@ -402,7 +471,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         const calendarFetchStartedAt = nowMs()
         const { deserializeCalendarEvent } = await import('@silentsuite/core')
         const allEvents: CalendarEvent[] = []
-        const eventItems = await etebaseLoadIncrementally('calendar', {
+        let calendarDeserializeErrorCount = 0
+        const eventLoad = await etebaseLoadIncrementally('calendar', {
           onItems: async (pageItems, progress) => {
             if (pageItems.length > 0) {
               const { events, errors } = await deserializeCalendarItemsIncrementally(
@@ -413,106 +483,167 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
               )
               allEvents.push(...events)
               calendarEventCount = allEvents.length
+              calendarDeserializeErrorCount += errors.length
               if (errors.length > 0) {
-                hadErrors = true
                 reportSyncError('load calendar event chunk', errors[0])
               }
             }
             updateInitialSyncProgress('calendar', calendarEventCount, undefined, progress.done)
           },
         })
-        useCalendarStore.getState().syncFromRemote(allEvents)
+        const decodeFailureCount = eventLoad.decodeFailureCount + calendarDeserializeErrorCount
+        const trustworthyCalendar = eventLoad.trustworthyForFullReplacement && calendarDeserializeErrorCount === 0
+        if (trustworthyCalendar) {
+          useCalendarStore.getState().syncFromRemote(allEvents)
+        }
         updateInitialSyncProgress('calendar', calendarEventCount, undefined, true)
-        logSyncTiming('calendar-fetch', calendarFetchStartedAt, { itemCount: eventItems.length, eventCount: allEvents.length })
+        const status = eventLoad.enumerationErrorCount > 0 && allEvents.length === 0
+          ? 'failed'
+          : decodeFailureCount > 0 || eventLoad.enumerationErrorCount > 0
+            ? 'warning'
+            : eventLoad.attemptedCount === 0
+              ? 'empty'
+              : 'loaded'
+        addDomain({
+          domain: 'calendar',
+          visibility: 'visible',
+          status,
+          itemCount: eventLoad.attemptedCount,
+          decodedCount: allEvents.length,
+          decodeFailureCount,
+          errorCategory: eventLoad.enumerationErrorCount > 0 ? 'enumeration-failed' : decodeFailureCount > 0 ? 'decode-failed' : undefined,
+        })
+        logSyncTiming('calendar-fetch', calendarFetchStartedAt, {
+          itemCount: eventLoad.attemptedCount,
+          decodedItemCount: eventLoad.decodedCount,
+          decodeFailureCount,
+          enumerationErrorCount: eventLoad.enumerationErrorCount,
+          eventCount: allEvents.length,
+          trustworthyForFullReplacement: trustworthyCalendar,
+        })
         logger.log(`[sync-provider] Loaded ${allEvents.length} calendar events from server`)
-        await mirrorToCache('calendar', eventItems)
+        if (trustworthyCalendar) await mirrorToCache('calendar', eventLoad.items)
       } catch (err) {
-        hadErrors = true
         reportSyncError('load calendar events', err)
+        addDomain({
+          domain: 'calendar',
+          visibility: 'visible',
+          status: 'failed',
+          itemCount: 0,
+          decodedCount: 0,
+          decodeFailureCount: 0,
+          errorCategory: errorCategoryFrom(err),
+        })
       }
 
       // Load tasks
       try {
         setInitialSyncProgressPhase('tasks')
         const taskLoadStartedAt = nowMs()
-        const taskItems = await etebaseLoadIncrementally('tasks')
+        const taskLoad = await etebaseLoadIncrementally('tasks')
         const { deserializeTask } = await import('@silentsuite/core')
-        const tasks = taskItems.map((item) => {
+        const tasks = taskLoad.items.map((item) => {
           const task = deserializeTask(item.content)
           // Use the Etebase item UID only as the local id so updates/deletes
           // can address the item without changing the stable iCalendar UID.
           return { ...task, id: item.uid, listId: item.collectionUid }
         })
-        useTaskStore.getState().syncFromRemote(tasks)
+        const taskStore = useTaskStore.getState()
+        taskStore.syncFromRemote(taskLoad.trustworthyForFullReplacement
+          ? tasks
+          : mergeById(taskStore.tasks, tasks))
         updateInitialSyncProgress('tasks', tasks.length, undefined, true)
         logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
-        logSyncTiming('tasks-load', taskLoadStartedAt, { itemCount: taskItems.length, taskCount: tasks.length })
-        await mirrorToCache('tasks', taskItems)
+        logSyncTiming('tasks-load', taskLoadStartedAt, { itemCount: taskLoad.attemptedCount, taskCount: tasks.length, decodeFailureCount: taskLoad.decodeFailureCount, enumerationErrorCount: taskLoad.enumerationErrorCount })
+        addDomain({ domain: 'tasks', visibility: 'visible', status: taskLoad.decodeFailureCount || taskLoad.enumerationErrorCount ? 'warning' : taskLoad.attemptedCount === 0 ? 'empty' : 'loaded', itemCount: taskLoad.attemptedCount, decodedCount: tasks.length, decodeFailureCount: taskLoad.decodeFailureCount, errorCategory: taskLoad.enumerationErrorCount ? 'enumeration-failed' : taskLoad.decodeFailureCount ? 'decode-failed' : undefined })
+        if (taskLoad.trustworthyForFullReplacement) await mirrorToCache('tasks', taskLoad.items)
       } catch (err) {
-        hadErrors = true
         reportSyncError('load tasks', err)
+        addDomain({ domain: 'tasks', visibility: 'visible', status: 'warning', itemCount: 0, decodedCount: 0, decodeFailureCount: 0, errorCategory: errorCategoryFrom(err) })
       }
 
       // Load contacts
       try {
         setInitialSyncProgressPhase('contacts')
         const contactLoadStartedAt = nowMs()
-        const contactItems = await etebaseLoadIncrementally('contacts')
+        const contactLoad = await etebaseLoadIncrementally('contacts')
         const { deserializeContact } = await import('@silentsuite/core')
-        const contacts = contactItems.map((item) => {
+        const contacts = contactLoad.items.map((item) => {
           const contact = deserializeContact(item.content)
           return { ...contact, id: item.uid, listId: item.collectionUid }
         })
-        useContactStore.getState().syncFromRemote(contacts)
+        const contactStore = useContactStore.getState()
+        contactStore.syncFromRemote(contactLoad.trustworthyForFullReplacement
+          ? contacts
+          : mergeById(contactStore.contacts, contacts))
         updateInitialSyncProgress('contacts', contacts.length, undefined, true)
         logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
-        logSyncTiming('contacts-load', contactLoadStartedAt, { itemCount: contactItems.length, contactCount: contacts.length })
-        await mirrorToCache('contacts', contactItems)
+        logSyncTiming('contacts-load', contactLoadStartedAt, { itemCount: contactLoad.attemptedCount, contactCount: contacts.length, decodeFailureCount: contactLoad.decodeFailureCount, enumerationErrorCount: contactLoad.enumerationErrorCount })
+        addDomain({ domain: 'contacts', visibility: 'visible', status: contactLoad.decodeFailureCount || contactLoad.enumerationErrorCount ? 'warning' : contactLoad.attemptedCount === 0 ? 'empty' : 'loaded', itemCount: contactLoad.attemptedCount, decodedCount: contacts.length, decodeFailureCount: contactLoad.decodeFailureCount, errorCategory: contactLoad.enumerationErrorCount ? 'enumeration-failed' : contactLoad.decodeFailureCount ? 'decode-failed' : undefined })
+        if (contactLoad.trustworthyForFullReplacement) await mirrorToCache('contacts', contactLoad.items)
       } catch (err) {
-        hadErrors = true
         reportSyncError('load contacts', err)
+        addDomain({ domain: 'contacts', visibility: 'visible', status: 'warning', itemCount: 0, decodedCount: 0, decodeFailureCount: 0, errorCategory: errorCategoryFrom(err) })
       }
 
       // Load non-visible encrypted collections into itemCache before their
       // stores initialize through fetchAllItems().
       setInitialSyncProgressPhase('preferences')
       try {
-        await etebaseLoadIncrementally('preferences')
+        const preferencesLoad = await etebaseLoadIncrementally('preferences')
+        addDomain({ domain: 'preferences', visibility: 'internal', status: preferencesLoad.decodeFailureCount || preferencesLoad.enumerationErrorCount ? 'warning' : preferencesLoad.attemptedCount === 0 ? 'empty' : 'loaded', itemCount: preferencesLoad.attemptedCount, decodedCount: preferencesLoad.decodedCount, decodeFailureCount: preferencesLoad.decodeFailureCount, errorCategory: preferencesLoad.enumerationErrorCount ? 'enumeration-failed' : preferencesLoad.decodeFailureCount ? 'decode-failed' : undefined })
       } catch (err) {
-        hadErrors = true
         reportSyncError('load preferences items', err)
+        addDomain({ domain: 'preferences', visibility: 'internal', status: 'warning', itemCount: 0, decodedCount: 0, decodeFailureCount: 0, errorCategory: errorCategoryFrom(err) })
       }
       try {
-        await etebaseLoadIncrementally('labelIndex')
+        const labelIndexLoad = await etebaseLoadIncrementally('labelIndex')
+        addDomain({ domain: 'labelIndex', visibility: 'internal', status: labelIndexLoad.decodeFailureCount || labelIndexLoad.enumerationErrorCount ? 'warning' : labelIndexLoad.attemptedCount === 0 ? 'empty' : 'loaded', itemCount: labelIndexLoad.attemptedCount, decodedCount: labelIndexLoad.decodedCount, decodeFailureCount: labelIndexLoad.decodeFailureCount, errorCategory: labelIndexLoad.enumerationErrorCount ? 'enumeration-failed' : labelIndexLoad.decodeFailureCount ? 'decode-failed' : undefined })
       } catch (err) {
-        hadErrors = true
         reportSyncError('load label suggestion items', err)
+        addDomain({ domain: 'labelIndex', visibility: 'internal', status: 'warning', itemCount: 0, decodedCount: 0, decodeFailureCount: 0, errorCategory: errorCategoryFrom(err) })
       }
 
-      // Load and subscribe account-level preferences after the Etebase item
-      // cache is ready. Preferences stay in their own local store because one
-      // field, notificationSound, is intentionally device-local.
+      beginPassiveStartupToastCycle()
       try {
         const preferencesStartedAt = nowMs()
         await usePreferencesSyncStore.getState().initialize()
-        logSyncTiming('preferences-initialize', preferencesStartedAt)
+        logSyncTiming('preferences-initialize', preferencesStartedAt, { createOrUpdateAttempted: true })
       } catch (err) {
-        hadErrors = true
         reportSyncError('initialize preferences sync', err)
+        addDomain({ domain: 'preferences', visibility: 'internal', status: 'warning', itemCount: 0, decodedCount: 0, decodeFailureCount: 0, errorCategory: errorCategoryFrom(err) })
       }
 
-      // Load the encrypted label suggestion index from its dedicated Etebase
-      // collection. Plaintext labels only exist inside decrypted item content.
       try {
         const labelIndexStartedAt = nowMs()
         await useLabelSuggestionsStore.getState().initialize()
-        logSyncTiming('label-index-initialize', labelIndexStartedAt)
+        logSyncTiming('label-index-initialize', labelIndexStartedAt, { createOrUpdateAttempted: true })
       } catch (err) {
-        hadErrors = true
         reportSyncError('initialize label suggestions', err)
+        addDomain({ domain: 'labelIndex', visibility: 'internal', status: 'warning', itemCount: 0, decodedCount: 0, decodeFailureCount: 0, errorCategory: errorCategoryFrom(err) })
+      } finally {
+        endPassiveStartupToastCycle()
       }
 
-      return hadErrors
+      const visibleFatal = domains.some((domain) => domain.domain === 'calendar' && domain.status === 'failed')
+      const visibleWarnings = domains.filter((domain) => domain.visibility === 'visible' && domain.status === 'warning')
+      const internalWarnings = domains.filter((domain) => domain.visibility === 'internal' && (domain.status === 'warning' || domain.status === 'failed'))
+      const classification: InitialLoadClassification = {
+        accountRestored: true,
+        domains,
+        visibleFatal,
+        visibleWarnings,
+        internalWarnings,
+        safeToWireSyncEngine: shouldWireSyncEngine({ visibleFatal }),
+      }
+      logSyncTiming('initial-load-classification', nowMs(), {
+        domainCount: domains.length,
+        visibleFatal,
+        visibleWarningCount: visibleWarnings.length,
+        internalWarningCount: internalWarnings.length,
+        safeToWireSyncEngine: classification.safeToWireSyncEngine,
+      })
+      return classification
     }
 
     function wireChangeHandler(): (() => void) | null {

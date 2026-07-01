@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
+import { deserializeCalendarEvent, deserializeContact, deserializeTask } from '@silentsuite/core'
 import { SyncProvider } from '../sync-provider'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 
@@ -21,6 +22,28 @@ const calendarStore = vi.hoisted(() => ({
   upsertFromRemote: vi.fn(),
 }))
 
+const taskStore = vi.hoisted(() => ({
+  tasks: [] as unknown[],
+  syncFromRemote: vi.fn(),
+}))
+
+const contactStore = vi.hoisted(() => ({
+  contacts: [] as unknown[],
+  syncFromRemote: vi.fn(),
+}))
+
+const preferencesSyncStore = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  loadFromRemote: vi.fn(),
+  destroy: vi.fn(),
+}))
+
+const labelSuggestionsStore = vi.hoisted(() => ({
+  initialize: vi.fn(),
+  loadFromRemote: vi.fn(),
+  destroy: vi.fn(),
+}))
+
 vi.mock('@sentry/nextjs', () => ({
   captureException: vi.fn(),
 }))
@@ -33,11 +56,11 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-task-store', () => ({
-  useTaskStore: { getState: () => ({ tasks: [], syncFromRemote: vi.fn() }) },
+  useTaskStore: { getState: () => taskStore },
 }))
 
 vi.mock('@/app/stores/use-contact-store', () => ({
-  useContactStore: { getState: () => ({ contacts: [], syncFromRemote: vi.fn() }) },
+  useContactStore: { getState: () => contactStore },
 }))
 
 vi.mock('@/app/stores/use-calendar-store', () => ({
@@ -51,11 +74,11 @@ vi.mock('@/app/stores/use-calendar-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-preferences-sync-store', () => ({
-  usePreferencesSyncStore: { getState: () => ({ initialize: vi.fn(), loadFromRemote: vi.fn(), destroy: vi.fn() }) },
+  usePreferencesSyncStore: { getState: () => preferencesSyncStore },
 }))
 
 vi.mock('@/app/stores/use-label-suggestions-store', () => ({
-  useLabelSuggestionsStore: { getState: () => ({ initialize: vi.fn(), loadFromRemote: vi.fn(), destroy: vi.fn() }) },
+  useLabelSuggestionsStore: { getState: () => labelSuggestionsStore },
 }))
 
 vi.mock('@/app/lib/offline-queue', () => ({
@@ -69,6 +92,8 @@ vi.mock('@/app/lib/offline-queue', () => ({
 
 vi.mock('@/app/stores/use-toast-store', () => ({
   showErrorToast: vi.fn(),
+  beginPassiveStartupToastCycle: vi.fn(),
+  endPassiveStartupToastCycle: vi.fn(),
 }))
 
 vi.mock('@/app/lib/data-cache', () => ({
@@ -112,18 +137,62 @@ function resetSyncStore() {
   })
 }
 
+function incrementalResult(items: { uid: string; content: string; collectionUid: string }[] = []) {
+  return {
+    type: 'calendar',
+    attemptedCount: items.length,
+    decodedCount: items.length,
+    decodeFailureCount: 0,
+    enumerationErrorCount: 0,
+    items,
+    collections: [],
+    trustworthyForFullReplacement: true,
+  }
+}
+
 describe('SyncProvider restore recovery blockers', () => {
   beforeEach(() => {
     resetSyncStore()
     calendarStore.events = []
     calendarStore.syncFromRemote.mockClear()
     calendarStore.upsertFromRemote.mockClear()
+    taskStore.tasks = []
+    taskStore.syncFromRemote.mockClear()
+    contactStore.contacts = []
+    contactStore.syncFromRemote.mockClear()
+    vi.mocked(deserializeCalendarEvent).mockReset().mockImplementation((content) => ({
+      id: String(content),
+      title: String(content),
+      startDate: new Date('2026-01-01T00:00:00Z'),
+      endDate: new Date('2026-01-01T01:00:00Z'),
+      allDay: false,
+      calendarId: 'calendar-1',
+    }))
+    vi.mocked(deserializeTask).mockReset().mockImplementation((content) => ({
+      id: String(content),
+      uid: String(content),
+      title: String(content),
+      completed: false,
+      status: 'needs-action',
+      percent_complete: 0,
+    }))
+    vi.mocked(deserializeContact).mockReset().mockImplementation((content) => ({
+      id: String(content),
+      uid: String(content),
+      displayName: String(content),
+    }))
     etebase.state.initialize.mockReset().mockResolvedValue({ status: 'success' })
     etebase.state.fetchAllItems.mockReset().mockResolvedValue([])
-    etebase.state.loadCollectionItemsIncrementally.mockReset().mockResolvedValue([])
+    etebase.state.loadCollectionItemsIncrementally.mockReset().mockResolvedValue(incrementalResult())
     etebase.state.startSyncEngine.mockReset().mockResolvedValue(undefined)
     etebase.state.onSyncChange.mockClear()
     etebase.state.onStatusChange.mockClear()
+    preferencesSyncStore.initialize.mockReset().mockResolvedValue(undefined)
+    preferencesSyncStore.loadFromRemote.mockReset().mockResolvedValue(undefined)
+    preferencesSyncStore.destroy.mockClear()
+    labelSuggestionsStore.initialize.mockReset().mockResolvedValue(undefined)
+    labelSuggestionsStore.loadFromRemote.mockReset().mockResolvedValue(undefined)
+    labelSuggestionsStore.destroy.mockClear()
   })
 
   it('sets the recovery blocker for a missing encrypted session', async () => {
@@ -162,9 +231,98 @@ describe('SyncProvider restore recovery blockers', () => {
 
     render(<SyncProvider><div>content</div></SyncProvider>)
 
-    await waitFor(() => expect(useSyncStore.getState().error).toBe('Some synced items could not be loaded'))
-    expect(useSyncStore.getState().initialSyncState).toBe('empty')
+    await waitFor(() => expect(useSyncStore.getState().error).toBe('Calendar data could not be loaded'))
+    expect(useSyncStore.getState().initialSyncState).toBe('error')
     expect(useSyncStore.getState().initialSyncBlocker).toBeNull()
     expect(useSyncStore.getState().initialSyncProgress.active).toBe(false)
+    expect(etebase.state.startSyncEngine).not.toHaveBeenCalled()
+  })
+
+  it('wires SyncEngine when calendar loads but preferences startup fails', async () => {
+    etebase.state.initialize.mockResolvedValueOnce({ status: 'success' })
+    preferencesSyncStore.initialize.mockRejectedValueOnce(new Error('preferences write failed'))
+
+    render(<SyncProvider><div>content</div></SyncProvider>)
+
+    await waitFor(() => expect(etebase.state.startSyncEngine).toHaveBeenCalledTimes(1))
+    expect(etebase.state.onSyncChange).toHaveBeenCalledTimes(1)
+    expect(etebase.state.onStatusChange).toHaveBeenCalledTimes(1)
+    expect(useSyncStore.getState().initialSyncBlocker).toBeNull()
+    expect(useSyncStore.getState().error).toBe('Some synced metadata could not be loaded')
+  })
+
+  it('upserts successfully decoded calendar events when enumeration is partial and untrustworthy', async () => {
+    const calendarItem = { uid: 'event-1', content: 'VEVENT', collectionUid: 'calendar-1' }
+    etebase.state.loadCollectionItemsIncrementally.mockImplementation(async (type: string, options?: { onItems?: (items: typeof calendarItem[], progress: { loaded: number; done: boolean; collectionUid: string }) => Promise<void> | void }) => {
+      if (type !== 'calendar') return incrementalResult()
+      await options?.onItems?.([calendarItem], { loaded: 1, done: true, collectionUid: 'calendar-1' })
+      return {
+        ...incrementalResult([calendarItem]),
+        enumerationErrorCount: 1,
+        trustworthyForFullReplacement: false,
+      }
+    })
+
+    render(<SyncProvider><div>content</div></SyncProvider>)
+
+    await waitFor(() => expect(calendarStore.upsertFromRemote).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(etebase.state.startSyncEngine).toHaveBeenCalledTimes(1))
+    expect(calendarStore.syncFromRemote).not.toHaveBeenCalled()
+    expect(calendarStore.upsertFromRemote).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'event-1', calendarId: 'calendar-1' }),
+    ])
+  })
+
+  it('keeps SyncEngine wired when one calendar item fails to deserialize', async () => {
+    const calendarItem = { uid: 'broken-event', content: 'BROKEN', collectionUid: 'calendar-1' }
+    vi.mocked(deserializeCalendarEvent).mockImplementationOnce(() => {
+      throw new Error('broken calendar item')
+    })
+    etebase.state.loadCollectionItemsIncrementally.mockImplementation(async (type: string, options?: { onItems?: (items: typeof calendarItem[], progress: { loaded: number; done: boolean; collectionUid: string }) => Promise<void> | void }) => {
+      if (type !== 'calendar') return incrementalResult()
+      await options?.onItems?.([calendarItem], { loaded: 1, done: true, collectionUid: 'calendar-1' })
+      return incrementalResult([calendarItem])
+    })
+
+    render(<SyncProvider><div>content</div></SyncProvider>)
+
+    await waitFor(() => expect(etebase.state.startSyncEngine).toHaveBeenCalledTimes(1))
+    expect(calendarStore.syncFromRemote).not.toHaveBeenCalled()
+    expect(useSyncStore.getState().error).toBe('Some synced items could not be loaded')
+  })
+
+  it('merges visible task and contact items instead of full-replacing on partial enumeration', async () => {
+    taskStore.tasks = [{ id: 'existing-task', title: 'Existing task' }]
+    contactStore.contacts = [{ id: 'existing-contact', displayName: 'Existing contact' }]
+    etebase.state.loadCollectionItemsIncrementally.mockImplementation(async (type: string) => {
+      if (type === 'tasks') {
+        return {
+          ...incrementalResult([{ uid: 'task-new', content: 'Task new', collectionUid: 'tasks-1' }]),
+          enumerationErrorCount: 1,
+          trustworthyForFullReplacement: false,
+        }
+      }
+      if (type === 'contacts') {
+        return {
+          ...incrementalResult([{ uid: 'contact-new', content: 'Contact new', collectionUid: 'contacts-1' }]),
+          enumerationErrorCount: 1,
+          trustworthyForFullReplacement: false,
+        }
+      }
+      return incrementalResult()
+    })
+
+    render(<SyncProvider><div>content</div></SyncProvider>)
+
+    await waitFor(() => expect(etebase.state.startSyncEngine).toHaveBeenCalledTimes(1))
+    expect(taskStore.syncFromRemote).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ id: 'existing-task' }),
+      expect.objectContaining({ id: 'task-new', listId: 'tasks-1' }),
+    ]))
+    expect(contactStore.syncFromRemote).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ id: 'existing-contact' }),
+      expect.objectContaining({ id: 'contact-new', listId: 'contacts-1' }),
+    ]))
+    expect(useSyncStore.getState().error).toBe('Some synced items could not be loaded')
   })
 })

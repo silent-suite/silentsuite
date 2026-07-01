@@ -303,11 +303,12 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       }
 
       // Then refresh every collection of each type from the server
-      const [taskItems, contactItems, eventItems, preferenceItems] = await Promise.all([
+      const [taskItems, contactItems, eventItems, preferenceItems, labelIndexItems] = await Promise.all([
         reconciledEtebase.refreshCollection('tasks'),
         reconciledEtebase.refreshCollection('contacts'),
         reconciledEtebase.refreshCollection('calendar'),
         reconciledEtebase.refreshCollection('preferences'),
+        reconciledEtebase.refreshCollection('labelIndex'),
       ])
 
       // Push fresh data into stores
@@ -315,6 +316,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
       const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
+      const { useLabelSuggestionsStore } = await import('@/app/stores/use-label-suggestions-store')
 
       const tasks = taskItems.map((item) => {
         const task = core.deserializeTask(item.content)
@@ -334,6 +336,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       })
       useCalendarStore.getState().syncFromRemote(events)
       await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
+      await useLabelSuggestionsStore.getState().loadFromRemote(labelIndexItems)
 
       // Purge stale queue entries (older than 24h) that may cause phantom indicators
       const stale = await getStaleEntries()
