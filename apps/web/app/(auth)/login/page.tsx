@@ -19,11 +19,17 @@ const loginSchema = z.object({
 
 type LoginFormData = z.infer<typeof loginSchema>
 
+function getSafeReturnTo(raw: string | null): string {
+  return raw && raw.startsWith('/') && !raw.includes('://') && !raw.includes('//') ? raw : '/calendar'
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore()
   const [serverUrl, setServerUrl] = useState('')
+  const isUnlockMode = searchParams.get('reason') === 'unlock'
+  const returnTo = getSafeReturnTo(searchParams.get('returnTo'))
 
   const {
     register,
@@ -35,13 +41,10 @@ export default function LoginPage() {
   })
 
   useEffect(() => {
-    if (isAuthenticated) {
-      const raw = searchParams.get('returnTo') ?? '/calendar'
-      // Validate returnTo to prevent open redirect: must be a relative path
-      const returnTo = raw.startsWith('/') && !raw.includes('://') && !raw.includes('//') ? raw : '/calendar'
+    if (isAuthenticated && !isUnlockMode) {
       router.replace(returnTo)
     }
-  }, [isAuthenticated, router, searchParams])
+  }, [isAuthenticated, isUnlockMode, returnTo, router])
 
   useEffect(() => {
     return () => clearError()
@@ -55,14 +58,21 @@ export default function LoginPage() {
       localStorage.removeItem('silentsuite-server-url')
     }
     await login(data.email, data.password, normalizedUrl)
+    if (useAuthStore.getState().isAuthenticated) {
+      router.replace(returnTo)
+    }
   }
 
   return (
     <div className="max-w-md mx-auto space-y-6">
       <div className="space-y-2 text-center">
-        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Welcome back</h2>
+        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">
+          {isUnlockMode ? 'Unlock your encrypted data' : 'Welcome back'}
+        </h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Log in to your encrypted workspace
+          {isUnlockMode
+            ? 'Sign in again to recreate the encrypted session for this browser.'
+            : 'Log in to your encrypted workspace'}
         </p>
       </div>
 
@@ -115,7 +125,7 @@ export default function LoginPage() {
         </div>
 
         <Button type="submit" disabled={isLoading} className="w-full">
-          {isLoading ? 'Logging in...' : 'Log in'}
+          {isLoading ? 'Logging in...' : isUnlockMode ? 'Unlock data' : 'Log in'}
         </Button>
 
         {/* Advanced Settings */}

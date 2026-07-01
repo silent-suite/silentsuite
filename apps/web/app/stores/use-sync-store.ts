@@ -8,10 +8,45 @@ import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
 
 export type InitialSyncState = 'idle' | 'restoring' | 'hydrated-cache' | 'syncing' | 'synced' | 'empty' | 'offline' | 'error' | 'no-session'
+export type InitialSyncBlocker = null | 'missing-encrypted-session' | 'encrypted-session-restore-failed'
+export type InitialSyncDomain = 'calendar' | 'tasks' | 'contacts'
+export type InitialSyncProgressPhase = 'idle' | 'restoring' | 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'complete' | 'blocked' | 'error'
+
+export interface DomainSyncProgress {
+  loaded: number
+  knownTotal: number | null
+  done: boolean
+}
+
+export interface InitialSyncProgressState {
+  active: boolean
+  phase: InitialSyncProgressPhase
+  calendar: DomainSyncProgress
+  tasks: DomainSyncProgress
+  contacts: DomainSyncProgress
+  message: string | null
+}
+
+export type InitialSyncKnownTotals = Partial<Record<InitialSyncDomain, number | null>>
+
+const emptyDomainProgress: DomainSyncProgress = { loaded: 0, knownTotal: null, done: false }
+
+export function createInitialSyncProgressState(): InitialSyncProgressState {
+  return {
+    active: false,
+    phase: 'idle',
+    calendar: { ...emptyDomainProgress },
+    tasks: { ...emptyDomainProgress },
+    contacts: { ...emptyDomainProgress },
+    message: null,
+  }
+}
 
 interface SyncState {
   syncStatus: SyncStatus
   initialSyncState: InitialSyncState
+  initialSyncBlocker: InitialSyncBlocker
+  initialSyncProgress: InitialSyncProgressState
   lastSyncedAt: Date | null
   isOnline: boolean
   error: string | null
@@ -22,6 +57,12 @@ interface SyncState {
 interface SyncActions {
   setSyncStatus: (status: SyncStatus) => void
   setInitialSyncState: (state: InitialSyncState) => void
+  setInitialSyncBlocker: (blocker: InitialSyncBlocker) => void
+  startInitialSyncProgress: (knownTotals?: InitialSyncKnownTotals) => void
+  setInitialSyncProgressPhase: (phase: InitialSyncProgressPhase, message?: string | null) => void
+  updateInitialSyncProgress: (domain: InitialSyncDomain, loaded: number, knownTotal?: number | null, done?: boolean) => void
+  finishInitialSyncProgress: () => void
+  resetInitialSyncProgress: () => void
   setLastSynced: (date: Date) => void
   setOnline: (online: boolean) => void
   setError: (error: string | null) => void
@@ -38,6 +79,8 @@ interface SyncActions {
 export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
   syncStatus: 'syncing',
   initialSyncState: 'idle',
+  initialSyncBlocker: null,
+  initialSyncProgress: createInitialSyncProgressState(),
   lastSyncedAt: null,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   error: null,
@@ -46,6 +89,43 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
   setSyncStatus: (status) => set({ syncStatus: status }),
   setInitialSyncState: (initialSyncState) => set({ initialSyncState }),
+  setInitialSyncBlocker: (initialSyncBlocker) => set({ initialSyncBlocker }),
+  startInitialSyncProgress: (knownTotals = {}) => set({
+    initialSyncProgress: {
+      active: true,
+      phase: 'restoring',
+      calendar: { loaded: 0, knownTotal: knownTotals.calendar ?? null, done: false },
+      tasks: { loaded: 0, knownTotal: knownTotals.tasks ?? null, done: false },
+      contacts: { loaded: 0, knownTotal: knownTotals.contacts ?? null, done: false },
+      message: null,
+    },
+  }),
+  setInitialSyncProgressPhase: (phase, message = null) => set((state) => ({
+    initialSyncProgress: { ...state.initialSyncProgress, active: phase !== 'idle' && phase !== 'complete', phase, message },
+  })),
+  updateInitialSyncProgress: (domain, loaded, knownTotal, done) => set((state) => ({
+    initialSyncProgress: {
+      ...state.initialSyncProgress,
+      [domain]: {
+        ...state.initialSyncProgress[domain],
+        loaded: Math.max(0, loaded),
+        knownTotal: knownTotal === undefined ? state.initialSyncProgress[domain].knownTotal : knownTotal,
+        done: done ?? state.initialSyncProgress[domain].done,
+      },
+    },
+  })),
+  finishInitialSyncProgress: () => set((state) => ({
+    initialSyncProgress: {
+      ...state.initialSyncProgress,
+      active: false,
+      phase: 'complete',
+      calendar: { ...state.initialSyncProgress.calendar, done: true },
+      tasks: { ...state.initialSyncProgress.tasks, done: true },
+      contacts: { ...state.initialSyncProgress.contacts, done: true },
+      message: null,
+    },
+  })),
+  resetInitialSyncProgress: () => set({ initialSyncProgress: createInitialSyncProgressState() }),
   setLastSynced: (date) => set({ lastSyncedAt: date }),
   setOnline: (online) => set({ isOnline: online }),
   setError: (error) => set({ error }),
@@ -264,7 +344,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       // Refresh counts to ensure UI is accurate after sync
       const pc = await getPendingCount()
       const fc = await getFailedCount()
-      set({ syncStatus: 'synced', initialSyncState: 'synced', lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
+      set({ syncStatus: 'synced', initialSyncState: 'synced', initialSyncBlocker: null, lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
     }).catch((err) => {
       console.error('[sync-store] Manual sync failed', getSafeErrorDetails(err))
       set({ syncStatus: 'error', error: 'Sync failed' })
