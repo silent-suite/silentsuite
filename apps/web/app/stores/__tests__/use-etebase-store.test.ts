@@ -255,7 +255,14 @@ describe('useEtebaseStore.initialize outcomes', () => {
     expect(coreMock.listItems).toHaveBeenCalledTimes(2)
     expect(pages).toEqual([['event-1'], ['event-2']])
     expect(progress).toEqual([1, 2])
-    expect(items.map((item) => item.uid)).toEqual(['event-1', 'event-2'])
+    expect(items.items.map((item) => item.uid)).toEqual(['event-1', 'event-2'])
+    expect(items).toMatchObject({
+      attemptedCount: 2,
+      decodedCount: 2,
+      decodeFailureCount: 0,
+      enumerationErrorCount: 0,
+      trustworthyForFullReplacement: true,
+    })
     expect(useEtebaseStore.getState().itemCache.has('deleted-event')).toBe(false)
     await expect(useEtebaseStore.getState().fetchAllItems('calendar')).resolves.toHaveLength(2)
   })
@@ -290,6 +297,130 @@ describe('useEtebaseStore.initialize outcomes', () => {
     expect(await useEtebaseStore.getState().fetchAllItems('labelIndex')).toEqual([
       { uid: 'labels-1', content: 'LABELS', collectionUid: 'label-index-col' },
     ])
+  })
+
+  it('reports all-item decode failure without treating the collection as trustworthy empty', async () => {
+    const account = { id: 'account' }
+    const calendarCollection = mockCollection('calendar-col')
+    const existingItem = mockItem('existing-event', 'OLD VEVENT')
+    const brokenItem = {
+      uid: 'broken-event',
+      isDeleted: false,
+      getContent: vi.fn(async () => {
+        throw new Error('decode failed')
+      }),
+    }
+    useEtebaseStore.setState({
+      account,
+      collections: { calendar: [calendarCollection], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      itemCache: new Map([['existing-event', existingItem]]),
+      itemTypeMap: new Map([['existing-event', 'calendar']]),
+      itemCollectionMap: new Map([['existing-event', 'calendar-col']]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+    coreMock.listItems.mockResolvedValueOnce({ items: [brokenItem], stoken: null, done: true })
+
+    const result = await useEtebaseStore.getState().loadCollectionItemsIncrementally('calendar')
+
+    expect(result.items).toEqual([])
+    expect(result).toMatchObject({
+      attemptedCount: 1,
+      decodedCount: 0,
+      decodeFailureCount: 1,
+      trustworthyForFullReplacement: false,
+    })
+    expect(useEtebaseStore.getState().itemCache.get('existing-event')).toBe(existingItem)
+  })
+
+  it('keeps successful calendar collection results when another collection fails enumeration', async () => {
+    const account = { id: 'account' }
+    const okCollection = mockCollection('ok-col')
+    const failedCollection = mockCollection('failed-col')
+    useEtebaseStore.setState({
+      account,
+      collections: { calendar: [okCollection, failedCollection], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: true,
+      syncEngine: null,
+    })
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'failed-col') throw new Error('list failed')
+      return { items: [mockItem('event-ok', 'VEVENT OK')], stoken: null, done: true }
+    })
+
+    const result = await useEtebaseStore.getState().loadCollectionItemsIncrementally('calendar')
+
+    expect(result.items).toEqual([{ uid: 'event-ok', content: 'VEVENT OK', collectionUid: 'ok-col' }])
+    expect(result.enumerationErrorCount).toBe(1)
+    expect(result.trustworthyForFullReplacement).toBe(false)
+    expect(result.collections.map((collection) => collection.trustworthyForReplacement)).toEqual([true, false])
+  })
+
+  it('allows trustworthy empty enumeration to remove stale cached items', async () => {
+    const account = { id: 'account' }
+    const calendarCollection = mockCollection('calendar-col')
+    useEtebaseStore.setState({
+      account,
+      collections: { calendar: [calendarCollection], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      itemCache: new Map([['stale-event', mockItem('stale-event', 'OLD')]]),
+      itemTypeMap: new Map([['stale-event', 'calendar']]),
+      itemCollectionMap: new Map([['stale-event', 'calendar-col']]),
+      isInitialized: true,
+      syncEngine: null,
+    })
+    coreMock.listItems.mockResolvedValueOnce({ items: [], stoken: null, done: true })
+
+    const result = await useEtebaseStore.getState().loadCollectionItemsIncrementally('calendar')
+
+    expect(result).toMatchObject({
+      attemptedCount: 0,
+      decodedCount: 0,
+      decodeFailureCount: 0,
+      enumerationErrorCount: 0,
+      trustworthyForFullReplacement: true,
+    })
+    expect(useEtebaseStore.getState().itemCache.has('stale-event')).toBe(false)
+  })
+})
+
+describe('useEtebaseStore.createItem', () => {
+  beforeEach(() => {
+    offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('routes labelIndex save failures to label-suggestion copy instead of preferences copy', async () => {
+    const account = { id: 'account' }
+    const labelCollection = { uid: 'label-col' }
+    coreMock.createItem.mockRejectedValueOnce(new Error('write failed'))
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [labelCollection] as any[] },
+      isInitialized: true,
+    })
+
+    const result = await useEtebaseStore.getState().createItem('labelIndex', 'LABELS')
+
+    expect(result).toBeNull()
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith(
+      'Failed to save label suggestions. Please try again.',
+      { source: 'labelIndex' },
+    )
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalledWith(
+      'Failed to save preferences. Please try again.',
+      expect.anything(),
+    )
   })
 })
 
