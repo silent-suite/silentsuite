@@ -90,25 +90,6 @@ export function expandEventsForRange(
   return result
 }
 
-function splitMonthTimedEvent(e: DisplayEvent): DisplayEvent[] {
-  const segments: DisplayEvent[] = []
-  const endPlainDate = toTimedMonthEndPlainDate(e.startDate, e.endDate)
-  let day = dateToPlainDate(e.startDate)
-
-  while (Temporal.PlainDate.compare(day, endPlainDate) <= 0) {
-    const segmentDate = new Date(day.year, day.month - 1, day.day, e.startDate.getHours(), e.startDate.getMinutes(), e.startDate.getSeconds(), e.startDate.getMilliseconds())
-    segments.push({
-      ...e,
-      id: `${e.id}__day_${day.toString()}`,
-      startDate: segmentDate,
-      endDate: segmentDate,
-    })
-    day = day.add({ days: 1 })
-  }
-
-  return segments
-}
-
 export function toScheduleXEvents(
   displayEvents: DisplayEvent[],
   calendarColors: Map<string, string>,
@@ -116,26 +97,39 @@ export function toScheduleXEvents(
   currentView: CalendarGridView,
   toScheduleXDateTime: (date: Date, tz: string) => Temporal.ZonedDateTime,
 ): CalendarEventExternal[] {
-  const eventsForView = currentView === 'month'
-    ? displayEvents.flatMap((e) => (!e.allDay && isMultiDayTimedRange(e.startDate, e.endDate) ? splitMonthTimedEvent(e) : [e]))
-    : displayEvents
-
-  return eventsForView.map((e) => {
+  return displayEvents.map((e) => {
     const color = calendarColors.get(e.calendarId ?? 'default') ?? '#10b981'
+    const calendarId = e.calendarId ?? 'default'
+    const colorClass = `sx-cal-color-${calendarId.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+    const renderAsTimedMonthBar =
+      currentView === 'month' && !e.allDay && isMultiDayTimedRange(e.startDate, e.endDate)
+    const allDayMonthEnd = e.allDay ? toAllDayEndPlainDate(e.startDate, e.endDate) : null
+    const renderAsAllDayMonthBar =
+      currentView === 'month'
+      && e.allDay
+      && allDayMonthEnd !== null
+      && Temporal.PlainDate.compare(allDayMonthEnd, dateToPlainDate(e.startDate)) > 0
+    const additionalClasses = [colorClass]
+    if (renderAsTimedMonthBar || renderAsAllDayMonthBar) {
+      additionalClasses.push('ss-month-multiday')
+    }
+
     return {
       id: e.id,
       title: e.isRecurring ? `↻ ${e.title}` : e.title,
-      start: e.allDay ? dateToPlainDate(e.startDate) : currentView === 'month' && e.id.includes('__day_') ? dateToPlainDate(e.startDate) : toScheduleXDateTime(e.startDate, userTz),
+      start: e.allDay || renderAsTimedMonthBar
+        ? dateToPlainDate(e.startDate)
+        : toScheduleXDateTime(e.startDate, userTz),
       end: e.allDay
-        ? toAllDayEndPlainDate(e.startDate, e.endDate)
-        : currentView === 'month' && e.id.includes('__day_')
-          ? dateToPlainDate(e.startDate)
+        ? allDayMonthEnd!
+        : renderAsTimedMonthBar
+          ? toTimedMonthEndPlainDate(e.startDate, e.endDate)
           : toScheduleXDateTime(e.endDate, userTz),
       description: e.description || undefined,
       location: e.location || undefined,
-      calendarId: e.calendarId ?? 'default',
+      calendarId,
       _options: {
-        additionalClasses: [`sx-cal-color-${(e.calendarId ?? 'default').replace(/[^a-zA-Z0-9_-]/g, '_')}`],
+        additionalClasses,
       },
       _color: color,
     }
