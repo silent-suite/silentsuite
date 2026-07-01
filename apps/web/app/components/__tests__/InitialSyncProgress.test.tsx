@@ -34,7 +34,7 @@ describe('InitialSyncProgress', () => {
   it('shows first-sync counts without a percentage when totals are unknown', () => {
     render(<InitialSyncProgress />)
 
-    expect(screen.getByText(/Encrypted data is loading and decrypting locally in this browser/i)).toBeInTheDocument()
+    expect(screen.getByText(/Decrypting locally in this browser/i)).toBeInTheDocument()
     expect(screen.getAllByText(/600 events loaded so far/).length).toBeGreaterThan(0)
     expect(screen.queryByText(/600 \/ about/)).not.toBeInTheDocument()
   })
@@ -52,13 +52,17 @@ describe('InitialSyncProgress', () => {
     expect(formatInitialSyncCount('tasks', { loaded: 12, knownTotal: 10, done: false })).toBe('12 / about 10 tasks loaded (100%) — more than last sync')
   })
 
-  it('does not render when inactive or blocked', () => {
+  it('does not render when inactive, blocked, or errored', () => {
     mockState.initialSyncProgress.active = false
     const { rerender } = render(<InitialSyncProgress />)
     expect(screen.queryByLabelText('Initial encrypted data sync progress')).not.toBeInTheDocument()
 
     mockState.initialSyncProgress.active = true
     mockState.initialSyncProgress.phase = 'blocked'
+    rerender(<InitialSyncProgress />)
+    expect(screen.queryByLabelText('Initial encrypted data sync progress')).not.toBeInTheDocument()
+
+    mockState.initialSyncProgress.phase = 'error'
     rerender(<InitialSyncProgress />)
     expect(screen.queryByLabelText('Initial encrypted data sync progress')).not.toBeInTheDocument()
   })
