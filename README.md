@@ -102,6 +102,8 @@ Useful feedback right now:
 
 Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with logs/screenshots where useful. Do not paste secrets, passwords, or private calendar/contact data.
 
+Want a small first PR? See the open [good first issues](https://github.com/silent-suite/silentsuite/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22).
+
 Security issues: email <info@silentsuite.io> rather than opening a public issue.
 
 Bug reports, feature requests, and PRs are welcome.
