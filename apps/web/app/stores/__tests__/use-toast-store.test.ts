@@ -13,6 +13,21 @@ beforeEach(() => {
 })
 
 describe('useToastStore passive startup coalescing', () => {
+  it('suppresses internal save failures during passive startup', () => {
+    beginPassiveStartupToastCycle()
+
+    showErrorToast('Failed to save preferences. Please try again.', {
+      source: 'preferences',
+      suppressDuringPassiveStartup: true,
+    })
+    showErrorToast('Failed to save label suggestions. Please try again.', {
+      source: 'labelIndex',
+      suppressDuringPassiveStartup: true,
+    })
+
+    expect(useToastStore.getState().toasts).toHaveLength(0)
+  })
+
   it('coalesces duplicate passive startup errors per source and cycle', () => {
     beginPassiveStartupToastCycle()
 
@@ -28,12 +43,17 @@ describe('useToastStore passive startup coalescing', () => {
 
   it('allows a later explicit action-scoped failure after the passive cycle ends', () => {
     beginPassiveStartupToastCycle()
-    showErrorToast('Failed to save preferences. Please try again.', { source: 'preferences' })
-    showErrorToast('Failed to save preferences. Please try again.', { source: 'preferences' })
+    showErrorToast('Failed to save preferences. Please try again.', {
+      source: 'preferences',
+      suppressDuringPassiveStartup: true,
+    })
     endPassiveStartupToastCycle()
 
-    showErrorToast('Failed to save preferences. Please try again.', { source: 'preferences' })
+    showErrorToast('Failed to save preferences. Please try again.', {
+      source: 'preferences',
+      suppressDuringPassiveStartup: true,
+    })
 
-    expect(useToastStore.getState().toasts).toHaveLength(2)
+    expect(useToastStore.getState().toasts).toHaveLength(1)
   })
 })

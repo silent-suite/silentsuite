@@ -42,7 +42,7 @@ const CALENDAR_DESERIALIZE_CHUNK_SIZE = 50
 type InitialDomainLoadResult = {
   domain: 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'labelIndex'
   visibility: 'visible' | 'internal'
-  status: 'loaded' | 'empty' | 'warning' | 'failed'
+  status: 'loaded' | 'empty' | 'warning' | 'degraded' | 'failed'
   itemCount: number
   decodedCount: number
   decodeFailureCount: number
@@ -66,8 +66,8 @@ function errorCategoryFrom(err: unknown): string {
   return 'unknown'
 }
 
-function shouldWireSyncEngine(classification: Pick<InitialLoadClassification, 'visibleFatal'>): boolean {
-  return !classification.visibleFatal
+function shouldWireSyncEngine(_classification: Pick<InitialLoadClassification, 'visibleFatal'>): boolean {
+  return true
 }
 
 function mergeById<T extends { id: string }>(current: T[], incoming: T[]): T[] {
@@ -498,7 +498,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         }
         updateInitialSyncProgress('calendar', calendarEventCount, undefined, true)
         const status = eventLoad.enumerationErrorCount > 0 && allEvents.length === 0
-          ? 'failed'
+          ? 'degraded'
           : decodeFailureCount > 0 || eventLoad.enumerationErrorCount > 0
             ? 'warning'
             : eventLoad.attemptedCount === 0
@@ -528,7 +528,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         addDomain({
           domain: 'calendar',
           visibility: 'visible',
-          status: 'failed',
+          status: 'degraded',
           itemCount: 0,
           decodedCount: 0,
           decodeFailureCount: 0,
@@ -625,8 +625,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         endPassiveStartupToastCycle()
       }
 
-      const visibleFatal = domains.some((domain) => domain.domain === 'calendar' && domain.status === 'failed')
-      const visibleWarnings = domains.filter((domain) => domain.visibility === 'visible' && domain.status === 'warning')
+      const visibleFatal = domains.some((domain) => domain.visibility === 'visible' && domain.status === 'failed')
+      const visibleWarnings = domains.filter((domain) => domain.visibility === 'visible' && (domain.status === 'warning' || domain.status === 'degraded'))
       const internalWarnings = domains.filter((domain) => domain.visibility === 'internal' && (domain.status === 'warning' || domain.status === 'failed'))
       const classification: InitialLoadClassification = {
         accountRestored: true,

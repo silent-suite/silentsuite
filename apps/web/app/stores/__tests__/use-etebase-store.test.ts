@@ -415,7 +415,7 @@ describe('useEtebaseStore.createItem', () => {
     expect(result).toBeNull()
     expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith(
       'Failed to save label suggestions. Please try again.',
-      { source: 'labelIndex' },
+      { source: 'labelIndex', suppressDuringPassiveStartup: true },
     )
     expect(toastStoreMock.showErrorToast).not.toHaveBeenCalledWith(
       'Failed to save preferences. Please try again.',
