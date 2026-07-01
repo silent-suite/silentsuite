@@ -78,7 +78,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     vi.unstubAllGlobals()
   })
 
-  it('shows add payment method for active no-card trials without making cancel the only action', async () => {
+  it('shows choose payment for active no-card trials without making cancel the only action', async () => {
     mockSubscription({
       status: 'trialing',
       trial: { active: true, endsAt: '2026-07-03T00:00:00.000Z', daysRemaining: 3 },
@@ -94,7 +94,8 @@ describe('SubscriptionPage billing recovery CTAs', () => {
 
     render(<SubscriptionPage />)
 
-    expect(await screen.findByRole('button', { name: /add payment method/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /choose payment/i })).toBeInTheDocument()
+    expect(screen.getByText(/Subscribe by card or annual Bitcoin and get 14 bonus days/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /cancel subscription/i })).not.toBeInTheDocument()
   })
 
