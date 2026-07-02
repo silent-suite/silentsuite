@@ -46,13 +46,14 @@ export interface CacheMeta {
 }
 
 /** Bumped on shape changes to the cached records. */
-export const CACHE_SCHEMA_VERSION = 2
+export const CACHE_SCHEMA_VERSION = 4
 
 const DB_NAME = 'silentsuite-data-cache'
-const DB_VERSION = 2
+const DB_VERSION = 4
 const STORE_ITEMS = 'items'
 const STORE_COLLECTIONS = 'collections'
 const STORE_META = 'meta'
+const STORE_CRYPTO = 'crypto'
 
 const META_KEY = 'singleton'
 
@@ -80,6 +81,15 @@ function openDB(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onupgradeneeded = (event) => {
       const db = request.result
+      // v4 intentionally rolls back the encrypted local item cache. Browsers
+      // that already opened the v3 database cannot be downgraded to v2; clear
+      // all prior stores, including the v3 crypto key store, then recreate the
+      // minimal fail-closed cache schema used by this build.
+      if (event.oldVersion > 0 && event.oldVersion < 4) {
+        for (const storeName of [STORE_ITEMS, STORE_COLLECTIONS, STORE_META, STORE_CRYPTO]) {
+          if (db.objectStoreNames.contains(storeName)) db.deleteObjectStore(storeName)
+        }
+      }
       if (!db.objectStoreNames.contains(STORE_ITEMS)) {
         const items = db.createObjectStore(STORE_ITEMS, { keyPath: 'itemUid' })
         items.createIndex('byCollectionType', 'collectionType', { unique: false })
