@@ -239,6 +239,39 @@ describe('data-cache', () => {
       expect(ok).toBe(true)
       expect(await getStoken('col-tasks')).toBe('stk-a')
     })
+
+    it('upgrades and clears the rolled-back v3 encrypted cache schema', async () => {
+      await _resetForTests()
+      const v3Db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('silentsuite-data-cache', 3)
+        req.onupgradeneeded = () => {
+          const db = req.result
+          const items = db.createObjectStore('items', { keyPath: 'itemUid' })
+          items.createIndex('byCollectionType', 'collectionType', { unique: false })
+          items.createIndex('byCollectionUid', 'collectionUid', { unique: false })
+          db.createObjectStore('collections', { keyPath: 'collectionUid' })
+          db.createObjectStore('meta')
+          db.createObjectStore('crypto')
+        }
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+      v3Db.close()
+
+      await ensureFingerprint('alice@example.com')
+      await _resetForTests()
+
+      const upgradedDb = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('silentsuite-data-cache')
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+
+      expect(upgradedDb.version).toBe(4)
+      expect(upgradedDb.objectStoreNames.contains('crypto')).toBe(false)
+      expect(upgradedDb.objectStoreNames.contains('items')).toBe(true)
+      upgradedDb.close()
+    })
   })
 
   describe('clearAll', () => {
