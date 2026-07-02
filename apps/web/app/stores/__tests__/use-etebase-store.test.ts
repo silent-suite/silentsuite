@@ -13,8 +13,12 @@ const offlineQueueMock = vi.hoisted(() => ({
 }))
 
 const coreMock = vi.hoisted(() => ({
+  restoreSession: vi.fn(),
+  getAccountFingerprint: vi.fn(),
   listCollections: vi.fn(),
   createCollection: vi.fn(),
+  listItems: vi.fn(),
+  SyncEngine: vi.fn(),
   createItem: vi.fn(),
   deleteItem: vi.fn(),
   updateCollectionMeta: vi.fn(),
@@ -46,10 +50,15 @@ beforeEach(() => {
   offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
   coreMock.listCollections.mockReset()
   coreMock.createCollection.mockReset()
+  coreMock.restoreSession.mockReset()
+  coreMock.getAccountFingerprint.mockReset()
+  coreMock.listItems.mockReset()
+  coreMock.SyncEngine.mockReset()
   coreMock.createItem.mockReset()
   coreMock.deleteItem.mockReset()
   coreMock.updateCollectionMeta.mockReset()
   toastStoreMock.showErrorToast.mockReset()
+  sessionStorage.clear()
 })
 
 interface MockItemManager {
@@ -112,6 +121,51 @@ function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemMana
     syncEngine: syncEngine as any,
   })
 }
+
+describe('useEtebaseStore.initialize restore diagnostics', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      syncEngine: null,
+    })
+  })
+
+  it('records a redacted failed restoreSession phase diagnostic', async () => {
+    const { secureGet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session-secret')
+    coreMock.restoreSession.mockRejectedValueOnce(new Error('raw-session-secret user@example.com'))
+
+    await useEtebaseStore.getState().initialize()
+
+    const raw = sessionStorage.getItem('silentsuite.restore-diagnostics.v1') ?? ''
+    expect(raw).toContain('"phase":"restoreSession"')
+    expect(raw).toContain('"status":"failed"')
+    expect(raw).toContain('"errorName":"Error"')
+    expect(raw).not.toContain('raw-session-secret')
+    expect(raw).not.toContain('user@example.com')
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to restore session. Please try signing in again.')
+  })
+
+  it('records a failed sessionRead phase diagnostic when secure session read throws', async () => {
+    const { secureGet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureGet).mockRejectedValueOnce(new Error('raw-session-secret user@example.com'))
+
+    await useEtebaseStore.getState().initialize()
+
+    const raw = sessionStorage.getItem('silentsuite.restore-diagnostics.v1') ?? ''
+    expect(raw).toContain('"phase":"sessionRead"')
+    expect(raw).toContain('"status":"failed"')
+    expect(raw).toContain('"failedPhase":"sessionRead"')
+    expect(raw).not.toContain('raw-session-secret')
+    expect(raw).not.toContain('user@example.com')
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to restore session. Please try signing in again.')
+  })
+})
 
 describe('useEtebaseStore.createItemsBatch', () => {
   beforeEach(() => {
