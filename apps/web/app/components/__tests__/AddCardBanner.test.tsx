@@ -37,9 +37,13 @@ describe('AddCardBanner', () => {
   })
 
   it('uses shared payment options and starts Stripe pay-now through payment-flows', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => monthlyOptions } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now' }) } as Response)
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
+      if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
+      if (url.includes('/subscription/payment-flows')) return { ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now' }) } as Response
+      return { ok: false, json: async () => ({}) } as Response
+    })
 
     render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
 
@@ -68,11 +72,16 @@ describe('AddCardBanner', () => {
   })
 
   it('switches monthly Bitcoin banner to annual and starts annual BTCPay flow', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => monthlyOptions } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => annualOptions } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => annualOptions } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ checkoutUrl: 'https://btcpay.silentsuite.io/i/inv_123' }) } as Response)
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
+      if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
+      if (url.includes('/subscription/payment-options?interval=annual')) return { ok: true, json: async () => annualOptions } as Response
+      if (url.includes('/subscription/crypto/invoice/inv_123/payment-methods')) return { ok: true, json: async () => ({ paymentMethods: [{ id: 'btc', label: 'BTC', qrValue: 'bitcoin:test', address: 'bc1test', amountDue: '0.001', cryptoCode: 'BTC' }] }) } as Response
+      if (url.includes('/subscription/crypto/invoice/inv_123')) return { ok: true, json: async () => ({ status: 'pending' }) } as Response
+      if (url.includes('/subscription/payment-flows')) return { ok: true, json: async () => ({ checkoutUrl: 'https://btcpay.silentsuite.io/i/inv_123', invoiceId: 'inv_123', invoiceLookupToken: 'lookup_123' }) } as Response
+      return { ok: false, json: async () => ({}) } as Response
+    })
 
     render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
     fireEvent.click(screen.getByText('Choose payment'))
