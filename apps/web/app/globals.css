@@ -432,6 +432,17 @@
   text-overflow: ellipsis;
 }
 
+.sx-silentsuite-calendar .sx__month-grid-event.ss-month-multiday {
+  min-height: 21px;
+  border-radius: 6px !important;
+  margin-block: 2px !important;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+.sx-silentsuite-calendar .sx__month-grid-event.ss-month-multiday:hover {
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.12);
+}
+
 .sx-silentsuite-calendar .sx__month-grid-event * {
   min-width: 0;
   overflow: hidden;

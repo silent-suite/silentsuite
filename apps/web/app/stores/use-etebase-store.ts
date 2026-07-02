@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { ETEBASE_SERVER_URL } from '@/app/lib/config'
+import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import type {
   CollectionAccessLevel,
   CollectionType,
@@ -28,6 +28,7 @@ import {
   type CachedItem,
 } from '@/app/lib/data-cache'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { RestoreDiagnosticsRecorder, classifySessionPersistence } from '@/app/lib/sync-restore-diagnostics'
 
 /**
  * Holds live Etebase SDK objects (Account, Collections, Items, SyncEngine).
@@ -72,35 +73,24 @@ function getServerUrl(): string {
 const COLLECTION_TYPE_CALENDAR = 'etebase.vevent'
 const COLLECTION_TYPE_TASKS = 'etebase.vtodo'
 const COLLECTION_TYPE_CONTACTS = 'etebase.vcard'
-const COLLECTION_TYPE_PREFERENCES = 'silentsuite.preferences'
-const COLLECTION_TYPE_LABEL_INDEX = 'silentsuite.labelindex'
 
-type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences' | 'labelIndex'
+type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
+type VisibleCollectionTypeKey = Exclude<CollectionTypeKey, 'preferences'>
 type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
 type EtebaseCore = typeof import('@silentsuite/core')
 
 type CachedContentItem = { uid: string; content: string; collectionUid: string }
 
-export type EtebaseInitializeOutcome =
-  | { status: 'no-session' }
-  | { status: 'success'; itemCount: number }
-  | { status: 'offline'; error: unknown }
-  | { status: 'error'; error: unknown }
-
-const COLLECTION_DEFINITIONS: [CollectionTypeKey, string, string][] = [
+const COLLECTION_DEFINITIONS: [VisibleCollectionTypeKey, string, string][] = [
   ['calendar', COLLECTION_TYPE_CALENDAR, 'Personal Calendar'],
   ['tasks', COLLECTION_TYPE_TASKS, 'Personal Tasks'],
   ['contacts', COLLECTION_TYPE_CONTACTS, 'Personal Contacts'],
-  ['preferences', COLLECTION_TYPE_PREFERENCES, 'Preferences'],
-  ['labelIndex', COLLECTION_TYPE_LABEL_INDEX, 'Label Suggestions'],
 ]
 
 function collectionTypeToKey(ct: string): CollectionTypeKey | null {
   if (ct === COLLECTION_TYPE_CALENDAR) return 'calendar'
   if (ct === COLLECTION_TYPE_TASKS) return 'tasks'
   if (ct === COLLECTION_TYPE_CONTACTS) return 'contacts'
-  if (ct === COLLECTION_TYPE_PREFERENCES) return 'preferences'
-  if (ct === COLLECTION_TYPE_LABEL_INDEX) return 'labelIndex'
   return null
 }
 
@@ -108,8 +98,7 @@ function keyToCollectionType(type: CollectionTypeKey): string {
   if (type === 'calendar') return COLLECTION_TYPE_CALENDAR
   if (type === 'tasks') return COLLECTION_TYPE_TASKS
   if (type === 'contacts') return COLLECTION_TYPE_CONTACTS
-  if (type === 'labelIndex') return COLLECTION_TYPE_LABEL_INDEX
-  return COLLECTION_TYPE_PREFERENCES
+  return 'silentsuite.preferences'
 }
 
 async function ensureCollectionsForAccount(
@@ -121,7 +110,6 @@ async function ensureCollectionsForAccount(
     tasks: [],
     contacts: [],
     preferences: [],
-    labelIndex: [],
   }
 
   for (const [key, colType, defaultName] of COLLECTION_DEFINITIONS) {
@@ -247,7 +235,7 @@ async function hydrateListStores(collections: Record<CollectionTypeKey, any[]>):
 }
 
 async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid: string, itemUids?: string[]): Promise<number> {
-  if (type === 'preferences' || type === 'labelIndex') return 0
+  if (type === 'preferences') return 0
 
   const itemUidSet = itemUids ? new Set(itemUids) : null
 
@@ -321,7 +309,6 @@ function collectionItemNoun(type: CollectionTypeKey): string {
   if (type === 'calendar') return 'events'
   if (type === 'tasks') return 'tasks'
   if (type === 'preferences') return 'preferences'
-  if (type === 'labelIndex') return 'label suggestions'
   return 'contacts'
 }
 
@@ -329,25 +316,7 @@ function collectionDisplayName(type: CollectionTypeKey): string {
   if (type === 'calendar') return 'calendar'
   if (type === 'tasks') return 'task list'
   if (type === 'contacts') return 'address book'
-  if (type === 'labelIndex') return 'label suggestions'
   return 'preferences'
-}
-
-async function recordLabelsFromContent(type: CollectionTypeKey, content: string): Promise<void> {
-  if (type !== 'calendar' && type !== 'tasks' && type !== 'contacts') return
-  try {
-    const core = await import('@silentsuite/core')
-    const labels = type === 'calendar'
-      ? core.deserializeCalendarEvent(content).categories
-      : type === 'tasks'
-        ? core.deserializeTask(content).categories
-        : core.deserializeContact(content).categories
-    if (!labels || labels.length === 0) return
-    const { useLabelSuggestionsStore } = await import('@/app/stores/use-label-suggestions-store')
-    await useLabelSuggestionsStore.getState().recordLabelsUsed(labels)
-  } catch (err) {
-    logger.warn(`[etebase-store] Failed to record ${type} label suggestions`, err)
-  }
 }
 
 interface EtebaseState {
@@ -374,7 +343,7 @@ interface EtebaseActions {
    * Restore Etebase session from localStorage, initialize collections,
    * load all items into data stores, and start the SyncEngine.
    */
-  initialize: () => Promise<EtebaseInitializeOutcome>
+  initialize: () => Promise<void>
 
   /**
    * Create an item in the given collection type.
@@ -512,7 +481,7 @@ interface EtebaseActions {
 export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) => ({
   account: null,
   accountFingerprint: null,
-  collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+  collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
   itemCache: new Map(),
   itemTypeMap: new Map(),
   itemCollectionMap: new Map(),
@@ -520,22 +489,35 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   syncEngine: null,
 
   initialize: async () => {
-    const savedSession = await secureGet('etebase_session')
-    if (!savedSession) {
-      logger.debug('[etebase-store] No saved session, skipping initialization')
-      set({ isInitialized: false })
-      return { status: 'no-session' }
-    }
+    const serverUrl = getServerUrl()
+    const diagnostics = new RestoreDiagnosticsRecorder({
+      source: 'restore',
+      etebaseServerUrl: serverUrl,
+      billingApiUrl: BILLING_API_URL,
+    })
 
     try {
+      diagnostics.startPhase('sessionRead')
+      const savedSession = await secureGet('etebase_session')
+      diagnostics.completePhase('sessionRead', {
+        session: classifySessionPersistence(savedSession),
+      })
+      if (!savedSession) {
+        diagnostics.skipPhase('restoreSession')
+        diagnostics.persist()
+        logger.debug('[etebase-store] No saved session, skipping initialization')
+        return
+      }
+
       // Dynamic import to avoid SSR issues with etebase WASM
       const core = await import('@silentsuite/core')
 
       // 1. Restore the Account
       logger.debug('[etebase-store] Restoring Etebase session...')
-      const serverUrl = getServerUrl()
+      diagnostics.startPhase('restoreSession')
       const account = await core.restoreSession(serverUrl, savedSession)
       const accountFingerprint = core.getAccountFingerprint(account)
+      diagnostics.completePhase('restoreSession')
       set({ account, accountFingerprint })
       logger.debug('[etebase-store] Session restored')
 
@@ -552,10 +534,16 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
 
       // 2. Ensure collections exist (create if first login, fetch if returning)
+      diagnostics.startPhase('ensureCollections')
       const collections = await ensureCollectionsForAccount(account, core)
+      diagnostics.completePhase('ensureCollections', {
+        collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
+      })
 
       set({ collections })
+      diagnostics.startPhase('hydrateLists')
       await hydrateListStores(collections)
+      diagnostics.completePhase('hydrateLists')
 
       // 3. Load all items from each collection into the cache
       const itemCache = new Map<string, any>()
@@ -563,7 +551,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const itemCollectionMap = new Map<string, string>()
 
       for (const [key] of COLLECTION_DEFINITIONS) {
+        const phase = `listItems:${key}` as const
+        diagnostics.startPhase(phase)
         const typedCollections = collections[key]
+        let itemCount = 0
+        let pageCount = 0
 
         for (const collection of typedCollections) {
           let stoken: string | null = null
@@ -571,17 +563,25 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
           while (!done) {
             const response = await core.listItems(account, collection, stoken)
+            pageCount += 1
             for (const item of response.items) {
               if (!item.isDeleted) {
                 itemCache.set(item.uid, item)
                 itemTypeMap.set(item.uid, key)
                 itemCollectionMap.set(item.uid, collection.uid)
+                itemCount += 1
               }
             }
             stoken = response.stoken
             done = response.done
           }
         }
+        diagnostics.completePhase(phase, {
+          collectionType: key,
+          collectionCount: typedCollections.length,
+          itemCount,
+          pageCount,
+        })
       }
 
       set({ itemCache, itemTypeMap, itemCollectionMap })
@@ -594,11 +594,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       })
 
       // Track all collections
+      diagnostics.startPhase('syncEngineTrackCollections')
       for (const [key, colType] of COLLECTION_DEFINITIONS) {
         for (const collection of collections[key]) {
           await trackCollectionWithSyncEngine(engine, colType, key, collection.uid)
         }
       }
+      diagnostics.completePhase('syncEngineTrackCollections', {
+        collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
+      })
 
       // Seed persisted stokens before starting so the first sync round
       // pulls only deltas instead of refetching the whole vault. Wire the
@@ -612,19 +616,22 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         })
       }
 
+      diagnostics.startPhase('syncEngineStart')
       await engine.start(account)
+      diagnostics.completePhase('syncEngineStart')
       set({ syncEngine: engine, isInitialized: true })
+      diagnostics.persist()
       logger.debug('[etebase-store] SyncEngine started')
-      return { status: 'success', itemCount: itemCache.size }
     } catch (err) {
+      diagnostics.failActivePhase(err)
+      diagnostics.persist()
       console.error('[etebase-store] Initialization failed', getSafeErrorDetails(err))
       // Don't clear the session -- the user might be offline
       // They can retry on next page load
-      set({ isInitialized: false })
+      set({ isInitialized: true })
       if (!isOfflineError(err)) {
         showErrorToast('Failed to restore session. Please try signing in again.')
       }
-      return isOfflineError(err) ? { status: 'offline', error: err } : { status: 'error', error: err }
     }
   },
 
@@ -1100,7 +1107,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ itemCache, itemTypeMap, itemCollectionMap })
       // Write through to the local persistence cache so a reload paints it.
       void writeItemToCache(type, collection.uid, item.uid, content)
-      void recordLabelsFromContent(type, content)
       return item.uid
     } catch (err) {
       if (isOfflineError(err)) {
@@ -1274,7 +1280,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCache.set(itemUid, updated)
       set({ itemCache: newCache })
       void writeItemToCache(type, collection.uid, itemUid, content)
-      void recordLabelsFromContent(type, content)
     } catch (err) {
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
@@ -1386,25 +1391,17 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   fetchAllItems: async (type: CollectionTypeKey) => {
     const { itemCache, itemTypeMap, itemCollectionMap } = get()
     const results: CachedContentItem[] = []
-    let matchingItemCount = 0
-    let failedDecodeCount = 0
 
     for (const [uid, item] of itemCache.entries()) {
       if (itemTypeMap.get(uid) !== type) continue
-      matchingItemCount++
       try {
         const content = await item.getContent()
         const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
         const collectionUid = itemCollectionMap.get(uid)
         if (collectionUid) results.push({ uid, content: contentStr, collectionUid })
-      } catch (err) {
-        failedDecodeCount++
-        logger.warn(`[etebase-store] Failed to decode cached ${type} item`, getSafeErrorDetails(err))
+      } catch {
+        // Skip items that fail to decode
       }
-    }
-
-    if (failedDecodeCount > 0) {
-      throw new Error(`Could not decode cached ${collectionItemNoun(type)} (${failedDecodeCount}/${matchingItemCount} failed)`)
     }
 
     return results
@@ -1415,10 +1412,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const targetCollections = collectionUid
       ? [resolveCollection(collections, type, collectionUid)].filter(Boolean)
       : collections[type]
-    if (!account || targetCollections.length === 0) {
-      logger.warn(`[etebase-store] Cannot refresh ${type}: missing account or collection`)
-      return get().fetchAllItems(type)
-    }
+    if (!account || targetCollections.length === 0) return []
 
     try {
       const colManager = account.getCollectionManager()
@@ -1432,7 +1426,6 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         // Fetch ALL items (no stoken = full fetch)
         const itemManager = colManager.getItemManager(freshCollection)
         const collectionItems: { item: any; content: string }[] = []
-        let skippedDecodeCount = 0
 
         // Paginate through all items
         let stoken: string | undefined = undefined
@@ -1446,18 +1439,13 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
                 const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
                 collectionItems.push({ item, content: contentStr })
                 allResults.push({ uid: item.uid, content: contentStr, collectionUid: freshCollection.uid })
-              } catch (err) {
-                skippedDecodeCount++
-                logger.warn(`[etebase-store] Failed to decode refreshed ${type} item`, getSafeErrorDetails(err))
+              } catch {
+                // Skip items that fail to decode
               }
             }
           }
           stoken = response.stoken || undefined
           done = response.done
-        }
-
-        if (skippedDecodeCount > 0 && collectionItems.length === 0) {
-          throw new Error(`Refreshed ${type} collection contained only undecodable items`)
         }
 
         refreshed.push({ collection: freshCollection, items: collectionItems })
@@ -1524,7 +1512,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     set({
       account: null,
       accountFingerprint: null,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
       itemCache: new Map(),
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),

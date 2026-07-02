@@ -40,10 +40,6 @@ const storeMock = vi.hoisted(() => ({
   authState: {
     canWrite: vi.fn(() => true),
   },
-  syncState: {
-    initialSyncState: 'synced' as const,
-    error: null as string | null,
-  },
 }))
 
 vi.mock('@/app/stores/use-calendar-store', () => ({
@@ -56,10 +52,6 @@ vi.mock('@/app/stores/use-calendar-list-store', () => ({
 
 vi.mock('@/app/stores/use-auth-store', () => ({
   useAuthStore: (selector: (state: typeof storeMock.authState) => unknown) => selector(storeMock.authState),
-}))
-
-vi.mock('@/app/stores/use-sync-store', () => ({
-  useSyncStore: (selector: (state: typeof storeMock.syncState) => unknown) => selector(storeMock.syncState),
 }))
 
 vi.mock('@/app/stores/use-preferences-store', () => ({
@@ -118,8 +110,6 @@ function resetCalendarMocks() {
   storeMock.calendarState.setCurrentView.mockReset()
   storeMock.calendarState.setSearchQuery.mockReset()
   storeMock.authState.canWrite.mockReturnValue(true)
-  storeMock.syncState.initialSyncState = 'synced'
-  storeMock.syncState.error = null
 }
 
 describe('CalendarPage calendar visibility', () => {
@@ -273,26 +263,6 @@ describe('CalendarPage mobile reachability', () => {
     renderWithIntl(<CalendarPage />)
 
     expect(screen.getByTestId('mobile-agenda')).toHaveAttribute('data-mode', 'upcoming')
-  })
-
-  it('shows restore copy instead of an empty calendar before initial sync completes', () => {
-    storeMock.calendarState.isLoading = false
-    storeMock.syncState.initialSyncState = 'restoring'
-
-    renderWithIntl(<CalendarPage />)
-
-    expect(screen.getByText('Restoring encrypted data…')).toBeInTheDocument()
-    expect(screen.queryByTestId('mobile-agenda')).not.toBeInTheDocument()
-  })
-
-  it('does not render the calendar as empty when the encrypted session is missing', () => {
-    storeMock.calendarState.isLoading = false
-    storeMock.syncState.initialSyncState = 'no-session'
-
-    renderWithIntl(<CalendarPage />)
-
-    expect(screen.getByText('Encrypted session needs to be restored')).toBeInTheDocument()
-    expect(screen.queryByTestId('mobile-agenda')).not.toBeInTheDocument()
   })
 
   it('exposes a mobile collection switcher with a 44px touch target', () => {

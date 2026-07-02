@@ -11,7 +11,7 @@ import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-s
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
-import { ContactsEmptyState, ContactDetailEmptyState, SearchEmptyState, SyncStartupState } from '@/app/components/empty-state'
+import { ContactsEmptyState, SearchEmptyState, ContactDetailEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
@@ -1080,8 +1080,6 @@ export default function ContactsPage() {
   const isLoading = useContactStore((s) => s.isLoading)
   const searchQuery = useContactStore((s) => s.searchQuery)
   const isOnline = useSyncStore((s) => s.isOnline)
-  const initialSyncState = useSyncStore((s) => s.initialSyncState)
-  const syncError = useSyncStore((s) => s.error)
   const contactLists = useContactListStore((s) => s.lists)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showNewForm, setShowNewForm] = useState(false)
@@ -1104,10 +1102,8 @@ export default function ContactsPage() {
     [contacts, selectedId],
   )
 
-  const initialLoadComplete = initialSyncState === 'synced' || initialSyncState === 'empty'
-  const shouldShowStartupState = listFilteredContacts.length === 0 && !isLoading && !initialLoadComplete
-  const isEmpty = listFilteredContacts.length === 0 && !isLoading && initialLoadComplete
-  const isEmptySearch = filtered.length === 0 && searchQuery.trim() !== '' && !isLoading && initialLoadComplete
+  const isEmpty = listFilteredContacts.length === 0 && !isLoading
+  const isEmptySearch = filtered.length === 0 && searchQuery.trim() !== '' && !isLoading
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -1163,8 +1159,6 @@ export default function ContactsPage() {
       {/* Content */}
       {isLoading ? (
         <ContactSkeleton />
-      ) : shouldShowStartupState ? (
-        <SyncStartupState state={initialSyncState} error={syncError} />
       ) : isEmpty ? (
         <ContactsEmptyState onAddContact={canWrite ? () => setShowNewForm(true) : undefined} />
       ) : isEmptySearch ? (

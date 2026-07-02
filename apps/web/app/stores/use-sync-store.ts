@@ -7,11 +7,8 @@ import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
 
-export type InitialSyncState = 'idle' | 'restoring' | 'hydrated-cache' | 'syncing' | 'synced' | 'empty' | 'offline' | 'error' | 'no-session'
-
 interface SyncState {
   syncStatus: SyncStatus
-  initialSyncState: InitialSyncState
   lastSyncedAt: Date | null
   isOnline: boolean
   error: string | null
@@ -21,7 +18,6 @@ interface SyncState {
 
 interface SyncActions {
   setSyncStatus: (status: SyncStatus) => void
-  setInitialSyncState: (state: InitialSyncState) => void
   setLastSynced: (date: Date) => void
   setOnline: (online: boolean) => void
   setError: (error: string | null) => void
@@ -36,8 +32,7 @@ interface SyncActions {
 }
 
 export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
-  syncStatus: 'syncing',
-  initialSyncState: 'idle',
+  syncStatus: 'synced',
   lastSyncedAt: null,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   error: null,
@@ -45,7 +40,6 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
   failedQueueCount: 0,
 
   setSyncStatus: (status) => set({ syncStatus: status }),
-  setInitialSyncState: (initialSyncState) => set({ initialSyncState }),
   setLastSynced: (date) => set({ lastSyncedAt: date }),
   setOnline: (online) => set({ isOnline: online }),
   setError: (error) => set({ error }),
@@ -185,9 +179,6 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
             e.id === oldId ? { ...e, id: result.itemUid!, calendarId: targetCollectionUid ?? e.calendarId } : e,
           ),
         )
-      } else if (collectionType === 'preferences' && result.entry.type === 'create') {
-        const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
-        usePreferencesSyncStore.getState().setRemoteItemUid(result.itemUid)
       }
     }
 
@@ -223,18 +214,16 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       }
 
       // Then refresh every collection of each type from the server
-      const [taskItems, contactItems, eventItems, preferenceItems] = await Promise.all([
+      const [taskItems, contactItems, eventItems] = await Promise.all([
         reconciledEtebase.refreshCollection('tasks'),
         reconciledEtebase.refreshCollection('contacts'),
         reconciledEtebase.refreshCollection('calendar'),
-        reconciledEtebase.refreshCollection('preferences'),
       ])
 
       // Push fresh data into stores
       const { useTaskStore } = await import('@/app/stores/use-task-store')
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
-      const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
 
       const tasks = taskItems.map((item) => {
         const task = core.deserializeTask(item.content)
@@ -253,8 +242,6 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         return { ...event, id: item.uid, calendarId: item.collectionUid }
       })
       useCalendarStore.getState().syncFromRemote(events)
-      await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
-
       // Purge stale queue entries (older than 24h) that may cause phantom indicators
       const stale = await getStaleEntries()
       for (const entry of stale) {
@@ -264,7 +251,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       // Refresh counts to ensure UI is accurate after sync
       const pc = await getPendingCount()
       const fc = await getFailedCount()
-      set({ syncStatus: 'synced', initialSyncState: 'synced', lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
+      set({ syncStatus: 'synced', lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
     }).catch((err) => {
       console.error('[sync-store] Manual sync failed', getSafeErrorDetails(err))
       set({ syncStatus: 'error', error: 'Sync failed' })

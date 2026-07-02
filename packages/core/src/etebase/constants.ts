@@ -2,11 +2,9 @@ export const COLLECTION_TYPE_CALENDAR = 'etebase.vevent' as const;
 export const COLLECTION_TYPE_TASKS = 'etebase.vtodo' as const;
 export const COLLECTION_TYPE_CONTACTS = 'etebase.vcard' as const;
 export const COLLECTION_TYPE_PREFERENCES = 'silentsuite.preferences' as const;
-export const COLLECTION_TYPE_LABEL_INDEX = 'silentsuite.labelindex' as const;
 
 export type CollectionType =
   | typeof COLLECTION_TYPE_CALENDAR
   | typeof COLLECTION_TYPE_TASKS
   | typeof COLLECTION_TYPE_CONTACTS
-  | typeof COLLECTION_TYPE_PREFERENCES
-  | typeof COLLECTION_TYPE_LABEL_INDEX;
+  | typeof COLLECTION_TYPE_PREFERENCES;

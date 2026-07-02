@@ -17,7 +17,6 @@ import {
   clearAll,
   ensureFingerprint,
   isCacheEnabled,
-  getCacheCapabilityStatus,
   CACHE_SCHEMA_VERSION,
   _resetForTests,
   _setEncryptedCacheAvailableForTests,
@@ -35,30 +34,6 @@ beforeEach(async () => {
   })
 })
 
-
-async function getRawItem(uid: string): Promise<{ content: string } | undefined> {
-  const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const req = indexedDB.open('silentsuite-data-cache')
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction('items', 'readonly')
-      const req = tx.objectStore('items').get(uid)
-      req.onsuccess = () => resolve(req.result as { content: string } | undefined)
-      req.onerror = () => reject(req.error)
-    })
-  } finally {
-    db.close()
-  }
-}
-
-function restoreLocalCacheEnv(previous: string | undefined): void {
-  if (previous === undefined) delete process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
-  else process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
-}
-
 function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks', content = 'CONTENT', collectionUid = 'col-1'): CachedItem {
   return {
     itemUid: uid,
@@ -71,50 +46,14 @@ function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks'
 
 describe('data-cache', () => {
   describe('encryption guard', () => {
-    it('enables cache by default when encrypted storage is available', () => {
-      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
-      delete process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
-      _setEncryptedCacheAvailableForTests(true)
-
-      expect(isCacheEnabled()).toBe(true)
-      expect(getCacheCapabilityStatus()).toEqual({
-        featureFlagEnabled: true,
-        encryptedEnvelopeAvailable: true,
-        enabled: true,
-      })
-
-      restoreLocalCacheEnv(previous)
-    })
-
-    it('does not enable cache when encryption is unavailable', () => {
+    it('does not enable cache when the env flag is true but encryption is unavailable', () => {
       const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
       process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
       _setEncryptedCacheAvailableForTests(false)
 
       expect(isCacheEnabled()).toBe(false)
 
-      restoreLocalCacheEnv(previous)
-    })
-
-    it('reports privacy-safe cache capability diagnostics', () => {
-      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
-      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
-      _setEncryptedCacheAvailableForTests(true)
-
-      expect(getCacheCapabilityStatus()).toEqual({
-        featureFlagEnabled: true,
-        encryptedEnvelopeAvailable: true,
-        enabled: true,
-      })
-
-      _setEncryptedCacheAvailableForTests(false)
-      expect(getCacheCapabilityStatus()).toEqual({
-        featureFlagEnabled: true,
-        encryptedEnvelopeAvailable: false,
-        enabled: false,
-      })
-
-      restoreLocalCacheEnv(previous)
+      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
     })
 
     it('refuses plaintext item writes without an encrypted cache envelope', async () => {
@@ -135,16 +74,12 @@ describe('data-cache', () => {
       expect(items).toEqual([])
     })
 
-    it('persists encrypted content and reads back the decrypted item', async () => {
-      await putItem(makeItem('task-1', 'tasks', 'PRIVATE TASK CONTENT'))
+    it('persists and reads back a single item', async () => {
+      await putItem(makeItem('task-1', 'tasks', 'A'))
       const items = await getItemsByType('tasks')
       expect(items).toHaveLength(1)
       expect(items[0]!.itemUid).toBe('task-1')
-      expect(items[0]!.content).toBe('PRIVATE TASK CONTENT')
-
-      const raw = await getRawItem('task-1')
-      expect(raw?.content).not.toContain('PRIVATE TASK CONTENT')
-      expect(JSON.parse(raw!.content)).toMatchObject({ v: 1, alg: 'AES-GCM' })
+      expect(items[0]!.content).toBe('A')
     })
 
     it('bulk-inserts via putItems', async () => {
@@ -303,6 +238,39 @@ describe('data-cache', () => {
       const ok = await ensureFingerprint('alice@example.com')
       expect(ok).toBe(true)
       expect(await getStoken('col-tasks')).toBe('stk-a')
+    })
+
+    it('upgrades and clears the rolled-back v3 encrypted cache schema', async () => {
+      await _resetForTests()
+      const v3Db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('silentsuite-data-cache', 3)
+        req.onupgradeneeded = () => {
+          const db = req.result
+          const items = db.createObjectStore('items', { keyPath: 'itemUid' })
+          items.createIndex('byCollectionType', 'collectionType', { unique: false })
+          items.createIndex('byCollectionUid', 'collectionUid', { unique: false })
+          db.createObjectStore('collections', { keyPath: 'collectionUid' })
+          db.createObjectStore('meta')
+          db.createObjectStore('crypto')
+        }
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+      v3Db.close()
+
+      await ensureFingerprint('alice@example.com')
+      await _resetForTests()
+
+      const upgradedDb = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('silentsuite-data-cache')
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+
+      expect(upgradedDb.version).toBe(4)
+      expect(upgradedDb.objectStoreNames.contains('crypto')).toBe(false)
+      expect(upgradedDb.objectStoreNames.contains('items')).toBe(true)
+      upgradedDb.close()
     })
   })
 

@@ -60,7 +60,6 @@ interface CalendarActions {
   navigateToday: () => void
   importEvents: (newEvents: NewCalendarEvent[]) => Promise<number>
   syncFromRemote: (events: CalendarEvent[]) => void
-  upsertFromRemote: (events: CalendarEvent[]) => void
   setSearchQuery: (q: string) => void
   getFilteredEvents: () => CalendarEvent[]
 }
@@ -558,26 +557,6 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
 
   syncFromRemote: (remoteEvents: CalendarEvent[]) => {
     set({ events: remoteEvents, syncStatus: 'synced' })
-  },
-
-  upsertFromRemote: (remoteEvents: CalendarEvent[]) => {
-    if (remoteEvents.length === 0) return
-    set((state) => {
-      const nextEvents = [...state.events]
-      const indexById = new Map(nextEvents.map((event, index) => [event.id, index]))
-
-      for (const remoteEvent of remoteEvents) {
-        const index = indexById.get(remoteEvent.id)
-        if (index === undefined) {
-          indexById.set(remoteEvent.id, nextEvents.length)
-          nextEvents.push(remoteEvent)
-        } else {
-          nextEvents[index] = remoteEvent
-        }
-      }
-
-      return { events: nextEvents, syncStatus: 'syncing' }
-    })
   },
 
   setSearchQuery: (q: string) => set({ searchQuery: q }),
