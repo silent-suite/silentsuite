@@ -16,10 +16,18 @@ django.setup()
 
 from django.contrib.auth import get_user_model  # noqa: E402
 from django.core.files.base import ContentFile  # noqa: E402
-from django.test import TestCase  # noqa: E402
+from django.test import TestCase, TransactionTestCase  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 from etebase_server.django import models  # noqa: E402
+from etebase_server.django.token_auth.models import AuthToken  # noqa: E402
 from etebase_server.fastapi.dependencies import build_item_queryset  # noqa: E402
+from etebase_server.fastapi.exceptions import CustomHttpException  # noqa: E402
+from etebase_server.fastapi.msgpack import MsgpackResponse  # noqa: E402
+from etebase_server.fastapi.routers.collection import item_router  # noqa: E402
+from etebase_server.fastapi.utils import msgpack_decode  # noqa: E402
 
 User = get_user_model()
 
@@ -32,6 +40,15 @@ def _make_collection_with_items(n_items: int):
     nonce = _FIXTURE_COUNTER["n"]
     user = User.objects.create_user(username=f"test_user_n1_{nonce}", email=f"t{nonce}@t.t", password="x")
     col = models.Collection.objects.create(uid=f"col{nonce:03d}" + "a" * 37, owner=user)
+    collection_type = models.CollectionType.objects.create(uid=f"type{nonce:03d}".encode(), owner=user)
+    models.CollectionMember.objects.create(
+        collection=col,
+        user=user,
+        encryptionKey=b"\x01" * 32,
+        accessLevel=models.AccessLevels.ADMIN,
+        collectionType=collection_type,
+        stoken=models.Stoken.objects.create(),
+    )
     for i in range(n_items):
         item = models.CollectionItem.objects.create(
             uid=f"item{nonce:03d}{i:036d}",
@@ -51,6 +68,21 @@ def _make_collection_with_items(n_items: int):
         chunk.save()
         models.RevisionChunkRelation.objects.create(chunk=chunk, revision=rev)
     return user, col
+
+
+def _item_list_app(user):
+    app = FastAPI()
+    app.include_router(item_router, prefix="/api/v1/collection/{collection_uid}")
+
+    @app.exception_handler(CustomHttpException)
+    async def _custom_exception_handler(_request, exc: CustomHttpException):  # noqa: RUF029
+        return MsgpackResponse(status_code=exc.status_code, content=exc.as_dict)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(_request, exc: RequestValidationError):  # noqa: RUF029
+        return MsgpackResponse(status_code=422, content={"detail": exc.errors()})
+
+    return app
 
 
 class ItemListQuerysetTests(TestCase):
@@ -93,3 +125,23 @@ class ItemListQuerysetTests(TestCase):
                 for chunk_relation in rev.chunks_relation.all():
                     _ = chunk_relation.chunk.uid
         return len(ctx.captured_queries)
+
+
+class ItemListRouteTests(TransactionTestCase):
+    def test_item_list_uses_collection_uid_from_router_prefix(self):
+        user, col = _make_collection_with_items(1)
+        token = AuthToken.objects.create(user=user)
+        client = TestClient(_item_list_app(user))
+
+        response = client.get(
+            f"/api/v1/collection/{col.uid}/item/",
+            headers={
+                "Accept": "application/msgpack",
+                "Content-Type": "application/msgpack",
+                "Authorization": f"Token {token.key}",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        data = msgpack_decode(response.content)
+        assert len(data["data"]) == 1
