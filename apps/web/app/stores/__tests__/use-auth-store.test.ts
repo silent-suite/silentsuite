@@ -522,6 +522,37 @@ describe('useAuthStore', () => {
     expect(secureStore.etebase_session).toBe('mock-saved-session')
   })
 
+  it('login records a redacted Etebase session persistence diagnostic after storing the session', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false }),
+    } as Response)
+
+    await useAuthStore.getState().login('test@example.com', 'password123')
+
+    const raw = sessionStorage.getItem('silentsuite.restore-diagnostics.v1') ?? ''
+    expect(raw).toContain('"phase":"sessionPersistence"')
+    expect(raw).toContain('"roundtripMatch":true')
+    expect(raw).not.toContain('mock-saved-session')
+    expect(raw).not.toContain('test@example.com')
+  })
+
+  it('login still succeeds if the best-effort persistence diagnostic read fails', async () => {
+    const { secureGet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureGet).mockRejectedValueOnce(new Error('diagnostic read failed'))
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false }),
+    } as Response)
+
+    await useAuthStore.getState().login('test@example.com', 'password123')
+
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().error).toBeNull()
+  })
+
   it('login does not clear the current offline queue when Etebase authentication fails', async () => {
     const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
     vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('unauthorized'))

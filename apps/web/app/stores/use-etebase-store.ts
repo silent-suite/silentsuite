@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import { ETEBASE_SERVER_URL } from '@/app/lib/config'
+import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import type {
   CollectionAccessLevel,
   CollectionType,
@@ -28,6 +28,7 @@ import {
   type CachedItem,
 } from '@/app/lib/data-cache'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { RestoreDiagnosticsRecorder, classifySessionPersistence } from '@/app/lib/sync-restore-diagnostics'
 
 /**
  * Holds live Etebase SDK objects (Account, Collections, Items, SyncEngine).
@@ -74,12 +75,13 @@ const COLLECTION_TYPE_TASKS = 'etebase.vtodo'
 const COLLECTION_TYPE_CONTACTS = 'etebase.vcard'
 
 type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
+type VisibleCollectionTypeKey = Exclude<CollectionTypeKey, 'preferences'>
 type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
 type EtebaseCore = typeof import('@silentsuite/core')
 
 type CachedContentItem = { uid: string; content: string; collectionUid: string }
 
-const COLLECTION_DEFINITIONS: [CollectionTypeKey, string, string][] = [
+const COLLECTION_DEFINITIONS: [VisibleCollectionTypeKey, string, string][] = [
   ['calendar', COLLECTION_TYPE_CALENDAR, 'Personal Calendar'],
   ['tasks', COLLECTION_TYPE_TASKS, 'Personal Tasks'],
   ['contacts', COLLECTION_TYPE_CONTACTS, 'Personal Contacts'],
@@ -487,21 +489,35 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   syncEngine: null,
 
   initialize: async () => {
-    const savedSession = await secureGet('etebase_session')
-    if (!savedSession) {
-      logger.debug('[etebase-store] No saved session, skipping initialization')
-      return
-    }
+    const serverUrl = getServerUrl()
+    const diagnostics = new RestoreDiagnosticsRecorder({
+      source: 'restore',
+      etebaseServerUrl: serverUrl,
+      billingApiUrl: BILLING_API_URL,
+    })
 
     try {
+      diagnostics.startPhase('sessionRead')
+      const savedSession = await secureGet('etebase_session')
+      diagnostics.completePhase('sessionRead', {
+        session: classifySessionPersistence(savedSession),
+      })
+      if (!savedSession) {
+        diagnostics.skipPhase('restoreSession')
+        diagnostics.persist()
+        logger.debug('[etebase-store] No saved session, skipping initialization')
+        return
+      }
+
       // Dynamic import to avoid SSR issues with etebase WASM
       const core = await import('@silentsuite/core')
 
       // 1. Restore the Account
       logger.debug('[etebase-store] Restoring Etebase session...')
-      const serverUrl = getServerUrl()
+      diagnostics.startPhase('restoreSession')
       const account = await core.restoreSession(serverUrl, savedSession)
       const accountFingerprint = core.getAccountFingerprint(account)
+      diagnostics.completePhase('restoreSession')
       set({ account, accountFingerprint })
       logger.debug('[etebase-store] Session restored')
 
@@ -518,10 +534,16 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
 
       // 2. Ensure collections exist (create if first login, fetch if returning)
+      diagnostics.startPhase('ensureCollections')
       const collections = await ensureCollectionsForAccount(account, core)
+      diagnostics.completePhase('ensureCollections', {
+        collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
+      })
 
       set({ collections })
+      diagnostics.startPhase('hydrateLists')
       await hydrateListStores(collections)
+      diagnostics.completePhase('hydrateLists')
 
       // 3. Load all items from each collection into the cache
       const itemCache = new Map<string, any>()
@@ -529,7 +551,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const itemCollectionMap = new Map<string, string>()
 
       for (const [key] of COLLECTION_DEFINITIONS) {
+        const phase = `listItems:${key}` as const
+        diagnostics.startPhase(phase)
         const typedCollections = collections[key]
+        let itemCount = 0
+        let pageCount = 0
 
         for (const collection of typedCollections) {
           let stoken: string | null = null
@@ -537,17 +563,25 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
           while (!done) {
             const response = await core.listItems(account, collection, stoken)
+            pageCount += 1
             for (const item of response.items) {
               if (!item.isDeleted) {
                 itemCache.set(item.uid, item)
                 itemTypeMap.set(item.uid, key)
                 itemCollectionMap.set(item.uid, collection.uid)
+                itemCount += 1
               }
             }
             stoken = response.stoken
             done = response.done
           }
         }
+        diagnostics.completePhase(phase, {
+          collectionType: key,
+          collectionCount: typedCollections.length,
+          itemCount,
+          pageCount,
+        })
       }
 
       set({ itemCache, itemTypeMap, itemCollectionMap })
@@ -560,11 +594,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       })
 
       // Track all collections
+      diagnostics.startPhase('syncEngineTrackCollections')
       for (const [key, colType] of COLLECTION_DEFINITIONS) {
         for (const collection of collections[key]) {
           await trackCollectionWithSyncEngine(engine, colType, key, collection.uid)
         }
       }
+      diagnostics.completePhase('syncEngineTrackCollections', {
+        collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
+      })
 
       // Seed persisted stokens before starting so the first sync round
       // pulls only deltas instead of refetching the whole vault. Wire the
@@ -578,10 +616,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         })
       }
 
+      diagnostics.startPhase('syncEngineStart')
       await engine.start(account)
+      diagnostics.completePhase('syncEngineStart')
       set({ syncEngine: engine, isInitialized: true })
+      diagnostics.persist()
       logger.debug('[etebase-store] SyncEngine started')
     } catch (err) {
+      diagnostics.failActivePhase(err)
+      diagnostics.persist()
       console.error('[etebase-store] Initialization failed', getSafeErrorDetails(err))
       // Don't clear the session -- the user might be offline
       // They can retry on next page load

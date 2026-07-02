@@ -5,6 +5,11 @@ import { RefreshCw } from 'lucide-react'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { formatTimeAgo } from '@/app/lib/format-time-ago'
 import type { SyncStatus } from '@silentsuite/core'
+import {
+  buildRestoreDiagnosticsCopyText,
+  readRestoreDiagnostics,
+  shouldExposeRestoreDiagnostics,
+} from '@/app/lib/sync-restore-diagnostics'
 
 const dotStyles: Record<SyncStatus, string> = {
   synced: 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]',
@@ -47,11 +52,19 @@ export function SyncIndicator() {
   const isSyncing = syncStatus === 'syncing'
   const isOffline = syncStatus === 'offline'
   const isError = syncStatus === 'error'
+  const canCopyDiagnostics = isError && shouldExposeRestoreDiagnostics()
 
   const handleSync = useCallback(() => {
     if (isSyncing || isOffline) return
     simulateSyncCycle()
   }, [isSyncing, isOffline, simulateSyncCycle])
+
+  const handleCopyDiagnostics = useCallback(async () => {
+    const copyText = buildRestoreDiagnosticsCopyText(readRestoreDiagnostics())
+    await navigator.clipboard?.writeText(copyText)
+    setTooltipText('Restore diagnostics copied')
+    setShowTooltip(true)
+  }, [])
 
   // Update tooltip text on an interval while visible so relative times stay fresh
   useEffect(() => {
@@ -93,6 +106,16 @@ export function SyncIndicator() {
           className="hidden text-xs text-rose-400 hover:text-rose-300 md:inline"
         >
           Sync error
+        </button>
+      )}
+      {canCopyDiagnostics && (
+        <button
+          onClick={handleCopyDiagnostics}
+          className="hidden rounded border border-rose-500/40 px-1.5 py-0.5 text-[10px] text-rose-300 hover:border-rose-400 hover:text-rose-200 md:inline"
+          aria-label="Copy sync restore diagnostics"
+          type="button"
+        >
+          Copy diagnostics
         </button>
       )}
 
