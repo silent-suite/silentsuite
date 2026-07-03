@@ -1,18 +1,22 @@
 <div align="center">
 
+<a href="https://silentsuite.io">
+  <img src="./.github/assets/logo-shield.svg" alt="SilentSuite logo" width="96" />
+</a>
+
 # SilentSuite
 
 **Privacy by Architecture.**
 
-Open-source, zero-knowledge sync for calendars, contacts, and tasks.
-Plaintext stays off the server; keys stay on-device.
+Open-source, end-to-end encrypted sync for calendars, contacts, and tasks.
+Plaintext stays off the server. Keys stay on your devices.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](./LICENSE)
 [![Release](https://img.shields.io/github/v/release/silent-suite/silentsuite?logo=github&label=release)](https://github.com/silent-suite/silentsuite/releases)
 [![Stars](https://img.shields.io/github/stars/silent-suite/silentsuite?style=flat&logo=github)](https://github.com/silent-suite/silentsuite/stargazers)
 [![X](https://img.shields.io/badge/X-@silentsuiteio-000000?logo=x&logoColor=white)](https://x.com/silentsuiteio)
 
-[Website](https://silentsuite.io) · [Docs](https://docs.silentsuite.io) · [Blog](https://silentsuite.io/blog)
+[Website](https://silentsuite.io) · [Web app](https://app.silentsuite.io/signup) · [Docs](https://docs.silentsuite.io) · [Blog](https://silentsuite.io/blog) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest)
 
 <br />
 
@@ -22,36 +26,52 @@ Plaintext stays off the server; keys stay on-device.
 
 <br /><br />
 
-[**⭐ Star this repo to help early testers find SilentSuite**](https://github.com/silent-suite/silentsuite/stargazers) · [Create your account](https://app.silentsuite.io/signup) · [Self-host](#self-host) · [Android APK](https://github.com/silent-suite/silentsuite/releases/latest) · [Help test](#help-test-the-beta)
+SilentSuite is in open beta. [Star the repo](https://github.com/silent-suite/silentsuite/stargazers) to help early testers find it, or jump straight to [helping test](#help-test-the-beta).
 
 </div>
 
----
-
 ## What is SilentSuite?
 
-SilentSuite is an end-to-end encrypted alternative to Google Calendar, iCloud, and other cloud sync services. Events, contacts, and tasks are encrypted before they reach the sync server.
+SilentSuite is an end-to-end encrypted alternative to Google Calendar, iCloud, and other cloud sync services. Your events, contacts, and tasks are encrypted on your device before they ever reach the sync server, using the open [Etebase protocol](https://www.etebase.com/).
 
-- 📅 **Calendar:** encrypted events and reminders
-- 👥 **Contacts:** encrypted address book sync
-- ✅ **Tasks:** encrypted to-do lists
-- 🔌 **Bridge:** local CalDAV/CardDAV for apps like Apple Calendar and Thunderbird
-- 🤖 **Android:** signed APK syncs into Android calendar, contacts, and task providers
-- 🍎 **iOS:** the open-source EteSync app works with the same protocol while a native app is not ready yet
+It syncs:
 
-Built on the open [Etebase protocol](https://www.etebase.com/). Open source, self-hostable, EU-hosted for the managed service, GDPR-baseline.
+- 📅 **Calendars** with events and reminders
+- 👥 **Contacts** across your devices
+- ✅ **Tasks** and to-do lists
 
-## Why it exists
+And it meets you where your apps are:
 
-Most calendar and contact sync services can read the data they store. SilentSuite is built for people who want sync without handing over plaintext.
+- 🌐 **Web app** at [app.silentsuite.io](https://app.silentsuite.io), with client-side encryption
+- 🤖 **Android** via a signed APK that syncs into the system calendar, contacts, and task providers
+- 🔌 **CalDAV/CardDAV bridge** so Apple Calendar, Thunderbird, Evolution, and other standard clients work over `localhost`
+- 🍎 **iOS** through the open-source EteSync app, which speaks the same protocol, until a native app is ready
+- 🏠 **Self-hosting** with a two-container Docker setup
 
-- **Zero-knowledge by default:** encryption is always on, with no opt-out mode
-- **Open and auditable:** server, web app, bridge, and Android code are open source
-- **No lock-in:** export your data, use standard clients through the bridge, or self-host
-- **No private-data monetisation:** paid hosting funds development; sync contents are unreadable to us
-- **Practical beta:** usable today, but still honest about what is not ready yet
+## Why privacy matters here
 
-## Status
+Calendars and address books are some of the most sensitive data people put in the cloud: who you meet, when, where, and how to reach everyone you know. Most sync services can read all of it.
+
+SilentSuite is built so the server operator, including us, cannot:
+
+- **Zero-knowledge by default.** Encryption is always on. There is no unencrypted mode to misconfigure.
+- **Open and auditable.** The server, web app, bridge, and Android code are all in this repository.
+- **No lock-in.** Export your data, connect standard DAV clients through the bridge, or run the whole stack yourself.
+- **Honest funding.** Paid hosting funds development. Sync contents are unreadable to us, so they cannot be monetised.
+
+The managed service is EU-hosted and built to a GDPR baseline.
+
+## How it works
+
+<img src="./.github/assets/how-it-works.svg" alt="How SilentSuite works: your device encrypts data locally, the server stores ciphertext, and your other device decrypts locally." width="100%" />
+
+Your devices encrypt and decrypt locally. The sync server stores ciphertext and never receives your encryption keys. The CalDAV/CardDAV bridge exposes plaintext only on `localhost`, then syncs encrypted data upstream.
+
+Event titles, contact fields, task contents, notes, descriptions, locations, and reminders stay encrypted. What the hosted service can see is the operational metadata needed to run it: account and billing details, approximate encrypted storage size, sync timing, and IP-level network logs.
+
+Under the hood: XChaCha20-Poly1305, Argon2id, libsodium, and the open Etebase protocol.
+
+## Beta status
 
 | Status | Details |
 |---|---|
@@ -59,77 +79,46 @@ Most calendar and contact sync services can read the data they store. SilentSuit
 | **In progress** | F-Droid and Google Play listings, broader Android testing, DAV client compatibility reports |
 | **Not in this beta** | Native iOS app, push notifications, shared calendars/contacts, OAuth Google/iCloud import |
 
-## How it works
-
-<img src="./.github/assets/how-it-works.svg" alt="How SilentSuite works: your device encrypts data locally, the server stores ciphertext, and your other device decrypts locally." width="100%" />
-
-Your device encrypts and decrypts locally. The sync server stores ciphertext and never receives your encryption keys. The CalDAV/CardDAV bridge only exposes plaintext on `localhost`, then syncs encrypted data upstream.
-
-Hosted-service metadata is still visible where needed to operate the service: account and billing details, approximate encrypted storage size, sync timing, IP-level network logs, and operational metadata. Event titles, contact fields, task contents, notes, descriptions, locations, and reminders stay encrypted.
-
-Crypto: XChaCha20-Poly1305, Argon2id, libsodium, and the open Etebase protocol.
-
 ## Get started
 
 ### Hosted service
 
-Create an account at [app.silentsuite.io/signup](https://app.silentsuite.io/signup). Start with 7 days free without a card, or 30 days with a card; plans from €3/mo after trial.
+Create an account at [app.silentsuite.io/signup](https://app.silentsuite.io/signup). Start with 7 days free without a card, or 30 days with a card; plans from €3/mo after the trial.
 
 ### Android
 
 Install the signed APK from [GitHub Releases](https://github.com/silent-suite/silentsuite/releases/latest), or add this repo to Obtainium for update notifications.
 
-### Self-host
+### Desktop clients
+
+Run the [CalDAV/CardDAV bridge](./bridge/) locally and point Apple Calendar, Thunderbird, or any other DAV client at it. See the [User Guide](./docs/user-guide/).
+
+## Self-host
+
+Run the sync server on your own hardware with Docker:
 
 ```bash
-git clone https://github.com/silent-suite/silentsuite.git
-cd silentsuite/self-host
-cp .env.example .env   # then edit
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
 ```
 
-Full setup guide: [Self-Hosting](./docs/self-hosting/).
+The installer sets up two containers (the SilentSuite server and PostgreSQL), generates secrets, and writes your `.env`. You bring a reverse proxy for TLS. Prefer to read before you run? Clone the repo and start from [`self-host/SELF-HOSTING.md`](./self-host/SELF-HOSTING.md), or follow the [self-hosting docs](./docs/self-hosting/).
 
-## Help test the beta
+## Repository map
 
-Useful feedback right now:
+| Path | What it is |
+|------|-----------|
+| [`apps/web/`](./apps/web/) | Web app at app.silentsuite.io (Next.js, client-side encryption) |
+| [`apps/docs/`](./apps/docs/) | Documentation site (VitePress) |
+| [`packages/`](./packages/) | Shared TypeScript packages |
+| [`server/`](./server/) | Sync server (Python, Etebase protocol) |
+| [`bridge/`](./bridge/) | CalDAV/CardDAV bridge (Python, Radicale) |
+| [`android/`](./android/) | Android sync adapter (Kotlin) |
+| [`self-host/`](./self-host/) | Docker self-hosting setup |
+| [`docs/`](./docs/) | Markdown documentation |
 
-- Android APK testing across device models and Android versions
-- Bridge compatibility reports for Thunderbird, Apple Calendar, Evolution, GNOME Calendar, and other DAV clients
-- Self-hosting verification on fresh servers
-- Web app translation proposals and review from fluent human translators
-- Docs and trust review for vague privacy claims or confusing setup steps
+The marketing site and billing/accounts API live in a separate private repo and have no cryptographic responsibilities.
 
-Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with logs/screenshots where useful. Do not paste secrets, passwords, or private calendar/contact data.
-
-Want a small first PR? See the open [good first issues](https://github.com/silent-suite/silentsuite/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22).
-
-Security issues: email <info@silentsuite.io> rather than opening a public issue.
-
-Bug reports, feature requests, and PRs are welcome.
-
-## Docs
-
-- [User Guide](./docs/user-guide/)
-- [Self-Hosting](./docs/self-hosting/)
-- [Contributing](./docs/contributing/)
-- [Translating SilentSuite](./TRANSLATING.md)
-- [docs.silentsuite.io](https://docs.silentsuite.io)
-
-## Follow along
-
-**⭐ [Star this repo](https://github.com/silent-suite/silentsuite/stargazers) to help early testers, contributors, and privacy users find the project.**
-
-<p align="center">
-  <a href="https://github.com/silent-suite/silentsuite/stargazers">
-    <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/silent-suite/silentsuite?style=social" />
-  </a>
-</p>
-
-<details>
-<summary><strong>Developer information</strong></summary>
-
-### Run locally
+To run the web app locally:
 
 ```bash
 git clone https://github.com/silent-suite/silentsuite.git
@@ -138,36 +127,29 @@ pnpm install
 pnpm dev
 ```
 
-The Etebase sync server, CalDAV/CardDAV bridge, and Android adapter each have their own setup. See the [Contributing guide](./docs/contributing/) for the full dev environment.
+The sync server, bridge, and Android adapter each have their own setup. See the [Contributing guide](./docs/contributing/) for the full dev environment.
 
-### Tech stack
+## Help test the beta
 
-| Component | Technology |
-|-----------|-----------|
-| Sync server | Python, Etebase protocol, Django |
-| Web app | Next.js 15, React, Tailwind CSS |
-| Docs site | VitePress, Vue, Cloudflare Workers |
-| CalDAV/CardDAV bridge | Python, Radicale |
-| Android adapter | Kotlin |
-| Encryption | Etebase protocol, XChaCha20-Poly1305, Argon2id, libsodium |
+The most useful feedback right now:
 
-### Repository structure
+- Android APK testing across device models and Android versions
+- Bridge compatibility reports for Thunderbird, Apple Calendar, Evolution, GNOME Calendar, and other DAV clients
+- Self-hosting verification on fresh servers
+- Web app translation proposals and review from fluent human translators, via [TRANSLATING.md](./TRANSLATING.md)
+- Docs and trust review: call out vague privacy claims or confusing setup steps
 
-| Path | What it is |
-|------|-----------|
-| [`apps/web/`](./apps/web/) | Web app at app.silentsuite.io |
-| [`apps/docs/`](./apps/docs/) | Documentation site |
-| [`packages/`](./packages/) | Shared TypeScript packages |
-| [`server/`](./server/) | Etebase sync server |
-| [`bridge/`](./bridge/) | CalDAV/CardDAV bridge |
-| [`android/`](./android/) | Android sync adapter |
-| [`self-host/`](./self-host/) | Docker self-hosting setup |
-| [`docs/`](./docs/) | Markdown documentation |
+Open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues) with logs or screenshots where useful. Please do not paste secrets, passwords, or private calendar/contact data.
 
-The marketing site and billing/accounts API live in a separate private repo and have no cryptographic responsibilities.
+Want a small first PR? See the open [good first issues](https://github.com/silent-suite/silentsuite/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22). Bug reports, feature requests, and PRs are all welcome.
 
-</details>
+More docs: [User Guide](./docs/user-guide/) · [Self-Hosting](./docs/self-hosting/) · [Contributing](./docs/contributing/) · [docs.silentsuite.io](https://docs.silentsuite.io)
+
+## Security
+
+If you find a security issue, please email <info@silentsuite.io> instead of opening a public issue.
 
 ## License
 
-[AGPL-3.0](./LICENSE) · [`android/LICENSE`](./android/LICENSE) (GPL-3.0)
+- [AGPL-3.0](./LICENSE) for the server, web app, bridge, and self-host code
+- [GPL-3.0](./android/LICENSE) for the Android adapter, which builds on DAVx5 lineage
