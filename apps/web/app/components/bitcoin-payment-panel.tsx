@@ -26,7 +26,7 @@ type BitcoinPaymentPanelProps = {
   title?: string
   description?: string
   settledMessage?: string
-  onBack: () => void
+  onBack: () => void | Promise<void>
   onInvoiceInactive?: () => void
   onPaymentComplete: () => void | Promise<void>
   externalCheckoutLabel?: string
@@ -127,13 +127,26 @@ export default function BitcoinPaymentPanel({
     }
   }
 
-  function handleBack() {
+  async function handleBack() {
     if (status === 'expired' || status === 'settled' || status === 'error') onInvoiceInactive?.()
-    onBack()
+    await onBack()
   }
+
+  const backButton = (
+    <button
+      type="button"
+      onClick={() => { void handleBack() }}
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))]"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      Back to payment options
+    </button>
+  )
 
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
+      <div>{backButton}</div>
+
       <div className="space-y-2 text-center">
         <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">{title}</h2>
         <p className="text-sm text-[rgb(var(--muted))]">{description}</p>
@@ -200,10 +213,7 @@ export default function BitcoinPaymentPanel({
         </div>
       )}
 
-      <button onClick={handleBack} className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors">
-        <ArrowLeft className="h-4 w-4" />
-        Back to payment methods
-      </button>
+      <div>{backButton}</div>
     </div>
   )
 }
