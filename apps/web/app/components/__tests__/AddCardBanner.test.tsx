@@ -41,7 +41,7 @@ describe('AddCardBanner', () => {
       const url = String(input)
       if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
       if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
-      if (url.includes('/subscription/payment-flows')) return { ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now' }) } as Response
+      if (url.includes('/subscription/payment-flows')) return { ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now', planId: 'early_monthly', billingInterval: 'monthly', amount: '3.60', currency: 'EUR' }) } as Response
       return { ok: false, json: async () => ({}) } as Response
     })
 
@@ -68,6 +68,8 @@ describe('AddCardBanner', () => {
     ))
 
     expect(await screen.findByText('14 bonus days included after today\'s payment.')).toBeInTheDocument()
+    expect(screen.getByText('Amount due')).toBeInTheDocument()
+    expect(screen.getByText('Powered by Stripe')).toBeInTheDocument()
     expect(screen.getByTestId('stripe-payment-form')).toHaveTextContent('payment:Pay €3.60')
   })
 
@@ -98,6 +100,29 @@ describe('AddCardBanner', () => {
         credentials: 'include',
         body: JSON.stringify({ flowKind: 'btcpay_annual', planId: 'early_annual', returnUrl: '/settings/subscription' }),
       }),
+    ))
+  })
+
+  it('cancels a pending card payment flow when backing out of the card form', async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
+      if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
+      if (url.includes('/subscription/payment-flows/cancel')) return { ok: true, json: async () => ({ cancelled: true, flowKind: 'stripe_pay_now' }) } as Response
+      if (url.includes('/subscription/payment-flows') && init?.method === 'POST') return { ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now', planId: 'early_monthly', billingInterval: 'monthly', amount: '3.60', currency: 'EUR' }) } as Response
+      return { ok: false, json: async () => ({}) } as Response
+    })
+
+    render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
+    fireEvent.click(screen.getByText('Choose payment'))
+    fireEvent.click(await screen.findByText('Continue to card payment'))
+
+    expect(await screen.findByText('Powered by Stripe')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('← Back to options'))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'https://billing.example.test/subscription/payment-flows/cancel',
+      expect.objectContaining({ method: 'POST', credentials: 'include' }),
     ))
   })
 })

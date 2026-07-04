@@ -66,8 +66,35 @@ function mockSubscription(subscription: Record<string, unknown>) {
     if (url === 'https://billing.test/subscription' && !init?.method) {
       return { ok: true, json: async () => response }
     }
-    if (url === 'https://billing.test/subscription/reactivate') {
-      return { ok: true, json: async () => ({ clientSecret: 'cs_test' }) }
+    if (url === 'https://billing.test/subscription/payment-flows/current') {
+      return { ok: true, json: async () => ({ flow: null }) }
+    }
+    if (url === 'https://billing.test/subscription/payment-options?interval=monthly') {
+      return { ok: true, json: async () => ({
+        selectedInterval: 'monthly',
+        options: [
+          { id: 'stripe_pay_now', provider: 'stripe', planIds: ['early_monthly'], billingIntervals: ['monthly'], enabled: true },
+          { id: 'bitcoin_annual_switch', provider: 'notice', planIds: ['early_annual'], billingIntervals: ['annual'], enabled: true },
+        ],
+      }) }
+    }
+    if (url === 'https://billing.test/subscription/payment-options?interval=annual') {
+      return { ok: true, json: async () => ({
+        selectedInterval: 'annual',
+        options: [
+          { id: 'stripe_pay_now', provider: 'stripe', planIds: ['early_annual'], billingIntervals: ['annual'], enabled: true },
+          { id: 'btcpay_annual', provider: 'btcpay', planIds: ['early_annual'], billingIntervals: ['annual'], enabled: true },
+        ],
+      }) }
+    }
+    if (url === 'https://billing.test/subscription/payment-flows') {
+      return { ok: true, json: async () => ({
+        clientSecret: 'cs_test',
+        planId: 'early_monthly',
+        billingInterval: 'monthly',
+        amount: '3.60',
+        currency: 'EUR',
+      }) }
     }
     return { ok: false, status: 404, json: async () => ({ detail: 'not found' }) }
   }))
@@ -151,7 +178,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(await screen.findByRole('button', { name: /^subscribe$/i })).toBeInTheDocument()
   })
 
-  it('shows visible reactivate errors and recovers the loading state', async () => {
+  it('shows visible shared payment-flow errors and recovers the loading state', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url === 'https://billing.test/subscription' && !init?.method) {
         return { ok: true, json: async () => ({
@@ -160,7 +187,11 @@ describe('SubscriptionPage billing recovery CTAs', () => {
           capabilities: { ...baseSubscription.capabilities, canReactivate: true },
         }) }
       }
-      if (url === 'https://billing.test/subscription/reactivate') {
+      if (url === 'https://billing.test/subscription/payment-flows/current') return { ok: true, json: async () => ({ flow: null }) }
+      if (url === 'https://billing.test/subscription/payment-options?interval=monthly') {
+        return { ok: true, json: async () => ({ selectedInterval: 'monthly', options: [{ id: 'stripe_pay_now', provider: 'stripe', planIds: ['early_monthly'], billingIntervals: ['monthly'], enabled: true }] }) }
+      }
+      if (url === 'https://billing.test/subscription/payment-flows') {
         return { ok: false, status: 500, json: async () => ({ detail: 'Payment setup failed safely' }) }
       }
       return { ok: false, status: 404, json: async () => ({}) }
@@ -169,10 +200,10 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     render(<SubscriptionPage />)
 
     fireEvent.click(await screen.findByRole('button', { name: /reactivate/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /subscribe by card/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /continue to card payment/i }))
 
     expect(await screen.findByText('Payment setup failed safely')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('button', { name: /subscribe by card/i })).not.toBeDisabled())
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue to card payment/i })).not.toBeDisabled())
   })
 
   it('suppresses retry CTA while payment confirmation is pending after client-side success', async () => {
@@ -192,8 +223,12 @@ describe('SubscriptionPage billing recovery CTAs', () => {
               capabilities: { ...baseSubscription.capabilities, canRetryPayment: true, canStartPaidSubscription: true },
             } }
       }
-      if (url === 'https://billing.test/subscription/reactivate') {
-        return { ok: true, json: async () => ({ clientSecret: 'cs_test' }) }
+      if (url === 'https://billing.test/subscription/payment-flows/current') return { ok: true, json: async () => ({ flow: null }) }
+      if (url === 'https://billing.test/subscription/payment-options?interval=monthly') {
+        return { ok: true, json: async () => ({ selectedInterval: 'monthly', options: [{ id: 'stripe_pay_now', provider: 'stripe', planIds: ['early_monthly'], billingIntervals: ['monthly'], enabled: true }] }) }
+      }
+      if (url === 'https://billing.test/subscription/payment-flows') {
+        return { ok: true, json: async () => ({ clientSecret: 'cs_test', planId: 'early_monthly', billingInterval: 'monthly', amount: '3.60', currency: 'EUR' }) }
       }
       return { ok: false, status: 404, json: async () => ({}) }
     }))
@@ -201,7 +236,9 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     render(<SubscriptionPage />)
 
     fireEvent.click(await screen.findByRole('button', { name: /reactivate/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /subscribe by card/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /continue to card payment/i }))
+    expect(await screen.findByText('Amount due')).toBeInTheDocument()
+    expect(screen.getByText('Powered by Stripe')).toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: /mock payment success/i }))
 
     expect(await screen.findByText(/confirming your payment/i)).toBeInTheDocument()
