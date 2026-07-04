@@ -292,7 +292,7 @@ export default function PaymentChoicePanel({
         title="Pay annual with Bitcoin"
         description="Scan the QR code or copy the payment details. Your 14 bonus days and paid access apply after BTCPay settlement confirms."
         settledMessage="Payment settled. Refreshing your subscription..."
-        onBack={() => setBitcoinSession(null)}
+        onBack={cancelCurrentFlow}
         onPaymentComplete={async () => {
           await onSuccess()
           await successPoll?.()
@@ -304,6 +304,15 @@ export default function PaymentChoicePanel({
   if (clientSecret) {
     return (
       <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => { void cancelCurrentFlow() }}
+          disabled={loading !== null}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))] disabled:opacity-50"
+        >
+          ← Back to payment options
+        </button>
+
         <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2">

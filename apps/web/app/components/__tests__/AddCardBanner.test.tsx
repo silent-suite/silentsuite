@@ -81,6 +81,7 @@ describe('AddCardBanner', () => {
       if (url.includes('/subscription/payment-options?interval=annual')) return { ok: true, json: async () => annualOptions } as Response
       if (url.includes('/subscription/crypto/invoice/inv_123/payment-methods')) return { ok: true, json: async () => ({ paymentMethods: [{ id: 'btc', label: 'BTC', qrValue: 'bitcoin:test', address: 'bc1test', amountDue: '0.001', cryptoCode: 'BTC' }] }) } as Response
       if (url.includes('/subscription/crypto/invoice/inv_123')) return { ok: true, json: async () => ({ status: 'pending' }) } as Response
+      if (url.includes('/subscription/payment-flows/cancel')) return { ok: true, json: async () => ({ cancelled: true, flowKind: 'btcpay_annual' }) } as Response
       if (url.includes('/subscription/payment-flows')) return { ok: true, json: async () => ({ checkoutUrl: 'https://btcpay.silentsuite.io/i/inv_123', invoiceId: 'inv_123', invoiceLookupToken: 'lookup_123' }) } as Response
       return { ok: false, json: async () => ({}) } as Response
     })
@@ -101,6 +102,13 @@ describe('AddCardBanner', () => {
         body: JSON.stringify({ flowKind: 'btcpay_annual', planId: 'early_annual', returnUrl: '/settings/subscription' }),
       }),
     ))
+
+    await waitFor(() => expect(screen.getAllByText('Back to payment options').length).toBeGreaterThan(0))
+    fireEvent.click(screen.getAllByText('Back to payment options')[0])
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'https://billing.example.test/subscription/payment-flows/cancel',
+      expect.objectContaining({ method: 'POST', credentials: 'include' }),
+    ))
   })
 
   it('cancels a pending card payment flow when backing out of the card form', async () => {
@@ -118,7 +126,8 @@ describe('AddCardBanner', () => {
     fireEvent.click(await screen.findByText('Continue to card payment'))
 
     expect(await screen.findByText('Powered by Stripe')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('← Back to options'))
+    expect(screen.getAllByText('← Back to payment options').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByText('← Back to payment options')[0])
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
       'https://billing.example.test/subscription/payment-flows/cancel',
