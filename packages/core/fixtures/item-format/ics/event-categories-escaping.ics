@@ -1,0 +1,17 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//SilentSuite//Golden Interop Corpus//EN
+BEGIN:VEVENT
+UID:golden-ics-categories-escaping-001
+DTSTAMP:20260701T120000Z
+DTSTART:20260410T090000Z
+DTEND:20260410T100000Z
+SUMMARY:Budget review\; Q2 planning
+DESCRIPTION:Agenda:\n1. Costs\, staffing\n2. Backslash test \\ done — th
+ is description also exercises RFC 5545 line unfolding.
+LOCATION:Café Zentral\, Room 42
+CATEGORIES:Work,Travel\, Inc.,Semi\;colon,Back\\slash
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+END:VEVENT
+END:VCALENDAR

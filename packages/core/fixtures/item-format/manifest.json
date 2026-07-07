@@ -1,0 +1,82 @@
+{
+  "description": "Golden ICS/VCF item-format corpus. Shared expectations consumed by packages/core Vitest (src/utils/item-format-fixtures.test.ts) and bridge pytest (bridge/tests/test_item_format_fixtures.py). See README.md.",
+  "fixtures": [
+    {
+      "path": "ics/event-categories-escaping.ics",
+      "kind": "vevent",
+      "covers": ["categories", "escaping", "line-folding", "utf8"],
+      "expected": {
+        "uid": "golden-ics-categories-escaping-001",
+        "summary": "Budget review; Q2 planning",
+        "description": "Agenda:\n1. Costs, staffing\n2. Backslash test \\ done — this description also exercises RFC 5545 line unfolding.",
+        "location": "Café Zentral, Room 42",
+        "categories": ["Work", "Travel, Inc.", "Semi;colon", "Back\\slash"],
+        "status": "CONFIRMED",
+        "dtstartUtc": "20260410T090000Z",
+        "dtendUtc": "20260410T100000Z"
+      }
+    },
+    {
+      "path": "ics/event-tzid-recurrence.ics",
+      "kind": "vevent",
+      "covers": ["tzid", "rrule", "exdate", "categories"],
+      "expected": {
+        "uid": "golden-ics-tzid-recurrence-001",
+        "summary": "Weekly sync (Vienna)",
+        "tzid": "Europe/Vienna",
+        "dtstartLocal": "20260707T140000",
+        "dtendLocal": "20260707T150000",
+        "utcOffsetMinutes": 120,
+        "rrule": "FREQ=WEEKLY;BYDAY=TU;COUNT=10",
+        "exdateLocal": ["20260714T140000", "20260728T140000"],
+        "categories": ["Work", "Recurring"],
+        "status": "CONFIRMED"
+      }
+    },
+    {
+      "path": "ics/todo-categories.ics",
+      "kind": "vtodo",
+      "covers": ["categories", "escaping", "vtodo"],
+      "expected": {
+        "uid": "golden-ics-todo-categories-001",
+        "summary": "File taxes, finally",
+        "description": "Step 1: gather docs\nStep 2: submit; celebrate",
+        "dueUtc": "20260430T170000Z",
+        "priority": 5,
+        "status": "NEEDS-ACTION",
+        "percentComplete": 25,
+        "categories": ["Home", "Errands, misc"]
+      }
+    },
+    {
+      "path": "vcf/contact-categories-escaping.vcf",
+      "kind": "vcard",
+      "covers": ["categories", "escaping", "structured-name"],
+      "expected": {
+        "uid": "golden-vcf-categories-escaping-001",
+        "fn": "Dr. Ada Q. Lovelace, PhD",
+        "n": { "family": "Love;lace", "given": "Ada, Quincy", "prefix": "Dr.", "suffix": "PhD" },
+        "org": "Analytical Engines, Ltd.",
+        "title": "Chief Difference Officer",
+        "categories": ["Friends", "Book Club, Vienna", "Semi;colon", "Back\\slash"],
+        "note": "First line\nSecond line with comma, semicolon; and backslash \\ end",
+        "email": [{ "type": "work", "value": "ada@example.com" }],
+        "tel": [{ "type": "cell", "value": "+43 660 1234567" }]
+      }
+    },
+    {
+      "path": "vcf/contact-tel-uri.vcf",
+      "kind": "vcard",
+      "covers": ["tel-value-uri", "categories"],
+      "expected": {
+        "uid": "golden-vcf-tel-uri-001",
+        "fn": "Taro Interop",
+        "n": { "family": "Interop", "given": "Taro" },
+        "categories": ["Testing"],
+        "telUri": "tel:+1-555-0100",
+        "telNumber": "+1-555-0100",
+        "cellNumber": "+1-555-0199"
+      }
+    }
+  ]
+}
