@@ -5,7 +5,7 @@ from django.core import exceptions as django_exceptions
 from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
 from django.db.models import Q, QuerySet
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Request, status
 
 from etebase_server.django import models
 from etebase_server.myauth.models import UserType
@@ -584,9 +584,12 @@ def fetch_updates(
 
 @item_router.post("/item/transaction/", dependencies=[Depends(has_write_access), *PERMISSIONS_READWRITE])
 def item_transaction(
-    collection_uid: str,
     data: ItemBatchIn,
     background_tasks: BackgroundTasks,
+    # Path(...) is required for the uid to bind from the router prefix: the
+    # route's dependant is built before include_router applies the prefix, so
+    # a bare `collection_uid: str` is classified as a query parameter.
+    collection_uid: str = Path(...),
     stoken: t.Optional[str] = None,
     user: UserType = Depends(get_authenticated_user),
 ):
@@ -597,9 +600,10 @@ def item_transaction(
 
 @item_router.post("/item/batch/", dependencies=[Depends(has_write_access), *PERMISSIONS_READWRITE])
 def item_batch(
-    collection_uid: str,
     data: ItemBatchIn,
     background_tasks: BackgroundTasks,
+    # See item_transaction: Path(...) is required for prefix binding.
+    collection_uid: str = Path(...),
     stoken: t.Optional[str] = None,
     user: UserType = Depends(get_authenticated_user),
 ):
