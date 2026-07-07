@@ -274,7 +274,7 @@ Use the CalDAV/CardDAV URL shown on the success page or dashboard, for example:
 http://127.0.0.1:37358/your@email.com/
 ```
 
-Do not copy the browser address-bar URL from the temporary sign-in page into Thunderbird, Outlook, or another DAV client.
+Do not copy the browser address-bar URL from the temporary sign-in page into Thunderbird, Outlook, or another DAV client. After sign-in, the success page waits for the real dashboard and automatically switches the tab to `http://127.0.0.1:37358/` once it is reachable.
 
 ### Thunderbird says no calendars, tasks, or contacts were found
 
