@@ -17,7 +17,7 @@ Thank you for your interest in contributing to SilentSuite. This guide will help
 
 ## Before You Start
 
-If this is your first contribution, start with an issue labeled `good first issue`. These are intentionally small and should have exact files and acceptance criteria. If anything is unclear, ask in the issue before opening a PR.
+If this is your first contribution, start with an issue labeled [good first issue](https://github.com/silent-suite/silentsuite/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22). These are intentionally small and should have exact files and acceptance criteria. If anything is unclear, ask in the issue before opening a PR.
 
 - Do not paste passwords, API keys, recovery phrases, `.env` values, or private calendar/contact/task content into issues, PRs, screenshots, or logs.
 - Redact sensitive values before posting debug output.
