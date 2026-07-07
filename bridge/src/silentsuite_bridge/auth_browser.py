@@ -427,6 +427,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
         }
         .docs-link a { color: #4ade80; text-decoration: none; }
         .docs-link a:hover { text-decoration: underline; }
+        .redirect-note { color: #4ade80; font-size: 13px; margin-top: 12px; }
     </style>
 </head>
 <body>
@@ -447,8 +448,9 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
             <p class="url-note" style="color:#f59e0b;">This URL is for calendar/contact apps, not a web browser. Copy it into your app &mdash; opening it in a browser can expose your password in the address bar.</p>
             DASHBOARD_BOOKMARK
             <div class="next-step">
-                You're signed in. If you installed through PowerShell, wait for the installer to say the bridge dashboard is reachable before adding the URL to your app.
+                You're signed in. If you installed through PowerShell, this tab will switch to the bridge dashboard as soon as the installer starts it. Wait for the installer to say the bridge dashboard is reachable before adding the URL to your app.
             </div>
+            <p class="redirect-note" id="redirectNote">Waiting for the bridge dashboard...</p>
         </div>
 
         <div class="card">
@@ -613,6 +615,32 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
             document.body.removeChild(ta);
             setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
         }
+        (function redirectWhenDashboardIsReady() {
+            var dashboardUrl = 'DASHBOARD_URL';
+            var note = document.getElementById('redirectNote');
+            if (!dashboardUrl) {
+                if (note) { note.textContent = 'Dashboard is disabled for this bridge bind.'; }
+                return;
+            }
+
+            var attempts = 0;
+            var maxAttempts = 45;
+            function tryDashboard() {
+                attempts += 1;
+                fetch(dashboardUrl, { mode: 'no-cors', cache: 'no-store' }).then(function() {
+                    window.location.href = dashboardUrl;
+                }).catch(function() {
+                    if (attempts >= maxAttempts) {
+                        if (note) {
+                            note.textContent = 'Dashboard did not open automatically. Keep this tab as a reference and open ' + dashboardUrl + ' after the installer reports success.';
+                        }
+                        return;
+                    }
+                    window.setTimeout(tryDashboard, 1000);
+                });
+            }
+            window.setTimeout(tryDashboard, 1000);
+        })();
     </script>
 </body>
 </html>"""
@@ -652,11 +680,13 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                     "to find these details later</div>"
                 )
             else:
+                dashboard_url = ""
                 dashboard_bookmark = '<div class="bookmark-box">Dashboard is disabled for remote bridge binds.</div>'
 
             page = SUCCESS_PAGE_HTML
             page = page.replace("USER_EMAIL", html_mod.escape(email))
             page = page.replace("BRIDGE_URL", html_mod.escape(bridge_url))
+            page = page.replace("DASHBOARD_URL", html_mod.escape(dashboard_url))
             page = page.replace("DASHBOARD_BOOKMARK", dashboard_bookmark)
 
             self.send_response(200)

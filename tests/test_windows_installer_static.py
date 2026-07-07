@@ -77,7 +77,11 @@ def test_browser_login_success_page_distinguishes_temporary_auth_port_from_dav_p
 
     assert "temporary sign-in page" in auth_browser
     assert "not the address-bar URL" in auth_browser
-    assert "wait for the installer to say the bridge dashboard is reachable" in auth_browser
+    assert "this tab will switch to the bridge dashboard" in auth_browser
+    assert "redirectWhenDashboardIsReady" in auth_browser
+    assert "fetch(dashboardUrl, { mode: 'no-cors', cache: 'no-store' })" in auth_browser
+    assert "window.location.href = dashboardUrl" in auth_browser
+    assert "DASHBOARD_URL" in auth_browser
 
 
 def test_bridge_docs_link_direct_windows_asset_and_visible_error_recovery():
@@ -88,6 +92,7 @@ def test_bridge_docs_link_direct_windows_asset_and_visible_error_recovery():
     assert "already-open PowerShell" in docs or "already-open Windows Terminal" in docs
     assert "-OutFile" in docs and "-File" in docs
     assert "temporary local sign-in page on a random port" in docs
+    assert "automatically switches the tab" in docs
     assert "Thunderbird says no calendars, tasks, or contacts were found" in docs
     assert "%LOCALAPPDATA%\\SilentSuite\\bridge.log" in docs
 
