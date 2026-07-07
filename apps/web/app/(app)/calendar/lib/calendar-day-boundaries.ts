@@ -8,6 +8,9 @@ export interface ScheduleXDayBoundariesInternal {
   end: number
 }
 
+const MIN_WEEK_GRID_HEIGHT = 800
+const WEEK_GRID_HOUR_HEIGHT = 112
+
 export function formatDayBoundary(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00`
 }
@@ -34,4 +37,9 @@ export function toScheduleXDayBoundariesInternal(
     start: hourToScheduleXTimePoint(startHour),
     end: hourToScheduleXTimePoint(endHour),
   }
+}
+
+export function getScheduleXWeekGridHeight(startHour: number, endHour: number): number {
+  const visibleHours = Math.max(1, endHour - startHour)
+  return Math.max(MIN_WEEK_GRID_HEIGHT, visibleHours * WEEK_GRID_HOUR_HEIGHT)
 }

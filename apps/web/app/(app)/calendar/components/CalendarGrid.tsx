@@ -18,6 +18,7 @@ import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
 import { expandEventsForRange, toScheduleXEvents, type DisplayEvent } from '../lib/calendar-grid-events'
 import {
+  getScheduleXWeekGridHeight,
   toScheduleXDayBoundariesExternal,
   toScheduleXDayBoundariesInternal,
 } from '../lib/calendar-day-boundaries'
@@ -400,6 +401,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
   // Capture initial first-day-of-week for Schedule-X config (changes pushed via signal below)
   const initialFirstDayRef = useRef(effectiveSxFirstDayOfWeek)
   const initialDayBoundariesRef = useRef(toScheduleXDayBoundariesExternal(dayStartHour, dayEndHour))
+  const initialWeekGridHeightRef = useRef(getScheduleXWeekGridHeight(dayStartHour, dayEndHour))
 
   // Memoize the event click handler
   const handleEventClick = useCallback(
@@ -439,7 +441,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
     dayBoundaries: initialDayBoundariesRef.current,
     timezone: initialTimezoneRef.current,
     weekOptions: {
-      gridHeight: 800,
+      gridHeight: initialWeekGridHeightRef.current,
       eventWidth: 95,
       // Concurrent (overlapping) events — e.g. from different collections — must
       // render in side-by-side columns instead of stacking on top of each other.
@@ -489,20 +491,26 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
     }
   }, [calendar, effectiveSxFirstDayOfWeek])
 
-  // Push the effective week column count through Schedule-X. The mobile 3-day
-  // views reuse the week renderer with nDays=3 or nDays=7; normal week/month keep 7 days.
+  // Push effective week options through Schedule-X. The grid height is tied to
+  // the visible day-boundary span so user-shortened days do not leave a blank
+  // parent band below the final hour row on tall screens.
   useEffect(() => {
     if (!calendar) return
     try {
       const app = (calendar as any).$app
       const weekOptionsSignal = app?.config?.weekOptions
-      if (weekOptionsSignal?.value && weekOptionsSignal.value.nDays !== effectiveWeekDays) {
-        weekOptionsSignal.value = { ...weekOptionsSignal.value, nDays: effectiveWeekDays }
+      const gridHeight = getScheduleXWeekGridHeight(dayStartHour, dayEndHour)
+      if (
+        weekOptionsSignal?.value &&
+        (weekOptionsSignal.value.nDays !== effectiveWeekDays ||
+          weekOptionsSignal.value.gridHeight !== gridHeight)
+      ) {
+        weekOptionsSignal.value = { ...weekOptionsSignal.value, nDays: effectiveWeekDays, gridHeight }
       }
     } catch {
       // Schedule-X internals may not be ready
     }
-  }, [calendar, effectiveWeekDays])
+  }, [calendar, effectiveWeekDays, dayStartHour, dayEndHour])
 
   // Push day-boundary preference changes into Schedule-X and our drag/select math.
   useEffect(() => {
