@@ -1,0 +1,15 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//SilentSuite//Golden Interop Corpus//EN
+BEGIN:VTODO
+UID:golden-ics-todo-categories-001
+DTSTAMP:20260701T120000Z
+SUMMARY:File taxes\, finally
+DESCRIPTION:Step 1: gather docs\nStep 2: submit\; celebrate
+DUE:20260430T170000Z
+PRIORITY:5
+STATUS:NEEDS-ACTION
+PERCENT-COMPLETE:25
+CATEGORIES:Home,Errands\, misc
+END:VTODO
+END:VCALENDAR

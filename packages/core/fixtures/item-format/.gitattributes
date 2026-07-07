@@ -1,0 +1,2 @@
+*.ics -text whitespace=cr-at-eol
+*.vcf -text whitespace=cr-at-eol
