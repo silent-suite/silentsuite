@@ -175,12 +175,10 @@
    --------------------------------------------------------------------------- */
 .sx-silentsuite-calendar .sx__week-grid {
   background: rgb(var(--background));
-  height: max(var(--sx-week-grid-height), 100%);
 }
 
 .sx-silentsuite-calendar .sx__week-wrapper {
   background: rgb(var(--background));
-  min-height: 100%;
 }
 
 .sx-silentsuite-calendar .sx__time-grid-day {

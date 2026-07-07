@@ -12,8 +12,8 @@ describe('Schedule-X week layout CSS', () => {
     expect(globalsCss).toMatch(/\.sx-silentsuite-calendar \.sx__view-container[\s\S]*background: rgb\(var\(--background\)\)/)
   })
 
-  it('lets the fixed Schedule-X week grid cover taller calendar panes', () => {
-    expect(globalsCss).toMatch(/\.sx-silentsuite-calendar \.sx__week-wrapper[\s\S]*min-height: 100%/)
-    expect(globalsCss).toMatch(/\.sx-silentsuite-calendar \.sx__week-grid[\s\S]*height: max\(var\(--sx-week-grid-height\), 100%\)/)
+  it('does not override Schedule-X week grid height calculations', () => {
+    expect(globalsCss).not.toContain('height: max(var(--sx-week-grid-height), 100%)')
+    expect(globalsCss).not.toMatch(/\.sx-silentsuite-calendar \.sx__week-wrapper[\s\S]*min-height: 100%/)
   })
 })
