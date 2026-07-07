@@ -443,10 +443,11 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                 <button class="copy-btn" onclick="copyUrl(event, 'bridgeUrl')">Copy</button>
             </div>
             <p class="url-note">CalDAV and CardDAV share the same base URL &mdash; this is normal. Your app will discover calendars and contacts automatically.</p>
+            <p class="url-note" style="color:#f59e0b;">If your browser address bar shows another localhost port, that is only the temporary sign-in page. Use the copied app URL above, not the address-bar URL.</p>
             <p class="url-note" style="color:#f59e0b;">This URL is for calendar/contact apps, not a web browser. Copy it into your app &mdash; opening it in a browser can expose your password in the address bar.</p>
             DASHBOARD_BOOKMARK
             <div class="next-step">
-                You're signed in. You can close this tab &mdash; the bridge is already running in the background and will keep syncing on its own.
+                You're signed in. If you installed through PowerShell, wait for the installer to say the bridge dashboard is reachable before adding the URL to your app.
             </div>
         </div>
 
