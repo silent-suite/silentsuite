@@ -75,6 +75,7 @@ function assessSnapshot(snapshot) {
     if (entries.some((entry) => entry.status !== 'ok')) nonOk.push(phase)
   }
 
+  if (snapshot.source !== 'restore') findings.push(`source is ${String(snapshot.source ?? 'unknown')}, expected restore`)
   if (snapshot.failedPhase !== null) findings.push(`failedPhase is ${String(snapshot.failedPhase)}`)
   if (missing.length > 0) findings.push(`missing phases: ${missing.join(', ')}`)
   if (failed.length > 0) findings.push(`failed phases: ${failed.join(', ')}`)
@@ -183,6 +184,13 @@ function runSelfTest() {
   }
   if (failReport.includes('session-secret') || failReport.includes('item-uid')) {
     throw new Error('self-test report leaked forbidden fixture data')
+  }
+
+  const loginFixture = makePassingFixture()
+  loginFixture.source = 'login'
+  const loginReport = report(loginFixture)
+  if (!loginReport.startsWith('Authenticated restore smoke: FAIL') || !loginReport.includes('source is login, expected restore')) {
+    throw new Error('expected login-source fixture to fail restore smoke')
   }
   console.log('restore-smoke-report self-test: PASS')
 }

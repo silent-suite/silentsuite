@@ -60,6 +60,8 @@ CI runs this focused gate before the full server test suite. Keep CI step names 
 
 After changes that affect web login, encrypted-session restore, Etebase item listing, or SyncEngine startup, run the [authenticated restore smoke probe](./authenticated-restore-smoke.md). It uses the app's redacted `silentsuite.restore-diagnostics.v1` payload and `scripts/restore-smoke-report.mjs` to distinguish CI/deploy health from real authenticated restore health without exposing plaintext PIM or credentials.
 
+Passing CI, building a PR image, or checking an unauthenticated page only proves deploy health. The authenticated restore smoke must run after the change reaches a deployed preview/dev environment. For production smoke, use only an approved already-initialized account; first-login or empty production accounts are not mutation-free because restore can create default collections.
+
 Validate the report helper with:
 
 ```bash

@@ -87,4 +87,50 @@ describe('SyncIndicator', () => {
     expect(copied).toContain('"failedPhase":"restoreSession"')
     expect(copied).not.toContain('session-secret')
   })
+
+  it('copies successful restore diagnostics in debug-exposed healthy states', async () => {
+    const writeText = vi.fn(async () => {})
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    mockSyncState.syncStatus = 'synced'
+    sessionStorage.setItem('silentsuite.restore-diagnostics.v1', JSON.stringify({
+      version: 1,
+      source: 'restore',
+      generatedAtMs: 1,
+      etebaseHost: 'server.silentsuite.io',
+      billingHost: 'api.silentsuite.io',
+      failedPhase: null,
+      entries: [{ phase: 'syncEngineStart', status: 'ok' }],
+    }))
+
+    render(<SyncIndicator />)
+    fireEvent.click(screen.getByRole('button', { name: 'Copy sync restore diagnostics' }))
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
+    expect(writeText.mock.calls[0]![0]).toContain('"failedPhase":null')
+  })
+
+  it('hides diagnostics copy in production-like contexts without debug opt-in', () => {
+    vi.stubGlobal('window', {
+      location: { hostname: 'app.silentsuite.io', search: '' },
+      sessionStorage,
+      localStorage,
+    })
+    sessionStorage.setItem('silentsuite.restore-diagnostics.v1', JSON.stringify({
+      version: 1,
+      source: 'restore',
+      generatedAtMs: 1,
+      etebaseHost: 'server.silentsuite.io',
+      billingHost: 'api.silentsuite.io',
+      failedPhase: null,
+      entries: [{ phase: 'syncEngineStart', status: 'ok' }],
+    }))
+
+    render(<SyncIndicator />)
+
+    expect(screen.queryByRole('button', { name: 'Copy sync restore diagnostics' })).toBeNull()
+    vi.unstubAllGlobals()
+  })
 })
