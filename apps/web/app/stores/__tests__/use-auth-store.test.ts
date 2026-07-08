@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useAuthStore } from '../use-auth-store'
+import { secureClear } from '@/app/lib/secure-storage'
 
 // Mock fetch globally
 vi.stubGlobal('fetch', vi.fn())
@@ -66,6 +67,9 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockReset()
     dataCacheClearAll.mockClear()
     offlineQueueClearAll.mockClear()
+    vi.mocked(secureClear).mockClear()
+    vi.mocked(secureClear).mockImplementation(async () => { secureStore = {} })
+    vi.stubGlobal('BroadcastChannel', undefined)
     secureStore = {}
     localStorage.clear()
     sessionStorage.clear()
@@ -114,6 +118,7 @@ describe('useAuthStore', () => {
           trialPath: '30day',
           promoCode: 'beta196',
           wantsProductUpdates: true,
+          rememberDevice: false,
         }),
       }),
     )
@@ -139,6 +144,7 @@ describe('useAuthStore', () => {
       etebaseSessionToken: 'etebase-token',
       planId: 'early_monthly',
       trialPath: '30day',
+      rememberDevice: false,
     })
   })
 
@@ -173,6 +179,7 @@ describe('useAuthStore', () => {
           trialPath: '30day',
           promoCode: 'BETA196',
           wantsProductUpdates: false,
+          rememberDevice: false,
         }),
       }),
     )
@@ -195,6 +202,7 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().pendingSignup).toEqual({
       email: 'new@example.com',
       wantsProductUpdates: true,
+      rememberDevice: false,
     })
   })
 
@@ -323,6 +331,17 @@ describe('useAuthStore', () => {
       expect(useAuthStore.getState().user!.onboardedAt).toBeNull()
     })
 
+
+    it('login clears unvalidated local auth material when token exchange is rate limited', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 429 } as Response)
+
+      await useAuthStore.getState().login('a@b.com', 'pw')
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(secureStore['etebase_session']).toBeUndefined()
+      expect(localStorage.getItem('silentsuite-hosted-validation-initialized')).toBeNull()
+    })
+
     it('refreshSession hydrates onboardedAt', async () => {
       vi.mocked(fetch).mockResolvedValueOnce({
         ok: true,
@@ -331,6 +350,7 @@ describe('useAuthStore', () => {
           email: 'x@y.com',
           planId: 'free',
           isAdmin: false,
+          rememberDevice: true,
           onboardedAt: '2024-12-01T00:00:00.000Z',
         }),
       } as Response)
@@ -348,6 +368,7 @@ describe('useAuthStore', () => {
           email: 'x@y.com',
           planId: 'free',
           isAdmin: false,
+          rememberDevice: true,
           onboardedAt: null,
         }),
       } as Response)
@@ -355,6 +376,135 @@ describe('useAuthStore', () => {
       await useAuthStore.getState().restoreSession()
 
       expect(useAuthStore.getState().user!.onboardedAt).toBeNull()
+    })
+
+    it('restoreSession rejects restored session-cookie refresh when the session marker is missing', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      vi.mocked(fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'u1', email: 'x@y.com', planId: 'free', isAdmin: false, rememberDevice: false }),
+        } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.user).toBeNull()
+      expect(secureStore['etebase_session']).toBeUndefined()
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('/auth/session'),
+        expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
+      )
+    })
+
+
+    it('restoreSession accepts a session-cookie refresh when the session marker matches', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      sessionStorage.setItem('silentsuite-hosted-validation-session', JSON.stringify({ userId: 'u1', rememberDevice: false, validatedAt: Date.now() }))
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'u1', email: 'x@y.com', planId: 'free', isAdmin: false, rememberDevice: false }),
+      } as Response)
+
+      await useAuthStore.getState().restoreSession()
+
+      expect(useAuthStore.getState().user).toMatchObject({ id: 'u1', rememberDevice: false })
+      expect(fetch).toHaveBeenCalledTimes(1)
+    })
+
+
+    it('restoreSession clears local auth material on unexpected invalid refresh responses', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      sessionStorage.setItem('silentsuite-hosted-validation-session', JSON.stringify({ userId: 'u1', rememberDevice: false, validatedAt: Date.now() }))
+      localStorage.setItem('silentsuite-hosted-validation-initialized', 'true')
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 400 } as Response)
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.user).toBeNull()
+      expect(secureStore['etebase_session']).toBeUndefined()
+      expect(sessionStorage.getItem('silentsuite-hosted-validation-session')).toBeNull()
+      expect(localStorage.getItem('silentsuite-hosted-validation-initialized')).toBeNull()
+    })
+
+
+    it('restoreSession skips online refresh when local auth is tombstoned', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      localStorage.setItem('silentsuite-hosted-auth-invalidated', String(Date.now()))
+
+      await useAuthStore.getState().restoreSession()
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('restoreSession clears unmarked local auth material when restore is rate limited', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 429 } as Response)
+
+      await useAuthStore.getState().restoreSession()
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(useAuthStore.getState().subscriptionStatus).toBeNull()
+      expect(secureStore['etebase_session']).toBeUndefined()
+    })
+
+    it('clearLocalAuthMaterial clears hosted markers even if secure storage clear fails', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      localStorage.setItem('silentsuite-hosted-validation-initialized', 'true')
+      vi.mocked(secureClear).mockRejectedValueOnce(new Error('idb clear failed'))
+      vi.mocked(fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'u1', email: 'x@y.com', planId: 'free', isAdmin: false, rememberDevice: false }),
+        } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+
+      await useAuthStore.getState().restoreSession()
+
+      expect(sessionStorage.getItem('silentsuite-hosted-validation-session')).toBeNull()
+      expect(localStorage.getItem('silentsuite-hosted-validation-initialized')).toBeNull()
+      expect(localStorage.getItem('silentsuite-hosted-validation-active-tabs')).toBeNull()
+      expect(localStorage.getItem('silentsuite-hosted-auth-invalidated')).toBeTruthy()
+      expect(vi.mocked(secureClear)).toHaveBeenCalled()
+
+      resetStore()
+      vi.mocked(fetch).mockReset()
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      await useAuthStore.getState().restoreSession()
+
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(useAuthStore.getState().subscriptionStatus).not.toBe('billing_unavailable')
+    })
+
+
+    it('restoreSession accepts a session-cookie refresh in a new tab when another active tab is present', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      sessionStorage.setItem('silentsuite-hosted-tab-id', 'tab-current')
+      localStorage.setItem('silentsuite-hosted-validation-active-tabs', JSON.stringify({
+        'tab-existing': { userId: 'u1', validatedAt: Date.now() },
+      }))
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'u1', email: 'x@y.com', planId: 'free', isAdmin: false, rememberDevice: false }),
+      } as Response)
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(true)
+      expect(state.user).toMatchObject({ id: 'u1', rememberDevice: false })
+      expect(secureStore['etebase_session']).toBe('fake-session-data')
+      expect(fetch).toHaveBeenCalledTimes(1)
     })
 
     it('completeSignup sets onboardedAt to null for fresh accounts', () => {
@@ -639,8 +789,9 @@ describe('useAuthStore', () => {
       expect(useAuthStore.getState().isDegraded()).toBe(false)
     })
 
-    it('restoreSession enters degraded mode on network error with etebase session', async () => {
+    it('restoreSession enters degraded mode on network error with etebase session and validation marker', async () => {
       secureStore['etebase_session'] = 'fake-session-data'
+      sessionStorage.setItem('silentsuite-hosted-validation-session', JSON.stringify({ userId: 'user-1', rememberDevice: false, validatedAt: Date.now() }))
       vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
       await useAuthStore.getState().restoreSession()
@@ -650,8 +801,54 @@ describe('useAuthStore', () => {
       expect(state.subscriptionStatus).toBe('billing_unavailable')
       // Degraded users keep a non-null legacy onboardedAt timestamp for
       // backward compatibility with existing account metadata expectations.
-      expect(state.user).toMatchObject({ id: 'degraded', email: '', planId: 'unknown', isAdmin: false })
+      expect(state.user).toMatchObject({ id: 'user-1', email: '', planId: 'unknown', isAdmin: false })
       expect(state.user!.onboardedAt).toEqual(expect.any(String))
+    })
+
+
+    it('restoreSession does not trust unmarked legacy local sessions on first offline load', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.user).toBeNull()
+      expect(state.subscriptionStatus).toBeNull()
+      expect(secureStore['etebase_session']).toBeUndefined()
+    })
+
+    it('restoreSession preserves local data in an offline new tab while another session tab is active', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      sessionStorage.setItem('silentsuite-hosted-tab-id', 'tab-current')
+      localStorage.setItem('silentsuite-hosted-validation-initialized', 'true')
+      localStorage.setItem('silentsuite-hosted-validation-active-tabs', JSON.stringify({
+        'tab-existing': { userId: 'u1', validatedAt: Date.now() },
+      }))
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(true)
+      expect(state.subscriptionStatus).toBe('billing_unavailable')
+      expect(state.user).toMatchObject({ id: 'u1', rememberDevice: false })
+      expect(secureStore['etebase_session']).toBe('fake-session-data')
+    })
+
+    it('restoreSession clears stale local auth after validation has initialized and no marker is present', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      localStorage.setItem('silentsuite-hosted-validation-initialized', 'true')
+      vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+      await useAuthStore.getState().restoreSession()
+
+      const state = useAuthStore.getState()
+      expect(state.isAuthenticated).toBe(false)
+      expect(state.user).toBeNull()
+      expect(state.subscriptionStatus).not.toBe('billing_unavailable')
+      expect(secureStore['etebase_session']).toBeUndefined()
     })
 
     it('restoreSession does not enter degraded mode on network error without etebase session', async () => {
@@ -700,7 +897,7 @@ describe('useAuthStore', () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({ id: 'u1', email: 'test@x.com', planId: 'pro', isAdmin: false }),
+          json: async () => ({ id: 'u1', email: 'test@x.com', planId: 'pro', isAdmin: false, rememberDevice: true }),
         } as Response)
         .mockResolvedValueOnce({
           ok: true,
@@ -712,6 +909,55 @@ describe('useAuthStore', () => {
       expect(result).toBe(true)
       expect(useAuthStore.getState().subscriptionStatus).toBe('active')
       expect(useAuthStore.getState().isDegraded()).toBe(false)
+    })
+
+
+    it('retryBillingConnection rejects non-remembered refresh when the session marker is missing', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      useAuthStore.setState({ subscriptionStatus: 'billing_unavailable', isAuthenticated: true })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ id: 'u1', email: 'test@x.com', planId: 'pro', isAdmin: false, rememberDevice: false }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ status: 'active' }),
+        } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+
+      const result = await useAuthStore.getState().retryBillingConnection()
+
+      expect(result).toBe(false)
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(secureStore['etebase_session']).toBeUndefined()
+      expect(fetch).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('/auth/session'),
+        expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
+      )
+    })
+
+
+    it('retryBillingConnection clears local auth on explicit refresh auth failure', async () => {
+      secureStore['etebase_session'] = 'fake-session-data'
+      useAuthStore.setState({ subscriptionStatus: 'billing_unavailable', isAuthenticated: true })
+      vi.mocked(fetch)
+        .mockResolvedValueOnce({ ok: false, status: 401 } as Response)
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'active' }) } as Response)
+        .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+
+      const result = await useAuthStore.getState().retryBillingConnection()
+
+      expect(result).toBe(false)
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(secureStore['etebase_session']).toBeUndefined()
+      expect(localStorage.getItem('silentsuite-hosted-auth-invalidated')).toBeTruthy()
+      expect(fetch).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('/auth/session'),
+        expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
+      )
     })
 
     it('retryBillingConnection returns false on continued network failure', async () => {
