@@ -334,6 +334,10 @@ interface EtebaseState {
   itemCollectionMap: Map<string, string>
   // Whether initial data load from server is complete
   isInitialized: boolean
+  // True when the encrypted session could not be restored on this browser
+  // (missing/invalid/corrupt local session) and re-unlocking would help.
+  // Not set for offline errors or post-restore listing/sync failures.
+  restoreBlocked: boolean
   // SyncEngine reference
   syncEngine: any | null
 }
@@ -486,6 +490,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   itemTypeMap: new Map(),
   itemCollectionMap: new Map(),
   isInitialized: false,
+  restoreBlocked: false,
   syncEngine: null,
 
   initialize: async () => {
@@ -495,6 +500,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       etebaseServerUrl: serverUrl,
       billingApiUrl: BILLING_API_URL,
     })
+    // Clear any stale blocked state from a prior attempt before re-trying.
+    set({ restoreBlocked: false })
 
     try {
       diagnostics.startPhase('sessionRead')
@@ -505,7 +512,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (!savedSession) {
         diagnostics.skipPhase('restoreSession')
         diagnostics.persist()
-        logger.debug('[etebase-store] No saved session, skipping initialization')
+        // Authenticated (initialize only runs under ProtectedRoute) but no local
+        // vault to unlock -- re-entering credentials re-persists the session.
+        set({ restoreBlocked: true })
+        logger.debug('[etebase-store] No saved session, restore blocked')
         return
       }
 
@@ -628,7 +638,13 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       console.error('[etebase-store] Initialization failed', getSafeErrorDetails(err))
       // Don't clear the session -- the user might be offline
       // They can retry on next page load
-      set({ isInitialized: true })
+      // Only a session-restore failure (missing/invalid/corrupt local session)
+      // is recoverable by re-unlocking. Offline errors and post-restore
+      // listing/sync failures are NOT unlock cases (Slice 3 territory).
+      const failedPhase = diagnostics.snapshot().failedPhase
+      const isSessionRestoreFailure =
+        !isOfflineError(err) && (failedPhase === 'sessionRead' || failedPhase === 'restoreSession')
+      set({ isInitialized: true, restoreBlocked: isSessionRestoreFailure })
       if (!isOfflineError(err)) {
         showErrorToast('Failed to restore session. Please try signing in again.')
       }
@@ -1517,6 +1533,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
       isInitialized: false,
+      restoreBlocked: false,
       syncEngine: null,
     })
     logger.debug('[etebase-store] Destroyed')

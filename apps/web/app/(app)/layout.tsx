@@ -6,6 +6,7 @@ import { Sidebar } from '@/app/components/sidebar'
 import { Header } from '@/app/components/header'
 import { BottomNav } from '@/app/components/bottom-nav'
 import { ReadOnlyBanner, DegradedModeBanner } from '@/app/components/read-only-overlay'
+import { RestoreBlockedBanner } from '@/app/components/restore-blocked-banner'
 import { PendingSyncBanner } from '@/app/components/PendingSyncBanner'
 import { OfflineToast } from '@/app/components/OfflineToast'
 import { ToastContainer } from '@/app/components/Toast'
@@ -36,6 +37,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <div className="flex flex-1 flex-col min-w-0">
               <Header />
               <EmailVerificationBanner />
+              <RestoreBlockedBanner />
               {!isSelfHosted && degraded && <DegradedModeBanner />}
               {!isSelfHosted && readOnly && <ReadOnlyBanner />}
               <PendingSyncBanner />

@@ -167,6 +167,119 @@ describe('useEtebaseStore.initialize restore diagnostics', () => {
   })
 })
 
+describe('useEtebaseStore.initialize restoreBlocked flag', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      restoreBlocked: false,
+      syncEngine: null,
+    })
+  })
+
+  async function getSecureStorage() {
+    return import('@/app/lib/secure-storage')
+  }
+
+  it('defaults restoreBlocked to false', () => {
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
+  })
+
+  it('sets restoreBlocked when there is no saved session, without toast or removal', async () => {
+    const { secureGet, secureRemove } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce(null)
+
+    await useEtebaseStore.getState().initialize()
+
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(true)
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    expect(vi.mocked(secureRemove)).not.toHaveBeenCalled()
+  })
+
+  it('sets restoreBlocked on a non-offline restoreSession failure and preserves the session', async () => {
+    const { secureGet, secureRemove } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockRejectedValueOnce(new Error('bad session blob'))
+    offlineQueueMock.isOfflineError.mockReturnValue(false)
+
+    await useEtebaseStore.getState().initialize()
+
+    const state = useEtebaseStore.getState()
+    expect(state.restoreBlocked).toBe(true)
+    expect(state.isInitialized).toBe(true)
+    expect(vi.mocked(secureRemove)).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith(
+      'Failed to restore session. Please try signing in again.',
+    )
+  })
+
+  it('does NOT set restoreBlocked on an offline restore error, and shows no toast', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+
+    await useEtebaseStore.getState().initialize()
+
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('does NOT set restoreBlocked when a post-restore listItems phase fails (Slice 3 boundary)', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockResolvedValueOnce({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValueOnce('fingerprint')
+    coreMock.listCollections.mockImplementation(async () => [mockCollection('col-1')])
+    coreMock.listItems.mockRejectedValueOnce(new Error('server 500 on listItems'))
+    offlineQueueMock.isOfflineError.mockReturnValue(false)
+
+    await useEtebaseStore.getState().initialize()
+
+    const state = useEtebaseStore.getState()
+    // restoreSession succeeded; the failure is in listItems:calendar, which is a
+    // Slice 3 concern, NOT an unlock case.
+    expect(state.restoreBlocked).toBe(false)
+    expect(state.isInitialized).toBe(true)
+  })
+
+  it('leaves restoreBlocked false on a fully successful restore', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockResolvedValueOnce({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValueOnce('fingerprint')
+    coreMock.listCollections.mockImplementation(async () => [mockCollection('col-1')])
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = vi.fn()
+      this.onStokenAdvance = vi.fn()
+      this.start = vi.fn(async () => {})
+    })
+
+    await useEtebaseStore.getState().initialize()
+
+    const state = useEtebaseStore.getState()
+    expect(state.restoreBlocked).toBe(false)
+    expect(state.isInitialized).toBe(true)
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('resets restoreBlocked to false on destroy()', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce(null)
+    await useEtebaseStore.getState().initialize()
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(true)
+
+    useEtebaseStore.getState().destroy()
+
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
+  })
+})
+
 describe('useEtebaseStore.createItemsBatch', () => {
   beforeEach(() => {
     offlineQueueMock.enqueue.mockClear()
