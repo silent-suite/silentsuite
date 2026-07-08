@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import 'fake-indexeddb/auto'
 import {
   getItemsByType,
@@ -16,6 +16,7 @@ import {
   putMeta,
   clearAll,
   ensureFingerprint,
+  getCacheCapabilityStatus,
   isCacheEnabled,
   CACHE_SCHEMA_VERSION,
   _resetForTests,
@@ -46,6 +47,23 @@ function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks'
 
 describe('data-cache', () => {
   describe('encryption guard', () => {
+    it('reports cache capability without touching IndexedDB', () => {
+      const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
+      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
+      _setEncryptedCacheAvailableForTests(true)
+      const openSpy = vi.spyOn(indexedDB, 'open')
+
+      expect(getCacheCapabilityStatus()).toEqual({
+        featureFlagEnabled: true,
+        encryptedEnvelopeAvailable: true,
+        enabled: true,
+      })
+      expect(openSpy).not.toHaveBeenCalled()
+
+      process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = previous
+      openSpy.mockRestore()
+    })
+
     it('does not enable cache when the env flag is true but encryption is unavailable', () => {
       const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
       process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'

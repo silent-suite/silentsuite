@@ -12,12 +12,21 @@ import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
   isCacheEnabled as isLocalCacheEnabled,
+  getCacheCapabilityStatus,
   type CachedItem,
 } from '@/app/lib/data-cache'
 import {
   createSafeOperationalError,
   getSafeErrorDetails,
 } from '@/app/lib/privacy-safe-errors'
+import {
+  logSyncTiming,
+  markSyncTimingStart,
+  nowMs,
+  safeTimingErrorCategory,
+  type SyncTimingPhase,
+  type SyncTimingFields,
+} from '@/app/lib/sync-timing'
 
 function reportSyncError(operation: string, err: unknown) {
   Sentry.captureException(createSafeOperationalError('sync-provider', operation), {
@@ -25,6 +34,14 @@ function reportSyncError(operation: string, err: unknown) {
     extra: getSafeErrorDetails(err),
   })
   logger.error(`[sync-provider] ${operation} failed`, getSafeErrorDetails(err))
+}
+
+function safeLogSyncTiming(phase: SyncTimingPhase, startedAt: number, fields: SyncTimingFields = {}) {
+  try {
+    logSyncTiming(phase, startedAt, fields)
+  } catch {
+    // Instrumentation must never affect sync behavior.
+  }
 }
 
 /**
@@ -64,31 +81,44 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     let unsubStatus: (() => void) | null = null
 
     async function init() {
+      const initStartedAt = markSyncTimingStart()
       try {
         setSyncStatus('syncing')
+        safeLogSyncTiming('cache-capability', initStartedAt, { ...getCacheCapabilityStatus() })
 
         // Cache-first hydration: when the feature flag is on, paint the UI
         // from IndexedDB before the network sync starts. This is best-effort
         // — failures are logged and the normal init path proceeds.
         if (isLocalCacheEnabled()) {
-          await hydrateFromCache()
+          const cacheStartedAt = nowMs()
+          await hydrateFromCache(cacheStartedAt)
         }
 
         // Restore session, create/fetch collections, load items, start SyncEngine
+        const etebaseStartedAt = nowMs()
         await etebaseInitialize()
+        safeLogSyncTiming('etebase-initialize', etebaseStartedAt)
 
         // Now load items from each collection into the data stores
+        const loadStartedAt = nowMs()
         await loadItemsIntoStores()
+        safeLogSyncTiming('load-items', loadStartedAt)
 
         // Wire SyncEngine change events
+        const changeHandlerStartedAt = nowMs()
         unsubChange = wireChangeHandler()
+        safeLogSyncTiming('wire-change-handler', changeHandlerStartedAt, { status: unsubChange ? 'ok' : 'skipped' })
 
         // Wire SyncEngine status
+        const statusHandlerStartedAt = nowMs()
         unsubStatus = wireStatusHandler()
+        safeLogSyncTiming('wire-status-handler', statusHandlerStartedAt, { status: unsubStatus ? 'ok' : 'skipped' })
 
         setSyncStatus('synced')
         setLastSynced(new Date())
+        safeLogSyncTiming('initial-sync-complete', initStartedAt)
       } catch (err) {
+        safeLogSyncTiming('initial-sync-failed', initStartedAt, { errorCategory: safeTimingErrorCategory('unknown') })
         reportSyncError('init', err)
         setSyncStatus('error')
         setError('Sync initialization failed')
@@ -105,7 +135,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
      * Cheap (~10-50ms for a typical vault) and fully off the network path.
      * Failures here are non-fatal; we just skip the optimistic paint.
      */
-    async function hydrateFromCache() {
+    async function hydrateFromCache(startedAt = nowMs()) {
       try {
         const [taskItems, contactItems, eventItems, core] = await Promise.all([
           cacheGetItemsByType('tasks'),
@@ -152,8 +182,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             logger.warn('[sync-provider] Failed to hydrate calendar events from cache', getSafeErrorDetails(err))
           }
         }
+        safeLogSyncTiming('cache-hydrate', startedAt, {
+          status: 'ok',
+          taskItemCount: taskItems.length,
+          contactItemCount: contactItems.length,
+          calendarItemCount: eventItems.length,
+        })
       } catch (err) {
         logger.warn('[sync-provider] Cache hydration failed', getSafeErrorDetails(err))
+        safeLogSyncTiming('cache-hydrate-failed', startedAt, { status: 'failed', errorCategory: 'cache' })
       }
     }
 
@@ -166,6 +203,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         items: { uid: string; content: string; collectionUid: string }[],
       ) {
         if (!cacheEnabled || items.length === 0) return
+        const startedAt = nowMs()
         const records: CachedItem[] = items.map((it) => ({
           itemUid: it.uid,
           collectionType: type,
@@ -175,14 +213,18 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         }))
         try {
           await cacheReplaceItemsForType(type, records)
+          safeLogSyncTiming('cache-mirror', startedAt, { type, itemCount: items.length })
         } catch (err) {
           logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
+          safeLogSyncTiming('cache-mirror-failed', startedAt, { type, itemCount: items.length, errorCategory: 'cache' })
         }
       }
 
       // Load tasks
+      const taskStartedAt = nowMs()
       try {
         const taskItems = await etebase.fetchAllItems('tasks')
+        let taskCount = 0
         if (taskItems.length > 0) {
           const { deserializeTask } = await import('@silentsuite/core')
           const tasks = taskItems.map((item) => {
@@ -191,45 +233,73 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             // can address the item without changing the stable iCalendar UID.
             return { ...task, id: item.uid, listId: item.collectionUid }
           })
+          taskCount = tasks.length
           useTaskStore.getState().syncFromRemote(tasks)
           logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
           await mirrorToCache('tasks', taskItems)
         }
+        safeLogSyncTiming('tasks-load', taskStartedAt, {
+          source: 'server',
+          cacheEnabled,
+          itemCount: taskItems.length,
+          taskCount,
+        })
       } catch (err) {
+        safeLogSyncTiming('tasks-load', taskStartedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
         reportSyncError('load tasks', err)
       }
 
       // Load contacts
+      const contactStartedAt = nowMs()
       try {
         const contactItems = await etebase.fetchAllItems('contacts')
+        let contactCount = 0
         if (contactItems.length > 0) {
           const { deserializeContact } = await import('@silentsuite/core')
           const contacts = contactItems.map((item) => {
             const contact = deserializeContact(item.content)
             return { ...contact, id: item.uid, listId: item.collectionUid }
           })
+          contactCount = contacts.length
           useContactStore.getState().syncFromRemote(contacts)
           logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
           await mirrorToCache('contacts', contactItems)
         }
+        safeLogSyncTiming('contacts-load', contactStartedAt, {
+          source: 'server',
+          cacheEnabled,
+          itemCount: contactItems.length,
+          contactCount,
+        })
       } catch (err) {
+        safeLogSyncTiming('contacts-load', contactStartedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
         reportSyncError('load contacts', err)
       }
 
       // Load calendar events
+      const calendarStartedAt = nowMs()
       try {
         const eventItems = await etebase.fetchAllItems('calendar')
+        let eventCount = 0
         if (eventItems.length > 0) {
           const { deserializeCalendarEvent } = await import('@silentsuite/core')
           const events = eventItems.map((item) => {
             const event = deserializeCalendarEvent(item.content)
             return { ...event, id: item.uid, calendarId: item.collectionUid }
           })
+          eventCount = events.length
           useCalendarStore.getState().syncFromRemote(events)
           logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
           await mirrorToCache('calendar', eventItems)
         }
+        safeLogSyncTiming('calendar-load', calendarStartedAt, {
+          source: 'server',
+          cacheEnabled,
+          itemCount: eventItems.length,
+          eventCount,
+        })
       } catch (err) {
+        safeLogSyncTiming('calendar-load', calendarStartedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
         reportSyncError('load calendar events', err)
       }
 
