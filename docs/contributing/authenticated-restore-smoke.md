@@ -40,6 +40,14 @@ Production smoke is mutation-free only when the account is already initialized. 
    https://previewapp.silentsuite.io/calendar?syncDebug=1
    ```
 
+   If the change also needs privacy-safe startup timing evidence, explicitly opt in for that run:
+
+   ```text
+   https://previewapp.silentsuite.io/calendar?syncDebug=1&syncTiming=1
+   ```
+
+   Timing output is console-only and explicit-opt-in only outside local development. Do not enable it for general preview browsing.
+
 3. Sign in only if no valid session exists.
 4. Hard reload once after login so the saved encrypted-session restore path runs.
 5. Wait until the app reaches a steady state and the sync indicator is not actively syncing.
@@ -87,6 +95,14 @@ Production smoke has the same steps as preview, but with stricter gates:
 7. Share only the redacted report.
 
 `?syncDebug=1` is an intentional user/operator opt-in for this slice. It may expose redacted self-account metadata such as phase timings, counts, hostnames, and safe error categories. It must never expose secrets, raw identifiers, plaintext PIM, raw errors, or unknown stored fields.
+
+## Optional sync timing capture
+
+For changes that instrument startup timing, add `syncTiming=1` to the smoke URL for that single run or set `localStorage.setItem('silentsuite:syncTiming', 'true')` before reload. Timing is not auto-enabled on preview or production.
+
+Capture only console lines beginning with `[silentsuite-sync-timing]`. Before sharing timing evidence, confirm it contains only phase names, durations, counts, booleans, status/source labels, and safe error categories. Do not share credentials, cookies, tokens, session blobs, item IDs, collection IDs, stokens, raw browser storage, raw errors, plaintext PIM, or full URLs with paths/query strings.
+
+Timing evidence is optional context. It does not replace the restore smoke helper report.
 
 ## Expected redacted diagnostics
 

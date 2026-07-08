@@ -68,6 +68,8 @@ Validate the report helper with:
 node scripts/restore-smoke-report.mjs --self-test
 ```
 
+For timing instrumentation changes, collect optional console timing only with explicit opt-in (`?syncTiming=1` or `localStorage.setItem('silentsuite:syncTiming', 'true')` before reload). Preview and production must not emit timing automatically. Share only `[silentsuite-sync-timing]` lines after confirming they contain no credentials, cookies, session blobs, item IDs, collection IDs, stokens, raw errors, plaintext PIM, or full private URLs.
+
 ## Before Submitting a PR
 
 Make sure all checks pass:

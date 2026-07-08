@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import CalendarPage from '../page'
@@ -16,6 +16,10 @@ import type { CalendarList } from '@/app/stores/use-calendar-list-store'
 // catalog so the tests do not couple to English copy.
 
 const manageCalendars = messages.Collections.manageCalendars
+
+const timingMock = vi.hoisted(() => ({
+  logCalendarPaintTiming: vi.fn(),
+}))
 
 const storeMock = vi.hoisted(() => ({
   calendarState: {
@@ -57,6 +61,8 @@ vi.mock('@/app/stores/use-auth-store', () => ({
 vi.mock('@/app/stores/use-preferences-store', () => ({
   usePreferencesStore: (selector: (state: { dateFormat: 'system'; firstDayOfWeek: 'monday' }) => unknown) => selector({ dateFormat: 'system', firstDayOfWeek: 'monday' }),
 }))
+
+vi.mock('@/app/lib/sync-timing', () => timingMock)
 
 vi.mock('@/app/components/PullToRefresh', () => ({
   PullToRefresh: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -110,6 +116,9 @@ function resetCalendarMocks() {
   storeMock.calendarState.setCurrentView.mockReset()
   storeMock.calendarState.setSearchQuery.mockReset()
   storeMock.authState.canWrite.mockReturnValue(true)
+  timingMock.logCalendarPaintTiming.mockReset()
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0))
+  vi.stubGlobal('cancelAnimationFrame', (handle: number) => window.clearTimeout(handle))
 }
 
 describe('CalendarPage calendar visibility', () => {
@@ -152,6 +161,81 @@ describe('CalendarPage calendar visibility', () => {
     const sevenDayGrid = within(screen.getByTestId('mobile-seven-day-grid'))
     expect(sevenDayGrid.getByText('Visible event')).toBeInTheDocument()
     expect(sevenDayGrid.queryByText('Hidden event')).not.toBeInTheDocument()
+  })
+})
+
+describe('CalendarPage first content paint timing', () => {
+  beforeEach(() => {
+    resetCalendarMocks()
+    storeMock.calendarState.events = []
+    storeMock.calendarListState.calendars = []
+  })
+
+  it('does not log while the calendar is still loading', () => {
+    storeMock.calendarState.isLoading = true
+
+    renderWithIntl(<CalendarPage />)
+
+    expect(timingMock.logCalendarPaintTiming).not.toHaveBeenCalled()
+  })
+
+  it('logs first non-loading content once with visible aggregate counts only', async () => {
+    storeMock.calendarState.isLoading = false
+    storeMock.calendarState.events = [
+      { id: 'visible-event', calendarId: 'visible-cal', title: 'Visible event' },
+      { id: 'hidden-event', calendarId: 'hidden-cal', title: 'Hidden event' },
+    ]
+    storeMock.calendarListState.calendars = [
+      { id: 'visible-cal', name: 'Visible', color: '#10b981', visible: true },
+      { id: 'hidden-cal', name: 'Hidden', color: '#ef4444', visible: false },
+    ]
+
+    const { rerender } = renderWithIntl(<CalendarPage />)
+
+    await waitFor(() => expect(timingMock.logCalendarPaintTiming).toHaveBeenCalledTimes(1))
+    expect(timingMock.logCalendarPaintTiming).toHaveBeenCalledWith({
+      view: 'week',
+      totalEventCount: 2,
+      visibleEventCount: 1,
+      visibleCalendarCount: 1,
+      hasEvents: true,
+    })
+
+    rerender(<CalendarPage />)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(timingMock.logCalendarPaintTiming).toHaveBeenCalledTimes(1)
+  })
+
+  it('logs valid empty calendar content with hasEvents false', async () => {
+    storeMock.calendarState.isLoading = false
+
+    renderWithIntl(<CalendarPage />)
+
+    await waitFor(() => expect(timingMock.logCalendarPaintTiming).toHaveBeenCalledWith({
+      view: 'week',
+      totalEventCount: 0,
+      visibleEventCount: 0,
+      visibleCalendarCount: 0,
+      hasEvents: false,
+    }))
+  })
+
+  it('cancels the pending paint callback on unmount', async () => {
+    storeMock.calendarState.isLoading = false
+    let queued: FrameRequestCallback | null = null
+    const cancel = vi.fn()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      queued = callback
+      return 42
+    })
+    vi.stubGlobal('cancelAnimationFrame', cancel)
+
+    const { unmount } = renderWithIntl(<CalendarPage />)
+    unmount()
+    queued?.(Date.now())
+
+    expect(cancel).toHaveBeenCalledWith(42)
+    expect(timingMock.logCalendarPaintTiming).not.toHaveBeenCalled()
   })
 })
 

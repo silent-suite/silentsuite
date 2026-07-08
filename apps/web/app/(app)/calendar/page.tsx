@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { ChevronLeft, ChevronRight, Plus, Folder, Search as SearchIcon } from 'lucide-react'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
@@ -16,6 +16,7 @@ import { AgendaView } from './components/AgendaView'
 import { EventDialog } from './components/EventDialog'
 import { FloatingAddButton } from './components/FloatingAddButton'
 import { resolveUserTimezone } from '@/app/lib/tz'
+import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
 
 /** Snap a Date to the nearest 30-minute boundary */
 function snapTo30Min(date: Date): Date {
@@ -160,6 +161,7 @@ export default function CalendarPage() {
   const [eventInstanceDate, setEventInstanceDate] = useState<Date | undefined>(undefined)
   const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
   const [mobileCalendarMode, setMobileCalendarMode] = useState<MobileCalendarMode>('agenda')
+  const firstContentPaintLoggedRef = useRef(false)
 
   const dateLabel = useMemo(
     () => formatDateRange(currentDate, currentView, dateFormat, firstDayOfWeek),
@@ -195,6 +197,32 @@ export default function CalendarPage() {
     () => events.filter((event) => visibleCalendarIds.has(event.calendarId ?? 'default')),
     [events, visibleCalendarIds],
   )
+
+  useEffect(() => {
+    if (isLoading || firstContentPaintLoggedRef.current) return
+    const requestFrame = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0)
+    const cancelFrame = typeof cancelAnimationFrame === 'function'
+      ? cancelAnimationFrame
+      : (handle: number) => window.clearTimeout(handle)
+    let cancelled = false
+    const frame = requestFrame(() => {
+      if (cancelled || firstContentPaintLoggedRef.current) return
+      firstContentPaintLoggedRef.current = true
+      logCalendarPaintTiming({
+        view: currentView,
+        totalEventCount: events.length,
+        visibleEventCount: visibleEvents.length,
+        visibleCalendarCount: calendars.filter((calendar) => calendar.visible).length,
+        hasEvents: visibleEvents.length > 0,
+      })
+    })
+    return () => {
+      cancelled = true
+      cancelFrame(frame)
+    }
+  }, [calendars, currentView, events.length, isLoading, visibleEvents.length])
 
   // Search
   const searchQuery = useCalendarStore((s) => s.searchQuery)
