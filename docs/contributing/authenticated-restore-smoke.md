@@ -170,6 +170,50 @@ findings:
 
 Before sharing, confirm the evidence contains no credentials, emails, session blobs, collection IDs, item IDs, plaintext PIM, raw URLs with query strings, cookies, headers, response bodies, or raw error messages.
 
+## Negative check: restore-blocked / unlock path
+
+The positive smoke proves a healthy restore. This negative check proves the app is honest when the encrypted session cannot be restored on a browser: it shows a calm, non-blocking restore-blocked banner and offers a loop-free unlock route, without clearing any local data.
+
+It requires no secrets and no stored credentials. It uses a controlled local mutation to force the blocked state, then re-unlocks with the same approved account you already use for the positive smoke.
+
+### Safety
+
+- Do not paste session blobs, storage values, tokens, cookies, IDs, or plaintext PIM anywhere. Observe shapes and booleans only.
+- This check is intentionally recoverable: re-entering credentials restores the vault. It never asks you to permanently delete data.
+
+### Recipe
+
+1. Start from a healthy state: sign in on preview with an approved test account and confirm the positive smoke passes (`failedPhase: null`, and **no** restore-blocked banner is visible).
+2. Force a blocked local session using DevTools, choosing one:
+   - Remove or scramble the local `etebase_session` entry in the browser's encrypted secure storage (Application → IndexedDB / storage), then reload; or
+   - Open the app in a fresh browser profile that still has a valid billing cookie/session but no local `etebase_session`, then load `/calendar`.
+   Both simulate "authenticated at billing, but this browser cannot unlock the local vault."
+3. Reload and observe the app shell. Expected:
+   - The **restore-blocked banner** appears with reassurance copy along the lines of "Your data is encrypted and safe on the server. This browser needs to unlock it again."
+   - The banner shows **no** raw error text, phase names, counts, IDs, or PIM — only static reassurance copy plus an "Unlock now" action.
+   - The sync indicator no longer implies a healthy empty account.
+4. Click **Unlock now**. Expected:
+   - You land on `/login?reason=unlock&returnTo=…` and are **not** immediately bounced back to `/calendar` (no redirect loop).
+   - The login page shows a short unlock explanation instead of the normal "Welcome back" copy.
+5. Re-enter the approved account credentials and submit. Expected:
+   - Login succeeds, the browser navigates to the `returnTo` path, the next restore initializes cleanly, and the restore-blocked banner disappears.
+6. Confirm non-destructiveness. Before unlocking, verify that no local data was auto-cleared by the blocked state itself (the only clearing is the pre-existing offline-queue clear that happens when you explicitly re-enter credentials via `login()`). The app must never auto-clear localStorage, sessionStorage, or IndexedDB, and must never auto-logout, in the blocked state.
+
+### Expected result shape
+
+```text
+Restore-blocked negative check: PASS|FAIL
+environment: preview|local
+trigger: missing-session|corrupt-session|fresh-profile
+banner shown while blocked: yes|no
+banner copy privacy-safe (no error/phase/ID/PIM): yes|no
+/login?reason=unlock bounced back: yes|no   (PASS requires "no")
+re-unlock restored vault + cleared banner: yes|no
+local data auto-cleared before unlock: yes|no   (PASS requires "no")
+findings:
+  - <privacy-safe finding, if any>
+```
+
 ## Automation follow-up design
 
 A future automation slice may add a local-only or secure-runner probe that reads credentials from environment variables outside the repo, for example:
