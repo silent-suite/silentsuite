@@ -32,6 +32,30 @@ pnpm type-check
 - Test behaviour, not implementation details.
 - Keep tests independent -- each test should be able to run in isolation.
 
+## Server framework upgrade gate
+
+PRs that touch any server request-routing or serialization dependency must run the FastAPI route contract gate, not only compile checks. This includes changes to:
+
+- `server/requirements.in/base.txt`
+- `server/requirements.txt`
+- `server/requirements.in/development.txt`
+- `server/requirements-dev.txt`
+- FastAPI, Starlette, Pydantic, `httpx2`/test-client transport dependencies, msgpack, or server request/response middleware
+
+From `server/`, run:
+
+```bash
+python -m pytest \
+  etebase_server/fastapi/test_collection_route_contracts.py \
+  etebase_server/fastapi/test_item_list_queryset.py \
+  etebase_server/fastapi/test_authentication.py \
+  -v --tb=short
+```
+
+These tests exercise real FastAPI router mounting, path-parameter binding, dependency injection, auth headers, and msgpack request/response handling. They are the upgrade gate for the incident class where compile checks and helper tests stayed green while a framework change broke authenticated restore/sync routes.
+
+CI runs this focused gate before the full server test suite. Keep CI step names precise: `py_compile` proves modules compile; it is not a functional smoke test.
+
 ## Before Submitting a PR
 
 Make sure all checks pass:
@@ -42,5 +66,7 @@ pnpm type-check
 pnpm test
 pnpm build
 ```
+
+For server dependency or request-routing changes, also run the FastAPI route contract gate above from `server/`.
 
 CI will run these checks automatically on your pull request.
