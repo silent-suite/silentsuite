@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatDayBoundary,
-  getScheduleXWeekGridHeight,
+  getScheduleXWeekLayout,
   hourToScheduleXTimePoint,
   toScheduleXDayBoundariesExternal,
   toScheduleXDayBoundariesInternal,
@@ -22,9 +22,10 @@ describe('calendar day boundaries', () => {
     expect(toScheduleXDayBoundariesInternal(7, 23)).toEqual({ start: 700, end: 2300 })
   })
 
-  it('scales week grid height with visible day span', () => {
-    expect(getScheduleXWeekGridHeight(7, 23)).toBe(1792)
-    expect(getScheduleXWeekGridHeight(8, 22)).toBe(1568)
-    expect(getScheduleXWeekGridHeight(9, 10)).toBe(800)
+  it('keeps hour rows within a readable adaptive density range', () => {
+    expect(getScheduleXWeekLayout(8, 22, 900)).toEqual({ startHour: 8, endHour: 22, gridHeight: 900 })
+    expect(getScheduleXWeekLayout(8, 22, 1600)).toEqual({ startHour: 1, endHour: 24, gridHeight: 1600 })
+    expect(getScheduleXWeekLayout(9, 10, 900)).toEqual({ startHour: 3, endHour: 16, gridHeight: 900 })
+    expect(getScheduleXWeekLayout(8, 22, 500)).toEqual({ startHour: 8, endHour: 22, gridHeight: 672 })
   })
 })
