@@ -34,9 +34,6 @@ export default function LoginPage() {
   const [serverUrl, setServerUrl] = useState('')
   const [rememberDevice, setRememberDevice] = useState(false)
   const isUnlock = searchParams.get('reason') === 'unlock'
-  // Tracks a fresh successful unlock submit so the redirect effect fires only
-  // after the user has actually re-entered credentials on the unlock route.
-  const [didUnlockSubmit, setDidUnlockSubmit] = useState(false)
 
   const {
     register,
@@ -52,10 +49,10 @@ export default function LoginPage() {
     // On the unlock route, stay put until the user re-enters credentials --
     // an already-authenticated-but-restore-blocked user must not be bounced
     // straight back into the broken empty state (redirect loop).
-    if (isUnlock && !didUnlockSubmit) return
+    if (isUnlock) return
     const returnTo = safeReturnTo(searchParams.get('returnTo'))
     router.replace(returnTo)
-  }, [isAuthenticated, isUnlock, didUnlockSubmit, router, searchParams])
+  }, [isAuthenticated, isUnlock, router, searchParams])
 
   useEffect(() => {
     return () => clearError()
@@ -72,7 +69,8 @@ export default function LoginPage() {
     await login(data.email, data.password, normalizedUrl, useHostedBilling && rememberDevice)
     // Read the store directly to avoid a stale closure over `error`.
     if (isUnlock && !useAuthStore.getState().error) {
-      setDidUnlockSubmit(true)
+      const returnTo = safeReturnTo(searchParams.get('returnTo'))
+      router.replace(returnTo)
     }
   }
 
