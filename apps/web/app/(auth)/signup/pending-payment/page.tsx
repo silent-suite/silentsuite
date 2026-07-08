@@ -184,13 +184,14 @@ export default function PendingPaymentPage() {
     setRestarting(true)
     setRestartError(null)
     try {
-      const res = await fetch(`${BILLING_API_URL}/subscription/crypto/checkout`, {
+      const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({
+          flowKind: 'btcpay_annual',
           planId: 'early_annual',
-          returnUrl: `${window.location.origin}/signup/pending-payment`,
+          returnUrl: '/signup/pending-payment',
         }),
       })
       if (!res.ok) throw new Error('Could not start a new Bitcoin invoice. Please log in or contact support.')
