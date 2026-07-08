@@ -24,6 +24,7 @@ export default function LoginPage() {
   const searchParams = useSearchParams()
   const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore()
   const [serverUrl, setServerUrl] = useState('')
+  const [rememberDevice, setRememberDevice] = useState(false)
 
   const {
     register,
@@ -48,13 +49,14 @@ export default function LoginPage() {
   }, [clearError])
 
   const onSubmit = async (data: LoginFormData) => {
-    const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
+    const useHostedBilling = !serverUrl.trim()
+    const normalizedUrl = useHostedBilling ? undefined : normalizeServerUrl(serverUrl)
     if (normalizedUrl) {
       localStorage.setItem('silentsuite-server-url', normalizedUrl)
     } else {
       localStorage.removeItem('silentsuite-server-url')
     }
-    await login(data.email, data.password, normalizedUrl)
+    await login(data.email, data.password, normalizedUrl, useHostedBilling && rememberDevice)
   }
 
   return (
@@ -113,6 +115,23 @@ export default function LoginPage() {
             <p id="password-error" role="alert" className="text-xs text-red-400">{errors.password.message}</p>
           )}
         </div>
+
+        {!serverUrl.trim() && (
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))]/40 p-3 text-sm text-[rgb(var(--foreground))]/80">
+            <input
+              type="checkbox"
+              checked={rememberDevice}
+              onChange={(e) => setRememberDevice(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
+            />
+            <span>
+              <span className="block font-medium">Keep me signed in on this device</span>
+              <span className="block text-xs text-[rgb(var(--muted))]">
+                Leave unchecked to let your browser forget this session when all windows are closed.
+              </span>
+            </span>
+          </label>
+        )}
 
         <Button type="submit" disabled={isLoading} className="w-full">
           {isLoading ? 'Logging in...' : 'Log in'}

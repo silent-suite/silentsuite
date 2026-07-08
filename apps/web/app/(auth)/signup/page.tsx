@@ -212,6 +212,8 @@ function StepCreateAccount({
   initialData,
   wantsProductUpdates,
   onWantsProductUpdatesChange,
+  rememberDevice,
+  onRememberDeviceChange,
 }: {
   onNext: (data: SignupFormData) => Promise<void>
   serverUrl: string
@@ -219,6 +221,8 @@ function StepCreateAccount({
   initialData?: SignupFormData | null
   wantsProductUpdates: boolean
   onWantsProductUpdatesChange: (value: boolean) => void
+  rememberDevice: boolean
+  onRememberDeviceChange: (value: boolean) => void
 }) {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -366,6 +370,21 @@ function StepCreateAccount({
             <span className="text-[rgb(var(--muted))]/70">We will never share your email. Unsubscribe anytime.</span>
           </span>
         </label>
+
+        {!serverUrl.trim() && (
+          <label className="flex items-start gap-2.5 cursor-pointer rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))]/40 p-3">
+            <input
+              type="checkbox"
+              checked={rememberDevice}
+              onChange={(e) => onRememberDeviceChange(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
+            />
+            <span className="text-xs text-[rgb(var(--muted))] leading-relaxed">
+              <span className="block font-medium text-[rgb(var(--foreground))]/80">Keep me signed in on this device</span>
+              Leave unchecked to let your browser forget this session when all windows are closed.
+            </span>
+          </label>
+        )}
 
         {/* Advanced Settings */}
         <details className="group">
@@ -1332,6 +1351,7 @@ export default function SignupPage() {
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
   const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
+  const [rememberDevice, setRememberDevice] = useState(false)
   const [returnTo, setReturnTo] = useState<string | null>(null)
   const [showReturnFallback, setShowReturnFallback] = useState(false)
   const formDataRef = useRef<SignupFormData | null>(null)
@@ -1367,14 +1387,14 @@ export default function SignupPage() {
       return
     }
 
-    prepareSignupDraft(identifier, wantsProductUpdates)
+    prepareSignupDraft(identifier, wantsProductUpdates, rememberDevice)
     setClientSecret(null)
     setCryptoPaymentSession(null)
     setProvisionError(null)
     setPlanView('cards')
     setUsingSelfHostedServer(false)
     setStep('plan')
-  }, [createEtebaseAccount, prepareSignupDraft, serverUrl, wantsProductUpdates])
+  }, [createEtebaseAccount, prepareSignupDraft, rememberDevice, serverUrl, wantsProductUpdates])
 
   const handleSelfHostChoice = useCallback(async (choice: 'free' | 'support') => {
     if (choice === 'support') {
@@ -1552,6 +1572,8 @@ export default function SignupPage() {
             initialData={formDataRef.current}
             wantsProductUpdates={wantsProductUpdates}
             onWantsProductUpdatesChange={setWantsProductUpdates}
+            rememberDevice={rememberDevice}
+            onRememberDeviceChange={setRememberDevice}
           />
         )}
         {step === 'selfhost' && (
