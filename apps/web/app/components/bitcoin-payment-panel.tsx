@@ -163,7 +163,7 @@ export default function BitcoinPaymentPanel({
       ) : status === 'error' ? (
         <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
           <p>{error ?? 'Could not load Bitcoin payment details.'}</p>
-          <a href={session.checkoutUrl} className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-500/10 dark:text-red-200">
+          <a href={session.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-500/10 dark:text-red-200">
             {externalCheckoutLabel}<ExternalLink className="h-3.5 w-3.5" />
           </a>
         </div>
@@ -202,7 +202,7 @@ export default function BitcoinPaymentPanel({
             </button>
           </div>
 
-          <a href={session.checkoutUrl} className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
+          <a href={session.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
             {externalCheckoutLabel}<ExternalLink className="h-3.5 w-3.5" />
           </a>
         </div>

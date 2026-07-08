@@ -134,4 +134,27 @@ describe('AddCardBanner', () => {
       expect.objectContaining({ method: 'POST', credentials: 'include' }),
     ))
   })
+
+  it('best-effort cancels an active payment flow when the page is hidden during unload', async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
+      if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
+      if (url.includes('/subscription/payment-flows/cancel')) return { ok: true, json: async () => ({ cancelled: true, flowKind: 'stripe_pay_now' }) } as Response
+      if (url.includes('/subscription/payment-flows') && init?.method === 'POST') return { ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now', planId: 'early_monthly', billingInterval: 'monthly', amount: '3.60', currency: 'EUR' }) } as Response
+      return { ok: false, json: async () => ({}) } as Response
+    })
+
+    render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
+    fireEvent.click(screen.getByText('Choose payment'))
+    fireEvent.click(await screen.findByText('Continue to card payment'))
+    expect(await screen.findByText('Powered by Stripe')).toBeInTheDocument()
+
+    window.dispatchEvent(new Event('pagehide'))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'https://billing.example.test/subscription/payment-flows/cancel',
+      expect.objectContaining({ method: 'POST', credentials: 'include', keepalive: true }),
+    ))
+  })
 })
