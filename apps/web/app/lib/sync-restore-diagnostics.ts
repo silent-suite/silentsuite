@@ -216,9 +216,84 @@ export function readRestoreDiagnostics(): RestoreDiagnosticsSnapshot | null {
   }
 }
 
+const VALID_PHASES = new Set<RestoreDiagnosticPhase>([
+  'sessionRead',
+  'sessionPersistence',
+  'restoreSession',
+  'ensureCollections',
+  'hydrateLists',
+  'listItems:calendar',
+  'listItems:tasks',
+  'listItems:contacts',
+  'syncEngineTrackCollections',
+  'syncEngineStart',
+  'unknown',
+])
+
+const VALID_STATUSES = new Set<RestoreDiagnosticStatus>(['ok', 'failed', 'skipped'])
+
+function sanitizeHostValue(host: unknown): string {
+  if (typeof host !== 'string' || host.length === 0) return 'unknown'
+  if (/^[a-z0-9.-]+$/i.test(host)) return host
+  return safeHostname(host, 'unknown')
+}
+
+function sanitizeErrorNameValue(errorName: string): string | undefined {
+  return /^[A-Za-z][A-Za-z0-9_.]*$/.test(errorName) ? errorName : undefined
+}
+
+function sanitizeSessionPersistence(session: SessionPersistenceShape | undefined): SessionPersistenceShape | undefined {
+  if (!session) return undefined
+  if (typeof session.present !== 'boolean') return undefined
+  if (typeof session.parseableJson !== 'boolean') return undefined
+  if (!['missing', 'empty', 'json', 'string'].includes(session.shape)) return undefined
+  return {
+    present: session.present,
+    parseableJson: session.parseableJson,
+    shape: session.shape,
+  }
+}
+
+function sanitizeDiagnosticsEntry(entry: RestoreDiagnosticEntry): RestoreDiagnosticEntry | null {
+  if (!VALID_PHASES.has(entry.phase) || !VALID_STATUSES.has(entry.status)) return null
+  const safe: RestoreDiagnosticEntry = {
+    phase: entry.phase,
+    status: entry.status,
+  }
+  if (typeof entry.durationMs === 'number') safe.durationMs = entry.durationMs
+  const errorName = typeof entry.errorName === 'string' ? sanitizeErrorNameValue(entry.errorName) : undefined
+  if (errorName) safe.errorName = errorName
+  const session = sanitizeSessionPersistence(entry.session)
+  if (session) safe.session = session
+  if (typeof entry.roundtripMatch === 'boolean') safe.roundtripMatch = entry.roundtripMatch
+  if (['calendar', 'tasks', 'contacts'].includes(entry.collectionType ?? '')) {
+    safe.collectionType = entry.collectionType
+  }
+  if (typeof entry.collectionCount === 'number') safe.collectionCount = entry.collectionCount
+  if (typeof entry.itemCount === 'number') safe.itemCount = entry.itemCount
+  if (typeof entry.pageCount === 'number') safe.pageCount = entry.pageCount
+  return safe
+}
+
+function sanitizeDiagnosticsSnapshot(snapshot: RestoreDiagnosticsSnapshot): RestoreDiagnosticsSnapshot {
+  return {
+    version: 1,
+    source: snapshot.source === 'login' ? 'login' : 'restore',
+    generatedAtMs: typeof snapshot.generatedAtMs === 'number' ? snapshot.generatedAtMs : 0,
+    etebaseHost: sanitizeHostValue(snapshot.etebaseHost),
+    billingHost: sanitizeHostValue(snapshot.billingHost),
+    failedPhase: snapshot.failedPhase && VALID_PHASES.has(snapshot.failedPhase) ? snapshot.failedPhase : null,
+    entries: snapshot.entries.map(sanitizeDiagnosticsEntry).filter((entry): entry is RestoreDiagnosticEntry => entry !== null),
+  }
+}
+
 export function buildRestoreDiagnosticsCopyText(snapshot: RestoreDiagnosticsSnapshot | null): string {
   if (!snapshot) return JSON.stringify({ version: 1, error: 'no_restore_diagnostics_recorded' })
-  return JSON.stringify(snapshot)
+  return JSON.stringify(sanitizeDiagnosticsSnapshot(snapshot))
+}
+
+export function hasRestoreDiagnostics(): boolean {
+  return readRestoreDiagnostics() !== null
 }
 
 export function shouldExposeRestoreDiagnostics(): boolean {
@@ -230,4 +305,8 @@ export function shouldExposeRestoreDiagnostics(): boolean {
   const params = new URLSearchParams(window.location.search)
   if (params.get('syncDebug') === '1') return true
   return safeLocalStorage()?.getItem('silentsuite-sync-debug') === '1'
+}
+
+export function canExposeRestoreDiagnosticsCopy(): boolean {
+  return shouldExposeRestoreDiagnostics() && hasRestoreDiagnostics()
 }

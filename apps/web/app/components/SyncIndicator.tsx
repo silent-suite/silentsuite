@@ -7,8 +7,8 @@ import { formatTimeAgo } from '@/app/lib/format-time-ago'
 import type { SyncStatus } from '@silentsuite/core'
 import {
   buildRestoreDiagnosticsCopyText,
+  canExposeRestoreDiagnosticsCopy,
   readRestoreDiagnostics,
-  shouldExposeRestoreDiagnostics,
 } from '@/app/lib/sync-restore-diagnostics'
 
 const dotStyles: Record<SyncStatus, string> = {
@@ -52,7 +52,7 @@ export function SyncIndicator() {
   const isSyncing = syncStatus === 'syncing'
   const isOffline = syncStatus === 'offline'
   const isError = syncStatus === 'error'
-  const canCopyDiagnostics = isError && shouldExposeRestoreDiagnostics()
+  const canCopyDiagnostics = canExposeRestoreDiagnosticsCopy()
 
   const handleSync = useCallback(() => {
     if (isSyncing || isOffline) return

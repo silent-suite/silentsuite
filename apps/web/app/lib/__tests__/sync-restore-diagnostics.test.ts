@@ -3,8 +3,10 @@ import {
   RESTORE_DIAGNOSTICS_STORAGE_KEY,
   RestoreDiagnosticsRecorder,
   buildRestoreDiagnosticsCopyText,
+  canExposeRestoreDiagnosticsCopy,
   classifySessionPersistence,
   createLoginSessionPersistenceDiagnostics,
+  hasRestoreDiagnostics,
   readRestoreDiagnostics,
   shouldExposeRestoreDiagnostics,
 } from '../sync-restore-diagnostics'
@@ -77,19 +79,102 @@ describe('sync restore diagnostics', () => {
     vi.stubGlobal('window', {
       location: { hostname: 'app.silentsuite.io', search: '' },
       localStorage,
+      sessionStorage,
     })
     expect(shouldExposeRestoreDiagnostics()).toBe(false)
 
     vi.stubGlobal('window', {
       location: { hostname: 'previewapp.silentsuite.io', search: '' },
       localStorage,
+      sessionStorage,
     })
     expect(shouldExposeRestoreDiagnostics()).toBe(true)
 
     vi.stubGlobal('window', {
       location: { hostname: 'app.silentsuite.io', search: '?syncDebug=1' },
       localStorage,
+      sessionStorage,
     })
     expect(shouldExposeRestoreDiagnostics()).toBe(true)
+  })
+
+  it('separates diagnostics presence from debug exposure policy', () => {
+    vi.stubGlobal('window', {
+      location: { hostname: 'app.silentsuite.io', search: '' },
+      localStorage,
+      sessionStorage,
+    })
+    expect(hasRestoreDiagnostics()).toBe(false)
+    expect(canExposeRestoreDiagnosticsCopy()).toBe(false)
+
+    sessionStorage.setItem(RESTORE_DIAGNOSTICS_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      source: 'restore',
+      generatedAtMs: 1,
+      etebaseHost: 'server.silentsuite.io',
+      billingHost: 'api.silentsuite.io',
+      failedPhase: null,
+      entries: [{ phase: 'syncEngineStart', status: 'ok' }],
+    }))
+
+    expect(hasRestoreDiagnostics()).toBe(true)
+    expect(canExposeRestoreDiagnosticsCopy()).toBe(false)
+
+    vi.stubGlobal('window', {
+      location: { hostname: 'app.silentsuite.io', search: '?syncDebug=1' },
+      localStorage,
+      sessionStorage,
+    })
+    expect(hasRestoreDiagnostics()).toBe(true)
+    expect(canExposeRestoreDiagnosticsCopy()).toBe(true)
+
+    sessionStorage.setItem(RESTORE_DIAGNOSTICS_STORAGE_KEY, '{not-json')
+    expect(hasRestoreDiagnostics()).toBe(false)
+    expect(canExposeRestoreDiagnosticsCopy()).toBe(false)
+  })
+
+  it('drops unknown top-level and entry fields from copied diagnostics', () => {
+    const copyText = buildRestoreDiagnosticsCopyText({
+      version: 1,
+      source: 'restore',
+      generatedAtMs: 3_000,
+      etebaseHost: 'https://server.silentsuite.io/private?token=secret',
+      billingHost: 'api.silentsuite.io',
+      failedPhase: null,
+      entries: [{
+        phase: 'listItems:calendar',
+        status: 'ok',
+        collectionType: 'calendar',
+        collectionCount: 1,
+        itemCount: 2,
+        pageCount: 1,
+        errorName: 'Error: user@example.com raw-session-secret',
+        // Simulate a future/corrupt snapshot that somehow contains unsafe extras.
+        collectionUid: 'collection-secret',
+        itemUid: 'item-secret',
+        content: 'plaintext-pim-secret',
+        rawUrl: 'https://server.silentsuite.io/private?token=secret',
+      } as never],
+      rawEmail: 'user@example.com',
+      sessionBlob: 'raw-session-secret',
+    } as never)
+
+    expect(copyText).toContain('"failedPhase":null')
+    expect(copyText).toContain('"phase":"listItems:calendar"')
+    expect(copyText).toContain('"itemCount":2')
+    for (const forbidden of [
+      'collection-secret',
+      'item-secret',
+      'plaintext-pim-secret',
+      'token=secret',
+      'user@example.com',
+      'raw-session-secret',
+      'collectionUid',
+      'itemUid',
+      'rawUrl',
+      'sessionBlob',
+    ]) {
+      expect(copyText).not.toContain(forbidden)
+    }
   })
 })
