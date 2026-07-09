@@ -150,6 +150,12 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({
   },
 }))
 
+vi.mock('@/app/stores/use-preferences-sync-store', () => ({
+  usePreferencesSyncStore: {
+    getState: () => ({ initialize: vi.fn(async () => {}), loadFromRemote: vi.fn(async () => {}), destroy: vi.fn() }),
+  },
+}))
+
 function renderProvider() {
   return render(<SyncProvider><div>child</div></SyncProvider>)
 }

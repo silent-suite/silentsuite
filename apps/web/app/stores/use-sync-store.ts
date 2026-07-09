@@ -230,6 +230,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const { useTaskStore } = await import('@/app/stores/use-task-store')
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
+      const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
 
       const refreshedEtebase = useEtebaseStore.getState()
       const domainLoadState = refreshedEtebase.domainLoadState
@@ -264,6 +265,13 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       } else {
         partialDomainCount += 1
       }
+
+      try {
+        await usePreferencesSyncStore.getState().loadFromRemote()
+      } catch (err) {
+        logger.warn('[sync-store] Preferences refresh failed during sync cycle', getSafeErrorDetails(err))
+      }
+
       // Purge stale queue entries (older than 24h) that may cause phantom indicators
       const stale = await getStaleEntries()
       for (const entry of stale) {
