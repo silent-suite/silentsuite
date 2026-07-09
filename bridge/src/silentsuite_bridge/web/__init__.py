@@ -10,8 +10,8 @@ Serves a status dashboard at the bridge root URL showing:
 Integrates with Radicale's web module system.
 """
 
-import html
 import hmac
+import html
 import json
 import logging
 import secrets
@@ -845,7 +845,7 @@ def _render_dashboard():
     creds = Credentials()
     users = creds.list_users()
 
-    base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}"
+    base_url = config.local_base_url(config.LISTEN_ADDRESS)
 
     with _bridge_status_lock:
         state = _bridge_status["state"]
@@ -936,6 +936,13 @@ def _render_dashboard():
                     '</div>'
                 )
             account_attr = esc(user)
+            ssl_note = (
+                '<div style="font-size:12px;color:#60a5fa;margin-top:6px;">'
+                "For Apple Internet Accounts, use Advanced setup with SSL and trust the localhost certificate."
+                "</div>"
+                if config.SSL_ENABLED
+                else ""
+            )
             account_html += (
                 '<div class="account-card">'
                 f'<h4>{esc(user)}</h4>'
@@ -949,6 +956,7 @@ def _render_dashboard():
                 f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
                 '</div>'
                 '<div style="font-size:12px;color:#f59e0b;margin-top:6px;">For calendar/contact apps only. Copy it into your app &mdash; do not open it in a web browser, which can expose your password in the address bar.</div>'
+                f'{ssl_note}'
                 '<div class="account-actions">'
                 f'<button class="account-action-btn" data-account="{account_attr}" '
                 'onclick="logoutAccount(this)">Log out</button>'
@@ -1077,7 +1085,7 @@ class Web(BaseWeb):
                 return (404, {}, b"Not found")
             if not _has_valid_csrf(environ):
                 return _csrf_error()
-            from ..local_cache import models, db
+            from ..local_cache import db, models
             try:
                 with db.database_proxy:
                     result = {"collections": []}

@@ -5,18 +5,24 @@ from unittest.mock import patch
 
 import pytest
 
-
 CONFIG_ENV_KEYS = (
     "SILENTSUITE_LISTEN_ADDRESS",
     "SILENTSUITE_LISTEN_PORT",
     "SILENTSUITE_SERVER_HOSTS",
     "SILENTSUITE_ALLOW_REMOTE",
     "SILENTSUITE_DASHBOARD_DUMP",
+    "SILENTSUITE_BRIDGE_SSL",
+    "SILENTSUITE_BRIDGE_SSL_CERT",
+    "SILENTSUITE_BRIDGE_SSL_KEY",
+    "SILENTSUITE_SSL",
+    "SILENTSUITE_SSL_CERT",
+    "SILENTSUITE_SSL_KEY",
 )
 
 
 def reload_config_with_env(monkeypatch, **values):
     import importlib
+
     from silentsuite_bridge import config
 
     for key in CONFIG_ENV_KEYS:
@@ -28,6 +34,7 @@ def reload_config_with_env(monkeypatch, **values):
 
 def restore_config(monkeypatch):
     import importlib
+
     from silentsuite_bridge import config
 
     for key in CONFIG_ENV_KEYS:
@@ -83,7 +90,6 @@ class TestConfigEnvOverrides:
     def test_server_url_env(self):
         with patch.dict(os.environ, {"SILENTSUITE_SERVER_URL": "https://custom.server"}):
             # Re-import to pick up env
-            import importlib
             from silentsuite_bridge import config
             original = config.ETEBASE_SERVER_URL
             # The env var is read at import time, so we test the mechanism
@@ -232,3 +238,222 @@ class TestConfigHelpers:
         finally:
             config.SETTINGS_FILE = original_settings
             config.DATA_DIR = original_data
+
+
+class TestSslConfig:
+    """Tests for SSL config defaults, env overrides, settings, and validation."""
+
+    def test_ssl_disabled_by_default(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            assert cfg.SSL_ENABLED is False
+            assert cfg.dav_scheme() == "http"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_ssl_env_enables_https(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_BRIDGE_SSL="1")
+        try:
+            assert cfg.SSL_ENABLED is True
+            assert cfg.dav_scheme() == "https"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_ssl_legacy_alias_env_enables_https(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_SSL="true")
+        try:
+            assert cfg.SSL_ENABLED is True
+        finally:
+            restore_config(monkeypatch)
+
+    def test_ssl_cert_and_key_env_overrides(self, monkeypatch, tmp_path):
+        cert = tmp_path / "cert.pem"
+        key = tmp_path / "key.pem"
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_BRIDGE_SSL="1",
+            SILENTSUITE_BRIDGE_SSL_CERT=str(cert),
+            SILENTSUITE_BRIDGE_SSL_KEY=str(key),
+        )
+        try:
+            assert cfg.SSL_CERT_FILE == str(cert)
+            assert cfg.SSL_KEY_FILE == str(key)
+        finally:
+            restore_config(monkeypatch)
+
+    def test_default_cert_and_key_paths_inside_data_dir(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            assert cfg.SSL_CERT_FILE.endswith("localhost-cert.pem")
+            assert cfg.SSL_KEY_FILE.endswith("localhost-key.pem")
+            assert cfg.DATA_DIR in cfg.SSL_CERT_FILE
+        finally:
+            restore_config(monkeypatch)
+
+    def test_dav_scheme_http_when_disabled(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            assert cfg.dav_scheme() == "http"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_local_base_url_http_default(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            assert cfg.local_base_url() == "http://127.0.0.1:37358"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_local_base_url_https_when_ssl_enabled(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch, SILENTSUITE_BRIDGE_SSL="1")
+        try:
+            assert cfg.local_base_url() == "https://127.0.0.1:37358"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_local_base_url_brackets_ipv6(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            assert cfg.local_base_url("::1") == "http://[::1]:37358"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_validate_ssl_config_noop_when_disabled(self, monkeypatch):
+        cfg = reload_config_with_env(monkeypatch)
+        try:
+            cfg.validate_ssl_config()
+        finally:
+            restore_config(monkeypatch)
+
+    def test_validate_ssl_config_missing_cert(self, monkeypatch, tmp_path):
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_BRIDGE_SSL="1",
+            SILENTSUITE_BRIDGE_SSL_CERT=str(tmp_path / "missing-cert.pem"),
+            SILENTSUITE_BRIDGE_SSL_KEY=str(tmp_path / "missing-key.pem"),
+        )
+        try:
+            with pytest.raises(RuntimeError, match="certificate file is missing"):
+                cfg.validate_ssl_config()
+        finally:
+            restore_config(monkeypatch)
+
+    def test_validate_ssl_config_missing_key(self, monkeypatch, tmp_path):
+        cert = tmp_path / "cert.pem"
+        cert.write_text("fake cert")
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_BRIDGE_SSL="1",
+            SILENTSUITE_BRIDGE_SSL_CERT=str(cert),
+            SILENTSUITE_BRIDGE_SSL_KEY=str(tmp_path / "missing-key.pem"),
+        )
+        try:
+            with pytest.raises(RuntimeError, match="key file is missing"):
+                cfg.validate_ssl_config()
+        finally:
+            restore_config(monkeypatch)
+
+    def test_validate_ssl_config_passes_when_files_readable(self, monkeypatch, tmp_path):
+        cert = tmp_path / "cert.pem"
+        key = tmp_path / "key.pem"
+        cert.write_text("fake cert")
+        key.write_text("fake key")
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_BRIDGE_SSL="1",
+            SILENTSUITE_BRIDGE_SSL_CERT=str(cert),
+            SILENTSUITE_BRIDGE_SSL_KEY=str(key),
+        )
+        try:
+            cfg.validate_ssl_config()
+        finally:
+            restore_config(monkeypatch)
+
+
+class TestSslSettingsPersistence:
+    """Tests for SSL settings load/save alongside syncInterval."""
+
+    def test_load_settings_enables_ssl_and_preserves_sync(self, tmp_path, monkeypatch):
+        from silentsuite_bridge import config
+        original_settings = config.SETTINGS_FILE
+        original_data = config.DATA_DIR
+        original_ssl = config.SSL_ENABLED
+        original_cert = config.SSL_CERT_FILE
+        original_key = config.SSL_KEY_FILE
+        original_sync = config.SYNC_INTERVAL
+        config.SETTINGS_FILE = str(tmp_path / "settings.json")
+        config.DATA_DIR = str(tmp_path)
+        cert = tmp_path / "cert.pem"
+        key = tmp_path / "key.pem"
+        config.save_settings({
+            "syncInterval": 120,
+            "sslEnabled": True,
+            "sslCertFile": str(cert),
+            "sslKeyFile": str(key),
+        })
+        try:
+            config.load_settings()
+            assert config.SSL_ENABLED is True
+            assert config.SSL_CERT_FILE == str(cert)
+            assert config.SSL_KEY_FILE == str(key)
+            assert config.SYNC_INTERVAL == 120
+        finally:
+            config.SETTINGS_FILE = original_settings
+            config.DATA_DIR = original_data
+            config.SSL_ENABLED = original_ssl
+            config.SSL_CERT_FILE = original_cert
+            config.SSL_KEY_FILE = original_key
+            config.SYNC_INTERVAL = original_sync
+            restore_config(monkeypatch)
+
+    def test_save_settings_preserves_unrelated_keys(self, tmp_path, monkeypatch):
+        from silentsuite_bridge import config
+        original_settings = config.SETTINGS_FILE
+        original_data = config.DATA_DIR
+        config.SETTINGS_FILE = str(tmp_path / "settings.json")
+        config.DATA_DIR = str(tmp_path)
+        try:
+            config.save_settings({"syncInterval": 60, "customKey": "keep-me"})
+            config.save_settings({"sslEnabled": True})
+            settings = config.get_settings()
+            assert settings["syncInterval"] == 60
+            assert settings["customKey"] == "keep-me"
+            assert settings["sslEnabled"] is True
+        finally:
+            config.SETTINGS_FILE = original_settings
+            config.DATA_DIR = original_data
+            restore_config(monkeypatch)
+
+    def test_env_overrides_settings_for_ssl(self, tmp_path, monkeypatch):
+        from silentsuite_bridge import config
+        original_settings = config.SETTINGS_FILE
+        original_data = config.DATA_DIR
+        config.SETTINGS_FILE = str(tmp_path / "settings.json")
+        config.DATA_DIR = str(tmp_path)
+        config.save_settings({"sslEnabled": False})
+        monkeypatch.setenv("SILENTSUITE_BRIDGE_SSL", "1")
+        try:
+            config.load_settings()
+            assert config.SSL_ENABLED is True
+        finally:
+            config.SETTINGS_FILE = original_settings
+            config.DATA_DIR = original_data
+            restore_config(monkeypatch)
+
+    def test_env_overrides_apply_when_settings_file_is_missing(self, tmp_path, monkeypatch):
+        from silentsuite_bridge import config
+        original_settings = config.SETTINGS_FILE
+        original_data = config.DATA_DIR
+        original_ssl = config.SSL_ENABLED
+        config.SETTINGS_FILE = str(tmp_path / "missing-settings.json")
+        config.DATA_DIR = str(tmp_path)
+        config.SSL_ENABLED = False
+        monkeypatch.setenv("SILENTSUITE_BRIDGE_SSL", "1")
+        try:
+            config.load_settings()
+            assert config.SSL_ENABLED is True
+        finally:
+            config.SETTINGS_FILE = original_settings
+            config.DATA_DIR = original_data
+            config.SSL_ENABLED = original_ssl
+            restore_config(monkeypatch)

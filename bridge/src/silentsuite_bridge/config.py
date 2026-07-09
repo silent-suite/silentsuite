@@ -34,6 +34,35 @@ SERVER_HOSTS = os.environ.get(
 )
 ALLOW_REMOTE = os.environ.get("SILENTSUITE_ALLOW_REMOTE", "").lower() in {"1", "true", "yes", "on"}
 
+# --- SSL ---
+_TRUTHY = {"1", "true", "yes", "on"}
+_FALSEY = {"0", "false", "no", "off"}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    return _bool_value(value, default) if value is not None else default
+
+
+def _bool_value(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in _TRUTHY:
+        return True
+    if normalized in _FALSEY:
+        return False
+    return default
+
+
+SSL_ENABLED = _env_bool("SILENTSUITE_BRIDGE_SSL", False) or _env_bool("SILENTSUITE_SSL", False)
+SSL_CERT_FILE = os.environ.get(
+    "SILENTSUITE_BRIDGE_SSL_CERT", os.environ.get("SILENTSUITE_SSL_CERT", "")
+)
+SSL_KEY_FILE = os.environ.get(
+    "SILENTSUITE_BRIDGE_SSL_KEY", os.environ.get("SILENTSUITE_SSL_KEY", "")
+)
+
 # --- Data directories ---
 APP_NAME = "silentsuite-bridge"
 APP_AUTHOR = "silentsuite"
@@ -42,6 +71,13 @@ DATA_DIR = os.environ.get(
     "SILENTSUITE_DATA_DIR",
     user_data_dir(APP_NAME, APP_AUTHOR),
 )
+
+# Default SSL cert/key live inside the data directory so launchd autostart
+# works without shell environment exports.
+if not SSL_CERT_FILE:
+    SSL_CERT_FILE = os.path.join(DATA_DIR, "localhost-cert.pem")
+if not SSL_KEY_FILE:
+    SSL_KEY_FILE = os.path.join(DATA_DIR, "localhost-key.pem")
 
 # --- Database ---
 DATABASE_FILE = os.environ.get(
@@ -157,23 +193,99 @@ def validate_network_config() -> None:
         )
 
 
+def dav_scheme() -> str:
+    """Return the DAV URL scheme for the current bridge config."""
+    return "https" if SSL_ENABLED else "http"
+
+
+def local_base_url(host: str | None = None) -> str:
+    """Build scheme://host:port for dashboard/DAV URLs.
+
+    Defaults to the configured LISTEN_ADDRESS/LISTEN_PORT. IPv6 literals are
+    bracketed to keep URLs well-formed.
+    """
+    if host is None:
+        host = LISTEN_ADDRESS
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{dav_scheme()}://{host}:{LISTEN_PORT}"
+
+
+def validate_ssl_config() -> None:
+    """Fail closed with actionable text when SSL is enabled but cert/key are unusable.
+
+    Called from the main() RuntimeError guard so missing material produces a
+    clean exit rather than a Radicale traceback.
+    """
+    if not SSL_ENABLED:
+        return
+    if not os.path.isfile(SSL_CERT_FILE) or not _readable(SSL_CERT_FILE):
+        raise RuntimeError(
+            f"Bridge SSL is enabled but the certificate file is missing or unreadable: "
+            f"{SSL_CERT_FILE}. Run `silentsuite-bridge --setup-macos-apple-accounts` "
+            f"to generate a localhost certificate, or set SILENTSUITE_BRIDGE_SSL_CERT."
+        )
+    if not os.path.isfile(SSL_KEY_FILE) or not _readable(SSL_KEY_FILE):
+        raise RuntimeError(
+            f"Bridge SSL is enabled but the key file is missing or unreadable: "
+            f"{SSL_KEY_FILE}. Run `silentsuite-bridge --setup-macos-apple-accounts` "
+            f"to generate a localhost key, or set SILENTSUITE_BRIDGE_SSL_KEY."
+        )
+
+
+def _readable(path: str) -> bool:
+    try:
+        with open(path, "rb"):
+            return True
+    except OSError:
+        return False
+
+
 def load_settings():
-    """Load settings from settings.json, applying overrides to module globals."""
-    global SYNC_INTERVAL
+    """Load settings from settings.json, applying overrides to module globals.
+
+    Environment variables take precedence over settings file values where both
+    are present, matching the env-override pattern used elsewhere in the bridge.
+    """
+    global SYNC_INTERVAL, SSL_ENABLED, SSL_CERT_FILE, SSL_KEY_FILE
     try:
         with open(SETTINGS_FILE, "r") as f:
             settings = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        settings = {}
+    try:
         if "syncInterval" in settings:
             SYNC_INTERVAL = int(settings["syncInterval"])
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+    except ValueError:
         pass
+    # Environment variables override settings even if tests/processes set them
+    # after the module was imported.
+    env_ssl = os.environ.get("SILENTSUITE_BRIDGE_SSL")
+    legacy_env_ssl = os.environ.get("SILENTSUITE_SSL")
+    if env_ssl is not None or legacy_env_ssl is not None:
+        SSL_ENABLED = _bool_value(env_ssl, False) or _bool_value(legacy_env_ssl, False)
+    elif "sslEnabled" in settings:
+        SSL_ENABLED = _bool_value(settings["sslEnabled"], False)
+
+    env_cert = os.environ.get("SILENTSUITE_BRIDGE_SSL_CERT") or os.environ.get("SILENTSUITE_SSL_CERT")
+    env_key = os.environ.get("SILENTSUITE_BRIDGE_SSL_KEY") or os.environ.get("SILENTSUITE_SSL_KEY")
+    if env_cert:
+        SSL_CERT_FILE = env_cert
+    elif "sslCertFile" in settings:
+        SSL_CERT_FILE = str(settings["sslCertFile"])
+    if env_key:
+        SSL_KEY_FILE = env_key
+    elif "sslKeyFile" in settings:
+        SSL_KEY_FILE = str(settings["sslKeyFile"])
 
 
 def save_settings(settings):
-    """Save settings dict to settings.json."""
+    """Save settings dict to settings.json, preserving caller-supplied keys."""
     ensure_data_dir()
+    existing = get_settings()
+    existing.update(settings)
     with open(SETTINGS_FILE, "w") as f:
-        json.dump(settings, f, indent=2)
+        json.dump(existing, f, indent=2)
 
 
 def get_settings():

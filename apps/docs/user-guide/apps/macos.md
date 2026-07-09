@@ -2,55 +2,97 @@
 
 Sync SilentSuite with the native macOS Calendar and Contacts apps through the [SilentSuite Bridge](./dav-bridge.md).
 
+macOS Apple Internet Accounts is stricter than many DAV clients: use **Advanced** setup with **SSL enabled** and a trusted localhost certificate.
+
 ## Prerequisites
 
-1. The [SilentSuite Bridge](./dav-bridge.md) running on your Mac.
-2. Your **account credentials** from the bridge's web UI at `http://localhost:37358/`.
+1. Install and start the [SilentSuite Bridge](./dav-bridge.md) on your Mac.
+2. Sign in to the bridge dashboard first so your account appears at `http://localhost:37358/`.
+3. Run the macOS Apple Accounts setup command:
+
+   ```bash
+   silentsuite-bridge --setup-macos-apple-accounts
+   ```
+
+4. In **Keychain Access**, add/open the generated localhost certificate and set **Trust > Secure Sockets Layer (SSL)** to **Always Trust**.
+5. Restart the bridge and open the dashboard at `https://localhost:37358/` or `https://127.0.0.1:37358/`.
+
+::: warning HTTPS affects the whole local bridge
+After SSL setup, this bridge profile serves its single DAV listener over HTTPS. Existing clients configured with `http://localhost:37358/` must be updated to the `https://` URL shown in the dashboard and may need to trust the same localhost certificate.
+:::
 
 ## Add Calendar Account
 
 1. Open **System Settings** (or System Preferences on older macOS).
 2. Go to **Internet Accounts** > **Add Account** > **Other**.
 3. Click **CalDAV Account**.
-4. Select **Manual** for the account type.
+4. Select **Advanced** for the account type.
 5. Enter:
-   - **Username**: your account email
-   - **Password**: your **account password**
-   - **Server Address**: `http://localhost:37358/`
+   - **User Name**: your SilentSuite account email
+   - **Password**: your account password
+   - **Server Address**: `localhost` or `127.0.0.1`
+   - **Server Path**: `/your@email.com/` using the exact account email shown in the bridge dashboard
+   - **Port**: `37358`
+   - **Use SSL**: checked
 6. Click **Sign In**.
 
-Your SilentSuite calendars will appear in the Calendar app.
+Your SilentSuite calendars should appear in Calendar after the bridge completes sync.
 
 ## Add Contacts Account
 
 1. Open **System Settings** > **Internet Accounts** > **Add Account** > **Other**.
 2. Click **CardDAV Account**.
-3. Select **Manual**.
+3. Select **Advanced**.
 4. Enter:
-   - **Username**: your account email
-   - **Password**: your **account password**
-   - **Server Address**: `http://localhost:37358/`
+   - **User Name**: your SilentSuite account email
+   - **Password**: your account password
+   - **Server Address**: `localhost` or `127.0.0.1`
+   - **Server Path**: `/your@email.com/` using the exact account email shown in the bridge dashboard
+   - **Port**: `37358`
+   - **Use SSL**: checked
 5. Click **Sign In**.
 
-Your SilentSuite contacts will appear in the Contacts app.
+Your SilentSuite contacts should appear in Contacts after the bridge completes sync.
+
+## If CalDAV Fails
+
+Some macOS versions accept the trusted localhost certificate more reliably after adding CardDAV first.
+
+1. Add the **CardDAV** account using Advanced setup and SSL.
+2. Confirm Contacts can connect.
+3. Add the **CalDAV** account again using the same server address, port, SSL setting, username, password, and account path.
 
 ## Running the Bridge at Login
 
 To keep the SilentSuite Bridge running automatically, see the [DAV bridge guide](./dav-bridge.md) for macOS launchd configuration.
 
-## Known Issues
-
-macOS Mojave and later have known bugs with local CalDAV/CardDAV accounts. If you encounter issues:
-
-- Try using `127.0.0.1` instead of `localhost` in the server address.
-- If macOS rejects the connection, try adding the account via the Calendar or Contacts app directly instead of System Settings.
-
 ## Troubleshooting
-
-### Calendar shows but events are missing
-
-macOS may limit sync to recent events. Open **Calendar > Preferences > Accounts**, select your DAV account, and check the sync range.
 
 ### Connection refused
 
-Make sure the SilentSuite Bridge is running. Open `http://localhost:37358/` in Safari to verify.
+Make sure the SilentSuite Bridge is running. Open the dashboard URL shown by the bridge:
+
+- Before SSL setup: `http://localhost:37358/`
+- After SSL setup: `https://localhost:37358/`
+
+### Certificate warning or account rejected
+
+1. Reopen **Keychain Access**.
+2. Find the generated localhost certificate from `silentsuite-bridge --setup-macos-apple-accounts`.
+3. Set **Trust > Secure Sockets Layer (SSL)** to **Always Trust**.
+4. Restart the bridge and retry Apple Internet Accounts.
+
+### Calendar shows but events are missing
+
+macOS may limit sync to recent events. Open **Calendar > Settings > Accounts**, select your DAV account, and check the sync range.
+
+### Apple Internet Accounts still fails with `/principals/`
+
+If HTTPS + Advanced setup still fails, collect a redacted bridge log for support. Include paths such as:
+
+- `/principals/`
+- `/.well-known/caldav`
+- `/.well-known/carddav`
+- `/your@email.com/`
+
+Do **not** include passwords, session tokens, or full private logs. This evidence determines whether SilentSuite needs a follow-up DAV principal-discovery compatibility shim.
