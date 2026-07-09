@@ -8,6 +8,7 @@ import { enqueue } from '@/app/lib/offline-queue'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
+import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 
 interface NewTask {
   title: string
@@ -85,6 +86,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             const content = serializeTask(task)
             const itemUid = await etebase.createItem('tasks', content, tempId, task.listId)
             if (itemUid) {
+              void useLabelSuggestionsStore.getState().recordUsage('tasks', task.categories ?? [])
               // Replace temp id with real Etebase item UID
               set((state) => ({
                 tasks: state.tasks.map((t) =>
@@ -122,6 +124,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               const { serializeTask } = await import('@silentsuite/core')
               const content = serializeTask(updated)
               await etebase.updateItem('tasks', id, content)
+              void useLabelSuggestionsStore.getState().recordUsage('tasks', updated.categories ?? [])
             } catch (err) {
               console.error('[task-store] Failed to sync task update to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to save task. Please try again.')
@@ -187,6 +190,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               const { serializeTask } = await import('@silentsuite/core')
               const content = serializeTask(updated)
               await etebase.updateItem('tasks', id, content)
+              void useLabelSuggestionsStore.getState().recordUsage('tasks', updated.categories ?? [])
             } catch (err) {
               console.error('[task-store] Failed to sync task toggle to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to save task. Please try again.')

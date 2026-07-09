@@ -46,6 +46,12 @@ vi.mock('@/app/lib/offline-queue', () => offlineQueueMock)
 
 vi.mock('@silentsuite/core', () => coreMock)
 
+vi.mock('@/app/stores/use-label-suggestions-store', () => ({
+  useLabelSuggestionsStore: {
+    getState: () => ({ recordUsage: vi.fn(async () => {}) }),
+  },
+}))
+
 vi.mock('@/app/lib/secure-storage', () => ({
   secureGet: vi.fn(async () => null),
   secureSet: vi.fn(async () => {}),

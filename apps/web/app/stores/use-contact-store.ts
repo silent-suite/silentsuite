@@ -8,6 +8,7 @@ import { enqueue } from '@/app/lib/offline-queue'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
+import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 
 interface NewContact {
   displayName: string
@@ -92,6 +93,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
             const content = serializeContact(contact)
             const itemUid = await etebase.createItem('contacts', content, tempId, contact.listId)
             if (itemUid) {
+              void useLabelSuggestionsStore.getState().recordUsage('contacts', contact.categories ?? [])
               set((state) => ({
                 contacts: state.contacts.map((c) =>
                   c.id === tempId ? { ...c, id: itemUid } : c,
@@ -128,6 +130,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
               const { serializeContact } = await import('@silentsuite/core')
               const content = serializeContact(updated)
               await etebase.updateItem('contacts', id, content)
+              void useLabelSuggestionsStore.getState().recordUsage('contacts', updated.categories ?? [])
             } catch (err) {
               console.error('[contact-store] Failed to sync contact update to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to save contact. Please try again.')
