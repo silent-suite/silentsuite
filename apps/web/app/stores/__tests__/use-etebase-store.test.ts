@@ -301,6 +301,142 @@ describe('useEtebaseStore.initialize restoreBlocked flag', () => {
   })
 })
 
+describe('useEtebaseStore.initialize incremental domain loading', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      restoreBlocked: false,
+      domainLoadState: unknownDomainLoadState(),
+      syncEngine: null,
+    })
+  })
+
+  function mockSuccessfulSyncEngine() {
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = vi.fn()
+      this.onStokenAdvance = vi.fn()
+      this.start = vi.fn(async () => {})
+    })
+  }
+
+  async function primeSuccessfulRestore() {
+    const { secureGet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockResolvedValueOnce({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValueOnce('fingerprint')
+    coreMock.listCollections.mockImplementation(async (_account: unknown, colType: string) => {
+      if (colType === 'etebase.vevent') return [mockCollection('cal-1')]
+      if (colType === 'etebase.vtodo') return [mockCollection('task-1')]
+      if (colType === 'etebase.vcard') return [mockCollection('contact-1')]
+      return []
+    })
+    mockSuccessfulSyncEngine()
+  }
+
+  it('invokes onDomainLoaded in calendar → tasks → contacts order with completed state visible', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'cal-1') return { items: [mockItem('event-1', 'VEVENT')], stoken: null, done: true }
+      if (collection.uid === 'task-1') return { items: [mockItem('task-item-1', 'VTODO')], stoken: null, done: true }
+      return { items: [mockItem('contact-item-1', 'VCARD')], stoken: null, done: true }
+    })
+
+    const events: { type: string; status: string }[] = []
+    let calendarItemsAtCalendarCallback = -1
+    let calendarStatusAtCalendarCallback = 'unseen'
+    await useEtebaseStore.getState().initialize({
+      onDomainLoaded: (event) => {
+        events.push({ type: event.type, status: event.status })
+        if (event.type === 'calendar') {
+          const state = useEtebaseStore.getState()
+          calendarItemsAtCalendarCallback = state.itemCache.size
+          calendarStatusAtCalendarCallback = state.domainLoadState.calendar
+        }
+      },
+    })
+
+    expect(events.map((e) => `${e.type}:${e.status}`)).toEqual([
+      'calendar:loaded',
+      'tasks:loaded',
+      'contacts:loaded',
+    ])
+    // Calendar was published as loaded, with its item already in the cache,
+    // before tasks/contacts were enumerated.
+    expect(calendarStatusAtCalendarCallback).toBe('loaded')
+    expect(calendarItemsAtCalendarCallback).toBe(1)
+    expect(useEtebaseStore.getState().isInitialized).toBe(true)
+  })
+
+  it('marks a failed domain without aborting later domains and still starts sync', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'task-1') throw new Error('server 500 on tasks')
+      return { items: [], stoken: null, done: true }
+    })
+
+    const events: string[] = []
+    await useEtebaseStore.getState().initialize({
+      onDomainLoaded: (event) => {
+        events.push(`${event.type}:${event.status}`)
+      },
+    })
+
+    expect(events).toEqual(['calendar:loaded', 'tasks:failed', 'contacts:loaded'])
+    const state = useEtebaseStore.getState()
+    expect(state.domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'failed', contacts: 'loaded' })
+    expect(state.restoreBlocked).toBe(false)
+    expect(state.isInitialized).toBe(true)
+    expect(state.syncEngine).toBeTruthy()
+  })
+
+  it('emits only privacy-safe aggregate fields in the domain event payload', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'cal-1') return { items: [mockItem('event-1', 'VEVENT')], stoken: null, done: true }
+      return { items: [], stoken: null, done: true }
+    })
+
+    const captured: Record<string, unknown>[] = []
+    await useEtebaseStore.getState().initialize({
+      onDomainLoaded: (event) => {
+        captured.push({ ...event })
+      },
+    })
+
+    expect(captured).toHaveLength(3)
+    for (const event of captured) {
+      expect(Object.keys(event).sort()).toEqual([
+        'collectionCount',
+        'itemCount',
+        'pageCount',
+        'status',
+        'type',
+      ])
+      expect(typeof event.itemCount).toBe('number')
+      expect(typeof event.pageCount).toBe('number')
+      expect(typeof event.collectionCount).toBe('number')
+    }
+    const calendarEvent = captured.find((e) => e.type === 'calendar')
+    expect(calendarEvent).toMatchObject({ type: 'calendar', status: 'loaded', itemCount: 1, collectionCount: 1 })
+  })
+
+  it('remains backwards-compatible when called with no options', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    await useEtebaseStore.getState().initialize()
+
+    const state = useEtebaseStore.getState()
+    expect(state.isInitialized).toBe(true)
+    expect(state.domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'loaded', contacts: 'loaded' })
+  })
+})
+
 describe('useEtebaseStore.createItemsBatch', () => {
   beforeEach(() => {
     offlineQueueMock.enqueue.mockClear()

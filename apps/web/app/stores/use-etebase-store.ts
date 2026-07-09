@@ -83,6 +83,32 @@ type EtebaseCore = typeof import('@silentsuite/core')
 
 type CachedContentItem = { uid: string; content: string; collectionUid: string }
 
+/** One visible domain reaching a terminal state during initial restore. */
+export type InitialVisibleDomainKey = VisibleCollectionTypeKey
+export type InitialDomainLoadStatus = 'loaded' | 'failed'
+
+/**
+ * Privacy-safe notification emitted after a single visible domain finishes its
+ * initial server enumeration. Carries only aggregate counts and coarse status
+ * -- never item UIDs, collection UIDs, or decrypted content.
+ */
+export interface InitialDomainLoadEvent {
+  type: InitialVisibleDomainKey
+  status: InitialDomainLoadStatus
+  itemCount: number
+  pageCount: number
+  collectionCount: number
+}
+
+export interface InitializeOptions {
+  /**
+   * Called after each visible domain reaches a terminal ('loaded'/'failed')
+   * state and the store's maps + domainLoadState have been published. Lets a
+   * fast domain (calendar) paint before slower domains finish enumerating.
+   */
+  onDomainLoaded?: (event: InitialDomainLoadEvent) => void | Promise<void>
+}
+
 const UNKNOWN_DOMAIN_LOAD_STATE: DomainLoadState = {
   calendar: 'unknown',
   tasks: 'unknown',
@@ -142,6 +168,48 @@ async function ensureCollectionsForAccount(
   }
 
   return collections
+}
+
+/**
+ * List every item for a single visible domain into the shared cache maps.
+ * Paginates each concrete collection to completion and skips tombstones.
+ * Returns privacy-safe aggregate counts only (no UIDs, no content).
+ */
+async function loadInitialDomainItems(
+  core: EtebaseCore,
+  account: any,
+  key: VisibleCollectionTypeKey,
+  typedCollections: any[],
+  maps: {
+    itemCache: Map<string, any>
+    itemTypeMap: Map<string, CollectionTypeKey>
+    itemCollectionMap: Map<string, string>
+  },
+): Promise<{ itemCount: number; pageCount: number }> {
+  let itemCount = 0
+  let pageCount = 0
+
+  for (const collection of typedCollections) {
+    let stoken: string | null = null
+    let done = false
+
+    while (!done) {
+      const response = await core.listItems(account, collection, stoken)
+      pageCount += 1
+      for (const item of response.items) {
+        if (!item.isDeleted) {
+          maps.itemCache.set(item.uid, item)
+          maps.itemTypeMap.set(item.uid, key)
+          maps.itemCollectionMap.set(item.uid, collection.uid)
+          itemCount += 1
+        }
+      }
+      stoken = response.stoken
+      done = response.done
+    }
+  }
+
+  return { itemCount, pageCount }
 }
 
 async function trackCollectionWithSyncEngine(
@@ -371,8 +439,12 @@ interface EtebaseActions {
   /**
    * Restore Etebase session from localStorage, initialize collections,
    * load all items into data stores, and start the SyncEngine.
+   *
+   * Visible domains are enumerated one at a time; options.onDomainLoaded is
+   * invoked after each reaches a terminal state so callers can paint a fast
+   * domain (calendar) before slower domains finish.
    */
-  initialize: () => Promise<void>
+  initialize: (options?: InitializeOptions) => Promise<void>
 
   /**
    * Create an item in the given collection type.
@@ -519,7 +591,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   domainLoadState: unknownDomainLoadState(),
   syncEngine: null,
 
-  initialize: async () => {
+  initialize: async (options?: InitializeOptions) => {
     const serverUrl = getServerUrl()
     const diagnostics = new RestoreDiagnosticsRecorder({
       source: 'restore',
@@ -581,7 +653,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       await hydrateListStores(collections)
       diagnostics.completePhase('hydrateLists')
 
-      // 3. Load all items from each collection into the cache
+      // 3. Load items from each visible collection into the cache, one domain
+      // at a time. After each domain reaches a terminal state we publish the
+      // accumulated maps + domainLoadState and notify the caller, so a fast
+      // domain (calendar comes first in COLLECTION_DEFINITIONS) can paint
+      // before slower domains finish enumerating.
       const itemCache = new Map<string, any>()
       const itemTypeMap = new Map<string, CollectionTypeKey>()
       const itemCollectionMap = new Map<string, string>()
@@ -594,28 +670,18 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const typedCollections = collections[key]
         let itemCount = 0
         let pageCount = 0
+        let status: InitialDomainLoadStatus
 
         try {
-          for (const collection of typedCollections) {
-            let stoken: string | null = null
-            let done = false
-
-            while (!done) {
-              const response = await core.listItems(account, collection, stoken)
-              pageCount += 1
-              for (const item of response.items) {
-                if (!item.isDeleted) {
-                  itemCache.set(item.uid, item)
-                  itemTypeMap.set(item.uid, key)
-                  itemCollectionMap.set(item.uid, collection.uid)
-                  itemCount += 1
-                }
-              }
-              stoken = response.stoken
-              done = response.done
-            }
-          }
+          const counts = await loadInitialDomainItems(core, account, key, typedCollections, {
+            itemCache,
+            itemTypeMap,
+            itemCollectionMap,
+          })
+          itemCount = counts.itemCount
+          pageCount = counts.pageCount
           domainLoadState[key] = 'loaded'
+          status = 'loaded'
           diagnostics.completePhase(phase, {
             collectionType: key,
             collectionCount: typedCollections.length,
@@ -624,12 +690,29 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           })
         } catch (err) {
           domainLoadState[key] = 'failed'
+          status = 'failed'
           diagnostics.failActivePhase(err)
           logger.warn(`[etebase-store] Failed to load ${key} items`, getSafeErrorDetails(err))
         }
+
+        // Publish incrementally with fresh Map copies + a fresh domainLoadState
+        // object so Zustand subscribers observe the completed domain right away.
+        set({
+          itemCache: new Map(itemCache),
+          itemTypeMap: new Map(itemTypeMap),
+          itemCollectionMap: new Map(itemCollectionMap),
+          domainLoadState: { ...domainLoadState },
+        })
+
+        await options?.onDomainLoaded?.({
+          type: key,
+          status,
+          itemCount,
+          pageCount,
+          collectionCount: typedCollections.length,
+        })
       }
 
-      set({ itemCache, itemTypeMap, itemCollectionMap, domainLoadState })
       logger.debug(`[etebase-store] Loaded ${itemCache.size} items into cache`)
 
       // 4. Start SyncEngine

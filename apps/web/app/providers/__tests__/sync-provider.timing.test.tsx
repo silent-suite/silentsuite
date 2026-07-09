@@ -16,10 +16,28 @@ const syncStoreMock = vi.hoisted(() => ({
   setPartialLoad: vi.fn((partial: boolean, count = 0) => order.push(`setPartialLoad:${partial}:${count}`)),
 }))
 
+type DomainKey = 'calendar' | 'tasks' | 'contacts'
+type OnDomainLoaded = (event: {
+  type: DomainKey
+  status: 'loaded' | 'failed'
+  itemCount: number
+  pageCount: number
+  collectionCount: number
+}) => void | Promise<void>
+
 const etebaseMock = vi.hoisted(() => {
   let syncChangeHandler: ((event: { collectionType: string; collectionUid: string; itemUids: string[]; changeType: string }) => Promise<void>) | null = null
+  // Default initialize replays the real store contract: calendar → tasks →
+  // contacts, one terminal callback each, statuses driven by domainLoadState.
+  async function defaultInitialize(options?: { onDomainLoaded?: OnDomainLoaded }) {
+    order.push('etebaseInitialize')
+    for (const type of ['calendar', 'tasks', 'contacts'] as const) {
+      const status = state.domainLoadState[type] === 'failed' ? 'failed' : 'loaded'
+      await options?.onDomainLoaded?.({ type, status, itemCount: 0, pageCount: 1, collectionCount: 1 })
+    }
+  }
   const state = {
-    initialize: vi.fn(async () => order.push('etebaseInitialize')),
+    initialize: vi.fn(defaultInitialize),
     fetchAllItems: vi.fn(async (type: 'tasks' | 'contacts' | 'calendar') => {
       order.push(`fetchAllItems:${type}`)
       return []
@@ -39,6 +57,7 @@ const etebaseMock = vi.hoisted(() => {
   }
   return {
     state,
+    defaultInitialize,
     getSyncChangeHandler: () => syncChangeHandler,
     setSyncChangeHandler: (handler: typeof syncChangeHandler) => {
       syncChangeHandler = handler
@@ -141,7 +160,7 @@ describe('SyncProvider timing instrumentation', () => {
     syncStoreMock.setError.mockImplementation((error: string | null) => order.push(`setError:${error ?? 'null'}`))
     syncStoreMock.setPartialLoad.mockImplementation((partial: boolean, count = 0) => order.push(`setPartialLoad:${partial}:${count}`))
     etebaseMock.state.domainLoadState = { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' }
-    etebaseMock.state.initialize.mockImplementation(async () => order.push('etebaseInitialize'))
+    etebaseMock.state.initialize.mockImplementation(etebaseMock.defaultInitialize)
     etebaseMock.state.fetchAllItems.mockImplementation(async (type: 'tasks' | 'contacts' | 'calendar') => {
       order.push(`fetchAllItems:${type}`)
       return []
@@ -166,7 +185,7 @@ describe('SyncProvider timing instrumentation', () => {
     timingMock.nowMs.mockReturnValue(100)
   })
 
-  it('preserves the existing startup order while recording timings', async () => {
+  it('loads each domain into its store as the domain callback fires (calendar first)', async () => {
     renderProvider()
 
     await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
@@ -175,12 +194,14 @@ describe('SyncProvider timing instrumentation', () => {
       'initializeSync',
       'setSyncStatus:syncing',
       'etebaseInitialize',
-      'fetchAllItems:tasks',
-      'syncTasks',
-      'fetchAllItems:contacts',
-      'syncContacts',
       'fetchAllItems:calendar',
       'syncCalendar',
+      'setPartialLoad:false:0',
+      'fetchAllItems:tasks',
+      'syncTasks',
+      'setPartialLoad:false:0',
+      'fetchAllItems:contacts',
+      'syncContacts',
       'setPartialLoad:false:0',
       'wireChangeHandler',
       'wireStatusHandler',
@@ -189,6 +210,71 @@ describe('SyncProvider timing instrumentation', () => {
     ])
     expect(timingMock.logSyncTiming).toHaveBeenCalledWith('cache-capability', 100, expect.any(Object))
     expect(timingMock.logSyncTiming).toHaveBeenCalledWith('initial-sync-complete', 100, {})
+  })
+
+  it('paints calendar as soon as its domain callback fires, before delayed tasks/contacts', async () => {
+    let releaseLater: () => void = () => {}
+    const laterGate = new Promise<void>((resolve) => {
+      releaseLater = resolve
+    })
+    etebaseMock.state.initialize.mockImplementation(async (options?: { onDomainLoaded?: OnDomainLoaded }) => {
+      order.push('etebaseInitialize')
+      await options?.onDomainLoaded?.({ type: 'calendar', status: 'loaded', itemCount: 1, pageCount: 1, collectionCount: 1 })
+      order.push('calendarCallbackDone')
+      await laterGate
+      await options?.onDomainLoaded?.({ type: 'tasks', status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
+      await options?.onDomainLoaded?.({ type: 'contacts', status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
+    })
+    etebaseMock.state.fetchAllItems.mockImplementation(async (type: DomainKey) => {
+      order.push(`fetchAllItems:${type}`)
+      if (type === 'calendar') return [{ uid: 'evt-1', content: 'VEVENT', collectionUid: 'cal-1' }]
+      return []
+    })
+
+    renderProvider()
+
+    // Calendar paints while tasks/contacts are still gated behind laterGate.
+    await waitFor(() => expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledTimes(1))
+    expect(taskStoreMock.syncFromRemote).not.toHaveBeenCalled()
+    expect(contactStoreMock.syncFromRemote).not.toHaveBeenCalled()
+    expect(order).toContain('syncCalendar')
+    expect(order).not.toContain('syncTasks')
+
+    releaseLater()
+
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+    expect(taskStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+    expect(contactStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+    // Calendar was replaced exactly once, never re-run by a later catch-up pass.
+    expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps calendar and flags partial load when tasks fail after calendar succeeds', async () => {
+    etebaseMock.state.domainLoadState = { tasks: 'failed', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' }
+    etebaseMock.state.fetchAllItems.mockImplementation(async (type: DomainKey) => {
+      order.push(`fetchAllItems:${type}`)
+      if (type === 'calendar') return [{ uid: 'evt-1', content: 'VEVENT', collectionUid: 'cal-1' }]
+      return []
+    })
+
+    renderProvider()
+
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+    expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+    expect(taskStoreMock.syncFromRemote).not.toHaveBeenCalled()
+    expect(contactStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+    expect(syncStoreMock.setPartialLoad).toHaveBeenCalledWith(true, 1)
+    expect(order).not.toContain('syncTasks')
+  })
+
+  it('replaces the calendar store only once during initial load', async () => {
+    renderProvider()
+
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+    expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+    expect(taskStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+    expect(contactStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+    expect(order.filter((entry) => entry === 'syncCalendar')).toHaveLength(1)
   })
 
   it('hydrates cache only when cache is enabled and still continues startup', async () => {
