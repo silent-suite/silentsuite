@@ -31,6 +31,13 @@
       "copy": "Copy fingerprint",
       "copied": "Fingerprint copied",
       "copyFailed": "Copy failed"
+    },
+    "RestoreDiagnostics": {
+      "title": "Restore diagnostics",
+      "description": "Copy a privacy-safe restore report when support asks for sync diagnostics. This action appears only when restore diagnostics are available in debug-enabled preview or local sessions.",
+      "copy": "Copy diagnostics",
+      "copied": "Diagnostics copied",
+      "copyFailed": "Copy failed"
     }
   },
   "Labels": {
