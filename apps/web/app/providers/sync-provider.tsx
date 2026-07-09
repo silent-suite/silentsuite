@@ -9,6 +9,7 @@ import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
+import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
@@ -124,6 +125,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         void useLabelSuggestionsStore.getState().initialize()
           .then(() => useLabelSuggestionsStore.getState().seedFromVisibleItems())
           .catch((err) => logger.warn('[sync-provider] Label suggestions initialization failed', getSafeErrorDetails(err)))
+        void usePreferencesSyncStore.getState().initialize()
+          .catch((err) => logger.warn('[sync-provider] Preferences sync initialization failed', getSafeErrorDetails(err)))
 
         // Wire SyncEngine status
         const statusHandlerStartedAt = nowMs()
@@ -357,6 +360,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           } catch (err) {
             logger.warn('[sync-provider] Label suggestions refresh failed', getSafeErrorDetails(err))
           }
+        } else if (collectionType === 'silentsuite.preferences') {
+          try {
+            const preferenceItems = await refresher('preferences', event.collectionUid)
+            await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
+          } catch (err) {
+            logger.warn('[sync-provider] Preferences refresh failed', getSafeErrorDetails(err))
+          }
         }
 
         setLastSynced(new Date())
@@ -381,6 +391,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     return () => {
       if (unsubChange) unsubChange()
       if (unsubStatus) unsubStatus()
+      usePreferencesSyncStore.getState().destroy()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

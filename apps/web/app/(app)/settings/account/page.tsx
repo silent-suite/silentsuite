@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import { formatDate } from '@/app/lib/date'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
@@ -20,6 +21,7 @@ export default function AccountPage() {
   const { user } = useAuthStore()
   const [account, setAccount] = useState<AccountDetails | null>(null)
   const [loading, setLoading] = useState(true)
+  const [preferencesSyncStatus, setPreferencesSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
 
   const timeFormat = usePreferencesStore((s) => s.timeFormat)
   const firstDayOfWeek = usePreferencesStore((s) => s.firstDayOfWeek)
@@ -36,6 +38,7 @@ export default function AccountPage() {
   const setNotificationSound = usePreferencesStore((s) => s.setNotificationSound)
   const setDefaultTimezone = usePreferencesStore((s) => s.setDefaultTimezone)
   const setDayBounds = usePreferencesStore((s) => s.setDayBounds)
+  const pushPreferencesNow = usePreferencesSyncStore((s) => s.pushNow)
 
   const hourOptions = useMemo(() => Array.from({ length: 25 }, (_, hour) => hour as DayBoundaryHour), [])
 
@@ -87,6 +90,16 @@ export default function AccountPage() {
       })()
     : '—'
   const status = isSelfHosted ? 'Self-Hosted' : (account?.provisioningStatus ?? 'Free trial')
+
+  const syncPreferencesNow = async () => {
+    setPreferencesSyncStatus('syncing')
+    try {
+      const synced = await pushPreferencesNow()
+      setPreferencesSyncStatus(synced ? 'synced' : 'failed')
+    } catch {
+      setPreferencesSyncStatus('failed')
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -283,6 +296,29 @@ export default function AccountPage() {
                     className="h-4 w-4 rounded border-[rgb(var(--border))] accent-emerald-500"
                   />
                 </label>
+              </div>
+
+              <div className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 space-y-3">
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-[rgb(var(--foreground))]">Account preference sync</p>
+                  <p className="text-xs text-[rgb(var(--muted))]">
+                    Save these account preferences to your encrypted vault so your other SilentSuite web sessions can use them. Notification sound stays local to this device.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={syncPreferencesNow}
+                  disabled={preferencesSyncStatus === 'syncing'}
+                  className="rounded-md border border-emerald-500/60 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:border-emerald-400 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {preferencesSyncStatus === 'syncing' ? 'Syncing preferences...' : 'Sync account preferences'}
+                </button>
+                {preferencesSyncStatus === 'synced' && (
+                  <p className="text-xs text-emerald-300">Preferences synced.</p>
+                )}
+                {preferencesSyncStatus === 'failed' && (
+                  <p className="text-xs text-rose-300">Could not sync preferences. Check your connection and try again.</p>
+                )}
               </div>
             </div>
           </section>

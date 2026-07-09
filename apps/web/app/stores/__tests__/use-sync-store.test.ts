@@ -18,6 +18,12 @@ const calendarStoreMock = vi.hoisted(() => ({
   syncFromRemote: vi.fn(),
 }))
 
+const preferencesSyncMock = vi.hoisted(() => ({
+  loadFromRemote: vi.fn(async () => {}),
+  pushNow: vi.fn(async () => true),
+  setRemoteItemUid: vi.fn(),
+}))
+
 // Mock the heavy dependencies that simulateSyncCycle imports dynamically
 vi.mock('@/app/stores/use-etebase-store', () => ({
   useEtebaseStore: {
@@ -51,6 +57,12 @@ vi.mock('@/app/stores/use-calendar-store', () => ({
   },
 }))
 
+vi.mock('@/app/stores/use-preferences-sync-store', () => ({
+  usePreferencesSyncStore: {
+    getState: () => preferencesSyncMock,
+  },
+}))
+
 vi.mock('@/app/lib/offline-queue', () => ({
   replay: vi.fn().mockResolvedValue([]),
   getPendingCount: vi.fn().mockResolvedValue(0),
@@ -73,6 +85,9 @@ function resetStore() {
   etebaseMock.state.moveItem.mockReset()
   calendarStoreMock.events = []
   calendarStoreMock.syncFromRemote.mockReset()
+  preferencesSyncMock.loadFromRemote.mockClear()
+  preferencesSyncMock.pushNow.mockClear()
+  preferencesSyncMock.setRemoteItemUid.mockClear()
   useSyncStore.setState({
     syncStatus: 'synced',
     lastSyncedAt: null,
@@ -123,6 +138,8 @@ describe('useSyncStore', () => {
     await flushPromises()
     expect(useSyncStore.getState().syncStatus).toBe('synced')
     expect(useSyncStore.getState().lastSyncedAt).toBeInstanceOf(Date)
+    expect(preferencesSyncMock.loadFromRemote).toHaveBeenCalledTimes(1)
+    expect(preferencesSyncMock.pushNow).not.toHaveBeenCalled()
   })
 
   it('simulateSyncCycle does nothing when offline', () => {
