@@ -104,16 +104,19 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           await hydrateFromCache(cacheStartedAt)
         }
 
-        // Restore session, create/fetch collections, load items, start SyncEngine
+        // Restore session, create/fetch collections, and enumerate items. The
+        // onDomainLoaded hook fires once per visible domain as soon as that
+        // domain reaches a terminal state, so calendar deserializes and paints
+        // before slower tasks/contacts finish. This replaces the old
+        // post-initialize all-domain load, so no domain is replaced twice.
         const etebaseStartedAt = nowMs()
-        await etebaseInitialize()
+        await etebaseInitialize({
+          onDomainLoaded: async (event) => {
+            await loadDomainIntoStore(event.type)
+            updatePartialLoadFlag()
+          },
+        })
         safeLogSyncTiming('etebase-initialize', etebaseStartedAt)
-
-        // Now load items from each collection into the data stores
-        const loadStartedAt = nowMs()
-        await loadItemsIntoStores()
-        updatePartialLoadFlag()
-        safeLogSyncTiming('load-items', loadStartedAt)
 
         // Wire SyncEngine change events
         const changeHandlerStartedAt = nowMs()
@@ -205,115 +208,88 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    async function loadItemsIntoStores() {
-      const etebase = useEtebaseStore.getState()
+    async function mirrorToCache(
+      type: 'tasks' | 'contacts' | 'calendar',
+      items: { uid: string; content: string; collectionUid: string }[],
+    ) {
+      if (!isLocalCacheEnabled() || items.length === 0) return
+      const startedAt = nowMs()
+      const records: CachedItem[] = items.map((it) => ({
+        itemUid: it.uid,
+        collectionType: type,
+        collectionUid: it.collectionUid,
+        content: it.content,
+        lastModified: Date.now(),
+      }))
+      try {
+        await cacheReplaceItemsForType(type, records)
+        safeLogSyncTiming('cache-mirror', startedAt, { type, itemCount: items.length })
+      } catch (err) {
+        logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
+        safeLogSyncTiming('cache-mirror-failed', startedAt, { type, itemCount: items.length, errorCategory: 'cache' })
+      }
+    }
+
+    // Explicit per-type phase names keep sync timing off arbitrary strings.
+    const TIMING_PHASE_BY_TYPE = {
+      tasks: 'tasks-load',
+      contacts: 'contacts-load',
+      calendar: 'calendar-load',
+    } as const
+
+    /**
+     * Deserialize one visible domain's server items into its Zustand store.
+     * Only replaces the store when that domain is 'loaded' -- a failed/unknown
+     * domain (Slice 4) keeps its existing store contents untouched.
+     */
+    async function loadDomainIntoStore(type: 'calendar' | 'tasks' | 'contacts') {
+      const startedAt = nowMs()
       const cacheEnabled = isLocalCacheEnabled()
-
-      async function mirrorToCache(
-        type: 'tasks' | 'contacts' | 'calendar',
-        items: { uid: string; content: string; collectionUid: string }[],
-      ) {
-        if (!cacheEnabled || items.length === 0) return
-        const startedAt = nowMs()
-        const records: CachedItem[] = items.map((it) => ({
-          itemUid: it.uid,
-          collectionType: type,
-          collectionUid: it.collectionUid,
-          content: it.content,
-          lastModified: Date.now(),
-        }))
-        try {
-          await cacheReplaceItemsForType(type, records)
-          safeLogSyncTiming('cache-mirror', startedAt, { type, itemCount: items.length })
-        } catch (err) {
-          logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
-          safeLogSyncTiming('cache-mirror-failed', startedAt, { type, itemCount: items.length, errorCategory: 'cache' })
-        }
-      }
-
-      // Load tasks
-      const taskStartedAt = nowMs()
       try {
-        const taskItems = await etebase.fetchAllItems('tasks')
-        let taskCount = 0
-        if (useEtebaseStore.getState().domainLoadState.tasks === 'loaded') {
-          const { deserializeTask } = await import('@silentsuite/core')
-          const tasks = taskItems.map((item) => {
-            const task = deserializeTask(item.content)
-            // Use the Etebase item UID only as the local id so updates/deletes
-            // can address the item without changing the stable iCalendar UID.
-            return { ...task, id: item.uid, listId: item.collectionUid }
-          })
-          taskCount = tasks.length
-          useTaskStore.getState().syncFromRemote(tasks)
-          logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
-          await mirrorToCache('tasks', taskItems)
+        const items = await useEtebaseStore.getState().fetchAllItems(type)
+        let domainItemCount = 0
+        if (useEtebaseStore.getState().domainLoadState[type] === 'loaded') {
+          const core = await import('@silentsuite/core')
+          if (type === 'tasks') {
+            const tasks = items.map((item) => {
+              // Use the Etebase item UID only as the local id so updates/deletes
+              // can address the item without changing the stable iCalendar UID.
+              const task = core.deserializeTask(item.content)
+              return { ...task, id: item.uid, listId: item.collectionUid }
+            })
+            domainItemCount = tasks.length
+            useTaskStore.getState().syncFromRemote(tasks)
+            logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
+          } else if (type === 'contacts') {
+            const contacts = items.map((item) => {
+              const contact = core.deserializeContact(item.content)
+              return { ...contact, id: item.uid, listId: item.collectionUid }
+            })
+            domainItemCount = contacts.length
+            useContactStore.getState().syncFromRemote(contacts)
+            logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
+          } else {
+            const events = items.map((item) => {
+              const event = core.deserializeCalendarEvent(item.content)
+              return { ...event, id: item.uid, calendarId: item.collectionUid }
+            })
+            domainItemCount = events.length
+            useCalendarStore.getState().syncFromRemote(events)
+            logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
+          }
+          await mirrorToCache(type, items)
         }
-        safeLogSyncTiming('tasks-load', taskStartedAt, {
+        const countField = type === 'tasks' ? 'taskCount' : type === 'contacts' ? 'contactCount' : 'eventCount'
+        safeLogSyncTiming(TIMING_PHASE_BY_TYPE[type], startedAt, {
           source: 'server',
           cacheEnabled,
-          itemCount: taskItems.length,
-          taskCount,
+          itemCount: items.length,
+          [countField]: domainItemCount,
         })
       } catch (err) {
-        safeLogSyncTiming('tasks-load', taskStartedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
-        reportSyncError('load tasks', err)
+        safeLogSyncTiming(TIMING_PHASE_BY_TYPE[type], startedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
+        reportSyncError(`load ${type}`, err)
       }
-
-      // Load contacts
-      const contactStartedAt = nowMs()
-      try {
-        const contactItems = await etebase.fetchAllItems('contacts')
-        let contactCount = 0
-        if (useEtebaseStore.getState().domainLoadState.contacts === 'loaded') {
-          const { deserializeContact } = await import('@silentsuite/core')
-          const contacts = contactItems.map((item) => {
-            const contact = deserializeContact(item.content)
-            return { ...contact, id: item.uid, listId: item.collectionUid }
-          })
-          contactCount = contacts.length
-          useContactStore.getState().syncFromRemote(contacts)
-          logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
-          await mirrorToCache('contacts', contactItems)
-        }
-        safeLogSyncTiming('contacts-load', contactStartedAt, {
-          source: 'server',
-          cacheEnabled,
-          itemCount: contactItems.length,
-          contactCount,
-        })
-      } catch (err) {
-        safeLogSyncTiming('contacts-load', contactStartedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
-        reportSyncError('load contacts', err)
-      }
-
-      // Load calendar events
-      const calendarStartedAt = nowMs()
-      try {
-        const eventItems = await etebase.fetchAllItems('calendar')
-        let eventCount = 0
-        if (useEtebaseStore.getState().domainLoadState.calendar === 'loaded') {
-          const { deserializeCalendarEvent } = await import('@silentsuite/core')
-          const events = eventItems.map((item) => {
-            const event = deserializeCalendarEvent(item.content)
-            return { ...event, id: item.uid, calendarId: item.collectionUid }
-          })
-          eventCount = events.length
-          useCalendarStore.getState().syncFromRemote(events)
-          logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
-          await mirrorToCache('calendar', eventItems)
-        }
-        safeLogSyncTiming('calendar-load', calendarStartedAt, {
-          source: 'server',
-          cacheEnabled,
-          itemCount: eventItems.length,
-          eventCount,
-        })
-      } catch (err) {
-        safeLogSyncTiming('calendar-load', calendarStartedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
-        reportSyncError('load calendar events', err)
-      }
-
     }
 
     function wireChangeHandler(): (() => void) | null {
