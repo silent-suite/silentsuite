@@ -144,6 +144,12 @@ vi.mock('@silentsuite/core', () => ({
   deserializeCalendarEvent: vi.fn(() => ({ title: 'event' })),
 }))
 
+vi.mock('@/app/stores/use-label-suggestions-store', () => ({
+  useLabelSuggestionsStore: {
+    getState: () => ({ initialize: vi.fn(async () => {}), seedFromVisibleItems: vi.fn(), refreshFromRemote: vi.fn(async () => {}) }),
+  },
+}))
+
 function renderProvider() {
   return render(<SyncProvider><div>child</div></SyncProvider>)
 }

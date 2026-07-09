@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { LabelEditor, LabelChips, normalizeLabels } from '../LabelEditor'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import { getLabelColor, labelTextColor, useLabelColorStore } from '@/app/stores/use-label-color-store'
+import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 
 vi.mock('lucide-react', () => ({
   Palette: () => <svg data-testid="palette-icon" />,
@@ -12,6 +13,7 @@ vi.mock('lucide-react', () => ({
 
 beforeEach(() => {
   useLabelColorStore.setState({ colors: {} })
+  useLabelSuggestionsStore.getState().reset()
   localStorage.clear()
 })
 
@@ -136,5 +138,41 @@ describe('LabelEditor', () => {
     expect(screen.queryByLabelText('Labels')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Remove label Work')).not.toBeInTheDocument()
     expect(screen.getByText('Work')).toBeInTheDocument()
+  })
+
+  it('shows encrypted label suggestions on focus and selects one by click', () => {
+    useLabelSuggestionsStore.getState().seedFromVisibleItems({ calendar: [{ categories: ['Work', 'Home'] }] })
+    const onChange = vi.fn()
+    renderWithIntl(<LabelEditor labels={[]} onChange={onChange} source="calendar" />)
+
+    fireEvent.focus(screen.getByLabelText('Labels'))
+    fireEvent.click(screen.getByRole('option', { name: 'Work' }))
+
+    expect(onChange).toHaveBeenCalledWith(['Work'])
+  })
+
+  it('filters suggestions and excludes labels already present', () => {
+    useLabelSuggestionsStore.getState().seedFromVisibleItems({ tasks: [{ categories: ['Work', 'Weekend', 'Home'] }] })
+    renderWithIntl(<LabelEditor labels={['Work']} onChange={vi.fn()} source="tasks" />)
+    const input = screen.getByLabelText('Labels')
+
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'we' } })
+
+    expect(screen.queryByRole('option', { name: 'Work' })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Weekend' })).toBeInTheDocument()
+  })
+
+  it('selects suggestions with keyboard navigation', () => {
+    useLabelSuggestionsStore.getState().seedFromVisibleItems({ contacts: [{ categories: ['Alpha', 'Beta'] }] })
+    const onChange = vi.fn()
+    renderWithIntl(<LabelEditor labels={[]} onChange={onChange} source="contacts" />)
+    const input = screen.getByLabelText('Labels')
+
+    fireEvent.focus(input)
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onChange).toHaveBeenCalledWith(['Beta'])
   })
 })

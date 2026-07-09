@@ -18,6 +18,7 @@ export {
   COLLECTION_TYPE_TASKS,
   COLLECTION_TYPE_CONTACTS,
   COLLECTION_TYPE_PREFERENCES,
+  COLLECTION_TYPE_LABEL_INDEX,
 } from './etebase/constants.js';
 export type { CollectionType } from './etebase/constants.js';
 
@@ -128,6 +129,23 @@ export type {
   VersionedPreference,
   SyncedPreferencesV1,
 } from './models/preferences.js';
+
+// Synced label index model
+export {
+  createEmptyLabelIndex,
+  normalizeLabelKey,
+  normalizeLabelIndex,
+  recordLabelsUsed,
+  mergeLabelIndexes,
+  serializeLabelIndex,
+  deserializeLabelIndex,
+  suggestLabels,
+} from './models/label-index.js';
+export type {
+  LabelIndexSource,
+  SyncedLabelEntryV1,
+  SyncedLabelIndexV1,
+} from './models/label-index.js';
 
 // iCal parser
 export {

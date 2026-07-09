@@ -455,6 +455,7 @@ function TaskDialog({
               <LabelEditor
                 labels={categories}
                 onChange={setCategories}
+                source="tasks"
                 aria-label={t('taskLabels')}
               />
             </div>
@@ -802,6 +803,7 @@ function TaskItem({ task }: { task: Task }) {
               labels={task.categories ?? []}
               onChange={(next) => canWrite && updateTask(task.id, { categories: next })}
               disabled={!canWrite}
+              source="tasks"
               aria-label={t('taskLabels')}
             />
           </div>

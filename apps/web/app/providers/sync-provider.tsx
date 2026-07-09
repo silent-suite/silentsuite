@@ -8,6 +8,7 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
@@ -118,6 +119,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         const changeHandlerStartedAt = nowMs()
         unsubChange = wireChangeHandler()
         safeLogSyncTiming('wire-change-handler', changeHandlerStartedAt, { status: unsubChange ? 'ok' : 'skipped' })
+
+        // Supporting metadata only: no passive writes and no visible restore blocking.
+        void useLabelSuggestionsStore.getState().initialize()
+          .then(() => useLabelSuggestionsStore.getState().seedFromVisibleItems())
+          .catch((err) => logger.warn('[sync-provider] Label suggestions initialization failed', getSafeErrorDetails(err)))
 
         // Wire SyncEngine status
         const statusHandlerStartedAt = nowMs()
@@ -344,6 +350,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             }
           } catch (err) {
             reportSyncError('sync calendar events', err)
+          }
+        } else if (collectionType === 'silentsuite.labelindex') {
+          try {
+            await useLabelSuggestionsStore.getState().refreshFromRemote()
+          } catch (err) {
+            logger.warn('[sync-provider] Label suggestions refresh failed', getSafeErrorDetails(err))
           }
         }
 
