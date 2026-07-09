@@ -118,6 +118,11 @@ const HOSTED_ACTIVE_TAB_HEARTBEAT_MS = 5_000
 const HOSTED_ACTIVE_TAB_BROADCAST = 'silentsuite-hosted-session-tabs'
 const HOSTED_ACTIVE_TAB_PING_TIMEOUT_MS = 1000
 
+const AUTH_RATE_LIMIT_MESSAGE =
+  'Too many sign-in attempts. Please wait a few minutes before trying again. Your encrypted data is safe.'
+const AUTH_TEMPORARY_UNAVAILABLE_MESSAGE =
+  'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'
+
 let hostedActiveTabHeartbeat: number | null = null
 let hostedActiveTabUnloadHooked = false
 
@@ -279,6 +284,20 @@ function clearHostedValidationMarkers() {
   } catch (err) {
     logger.warn('[auth-store] Failed to clear hosted validation markers:', err)
   }
+}
+
+function authErrorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return 'Login failed'
+  const raw = err.message.toLowerCase()
+  if (raw.includes('unauthorized') || raw.includes('401')) return 'Invalid email or password. Please try again.'
+  if (raw.includes('not found') || raw.includes('404')) return 'No account found with this email. Please sign up first.'
+  if (raw.includes('429') || raw.includes('too many') || raw.includes('rate limit') || raw.includes('throttl')) {
+    return AUTH_RATE_LIMIT_MESSAGE
+  }
+  if (raw.includes('fetch') || raw.includes('network') || raw.includes('timeout') || raw.includes('timed out')) {
+    return AUTH_TEMPORARY_UNAVAILABLE_MESSAGE
+  }
+  return 'Login failed. Please try again.'
 }
 
 function markHostedValidation(userId: string, rememberDevice: boolean) {
@@ -751,7 +770,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (res.status === 429) {
         await clearLocalAuthMaterial('invalid-hosted-auth')
-        set({ isLoading: false, error: 'Too many attempts. Please try again later.' }); return
+        set({ isLoading: false, error: AUTH_RATE_LIMIT_MESSAGE }); return
       }
       if (res.status === 404 || res.status === 409) {
         await clearLocalAuthMaterial('invalid-hosted-auth')
@@ -773,19 +792,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isLoading: false,
       })
     } catch (err) {
-      let message = 'Login failed'
-      if (err instanceof Error) {
-        const raw = err.message.toLowerCase()
-        if (raw.includes('unauthorized') || raw.includes('401')) {
-          message = 'Invalid email or password. Please try again.'
-        } else if (raw.includes('not found') || raw.includes('404')) {
-          message = 'No account found with this email. Please sign up first.'
-        } else if (raw.includes('fetch') || raw.includes('network')) {
-          message = 'Unable to reach the server. Please check your connection and try again.'
-        } else {
-          message = err.message
-        }
-      }
+      const message = authErrorMessage(err)
       set({ isLoading: false, error: message })
     }
   },
@@ -808,19 +815,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       await secureSet('etebase_session', savedSession)
       set({ isLoading: false })
     } catch (err) {
-      let message = 'Login failed'
-      if (err instanceof Error) {
-        const raw = err.message.toLowerCase()
-        if (raw.includes('unauthorized') || raw.includes('401')) {
-          message = 'Invalid email or password. Please try again.'
-        } else if (raw.includes('not found') || raw.includes('404')) {
-          message = 'No account found with this email. Please sign up first.'
-        } else if (raw.includes('fetch') || raw.includes('network')) {
-          message = 'Unable to reach the server. Please check your connection and try again.'
-        } else {
-          message = err.message
-        }
-      }
+      const message = authErrorMessage(err)
       set({ isLoading: false, error: message })
     }
   },
