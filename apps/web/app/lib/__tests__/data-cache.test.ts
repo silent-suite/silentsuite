@@ -16,23 +16,25 @@ import {
   putMeta,
   clearAll,
   ensureFingerprint,
+  ensureEncryptedEnvelope,
   getCacheCapabilityStatus,
   isCacheEnabled,
   CACHE_SCHEMA_VERSION,
   _resetForTests,
   _setEncryptedCacheAvailableForTests,
+  _setEnvelopeKeyForTests,
   type CachedItem,
 } from '../data-cache'
 
 beforeEach(async () => {
   await _resetForTests()
-  _setEncryptedCacheAvailableForTests(true)
   await new Promise<void>((resolve) => {
     const req = indexedDB.deleteDatabase('silentsuite-data-cache')
     req.onsuccess = () => resolve()
     req.onerror = () => resolve()
     req.onblocked = () => resolve()
   })
+  await installTestEnvelope()
 })
 
 function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks', content = 'CONTENT', collectionUid = 'col-1'): CachedItem {
@@ -45,12 +47,86 @@ function makeItem(uid: string, type: 'tasks' | 'contacts' | 'calendar' = 'tasks'
   }
 }
 
+async function makeTestKey(): Promise<CryptoKey> {
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+}
+
+async function installTestEnvelope(): Promise<void> {
+  _setEnvelopeKeyForTests(await makeTestKey())
+  _setEncryptedCacheAvailableForTests(true)
+}
+
+async function rawItems(): Promise<unknown[]> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open('silentsuite-data-cache')
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+  try {
+    if (!db.objectStoreNames.contains('items')) return []
+    return await new Promise<unknown[]>((resolve, reject) => {
+      const tx = db.transaction('items', 'readonly')
+      const req = tx.objectStore('items').getAll()
+      req.onsuccess = () => resolve(req.result ?? [])
+      req.onerror = () => reject(req.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function rawCryptoKeys(): Promise<unknown[]> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open('silentsuite-data-cache')
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+  try {
+    if (!db.objectStoreNames.contains('crypto')) return []
+    return await new Promise<unknown[]>((resolve, reject) => {
+      const tx = db.transaction('crypto', 'readonly')
+      const req = tx.objectStore('crypto').getAll()
+      req.onsuccess = () => resolve(req.result ?? [])
+      req.onerror = () => reject(req.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function corruptRawItem(itemUid: string): Promise<void> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open('silentsuite-data-cache')
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('items', 'readwrite')
+      const store = tx.objectStore('items')
+      const getReq = store.get(itemUid)
+      getReq.onsuccess = () => {
+        const value = getReq.result as { ct?: number[] } | undefined
+        if (value?.ct) {
+          value.ct = [...value.ct]
+          value.ct[0] = (value.ct[0] ?? 0) ^ 255
+          store.put(value)
+        }
+      }
+      getReq.onerror = () => reject(getReq.error)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
 describe('data-cache', () => {
   describe('encryption guard', () => {
     it('reports cache capability without touching IndexedDB', () => {
       const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
       process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
-      _setEncryptedCacheAvailableForTests(true)
       const openSpy = vi.spyOn(indexedDB, 'open')
 
       expect(getCacheCapabilityStatus()).toEqual({
@@ -68,6 +144,7 @@ describe('data-cache', () => {
       const previous = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED
       process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
       _setEncryptedCacheAvailableForTests(false)
+      _setEnvelopeKeyForTests(null)
 
       expect(isCacheEnabled()).toBe(false)
 
@@ -76,6 +153,7 @@ describe('data-cache', () => {
 
     it('refuses plaintext item writes without an encrypted cache envelope', async () => {
       _setEncryptedCacheAvailableForTests(false)
+      _setEnvelopeKeyForTests(null)
 
       await putItem(makeItem('plain-1', 'tasks', 'PRIVATE TASK SUMMARY'))
       await putItems([makeItem('plain-2', 'tasks', 'PRIVATE BULK TASK')])
@@ -83,6 +161,39 @@ describe('data-cache', () => {
       await replaceItemsForCollection('col-1', [makeItem('plain-4', 'tasks', 'PRIVATE REPLACE COLLECTION')])
 
       expect(await getItemsByType('tasks')).toEqual([])
+      expect(await rawItems()).toEqual([])
+    })
+
+    it('stores item content encrypted at rest and round-trips through the public API', async () => {
+      const sentinel = 'PRIVATE SENTINEL VEVENT SUMMARY 2026-07-09'
+
+      await putItem(makeItem('encrypted-1', 'calendar', sentinel))
+
+      const raw = await rawItems()
+      expect(raw).toHaveLength(1)
+      const serialized = JSON.stringify(raw[0])
+      expect(serialized).toContain('"iv"')
+      expect(serialized).toContain('"ct"')
+      expect(serialized).not.toContain(sentinel)
+      expect(serialized).not.toContain('content')
+
+      const items = await getItemsByType('calendar')
+      expect(items).toHaveLength(1)
+      expect(items[0]!.content).toBe(sentinel)
+    })
+
+    it('skips a corrupt cached item without poisoning other cached items', async () => {
+      await putItems([
+        makeItem('good', 'tasks', 'PRIVATE GOOD TASK'),
+        makeItem('bad', 'tasks', 'PRIVATE BAD TASK'),
+      ])
+
+      await corruptRawItem('bad')
+
+      const items = await getItemsByType('tasks')
+      expect(items.map((item) => item.itemUid)).toEqual(['good'])
+      expect(items[0]!.content).toBe('PRIVATE GOOD TASK')
+      expect(await rawItems()).toHaveLength(2)
     })
   })
 
@@ -237,6 +348,8 @@ describe('data-cache', () => {
 
     it('ensureFingerprint wipes when accounts differ', async () => {
       await setStoken('tasks', 'col-tasks', 'stk-a')
+      await putItem(makeItem('cached-task', 'tasks', 'PRIVATE TASK'))
+      await ensureEncryptedEnvelope()
       await ensureFingerprint('alice@example.com')
 
       const ok = await ensureFingerprint('bob@example.com')
@@ -244,6 +357,8 @@ describe('data-cache', () => {
 
       // Cache should be wiped for the new account.
       expect(await getStoken('col-tasks')).toBeNull()
+      expect(await getItemsByType('tasks')).toEqual([])
+      expect(await rawCryptoKeys()).toEqual([])
       const meta = await getMeta()
       expect(meta?.accountFingerprint).toBe('bob@example.com')
       expect(meta?.lastInvalidatedAt).not.toBeNull()
@@ -258,10 +373,10 @@ describe('data-cache', () => {
       expect(await getStoken('col-tasks')).toBe('stk-a')
     })
 
-    it('upgrades and clears the rolled-back v3 encrypted cache schema', async () => {
+    it('upgrades and clears the rolled-back v4 encrypted cache schema', async () => {
       await _resetForTests()
-      const v3Db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const req = indexedDB.open('silentsuite-data-cache', 3)
+      const v4Db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('silentsuite-data-cache', 4)
         req.onupgradeneeded = () => {
           const db = req.result
           const items = db.createObjectStore('items', { keyPath: 'itemUid' })
@@ -269,12 +384,12 @@ describe('data-cache', () => {
           items.createIndex('byCollectionUid', 'collectionUid', { unique: false })
           db.createObjectStore('collections', { keyPath: 'collectionUid' })
           db.createObjectStore('meta')
-          db.createObjectStore('crypto')
         }
         req.onsuccess = () => resolve(req.result)
         req.onerror = () => reject(req.error)
       })
-      v3Db.close()
+      v4Db.close()
+      await installTestEnvelope()
 
       await ensureFingerprint('alice@example.com')
       await _resetForTests()
@@ -285,17 +400,22 @@ describe('data-cache', () => {
         req.onerror = () => reject(req.error)
       })
 
-      expect(upgradedDb.version).toBe(4)
-      expect(upgradedDb.objectStoreNames.contains('crypto')).toBe(false)
+      expect(upgradedDb.version).toBe(5)
+      expect(upgradedDb.objectStoreNames.contains('crypto')).toBe(true)
       expect(upgradedDb.objectStoreNames.contains('items')).toBe(true)
       upgradedDb.close()
+    })
+
+    it('uses cache schema version 5 for encrypted records', () => {
+      expect(CACHE_SCHEMA_VERSION).toBe(5)
     })
   })
 
   describe('clearAll', () => {
-    it('wipes items, collections, and meta', async () => {
+    it('wipes items, collections, meta, and crypto', async () => {
       await putItem(makeItem('x', 'tasks'))
       await setStoken('tasks', 'col-tasks', 'stk')
+      await ensureEncryptedEnvelope()
       await putMeta({
         accountFingerprint: 'a',
         cacheSchemaVersion: CACHE_SCHEMA_VERSION,
@@ -307,6 +427,7 @@ describe('data-cache', () => {
       expect(await getItemsByType('tasks')).toEqual([])
       expect(await getStoken('col-tasks')).toBeNull()
       expect(await getMeta()).toBeNull()
+      expect(await rawCryptoKeys()).toEqual([])
     })
 
     it('is safe to call repeatedly', async () => {

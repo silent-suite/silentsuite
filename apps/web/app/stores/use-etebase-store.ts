@@ -17,7 +17,9 @@ import { secureGet } from '@/app/lib/secure-storage'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
 import {
+  ensureEncryptedEnvelope as cacheEnsureEncryptedEnvelope,
   ensureFingerprint as cacheEnsureFingerprint,
+  getCacheCapabilityStatus,
   getStoken as cacheGetStoken,
   setStoken as cacheSetStoken,
   putItems as cachePutItems,
@@ -101,6 +103,13 @@ export interface InitialDomainLoadEvent {
 }
 
 export interface InitializeOptions {
+  /**
+   * Called once after the Etebase session fingerprint has been verified and
+   * the encrypted local-cache envelope is available, before network item
+   * enumeration starts. This keeps cache-first paint account-scoped.
+   */
+  onCacheHydrate?: () => void | Promise<void>
+
   /**
    * Called after each visible domain reaches a terminal ('loaded'/'failed')
    * state and the store's maps + domainLoadState have been published. Lets a
@@ -210,6 +219,51 @@ async function loadInitialDomainItems(
   }
 
   return { itemCount, pageCount }
+}
+
+function buildInitialDomainPublish(
+  state: EtebaseState,
+  key: VisibleCollectionTypeKey,
+  loadedMaps: {
+    itemCache: Map<string, any>
+    itemTypeMap: Map<string, CollectionTypeKey>
+    itemCollectionMap: Map<string, string>
+  },
+  domainLoadState: DomainLoadState,
+  status: InitialDomainLoadStatus,
+): Partial<EtebaseState> {
+  const itemCache = new Map(state.itemCache)
+  const itemTypeMap = new Map(state.itemTypeMap)
+  const itemCollectionMap = new Map(state.itemCollectionMap)
+
+  // Early-paint domains can be interacted with while slower domains are still
+  // enumerating. Publish only the domain that just reached a terminal state;
+  // otherwise a later tasks/contacts publish can overwrite calendar mutations
+  // made against the live store with an older local snapshot.
+  if (status === 'loaded') {
+    for (const [uid, type] of itemTypeMap.entries()) {
+      if (type !== key) continue
+      itemCache.delete(uid)
+      itemTypeMap.delete(uid)
+      itemCollectionMap.delete(uid)
+    }
+    for (const [uid, item] of loadedMaps.itemCache.entries()) {
+      itemCache.set(uid, item)
+    }
+    for (const [uid, type] of loadedMaps.itemTypeMap.entries()) {
+      itemTypeMap.set(uid, type)
+    }
+    for (const [uid, collectionUid] of loadedMaps.itemCollectionMap.entries()) {
+      itemCollectionMap.set(uid, collectionUid)
+    }
+  }
+
+  return {
+    itemCache,
+    itemTypeMap,
+    itemCollectionMap,
+    domainLoadState: { ...state.domainLoadState, ...domainLoadState },
+  }
 }
 
 async function trackCollectionWithSyncEngine(
@@ -632,10 +686,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // Local-cache fingerprint check: if a different account previously
       // hydrated this browser, wipe before reseeding. Belt-and-braces against
       // the Android-style stale-cache contamination bug.
-      const cacheEnabled = isLocalCacheEnabled()
-      if (cacheEnabled) {
+      let cacheEnabled = isLocalCacheEnabled()
+      if (getCacheCapabilityStatus().featureFlagEnabled) {
         try {
-          await cacheEnsureFingerprint(accountFingerprint)
+          const cacheSurvived = await cacheEnsureFingerprint(accountFingerprint)
+          await cacheEnsureEncryptedEnvelope()
+          cacheEnabled = isLocalCacheEnabled()
+          if (cacheSurvived && cacheEnabled) {
+            await options?.onCacheHydrate?.()
+          }
         } catch (err) {
           logger.warn('[etebase-store] Cache fingerprint check failed', err)
         }
@@ -654,13 +713,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       diagnostics.completePhase('hydrateLists')
 
       // 3. Load items from each visible collection into the cache, one domain
-      // at a time. After each domain reaches a terminal state we publish the
-      // accumulated maps + domainLoadState and notify the caller, so a fast
+      // at a time. After each domain reaches a terminal state we publish that
+      // domain into the current live maps and notify the caller, so a fast
       // domain (calendar comes first in COLLECTION_DEFINITIONS) can paint
-      // before slower domains finish enumerating.
-      const itemCache = new Map<string, any>()
-      const itemTypeMap = new Map<string, CollectionTypeKey>()
-      const itemCollectionMap = new Map<string, string>()
+      // before slower domains finish enumerating without later stale snapshots
+      // overwriting user mutations made during that exposed window.
+      let totalLoadedItemCount = 0
 
       const domainLoadState = unknownDomainLoadState()
 
@@ -671,15 +729,21 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         let itemCount = 0
         let pageCount = 0
         let status: InitialDomainLoadStatus
+        const loadedMaps = {
+          itemCache: new Map<string, any>(),
+          itemTypeMap: new Map<string, CollectionTypeKey>(),
+          itemCollectionMap: new Map<string, string>(),
+        }
 
         try {
           const counts = await loadInitialDomainItems(core, account, key, typedCollections, {
-            itemCache,
-            itemTypeMap,
-            itemCollectionMap,
+            itemCache: loadedMaps.itemCache,
+            itemTypeMap: loadedMaps.itemTypeMap,
+            itemCollectionMap: loadedMaps.itemCollectionMap,
           })
           itemCount = counts.itemCount
           pageCount = counts.pageCount
+          totalLoadedItemCount += itemCount
           domainLoadState[key] = 'loaded'
           status = 'loaded'
           diagnostics.completePhase(phase, {
@@ -695,14 +759,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           logger.warn(`[etebase-store] Failed to load ${key} items`, getSafeErrorDetails(err))
         }
 
-        // Publish incrementally with fresh Map copies + a fresh domainLoadState
-        // object so Zustand subscribers observe the completed domain right away.
-        set({
-          itemCache: new Map(itemCache),
-          itemTypeMap: new Map(itemTypeMap),
-          itemCollectionMap: new Map(itemCollectionMap),
-          domainLoadState: { ...domainLoadState },
-        })
+        // Publish incrementally using the current live maps. Do not overwrite
+        // previously painted domains with the snapshot from earlier awaits.
+        set((state) => buildInitialDomainPublish(state, key, loadedMaps, domainLoadState, status))
 
         await options?.onDomainLoaded?.({
           type: key,
@@ -713,7 +772,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         })
       }
 
-      logger.debug(`[etebase-store] Loaded ${itemCache.size} items into cache`)
+      logger.debug(`[etebase-store] Loaded ${totalLoadedItemCount} items into cache`)
 
       // 4. Start SyncEngine
       const engine = new core.SyncEngine({

@@ -96,14 +96,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         setSyncStatus('syncing')
         safeLogSyncTiming('cache-capability', initStartedAt, { ...getCacheCapabilityStatus() })
 
-        // Cache-first hydration: when the feature flag is on, paint the UI
-        // from IndexedDB before the network sync starts. This is best-effort
-        // — failures are logged and the normal init path proceeds.
-        if (isLocalCacheEnabled()) {
-          const cacheStartedAt = nowMs()
-          await hydrateFromCache(cacheStartedAt)
-        }
-
         // Restore session, create/fetch collections, and enumerate items. The
         // onDomainLoaded hook fires once per visible domain as soon as that
         // domain reaches a terminal state, so calendar deserializes and paints
@@ -111,6 +103,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // post-initialize all-domain load, so no domain is replaced twice.
         const etebaseStartedAt = nowMs()
         await etebaseInitialize({
+          onCacheHydrate: async () => {
+            const cacheStartedAt = nowMs()
+            await hydrateFromCache(cacheStartedAt)
+          },
           onDomainLoaded: async (event) => {
             await loadDomainIntoStore(event.type)
             updatePartialLoadFlag()
@@ -142,9 +138,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     /**
      * Cache-first paint. Reads decrypted item content out of IndexedDB and
      * pushes it into the domain stores so the UI renders from cache before
-     * the network sync settles. The subsequent etebaseInitialize() +
-     * loadItemsIntoStores() pass overwrites with server data, which is the
-     * source of truth.
+     * the network sync settles. This is invoked only after the restored
+     * account fingerprint and encrypted cache envelope are verified. The
+     * subsequent per-domain server load overwrites with server data, which is
+     * the source of truth.
      *
      * Cheap (~10-50ms for a typical vault) and fully off the network path.
      * Failures here are non-fatal; we just skip the optimistic paint.
