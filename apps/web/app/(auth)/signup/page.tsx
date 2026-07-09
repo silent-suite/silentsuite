@@ -379,10 +379,7 @@ function StepCreateAccount({
               onChange={(e) => onRememberDeviceChange(e.target.checked)}
               className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
             />
-            <span className="text-xs text-[rgb(var(--muted))] leading-relaxed">
-              <span className="block font-medium text-[rgb(var(--foreground))]/80">Keep me signed in on this device</span>
-              Leave unchecked to let your browser forget this session when all windows are closed.
-            </span>
+            <span className="text-sm font-medium text-[rgb(var(--foreground))]/80">Keep me signed in on this device</span>
           </label>
         )}
 
