@@ -26,6 +26,26 @@ The dashboard exposes the same account-management flow without terminal commands
 - **Log out** removes local bridge credentials/session material for one account and keeps that account's local cache.
 - **Remove account** removes local bridge credentials/session material and deletes that account's local cache rows.
 
+## macOS Apple Internet Accounts
+
+Apple Internet Accounts may require the local bridge to use HTTPS with a trusted localhost certificate. To generate or reuse a localhost certificate and print the Keychain setup steps, run this on the Mac that hosts the bridge:
+
+```bash
+silentsuite-bridge --setup-macos-apple-accounts
+```
+
+On macOS, this persists bridge SSL settings, opens the certificate for Keychain, and prints the Advanced account setup fields. Trust the certificate in Keychain with **Secure Sockets Layer (SSL)** set to **Always Trust**, restart the bridge, then use the dashboard's `https://localhost:37358/your@example.com/` DAV URL.
+
+Enabling bridge SSL changes the whole single listener to HTTPS. Existing HTTP clients using the same bridge profile must switch to `https://` and trust the localhost certificate. The bridge does not expose simultaneous HTTP and HTTPS listeners in this mode.
+
+Advanced/headless configuration keys:
+
+- `sslEnabled` / `SILENTSUITE_BRIDGE_SSL`
+- `sslCertFile` / `SILENTSUITE_BRIDGE_SSL_CERT`
+- `sslKeyFile` / `SILENTSUITE_BRIDGE_SSL_KEY`
+
+If Apple Internet Accounts still fails after HTTPS setup, collect redacted bridge logs for `/principals/`, `/.well-known/caldav`, and `/.well-known/carddav`. Do not include passwords or session tokens; this evidence determines whether a later DAV discovery compatibility shim is needed.
+
 The local bridge cache contains decrypted calendar/contact/task data. Use `--remove-account` when retiring a shared or untrusted machine.
 
 ## License

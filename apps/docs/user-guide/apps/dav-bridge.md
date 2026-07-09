@@ -94,6 +94,24 @@ You can always find these URLs by:
 - Opening the dashboard at `http://localhost:37358/`
 - Using the system tray menu account entries (Copy CalDAV URL / Copy CardDAV URL)
 
+### macOS Apple Internet Accounts HTTPS setup
+
+Most DAV clients can use the default local HTTP bridge URL. macOS Apple Internet Accounts is stricter: use **Advanced** setup with **Use SSL** checked and a trusted localhost certificate.
+
+On the Mac that runs the bridge:
+
+```bash
+silentsuite-bridge --setup-macos-apple-accounts
+```
+
+Then trust the generated localhost certificate in **Keychain Access** with **Trust > Secure Sockets Layer (SSL)** set to **Always Trust**, restart the bridge, and use the `https://` DAV URLs shown in the dashboard.
+
+::: warning HTTPS is all-or-nothing for one bridge profile
+Enabling bridge SSL changes the single local DAV listener from HTTP to HTTPS. Existing Thunderbird, DAVx5, Evolution, KDE, or other clients configured with `http://localhost:37358/` must be updated to the dashboard's `https://` URL and may need to trust the same localhost certificate. Running simultaneous HTTP and HTTPS listeners is not part of this bridge mode.
+:::
+
+For detailed Apple setup fields and troubleshooting, see [macOS Calendar & Contacts](./macos.md).
+
 ## Multi-Account Use
 
 The bridge can keep multiple accounts active in one local bridge profile. Each account has its own credentials, local cache namespace, sync thread, and DAV path.
