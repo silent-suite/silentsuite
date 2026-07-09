@@ -14,6 +14,8 @@ interface SyncState {
   error: string | null
   pendingQueueCount: number
   failedQueueCount: number
+  partialLoad: boolean
+  partialLoadDomainCount: number
 }
 
 interface SyncActions {
@@ -21,6 +23,7 @@ interface SyncActions {
   setLastSynced: (date: Date) => void
   setOnline: (online: boolean) => void
   setError: (error: string | null) => void
+  setPartialLoad: (partial: boolean, domainCount?: number) => void
   initializeSync: () => () => void
   /**
    * Trigger a real sync cycle via the SyncEngine.
@@ -38,11 +41,14 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
   error: null,
   pendingQueueCount: 0,
   failedQueueCount: 0,
+  partialLoad: false,
+  partialLoadDomainCount: 0,
 
   setSyncStatus: (status) => set({ syncStatus: status }),
   setLastSynced: (date) => set({ lastSyncedAt: date }),
   setOnline: (online) => set({ isOnline: online }),
   setError: (error) => set({ error }),
+  setPartialLoad: (partial, domainCount = 0) => set({ partialLoad: partial, partialLoadDomainCount: partial ? domainCount : 0 }),
 
   initializeSync: () => {
     const handleOnline = async () => {
@@ -225,23 +231,39 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
 
+      const refreshedEtebase = useEtebaseStore.getState()
+      const domainLoadState = refreshedEtebase.domainLoadState
+      let partialDomainCount = 0
+
       const tasks = taskItems.map((item) => {
         const task = core.deserializeTask(item.content)
         return { ...task, id: item.uid, listId: item.collectionUid }
       })
-      useTaskStore.getState().syncFromRemote(tasks)
+      if (domainLoadState.tasks === 'loaded') {
+        useTaskStore.getState().syncFromRemote(tasks)
+      } else {
+        partialDomainCount += 1
+      }
 
       const contacts = contactItems.map((item) => {
         const contact = core.deserializeContact(item.content)
         return { ...contact, id: item.uid, listId: item.collectionUid }
       })
-      useContactStore.getState().syncFromRemote(contacts)
+      if (domainLoadState.contacts === 'loaded') {
+        useContactStore.getState().syncFromRemote(contacts)
+      } else {
+        partialDomainCount += 1
+      }
 
       const events = eventItems.map((item) => {
         const event = core.deserializeCalendarEvent(item.content)
         return { ...event, id: item.uid, calendarId: item.collectionUid }
       })
-      useCalendarStore.getState().syncFromRemote(events)
+      if (domainLoadState.calendar === 'loaded') {
+        useCalendarStore.getState().syncFromRemote(events)
+      } else {
+        partialDomainCount += 1
+      }
       // Purge stale queue entries (older than 24h) that may cause phantom indicators
       const stale = await getStaleEntries()
       for (const entry of stale) {
@@ -251,7 +273,15 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       // Refresh counts to ensure UI is accurate after sync
       const pc = await getPendingCount()
       const fc = await getFailedCount()
-      set({ syncStatus: 'synced', lastSyncedAt: new Date(), error: null, pendingQueueCount: pc, failedQueueCount: fc })
+      set({
+        syncStatus: 'synced',
+        lastSyncedAt: new Date(),
+        error: null,
+        pendingQueueCount: pc,
+        failedQueueCount: fc,
+        partialLoad: partialDomainCount > 0,
+        partialLoadDomainCount: partialDomainCount,
+      })
     }).catch((err) => {
       console.error('[sync-store] Manual sync failed', getSafeErrorDetails(err))
       set({ syncStatus: 'error', error: 'Sync failed' })

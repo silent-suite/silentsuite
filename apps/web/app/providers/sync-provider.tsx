@@ -44,6 +44,16 @@ function safeLogSyncTiming(phase: SyncTimingPhase, startedAt: number, fields: Sy
   }
 }
 
+function countVisiblePartialDomains() {
+  const state = useEtebaseStore.getState().domainLoadState
+  return (['tasks', 'contacts', 'calendar'] as const).filter((type) => state[type] === 'failed').length
+}
+
+function updatePartialLoadFlag() {
+  const failedCount = countVisiblePartialDomains()
+  useSyncStore.getState().setPartialLoad(failedCount > 0, failedCount)
+}
+
 /**
  * SyncProvider orchestrates:
  * 1. Online/offline listeners (existing behavior)
@@ -102,6 +112,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // Now load items from each collection into the data stores
         const loadStartedAt = nowMs()
         await loadItemsIntoStores()
+        updatePartialLoadFlag()
         safeLogSyncTiming('load-items', loadStartedAt)
 
         // Wire SyncEngine change events
@@ -225,7 +236,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       try {
         const taskItems = await etebase.fetchAllItems('tasks')
         let taskCount = 0
-        if (taskItems.length > 0) {
+        if (useEtebaseStore.getState().domainLoadState.tasks === 'loaded') {
           const { deserializeTask } = await import('@silentsuite/core')
           const tasks = taskItems.map((item) => {
             const task = deserializeTask(item.content)
@@ -254,7 +265,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       try {
         const contactItems = await etebase.fetchAllItems('contacts')
         let contactCount = 0
-        if (contactItems.length > 0) {
+        if (useEtebaseStore.getState().domainLoadState.contacts === 'loaded') {
           const { deserializeContact } = await import('@silentsuite/core')
           const contacts = contactItems.map((item) => {
             const contact = deserializeContact(item.content)
@@ -281,7 +292,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       try {
         const eventItems = await etebase.fetchAllItems('calendar')
         let eventCount = 0
-        if (eventItems.length > 0) {
+        if (useEtebaseStore.getState().domainLoadState.calendar === 'loaded') {
           const { deserializeCalendarEvent } = await import('@silentsuite/core')
           const events = eventItems.map((item) => {
             const event = deserializeCalendarEvent(item.content)
@@ -319,36 +330,45 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         if (collectionType === 'etebase.vtodo') {
           try {
             await refresher('tasks', event.collectionUid)
-            const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks')
-            const tasks = taskItems.map((item) => {
-              const task = core.deserializeTask(item.content)
-              return { ...task, id: item.uid, listId: item.collectionUid }
-            })
-            useTaskStore.getState().syncFromRemote(tasks)
+            updatePartialLoadFlag()
+            if (useEtebaseStore.getState().domainLoadState.tasks === 'loaded') {
+              const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks')
+              const tasks = taskItems.map((item) => {
+                const task = core.deserializeTask(item.content)
+                return { ...task, id: item.uid, listId: item.collectionUid }
+              })
+              useTaskStore.getState().syncFromRemote(tasks)
+            }
           } catch (err) {
             reportSyncError('sync tasks', err)
           }
         } else if (collectionType === 'etebase.vcard') {
           try {
             await refresher('contacts', event.collectionUid)
-            const contactItems = await useEtebaseStore.getState().fetchAllItems('contacts')
-            const contacts = contactItems.map((item) => {
-              const contact = core.deserializeContact(item.content)
-              return { ...contact, id: item.uid, listId: item.collectionUid }
-            })
-            useContactStore.getState().syncFromRemote(contacts)
+            updatePartialLoadFlag()
+            if (useEtebaseStore.getState().domainLoadState.contacts === 'loaded') {
+              const contactItems = await useEtebaseStore.getState().fetchAllItems('contacts')
+              const contacts = contactItems.map((item) => {
+                const contact = core.deserializeContact(item.content)
+                return { ...contact, id: item.uid, listId: item.collectionUid }
+              })
+              useContactStore.getState().syncFromRemote(contacts)
+            }
           } catch (err) {
             reportSyncError('sync contacts', err)
           }
         } else if (collectionType === 'etebase.vevent') {
           try {
             await refresher('calendar', event.collectionUid)
-            const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar')
-            const events = eventItems.map((item) => {
-              const event = core.deserializeCalendarEvent(item.content)
-              return { ...event, id: item.uid, calendarId: item.collectionUid }
-            })
-            useCalendarStore.getState().syncFromRemote(events)
+            updatePartialLoadFlag()
+            if (useEtebaseStore.getState().domainLoadState.calendar === 'loaded') {
+              const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar')
+              const events = eventItems.map((item) => {
+                const event = core.deserializeCalendarEvent(item.content)
+                return { ...event, id: item.uid, calendarId: item.collectionUid }
+              })
+              useCalendarStore.getState().syncFromRemote(events)
+            }
           } catch (err) {
             reportSyncError('sync calendar events', err)
           }

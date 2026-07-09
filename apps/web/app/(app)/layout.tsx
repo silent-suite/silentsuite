@@ -7,6 +7,7 @@ import { Header } from '@/app/components/header'
 import { BottomNav } from '@/app/components/bottom-nav'
 import { ReadOnlyBanner, DegradedModeBanner } from '@/app/components/read-only-overlay'
 import { RestoreBlockedBanner } from '@/app/components/restore-blocked-banner'
+import { PartialLoadBanner } from '@/app/components/partial-load-banner'
 import { PendingSyncBanner } from '@/app/components/PendingSyncBanner'
 import { OfflineToast } from '@/app/components/OfflineToast'
 import { ToastContainer } from '@/app/components/Toast'
@@ -38,6 +39,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <Header />
               <EmailVerificationBanner />
               <RestoreBlockedBanner />
+              <PartialLoadBanner />
               {!isSelfHosted && degraded && <DegradedModeBanner />}
               {!isSelfHosted && readOnly && <ReadOnlyBanner />}
               <PendingSyncBanner />

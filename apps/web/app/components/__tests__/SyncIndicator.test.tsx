@@ -9,6 +9,7 @@ const mockSyncState = {
   lastSyncedAt: null as Date | null,
   error: null as string | null,
   pendingQueueCount: 0,
+  partialLoad: false,
   simulateSyncCycle: vi.fn(),
 }
 
@@ -26,6 +27,7 @@ describe('SyncIndicator', () => {
     mockSyncState.lastSyncedAt = null
     mockSyncState.error = null
     mockSyncState.pendingQueueCount = 0
+    mockSyncState.partialLoad = false
     mockSyncState.simulateSyncCycle.mockClear()
     sessionStorage.clear()
   })
@@ -43,6 +45,15 @@ describe('SyncIndicator', () => {
     render(<SyncIndicator />)
     const dot = screen.getByRole('status')
     expect(dot).toHaveAttribute('aria-label', 'Sync status: syncing')
+    expect(dot.className).toContain('bg-amber-400')
+  })
+
+  it('renders a synced warning affordance when partial load is active', () => {
+    mockSyncState.syncStatus = 'synced'
+    mockSyncState.partialLoad = true
+    render(<SyncIndicator />)
+    const dot = screen.getByRole('status')
+    expect(dot).toHaveAttribute('aria-label', 'Sync status: synced with warning')
     expect(dot.className).toContain('bg-amber-400')
   })
 

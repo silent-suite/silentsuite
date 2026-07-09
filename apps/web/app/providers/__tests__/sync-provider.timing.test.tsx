@@ -13,17 +13,20 @@ const syncStoreMock = vi.hoisted(() => ({
   setSyncStatus: vi.fn((status: string) => order.push(`setSyncStatus:${status}`)),
   setLastSynced: vi.fn(() => order.push('setLastSynced')),
   setError: vi.fn((error: string | null) => order.push(`setError:${error ?? 'null'}`)),
+  setPartialLoad: vi.fn((partial: boolean, count = 0) => order.push(`setPartialLoad:${partial}:${count}`)),
 }))
 
 const etebaseMock = vi.hoisted(() => {
+  let syncChangeHandler: ((event: { collectionType: string; collectionUid: string; itemUids: string[]; changeType: string }) => Promise<void>) | null = null
   const state = {
     initialize: vi.fn(async () => order.push('etebaseInitialize')),
     fetchAllItems: vi.fn(async (type: 'tasks' | 'contacts' | 'calendar') => {
       order.push(`fetchAllItems:${type}`)
       return []
     }),
-    onSyncChange: vi.fn(() => {
+    onSyncChange: vi.fn((handler?: typeof syncChangeHandler) => {
       order.push('wireChangeHandler')
+      syncChangeHandler = handler ?? null
       return vi.fn()
     }),
     onStatusChange: vi.fn(() => {
@@ -32,8 +35,15 @@ const etebaseMock = vi.hoisted(() => {
     }),
     isInitialized: false,
     refreshCollection: vi.fn(),
+    domainLoadState: { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' },
   }
-  return { state }
+  return {
+    state,
+    getSyncChangeHandler: () => syncChangeHandler,
+    setSyncChangeHandler: (handler: typeof syncChangeHandler) => {
+      syncChangeHandler = handler
+    },
+  }
 })
 
 const taskStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.push('syncTasks')) }))
@@ -83,7 +93,10 @@ vi.mock('@/app/lib/data-cache', () => cacheMock)
 vi.mock('@/app/lib/sync-timing', () => timingMock)
 
 vi.mock('@/app/stores/use-sync-store', () => ({
-  useSyncStore: (selector: (state: typeof syncStoreMock) => unknown) => selector(syncStoreMock),
+  useSyncStore: Object.assign(
+    (selector: (state: typeof syncStoreMock) => unknown) => selector(syncStoreMock),
+    { getState: () => syncStoreMock },
+  ),
 }))
 
 vi.mock('@/app/stores/use-etebase-store', () => ({
@@ -126,13 +139,17 @@ describe('SyncProvider timing instrumentation', () => {
     syncStoreMock.setSyncStatus.mockImplementation((status: string) => order.push(`setSyncStatus:${status}`))
     syncStoreMock.setLastSynced.mockImplementation(() => order.push('setLastSynced'))
     syncStoreMock.setError.mockImplementation((error: string | null) => order.push(`setError:${error ?? 'null'}`))
+    syncStoreMock.setPartialLoad.mockImplementation((partial: boolean, count = 0) => order.push(`setPartialLoad:${partial}:${count}`))
+    etebaseMock.state.domainLoadState = { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' }
     etebaseMock.state.initialize.mockImplementation(async () => order.push('etebaseInitialize'))
     etebaseMock.state.fetchAllItems.mockImplementation(async (type: 'tasks' | 'contacts' | 'calendar') => {
       order.push(`fetchAllItems:${type}`)
       return []
     })
-    etebaseMock.state.onSyncChange.mockImplementation(() => {
+    etebaseMock.state.refreshCollection.mockImplementation(async () => [])
+    etebaseMock.state.onSyncChange.mockImplementation((handler?: Parameters<typeof etebaseMock.state.onSyncChange>[0]) => {
       order.push('wireChangeHandler')
+      etebaseMock.setSyncChangeHandler(handler ?? null)
       return vi.fn()
     })
     etebaseMock.state.onStatusChange.mockImplementation(() => {
@@ -159,8 +176,12 @@ describe('SyncProvider timing instrumentation', () => {
       'setSyncStatus:syncing',
       'etebaseInitialize',
       'fetchAllItems:tasks',
+      'syncTasks',
       'fetchAllItems:contacts',
+      'syncContacts',
       'fetchAllItems:calendar',
+      'syncCalendar',
+      'setPartialLoad:false:0',
       'wireChangeHandler',
       'wireStatusHandler',
       'setSyncStatus:synced',
@@ -210,5 +231,33 @@ describe('SyncProvider timing instrumentation', () => {
     await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
     expect(syncStoreMock.setSyncStatus).toHaveBeenCalledWith('synced')
     expect(sentryMock.captureException).toHaveBeenCalled()
+  })
+
+  it('does not full-replace a failed domain after a scoped change refresh succeeds', async () => {
+    renderProvider()
+
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+    vi.clearAllMocks()
+    order.length = 0
+    etebaseMock.state.domainLoadState = { tasks: 'loaded', contacts: 'loaded', calendar: 'failed', preferences: 'unknown' }
+    etebaseMock.state.refreshCollection.mockImplementation(async () => {
+      order.push('refreshCalendarScoped')
+      return []
+    })
+
+    const handler = etebaseMock.getSyncChangeHandler()
+    expect(handler).toBeTruthy()
+    await handler!({
+      collectionType: 'etebase.vevent',
+      collectionUid: 'calendar-one',
+      itemUids: ['redacted-item'],
+      changeType: 'change',
+    })
+
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('calendar', 'calendar-one')
+    expect(calendarStoreMock.syncFromRemote).not.toHaveBeenCalled()
+    expect(syncStoreMock.setPartialLoad).toHaveBeenCalledWith(true, 1)
+    expect(order).toContain('refreshCalendarScoped')
+    expect(order).not.toContain('syncCalendar')
   })
 })
