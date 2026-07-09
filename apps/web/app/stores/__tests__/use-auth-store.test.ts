@@ -365,6 +365,9 @@ describe('useAuthStore', () => {
       await useAuthStore.getState().login('a@b.com', 'pw')
 
       expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(useAuthStore.getState().error).toBe(
+        'Too many sign-in attempts. Please wait a few minutes before trying again. Your encrypted data is safe.',
+      )
       expect(secureStore['etebase_session']).toBeUndefined()
       expect(localStorage.getItem('silentsuite-hosted-validation-initialized')).toBeNull()
     })
@@ -739,6 +742,44 @@ describe('useAuthStore', () => {
     expect(offlineQueueClearAll).not.toHaveBeenCalled()
     expect(secureStore.etebase_session).toBeUndefined()
     expect(useAuthStore.getState().error).toBe('Invalid email or password. Please try again.')
+  })
+
+  it('login gives calm retry guidance when Etebase throttles sign-in', async () => {
+    const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('Too many attempts'))
+
+    await useAuthStore.getState().login('test@example.com', 'password123')
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(useAuthStore.getState().error).toBe(
+      'Too many sign-in attempts. Please wait a few minutes before trying again. Your encrypted data is safe.',
+    )
+  })
+
+  it('login does not surface unmapped raw Etebase errors', async () => {
+    const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('internal provider detail: req-123'))
+
+    await useAuthStore.getState().login('test@example.com', 'password123')
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(useAuthStore.getState().error).toBe('Login failed. Please try again.')
+  })
+
+  it('unlock gives calm retry guidance when Etebase sign-in is temporarily unavailable', async () => {
+    const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('network timeout'))
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false, onboardedAt: null },
+      isAuthenticated: true,
+    })
+
+    await useAuthStore.getState().unlockEtebaseSession('test@example.com', 'password123')
+
+    expect(secureStore.etebase_session).toBeUndefined()
+    expect(useAuthStore.getState().error).toBe(
+      'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.',
+    )
   })
 
   it('logout still completes when the data-cache wipe throws', async () => {
