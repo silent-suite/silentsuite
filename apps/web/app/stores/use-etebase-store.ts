@@ -76,10 +76,27 @@ const COLLECTION_TYPE_CONTACTS = 'etebase.vcard'
 
 type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
 type VisibleCollectionTypeKey = Exclude<CollectionTypeKey, 'preferences'>
+type DomainLoadStatus = 'unknown' | 'loaded' | 'failed'
+type DomainLoadState = Record<CollectionTypeKey, DomainLoadStatus>
 type CollectionMetaUpdates = { name?: string; description?: string; color?: string }
 type EtebaseCore = typeof import('@silentsuite/core')
 
 type CachedContentItem = { uid: string; content: string; collectionUid: string }
+
+const UNKNOWN_DOMAIN_LOAD_STATE: DomainLoadState = {
+  calendar: 'unknown',
+  tasks: 'unknown',
+  contacts: 'unknown',
+  preferences: 'unknown',
+}
+
+function unknownDomainLoadState(): DomainLoadState {
+  return { ...UNKNOWN_DOMAIN_LOAD_STATE }
+}
+
+function incompleteLoadMessage(): string {
+  return "This data hasn't finished loading yet. Retry sync, then try again."
+}
 
 const COLLECTION_DEFINITIONS: [VisibleCollectionTypeKey, string, string][] = [
   ['calendar', COLLECTION_TYPE_CALENDAR, 'Personal Calendar'],
@@ -319,6 +336,10 @@ function collectionDisplayName(type: CollectionTypeKey): string {
   return 'preferences'
 }
 
+function isDomainLoadedForBulkMutation(domainLoadState: DomainLoadState, type: CollectionTypeKey): boolean {
+  return domainLoadState[type] === 'loaded'
+}
+
 interface EtebaseState {
   // The live Account object (null until session restored)
   account: any | null
@@ -338,6 +359,10 @@ interface EtebaseState {
   // (missing/invalid/corrupt local session) and re-unlocking would help.
   // Not set for offline errors or post-restore listing/sync failures.
   restoreBlocked: boolean
+  // Per-domain post-restore load outcome. 'loaded' means the app has a
+  // complete server view of the domain; 'failed'/'unknown' means bulk
+  // destructive operations must not trust the in-memory view.
+  domainLoadState: DomainLoadState
   // SyncEngine reference
   syncEngine: any | null
 }
@@ -491,6 +516,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   itemCollectionMap: new Map(),
   isInitialized: false,
   restoreBlocked: false,
+  domainLoadState: unknownDomainLoadState(),
   syncEngine: null,
 
   initialize: async () => {
@@ -560,6 +586,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const itemTypeMap = new Map<string, CollectionTypeKey>()
       const itemCollectionMap = new Map<string, string>()
 
+      const domainLoadState = unknownDomainLoadState()
+
       for (const [key] of COLLECTION_DEFINITIONS) {
         const phase = `listItems:${key}` as const
         diagnostics.startPhase(phase)
@@ -567,34 +595,41 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         let itemCount = 0
         let pageCount = 0
 
-        for (const collection of typedCollections) {
-          let stoken: string | null = null
-          let done = false
+        try {
+          for (const collection of typedCollections) {
+            let stoken: string | null = null
+            let done = false
 
-          while (!done) {
-            const response = await core.listItems(account, collection, stoken)
-            pageCount += 1
-            for (const item of response.items) {
-              if (!item.isDeleted) {
-                itemCache.set(item.uid, item)
-                itemTypeMap.set(item.uid, key)
-                itemCollectionMap.set(item.uid, collection.uid)
-                itemCount += 1
+            while (!done) {
+              const response = await core.listItems(account, collection, stoken)
+              pageCount += 1
+              for (const item of response.items) {
+                if (!item.isDeleted) {
+                  itemCache.set(item.uid, item)
+                  itemTypeMap.set(item.uid, key)
+                  itemCollectionMap.set(item.uid, collection.uid)
+                  itemCount += 1
+                }
               }
+              stoken = response.stoken
+              done = response.done
             }
-            stoken = response.stoken
-            done = response.done
           }
+          domainLoadState[key] = 'loaded'
+          diagnostics.completePhase(phase, {
+            collectionType: key,
+            collectionCount: typedCollections.length,
+            itemCount,
+            pageCount,
+          })
+        } catch (err) {
+          domainLoadState[key] = 'failed'
+          diagnostics.failActivePhase(err)
+          logger.warn(`[etebase-store] Failed to load ${key} items`, getSafeErrorDetails(err))
         }
-        diagnostics.completePhase(phase, {
-          collectionType: key,
-          collectionCount: typedCollections.length,
-          itemCount,
-          pageCount,
-        })
       }
 
-      set({ itemCache, itemTypeMap, itemCollectionMap })
+      set({ itemCache, itemTypeMap, itemCollectionMap, domainLoadState })
       logger.debug(`[etebase-store] Loaded ${itemCache.size} items into cache`)
 
       // 4. Start SyncEngine
@@ -678,10 +713,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   deleteCollection: async (type: CollectionTypeKey, collectionUid: string) => {
-    const { account, collections, syncEngine } = get()
+    const { account, collections, domainLoadState, syncEngine } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot delete ${type} collection ${collectionUid}: missing account or collection`)
+      return false
+    }
+    if (!isDomainLoadedForBulkMutation(domainLoadState, type)) {
+      showErrorToast(incompleteLoadMessage())
+      logger.warn(`[etebase-store] Refusing to delete ${type} collection before domain load completes`)
       return false
     }
     if (collections[type].length <= 1) {
@@ -1013,10 +1053,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   deleteItemsInCollection: async (type: CollectionTypeKey, collectionUid: string) => {
-    const { account, collections, itemCache, itemCollectionMap } = get()
+    const { account, collections, domainLoadState, itemCache, itemCollectionMap } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot clear ${type} collection ${collectionUid}: missing account or collection`)
+      return 0
+    }
+    if (!isDomainLoadedForBulkMutation(domainLoadState, type)) {
+      showErrorToast(incompleteLoadMessage())
+      logger.warn(`[etebase-store] Refusing to clear ${type} collection before domain load completes`)
       return 0
     }
 
@@ -1495,7 +1540,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCollections[type] = newCollections[type].map((collection) =>
         refreshedByUid.get(collection.uid) ?? collection,
       )
-      set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, itemCollectionMap: newItemCollectionMap, collections: newCollections })
+      const nextDomainStatus = collectionUid ? get().domainLoadState[type] : 'loaded'
+
+      set((state) => ({
+        itemCache: newItemCache,
+        itemTypeMap: newItemTypeMap,
+        itemCollectionMap: newItemCollectionMap,
+        collections: newCollections,
+        domainLoadState: { ...state.domainLoadState, [type]: nextDomainStatus },
+      }))
 
       // Mirror the refresh into the local cache. Use replace-style writes so
       // items deleted upstream are also dropped from disk.
@@ -1516,6 +1569,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return allResults
     } catch (err) {
       console.error(`[etebase-store] Failed to refresh ${type}`, getSafeErrorDetails(err))
+      set((state) => ({ domainLoadState: { ...state.domainLoadState, [type]: 'failed' } }))
       return get().fetchAllItems(type)
     }
   },
@@ -1534,6 +1588,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       itemCollectionMap: new Map(),
       isInitialized: false,
       restoreBlocked: false,
+      domainLoadState: unknownDomainLoadState(),
       syncEngine: null,
     })
     logger.debug('[etebase-store] Destroyed')

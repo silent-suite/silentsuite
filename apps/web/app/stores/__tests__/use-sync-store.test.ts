@@ -6,6 +6,7 @@ const etebaseMock = vi.hoisted(() => ({
   state: {
     account: null as unknown,
     syncEngine: null as { syncNow: ReturnType<typeof vi.fn> } | null,
+    domainLoadState: { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' },
     reconcileCollections: vi.fn().mockResolvedValue(undefined),
     refreshCollection: vi.fn().mockResolvedValue([]),
     moveItem: vi.fn(),
@@ -66,6 +67,7 @@ vi.mock('@/app/stores/use-toast-store', () => ({
 function resetStore() {
   etebaseMock.state.account = null
   etebaseMock.state.syncEngine = null
+  etebaseMock.state.domainLoadState = { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' }
   etebaseMock.state.reconcileCollections.mockReset().mockResolvedValue(undefined)
   etebaseMock.state.refreshCollection.mockReset().mockResolvedValue([])
   etebaseMock.state.moveItem.mockReset()
@@ -78,6 +80,8 @@ function resetStore() {
     error: null,
     pendingQueueCount: 0,
     failedQueueCount: 0,
+    partialLoad: false,
+    partialLoadDomainCount: 0,
   })
 }
 
@@ -162,6 +166,26 @@ describe('useSyncStore', () => {
     const reconcileOrder = etebaseMock.state.reconcileCollections.mock.invocationCallOrder[0]!
     const firstRefreshOrder = etebaseMock.state.refreshCollection.mock.invocationCallOrder[0]!
     expect(reconcileOrder).toBeLessThan(firstRefreshOrder)
+  })
+
+  it('does not replace a domain store when that domain refresh failed', async () => {
+    etebaseMock.state.refreshCollection.mockImplementation(async (type: string) => {
+      if (type === 'calendar') {
+        etebaseMock.state.domainLoadState = { ...etebaseMock.state.domainLoadState, calendar: 'failed' }
+        return []
+      }
+      return []
+    })
+    calendarStoreMock.events = [{ id: 'existing', calendarId: 'cal-1' }]
+
+    useSyncStore.getState().simulateSyncCycle()
+
+    await flushPromises()
+    await flushPromises()
+    expect(calendarStoreMock.syncFromRemote).not.toHaveBeenCalled()
+    expect(calendarStoreMock.events).toEqual([{ id: 'existing', calendarId: 'cal-1' }])
+    expect(useSyncStore.getState().partialLoad).toBe(true)
+    expect(useSyncStore.getState().partialLoadDomainCount).toBe(1)
   })
 
   it('replays queued collection moves and remaps the calendar event id', async () => {

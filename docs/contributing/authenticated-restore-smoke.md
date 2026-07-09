@@ -123,6 +123,32 @@ The raw diagnostics in `sessionStorage` should be JSON under the key `silentsuit
 
 A `source: "login"` snapshot only proves login/session persistence diagnostics. It is not sufficient for authenticated restore smoke; hard reload and collect a `source: "restore"` snapshot.
 
+## Partial-load warning check
+
+After Slice 4, one failed visible domain load must not make sibling domains look empty or block the app shell. If the app reaches the calendar while one or more domains could not be refreshed, expected behavior is:
+
+- cached or already-loaded sibling domains remain visible;
+- bulk destructive collection clears are blocked until that domain finishes loading;
+- a calm amber warning appears in the app shell with static copy and a **Retry sync** action;
+- the sync indicator uses a warning affordance instead of reporting a fully healthy synced state;
+- no raw errors, phase names, tokens, collection IDs, item IDs, plaintext PIM, or request details are shown.
+
+Use this as a non-destructive smoke after preview deploys that touch domain item loading:
+
+```text
+Partial-load warning check: PASS|FAIL
+environment: preview|local
+app reached shell: yes|no
+healthy sibling data preserved: yes|no
+partial-load banner shown: yes|no
+retry action present: yes|no
+sync indicator warning affordance: yes|no
+privacy-safe copy only: yes|no
+bulk clear blocked before full domain load: yes|no
+findings:
+  - <privacy-safe finding, if any>
+```
+
 ## Failure triage by `failedPhase`
 
 If the smoke fails, do not start with broad rollback. Use the failed phase to choose the next narrow investigation:
