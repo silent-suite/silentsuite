@@ -12,6 +12,11 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { isSelfHosted } from '@/app/lib/self-hosted'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
+import {
+  buildRestoreDiagnosticsCopyText,
+  canExposeRestoreDiagnosticsCopy,
+  readRestoreDiagnostics,
+} from '@/app/lib/sync-restore-diagnostics'
 
 // ---------------------------------------------------------------------------
 // Validation (same rules as signup)
@@ -92,6 +97,44 @@ function AccountFingerprintSection() {
           </Button>
         </div>
       </div>
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Restore Diagnostics Section
+// ---------------------------------------------------------------------------
+
+function RestoreDiagnosticsSection() {
+  const t = useTranslations('SettingsSecurity.RestoreDiagnostics')
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const canCopyDiagnostics = canExposeRestoreDiagnosticsCopy()
+
+  if (!canCopyDiagnostics) return null
+
+  const copyDiagnostics = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error('Clipboard API unavailable')
+      await navigator.clipboard.writeText(buildRestoreDiagnosticsCopyText(readRestoreDiagnostics()))
+      setCopyStatus('copied')
+    } catch {
+      setCopyStatus('failed')
+    }
+
+    window.setTimeout(() => setCopyStatus('idle'), 2000)
+  }
+
+  return (
+    <section className="rounded-lg border border-[rgb(var(--border))] p-4 space-y-4">
+      <div className="space-y-1">
+        <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">{t('title')}</h2>
+        <p className="text-xs text-[rgb(var(--muted))]">
+          {t('description')}
+        </p>
+      </div>
+      <Button type="button" variant="secondary" size="sm" onClick={copyDiagnostics}>
+        {copyStatus === 'copied' ? t('copied') : copyStatus === 'failed' ? t('copyFailed') : t('copy')}
+      </Button>
     </section>
   )
 }
@@ -347,6 +390,7 @@ export default function SecurityPage() {
   return (
     <div className="space-y-6">
       <AccountFingerprintSection />
+      <RestoreDiagnosticsSection />
       <ChangePasswordSection />
       <DeleteAccountSection />
     </div>
