@@ -24,12 +24,13 @@ type OnDomainLoaded = (event: {
   pageCount: number
   collectionCount: number
 }) => void | Promise<void>
+type OnCacheHydrate = () => void | Promise<void>
 
 const etebaseMock = vi.hoisted(() => {
   let syncChangeHandler: ((event: { collectionType: string; collectionUid: string; itemUids: string[]; changeType: string }) => Promise<void>) | null = null
   // Default initialize replays the real store contract: calendar → tasks →
   // contacts, one terminal callback each, statuses driven by domainLoadState.
-  async function defaultInitialize(options?: { onDomainLoaded?: OnDomainLoaded }) {
+  async function defaultInitialize(options?: { onCacheHydrate?: OnCacheHydrate; onDomainLoaded?: OnDomainLoaded }) {
     order.push('etebaseInitialize')
     for (const type of ['calendar', 'tasks', 'contacts'] as const) {
       const status = state.domainLoadState[type] === 'failed' ? 'failed' : 'loaded'
@@ -277,20 +278,55 @@ describe('SyncProvider timing instrumentation', () => {
     expect(order.filter((entry) => entry === 'syncCalendar')).toHaveLength(1)
   })
 
-  it('hydrates cache only when cache is enabled and still continues startup', async () => {
+  it('hydrates cache through the verified Etebase callback and still continues startup', async () => {
     cacheMock.isCacheEnabled.mockReturnValue(true)
+    etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate; onDomainLoaded?: OnDomainLoaded }) => {
+      order.push('etebaseInitialize')
+      await options?.onCacheHydrate?.()
+      for (const type of ['calendar', 'tasks', 'contacts'] as const) {
+        await options?.onDomainLoaded?.({ type, status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
+      }
+    })
 
     renderProvider()
 
     await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
-    expect(order.slice(0, 6)).toEqual([
+    expect(order.slice(0, 7)).toEqual([
       'initializeSync',
       'setSyncStatus:syncing',
+      'etebaseInitialize',
       'cacheGet:tasks',
       'cacheGet:contacts',
       'cacheGet:calendar',
-      'etebaseInitialize',
+      'fetchAllItems:calendar',
     ])
+  })
+
+  it('lets cache hydrate first and then overwrites calendar with server truth', async () => {
+    cacheMock.isCacheEnabled.mockReturnValue(true)
+    cacheMock.getItemsByType.mockImplementation(async (type: string) => {
+      order.push(`cacheGet:${type}`)
+      if (type === 'calendar') return [{ itemUid: 'cached-event', collectionUid: 'cal-1', content: 'VCALENDAR:CACHED' }]
+      return []
+    })
+    etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate; onDomainLoaded?: OnDomainLoaded }) => {
+      order.push('etebaseInitialize')
+      await options?.onCacheHydrate?.()
+      await options?.onDomainLoaded?.({ type: 'calendar', status: 'loaded', itemCount: 1, pageCount: 1, collectionCount: 1 })
+      await options?.onDomainLoaded?.({ type: 'tasks', status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
+      await options?.onDomainLoaded?.({ type: 'contacts', status: 'loaded', itemCount: 0, pageCount: 1, collectionCount: 1 })
+    })
+    etebaseMock.state.fetchAllItems.mockImplementation(async (type: DomainKey) => {
+      order.push(`fetchAllItems:${type}`)
+      if (type === 'calendar') return [{ uid: 'server-event', content: 'VEVENT:SERVER', collectionUid: 'cal-1' }]
+      return []
+    })
+
+    renderProvider()
+
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+    expect(order.filter((entry) => entry === 'syncCalendar')).toHaveLength(2)
+    expect(order.indexOf('cacheGet:calendar')).toBeLessThan(order.indexOf('fetchAllItems:calendar'))
   })
 
   it('does not let timing helper failures change sync status flow', async () => {

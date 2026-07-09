@@ -28,6 +28,19 @@ const toastStoreMock = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
 }))
 
+const dataCacheMock = vi.hoisted(() => ({
+  ensureEncryptedEnvelope: vi.fn(async () => true),
+  ensureFingerprint: vi.fn(async () => true),
+  getCacheCapabilityStatus: vi.fn(() => ({ featureFlagEnabled: false, encryptedEnvelopeAvailable: false, enabled: false })),
+  getStoken: vi.fn(async () => null),
+  setStoken: vi.fn(async () => {}),
+  putItems: vi.fn(async () => {}),
+  putItem: vi.fn(async () => {}),
+  deleteItem: vi.fn(async () => {}),
+  replaceItemsForCollection: vi.fn(async () => {}),
+  isCacheEnabled: vi.fn(() => false),
+}))
+
 // Stub the offline queue so isOfflineError + enqueue don't try to open IndexedDB.
 vi.mock('@/app/lib/offline-queue', () => offlineQueueMock)
 
@@ -42,6 +55,8 @@ vi.mock('@/app/lib/secure-storage', () => ({
 }))
 
 vi.mock('@/app/stores/use-toast-store', () => toastStoreMock)
+
+vi.mock('@/app/lib/data-cache', () => dataCacheMock)
 
 beforeEach(() => {
   offlineQueueMock.enqueue.mockClear()
@@ -58,6 +73,16 @@ beforeEach(() => {
   coreMock.deleteItem.mockReset()
   coreMock.updateCollectionMeta.mockReset()
   toastStoreMock.showErrorToast.mockReset()
+  dataCacheMock.ensureEncryptedEnvelope.mockReset().mockResolvedValue(true)
+  dataCacheMock.ensureFingerprint.mockReset().mockResolvedValue(true)
+  dataCacheMock.getCacheCapabilityStatus.mockReset().mockReturnValue({ featureFlagEnabled: false, encryptedEnvelopeAvailable: false, enabled: false })
+  dataCacheMock.getStoken.mockReset().mockResolvedValue(null)
+  dataCacheMock.setStoken.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.putItems.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.putItem.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.deleteItem.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.replaceItemsForCollection.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.isCacheEnabled.mockReset().mockReturnValue(false)
   sessionStorage.clear()
 })
 
@@ -394,6 +419,42 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     expect(state.syncEngine).toBeTruthy()
   })
 
+  it('preserves calendar map mutations made during early paint while slower domains continue loading', async () => {
+    await primeSuccessfulRestore()
+    const originalCalendarItem = mockItem('event-1', 'VEVENT')
+    const userCreatedCalendarItem = mockItem('event-user', 'VEVENT')
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'cal-1') return { items: [originalCalendarItem], stoken: null, done: true }
+      if (collection.uid === 'task-1') return { items: [mockItem('task-1', 'VTODO')], stoken: null, done: true }
+      if (collection.uid === 'contact-1') return { items: [mockItem('contact-1', 'VCARD')], stoken: null, done: true }
+      return { items: [], stoken: null, done: true }
+    })
+
+    await useEtebaseStore.getState().initialize({
+      onDomainLoaded: (event) => {
+        if (event.type !== 'calendar') return
+        const itemCache = new Map(useEtebaseStore.getState().itemCache)
+        const itemTypeMap = new Map(useEtebaseStore.getState().itemTypeMap)
+        const itemCollectionMap = new Map(useEtebaseStore.getState().itemCollectionMap)
+        itemCache.delete('event-1')
+        itemTypeMap.delete('event-1')
+        itemCollectionMap.delete('event-1')
+        itemCache.set('event-user', userCreatedCalendarItem)
+        itemTypeMap.set('event-user', 'calendar')
+        itemCollectionMap.set('event-user', 'cal-1')
+        useEtebaseStore.setState({ itemCache, itemTypeMap, itemCollectionMap })
+      },
+    })
+
+    const finalState = useEtebaseStore.getState()
+    expect(finalState.itemCache.has('event-1')).toBe(false)
+    expect(finalState.itemCache.get('event-user')).toBe(userCreatedCalendarItem)
+    expect(finalState.itemTypeMap.get('event-user')).toBe('calendar')
+    expect(finalState.itemCollectionMap.get('event-user')).toBe('cal-1')
+    expect(finalState.itemTypeMap.get('task-1')).toBe('tasks')
+    expect(finalState.itemTypeMap.get('contact-1')).toBe('contacts')
+  })
+
   it('emits only privacy-safe aggregate fields in the domain event payload', async () => {
     await primeSuccessfulRestore()
     coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
@@ -423,6 +484,57 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     }
     const calendarEvent = captured.find((e) => e.type === 'calendar')
     expect(calendarEvent).toMatchObject({ type: 'calendar', status: 'loaded', itemCount: 1, collectionCount: 1 })
+  })
+
+  it('hydrates local cache only after fingerprint survives and envelope is available', async () => {
+    await primeSuccessfulRestore()
+    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
+    dataCacheMock.isCacheEnabled.mockReturnValueOnce(false).mockReturnValue(true)
+    dataCacheMock.ensureFingerprint.mockResolvedValueOnce(true)
+    dataCacheMock.ensureEncryptedEnvelope.mockResolvedValueOnce(true)
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    const calls: string[] = []
+    await useEtebaseStore.getState().initialize({
+      onCacheHydrate: () => calls.push('cacheHydrate'),
+      onDomainLoaded: (event) => calls.push(`domain:${event.type}`),
+    })
+
+    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint')
+    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual(['cacheHydrate', 'domain:calendar', 'domain:tasks', 'domain:contacts'])
+  })
+
+  it('does not hydrate local cache when fingerprint mismatch wipes stale cache', async () => {
+    await primeSuccessfulRestore()
+    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
+    dataCacheMock.isCacheEnabled.mockReturnValueOnce(false).mockReturnValue(true)
+    dataCacheMock.ensureFingerprint.mockResolvedValueOnce(false)
+    dataCacheMock.ensureEncryptedEnvelope.mockResolvedValueOnce(true)
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    const onCacheHydrate = vi.fn()
+    await useEtebaseStore.getState().initialize({ onCacheHydrate })
+
+    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint')
+    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledTimes(1)
+    expect(onCacheHydrate).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().isInitialized).toBe(true)
+  })
+
+  it('continues restore when encrypted cache envelope setup fails', async () => {
+    await primeSuccessfulRestore()
+    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
+    dataCacheMock.ensureFingerprint.mockResolvedValueOnce(true)
+    dataCacheMock.ensureEncryptedEnvelope.mockRejectedValueOnce(new Error('quota'))
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    const onCacheHydrate = vi.fn()
+    await useEtebaseStore.getState().initialize({ onCacheHydrate })
+
+    expect(onCacheHydrate).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().isInitialized).toBe(true)
+    expect(useEtebaseStore.getState().domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'loaded', contacts: 'loaded' })
   })
 
   it('remains backwards-compatible when called with no options', async () => {
