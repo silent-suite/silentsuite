@@ -7,6 +7,7 @@ let searchParams = new URLSearchParams()
 
 const authState = {
   login: vi.fn(async () => {}),
+  unlockEtebaseSession: vi.fn(async () => {}),
   isLoading: false,
   error: null as string | null,
   clearError: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
 beforeEach(() => {
   replace.mockClear()
   authState.login.mockClear().mockResolvedValue(undefined)
+  authState.unlockEtebaseSession.mockClear().mockResolvedValue(undefined)
   authState.clearError.mockClear()
   authState.isAuthenticated = false
   authState.error = null
@@ -63,9 +65,31 @@ describe('LoginPage unlock route', () => {
     })
     fireEvent.submit(screen.getByRole('button', { name: /log in/i }))
 
-    await waitFor(() => expect(authState.login).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(authState.unlockEtebaseSession).toHaveBeenCalledTimes(1))
+    expect(authState.login).not.toHaveBeenCalled()
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/calendar'))
     expect(replace).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not redirect after a failed unlock submit', async () => {
+    authState.isAuthenticated = true
+    authState.unlockEtebaseSession.mockImplementationOnce(async () => {
+      authState.error = 'Invalid email or password. Please try again.'
+    })
+    searchParams = new URLSearchParams('reason=unlock&returnTo=/calendar')
+
+    render(<LoginPage />)
+
+    fireEvent.change(screen.getByLabelText(/Email address/i), {
+      target: { value: 'user@example.com' },
+    })
+    fireEvent.change(screen.getByLabelText(/^Password$/i), {
+      target: { value: 'wrong-password' },
+    })
+    fireEvent.submit(screen.getByRole('button', { name: /log in/i }))
+
+    await waitFor(() => expect(authState.unlockEtebaseSession).toHaveBeenCalledTimes(1))
+    expect(replace).not.toHaveBeenCalled()
   })
 
   it('falls back to calendar for malicious or self-looping returnTo values', async () => {
@@ -89,6 +113,24 @@ describe('LoginPage unlock route', () => {
       await waitFor(() => expect(replace).toHaveBeenCalledWith('/calendar'))
       unmount()
     }
+  })
+
+  it('uses full login when unlock route is visited without an authenticated hosted session', async () => {
+    authState.isAuthenticated = false
+    searchParams = new URLSearchParams('reason=unlock&returnTo=/calendar')
+
+    render(<LoginPage />)
+
+    fireEvent.change(screen.getByLabelText(/Email address/i), {
+      target: { value: 'user@example.com' },
+    })
+    fireEvent.change(screen.getByLabelText(/^Password$/i), {
+      target: { value: 'correct-horse' },
+    })
+    fireEvent.submit(screen.getByRole('button', { name: /log in/i }))
+
+    await waitFor(() => expect(authState.login).toHaveBeenCalledTimes(1))
+    expect(authState.unlockEtebaseSession).not.toHaveBeenCalled()
   })
 
   it('preserves the normal authenticated bounce when reason is absent', () => {

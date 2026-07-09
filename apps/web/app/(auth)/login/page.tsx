@@ -30,7 +30,7 @@ function safeReturnTo(raw: string | null): string {
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore()
+  const { login, unlockEtebaseSession, isLoading, error, clearError, isAuthenticated } = useAuthStore()
   const [serverUrl, setServerUrl] = useState('')
   const [rememberDevice, setRememberDevice] = useState(false)
   const isUnlock = searchParams.get('reason') === 'unlock'
@@ -66,7 +66,11 @@ export default function LoginPage() {
     } else {
       localStorage.removeItem('silentsuite-server-url')
     }
-    await login(data.email, data.password, normalizedUrl, useHostedBilling && rememberDevice)
+    if (isUnlock && isAuthenticated) {
+      await unlockEtebaseSession(data.email, data.password, normalizedUrl)
+    } else {
+      await login(data.email, data.password, normalizedUrl, useHostedBilling && rememberDevice)
+    }
     // Read the store directly to avoid a stale closure over `error`.
     if (isUnlock && !useAuthStore.getState().error) {
       const returnTo = safeReturnTo(searchParams.get('returnTo'))

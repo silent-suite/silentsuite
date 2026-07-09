@@ -92,6 +92,33 @@ describe('useAuthStore', () => {
     expect(state.isLoading).toBe(false)
   })
 
+  it('unlockEtebaseSession restores only the local session for the signed-in account', async () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false, onboardedAt: null },
+      isAuthenticated: true,
+    })
+
+    await useAuthStore.getState().unlockEtebaseSession('TEST@example.com', 'password123')
+
+    expect(secureStore.etebase_session).toBe('mock-saved-session')
+    expect(fetch).not.toHaveBeenCalled()
+    expect(offlineQueueClearAll).not.toHaveBeenCalled()
+    expect(useAuthStore.getState().error).toBeNull()
+  })
+
+  it('unlockEtebaseSession refuses to mix a different Etebase account with the hosted session', async () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false, onboardedAt: null },
+      isAuthenticated: true,
+    })
+
+    await useAuthStore.getState().unlockEtebaseSession('other@example.com', 'password123')
+
+    expect(secureStore.etebase_session).toBeUndefined()
+    expect(fetch).not.toHaveBeenCalled()
+    expect(useAuthStore.getState().error).toMatch(/already signed in/i)
+  })
+
   it('signup sends a trimmed promo code when provided', async () => {
     useAuthStore.setState({
       pendingSignup: {

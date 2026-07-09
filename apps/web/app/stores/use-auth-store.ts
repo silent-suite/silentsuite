@@ -75,6 +75,7 @@ interface AuthState {
   /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
   completeSignup: () => void
   login: (email: string, password: string, serverUrl?: string, rememberDevice?: boolean) => Promise<void>
+  unlockEtebaseSession: (email: string, password: string, serverUrl?: string) => Promise<void>
   logout: () => Promise<void>
   refreshSession: () => Promise<boolean>
   restoreSession: () => Promise<void>
@@ -771,6 +772,41 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isAuthenticated: true,
         isLoading: false,
       })
+    } catch (err) {
+      let message = 'Login failed'
+      if (err instanceof Error) {
+        const raw = err.message.toLowerCase()
+        if (raw.includes('unauthorized') || raw.includes('401')) {
+          message = 'Invalid email or password. Please try again.'
+        } else if (raw.includes('not found') || raw.includes('404')) {
+          message = 'No account found with this email. Please sign up first.'
+        } else if (raw.includes('fetch') || raw.includes('network')) {
+          message = 'Unable to reach the server. Please check your connection and try again.'
+        } else {
+          message = err.message
+        }
+      }
+      set({ isLoading: false, error: message })
+    }
+  },
+
+  unlockEtebaseSession: async (email: string, password: string, serverUrl?: string) => {
+    set({ isLoading: true, error: null })
+    const currentEmail = get().user?.email
+    if (currentEmail && currentEmail.toLowerCase() !== email.toLowerCase()) {
+      set({
+        isLoading: false,
+        error: 'Please unlock this browser with the email address already signed in on this device.',
+      })
+      return
+    }
+    try {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      const { savedSession } = await etebaseLogIn(email, password, serverUrl)
+      // This is same-account recovery, not an account switch. Preserve queued
+      // offline work while restoring the missing encrypted session blob.
+      await secureSet('etebase_session', savedSession)
+      set({ isLoading: false })
     } catch (err) {
       let message = 'Login failed'
       if (err instanceof Error) {
