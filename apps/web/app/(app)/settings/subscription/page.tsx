@@ -142,7 +142,29 @@ const REACTIVATION_PLANS = [
 
 const PAYMENT_CONFIRMATION_POLL_DELAYS_MS = [2000, 5000, 10000] as const
 
+interface StripePaymentReturn {
+  hasStripeParameters: boolean
+  paymentIntent: string | null
+  redirectStatus: string | null
+}
+
+function getStripePaymentReturn(search: string): StripePaymentReturn {
+  const params = new URLSearchParams(search)
+  return {
+    hasStripeParameters: params.has('payment_intent')
+      || params.has('payment_intent_client_secret')
+      || params.has('redirect_status'),
+    paymentIntent: params.get('payment_intent'),
+    redirectStatus: params.get('redirect_status'),
+  }
+}
+
 export default function SubscriptionPage() {
+  const [stripePaymentReturn] = useState<StripePaymentReturn>(() => (
+    typeof window === 'undefined'
+      ? { hasStripeParameters: false, paymentIntent: null, redirectStatus: null }
+      : getStripePaymentReturn(window.location.search)
+  ))
   const [data, setData] = useState<SubscriptionData | null>(null)
   const [loading, setLoading] = useState(true)
   const [bannerDismissed, setBannerDismissed] = useState(false)
@@ -178,22 +200,20 @@ export default function SubscriptionPage() {
   }, [])
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('payment_intent') && params.get('redirect_status')) return
+    if (stripePaymentReturn.paymentIntent && stripePaymentReturn.redirectStatus) return
     void fetchSubscription()
-  }, [fetchSubscription])
+  }, [fetchSubscription, stripePaymentReturn])
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const paymentIntent = params.get('payment_intent')
-    const redirectStatus = params.get('redirect_status')
+    const { hasStripeParameters, paymentIntent, redirectStatus } = stripePaymentReturn
+    if (hasStripeParameters) {
+      const cleanedUrl = new URL(window.location.href)
+      cleanedUrl.searchParams.delete('payment_intent')
+      cleanedUrl.searchParams.delete('payment_intent_client_secret')
+      cleanedUrl.searchParams.delete('redirect_status')
+      window.history.replaceState({}, '', `${cleanedUrl.pathname}${cleanedUrl.search}${cleanedUrl.hash}`)
+    }
     if (!paymentIntent || !redirectStatus) return
-
-    const cleanedUrl = new URL(window.location.href)
-    cleanedUrl.searchParams.delete('payment_intent')
-    cleanedUrl.searchParams.delete('payment_intent_client_secret')
-    cleanedUrl.searchParams.delete('redirect_status')
-    window.history.replaceState({}, '', `${cleanedUrl.pathname}${cleanedUrl.search}${cleanedUrl.hash}`)
 
     if (redirectStatus !== 'succeeded' && redirectStatus !== 'processing') {
       setPaymentConfirmationPending(false)
@@ -212,7 +232,13 @@ export default function SubscriptionPage() {
     const pollSubscription = async (finalAttempt = false) => {
       const nextData = await fetchSubscription()
       if (cancelled) return
-      if (nextData?.status === 'active' || nextData?.status === 'trialing') {
+      const capabilities = nextData ? getCapabilities(nextData) : null
+      const paymentConfirmed = nextData?.status === 'active'
+        || (nextData?.status === 'trialing'
+          && capabilities?.canSetupCard === false
+          && capabilities.needsPaymentMethod === false
+          && capabilities.canRetryPayment === false)
+      if (paymentConfirmed) {
         settled = true
         setPaymentConfirmationPending(false)
         setPaymentReturnFailure(null)
@@ -235,14 +261,21 @@ export default function SubscriptionPage() {
       cancelled = true
       timers.forEach(timer => window.clearTimeout(timer))
     }
-  }, [fetchSubscription])
+  }, [fetchSubscription, stripePaymentReturn])
 
   useEffect(() => {
-    if (data?.status === 'active' || data?.status === 'trialing') {
+    if (!data) return
+    const capabilities = getCapabilities(data)
+    const paymentConfirmed = data.status === 'active'
+      || (data.status === 'trialing'
+        && !capabilities.canSetupCard
+        && !capabilities.needsPaymentMethod
+        && !capabilities.canRetryPayment)
+    if (paymentConfirmed) {
       setPaymentConfirmationPending(false)
       setPaymentReturnFailure(null)
     }
-  }, [data?.status])
+  }, [data])
 
   async function handleCancel() {
     setCancelling(true)
@@ -297,7 +330,23 @@ export default function SubscriptionPage() {
   if (!data) {
     return (
       <div className="space-y-6">
-        <p className="text-sm text-[rgb(var(--muted))]">Unable to load subscription details.</p>
+        {paymentConfirmationPending && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+            <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Confirming your payment.</p>
+            <p className="mt-1 text-xs text-[rgb(var(--muted))]">This usually takes a few seconds. We will update this page automatically.</p>
+          </div>
+        )}
+        {paymentReturnFailure ? (
+          <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
+              <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
+            </div>
+            <Button size="sm" onClick={() => { void fetchSubscription() }}>Retry payment status</Button>
+          </div>
+        ) : !paymentConfirmationPending && (
+          <p className="text-sm text-[rgb(var(--muted))]">Unable to load subscription details.</p>
+        )}
       </div>
     )
   }
