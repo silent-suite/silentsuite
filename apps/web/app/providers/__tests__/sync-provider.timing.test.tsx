@@ -312,6 +312,9 @@ describe('SyncProvider timing instrumentation', () => {
       'cacheGet:calendar',
       'fetchAllItems:calendar',
     ])
+    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('calendar', [])
+    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('tasks', [])
+    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('contacts', [])
   })
 
   it('lets cache hydrate first and then overwrites calendar with server truth', async () => {
