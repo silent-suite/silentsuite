@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import AddCardBanner from '../add-card-banner'
 
 vi.mock('next/dynamic', () => ({
@@ -71,6 +71,33 @@ describe('AddCardBanner', () => {
     expect(screen.getByText('Amount due')).toBeInTheDocument()
     expect(screen.getByText('Powered by Stripe')).toBeInTheDocument()
     expect(screen.getByTestId('stripe-payment-form')).toHaveTextContent('payment:Pay €3.60:/settings/subscription')
+  })
+
+  it('does not enable payment creation before the current-flow lookup completes', async () => {
+    let resolveCurrentFlow: ((response: Response) => void) | undefined
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) {
+        return new Promise<Response>(resolve => { resolveCurrentFlow = resolve })
+      }
+      if (url.includes('/subscription/payment-options?interval=monthly')) {
+        return { ok: true, json: async () => monthlyOptions } as Response
+      }
+      return { ok: false, json: async () => ({}) } as Response
+    })
+
+    render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
+    fireEvent.click(screen.getByText('Choose payment'))
+
+    expect(await screen.findByText('Checking current payment...')).toBeInTheDocument()
+    expect(screen.queryByText('Continue to card payment')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveCurrentFlow?.({ ok: true, json: async () => ({ flow: null }) } as Response)
+      await Promise.resolve()
+    })
+
+    expect(await screen.findByText('Continue to card payment')).toBeInTheDocument()
   })
 
   it('switches monthly Bitcoin banner to annual and starts annual BTCPay flow', async () => {

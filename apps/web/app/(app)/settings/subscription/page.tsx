@@ -376,10 +376,23 @@ export default function SubscriptionPage() {
               <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
               <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
             </div>
-            <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
+              <Button size="sm" variant="outline" onClick={openPaymentRecovery}>Review payment options</Button>
+            </div>
           </div>
         ) : !paymentConfirmationPending && (
           <p className="text-sm text-[rgb(var(--muted))]">Unable to load subscription details.</p>
+        )}
+        {showPlanSelection && (
+          <section className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-5">
+            <PaymentChoicePanel
+              initialInterval={billingInterval}
+              onSuccess={startPaymentConfirmation}
+              onCancel={() => setShowPlanSelection(false)}
+              title="Review payment options"
+            />
+          </section>
         )}
       </div>
     )
