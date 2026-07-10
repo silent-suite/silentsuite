@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { BILLING_API_URL } from '@/app/lib/config'
@@ -10,6 +10,15 @@ import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
 
 type PaymentState = 'pending' | 'settled' | 'account' | 'vault' | 'expired' | 'timeout' | 'unknown'
+type PaymentFlowCheckState = 'idle' | 'loading' | 'ready' | 'failed'
+
+type CurrentPaymentFlow = {
+  flowKind: 'stripe_pay_now' | 'btcpay_annual'
+  provider: 'stripe' | 'btcpay'
+  status: string
+  cancellable: boolean
+  checkoutUrl?: string | null
+}
 
 const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
 
@@ -38,6 +47,33 @@ export default function PendingPaymentPage() {
   const [pollNonce, setPollNonce] = useState(0)
   const [restarting, setRestarting] = useState(false)
   const [restartError, setRestartError] = useState<string | null>(null)
+  const [currentFlow, setCurrentFlow] = useState<CurrentPaymentFlow | null>(null)
+  const [flowCheckState, setFlowCheckState] = useState<PaymentFlowCheckState>('idle')
+
+  const loadCurrentFlow = useCallback(async (isCancelled: () => boolean = () => false) => {
+    if (!isCancelled()) {
+      setFlowCheckState('loading')
+      setCurrentFlow(null)
+      setRestartError(null)
+    }
+    try {
+      const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows/current`, {
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      })
+      if (!res.ok) throw new Error('Could not verify the current payment flow.')
+      const data = await res.json()
+      if (!isCancelled()) {
+        setCurrentFlow(data.flow ?? null)
+        setFlowCheckState('ready')
+      }
+    } catch {
+      if (!isCancelled()) {
+        setFlowCheckState('failed')
+        setRestartError('Could not verify whether a payment is already in progress. Retry before starting another invoice.')
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (state !== 'pending') return
@@ -128,6 +164,18 @@ export default function PendingPaymentPage() {
     }
   }, [pendingSignup?.email, pollNonce, restoreSignupStateFromRedirect, state])
 
+  useEffect(() => {
+    if (state !== 'expired' && state !== 'timeout' && state !== 'unknown') {
+      setCurrentFlow(null)
+      setFlowCheckState('idle')
+      return
+    }
+
+    let cancelled = false
+    void loadCurrentFlow(() => cancelled)
+    return () => { cancelled = true }
+  }, [loadCurrentFlow, state])
+
   function handleVaultComplete() {
     completeSignup()
     if (returnTo) {
@@ -181,6 +229,10 @@ export default function PendingPaymentPage() {
           : 'Crypto payments can take a little time to settle. Your app access stays locked until the BTCPay webhook activates the account.'
 
   async function restartBitcoinCheckout() {
+    if (flowCheckState !== 'ready' || currentFlow) {
+      setRestartError('Check the current payment status before starting another invoice.')
+      return
+    }
     setRestarting(true)
     setRestartError(null)
     try {
@@ -194,6 +246,10 @@ export default function PendingPaymentPage() {
           returnUrl: '/signup/pending-payment',
         }),
       })
+      if (res.status === 409) {
+        await loadCurrentFlow()
+        throw new Error('A payment is already in progress. Review or cancel it before starting another invoice.')
+      }
       if (!res.ok) throw new Error('Could not start a new Bitcoin invoice. Please log in or contact support.')
       const data = await res.json()
       if (!data.checkoutUrl || !data.invoiceId || !data.invoiceLookupToken) {
@@ -211,6 +267,85 @@ export default function PendingPaymentPage() {
       setRestartError(err instanceof Error ? err.message : 'Could not start a new Bitcoin invoice.')
       setRestarting(false)
     }
+  }
+
+  async function cancelCurrentFlow() {
+    setRestarting(true)
+    setRestartError(null)
+    try {
+      const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows/cancel`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      })
+      if (!res.ok) throw new Error('Could not cancel the payment in progress.')
+      clearPendingCryptoPaymentSession()
+      setCurrentFlow(null)
+      setFlowCheckState('ready')
+    } catch (err) {
+      setRestartError(err instanceof Error ? err.message : 'Could not cancel the payment in progress.')
+    } finally {
+      setRestarting(false)
+    }
+  }
+
+  function currentCheckoutUrl(): string | null {
+    if (currentFlow?.provider !== 'btcpay' || !currentFlow.checkoutUrl) return null
+    try {
+      const checkoutUrl = new URL(currentFlow.checkoutUrl)
+      return checkoutUrl.origin === BTCPAY_CHECKOUT_ORIGIN && checkoutUrl.protocol === 'https:'
+        ? checkoutUrl.toString()
+        : null
+    } catch {
+      return null
+    }
+  }
+
+  function renderBitcoinRecoveryAction() {
+    if (flowCheckState === 'idle' || flowCheckState === 'loading') {
+      return (
+        <button type="button" disabled className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium opacity-60">
+          Checking current payment...
+        </button>
+      )
+    }
+    if (flowCheckState === 'failed') {
+      return (
+        <button type="button" onClick={() => { void loadCurrentFlow() }} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
+          Retry payment status
+        </button>
+      )
+    }
+    if (currentFlow) {
+      const checkoutUrl = currentCheckoutUrl()
+      return (
+        <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-left">
+          <div>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Payment already in progress</p>
+            <p className="mt-1 text-xs text-[rgb(var(--muted))]">Continue the existing payment or cancel it before starting another invoice.</p>
+          </div>
+          {checkoutUrl && (
+            <button type="button" onClick={() => { window.location.href = checkoutUrl }} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
+              Continue Bitcoin checkout
+            </button>
+          )}
+          {currentFlow.cancellable ? (
+            <button type="button" onClick={cancelCurrentFlow} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100 disabled:cursor-not-allowed disabled:opacity-60">
+              {restarting ? 'Cancelling payment...' : 'Cancel and start another invoice'}
+            </button>
+          ) : !checkoutUrl && (
+            <button type="button" onClick={() => { void loadCurrentFlow() }} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
+              Check payment status again
+            </button>
+          )}
+        </div>
+      )
+    }
+    return (
+      <button type="button" onClick={restartBitcoinCheckout} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600 disabled:cursor-not-allowed disabled:opacity-60">
+        {restarting ? 'Starting new invoice...' : 'Start new Bitcoin invoice'}
+      </button>
+    )
   }
 
   if (state === 'vault') {
@@ -292,14 +427,10 @@ export default function PendingPaymentPage() {
             <button type="button" onClick={() => { setState('pending'); setPollNonce((value) => value + 1) }} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
               Check again
             </button>
-            <button type="button" onClick={restartBitcoinCheckout} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100 disabled:cursor-not-allowed disabled:opacity-60">
-              {restarting ? 'Starting new invoice...' : 'Start new Bitcoin invoice'}
-            </button>
+            {renderBitcoinRecoveryAction()}
           </>
         ) : state === 'expired' || state === 'unknown' ? (
-          <button type="button" onClick={restartBitcoinCheckout} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600 disabled:cursor-not-allowed disabled:opacity-60">
-            {restarting ? 'Starting new invoice...' : 'Start new Bitcoin invoice'}
-          </button>
+          renderBitcoinRecoveryAction()
         ) : (
           <Link href="/login" className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100">
             Go to login

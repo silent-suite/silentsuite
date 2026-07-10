@@ -218,7 +218,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       type: 'tasks' | 'contacts' | 'calendar',
       items: { uid: string; content: string; collectionUid: string }[],
     ) {
-      if (!isLocalCacheEnabled() || items.length === 0) return
+      if (!isLocalCacheEnabled()) return
       const startedAt = nowMs()
       const records: CachedItem[] = items.map((it) => ({
         itemUid: it.uid,
