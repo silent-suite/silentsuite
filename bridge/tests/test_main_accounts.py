@@ -131,6 +131,7 @@ def test_setup_macos_apple_accounts_success_non_darwin(tmp_path, monkeypatch, ca
     assert "Use SSL" in out
     assert "Keychain" in out or "Always Trust" in out
     assert "restart" in out.lower() or "Restart" in out
+    assert "https://localhost:37358/" not in out
     # Non-Darwin must not silently persist sslEnabled=true.
     assert config.SSL_ENABLED is False
     assert not settings_path.exists()
@@ -157,7 +158,7 @@ def test_setup_macos_apple_accounts_failure_exits_nonzero(monkeypatch, capsys):
     assert "Traceback" not in out
 
 
-def test_setup_macos_apple_accounts_persists_ssl_settings_on_darwin(tmp_path, monkeypatch):
+def test_setup_macos_apple_accounts_persists_ssl_settings_on_darwin(tmp_path, monkeypatch, capsys):
     cert_path = str(tmp_path / "cert.pem")
     key_path = str(tmp_path / "key.pem")
     settings_path = tmp_path / "settings.json"
@@ -165,7 +166,8 @@ def test_setup_macos_apple_accounts_persists_ssl_settings_on_darwin(tmp_path, mo
     monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_path))
     monkeypatch.setattr(config, "SSL_CERT_FILE", cert_path)
     monkeypatch.setattr(config, "SSL_KEY_FILE", key_path)
-    monkeypatch.setattr(config, "LISTEN_PORT", 37358)
+    monkeypatch.setattr(config, "LISTEN_ADDRESS", "::1")
+    monkeypatch.setattr(config, "LISTEN_PORT", 45454)
     monkeypatch.setattr(config, "SSL_ENABLED", False)
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(main_module, "_open_certificate_for_trust", lambda c: True)
@@ -180,8 +182,10 @@ def test_setup_macos_apple_accounts_persists_ssl_settings_on_darwin(tmp_path, mo
 
     code = main_module.setup_macos_apple_accounts()
 
+    out = capsys.readouterr().out
     settings = config.get_settings()
     assert code == 0
+    assert "Open the dashboard: https://[::1]:45454/" in out
     assert config.SSL_ENABLED is True
     assert settings["sslEnabled"] is True
     assert settings["sslCertFile"] == cert_path
