@@ -73,6 +73,9 @@ def test_android_release_metadata_matches_current_release():
     assert f"/silentsuite/v{CURRENT_RELEASE_VERSION}/android/fastlane/metadata/android/en-US/" in zapstore
     assert f"/changelogs/{CURRENT_ANDROID_VERSION_CODE}.txt" in zapstore
 
+    listing_copy = read("android/fastlane/metadata/android/en-US/google-play-listing-copy.md")
+    assert f"SilentSuite v{CURRENT_RELEASE_VERSION}" in listing_copy
+
 
 def test_bridge_release_workflow_validates_frozen_version_without_runtime_env_override():
     workflow = read(".github/workflows/build-bridge.yml")
