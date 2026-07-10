@@ -463,7 +463,7 @@ def setup_macos_apple_accounts() -> int:
         print("  1. In Keychain Access, add the certificate to your login keychain.")
         print("     Set Trust > Secure Sockets Layer (SSL) to Always Trust.")
         print("  2. Restart the bridge: silentsuite-bridge")
-        print(f"  3. Open the dashboard: {config.dav_scheme()}://localhost:{config.LISTEN_PORT}/")
+        print(f"  3. Open the dashboard: {config.local_base_url()}/")
         print("  4. System Settings > Internet Accounts > Add Account > Other >")
         print("     CalDAV/CardDAV Account > Advanced:")
         print(f"       - Server Address: localhost (or 127.0.0.1), Port: {config.LISTEN_PORT}")
@@ -490,7 +490,7 @@ def setup_macos_apple_accounts() -> int:
     print()
     print("macOS setup steps (run on the Mac that hosts the bridge):")
     print("  1. Trust this certificate in Keychain with SSL set to Always Trust.")
-    print("  2. Restart the bridge and open https://localhost:37358/.")
+    print("  2. Enable SSL as above, restart the bridge, and open the dashboard URL printed at startup.")
     print("  3. Use Apple Internet Accounts > Advanced with Use SSL checked.")
     return 0
 

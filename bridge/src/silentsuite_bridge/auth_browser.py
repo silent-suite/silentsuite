@@ -46,10 +46,8 @@ class AuthenticationError(Exception):
 
 def _auth_error_message(exc):
     error_text = str(exc)
-    if "401" in error_text or "Unauthorized" in error_text:
+    if any(marker in error_text for marker in ("401", "Unauthorized", "404", "Not Found")):
         return "Invalid email or password."
-    if "404" in error_text:
-        return "Account not found."
     return "Authentication failed. Check the server URL and try again."
 
 
@@ -671,9 +669,9 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             if not email:
                 self.send_error(404)
                 return
-            bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+            bridge_url = f"{config.local_base_url()}/{email}/"
             if config.is_dashboard_enabled():
-                dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+                dashboard_url = f"{config.local_base_url()}/"
                 dashboard_bookmark = (
                     '<div class="bookmark-box">&#11088; Bookmark '
                     f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
@@ -811,7 +809,7 @@ def browser_login(running_bridge=False):
     email = server.authenticated_email
     if email:
         used_server = server.authenticated_server_url
-        base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+        base_url = f"{config.local_base_url()}/{email}/"
         if running_bridge:
             print(f"\n  Login successful! The bridge is already running.")
         else:
@@ -820,7 +818,7 @@ def browser_login(running_bridge=False):
         print()
         print(f"  Etebase server: {used_server}")
         if config.is_dashboard_enabled():
-            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+            dashboard_url = f"{config.local_base_url()}/"
             print(f"  Dashboard will be available at: {dashboard_url}")
         else:
             print("  Dashboard is disabled for remote bridge binds.")

@@ -23,10 +23,9 @@ import threading
 import webbrowser
 
 try:
-    from PIL import Image, ImageDraw
-
     # pystray may fail to import if no display is available
     import pystray
+    from PIL import Image, ImageDraw
 
     TRAY_AVAILABLE = True
 except (ImportError, Exception):
@@ -45,6 +44,16 @@ COLOR_GREEN = "#4ade80"
 COLOR_YELLOW = "#fbbf24"
 COLOR_RED = "#ef4444"
 COLOR_GRAY = "#666666"
+
+
+def _dashboard_url():
+    """Return the configured local dashboard URL."""
+    return f"{config.local_base_url()}/"
+
+
+def _account_dav_url(email):
+    """Return the configured local DAV URL for one account."""
+    return f"{config.local_base_url()}/{email}/"
 
 
 def _create_icon_image(color, size=64):
@@ -98,7 +107,6 @@ class BridgeTray:
     def _build_menu(self):
         """Build the tray menu."""
         accounts = _get_accounts()
-        base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}"
 
         status_text = {
             "connected": "Connected",
@@ -110,17 +118,17 @@ class BridgeTray:
         if accounts:
             account_items = []
             for email in accounts:
-                dav_url = f"{base_url}/{email}/"
+                dav_url = _account_dav_url(email)
                 account_items.append(pystray.MenuItem(
                     email,
                     pystray.Menu(
                         pystray.MenuItem(
                             "Copy CalDAV URL",
-                            lambda url=dav_url: self._copy_to_clipboard(url),
+                            lambda _icon=None, _item=None, url=dav_url: self._copy_to_clipboard(url),
                         ),
                         pystray.MenuItem(
                             "Copy CardDAV URL",
-                            lambda url=dav_url: self._copy_to_clipboard(url),
+                            lambda _icon=None, _item=None, url=dav_url: self._copy_to_clipboard(url),
                         ),
                     ),
                 ))
@@ -145,16 +153,16 @@ class BridgeTray:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Open Dashboard",
-                lambda: webbrowser.open(f"{base_url}/"),
+                lambda _icon=None, _item=None: webbrowser.open(_dashboard_url()),
             ),
             pystray.MenuItem(
                 "Add / Re-authenticate Account",
-                lambda: self._reauthenticate(),
+                lambda _icon=None, _item=None: self._reauthenticate(),
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Quit SilentSuite Bridge",
-                lambda: self.quit(),
+                lambda _icon=None, _item=None: self.quit(),
             ),
         )
 
