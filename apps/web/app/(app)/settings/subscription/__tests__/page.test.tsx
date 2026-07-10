@@ -60,14 +60,29 @@ const baseSubscription = {
   },
 }
 
-function mockSubscription(subscription: Record<string, unknown>) {
+const pendingStripeFlow = {
+  flowKind: 'stripe_pay_now',
+  provider: 'stripe',
+  status: 'processing',
+  planId: 'early_monthly',
+  billingInterval: 'monthly',
+  amount: '3.60',
+  currency: 'EUR',
+  createdAt: '2026-07-10T00:00:00.000Z',
+  cancellable: true,
+}
+
+function mockSubscription(
+  subscription: Record<string, unknown>,
+  currentFlow: Record<string, unknown> | null = null,
+) {
   const response = { ...baseSubscription, ...subscription }
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url === 'https://billing.test/subscription' && !init?.method) {
       return { ok: true, json: async () => response }
     }
     if (url === 'https://billing.test/subscription/payment-flows/current') {
-      return { ok: true, json: async () => ({ flow: null }) }
+      return { ok: true, json: async () => ({ flow: currentFlow }) }
     }
     if (url === 'https://billing.test/subscription/payment-options?interval=monthly') {
       return { ok: true, json: async () => ({
@@ -362,7 +377,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
         needsPaymentMethod: true,
         canSetupCard: true,
       },
-    })
+    }, pendingStripeFlow)
 
     render(<React.StrictMode><SubscriptionPage /></React.StrictMode>)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
@@ -377,9 +392,19 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(screen.getByText(/payment needs attention/i)).toBeInTheDocument()
     expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /review payment options/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^retry payment$/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /choose payment/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /review payment options/i }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText(/card payment in progress/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /cancel and choose another method/i })).toBeInTheDocument()
+    expect(screen.queryByText(/taking longer than expected/i)).not.toBeInTheDocument()
   })
 
   it('removes an incomplete Stripe client secret from the URL without suppressing the normal fetch', async () => {
@@ -443,13 +468,17 @@ describe('SubscriptionPage billing recovery CTAs', () => {
         canRetryPayment: true,
         canStartPaidSubscription: true,
       },
-    })
+    }, pendingStripeFlow)
 
     render(<SubscriptionPage />)
 
     expect(await screen.findByText(/payment needs attention/i)).toBeInTheDocument()
     expect(screen.getByText(/Stripe could not confirm this payment/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /retry payment/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /review payment options/i }))
+    expect(await screen.findByText(/card payment in progress/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /cancel and choose another method/i })).toBeInTheDocument()
+    expect(screen.queryByText(/Stripe could not confirm this payment/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
     expect(window.location.search).toBe('')
   })

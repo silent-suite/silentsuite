@@ -305,6 +305,12 @@ export default function SubscriptionPage() {
     setPaymentConfirmationAttempt(attempt => attempt + 1)
   }
 
+  function openPaymentRecovery() {
+    setPaymentConfirmationPending(false)
+    setPaymentReturnFailure(null)
+    setShowPlanSelection(true)
+  }
+
   async function handleCancel() {
     setCancelling(true)
     try {
@@ -525,12 +531,17 @@ export default function SubscriptionPage() {
       )}
 
       {paymentReturnFailure && (
-        <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <div>
-            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
-            <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+          <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Payment needs attention</p>
+          <p className="mt-1 text-sm text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" onClick={startPaymentConfirmation}>
+              Retry payment status
+            </Button>
+            <Button size="sm" variant="outline" onClick={openPaymentRecovery}>
+              Review payment options
+            </Button>
           </div>
-          <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
         </div>
       )}
 
