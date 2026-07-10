@@ -46,10 +46,8 @@ class AuthenticationError(Exception):
 
 def _auth_error_message(exc):
     error_text = str(exc)
-    if "401" in error_text or "Unauthorized" in error_text:
+    if any(marker in error_text for marker in ("401", "Unauthorized", "404", "Not Found")):
         return "Invalid email or password."
-    if "404" in error_text:
-        return "Account not found."
     return "Authentication failed. Check the server URL and try again."
 
 

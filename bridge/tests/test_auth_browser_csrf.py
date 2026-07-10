@@ -92,6 +92,25 @@ def test_auth_post_with_valid_csrf_reaches_login():
     assert login.called
 
 
+def test_auth_post_does_not_distinguish_unknown_account_from_wrong_password():
+    server, thread = _serve_one_auth_request()
+    try:
+        with patch("silentsuite_bridge.auth_browser.Account.login", side_effect=Exception("404 Not Found")) as login:
+            status, payload = _post_auth(server, {
+                "email": "unknown@example.com",
+                "password": "secret",
+                "server_url": "https://server.silentsuite.io",
+                "csrf_token": "expected-token",
+            })
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 401
+    assert payload == {"success": False, "error": "Invalid email or password."}
+    assert login.called
+
+
 def test_auth_success_redirect_does_not_include_email_query():
     server, thread = _serve_one_auth_request()
     etebase = MagicMock()
