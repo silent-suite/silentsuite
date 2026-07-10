@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Crown, Loader2, Check } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
@@ -140,7 +140,31 @@ const REACTIVATION_PLANS = [
   { id: 'standard_annual', name: 'Standard Annual', price: '48', period: '/yr', description: 'Save with annual billing', icon: Crown, badge: 'Best value', earlyOnly: false },
 ] as const
 
+const PAYMENT_CONFIRMATION_POLL_DELAYS_MS = [2000, 5000, 10000] as const
+
+interface StripePaymentReturn {
+  hasStripeParameters: boolean
+  paymentIntent: string | null
+  redirectStatus: string | null
+}
+
+function getStripePaymentReturn(search: string): StripePaymentReturn {
+  const params = new URLSearchParams(search)
+  return {
+    hasStripeParameters: params.has('payment_intent')
+      || params.has('payment_intent_client_secret')
+      || params.has('redirect_status'),
+    paymentIntent: params.get('payment_intent'),
+    redirectStatus: params.get('redirect_status'),
+  }
+}
+
 export default function SubscriptionPage() {
+  const [stripePaymentReturn] = useState<StripePaymentReturn>(() => (
+    typeof window === 'undefined'
+      ? { hasStripeParameters: false, paymentIntent: null, redirectStatus: null }
+      : getStripePaymentReturn(window.location.search)
+  ))
   const [data, setData] = useState<SubscriptionData | null>(null)
   const [loading, setLoading] = useState(true)
   const [bannerDismissed, setBannerDismissed] = useState(false)
@@ -155,31 +179,131 @@ export default function SubscriptionPage() {
   const [changePlanToast, setChangePlanToast] = useState<string | null>(null)
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
   const [paymentConfirmationPending, setPaymentConfirmationPending] = useState(false)
+  const [paymentReturnFailure, setPaymentReturnFailure] = useState<string | null>(null)
+  const [paymentConfirmationAttempt, setPaymentConfirmationAttempt] = useState(0)
+  const stripeReturnHandledRef = useRef(false)
 
-  const fetchSubscription = useCallback(async () => {
+  const requestSubscription = useCallback(async (): Promise<SubscriptionData | null> => {
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription`, {
         credentials: 'include',
       })
       if (res.ok) {
-        setData(await res.json())
+        return await res.json() as SubscriptionData
       }
     } catch {
       // API may not be running in dev
-    } finally {
-      setLoading(false)
     }
+    return null
   }, [])
 
-  useEffect(() => {
-    fetchSubscription()
-  }, [fetchSubscription])
+  const fetchSubscription = useCallback(async () => {
+    const nextData = await requestSubscription()
+    if (nextData) setData(nextData)
+    setLoading(false)
+    return nextData
+  }, [requestSubscription])
 
   useEffect(() => {
-    if (data?.status === 'active' || data?.status === 'trialing') {
-      setPaymentConfirmationPending(false)
+    if (stripePaymentReturn.paymentIntent && stripePaymentReturn.redirectStatus) return
+    void fetchSubscription()
+  }, [fetchSubscription, stripePaymentReturn])
+
+  useEffect(() => {
+    const { hasStripeParameters, paymentIntent, redirectStatus } = stripePaymentReturn
+    if (hasStripeParameters) {
+      const cleanedUrl = new URL(window.location.href)
+      cleanedUrl.searchParams.delete('payment_intent')
+      cleanedUrl.searchParams.delete('payment_intent_client_secret')
+      cleanedUrl.searchParams.delete('redirect_status')
+      window.history.replaceState({}, '', `${cleanedUrl.pathname}${cleanedUrl.search}${cleanedUrl.hash}`)
     }
-  }, [data?.status])
+    if (!paymentIntent || !redirectStatus) return
+    if (stripeReturnHandledRef.current) return
+    stripeReturnHandledRef.current = true
+
+    if (redirectStatus !== 'succeeded' && redirectStatus !== 'processing') {
+      setPaymentConfirmationPending(false)
+      setPaymentReturnFailure('Stripe could not confirm this payment. You can retry or choose another payment method.')
+      void fetchSubscription()
+      return
+    }
+
+    setPaymentConfirmationPending(true)
+    setPaymentReturnFailure(null)
+    setShowPlanSelection(false)
+    setPaymentConfirmationAttempt(attempt => attempt + 1)
+  }, [fetchSubscription, stripePaymentReturn])
+
+  useEffect(() => {
+    if (paymentConfirmationAttempt === 0) return
+
+    let cancelled = false
+    let settled = false
+    let requestSequence = 0
+    let latestCommittedSequence = 0
+    const timers: number[] = []
+    const clearTimers = () => timers.forEach(timer => window.clearTimeout(timer))
+
+    const pollSubscription = async (finalAttempt = false) => {
+      const sequence = ++requestSequence
+      const nextData = await requestSubscription()
+      if (cancelled || settled || sequence < latestCommittedSequence) return
+      latestCommittedSequence = sequence
+      setLoading(false)
+      if (nextData) setData(nextData)
+      const capabilities = nextData ? getCapabilities(nextData) : null
+      const paymentConfirmed = nextData?.status === 'active'
+        || (nextData?.status === 'trialing'
+          && capabilities?.canSetupCard === false
+          && capabilities.needsPaymentMethod === false
+          && capabilities.canRetryPayment === false)
+      if (paymentConfirmed) {
+        settled = true
+        clearTimers()
+        setPaymentConfirmationPending(false)
+        setPaymentReturnFailure(null)
+        return
+      }
+      if (finalAttempt && !settled) {
+        setPaymentConfirmationPending(false)
+        setPaymentReturnFailure('Payment confirmation is taking longer than expected. Retry the payment status or choose another payment method.')
+      }
+    }
+
+    void pollSubscription()
+    PAYMENT_CONFIRMATION_POLL_DELAYS_MS.forEach((delayMs, index) => {
+      timers.push(window.setTimeout(() => {
+        if (!settled) void pollSubscription(index === PAYMENT_CONFIRMATION_POLL_DELAYS_MS.length - 1)
+      }, delayMs))
+    })
+
+    return () => {
+      cancelled = true
+      clearTimers()
+    }
+  }, [paymentConfirmationAttempt, requestSubscription])
+
+  useEffect(() => {
+    if (!data) return
+    const capabilities = getCapabilities(data)
+    const paymentConfirmed = data.status === 'active'
+      || (data.status === 'trialing'
+        && !capabilities.canSetupCard
+        && !capabilities.needsPaymentMethod
+        && !capabilities.canRetryPayment)
+    if (paymentConfirmed) {
+      setPaymentConfirmationPending(false)
+      setPaymentReturnFailure(null)
+    }
+  }, [data])
+
+  function startPaymentConfirmation() {
+    setPaymentConfirmationPending(true)
+    setPaymentReturnFailure(null)
+    setShowPlanSelection(false)
+    setPaymentConfirmationAttempt(attempt => attempt + 1)
+  }
 
   async function handleCancel() {
     setCancelling(true)
@@ -234,7 +358,23 @@ export default function SubscriptionPage() {
   if (!data) {
     return (
       <div className="space-y-6">
-        <p className="text-sm text-[rgb(var(--muted))]">Unable to load subscription details.</p>
+        {paymentConfirmationPending && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+            <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Confirming your payment.</p>
+            <p className="mt-1 text-xs text-[rgb(var(--muted))]">This usually takes a few seconds. We will update this page automatically.</p>
+          </div>
+        )}
+        {paymentReturnFailure ? (
+          <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <div>
+              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
+              <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
+            </div>
+            <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
+          </div>
+        ) : !paymentConfirmationPending && (
+          <p className="text-sm text-[rgb(var(--muted))]">Unable to load subscription details.</p>
+        )}
       </div>
     )
   }
@@ -254,7 +394,7 @@ export default function SubscriptionPage() {
     && !capabilities.trialExpired
     && !capabilities.canRetryPayment
     && !capabilities.canStartPaidSubscription
-  const canOpenPaidRecovery = !paymentConfirmationPending && (
+  const canOpenPaidRecovery = !paymentConfirmationPending && !paymentReturnFailure && (
     capabilities.canRetryPayment
     || capabilities.canStartPaidSubscription
     || capabilities.canReactivate
@@ -370,8 +510,11 @@ export default function SubscriptionPage() {
         </div>
       </section>
 
-      {capabilities.canSetupCard && data.trial.daysRemaining != null && (
-        <AddCardBanner daysRemaining={data.trial.daysRemaining} onCardAdded={fetchSubscription} />
+      {capabilities.canSetupCard
+        && data.trial.daysRemaining != null
+        && !paymentConfirmationPending
+        && !paymentReturnFailure && (
+        <AddCardBanner daysRemaining={data.trial.daysRemaining} onCardAdded={startPaymentConfirmation} />
       )}
 
       {paymentConfirmationPending && (
@@ -381,7 +524,17 @@ export default function SubscriptionPage() {
         </div>
       )}
 
-      {capabilities.canRetryPayment && !paymentConfirmationPending && (
+      {paymentReturnFailure && (
+        <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <div>
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
+            <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
+          </div>
+          <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
+        </div>
+      )}
+
+      {capabilities.canRetryPayment && !paymentConfirmationPending && !paymentReturnFailure && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment incomplete. Please try again.</p>
           <p className="mt-1 text-xs text-[rgb(var(--muted))]">Your subscription will activate after payment is completed.</p>
@@ -417,17 +570,9 @@ export default function SubscriptionPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(var(--background))]/80 backdrop-blur-sm">
           <div className="mx-4 w-full max-w-md rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6">
             <PaymentChoicePanel
-              onSuccess={async () => {
-                setPaymentConfirmationPending(true)
-                setShowPlanSelection(false)
-                await fetchSubscription()
-                for (const delayMs of [2000, 5000, 10000]) {
-                  window.setTimeout(() => { void fetchSubscription() }, delayMs)
-                }
-              }}
+              onSuccess={startPaymentConfirmation}
               onCancel={() => setShowPlanSelection(false)}
               title="Continue with silentsuite.io"
-              successPoll={fetchSubscription}
             />
           </div>
         </div>

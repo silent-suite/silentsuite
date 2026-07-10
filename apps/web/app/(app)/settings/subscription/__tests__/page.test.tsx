@@ -1,6 +1,6 @@
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import SubscriptionPage from '../page'
 
 vi.mock('next/dynamic', () => ({
@@ -103,6 +103,11 @@ function mockSubscription(subscription: Record<string, unknown>) {
 describe('SubscriptionPage billing recovery CTAs', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
+    window.history.replaceState({}, '', '/settings/subscription')
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('shows choose payment for active no-card trials without making cancel the only action', async () => {
@@ -239,11 +244,214 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     fireEvent.click(await screen.findByRole('button', { name: /continue to card payment/i }))
     expect(await screen.findByText('Amount due')).toBeInTheDocument()
     expect(screen.getByText('Powered by Stripe')).toBeInTheDocument()
-    fireEvent.click(await screen.findByRole('button', { name: /mock payment success/i }))
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: /mock payment success/i }))
 
-    expect(await screen.findByText(/confirming your payment/i)).toBeInTheDocument()
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
     expect(screen.queryByText(/payment incomplete/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /retry payment/i })).not.toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^retry payment$/i })).not.toBeInTheDocument()
+  })
+
+  it('keeps polling a no-card trial until Stripe confirmation removes payment requirements', async () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&payment_intent_client_secret=secret_123&redirect_status=processing')
+    let subscriptionFetches = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://billing.test/subscription' && !init?.method) {
+        subscriptionFetches += 1
+        const cardConfirmed = subscriptionFetches >= 2
+        return { ok: true, json: async () => cardConfirmed
+          ? {
+              ...baseSubscription,
+              status: 'trialing',
+              trial: { active: true, endsAt: '2026-07-30T00:00:00.000Z', daysRemaining: 20 },
+              capabilities: { ...baseSubscription.capabilities, trialActive: true },
+            }
+          : {
+              ...baseSubscription,
+              status: 'trialing',
+              trialPath: '7day',
+              trial: { active: true, endsAt: '2026-07-17T00:00:00.000Z', daysRemaining: 7 },
+              capabilities: { ...baseSubscription.capabilities, trialActive: true, needsPaymentMethod: true, canSetupCard: true },
+            } }
+      }
+      return { ok: false, status: 404, json: async () => ({}) }
+    }))
+
+    render(<SubscriptionPage />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /retry payment/i })).not.toBeInTheDocument()
+    expect(window.location.search).toBe('')
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Trialing')).toBeInTheDocument()
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+    expect(subscriptionFetches).toBeGreaterThanOrEqual(2)
+  })
+
+  it('ignores an older pending poll response after a newer response confirms payment', async () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&redirect_status=processing')
+    let subscriptionFetches = 0
+    let resolveFirst: ((response: { ok: boolean; json: () => Promise<Record<string, unknown>> }) => void) | undefined
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      if (url === 'https://billing.test/subscription' && !init?.method) {
+        subscriptionFetches += 1
+        if (subscriptionFetches === 1) {
+          return new Promise(resolve => { resolveFirst = resolve })
+        }
+        return Promise.resolve({ ok: true, json: async () => baseSubscription })
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) })
+    }))
+
+    render(<SubscriptionPage />)
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(subscriptionFetches).toBe(2)
+
+    await act(async () => {
+      resolveFirst?.({
+        ok: true,
+        json: async () => ({
+          ...baseSubscription,
+          status: 'none',
+          renewalDate: null,
+          capabilities: { ...baseSubscription.capabilities, canRetryPayment: true, canStartPaidSubscription: true },
+        }),
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^retry payment$/i })).not.toBeInTheDocument()
+  })
+
+  it('stops bounded redirect polling with an actionable timeout', async () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&redirect_status=succeeded')
+    mockSubscription({
+      status: 'trialing',
+      trialPath: '7day',
+      trial: { active: true, endsAt: '2026-07-17T00:00:00.000Z', daysRemaining: 7 },
+      capabilities: {
+        ...baseSubscription.capabilities,
+        trialActive: true,
+        needsPaymentMethod: true,
+        canSetupCard: true,
+      },
+    })
+
+    render(<React.StrictMode><SubscriptionPage /></React.StrictMode>)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/payment needs attention/i)).toBeInTheDocument()
+    expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^retry payment$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /choose payment/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+  })
+
+  it('removes an incomplete Stripe client secret from the URL without suppressing the normal fetch', async () => {
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent_client_secret=secret_123')
+    mockSubscription({})
+
+    render(<SubscriptionPage />)
+
+    expect(await screen.findByText('Active')).toBeInTheDocument()
+    expect(window.location.search).toBe('')
+  })
+
+  it('offers a manual status retry when every redirect poll fails', async () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&redirect_status=processing')
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<SubscriptionPage />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/payment needs attention/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
+    expect(screen.queryByText(/unable to load subscription details/i)).not.toBeInTheDocument()
+
+    const firstAttemptCalls = fetchMock.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: /retry payment status/i }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(firstAttemptCalls)
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/payment needs attention/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
+  })
+
+  it('shows an actionable retry path after a failed Stripe redirect', async () => {
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&payment_intent_client_secret=secret_123&redirect_status=failed')
+    mockSubscription({
+      status: 'none',
+      renewalDate: null,
+      capabilities: {
+        ...baseSubscription.capabilities,
+        canRetryPayment: true,
+        canStartPaidSubscription: true,
+      },
+    })
+
+    render(<SubscriptionPage />)
+
+    expect(await screen.findByText(/payment needs attention/i)).toBeInTheDocument()
+    expect(screen.getByText(/Stripe could not confirm this payment/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment/i })).toBeInTheDocument()
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+    expect(window.location.search).toBe('')
   })
 
   it('does not route cancel-at-period-end users into reactivation', async () => {
