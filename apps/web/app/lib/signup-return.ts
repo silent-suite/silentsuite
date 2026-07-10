@@ -24,3 +24,15 @@ export function signupSuccessUrl(origin: string, returnTo?: string | null): stri
   }
   return url.toString()
 }
+
+export function paymentReturnUrl(origin: string, returnPath?: string, signupReturnTo?: string | null): string {
+  if (!returnPath) return signupSuccessUrl(origin, signupReturnTo)
+
+  const appOrigin = new URL(origin).origin
+  const returnUrl = new URL(returnPath, appOrigin)
+  if (!returnPath.startsWith('/') || returnPath.startsWith('//') || returnUrl.origin !== appOrigin) {
+    throw new Error('Payment return path must stay on the SilentSuite app origin.')
+  }
+
+  return returnUrl.toString()
+}

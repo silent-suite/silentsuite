@@ -1,9 +1,10 @@
 /**
  * Local data cache for instant reload — IndexedDB-backed values.
  *
- * Stores already-decrypted item content (iCal/vCard/vTodo strings) plus
- * per-collection sync cursors (stokens) so that on the next page load the
- * UI can paint from the cache before the network sync completes.
+ * Stores decrypted item content at the public call boundary, but encrypts item
+ * content before it reaches IndexedDB. Collection/type indexes and stokens stay
+ * plaintext client-local metadata so cache reads can be efficient; item PIM
+ * content must never be stored as raw iCal/vCard/vTodo text.
  *
  * SCOPE: This module follows the same raw-IDB pattern as `secure-storage.ts`
  * and `offline-queue.ts` — no `idb` / Dexie dependency.
@@ -29,6 +30,17 @@ export interface CachedItem {
   lastModified: number
 }
 
+interface StoredItem {
+  itemUid: string
+  collectionType: CollectionTypeKey
+  collectionUid: string
+  /** AES-GCM IV bytes */
+  iv: number[]
+  /** AES-GCM ciphertext bytes */
+  ct: number[]
+  lastModified: number
+}
+
 export interface CachedCollection {
   collectionType: CollectionTypeKey
   collectionUid: string
@@ -46,23 +58,35 @@ export interface CacheMeta {
 }
 
 /** Bumped on shape changes to the cached records. */
-export const CACHE_SCHEMA_VERSION = 4
+export const CACHE_SCHEMA_VERSION = 5
 
 const DB_NAME = 'silentsuite-data-cache'
-const DB_VERSION = 4
+const DB_VERSION = 5
 const STORE_ITEMS = 'items'
 const STORE_COLLECTIONS = 'collections'
 const STORE_META = 'meta'
 const STORE_CRYPTO = 'crypto'
 
 const META_KEY = 'singleton'
+const ENVELOPE_KEY = 'envelope-key'
 
 let dbPromise: Promise<IDBDatabase> | null = null
 let encryptedCacheAvailableForTests: boolean | null = null
+let envelopeKey: CryptoKey | null = null
+let envelopeReady = false
+
+const encoder = new TextEncoder()
+const decoder = new TextDecoder()
+
+function hasWebCrypto(): boolean {
+  return Boolean(globalThis.crypto?.subtle && globalThis.crypto?.getRandomValues)
+}
 
 function hasEncryptedCacheEnvelope(): boolean {
-  if (encryptedCacheAvailableForTests !== null) return encryptedCacheAvailableForTests
-  return false
+  if (encryptedCacheAvailableForTests !== null) {
+    return encryptedCacheAvailableForTests && envelopeKey !== null
+  }
+  return hasWebCrypto() && envelopeReady && envelopeKey !== null
 }
 
 function canWriteItemContent(operation: string): boolean {
@@ -81,11 +105,10 @@ function openDB(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onupgradeneeded = (event) => {
       const db = request.result
-      // v4 intentionally rolls back the encrypted local item cache. Browsers
-      // that already opened the v3 database cannot be downgraded to v2; clear
-      // all prior stores, including the v3 crypto key store, then recreate the
-      // minimal fail-closed cache schema used by this build.
-      if (event.oldVersion > 0 && event.oldVersion < 4) {
+      // v5 stores item content as ciphertext and reintroduces the crypto key
+      // store after the v4 rollback. Wipe earlier local-cache schemas rather
+      // than trying to reinterpret plaintext/v3 crypto records.
+      if (event.oldVersion > 0 && event.oldVersion < 5) {
         for (const storeName of [STORE_ITEMS, STORE_COLLECTIONS, STORE_META, STORE_CRYPTO]) {
           if (db.objectStoreNames.contains(storeName)) db.deleteObjectStore(storeName)
         }
@@ -95,14 +118,14 @@ function openDB(): Promise<IDBDatabase> {
         items.createIndex('byCollectionType', 'collectionType', { unique: false })
         items.createIndex('byCollectionUid', 'collectionUid', { unique: false })
       }
-      if (db.objectStoreNames.contains(STORE_COLLECTIONS) && event.oldVersion < 2) {
-        db.deleteObjectStore(STORE_COLLECTIONS)
-      }
       if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
         db.createObjectStore(STORE_COLLECTIONS, { keyPath: 'collectionUid' })
       }
       if (!db.objectStoreNames.contains(STORE_META)) {
         db.createObjectStore(STORE_META)
+      }
+      if (!db.objectStoreNames.contains(STORE_CRYPTO)) {
+        db.createObjectStore(STORE_CRYPTO)
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -131,22 +154,131 @@ function withStore<T>(
   )
 }
 
+async function getStoredEnvelopeKey(): Promise<CryptoKey | null> {
+  try {
+    const key = await withStore<CryptoKey | undefined>(STORE_CRYPTO, 'readonly', (store) => store.get(ENVELOPE_KEY))
+    return key ?? null
+  } catch (err) {
+    logger.warn('[data-cache] encrypted envelope key read failed', err)
+    return null
+  }
+}
+
+async function putStoredEnvelopeKey(key: CryptoKey): Promise<void> {
+  await withStore<IDBValidKey>(STORE_CRYPTO, 'readwrite', (store) => store.put(key, ENVELOPE_KEY))
+}
+
+/**
+ * Ensure the encrypted cache envelope is ready for this browser session.
+ * Returns false instead of throwing so cache enablement always fails closed.
+ */
+export async function ensureEncryptedEnvelope(): Promise<boolean> {
+  if (!hasWebCrypto()) {
+    envelopeKey = null
+    envelopeReady = false
+    return false
+  }
+
+  if (envelopeKey && envelopeReady) return true
+
+  try {
+    const existing = await getStoredEnvelopeKey()
+    if (existing) {
+      envelopeKey = existing
+      envelopeReady = true
+      return true
+    }
+
+    const generated = await globalThis.crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt'],
+    )
+    await putStoredEnvelopeKey(generated)
+    envelopeKey = generated
+    envelopeReady = true
+    return true
+  } catch (err) {
+    logger.warn('[data-cache] encrypted envelope unavailable', err)
+    envelopeKey = null
+    envelopeReady = false
+    return false
+  }
+}
+
+async function encryptContent(content: string): Promise<{ iv: number[]; ct: number[] }> {
+  if (!envelopeKey) throw new Error('Encrypted cache envelope is unavailable')
+  const iv = new Uint8Array(12)
+  globalThis.crypto.getRandomValues(iv)
+  const encrypted = await globalThis.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    envelopeKey,
+    encoder.encode(content),
+  )
+  return {
+    iv: Array.from(iv),
+    ct: Array.from(new Uint8Array(encrypted)),
+  }
+}
+
+async function decryptStoredItem(item: StoredItem): Promise<CachedItem> {
+  if (!envelopeKey) throw new Error('Encrypted cache envelope is unavailable')
+  if (!Array.isArray(item.iv) || !Array.isArray(item.ct)) {
+    throw new Error('Encrypted cache record is malformed')
+  }
+  const decrypted = await globalThis.crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: Uint8Array.from(item.iv) },
+    envelopeKey,
+    Uint8Array.from(item.ct),
+  )
+  return {
+    itemUid: item.itemUid,
+    collectionType: item.collectionType,
+    collectionUid: item.collectionUid,
+    content: decoder.decode(decrypted),
+    lastModified: item.lastModified,
+  }
+}
+
+async function toStoredItem(item: CachedItem): Promise<StoredItem> {
+  const encrypted = await encryptContent(item.content)
+  return {
+    itemUid: item.itemUid,
+    collectionType: item.collectionType,
+    collectionUid: item.collectionUid,
+    iv: encrypted.iv,
+    ct: encrypted.ct,
+    lastModified: item.lastModified,
+  }
+}
+
 // ── Items ──
 
 /**
  * Read all cached items for a collection type.
- * Returns an empty array if the cache is empty or unavailable.
+ * Returns an empty array if the cache is empty, unavailable, or undecryptable.
  */
 export async function getItemsByType(type: CollectionTypeKey): Promise<CachedItem[]> {
+  if (!hasEncryptedCacheEnvelope()) return []
   try {
     const db = await openDB()
-    return await new Promise<CachedItem[]>((resolve, reject) => {
+    const records = await new Promise<StoredItem[]>((resolve, reject) => {
       const tx = db.transaction(STORE_ITEMS, 'readonly')
       const idx = tx.objectStore(STORE_ITEMS).index('byCollectionType')
       const req = idx.getAll(type)
-      req.onsuccess = () => resolve((req.result as CachedItem[]) ?? [])
+      req.onsuccess = () => resolve((req.result as StoredItem[]) ?? [])
       req.onerror = () => reject(req.error)
     })
+
+    const items: CachedItem[] = []
+    for (const record of records) {
+      try {
+        items.push(await decryptStoredItem(record))
+      } catch (err) {
+        logger.warn('[data-cache] cached item decrypt failed', { name: err instanceof Error ? err.name : 'Error' })
+      }
+    }
+    return items
   } catch (err) {
     logger.warn('[data-cache] getItemsByType failed', err)
     return []
@@ -157,7 +289,8 @@ export async function getItemsByType(type: CollectionTypeKey): Promise<CachedIte
 export async function putItem(item: CachedItem): Promise<void> {
   if (!canWriteItemContent('putItem')) return
   try {
-    await withStore(STORE_ITEMS, 'readwrite', (store) => store.put(item))
+    const stored = await toStoredItem(item)
+    await withStore(STORE_ITEMS, 'readwrite', (store) => store.put(stored))
   } catch (err) {
     logger.warn('[data-cache] putItem failed', err)
   }
@@ -168,11 +301,12 @@ export async function putItems(items: CachedItem[]): Promise<void> {
   if (items.length === 0) return
   if (!canWriteItemContent('putItems')) return
   try {
+    const storedItems = await Promise.all(items.map(toStoredItem))
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_ITEMS, 'readwrite')
       const store = tx.objectStore(STORE_ITEMS)
-      for (const item of items) store.put(item)
+      for (const item of storedItems) store.put(item)
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
@@ -199,6 +333,7 @@ export async function replaceItemsForType(
 ): Promise<void> {
   if (!canWriteItemContent('replaceItemsForType')) return
   try {
+    const storedItems = await Promise.all(items.map(toStoredItem))
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_ITEMS, 'readwrite')
@@ -211,7 +346,7 @@ export async function replaceItemsForType(
           cursor.delete()
           cursor.continue()
         } else {
-          for (const item of items) store.put(item)
+          for (const item of storedItems) store.put(item)
         }
       }
       cursorReq.onerror = () => reject(cursorReq.error)
@@ -233,6 +368,7 @@ export async function replaceItemsForCollection(
 ): Promise<void> {
   if (!canWriteItemContent('replaceItemsForCollection')) return
   try {
+    const storedItems = await Promise.all(items.map(toStoredItem))
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE_ITEMS, 'readwrite')
@@ -245,7 +381,7 @@ export async function replaceItemsForCollection(
           cursor.delete()
           cursor.continue()
         } else {
-          for (const item of items) store.put(item)
+          for (const item of storedItems) store.put(item)
         }
       }
       cursorReq.onerror = () => reject(cursorReq.error)
@@ -329,17 +465,20 @@ export async function putMeta(meta: CacheMeta): Promise<void> {
 // ── Whole-cache operations ──
 
 /**
- * Wipe everything — items, collections, meta. Called on logout, password
- * change, account fingerprint mismatch, or schema bump.
+ * Wipe everything — items, collections, meta, and the crypto envelope. Called
+ * on logout, password change, account fingerprint mismatch, or schema bump.
  */
 export async function clearAll(): Promise<void> {
+  envelopeKey = null
+  envelopeReady = false
   try {
     const db = await openDB()
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction([STORE_ITEMS, STORE_COLLECTIONS, STORE_META], 'readwrite')
+      const tx = db.transaction([STORE_ITEMS, STORE_COLLECTIONS, STORE_META, STORE_CRYPTO], 'readwrite')
       tx.objectStore(STORE_ITEMS).clear()
       tx.objectStore(STORE_COLLECTIONS).clear()
       tx.objectStore(STORE_META).clear()
+      tx.objectStore(STORE_CRYPTO).clear()
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error)
     })
@@ -389,13 +528,33 @@ export async function ensureFingerprint(accountFingerprint: string): Promise<boo
 
 // ── Feature flag helper ──
 
+export interface CacheCapabilityStatus {
+  featureFlagEnabled: boolean
+  encryptedEnvelopeAvailable: boolean
+  enabled: boolean
+}
+
+/**
+ * Privacy-safe cache capability status for timing diagnostics. Synchronous and
+ * side-effect-free: no IndexedDB open, schema migration, cache reads, or writes.
+ */
+export function getCacheCapabilityStatus(): CacheCapabilityStatus {
+  const featureFlagEnabled = process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED === 'true'
+  const encryptedEnvelopeAvailable = hasEncryptedCacheEnvelope()
+  return {
+    featureFlagEnabled,
+    encryptedEnvelopeAvailable,
+    enabled: featureFlagEnabled && encryptedEnvelopeAvailable,
+  }
+}
+
 /**
  * Returns true only when the local cache feature is enabled and encrypted
  * cache storage is available. Off by default, and fail-closed if the flag is
  * enabled before encryption exists.
  */
 export function isCacheEnabled(): boolean {
-  return process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED === 'true' && hasEncryptedCacheEnvelope()
+  return getCacheCapabilityStatus().enabled
 }
 
 // ── Test helpers ──
@@ -412,9 +571,17 @@ export async function _resetForTests(): Promise<void> {
   }
   dbPromise = null
   encryptedCacheAvailableForTests = null
+  envelopeKey = null
+  envelopeReady = false
 }
 
 /** Test-only hook that simulates encrypted cache availability. */
 export function _setEncryptedCacheAvailableForTests(value: boolean | null): void {
   encryptedCacheAvailableForTests = value
+}
+
+/** Test-only hook that injects a real WebCrypto key without relying on IDB CryptoKey cloning. */
+export function _setEnvelopeKeyForTests(key: CryptoKey | null): void {
+  envelopeKey = key
+  envelopeReady = key !== null
 }

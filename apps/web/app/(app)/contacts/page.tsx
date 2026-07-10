@@ -527,6 +527,7 @@ function ContactForm({
             <LabelEditor
               labels={categories}
               onChange={setCategories}
+              source="contacts"
               aria-label={t('contactLabels')}
             />
           </fieldset>

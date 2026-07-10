@@ -19,11 +19,21 @@ const loginSchema = z.object({
 
 type LoginFormData = z.infer<typeof loginSchema>
 
+function safeReturnTo(raw: string | null): string {
+  if (!raw || !raw.startsWith('/') || raw.includes('://') || raw.includes('//')) return '/calendar'
+
+  // Never bounce back into login after a successful unlock. That can strand a
+  // direct-link user on the unlock route even after valid credentials.
+  return raw === '/login' || raw.startsWith('/login?') || raw.startsWith('/login/') ? '/calendar' : raw
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore()
+  const { login, unlockEtebaseSession, isLoading, error, clearError, isAuthenticated } = useAuthStore()
   const [serverUrl, setServerUrl] = useState('')
+  const [rememberDevice, setRememberDevice] = useState(false)
+  const isUnlock = searchParams.get('reason') === 'unlock'
 
   const {
     register,
@@ -35,34 +45,49 @@ export default function LoginPage() {
   })
 
   useEffect(() => {
-    if (isAuthenticated) {
-      const raw = searchParams.get('returnTo') ?? '/calendar'
-      // Validate returnTo to prevent open redirect: must be a relative path
-      const returnTo = raw.startsWith('/') && !raw.includes('://') && !raw.includes('//') ? raw : '/calendar'
-      router.replace(returnTo)
-    }
-  }, [isAuthenticated, router, searchParams])
+    if (!isAuthenticated) return
+    // On the unlock route, stay put until the user re-enters credentials --
+    // an already-authenticated-but-restore-blocked user must not be bounced
+    // straight back into the broken empty state (redirect loop).
+    if (isUnlock) return
+    const returnTo = safeReturnTo(searchParams.get('returnTo'))
+    router.replace(returnTo)
+  }, [isAuthenticated, isUnlock, router, searchParams])
 
   useEffect(() => {
     return () => clearError()
   }, [clearError])
 
   const onSubmit = async (data: LoginFormData) => {
-    const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
+    const useHostedBilling = !serverUrl.trim()
+    const normalizedUrl = useHostedBilling ? undefined : normalizeServerUrl(serverUrl)
     if (normalizedUrl) {
       localStorage.setItem('silentsuite-server-url', normalizedUrl)
     } else {
       localStorage.removeItem('silentsuite-server-url')
     }
-    await login(data.email, data.password, normalizedUrl)
+    if (isUnlock && isAuthenticated) {
+      await unlockEtebaseSession(data.email, data.password, normalizedUrl)
+    } else {
+      await login(data.email, data.password, normalizedUrl, useHostedBilling && rememberDevice)
+    }
+    // Read the store directly to avoid a stale closure over `error`.
+    if (isUnlock && !useAuthStore.getState().error) {
+      const returnTo = safeReturnTo(searchParams.get('returnTo'))
+      router.replace(returnTo)
+    }
   }
 
   return (
     <div className="max-w-md mx-auto space-y-6">
       <div className="space-y-2 text-center">
-        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">Welcome back</h2>
+        <h2 className="text-xl font-semibold text-[rgb(var(--foreground))]">
+          {isUnlock ? 'Unlock this browser' : 'Welcome back'}
+        </h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Log in to your encrypted workspace
+          {isUnlock
+            ? 'Your encrypted data is safe. Sign in again to unlock it on this browser.'
+            : 'Log in to your encrypted workspace'}
         </p>
       </div>
 
@@ -113,6 +138,18 @@ export default function LoginPage() {
             <p id="password-error" role="alert" className="text-xs text-red-400">{errors.password.message}</p>
           )}
         </div>
+
+        {!serverUrl.trim() && (
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))]/40 p-3 text-sm text-[rgb(var(--foreground))]/80">
+            <input
+              type="checkbox"
+              checked={rememberDevice}
+              onChange={(e) => setRememberDevice(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-[rgb(var(--border))] bg-[rgb(var(--surface))] text-[rgb(var(--primary))] focus:ring-[rgb(var(--primary))] focus:ring-offset-0"
+            />
+            <span className="text-sm font-medium text-[rgb(var(--foreground))]/80">Keep me signed in on this device</span>
+          </label>
+        )}
 
         <Button type="submit" disabled={isLoading} className="w-full">
           {isLoading ? 'Logging in...' : 'Log in'}

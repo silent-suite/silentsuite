@@ -1,0 +1,13 @@
+BEGIN:VCARD
+VERSION:3.0
+UID:golden-vcf-categories-escaping-001
+FN:Dr. Ada Q. Lovelace\, PhD
+N:Love\;lace;Ada\, Quincy;;Dr.;PhD
+ORG:Analytical Engines\, Ltd.
+TITLE:Chief Difference Officer
+EMAIL;TYPE=work:ada@example.com
+TEL;TYPE=cell:+43 660 1234567
+CATEGORIES:Friends,Book Club\, Vienna,Semi\;colon,Back\\slash
+NOTE:First line\nSecond line with comma\, semicolon\; and backslash \\ end
+REV:20260701T120000Z
+END:VCARD

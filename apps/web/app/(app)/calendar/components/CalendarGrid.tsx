@@ -18,6 +18,7 @@ import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
 import { expandEventsForRange, toScheduleXEvents, type DisplayEvent } from '../lib/calendar-grid-events'
 import {
+  getScheduleXWeekLayout,
   toScheduleXDayBoundariesExternal,
   toScheduleXDayBoundariesInternal,
 } from '../lib/calendar-day-boundaries'
@@ -223,6 +224,13 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
   const effectiveWeekDays = effectiveView === 'threeDay' ? 3 : 7
 
   const rootRef = useRef<HTMLDivElement>(null)
+  const [calendarPaneHeight, setCalendarPaneHeight] = useState(0)
+  const weekLayout = useMemo(
+    () => getScheduleXWeekLayout(dayStartHour, dayEndHour, calendarPaneHeight),
+    [dayStartHour, dayEndHour, calendarPaneHeight],
+  )
+  const displayDayStartHour = weekLayout.startHour
+  const displayDayEndHour = weekLayout.endHour
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
   // Ref to prevent feedback loops between store↔Schedule-X sync
@@ -399,7 +407,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
   const initialTimezoneRef = useRef(userTz)
   // Capture initial first-day-of-week for Schedule-X config (changes pushed via signal below)
   const initialFirstDayRef = useRef(effectiveSxFirstDayOfWeek)
-  const initialDayBoundariesRef = useRef(toScheduleXDayBoundariesExternal(dayStartHour, dayEndHour))
+  const initialDayBoundariesRef = useRef(toScheduleXDayBoundariesExternal(displayDayStartHour, displayDayEndHour))
+  const initialWeekGridHeightRef = useRef(weekLayout.gridHeight)
 
   // Memoize the event click handler
   const handleEventClick = useCallback(
@@ -439,7 +448,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
     dayBoundaries: initialDayBoundariesRef.current,
     timezone: initialTimezoneRef.current,
     weekOptions: {
-      gridHeight: 800,
+      gridHeight: initialWeekGridHeightRef.current,
       eventWidth: 95,
       // Concurrent (overlapping) events — e.g. from different collections — must
       // render in side-by-side columns instead of stacking on top of each other.
@@ -489,35 +498,65 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
     }
   }, [calendar, effectiveSxFirstDayOfWeek])
 
-  // Push the effective week column count through Schedule-X. The mobile 3-day
-  // views reuse the week renderer with nDays=3 or nDays=7; normal week/month keep 7 days.
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+
+    const measure = () => {
+      const viewContainer = root.querySelector('.sx__view-container') as HTMLElement | null
+      const nextHeight = Math.round((viewContainer ?? root).clientHeight)
+      if (nextHeight > 0) {
+        setCalendarPaneHeight((current) => (Math.abs(current - nextHeight) > 8 ? nextHeight : current))
+      }
+    }
+
+    measure()
+    const raf = requestAnimationFrame(measure)
+    const observer = new ResizeObserver(measure)
+    observer.observe(root)
+    const viewContainer = root.querySelector('.sx__view-container') as HTMLElement | null
+    if (viewContainer) observer.observe(viewContainer)
+
+    return () => {
+      cancelAnimationFrame(raf)
+      observer.disconnect()
+    }
+  }, [calendar])
+
+  // Push effective week options through Schedule-X. The grid height adapts to
+  // the rendered pane instead of forcing oversized rows or exposing a blank band.
   useEffect(() => {
     if (!calendar) return
     try {
       const app = (calendar as any).$app
       const weekOptionsSignal = app?.config?.weekOptions
-      if (weekOptionsSignal?.value && weekOptionsSignal.value.nDays !== effectiveWeekDays) {
-        weekOptionsSignal.value = { ...weekOptionsSignal.value, nDays: effectiveWeekDays }
+      const gridHeight = weekLayout.gridHeight
+      if (
+        weekOptionsSignal?.value &&
+        (weekOptionsSignal.value.nDays !== effectiveWeekDays ||
+          weekOptionsSignal.value.gridHeight !== gridHeight)
+      ) {
+        weekOptionsSignal.value = { ...weekOptionsSignal.value, nDays: effectiveWeekDays, gridHeight }
       }
     } catch {
       // Schedule-X internals may not be ready
     }
-  }, [calendar, effectiveWeekDays])
+  }, [calendar, effectiveWeekDays, weekLayout.gridHeight])
 
-  // Push day-boundary preference changes into Schedule-X and our drag/select math.
+  // Push adaptive day boundaries into Schedule-X and our drag/select math.
   useEffect(() => {
     if (!calendar) return
     try {
       const app = (calendar as any).$app
       const boundariesSignal = app?.config?.dayBoundaries
-      const next = toScheduleXDayBoundariesInternal(dayStartHour, dayEndHour)
+      const next = toScheduleXDayBoundariesInternal(displayDayStartHour, displayDayEndHour)
       if (boundariesSignal) {
         boundariesSignal.value = next
       }
     } catch {
       // Schedule-X internals may not be ready
     }
-  }, [calendar, dayStartHour, dayEndHour])
+  }, [calendar, displayDayStartHour, displayDayEndHour])
 
   // Sync view AND date changes from store → Schedule-X via internal API.
   // CalendarApp has NO public navigation methods. We access the private $app
@@ -698,11 +737,11 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
     (clientY: number, gridEl: HTMLElement): number => {
       const rect = gridEl.getBoundingClientRect()
       const relativeY = clientY - rect.top + gridEl.scrollTop
-      const totalHours = dayEndHour - dayStartHour
+      const totalHours = displayDayEndHour - displayDayStartHour
       const pixelsPerHour = gridEl.scrollHeight / totalHours
-      return dayStartHour + relativeY / pixelsPerHour
+      return displayDayStartHour + relativeY / pixelsPerHour
     },
-    [dayStartHour, dayEndHour],
+    [displayDayStartHour, displayDayEndHour],
   )
 
   /** Find which day column the X coordinate is within */
@@ -757,18 +796,18 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
       const snappedHour = Math.round(hour * 2) / 2
 
       const durationHours = dragMoveStartRef.current.duration / (60 * 60 * 1000)
-      const maxStartHour = dayEndHour - durationHours
-      const clampedHour = Math.max(dayStartHour, Math.min(snappedHour, maxStartHour))
+      const maxStartHour = displayDayEndHour - durationHours
+      const clampedHour = Math.max(displayDayStartHour, Math.min(snappedHour, maxStartHour))
       const clampedStart = buildDateFromHour(dayInfo.date, clampedHour)
       const clampedEnd = new Date(clampedStart.getTime() + dragMoveStartRef.current.duration)
 
-      const totalHours = dayEndHour - dayStartHour
+      const totalHours = displayDayEndHour - displayDayStartHour
       const pixelsPerHour = gridEl.scrollHeight / totalHours
       const gridRect = gridEl.getBoundingClientRect()
       const wrapperRect = wrapper.getBoundingClientRect()
 
       const topY =
-        (clampedHour - dayStartHour) * pixelsPerHour -
+        (clampedHour - displayDayStartHour) * pixelsPerHour -
         gridEl.scrollTop +
         gridRect.top -
         wrapperRect.top
@@ -799,7 +838,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         newEnd: clampedEnd,
       })
     },
-    [getDayColumnInfo, getTimeFromY, buildDateFromHour, use12h, userTz],
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, use12h, userTz, displayDayStartHour, displayDayEndHour],
   )
 
   /** Shared helper: complete drag-move drop */
@@ -831,8 +870,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
       const hour = getTimeFromY(clientY, gridEl)
       const snappedHour = Math.round(hour * 2) / 2
       const durationHours = moveStart.duration / (60 * 60 * 1000)
-      const maxStartHour = dayEndHour - durationHours
-      const clampedHour = Math.max(dayStartHour, Math.min(snappedHour, maxStartHour))
+      const maxStartHour = displayDayEndHour - durationHours
+      const clampedHour = Math.max(displayDayStartHour, Math.min(snappedHour, maxStartHour))
       const newStart = buildDateFromHour(dayInfo.date, clampedHour)
       const newEnd = new Date(newStart.getTime() + moveStart.duration)
 
@@ -858,7 +897,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         isDragMovingRef.current = false
       }, 100)
     },
-    [getDayColumnInfo, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent],
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, displayDayStartHour, displayDayEndHour],
   )
 
   // Track mouse position for event click anchoring + drag-to-select start
@@ -996,12 +1035,12 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         const origStartHour =
           origStart.getHours() + origStart.getMinutes() / 60
         const minEndHour = origStartHour + 0.5 // 30 min minimum
-        const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, dayEndHour))
+        const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, displayDayEndHour))
 
         const newEnd = buildDateFromHour(origStart, clampedEndHour)
 
         // Compute ghost overlay
-        const totalHours = dayEndHour - dayStartHour
+        const totalHours = displayDayEndHour - displayDayStartHour
         const pixelsPerHour = gridEl.scrollHeight / totalHours
         const gridRect = gridEl.getBoundingClientRect()
         const wrapperRect = wrapper.getBoundingClientRect()
@@ -1031,7 +1070,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         if (!dayInfo) return
 
         const topY =
-          (origStartHour - dayStartHour) * pixelsPerHour -
+          (origStartHour - displayDayStartHour) * pixelsPerHour -
           gridEl.scrollTop +
           gridRect.top -
           wrapperRect.top
@@ -1162,13 +1201,13 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
       const snappedEnd = snapHour(Math.max(startHour, endHour))
 
       // Convert snapped hours back to pixel positions
-      const totalHours = dayEndHour - dayStartHour
+      const totalHours = displayDayEndHour - displayDayStartHour
       const pixelsPerHour = gridEl.scrollHeight / totalHours
       const gridRect = gridEl.getBoundingClientRect()
       const wrapperRect = wrapper.getBoundingClientRect()
 
-      const snappedTopY = (snappedStart - dayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top
-      const snappedBottomY = (snappedEnd - dayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top
+      const snappedTopY = (snappedStart - displayDayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top
+      const snappedBottomY = (snappedEnd - displayDayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top
 
       const colRect = dragStartRef.current.dayColRect
       if (!colRect) return
@@ -1188,7 +1227,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         endTime,
       })
     },
-    [getTimeFromY, buildDateFromHour, getDayColumnInfo, updateDragMovePosition, viewRange, use12h, userTz],
+    [getTimeFromY, buildDateFromHour, getDayColumnInfo, updateDragMovePosition, viewRange, use12h, userTz, displayDayStartHour, displayDayEndHour],
   )
 
   const handleMouseUp = useCallback(
@@ -1221,7 +1260,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         const origStart = resizeStart.originalStart
         const origStartHour = origStart.getHours() + origStart.getMinutes() / 60
         const minEndHour = origStartHour + 0.5
-        const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, dayEndHour))
+        const clampedEndHour = Math.max(minEndHour, Math.min(snappedHour, displayDayEndHour))
         const newEnd = buildDateFromHour(origStart, clampedEndHour)
 
         if (newEnd.getTime() !== resizeStart.originalEnd.getTime()) {
@@ -1295,7 +1334,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         isDraggingRef.current = false
       }, 100)
     },
-    [onSlotClick, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, completeDragMove],
+    [onSlotClick, getTimeFromY, buildDateFromHour, setSelectedEvent, updateEvent, completeDragMove, displayDayEndHour],
   )
 
   // ESC key handler for cancelling drag-to-move and drag-to-resize

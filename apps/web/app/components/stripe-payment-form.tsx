@@ -7,7 +7,7 @@ import type { Stripe, Appearance } from '@stripe/stripe-js'
 import { useTheme } from 'next-themes'
 import { Button } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
-import { signupSuccessUrl } from '@/app/lib/signup-return'
+import { paymentReturnUrl } from '@/app/lib/signup-return'
 
 const STRIPE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 
@@ -46,9 +46,11 @@ interface PaymentFormProps {
   mode?: 'setup' | 'payment'
   /** Billing interval to persist before a potential 3DS redirect. */
   selectedInterval?: 'monthly' | 'annual'
+  /** Same-origin path for non-signup payment redirects. */
+  returnPath?: string
 }
 
-function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInterval }: Omit<PaymentFormProps, 'clientSecret'>) {
+function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInterval, returnPath }: Omit<PaymentFormProps, 'clientSecret'>) {
   const stripe = useStripe()
   const elements = useElements()
   const [loading, setLoading] = useState(false)
@@ -88,7 +90,7 @@ function PaymentFormInner({ onSuccess, onError, submitLabel, mode, selectedInter
     const billingName = authState.pendingSignup?.email || authState.user?.email || 'Customer'
     const currentReturnTo = new URLSearchParams(window.location.search).get('return_to')
     const confirmParams = {
-      return_url: signupSuccessUrl(window.location.origin, currentReturnTo),
+      return_url: paymentReturnUrl(window.location.origin, returnPath, currentReturnTo),
       payment_method_data: { billing_details: { name: billingName } },
     }
 
@@ -235,6 +237,7 @@ export default function StripePaymentForm(props: PaymentFormProps) {
         submitLabel={props.submitLabel}
         mode={props.mode}
         selectedInterval={props.selectedInterval}
+        returnPath={props.returnPath}
       />
     </Elements>
   )

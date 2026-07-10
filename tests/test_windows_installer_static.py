@@ -4,6 +4,7 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "bridge" / "install.ps1"
 DOCS = ROOT / "apps" / "docs" / "user-guide" / "apps" / "dav-bridge.md"
+AUTH_BROWSER = ROOT / "bridge" / "src" / "silentsuite_bridge" / "auth_browser.py"
 WINDOWS_WORKFLOW = ROOT / ".github" / "workflows" / "test-bridge-windows.yml"
 
 
@@ -59,6 +60,30 @@ def test_windows_installer_fails_closed_on_checksum_mismatch():
     assert "Write-Ok \"Checksum verified\"" in else_body
 
 
+def test_windows_installer_polls_dashboard_after_starting_hidden_bridge():
+    script = read(INSTALLER)
+
+    assert "$BridgeDashboardUrl = \"http://127.0.0.1:37358/\"" in script
+    assert "function Test-BridgeDashboardReady" in script
+    assert "Invoke-WebRequest -Uri $BridgeDashboardUrl" in script
+    assert "Start-Process -FilePath $ExePath" in script and "-PassThru" in script
+    assert "SILENTSUITE_LOG_FILE" in script and "$BridgeLog" in script
+    assert "dashboard did not respond yet" in script
+    assert "Bridge exited after login" in script
+
+
+def test_browser_login_success_page_distinguishes_temporary_auth_port_from_dav_port():
+    auth_browser = read(AUTH_BROWSER)
+
+    assert "temporary sign-in page" in auth_browser
+    assert "not the address-bar URL" in auth_browser
+    assert "this tab will switch to the bridge dashboard" in auth_browser
+    assert "redirectWhenDashboardIsReady" in auth_browser
+    assert "fetch(dashboardUrl, { mode: 'no-cors', cache: 'no-store' })" in auth_browser
+    assert "window.location.href = dashboardUrl" in auth_browser
+    assert "DASHBOARD_URL" in auth_browser
+
+
 def test_bridge_docs_link_direct_windows_asset_and_visible_error_recovery():
     docs = read(DOCS)
 
@@ -66,6 +91,10 @@ def test_bridge_docs_link_direct_windows_asset_and_visible_error_recovery():
     assert "silentsuite-bridge-windows-x86_64.exe.sha256" in docs
     assert "already-open PowerShell" in docs or "already-open Windows Terminal" in docs
     assert "-OutFile" in docs and "-File" in docs
+    assert "temporary local sign-in page on a random port" in docs
+    assert "automatically switches the tab" in docs
+    assert "Thunderbird says no calendars, tasks, or contacts were found" in docs
+    assert "%LOCALAPPDATA%\\SilentSuite\\bridge.log" in docs
 
 
 def test_windows_github_actions_workflow_covers_installer_and_binary_smoke_tests():

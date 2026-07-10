@@ -1,0 +1,10 @@
+BEGIN:VCARD
+VERSION:3.0
+UID:golden-vcf-tel-uri-001
+FN:Taro Interop
+N:Interop;Taro;;;
+TEL;TYPE=cell:+1-555-0199
+TEL;VALUE=uri:tel:+1-555-0100
+EMAIL;TYPE=home:taro@example.com
+CATEGORIES:Testing
+END:VCARD

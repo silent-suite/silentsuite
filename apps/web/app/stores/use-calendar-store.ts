@@ -9,6 +9,7 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 
 type CalendarView = 'week' | 'month'
 
@@ -115,6 +116,7 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
           return movedItemUid
         }
         await etebase.updateItem('calendar', event.id, content)
+        void useLabelSuggestionsStore.getState().recordUsage('calendar', event.categories ?? [])
         return event.id
       } else {
         const { enqueue } = await import('@/app/lib/offline-queue')
@@ -194,6 +196,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     // Sync to Etebase (pass tempId for offline queue mapping)
     const itemUid = await syncEventToEtebase(event, 'create', tempId)
     if (itemUid) {
+      void useLabelSuggestionsStore.getState().recordUsage('calendar', event.categories ?? [])
       set((state) => ({
         events: state.events.map((e) =>
           e.id === tempId ? { ...e, id: itemUid } : e,

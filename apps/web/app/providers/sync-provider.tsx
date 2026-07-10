@@ -8,16 +8,27 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
+import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import {
   getItemsByType as cacheGetItemsByType,
   replaceItemsForType as cacheReplaceItemsForType,
   isCacheEnabled as isLocalCacheEnabled,
+  getCacheCapabilityStatus,
   type CachedItem,
 } from '@/app/lib/data-cache'
 import {
   createSafeOperationalError,
   getSafeErrorDetails,
 } from '@/app/lib/privacy-safe-errors'
+import {
+  logSyncTiming,
+  markSyncTimingStart,
+  nowMs,
+  safeTimingErrorCategory,
+  type SyncTimingPhase,
+  type SyncTimingFields,
+} from '@/app/lib/sync-timing'
 
 function reportSyncError(operation: string, err: unknown) {
   Sentry.captureException(createSafeOperationalError('sync-provider', operation), {
@@ -25,6 +36,24 @@ function reportSyncError(operation: string, err: unknown) {
     extra: getSafeErrorDetails(err),
   })
   logger.error(`[sync-provider] ${operation} failed`, getSafeErrorDetails(err))
+}
+
+function safeLogSyncTiming(phase: SyncTimingPhase, startedAt: number, fields: SyncTimingFields = {}) {
+  try {
+    logSyncTiming(phase, startedAt, fields)
+  } catch {
+    // Instrumentation must never affect sync behavior.
+  }
+}
+
+function countVisiblePartialDomains() {
+  const state = useEtebaseStore.getState().domainLoadState
+  return (['tasks', 'contacts', 'calendar'] as const).filter((type) => state[type] === 'failed').length
+}
+
+function updatePartialLoadFlag() {
+  const failedCount = countVisiblePartialDomains()
+  useSyncStore.getState().setPartialLoad(failedCount > 0, failedCount)
 }
 
 /**
@@ -64,31 +93,51 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     let unsubStatus: (() => void) | null = null
 
     async function init() {
+      const initStartedAt = markSyncTimingStart()
       try {
         setSyncStatus('syncing')
+        safeLogSyncTiming('cache-capability', initStartedAt, { ...getCacheCapabilityStatus() })
 
-        // Cache-first hydration: when the feature flag is on, paint the UI
-        // from IndexedDB before the network sync starts. This is best-effort
-        // — failures are logged and the normal init path proceeds.
-        if (isLocalCacheEnabled()) {
-          await hydrateFromCache()
-        }
-
-        // Restore session, create/fetch collections, load items, start SyncEngine
-        await etebaseInitialize()
-
-        // Now load items from each collection into the data stores
-        await loadItemsIntoStores()
+        // Restore session, create/fetch collections, and enumerate items. The
+        // onDomainLoaded hook fires once per visible domain as soon as that
+        // domain reaches a terminal state, so calendar deserializes and paints
+        // before slower tasks/contacts finish. This replaces the old
+        // post-initialize all-domain load, so no domain is replaced twice.
+        const etebaseStartedAt = nowMs()
+        await etebaseInitialize({
+          onCacheHydrate: async () => {
+            const cacheStartedAt = nowMs()
+            await hydrateFromCache(cacheStartedAt)
+          },
+          onDomainLoaded: async (event) => {
+            await loadDomainIntoStore(event.type)
+            updatePartialLoadFlag()
+          },
+        })
+        safeLogSyncTiming('etebase-initialize', etebaseStartedAt)
 
         // Wire SyncEngine change events
+        const changeHandlerStartedAt = nowMs()
         unsubChange = wireChangeHandler()
+        safeLogSyncTiming('wire-change-handler', changeHandlerStartedAt, { status: unsubChange ? 'ok' : 'skipped' })
+
+        // Supporting metadata only: no passive writes and no visible restore blocking.
+        void useLabelSuggestionsStore.getState().initialize()
+          .then(() => useLabelSuggestionsStore.getState().seedFromVisibleItems())
+          .catch((err) => logger.warn('[sync-provider] Label suggestions initialization failed', getSafeErrorDetails(err)))
+        void usePreferencesSyncStore.getState().initialize()
+          .catch((err) => logger.warn('[sync-provider] Preferences sync initialization failed', getSafeErrorDetails(err)))
 
         // Wire SyncEngine status
+        const statusHandlerStartedAt = nowMs()
         unsubStatus = wireStatusHandler()
+        safeLogSyncTiming('wire-status-handler', statusHandlerStartedAt, { status: unsubStatus ? 'ok' : 'skipped' })
 
         setSyncStatus('synced')
         setLastSynced(new Date())
+        safeLogSyncTiming('initial-sync-complete', initStartedAt)
       } catch (err) {
+        safeLogSyncTiming('initial-sync-failed', initStartedAt, { errorCategory: safeTimingErrorCategory('unknown') })
         reportSyncError('init', err)
         setSyncStatus('error')
         setError('Sync initialization failed')
@@ -98,14 +147,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     /**
      * Cache-first paint. Reads decrypted item content out of IndexedDB and
      * pushes it into the domain stores so the UI renders from cache before
-     * the network sync settles. The subsequent etebaseInitialize() +
-     * loadItemsIntoStores() pass overwrites with server data, which is the
-     * source of truth.
+     * the network sync settles. This is invoked only after the restored
+     * account fingerprint and encrypted cache envelope are verified. The
+     * subsequent per-domain server load overwrites with server data, which is
+     * the source of truth.
      *
      * Cheap (~10-50ms for a typical vault) and fully off the network path.
      * Failures here are non-fatal; we just skip the optimistic paint.
      */
-    async function hydrateFromCache() {
+    async function hydrateFromCache(startedAt = nowMs()) {
       try {
         const [taskItems, contactItems, eventItems, core] = await Promise.all([
           cacheGetItemsByType('tasks'),
@@ -152,87 +202,100 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             logger.warn('[sync-provider] Failed to hydrate calendar events from cache', getSafeErrorDetails(err))
           }
         }
+        safeLogSyncTiming('cache-hydrate', startedAt, {
+          status: 'ok',
+          taskItemCount: taskItems.length,
+          contactItemCount: contactItems.length,
+          calendarItemCount: eventItems.length,
+        })
       } catch (err) {
         logger.warn('[sync-provider] Cache hydration failed', getSafeErrorDetails(err))
+        safeLogSyncTiming('cache-hydrate-failed', startedAt, { status: 'failed', errorCategory: 'cache' })
       }
     }
 
-    async function loadItemsIntoStores() {
-      const etebase = useEtebaseStore.getState()
+    async function mirrorToCache(
+      type: 'tasks' | 'contacts' | 'calendar',
+      items: { uid: string; content: string; collectionUid: string }[],
+    ) {
+      if (!isLocalCacheEnabled()) return
+      const startedAt = nowMs()
+      const records: CachedItem[] = items.map((it) => ({
+        itemUid: it.uid,
+        collectionType: type,
+        collectionUid: it.collectionUid,
+        content: it.content,
+        lastModified: Date.now(),
+      }))
+      try {
+        await cacheReplaceItemsForType(type, records)
+        safeLogSyncTiming('cache-mirror', startedAt, { type, itemCount: items.length })
+      } catch (err) {
+        logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
+        safeLogSyncTiming('cache-mirror-failed', startedAt, { type, itemCount: items.length, errorCategory: 'cache' })
+      }
+    }
+
+    // Explicit per-type phase names keep sync timing off arbitrary strings.
+    const TIMING_PHASE_BY_TYPE = {
+      tasks: 'tasks-load',
+      contacts: 'contacts-load',
+      calendar: 'calendar-load',
+    } as const
+
+    /**
+     * Deserialize one visible domain's server items into its Zustand store.
+     * Only replaces the store when that domain is 'loaded' -- a failed/unknown
+     * domain (Slice 4) keeps its existing store contents untouched.
+     */
+    async function loadDomainIntoStore(type: 'calendar' | 'tasks' | 'contacts') {
+      const startedAt = nowMs()
       const cacheEnabled = isLocalCacheEnabled()
-
-      async function mirrorToCache(
-        type: 'tasks' | 'contacts' | 'calendar',
-        items: { uid: string; content: string; collectionUid: string }[],
-      ) {
-        if (!cacheEnabled || items.length === 0) return
-        const records: CachedItem[] = items.map((it) => ({
-          itemUid: it.uid,
-          collectionType: type,
-          collectionUid: it.collectionUid,
-          content: it.content,
-          lastModified: Date.now(),
-        }))
-        try {
-          await cacheReplaceItemsForType(type, records)
-        } catch (err) {
-          logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
-        }
-      }
-
-      // Load tasks
       try {
-        const taskItems = await etebase.fetchAllItems('tasks')
-        if (taskItems.length > 0) {
-          const { deserializeTask } = await import('@silentsuite/core')
-          const tasks = taskItems.map((item) => {
-            const task = deserializeTask(item.content)
-            // Use the Etebase item UID only as the local id so updates/deletes
-            // can address the item without changing the stable iCalendar UID.
-            return { ...task, id: item.uid, listId: item.collectionUid }
-          })
-          useTaskStore.getState().syncFromRemote(tasks)
-          logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
-          await mirrorToCache('tasks', taskItems)
+        const items = await useEtebaseStore.getState().fetchAllItems(type)
+        let domainItemCount = 0
+        if (useEtebaseStore.getState().domainLoadState[type] === 'loaded') {
+          const core = await import('@silentsuite/core')
+          if (type === 'tasks') {
+            const tasks = items.map((item) => {
+              // Use the Etebase item UID only as the local id so updates/deletes
+              // can address the item without changing the stable iCalendar UID.
+              const task = core.deserializeTask(item.content)
+              return { ...task, id: item.uid, listId: item.collectionUid }
+            })
+            domainItemCount = tasks.length
+            useTaskStore.getState().syncFromRemote(tasks)
+            logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
+          } else if (type === 'contacts') {
+            const contacts = items.map((item) => {
+              const contact = core.deserializeContact(item.content)
+              return { ...contact, id: item.uid, listId: item.collectionUid }
+            })
+            domainItemCount = contacts.length
+            useContactStore.getState().syncFromRemote(contacts)
+            logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
+          } else {
+            const events = items.map((item) => {
+              const event = core.deserializeCalendarEvent(item.content)
+              return { ...event, id: item.uid, calendarId: item.collectionUid }
+            })
+            domainItemCount = events.length
+            useCalendarStore.getState().syncFromRemote(events)
+            logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
+          }
+          await mirrorToCache(type, items)
         }
+        const countField = type === 'tasks' ? 'taskCount' : type === 'contacts' ? 'contactCount' : 'eventCount'
+        safeLogSyncTiming(TIMING_PHASE_BY_TYPE[type], startedAt, {
+          source: 'server',
+          cacheEnabled,
+          itemCount: items.length,
+          [countField]: domainItemCount,
+        })
       } catch (err) {
-        reportSyncError('load tasks', err)
+        safeLogSyncTiming(TIMING_PHASE_BY_TYPE[type], startedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
+        reportSyncError(`load ${type}`, err)
       }
-
-      // Load contacts
-      try {
-        const contactItems = await etebase.fetchAllItems('contacts')
-        if (contactItems.length > 0) {
-          const { deserializeContact } = await import('@silentsuite/core')
-          const contacts = contactItems.map((item) => {
-            const contact = deserializeContact(item.content)
-            return { ...contact, id: item.uid, listId: item.collectionUid }
-          })
-          useContactStore.getState().syncFromRemote(contacts)
-          logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
-          await mirrorToCache('contacts', contactItems)
-        }
-      } catch (err) {
-        reportSyncError('load contacts', err)
-      }
-
-      // Load calendar events
-      try {
-        const eventItems = await etebase.fetchAllItems('calendar')
-        if (eventItems.length > 0) {
-          const { deserializeCalendarEvent } = await import('@silentsuite/core')
-          const events = eventItems.map((item) => {
-            const event = deserializeCalendarEvent(item.content)
-            return { ...event, id: item.uid, calendarId: item.collectionUid }
-          })
-          useCalendarStore.getState().syncFromRemote(events)
-          logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
-          await mirrorToCache('calendar', eventItems)
-        }
-      } catch (err) {
-        reportSyncError('load calendar events', err)
-      }
-
     }
 
     function wireChangeHandler(): (() => void) | null {
@@ -249,38 +312,60 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         if (collectionType === 'etebase.vtodo') {
           try {
             await refresher('tasks', event.collectionUid)
-            const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks')
-            const tasks = taskItems.map((item) => {
-              const task = core.deserializeTask(item.content)
-              return { ...task, id: item.uid, listId: item.collectionUid }
-            })
-            useTaskStore.getState().syncFromRemote(tasks)
+            updatePartialLoadFlag()
+            if (useEtebaseStore.getState().domainLoadState.tasks === 'loaded') {
+              const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks')
+              const tasks = taskItems.map((item) => {
+                const task = core.deserializeTask(item.content)
+                return { ...task, id: item.uid, listId: item.collectionUid }
+              })
+              useTaskStore.getState().syncFromRemote(tasks)
+            }
           } catch (err) {
             reportSyncError('sync tasks', err)
           }
         } else if (collectionType === 'etebase.vcard') {
           try {
             await refresher('contacts', event.collectionUid)
-            const contactItems = await useEtebaseStore.getState().fetchAllItems('contacts')
-            const contacts = contactItems.map((item) => {
-              const contact = core.deserializeContact(item.content)
-              return { ...contact, id: item.uid, listId: item.collectionUid }
-            })
-            useContactStore.getState().syncFromRemote(contacts)
+            updatePartialLoadFlag()
+            if (useEtebaseStore.getState().domainLoadState.contacts === 'loaded') {
+              const contactItems = await useEtebaseStore.getState().fetchAllItems('contacts')
+              const contacts = contactItems.map((item) => {
+                const contact = core.deserializeContact(item.content)
+                return { ...contact, id: item.uid, listId: item.collectionUid }
+              })
+              useContactStore.getState().syncFromRemote(contacts)
+            }
           } catch (err) {
             reportSyncError('sync contacts', err)
           }
         } else if (collectionType === 'etebase.vevent') {
           try {
             await refresher('calendar', event.collectionUid)
-            const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar')
-            const events = eventItems.map((item) => {
-              const event = core.deserializeCalendarEvent(item.content)
-              return { ...event, id: item.uid, calendarId: item.collectionUid }
-            })
-            useCalendarStore.getState().syncFromRemote(events)
+            updatePartialLoadFlag()
+            if (useEtebaseStore.getState().domainLoadState.calendar === 'loaded') {
+              const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar')
+              const events = eventItems.map((item) => {
+                const event = core.deserializeCalendarEvent(item.content)
+                return { ...event, id: item.uid, calendarId: item.collectionUid }
+              })
+              useCalendarStore.getState().syncFromRemote(events)
+            }
           } catch (err) {
             reportSyncError('sync calendar events', err)
+          }
+        } else if (collectionType === 'silentsuite.labelindex') {
+          try {
+            await useLabelSuggestionsStore.getState().refreshFromRemote()
+          } catch (err) {
+            logger.warn('[sync-provider] Label suggestions refresh failed', getSafeErrorDetails(err))
+          }
+        } else if (collectionType === 'silentsuite.preferences') {
+          try {
+            const preferenceItems = await refresher('preferences', event.collectionUid)
+            await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
+          } catch (err) {
+            logger.warn('[sync-provider] Preferences refresh failed', getSafeErrorDetails(err))
           }
         }
 
@@ -306,6 +391,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     return () => {
       if (unsubChange) unsubChange()
       if (unsubStatus) unsubStatus()
+      usePreferencesSyncStore.getState().destroy()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 

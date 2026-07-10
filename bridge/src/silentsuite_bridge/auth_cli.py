@@ -62,7 +62,7 @@ def manual_login():
     print()
     print("Account saved! Existing accounts were left unchanged.")
     print(f"Etebase server: {config.ETEBASE_SERVER_URL}")
-    print(f"CalDAV/CardDAV URL: http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{result.username}/")
+    print(f"CalDAV/CardDAV URL: {config.local_base_url()}/{result.username}/")
     print(f"Username: {result.username}")
     print("Password: (your account password)")
     print()

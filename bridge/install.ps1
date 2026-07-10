@@ -25,6 +25,8 @@ $BinaryName = "silentsuite-bridge"
 $InstallDir = if ($env:SILENTSUITE_INSTALL_DIR) { $env:SILENTSUITE_INSTALL_DIR } else { "$env:LOCALAPPDATA\SilentSuite" }
 $ExePath = "$InstallDir\$BinaryName.exe"
 $InstallLog = Join-Path $InstallDir "install.log"
+$BridgeLog = Join-Path $InstallDir "bridge.log"
+$BridgeDashboardUrl = "http://127.0.0.1:37358/"
 
 # --- Helpers ---
 function Write-InstallLog($msg) {
@@ -71,6 +73,22 @@ function Get-GitHubErrorHint($errorRecord) {
         return "GitHub did not return release metadata. Check https://github.com/$Repo/releases/latest for current downloads."
     }
     return "Check https://github.com/$Repo/releases/latest for manual downloads."
+}
+
+function Test-BridgeDashboardReady([int]$TimeoutSeconds = 20) {
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $Deadline) {
+        try {
+            $Response = Invoke-WebRequest -Uri $BridgeDashboardUrl -UseBasicParsing -TimeoutSec 2
+            if ($Response.StatusCode -ge 200 -and $Response.StatusCode -lt 500) {
+                return $true
+            }
+        } catch {
+            # The bridge may still be starting or syncing. Keep polling until the deadline.
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
 }
 
 function Invoke-SilentSuiteBridgeInstall {
@@ -200,12 +218,23 @@ function Invoke-SilentSuiteBridgeInstall {
     # --- Login ---
     Write-Step "Launching login..."
     Write-Host "  Opening your browser to sign in."
-    Write-Host "  After login, the bridge runs in the background.`n"
+    Write-Host "  The browser sign-in tab may use a temporary random port. Use the app URL it shows, not the address bar.`n"
     try {
         & $ExePath --login
-        Start-Process -FilePath $ExePath -ArgumentList "--no-tray" -WindowStyle Hidden
-        Start-Sleep -Seconds 2
-        Write-Ok "Bridge is running! Dashboard: http://localhost:37358/"
+        $env:SILENTSUITE_LOG_FILE = $BridgeLog
+        $BridgeProcess = Start-Process -FilePath $ExePath -ArgumentList "--no-tray" -WindowStyle Hidden -PassThru
+        Write-InstallLog "Started bridge process id $($BridgeProcess.Id)"
+
+        if (Test-BridgeDashboardReady -TimeoutSeconds 20) {
+            Write-Ok "Bridge is running! Dashboard: $BridgeDashboardUrl"
+        } else {
+            $BridgeProcess.Refresh()
+            if ($BridgeProcess.HasExited) {
+                Write-Warn "Bridge exited after login (exit code $($BridgeProcess.ExitCode)). Check $BridgeLog, then run: $BinaryName"
+            } else {
+                Write-Warn "Bridge started but the dashboard did not respond yet. Open $BridgeDashboardUrl or check $BridgeLog before adding it to Thunderbird."
+            }
+        }
     } catch {
         Write-Warn "Login did not complete. Run later: $BinaryName --login"
     }
@@ -214,9 +243,10 @@ function Invoke-SilentSuiteBridgeInstall {
     Write-Step "Setup complete!"
     Write-Host ""
     Write-Host "  Bridge installed." -ForegroundColor Green
-    Write-Host "  Dashboard: " -NoNewline; Write-Host "http://localhost:37358/" -ForegroundColor Cyan
+    Write-Host "  Dashboard: " -NoNewline; Write-Host "$BridgeDashboardUrl" -ForegroundColor Cyan
     Write-Host "  Log in:    " -NoNewline; Write-Host "$BinaryName --login" -ForegroundColor Cyan
-    Write-Host "  Log file:  " -NoNewline; Write-Host "$InstallLog" -ForegroundColor Cyan
+    Write-Host "  Install log: " -NoNewline; Write-Host "$InstallLog" -ForegroundColor Cyan
+    Write-Host "  Bridge log:  " -NoNewline; Write-Host "$BridgeLog" -ForegroundColor Cyan
     Write-Host "  Full docs: " -NoNewline; Write-Host "https://docs.silentsuite.io/bridge" -ForegroundColor Cyan
     Write-Host ""
 }

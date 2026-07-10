@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { SyncIndicator } from '../SyncIndicator'
 import type { SyncStatus } from '@silentsuite/core'
 
@@ -9,6 +9,7 @@ const mockSyncState = {
   lastSyncedAt: null as Date | null,
   error: null as string | null,
   pendingQueueCount: 0,
+  partialLoad: false,
   simulateSyncCycle: vi.fn(),
 }
 
@@ -26,6 +27,7 @@ describe('SyncIndicator', () => {
     mockSyncState.lastSyncedAt = null
     mockSyncState.error = null
     mockSyncState.pendingQueueCount = 0
+    mockSyncState.partialLoad = false
     mockSyncState.simulateSyncCycle.mockClear()
     sessionStorage.clear()
   })
@@ -46,6 +48,15 @@ describe('SyncIndicator', () => {
     expect(dot.className).toContain('bg-amber-400')
   })
 
+  it('renders a synced warning affordance when partial load is active', () => {
+    mockSyncState.syncStatus = 'synced'
+    mockSyncState.partialLoad = true
+    render(<SyncIndicator />)
+    const dot = screen.getByRole('status')
+    expect(dot).toHaveAttribute('aria-label', 'Sync status: synced with warning')
+    expect(dot.className).toContain('bg-amber-400')
+  })
+
   it('renders offline status with gray color', () => {
     mockSyncState.syncStatus = 'offline'
     render(<SyncIndicator />)
@@ -62,12 +73,7 @@ describe('SyncIndicator', () => {
     expect(dot.className).toContain('bg-red-500')
   })
 
-  it('copies redacted restore diagnostics on preview/local sync errors', async () => {
-    const writeText = vi.fn(async () => {})
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      configurable: true,
-    })
+  it('does not render diagnostics copy in the app chrome', () => {
     mockSyncState.syncStatus = 'error'
     sessionStorage.setItem('silentsuite.restore-diagnostics.v1', JSON.stringify({
       version: 1,
@@ -80,11 +86,16 @@ describe('SyncIndicator', () => {
     }))
 
     render(<SyncIndicator />)
-    fireEvent.click(screen.getByRole('button', { name: 'Copy sync restore diagnostics' }))
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1))
-    const copied = writeText.mock.calls[0]![0] as string
-    expect(copied).toContain('"failedPhase":"restoreSession"')
-    expect(copied).not.toContain('session-secret')
+    expect(screen.queryByRole('button', { name: 'Copy sync restore diagnostics' })).toBeNull()
+    expect(screen.queryByText('Copy diagnostics')).toBeNull()
+  })
+
+  it('clicking sync button triggers simulateSyncCycle when available', () => {
+    mockSyncState.syncStatus = 'synced'
+    render(<SyncIndicator />)
+    const button = screen.getByRole('button', { name: 'Sync now' })
+    fireEvent.click(button)
+    expect(mockSyncState.simulateSyncCycle).toHaveBeenCalledTimes(1)
   })
 })

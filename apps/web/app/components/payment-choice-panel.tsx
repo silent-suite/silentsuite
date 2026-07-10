@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { Crown, Lock, Zap } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
+import BitcoinPaymentPanel, { type BitcoinPaymentSession } from './bitcoin-payment-panel'
 
 const StripePaymentForm = dynamic(() => import('./stripe-payment-form'), {
   loading: () => (
@@ -26,6 +27,27 @@ type PaymentOption = {
   entitlementPreview?: string
   enabled: boolean
   disabledReason?: string
+}
+
+type CurrentPaymentFlow = {
+  flowKind: 'stripe_pay_now' | 'btcpay_annual'
+  provider: 'stripe' | 'btcpay'
+  status: string
+  planId: string
+  billingInterval: BillingInterval
+  amount: string
+  currency: string
+  createdAt: string
+  cancellable: boolean
+  invoiceId?: string | null
+  checkoutUrl?: string | null
+}
+
+type StripePaymentSummary = {
+  planId: string
+  billingInterval: BillingInterval
+  amount: string
+  currency: string
 }
 
 interface PaymentChoicePanelProps {
@@ -75,6 +97,28 @@ function PriceDisplay({ interval }: { interval: BillingInterval }) {
   )
 }
 
+function amountForInterval(interval: BillingInterval) {
+  return interval === 'monthly' ? '3.60' : '36.00'
+}
+
+function formatAmount(amount: string, currency = 'EUR') {
+  const numeric = Number(amount)
+  if (!Number.isFinite(numeric)) return `${amount} ${currency}`
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(numeric)
+}
+
+function StripeTrustNote() {
+  return (
+    <div className="space-y-1.5 text-center text-xs text-[rgb(var(--muted))]">
+      <p className="font-medium text-[rgb(var(--foreground))]">Powered by Stripe</p>
+      <div className="flex items-center justify-center gap-1.5">
+        <Lock className="h-3 w-3 text-emerald-500" />
+        <span>Secured by Stripe. We never see your card details.</span>
+      </div>
+    </div>
+  )
+}
+
 function safeBtcpayUrl(rawUrl: string): string {
   const checkoutUrl = new URL(rawUrl)
   if (checkoutUrl.protocol !== 'https:' || checkoutUrl.origin !== 'https://btcpay.silentsuite.io') {
@@ -92,30 +136,36 @@ export default function PaymentChoicePanel({
 }: PaymentChoicePanelProps) {
   const [interval, setInterval] = useState<BillingInterval>(initialInterval)
   const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [stripePaymentSummary, setStripePaymentSummary] = useState<StripePaymentSummary | null>(null)
+  const [bitcoinSession, setBitcoinSession] = useState<BitcoinPaymentSession | null>(null)
+  const [currentFlow, setCurrentFlow] = useState<CurrentPaymentFlow | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [options, setOptions] = useState<PaymentOption[]>([])
   const [optionsLoaded, setOptionsLoaded] = useState(false)
+  const [currentFlowLoaded, setCurrentFlowLoaded] = useState(false)
+  const [currentFlowLoadFailed, setCurrentFlowLoadFailed] = useState(false)
+
+  async function loadOptionsForInterval(nextInterval: BillingInterval, isCancelled: () => boolean = () => false) {
+    setOptionsLoaded(false)
+    try {
+      const res = await fetch(`${BILLING_API_URL}/subscription/payment-options?interval=${nextInterval}`, { credentials: 'include' })
+      if (!res.ok) {
+        if (!isCancelled()) setOptions([])
+        return
+      }
+      const data = await res.json()
+      if (!isCancelled()) setOptions(Array.isArray(data.options) ? data.options : [])
+    } catch {
+      if (!isCancelled()) setOptions([])
+    } finally {
+      if (!isCancelled()) setOptionsLoaded(true)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
-    async function loadOptions() {
-      setOptionsLoaded(false)
-      try {
-        const res = await fetch(`${BILLING_API_URL}/subscription/payment-options?interval=${interval}`, { credentials: 'include' })
-        if (!res.ok) {
-          if (!cancelled) setOptions([])
-          return
-        }
-        const data = await res.json()
-        if (!cancelled) setOptions(Array.isArray(data.options) ? data.options : [])
-      } catch {
-        if (!cancelled) setOptions([])
-      } finally {
-        if (!cancelled) setOptionsLoaded(true)
-      }
-    }
-    void loadOptions()
+    void loadOptionsForInterval(interval, () => cancelled)
     return () => { cancelled = true }
   }, [interval])
 
@@ -123,6 +173,65 @@ export default function PaymentChoicePanel({
   const btcpayAnnualOption = useMemo(() => options.find(option => option.id === 'btcpay_annual' && option.enabled), [options])
   const bitcoinSwitchOption = useMemo(() => options.find(option => option.id === 'bitcoin_annual_switch' && option.enabled), [options])
   const planId = stripeOption?.planIds?.[0] ?? (interval === 'monthly' ? 'early_monthly' : 'early_annual')
+
+  async function loadCurrentFlow(isCancelled: () => boolean = () => false) {
+    if (!isCancelled()) {
+      setCurrentFlowLoaded(false)
+      setCurrentFlowLoadFailed(false)
+    }
+    try {
+      const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows/current`, { credentials: 'include' })
+      if (!res.ok) throw new Error('Could not verify the current payment flow.')
+      const data = await res.json()
+      const flow = data.flow ?? null
+      if (!isCancelled()) {
+        setCurrentFlow(flow)
+        setCurrentFlowLoaded(true)
+      }
+    } catch {
+      if (!isCancelled()) {
+        setCurrentFlowLoadFailed(true)
+        setError('Could not verify whether a payment is already in progress. Retry before starting another payment.')
+      }
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void loadCurrentFlow(() => cancelled)
+    return () => { cancelled = true }
+  }, [])
+
+  async function handleFlowInProgress() {
+    await loadCurrentFlow()
+    setError(null)
+  }
+
+  const cancelCurrentFlow = async () => {
+    setLoading('cancel-flow')
+    setError(null)
+    try {
+      const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows/cancel`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.detail ?? 'Could not cancel the pending payment flow.')
+      }
+      setCurrentFlow(null)
+      setCurrentFlowLoaded(true)
+      setClientSecret(null)
+      setStripePaymentSummary(null)
+      setBitcoinSession(null)
+      await loadOptionsForInterval(interval)
+      await loadCurrentFlow()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not cancel the pending payment flow.')
+    } finally {
+      setLoading(null)
+    }
+  }
 
   const startStripe = async () => {
     setLoading('stripe')
@@ -136,10 +245,20 @@ export default function PaymentChoicePanel({
       })
       if (!res.ok) {
         const data = await res.json().catch(() => null)
+        if (res.status === 409 && String(data?.type ?? '').includes('payment_flow_in_progress')) {
+          await handleFlowInProgress()
+          return
+        }
         throw new Error(data?.detail ?? 'Failed to set up payment')
       }
       const data = await res.json()
       setClientSecret(data.clientSecret)
+      setStripePaymentSummary({
+        planId: typeof data.planId === 'string' ? data.planId : planId,
+        billingInterval: data.billingInterval === 'annual' ? 'annual' : interval,
+        amount: typeof data.amount === 'string' ? data.amount : amountForInterval(interval),
+        currency: typeof data.currency === 'string' ? data.currency : 'EUR',
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -165,10 +284,16 @@ export default function PaymentChoicePanel({
       })
       if (!res.ok) {
         const data = await res.json().catch(() => null)
+        if (res.status === 409 && String(data?.type ?? '').includes('payment_flow_in_progress')) {
+          await handleFlowInProgress()
+          return
+        }
         throw new Error(data?.detail ?? 'Bitcoin checkout is not available.')
       }
       const data = await res.json()
-      window.location.href = safeBtcpayUrl(data.checkoutUrl)
+      const checkoutUrl = safeBtcpayUrl(data.checkoutUrl)
+      if (!data.invoiceId || !data.invoiceLookupToken) throw new Error('Bitcoin checkout did not return a complete payment session.')
+      setBitcoinSession({ invoiceId: data.invoiceId, lookupToken: data.invoiceLookupToken, checkoutUrl })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to start Bitcoin checkout.')
     } finally {
@@ -176,38 +301,103 @@ export default function PaymentChoicePanel({
     }
   }
 
+  if (bitcoinSession) {
+    return (
+      <BitcoinPaymentPanel
+        session={bitcoinSession}
+        title="Pay annual with Bitcoin"
+        description="Scan the QR code or copy the payment details. Your 14 bonus days and paid access apply after BTCPay settlement confirms."
+        settledMessage="Payment settled. Refreshing your subscription..."
+        onBack={cancelCurrentFlow}
+        onPaymentComplete={async () => {
+          await onSuccess()
+          await successPoll?.()
+        }}
+      />
+    )
+  }
+
   if (clientSecret) {
     return (
       <div className="space-y-4">
-        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3">
-          <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => { void cancelCurrentFlow() }}
+          disabled={loading !== null}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))] disabled:opacity-50"
+        >
+          ← Back to payment options
+        </button>
+
+        <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+          <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <Crown className="h-4 w-4 text-amber-400" />
-              <span className="text-sm font-medium text-[rgb(var(--foreground))]">Early Adopter</span>
+              <div>
+                <span className="text-sm font-medium text-[rgb(var(--foreground))]">Early Adopter</span>
+                <p className="text-xs text-[rgb(var(--muted))]">{stripePaymentSummary?.billingInterval === 'annual' ? 'Annual card payment' : 'Monthly card payment'}</p>
+              </div>
             </div>
-            <PriceDisplay interval={interval} />
+            <div className="text-right">
+              <p className="text-xs text-[rgb(var(--muted))]">Amount due</p>
+              <p className="text-sm font-semibold text-[rgb(var(--foreground))]">
+                {formatAmount(stripePaymentSummary?.amount ?? amountForInterval(interval), stripePaymentSummary?.currency ?? 'EUR')}
+              </p>
+            </div>
           </div>
-          <p className="mt-1 text-xs text-[rgb(var(--muted))]">14 bonus days included after today&apos;s payment.</p>
+          <p className="mt-2 text-xs text-[rgb(var(--muted))]">14 bonus days included after today&apos;s payment.</p>
         </div>
+        <StripeTrustNote />
         <StripePaymentForm
           clientSecret={clientSecret}
           onSuccess={async () => {
             await onSuccess()
             await successPoll?.()
           }}
-          submitLabel={`Pay ${interval === 'monthly' ? '\u20AC3.60' : '\u20AC36'}`}
+          submitLabel={`Pay ${formatAmount(stripePaymentSummary?.amount ?? amountForInterval(interval), stripePaymentSummary?.currency ?? 'EUR')}`}
           mode="payment"
+          returnPath="/settings/subscription"
         />
-        <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
-          <Lock className="h-3 w-3 text-emerald-500" />
-          <span>Secured by Stripe. We never see your card details.</span>
-        </div>
         <button
-          onClick={() => setClientSecret(null)}
-          className="w-full text-center text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+          onClick={() => { void cancelCurrentFlow() }}
+          disabled={loading !== null}
+          className="w-full text-center text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors disabled:opacity-50"
         >
-          &larr; Back to options
+          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : '← Back to options'}
         </button>
+      </div>
+    )
+  }
+
+  if (currentFlow) {
+    const isBitcoin = currentFlow.flowKind === 'btcpay_annual'
+    return (
+      <div className="space-y-5">
+        <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Payment already in progress</h2>
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-left">
+          <h3 className="font-medium text-[rgb(var(--foreground))]">
+            {isBitcoin ? 'Bitcoin invoice in progress' : 'Card payment in progress'}
+          </h3>
+          <p className="mt-1 text-sm text-[rgb(var(--muted))]">
+            To prevent double payments, only one payment flow can be active at a time. Continue the current payment or cancel it before choosing another method.
+          </p>
+          {isBitcoin && currentFlow.checkoutUrl && (
+            <a href={safeBtcpayUrl(currentFlow.checkoutUrl)} className="mt-3 inline-flex w-full items-center justify-center rounded-md border border-amber-500/30 px-4 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-500/10 dark:text-amber-200">
+              Continue in BTCPay
+            </a>
+          )}
+        </div>
+        {error && (
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+          </div>
+        )}
+        <Button onClick={cancelCurrentFlow} disabled={loading !== null || !currentFlow.cancellable} variant="outline" className="w-full">
+          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : 'Cancel and choose another method'}
+        </Button>
+        {!currentFlow.cancellable && (
+          <p className="text-xs text-[rgb(var(--muted))]">This payment is already being confirmed. Please wait for the provider update or contact support.</p>
+        )}
       </div>
     )
   }
@@ -241,7 +431,7 @@ export default function PaymentChoicePanel({
         </div>
       )}
 
-      {bitcoinSwitchOption && interval === 'monthly' && (
+      {currentFlowLoaded && bitcoinSwitchOption && interval === 'monthly' && (
         <button
           type="button"
           onClick={() => setInterval('annual')}
@@ -252,13 +442,22 @@ export default function PaymentChoicePanel({
         </button>
       )}
 
-      {interval === 'annual' && btcpayAnnualOption && (
+      {currentFlowLoaded && interval === 'annual' && btcpayAnnualOption && (
         <Button onClick={startBtcpay} disabled={loading !== null} variant="outline" className="w-full">
           {loading === 'btcpay' ? 'Opening Bitcoin checkout...' : 'Pay annual with Bitcoin'}
         </Button>
       )}
 
-      {!optionsLoaded ? (
+      {!currentFlowLoaded ? (
+        <Button
+          disabled={!currentFlowLoadFailed || loading !== null}
+          onClick={() => { void loadCurrentFlow() }}
+          variant="outline"
+          className="w-full"
+        >
+          {currentFlowLoadFailed ? 'Retry payment status' : 'Checking current payment...'}
+        </Button>
+      ) : !optionsLoaded ? (
         <Button disabled className="w-full">
           Loading payment options...
         </Button>
@@ -273,8 +472,20 @@ export default function PaymentChoicePanel({
       )}
 
       {onCancel && (
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={loading !== null} className="w-full">
-          Cancel
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            if (clientSecret || bitcoinSession || currentFlow) {
+              void cancelCurrentFlow().then(() => onCancel())
+            } else {
+              onCancel()
+            }
+          }}
+          disabled={loading !== null}
+          className="w-full"
+        >
+          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : 'Cancel'}
         </Button>
       )}
     </div>

@@ -854,6 +854,7 @@ export function EventDialog({
                         labels={categories}
                         onChange={setCategories}
                         disabled={!canWrite}
+                        source="calendar"
                         aria-label={t('eventLabels')}
                       />
                     </div>

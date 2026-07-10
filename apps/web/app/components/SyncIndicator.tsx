@@ -5,11 +5,6 @@ import { RefreshCw } from 'lucide-react'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { formatTimeAgo } from '@/app/lib/format-time-ago'
 import type { SyncStatus } from '@silentsuite/core'
-import {
-  buildRestoreDiagnosticsCopyText,
-  readRestoreDiagnostics,
-  shouldExposeRestoreDiagnostics,
-} from '@/app/lib/sync-restore-diagnostics'
 
 const dotStyles: Record<SyncStatus, string> = {
   synced: 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]',
@@ -25,11 +20,12 @@ const ariaLabels: Record<SyncStatus, string> = {
   error: 'Sync status: error',
 }
 
-function getTooltipText(status: SyncStatus, lastSyncedAt: Date | null, error: string | null, pendingCount: number): string {
+function getTooltipText(status: SyncStatus, lastSyncedAt: Date | null, error: string | null, pendingCount: number, partialLoad = false): string {
   const queueSuffix = pendingCount > 0 ? ` (${pendingCount} queued)` : ''
+  const partialSuffix = partialLoad && status === 'synced' ? ' · some data did not load' : ''
   switch (status) {
     case 'synced':
-      return (lastSyncedAt ? `Synced ${formatTimeAgo(lastSyncedAt)}` : 'Synced') + queueSuffix
+      return (lastSyncedAt ? `Synced ${formatTimeAgo(lastSyncedAt)}` : 'Synced') + queueSuffix + partialSuffix
     case 'syncing':
       return 'Syncing...' + queueSuffix
     case 'offline':
@@ -45,6 +41,7 @@ export function SyncIndicator() {
   const error = useSyncStore((s) => s.error)
   const simulateSyncCycle = useSyncStore((s) => s.simulateSyncCycle)
   const pendingQueueCount = useSyncStore((s) => s.pendingQueueCount)
+  const partialLoad = useSyncStore((s) => s.partialLoad)
   const [showTooltip, setShowTooltip] = useState(false)
   const [tooltipText, setTooltipText] = useState('')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -52,32 +49,23 @@ export function SyncIndicator() {
   const isSyncing = syncStatus === 'syncing'
   const isOffline = syncStatus === 'offline'
   const isError = syncStatus === 'error'
-  const canCopyDiagnostics = isError && shouldExposeRestoreDiagnostics()
-
   const handleSync = useCallback(() => {
     if (isSyncing || isOffline) return
     simulateSyncCycle()
   }, [isSyncing, isOffline, simulateSyncCycle])
 
-  const handleCopyDiagnostics = useCallback(async () => {
-    const copyText = buildRestoreDiagnosticsCopyText(readRestoreDiagnostics())
-    await navigator.clipboard?.writeText(copyText)
-    setTooltipText('Restore diagnostics copied')
-    setShowTooltip(true)
-  }, [])
-
   // Update tooltip text on an interval while visible so relative times stay fresh
   useEffect(() => {
     if (showTooltip) {
-      setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount))
+      setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad))
       intervalRef.current = setInterval(() => {
-        setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount))
+        setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad))
       }, 1000)
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [showTooltip, syncStatus, lastSyncedAt, error, pendingQueueCount])
+  }, [showTooltip, syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad])
 
   return (
     <div
@@ -88,9 +76,9 @@ export function SyncIndicator() {
       {/* Status dot with smooth transition */}
       <div className="relative">
         <div
-          className={`h-2 w-2 rounded-full transition-all duration-300 ${dotStyles[syncStatus]}`}
+          className={`h-2 w-2 rounded-full transition-all duration-300 ${partialLoad && syncStatus === 'synced' ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.45)]' : dotStyles[syncStatus]}`}
           role="status"
-          aria-label={ariaLabels[syncStatus]}
+          aria-label={partialLoad && syncStatus === 'synced' ? 'Sync status: synced with warning' : ariaLabels[syncStatus]}
         />
         {pendingQueueCount > 0 && (
           <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-500 text-[8px] font-bold leading-none text-white">
@@ -108,17 +96,6 @@ export function SyncIndicator() {
           Sync error
         </button>
       )}
-      {canCopyDiagnostics && (
-        <button
-          onClick={handleCopyDiagnostics}
-          className="hidden rounded border border-rose-500/40 px-1.5 py-0.5 text-[10px] text-rose-300 hover:border-rose-400 hover:text-rose-200 md:inline"
-          aria-label="Copy sync restore diagnostics"
-          type="button"
-        >
-          Copy diagnostics
-        </button>
-      )}
-
       {/* Pending count label */}
       {!isError && pendingQueueCount > 0 && (
         <span className="hidden text-xs text-amber-400 md:inline">

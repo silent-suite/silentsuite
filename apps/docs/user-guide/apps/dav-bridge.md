@@ -94,6 +94,24 @@ You can always find these URLs by:
 - Opening the dashboard at `http://localhost:37358/`
 - Using the system tray menu account entries (Copy CalDAV URL / Copy CardDAV URL)
 
+### macOS Apple Internet Accounts HTTPS setup
+
+Most DAV clients can use the default local HTTP bridge URL. macOS Apple Internet Accounts is stricter: use **Advanced** setup with **Use SSL** checked and a trusted localhost certificate.
+
+On the Mac that runs the bridge:
+
+```bash
+silentsuite-bridge --setup-macos-apple-accounts
+```
+
+Then trust the generated localhost certificate in **Keychain Access** with **Trust > Secure Sockets Layer (SSL)** set to **Always Trust**, restart the bridge, and use the `https://` DAV URLs shown in the dashboard.
+
+::: warning HTTPS is all-or-nothing for one bridge profile
+Enabling bridge SSL changes the single local DAV listener from HTTP to HTTPS. Existing Thunderbird, DAVx5, Evolution, KDE, or other clients configured with `http://localhost:37358/` must be updated to the dashboard's `https://` URL and may need to trust the same localhost certificate. Running simultaneous HTTP and HTTPS listeners is not part of this bridge mode.
+:::
+
+For detailed Apple setup fields and troubleshooting, see [macOS Calendar & Contacts](./macos.md).
+
 ## Multi-Account Use
 
 The bridge can keep multiple accounts active in one local bridge profile. Each account has its own credentials, local cache namespace, sync thread, and DAV path.
@@ -259,9 +277,30 @@ silentsuite-bridge --login
 
 ### Can't connect from your app
 
-1. Verify the bridge is running: open `http://localhost:37358/` in your browser
+1. Verify the bridge is running: open `http://127.0.0.1:37358/` in your browser
 2. Check the tray icon color (green = OK, red = error)
 3. Check the dashboard sync log for errors
+4. If you installed on Windows, also check `%LOCALAPPDATA%\SilentSuite\install.log` and `%LOCALAPPDATA%\SilentSuite\bridge.log`
+
+### The sign-in page and dashboard show different ports
+
+This is expected during browser sign-in. `silentsuite-bridge --login` opens a temporary local sign-in page on a random port such as `65486`. The actual CalDAV/CardDAV bridge always uses `http://127.0.0.1:37358/` unless you changed `SILENTSUITE_LISTEN_PORT`.
+
+Use the CalDAV/CardDAV URL shown on the success page or dashboard, for example:
+
+```text
+http://127.0.0.1:37358/your@email.com/
+```
+
+Do not copy the browser address-bar URL from the temporary sign-in page into Thunderbird, Outlook, or another DAV client. After sign-in, the success page waits for the real dashboard and automatically switches the tab to `http://127.0.0.1:37358/` once it is reachable.
+
+### Thunderbird says no calendars, tasks, or contacts were found
+
+1. Open `http://127.0.0.1:37358/` and confirm the dashboard loads. If it does not load, the bridge daemon is not running yet.
+2. Confirm the dashboard shows your configured account and a recent successful sync. If the sync log shows an error, fix that first.
+3. In Thunderbird, use the full account URL from the dashboard: `http://127.0.0.1:37358/your@email.com/`.
+4. Use your SilentSuite account email as the username and your SilentSuite account password as the password.
+5. If discovery still returns nothing, copy the dashboard sync log plus `%LOCALAPPDATA%\SilentSuite\bridge.log` into a support report. Do not include passwords or session tokens.
 
 ### System tray not visible (GNOME)
 

@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import AddCardBanner from '../add-card-banner'
 
 vi.mock('next/dynamic', () => ({
-  default: () => function MockStripePaymentForm({ mode, submitLabel }: { mode: string; submitLabel: string }) {
-    return <div data-testid="stripe-payment-form">{mode}:{submitLabel}</div>
+  default: () => function MockStripePaymentForm({ mode, submitLabel, returnPath }: { mode: string; submitLabel: string; returnPath?: string }) {
+    return <div data-testid="stripe-payment-form">{mode}:{submitLabel}:{returnPath ?? 'signup'}</div>
   },
 }))
 
@@ -37,9 +37,13 @@ describe('AddCardBanner', () => {
   })
 
   it('uses shared payment options and starts Stripe pay-now through payment-flows', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => monthlyOptions } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now' }) } as Response)
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
+      if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
+      if (url.includes('/subscription/payment-flows')) return { ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now', planId: 'early_monthly', billingInterval: 'monthly', amount: '3.60', currency: 'EUR' }) } as Response
+      return { ok: false, json: async () => ({}) } as Response
+    })
 
     render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
 
@@ -64,15 +68,59 @@ describe('AddCardBanner', () => {
     ))
 
     expect(await screen.findByText('14 bonus days included after today\'s payment.')).toBeInTheDocument()
-    expect(screen.getByTestId('stripe-payment-form')).toHaveTextContent('payment:Pay €3.60')
+    expect(screen.getByText('Amount due')).toBeInTheDocument()
+    expect(screen.getByText('Powered by Stripe')).toBeInTheDocument()
+    expect(screen.getByTestId('stripe-payment-form')).toHaveTextContent('payment:Pay €3.60:/settings/subscription')
+  })
+
+  it('does not enable card or Bitcoin payment creation before the current-flow lookup completes', async () => {
+    let resolveCurrentFlow: ((response: Response) => void) | undefined
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) {
+        return new Promise<Response>(resolve => { resolveCurrentFlow = resolve })
+      }
+      if (url.includes('/subscription/payment-options?interval=monthly')) {
+        return { ok: true, json: async () => monthlyOptions } as Response
+      }
+      if (url.includes('/subscription/payment-options?interval=annual')) {
+        return { ok: true, json: async () => annualOptions } as Response
+      }
+      return { ok: false, json: async () => ({}) } as Response
+    })
+
+    render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
+    fireEvent.click(screen.getByText('Choose payment'))
+
+    expect(await screen.findByText('Checking current payment...')).toBeInTheDocument()
+    expect(screen.queryByText('Continue to card payment')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Annual'))
+    expect(screen.queryByText('Pay annual with Bitcoin')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveCurrentFlow?.({ ok: true, json: async () => ({ flow: null }) } as Response)
+      await Promise.resolve()
+    })
+
+    expect(await screen.findByText('Pay annual with Bitcoin')).toBeInTheDocument()
   })
 
   it('switches monthly Bitcoin banner to annual and starts annual BTCPay flow', async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce({ ok: true, json: async () => monthlyOptions } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => annualOptions } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => annualOptions } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ checkoutUrl: 'https://btcpay.silentsuite.io/i/inv_123' }) } as Response)
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
+      if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
+      if (url.includes('/subscription/payment-options?interval=annual')) return { ok: true, json: async () => annualOptions } as Response
+      if (url.includes('/subscription/crypto/invoice/inv_123/payment-methods')) return { ok: true, json: async () => ({ paymentMethods: [
+        { id: 'BTC-CHAIN', label: 'Bitcoin on-chain', qrValue: 'bitcoin:bc1test?amount=0.001', address: 'bc1test', amountDue: '0.001', cryptoCode: 'BTC' },
+        { id: 'BTC-LN', label: 'Bitcoin Lightning', qrValue: 'lightning:lnbc123', address: 'lnbc123', amountDue: '0.001', cryptoCode: 'BTC' },
+      ] }) } as Response
+      if (url.includes('/subscription/crypto/invoice/inv_123')) return { ok: true, json: async () => ({ status: 'pending' }) } as Response
+      if (url.includes('/subscription/payment-flows/cancel')) return { ok: true, json: async () => ({ cancelled: true, flowKind: 'btcpay_annual' }) } as Response
+      if (url.includes('/subscription/payment-flows')) return { ok: true, json: async () => ({ checkoutUrl: 'https://btcpay.silentsuite.io/i/inv_123', invoiceId: 'inv_123', invoiceLookupToken: 'lookup_123' }) } as Response
+      return { ok: false, json: async () => ({}) } as Response
+    })
 
     render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
     fireEvent.click(screen.getByText('Choose payment'))
@@ -90,5 +138,58 @@ describe('AddCardBanner', () => {
         body: JSON.stringify({ flowKind: 'btcpay_annual', planId: 'early_annual', returnUrl: '/settings/subscription' }),
       }),
     ))
+
+    await waitFor(() => expect(screen.getAllByText('Back to payment options').length).toBeGreaterThan(0))
+    expect(await screen.findByText('Bitcoin on-chain')).toBeInTheDocument()
+    expect(screen.getByText('Bitcoin Lightning')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByText('Back to payment options')[0])
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'https://billing.example.test/subscription/payment-flows/cancel',
+      expect.objectContaining({ method: 'POST', credentials: 'include' }),
+    ))
+  })
+
+  it('cancels a pending card payment flow when backing out of the card form', async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
+      if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
+      if (url.includes('/subscription/payment-flows/cancel')) return { ok: true, json: async () => ({ cancelled: true, flowKind: 'stripe_pay_now' }) } as Response
+      if (url.includes('/subscription/payment-flows') && init?.method === 'POST') return { ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now', planId: 'early_monthly', billingInterval: 'monthly', amount: '3.60', currency: 'EUR' }) } as Response
+      return { ok: false, json: async () => ({}) } as Response
+    })
+
+    render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
+    fireEvent.click(screen.getByText('Choose payment'))
+    fireEvent.click(await screen.findByText('Continue to card payment'))
+
+    expect(await screen.findByText('Powered by Stripe')).toBeInTheDocument()
+    expect(screen.getAllByText('← Back to payment options').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getAllByText('← Back to payment options')[0])
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      'https://billing.example.test/subscription/payment-flows/cancel',
+      expect.objectContaining({ method: 'POST', credentials: 'include' }),
+    ))
+  })
+
+  it('keeps an active card flow intact during pagehide for Stripe redirect authentication', async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
+      if (url.includes('/subscription/payment-options?interval=monthly')) return { ok: true, json: async () => monthlyOptions } as Response
+      if (url.includes('/subscription/payment-flows/cancel')) return { ok: true, json: async () => ({ cancelled: true, flowKind: 'stripe_pay_now' }) } as Response
+      if (url.includes('/subscription/payment-flows') && init?.method === 'POST') return { ok: true, json: async () => ({ clientSecret: 'pi_secret', flowKind: 'stripe_pay_now', planId: 'early_monthly', billingInterval: 'monthly', amount: '3.60', currency: 'EUR' }) } as Response
+      return { ok: false, json: async () => ({}) } as Response
+    })
+
+    render(<AddCardBanner daysRemaining={3} onCardAdded={vi.fn()} />)
+    fireEvent.click(screen.getByText('Choose payment'))
+    fireEvent.click(await screen.findByText('Continue to card payment'))
+    expect(await screen.findByText('Powered by Stripe')).toBeInTheDocument()
+
+    window.dispatchEvent(new Event('pagehide'))
+
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/subscription/payment-flows/cancel'))).toBe(false)
   })
 })

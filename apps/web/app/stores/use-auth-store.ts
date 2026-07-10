@@ -17,6 +17,7 @@ export interface User {
   email: string
   planId: string
   emailVerified?: boolean
+  rememberDevice?: boolean
   /**
    * Legacy account metadata from the old first-run onboarding flow. The web app
    * no longer shows an onboarding window at startup, but we still hydrate the
@@ -31,6 +32,7 @@ interface PendingSignup {
   paymentSessionToken?: string
   earlyAdopter?: boolean
   wantsProductUpdates?: boolean
+  rememberDevice?: boolean
   /** Provisioned user data — stored here until the entire signup flow completes. */
   provisionedUser?: {
     id: string
@@ -66,13 +68,14 @@ interface AuthState {
   isDegraded: () => boolean
   isReadOnly: () => boolean
   canWrite: () => boolean
-  prepareSignupDraft: (email: string, wantsProductUpdates?: boolean) => void
+  prepareSignupDraft: (email: string, wantsProductUpdates?: boolean, rememberDevice?: boolean) => void
   createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
   signup: (planId: string, trialPath: string, promoCode?: string) => Promise<SignupResult>
   finalizePaidSignup: () => Promise<SignupResult>
   /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
   completeSignup: () => void
-  login: (email: string, password: string, serverUrl?: string) => Promise<void>
+  login: (email: string, password: string, serverUrl?: string, rememberDevice?: boolean) => Promise<void>
+  unlockEtebaseSession: (email: string, password: string, serverUrl?: string) => Promise<void>
   logout: () => Promise<void>
   refreshSession: () => Promise<boolean>
   restoreSession: () => Promise<void>
@@ -103,19 +106,311 @@ interface AuthState {
 }
 
 
+const HOSTED_VALIDATION_SESSION_KEY = 'silentsuite-hosted-validation-session'
+const HOSTED_VALIDATION_REMEMBERED_KEY = 'silentsuite-hosted-validation-remembered'
+const HOSTED_REMEMBERED_MARKER_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const HOSTED_ACTIVE_TABS_KEY = 'silentsuite-hosted-validation-active-tabs'
+const HOSTED_TAB_ID_KEY = 'silentsuite-hosted-tab-id'
+const HOSTED_VALIDATION_INITIALIZED_KEY = 'silentsuite-hosted-validation-initialized'
+const HOSTED_AUTH_INVALIDATED_KEY = 'silentsuite-hosted-auth-invalidated'
+const HOSTED_ACTIVE_TAB_TTL_MS = 15_000
+const HOSTED_ACTIVE_TAB_HEARTBEAT_MS = 5_000
+const HOSTED_ACTIVE_TAB_BROADCAST = 'silentsuite-hosted-session-tabs'
+const HOSTED_ACTIVE_TAB_PING_TIMEOUT_MS = 1000
+
+const AUTH_RATE_LIMIT_MESSAGE =
+  'Too many sign-in attempts. Please wait a few minutes before trying again. Your encrypted data is safe.'
+const AUTH_TEMPORARY_UNAVAILABLE_MESSAGE =
+  'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'
+
+let hostedActiveTabHeartbeat: number | null = null
+let hostedActiveTabUnloadHooked = false
+
+interface HostedValidationMarker {
+  userId: string
+  rememberDevice: boolean
+  validatedAt: number
+}
+
+interface HostedActiveTabMarker {
+  userId: string
+  validatedAt: number
+}
+
+function getHostedTabId(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    let tabId = sessionStorage.getItem(HOSTED_TAB_ID_KEY)
+    if (!tabId) {
+      tabId = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      sessionStorage.setItem(HOSTED_TAB_ID_KEY, tabId)
+    }
+    return tabId
+  } catch {
+    return null
+  }
+}
+
+function readHostedActiveTabs(): Record<string, HostedActiveTabMarker> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem(HOSTED_ACTIVE_TABS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, HostedActiveTabMarker>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeHostedActiveTabs(tabs: Record<string, HostedActiveTabMarker>) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(HOSTED_ACTIVE_TABS_KEY, JSON.stringify(tabs))
+  } catch (err) {
+    logger.warn('[auth-store] Failed to write hosted active-tab marker:', err)
+  }
+}
+
+function pruneHostedActiveTabs(now = Date.now()): Record<string, HostedActiveTabMarker> {
+  const tabs = readHostedActiveTabs()
+  let changed = false
+  for (const [tabId, marker] of Object.entries(tabs)) {
+    if (!marker?.userId || now - marker.validatedAt > HOSTED_ACTIVE_TAB_TTL_MS) {
+      delete tabs[tabId]
+      changed = true
+    }
+  }
+  if (changed) writeHostedActiveTabs(tabs)
+  return tabs
+}
+
+function markHostedActiveTab(userId: string) {
+  const tabId = getHostedTabId()
+  if (!tabId || !userId) return
+  const tabs = pruneHostedActiveTabs()
+  tabs[tabId] = { userId, validatedAt: Date.now() }
+  writeHostedActiveTabs(tabs)
+}
+
+function readOtherActiveHostedSessionTab(userId?: string): HostedActiveTabMarker | null {
+  const tabId = getHostedTabId()
+  if (!tabId) return null
+  const tabs = pruneHostedActiveTabs()
+  const match = Object.entries(tabs).find(([id, marker]) => {
+    return id !== tabId && (!userId || marker.userId === userId)
+  })
+  return match?.[1] ?? null
+}
+
+function hasOtherActiveHostedSessionTab(userId: string): boolean {
+  return !!readOtherActiveHostedSessionTab(userId)
+}
+
+async function hasLiveOtherHostedSessionTab(userId: string): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+  if (typeof window.BroadcastChannel !== 'function') return hasOtherActiveHostedSessionTab(userId)
+
+  try {
+    return await new Promise<boolean>((resolve) => {
+      const channel = new window.BroadcastChannel(HOSTED_ACTIVE_TAB_BROADCAST)
+      const timer = window.setTimeout(() => {
+        channel.close()
+        resolve(hasOtherActiveHostedSessionTab(userId))
+      }, HOSTED_ACTIVE_TAB_PING_TIMEOUT_MS)
+      channel.addEventListener('message', (event) => {
+        if (event.data?.type !== 'pong' || event.data?.userId !== userId) return
+        window.clearTimeout(timer)
+        channel.close()
+        resolve(true)
+      })
+      channel.postMessage({ type: 'ping', userId, tabId: getHostedTabId() })
+    })
+  } catch {
+    return hasOtherActiveHostedSessionTab(userId)
+  }
+}
+
+function stopHostedActiveTabHeartbeat() {
+  if (hostedActiveTabHeartbeat) {
+    clearInterval(hostedActiveTabHeartbeat)
+    hostedActiveTabHeartbeat = null
+  }
+}
+
+function startHostedActiveTabHeartbeat(userId: string) {
+  if (typeof window === 'undefined' || !userId) return
+  markHostedActiveTab(userId)
+  stopHostedActiveTabHeartbeat()
+  hostedActiveTabHeartbeat = window.setInterval(() => markHostedActiveTab(userId), HOSTED_ACTIVE_TAB_HEARTBEAT_MS)
+  if (!hostedActiveTabUnloadHooked) {
+    hostedActiveTabUnloadHooked = true
+    window.addEventListener('pagehide', clearCurrentHostedActiveTab)
+    window.addEventListener('beforeunload', clearCurrentHostedActiveTab)
+    if (typeof window.BroadcastChannel === 'function') {
+      try {
+        const channel = new window.BroadcastChannel(HOSTED_ACTIVE_TAB_BROADCAST)
+        channel.addEventListener('message', (event) => {
+          const current = readHostedValidationMarker()
+          if (!current || current.rememberDevice !== false) return
+          if (event.data?.type !== 'ping' || event.data?.userId !== current.userId) return
+          channel.postMessage({ type: 'pong', userId: current.userId, tabId: getHostedTabId() })
+        })
+      } catch {
+        // Fall back to the local active-tab TTL marker when BroadcastChannel is unavailable.
+      }
+    }
+  }
+}
+
+function clearCurrentHostedActiveTab() {
+  const tabId = getHostedTabId()
+  if (!tabId) return
+  const tabs = readHostedActiveTabs()
+  if (tabs[tabId]) {
+    delete tabs[tabId]
+    writeHostedActiveTabs(tabs)
+  }
+}
+
+function clearHostedValidationMarkers() {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.removeItem(HOSTED_VALIDATION_SESSION_KEY)
+    localStorage.removeItem(HOSTED_VALIDATION_REMEMBERED_KEY)
+    localStorage.removeItem(HOSTED_ACTIVE_TABS_KEY)
+    localStorage.removeItem(HOSTED_VALIDATION_INITIALIZED_KEY)
+    stopHostedActiveTabHeartbeat()
+  } catch (err) {
+    logger.warn('[auth-store] Failed to clear hosted validation markers:', err)
+  }
+}
+
+function authErrorMessage(err: unknown): string {
+  if (!(err instanceof Error)) return 'Login failed'
+  const raw = err.message.toLowerCase()
+  if (raw.includes('unauthorized') || raw.includes('401')) return 'Invalid email or password. Please try again.'
+  if (raw.includes('not found') || raw.includes('404')) return 'No account found with this email. Please sign up first.'
+  if (raw.includes('429') || raw.includes('too many') || raw.includes('rate limit') || raw.includes('throttl')) {
+    return AUTH_RATE_LIMIT_MESSAGE
+  }
+  if (raw.includes('fetch') || raw.includes('network') || raw.includes('timeout') || raw.includes('timed out')) {
+    return AUTH_TEMPORARY_UNAVAILABLE_MESSAGE
+  }
+  return 'Login failed. Please try again.'
+}
+
+function markHostedValidation(userId: string, rememberDevice: boolean) {
+  if (typeof window === 'undefined' || !userId) return
+  const marker: HostedValidationMarker = { userId, rememberDevice, validatedAt: Date.now() }
+  try {
+    if (rememberDevice) {
+      localStorage.removeItem(HOSTED_AUTH_INVALIDATED_KEY)
+      localStorage.setItem(HOSTED_VALIDATION_REMEMBERED_KEY, JSON.stringify(marker))
+      sessionStorage.removeItem(HOSTED_VALIDATION_SESSION_KEY)
+      clearCurrentHostedActiveTab()
+      stopHostedActiveTabHeartbeat()
+    } else {
+      localStorage.removeItem(HOSTED_AUTH_INVALIDATED_KEY)
+      sessionStorage.setItem(HOSTED_VALIDATION_SESSION_KEY, JSON.stringify(marker))
+      localStorage.removeItem(HOSTED_VALIDATION_REMEMBERED_KEY)
+      startHostedActiveTabHeartbeat(userId)
+    }
+    localStorage.setItem(HOSTED_VALIDATION_INITIALIZED_KEY, 'true')
+  } catch (err) {
+    logger.warn('[auth-store] Failed to write hosted validation marker:', err)
+  }
+}
+
+function readHostedValidationMarker(): HostedValidationMarker | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const sessionRaw = sessionStorage.getItem(HOSTED_VALIDATION_SESSION_KEY)
+    if (sessionRaw) {
+      const marker = JSON.parse(sessionRaw) as HostedValidationMarker
+      if (marker.userId && marker.rememberDevice === false) return marker
+    }
+    const rememberedRaw = localStorage.getItem(HOSTED_VALIDATION_REMEMBERED_KEY)
+    if (!rememberedRaw) return null
+    const marker = JSON.parse(rememberedRaw) as HostedValidationMarker
+    if (!marker.userId || marker.rememberDevice !== true) return null
+    if (Date.now() - marker.validatedAt > HOSTED_REMEMBERED_MARKER_TTL_MS) {
+      localStorage.removeItem(HOSTED_VALIDATION_REMEMBERED_KEY)
+      return null
+    }
+    return marker
+  } catch (err) {
+    logger.warn('[auth-store] Failed to read hosted validation marker:', err)
+    clearHostedValidationMarkers()
+    return null
+  }
+}
+
+async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth') {
+  try {
+    const { useEtebaseStore } = await import('@/app/stores/use-etebase-store')
+    useEtebaseStore.getState().destroy()
+  } catch (err) {
+    logger.warn(`[auth-store] Failed to destroy Etebase store during ${reason}:`, err)
+  }
+
+  try {
+    await clearLocalDataCache()
+  } catch (err) {
+    logger.warn(`[auth-store] Failed to clear local data cache during ${reason}:`, err)
+  }
+
+  try {
+    await clearOfflineQueue()
+  } catch (err) {
+    logger.warn(`[auth-store] Failed to clear offline queue during ${reason}:`, err)
+  }
+
+  if (typeof window !== 'undefined') {
+    sessionStorage.removeItem('silentsuite-signup-in-progress')
+    sessionStorage.removeItem('silentsuite-signup-redirect-state')
+  }
+
+  try {
+    await secureClear()
+  } catch (err) {
+    logger.warn(`[auth-store] Failed to clear secure storage during ${reason}:`, err)
+  }
+  localStorage.removeItem('silentsuite-server-url')
+  localStorage.removeItem('silentsuite-tasks')
+  localStorage.removeItem('silentsuite-contacts')
+  localStorage.removeItem('silentsuite-calendar')
+  localStorage.removeItem('etebase_session')
+  clearHostedValidationMarkers()
+  localStorage.setItem(HOSTED_AUTH_INVALIDATED_KEY, String(Date.now()))
+
+  try {
+    const { usePreferencesStore } = await import('@/app/stores/use-preferences-store')
+    usePreferencesStore.getState().resetSyncedPreferences()
+  } catch (err) {
+    logger.warn(`[auth-store] Failed to reset synced preferences during ${reason}:`, err)
+  }
+}
 
 /** Sync the is_admin cookie so Next.js middleware can guard /admin routes server-side. */
-function syncAdminCookie(isAdmin: boolean) {
+function syncAdminCookie(isAdmin: boolean, rememberDevice = false) {
   if (typeof document === 'undefined') return
   const secure = window.location.protocol === 'https:' ? '; Secure' : ''
-  // Self-hosted users are always admin — use a longer cookie lifetime (7 days).
-  // SaaS users get 15 min and rely on session refresh to renew.
   const isSH = typeof localStorage !== 'undefined' && !!localStorage.getItem('silentsuite-server-url')
-  const maxAge = (isSelfHosted || isSH) ? COOKIE_MAX_AGE_SELF_HOSTED : COOKIE_MAX_AGE_HOSTED
+  const maxAge = (isSelfHosted || isSH) ? COOKIE_MAX_AGE_SELF_HOSTED : (rememberDevice ? COOKIE_MAX_AGE_HOSTED : null)
   if (isAdmin) {
-    document.cookie = `is_admin=true; path=/; max-age=${maxAge}; SameSite=Strict${secure}`
+    const maxAgePart = maxAge == null ? '' : `; max-age=${maxAge}`
+    document.cookie = `is_admin=true; path=/${maxAgePart}; SameSite=Strict${secure}`
   } else {
     document.cookie = `is_admin=; path=/; max-age=0; SameSite=Strict${secure}`
+  }
+}
+
+async function deleteHostedServerSession(context: string) {
+  try {
+    await fetch(`${BILLING_API_URL}/auth/session`, { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+  } catch (err) {
+    logger.warn(`[auth-store] Failed to delete server session during ${context}:`, err)
   }
 }
 
@@ -139,7 +434,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
   canWrite: () => !get().isReadOnly(),
 
-  prepareSignupDraft: (email: string, wantsProductUpdates?: boolean) => {
+  prepareSignupDraft: (email: string, wantsProductUpdates?: boolean, rememberDevice?: boolean) => {
     const pending = get().pendingSignup
     const reusablePending = pending?.email.toLowerCase() === email.toLowerCase() ? pending : null
     if (typeof window !== 'undefined') {
@@ -150,6 +445,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         ...(reusablePending ?? {}),
         email,
         wantsProductUpdates,
+        rememberDevice: rememberDevice === true,
       },
       error: null,
     })
@@ -171,6 +467,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         authResult = await etebaseLogIn(email, password, serverUrl)
       }
       const { authToken, savedSession } = authResult
+      if (!isSelfHosted && !isCustomServer(serverUrl)) clearHostedValidationMarkers()
       await secureSet('etebase_session', savedSession)
 
       let earlyAdopter = false
@@ -265,6 +562,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             trialPath,
             ...(promoCode?.trim() ? { promoCode: promoCode.trim() } : {}),
             wantsProductUpdates: pending.wantsProductUpdates,
+            rememberDevice: pending.rememberDevice === true,
           }),
           credentials: 'include',
         })
@@ -311,6 +609,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           trialPath,
           ...(promoCode?.trim() ? { promoCode: promoCode.trim() } : {}),
           wantsProductUpdates: pending.wantsProductUpdates,
+          rememberDevice: pending.rememberDevice === true,
         }),
         credentials: 'include',
       })
@@ -320,7 +619,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       const data = await res.json()
       const isAdmin = data.isAdmin === true
-      syncAdminCookie(isAdmin)
+      syncAdminCookie(isAdmin, data.rememberDevice === true)
       // Store provisioned data in pendingSignup — do NOT set isAuthenticated yet.
       // The user is still in the signup flow (payment + vault steps remain).
       set({
@@ -328,6 +627,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           ...pending,
           provisionedUser: { id: data.id, planId, isAdmin },
             provisionedSubscriptionStatus: data.provisioningStatus ?? 'trialing',
+          rememberDevice: data.rememberDevice === true,
         },
         isLoading: false,
       })
@@ -372,6 +672,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           ...pending,
           provisionedUser: { id: data.id, planId: data.planId ?? 'early_annual', isAdmin },
           provisionedSubscriptionStatus: data.provisioningStatus ?? 'active',
+          rememberDevice: data.rememberDevice === true,
         },
         isLoading: false,
       })
@@ -400,7 +701,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       sessionStorage.removeItem('silentsuite-signup-in-progress')
     }
     // Sync admin cookie so middleware allows /admin access
-    syncAdminCookie(pending.provisionedUser.isAdmin)
+    syncAdminCookie(pending.provisionedUser.isAdmin, pending.rememberDevice === true)
+    if (!isSelfHosted) markHostedValidation(pending.provisionedUser.id, pending.rememberDevice === true)
     set({
       user: {
         id: pending.provisionedUser.id,
@@ -418,7 +720,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     })
   },
 
-  login: async (email: string, password: string, serverUrl?: string) => {
+  login: async (email: string, password: string, serverUrl?: string, rememberDevice?: boolean) => {
     set({ isLoading: true, error: null })
     try {
       const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
@@ -430,6 +732,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // failed login attempts do not destroy the current account's offline work
       // and queued work from one account cannot replay into another account.
       await clearOfflineQueue()
+      if (!isSelfHosted && !isCustomServer(serverUrl)) clearHostedValidationMarkers()
       await secureSet('etebase_session', savedSession)
       try {
         const persistedSession = await secureGet('etebase_session')
@@ -461,105 +764,68 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const res = await fetch(`${BILLING_API_URL}/auth/token-exchange`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        body: JSON.stringify({ etebaseSessionToken: authToken }),
+        body: JSON.stringify({ etebaseSessionToken: authToken, rememberDevice: rememberDevice === true }),
         credentials: 'include',
       })
 
       if (res.status === 429) {
-        set({ isLoading: false, error: 'Too many attempts. Please try again later.' }); return
+        await clearLocalAuthMaterial('invalid-hosted-auth')
+        set({ isLoading: false, error: AUTH_RATE_LIMIT_MESSAGE }); return
       }
       if (res.status === 404 || res.status === 409) {
+        await clearLocalAuthMaterial('invalid-hosted-auth')
         set({ isLoading: false, error: 'Account not fully set up. Please complete signup first.' }); return
       }
       if (!res.ok) {
+        await clearLocalAuthMaterial('invalid-hosted-auth')
         set({ isLoading: false, error: 'Login failed. Please check your credentials.' }); return
       }
 
       const data = await res.json()
+      const confirmedRememberDevice = data.rememberDevice === true
       const isAdmin = data.isAdmin === true
-      syncAdminCookie(isAdmin)
+      syncAdminCookie(isAdmin, confirmedRememberDevice)
+      markHostedValidation(data.id, confirmedRememberDevice)
       set({
-        user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, onboardedAt: data.onboardedAt ?? null },
+        user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice: data.rememberDevice === true, onboardedAt: data.onboardedAt ?? null },
         isAuthenticated: true,
         isLoading: false,
       })
     } catch (err) {
-      let message = 'Login failed'
-      if (err instanceof Error) {
-        const raw = err.message.toLowerCase()
-        if (raw.includes('unauthorized') || raw.includes('401')) {
-          message = 'Invalid email or password. Please try again.'
-        } else if (raw.includes('not found') || raw.includes('404')) {
-          message = 'No account found with this email. Please sign up first.'
-        } else if (raw.includes('fetch') || raw.includes('network')) {
-          message = 'Unable to reach the server. Please check your connection and try again.'
-        } else {
-          message = err.message
-        }
-      }
+      const message = authErrorMessage(err)
+      set({ isLoading: false, error: message })
+    }
+  },
+
+  unlockEtebaseSession: async (email: string, password: string, serverUrl?: string) => {
+    set({ isLoading: true, error: null })
+    const currentEmail = get().user?.email
+    if (currentEmail && currentEmail.toLowerCase() !== email.toLowerCase()) {
+      set({
+        isLoading: false,
+        error: 'Please unlock this browser with the email address already signed in on this device.',
+      })
+      return
+    }
+    try {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      const { savedSession } = await etebaseLogIn(email, password, serverUrl)
+      // This is same-account recovery, not an account switch. Preserve queued
+      // offline work while restoring the missing encrypted session blob.
+      await secureSet('etebase_session', savedSession)
+      set({ isLoading: false })
+    } catch (err) {
+      const message = authErrorMessage(err)
       set({ isLoading: false, error: message })
     }
   },
 
   logout: async () => {
     if (!isSelfHosted) {
-      try {
-        await fetch(`${BILLING_API_URL}/auth/session`, { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-      } catch (err) {
-        logger.warn('[auth-store] Failed to delete server session during logout:', err)
-      }
+      await deleteHostedServerSession('invalid-hosted-auth')
     }
 
-    // Destroy Etebase store (stops SyncEngine, clears SDK objects)
-    try {
-      const { useEtebaseStore } = await import('@/app/stores/use-etebase-store')
-      useEtebaseStore.getState().destroy()
-    } catch (err) {
-      logger.warn('[auth-store] Failed to destroy Etebase store during logout:', err)
-    }
-
-    // Clear the local data cache (decrypted iCal/vCard/vTodo on disk).
-    // Runs unconditionally — even if the feature flag was just turned off,
-    // any cache left from a previous session must not survive logout.
-    // Order matters: clear before invalidating session state, so a
-    // background read can't repopulate from a still-live store.
-    try {
-      await clearLocalDataCache()
-    } catch (err) {
-      logger.warn('[auth-store] Failed to clear local data cache during logout:', err)
-    }
-
-    // Clear the offline mutation queue as well. Queue entries are scoped to
-    // the current Etebase account/collections and must not survive logout or
-    // replay after a later account switch.
-    try {
-      await clearOfflineQueue()
-    } catch (err) {
-      logger.warn('[auth-store] Failed to clear offline queue during logout:', err)
-    }
-
-    // Clear signup-in-progress flag
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('silentsuite-signup-in-progress')
-    }
-
-    // Clear persisted data stores so next login starts fresh
-    await secureClear()
-    localStorage.removeItem('silentsuite-server-url')
-    // Legacy localStorage keys (no longer written, but clear in case of stale data)
-    localStorage.removeItem('silentsuite-tasks')
-    localStorage.removeItem('silentsuite-contacts')
-    localStorage.removeItem('silentsuite-calendar')
-    localStorage.removeItem('etebase_session')
-
-    // Keep device-local notificationSound, but reset account-scoped preference
-    // metadata when another user signs in here.
-    try {
-      const { usePreferencesStore } = await import('@/app/stores/use-preferences-store')
-      usePreferencesStore.getState().resetSyncedPreferences()
-    } catch (err) {
-      logger.warn('[auth-store] Failed to reset synced preferences during logout:', err)
-    }
+    await clearLocalAuthMaterial('logout')
 
     syncAdminCookie(false)
     set({ user: null, isAuthenticated: false, error: null, subscriptionStatus: null })
@@ -579,6 +845,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return false
     }
 
+    if (typeof window !== 'undefined' && localStorage.getItem(HOSTED_AUTH_INVALIDATED_KEY)) {
+      syncAdminCookie(false)
+      set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+      return false
+    }
+
     try {
       const res = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       // Only treat the session as invalid on explicit auth failures. A 5xx
@@ -586,8 +858,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // user when the verify-banner re-checks on tab focus (see
       // EmailVerificationBanner).
       if (res.status === 401 || res.status === 403) {
+        await deleteHostedServerSession('refresh auth failure')
+        await clearLocalAuthMaterial('invalid-hosted-auth')
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false })
+        set({ user: null, isAuthenticated: false, subscriptionStatus: null })
         return false
       }
       if (!res.ok) {
@@ -595,9 +869,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return false
       }
       const data = await res.json()
+      const rememberDevice = data.rememberDevice === true
+      if (!rememberDevice) {
+        const marker = readHostedValidationMarker()
+        if ((!marker || marker.rememberDevice !== false || marker.userId !== data.id) && !(await hasLiveOtherHostedSessionTab(data.id))) {
+          await deleteHostedServerSession('invalid-hosted-auth')
+          await clearLocalAuthMaterial('invalid-hosted-auth')
+          syncAdminCookie(false)
+          set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+          return false
+        }
+      }
       const isAdmin = data.isAdmin === true
-      syncAdminCookie(isAdmin)
-      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true })
+      syncAdminCookie(isAdmin, rememberDevice)
+      markHostedValidation(data.id, rememberDevice)
+      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true })
       return true
     } catch (err) {
       logger.warn('[auth-store] Session refresh failed (network), leaving session intact:', err)
@@ -630,16 +916,50 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return
     }
 
+    if (typeof window !== 'undefined' && localStorage.getItem(HOSTED_AUTH_INVALIDATED_KEY)) {
+      syncAdminCookie(false)
+      set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+      return
+    }
+
     set({ isLoading: true })
     try {
       const res = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       if (res.ok) {
         const data = await res.json()
+        const rememberDevice = data.rememberDevice === true
+        if (!rememberDevice) {
+          const marker = readHostedValidationMarker()
+          if ((!marker || marker.rememberDevice !== false || marker.userId !== data.id) && !(await hasLiveOtherHostedSessionTab(data.id))) {
+            await deleteHostedServerSession('invalid-hosted-auth')
+            await clearLocalAuthMaterial('invalid-hosted-auth')
+            syncAdminCookie(false)
+            set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+            return
+          }
+        }
         const isAdmin = data.isAdmin === true
-        syncAdminCookie(isAdmin)
-        set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, isLoading: false })
+        syncAdminCookie(isAdmin, rememberDevice)
+        markHostedValidation(data.id, rememberDevice)
+        set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, isLoading: false })
+      } else if (res.status === 401 || res.status === 403) {
+        await deleteHostedServerSession('restore auth failure')
+        await clearLocalAuthMaterial('invalid-hosted-auth')
+        syncAdminCookie(false)
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+      } else if (res.status === 429) {
+        const hasEtebaseSession = !!(await secureGet('etebase_session'))
+        const marker = readHostedValidationMarker()
+        const activeTabMarker = hasEtebaseSession ? readOtherActiveHostedSessionTab() : null
+        if (hasEtebaseSession && !marker && !activeTabMarker) await clearLocalAuthMaterial('invalid-hosted-auth')
+        syncAdminCookie(false)
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+      } else if (res.status >= 400 && res.status < 500) {
+        await deleteHostedServerSession('restore auth failure')
+        await clearLocalAuthMaterial('invalid-hosted-auth')
+        syncAdminCookie(false)
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
       } else {
-        // HTTP error (401/403 etc.) — billing responded, auth is invalid
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false })
       }
@@ -648,18 +968,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       logger.warn('[auth-store] Session restore failed (network):', err)
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
       const hasEtebaseSession = !!(await secureGet('etebase_session'))
-      if (hasEtebaseSession) {
+      const marker = readHostedValidationMarker()
+      const activeTabMarker = hasEtebaseSession ? readOtherActiveHostedSessionTab() : null
+      if (hasEtebaseSession && marker) {
         // Preserve the legacy onboardedAt metadata shape while billing is down;
         // startup UI no longer depends on this field.
         set({
-          user: { id: 'degraded', email: '', planId: 'unknown', isAdmin: false, onboardedAt: new Date().toISOString() },
+          user: { id: marker.userId, email: '', planId: 'unknown', isAdmin: false, rememberDevice: marker.rememberDevice, onboardedAt: new Date().toISOString() },
+          isAuthenticated: true,
+          isLoading: false,
+          subscriptionStatus: 'billing_unavailable',
+        })
+      } else if (hasEtebaseSession && activeTabMarker) {
+        set({
+          user: { id: activeTabMarker.userId, email: '', planId: 'unknown', isAdmin: false, rememberDevice: false, onboardedAt: new Date().toISOString() },
           isAuthenticated: true,
           isLoading: false,
           subscriptionStatus: 'billing_unavailable',
         })
       } else {
+        if (hasEtebaseSession) await clearLocalAuthMaterial('invalid-hosted-auth')
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, isLoading: false })
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
       }
     }
   },
@@ -685,19 +1015,40 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) return true
 
+    if (typeof window !== 'undefined' && localStorage.getItem(HOSTED_AUTH_INVALIDATED_KEY)) return false
+
     try {
       // Fetch both endpoints — only apply state if BOTH succeed
       const [refreshRes, subRes] = await Promise.all([
         fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }),
         fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' }),
       ])
+      if (refreshRes.status === 401 || refreshRes.status === 403 || (refreshRes.status >= 400 && refreshRes.status < 500 && refreshRes.status !== 429)) {
+        await deleteHostedServerSession('retry auth failure')
+        await clearLocalAuthMaterial('invalid-hosted-auth')
+        syncAdminCookie(false)
+        set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+        return false
+      }
       if (!refreshRes.ok || !subRes.ok) return false
       const refreshData = await refreshRes.json()
       const subData = await subRes.json()
+      const rememberDevice = refreshData.rememberDevice === true
+      if (!rememberDevice) {
+        const marker = readHostedValidationMarker()
+        if ((!marker || marker.rememberDevice !== false || marker.userId !== refreshData.id) && !(await hasLiveOtherHostedSessionTab(refreshData.id))) {
+          await deleteHostedServerSession('invalid-hosted-auth')
+          await clearLocalAuthMaterial('invalid-hosted-auth')
+          syncAdminCookie(false)
+          set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+          return false
+        }
+      }
       const isAdmin = refreshData.isAdmin === true
-      syncAdminCookie(isAdmin)
+      syncAdminCookie(isAdmin, rememberDevice)
+      markHostedValidation(refreshData.id, rememberDevice)
       set({
-        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin, emailVerified: refreshData.emailVerified ?? false, onboardedAt: refreshData.onboardedAt ?? null },
+        user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin, emailVerified: refreshData.emailVerified ?? false, rememberDevice, onboardedAt: refreshData.onboardedAt ?? null },
         isAuthenticated: true,
         subscriptionStatus: subData.status,
       })

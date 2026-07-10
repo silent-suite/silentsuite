@@ -7,8 +7,8 @@ import pytest
 from radicale.app import Application
 
 import silentsuite_bridge.auth_browser as auth_browser
-from silentsuite_bridge import __main__ as bridge_main
 import silentsuite_bridge.web as web_module
+from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.accounts import AccountOperationResult
 from silentsuite_bridge.auth_browser import AuthenticatedAccount, AuthenticationError
@@ -22,7 +22,6 @@ from silentsuite_bridge.web import (
     forget_account_status,
     update_status,
 )
-
 
 # Default Host header matching a localhost variant so the SEC-R7.4 Host check
 # accepts the request. Tests that exercise the rejection path set this explicitly.
@@ -166,6 +165,36 @@ def test_update_status_aggregates_background_sync_counts(tmp_path, monkeypatch):
 
     html = _render_dashboard()
     assert "3 calendars, 3 contacts, 1 tasks" in html
+
+
+def test_render_dashboard_uses_https_urls_when_ssl_enabled(tmp_path, monkeypatch):
+    """AC 11: with SSL enabled, account DAV URLs use https://."""
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
+    monkeypatch.setattr(config, "LISTEN_PORT", 37358)
+    monkeypatch.setattr(config, "SSL_ENABLED", True)
+    monkeypatch.setattr(
+        web_module,
+        "_account_fingerprint",
+        lambda _creds, _username: None,
+    )
+
+    creds = Credentials()
+    creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
+    creds.save()
+
+    update_status(
+        "connected",
+        collections={"calendars": 2, "contacts": 1, "tasks": 0},
+        scope="all configured accounts",
+    )
+
+    html = _render_dashboard()
+
+    assert "https://127.0.0.1:37358/alice@example.com/" in html
+    assert "http://127.0.0.1:37358/alice@example.com/" not in html
+    assert "Advanced setup with SSL" in html
 
 
 def test_render_dashboard_handles_no_accounts(tmp_path, monkeypatch):

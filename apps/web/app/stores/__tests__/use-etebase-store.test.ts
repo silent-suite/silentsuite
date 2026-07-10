@@ -28,10 +28,29 @@ const toastStoreMock = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
 }))
 
+const dataCacheMock = vi.hoisted(() => ({
+  ensureEncryptedEnvelope: vi.fn(async () => true),
+  ensureFingerprint: vi.fn(async () => true),
+  getCacheCapabilityStatus: vi.fn(() => ({ featureFlagEnabled: false, encryptedEnvelopeAvailable: false, enabled: false })),
+  getStoken: vi.fn(async () => null),
+  setStoken: vi.fn(async () => {}),
+  putItems: vi.fn(async () => {}),
+  putItem: vi.fn(async () => {}),
+  deleteItem: vi.fn(async () => {}),
+  replaceItemsForCollection: vi.fn(async () => {}),
+  isCacheEnabled: vi.fn(() => false),
+}))
+
 // Stub the offline queue so isOfflineError + enqueue don't try to open IndexedDB.
 vi.mock('@/app/lib/offline-queue', () => offlineQueueMock)
 
 vi.mock('@silentsuite/core', () => coreMock)
+
+vi.mock('@/app/stores/use-label-suggestions-store', () => ({
+  useLabelSuggestionsStore: {
+    getState: () => ({ recordUsage: vi.fn(async () => {}) }),
+  },
+}))
 
 vi.mock('@/app/lib/secure-storage', () => ({
   secureGet: vi.fn(async () => null),
@@ -42,6 +61,8 @@ vi.mock('@/app/lib/secure-storage', () => ({
 }))
 
 vi.mock('@/app/stores/use-toast-store', () => toastStoreMock)
+
+vi.mock('@/app/lib/data-cache', () => dataCacheMock)
 
 beforeEach(() => {
   offlineQueueMock.enqueue.mockClear()
@@ -58,6 +79,16 @@ beforeEach(() => {
   coreMock.deleteItem.mockReset()
   coreMock.updateCollectionMeta.mockReset()
   toastStoreMock.showErrorToast.mockReset()
+  dataCacheMock.ensureEncryptedEnvelope.mockReset().mockResolvedValue(true)
+  dataCacheMock.ensureFingerprint.mockReset().mockResolvedValue(true)
+  dataCacheMock.getCacheCapabilityStatus.mockReset().mockReturnValue({ featureFlagEnabled: false, encryptedEnvelopeAvailable: false, enabled: false })
+  dataCacheMock.getStoken.mockReset().mockResolvedValue(null)
+  dataCacheMock.setStoken.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.putItems.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.putItem.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.deleteItem.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.replaceItemsForCollection.mockReset().mockResolvedValue(undefined)
+  dataCacheMock.isCacheEnabled.mockReset().mockReturnValue(false)
   sessionStorage.clear()
 })
 
@@ -77,6 +108,14 @@ function mockItem(uid: string, content: string, isDeleted = false) {
     isDeleted,
     getContent: vi.fn(async () => content),
   }
+}
+
+function loadedDomainLoadState() {
+  return { calendar: 'loaded' as const, tasks: 'loaded' as const, contacts: 'loaded' as const, preferences: 'unknown' as const }
+}
+
+function unknownDomainLoadState() {
+  return { calendar: 'unknown' as const, tasks: 'unknown' as const, contacts: 'unknown' as const, preferences: 'unknown' as const }
 }
 
 function mockCollection(uid: string, meta: Record<string, string> = {}) {
@@ -100,6 +139,7 @@ function setupStoreWithMocks(itemManager: MockItemManager, syncEngine: MockSyncE
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
     isInitialized: true,
+    domainLoadState: loadedDomainLoadState(),
     syncEngine: syncEngine as any,
   })
 }
@@ -118,6 +158,7 @@ function setupStoreWithCollections(itemManagerByUid: Record<string, MockItemMana
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
     isInitialized: true,
+    domainLoadState: loadedDomainLoadState(),
     syncEngine: syncEngine as any,
   })
 }
@@ -164,6 +205,353 @@ describe('useEtebaseStore.initialize restore diagnostics', () => {
     expect(raw).not.toContain('raw-session-secret')
     expect(raw).not.toContain('user@example.com')
     expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to restore session. Please try signing in again.')
+  })
+})
+
+describe('useEtebaseStore.initialize restoreBlocked flag', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      restoreBlocked: false,
+      syncEngine: null,
+    })
+  })
+
+  async function getSecureStorage() {
+    return import('@/app/lib/secure-storage')
+  }
+
+  it('defaults restoreBlocked to false', () => {
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
+  })
+
+  it('sets restoreBlocked when there is no saved session, without toast or removal', async () => {
+    const { secureGet, secureRemove } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce(null)
+
+    await useEtebaseStore.getState().initialize()
+
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(true)
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    expect(vi.mocked(secureRemove)).not.toHaveBeenCalled()
+  })
+
+  it('sets restoreBlocked on a non-offline restoreSession failure and preserves the session', async () => {
+    const { secureGet, secureRemove } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockRejectedValueOnce(new Error('bad session blob'))
+    offlineQueueMock.isOfflineError.mockReturnValue(false)
+
+    await useEtebaseStore.getState().initialize()
+
+    const state = useEtebaseStore.getState()
+    expect(state.restoreBlocked).toBe(true)
+    expect(state.isInitialized).toBe(true)
+    expect(vi.mocked(secureRemove)).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith(
+      'Failed to restore session. Please try signing in again.',
+    )
+  })
+
+  it('does NOT set restoreBlocked on an offline restore error, and shows no toast', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+
+    await useEtebaseStore.getState().initialize()
+
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('does NOT set restoreBlocked when a post-restore listItems phase fails (Slice 3 boundary)', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockResolvedValueOnce({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValueOnce('fingerprint')
+    coreMock.listCollections.mockImplementation(async () => [mockCollection('col-1')])
+    coreMock.listItems
+      .mockRejectedValueOnce(new Error('server 500 on listItems'))
+      .mockResolvedValue({ items: [], stoken: null, done: true })
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = vi.fn()
+      this.onStokenAdvance = vi.fn()
+      this.start = vi.fn(async () => {})
+    })
+    offlineQueueMock.isOfflineError.mockReturnValue(false)
+
+    await useEtebaseStore.getState().initialize()
+
+    const state = useEtebaseStore.getState()
+    // restoreSession succeeded; the failure is in listItems:calendar, which is a
+    // Slice 3 concern, NOT an unlock case.
+    expect(state.restoreBlocked).toBe(false)
+    expect(state.isInitialized).toBe(true)
+    expect(state.domainLoadState).toMatchObject({ calendar: 'failed', tasks: 'loaded', contacts: 'loaded' })
+    expect(state.syncEngine).toBeTruthy()
+  })
+
+  it('leaves restoreBlocked false on a fully successful restore', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockResolvedValueOnce({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValueOnce('fingerprint')
+    coreMock.listCollections.mockImplementation(async () => [mockCollection('col-1')])
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = vi.fn()
+      this.onStokenAdvance = vi.fn()
+      this.start = vi.fn(async () => {})
+    })
+
+    await useEtebaseStore.getState().initialize()
+
+    const state = useEtebaseStore.getState()
+    expect(state.restoreBlocked).toBe(false)
+    expect(state.isInitialized).toBe(true)
+    expect(state.domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'loaded', contacts: 'loaded' })
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('resets restoreBlocked to false on destroy()', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValueOnce(null)
+    await useEtebaseStore.getState().initialize()
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(true)
+
+    useEtebaseStore.getState().destroy()
+
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
+    expect(useEtebaseStore.getState().domainLoadState).toEqual(unknownDomainLoadState())
+  })
+})
+
+describe('useEtebaseStore.initialize incremental domain loading', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState({
+      account: null,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: false,
+      restoreBlocked: false,
+      domainLoadState: unknownDomainLoadState(),
+      syncEngine: null,
+    })
+  })
+
+  function mockSuccessfulSyncEngine() {
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = vi.fn()
+      this.onStokenAdvance = vi.fn()
+      this.start = vi.fn(async () => {})
+    })
+  }
+
+  async function primeSuccessfulRestore() {
+    const { secureGet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureGet).mockResolvedValueOnce('raw-session')
+    coreMock.restoreSession.mockResolvedValueOnce({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValueOnce('fingerprint')
+    coreMock.listCollections.mockImplementation(async (_account: unknown, colType: string) => {
+      if (colType === 'etebase.vevent') return [mockCollection('cal-1')]
+      if (colType === 'etebase.vtodo') return [mockCollection('task-1')]
+      if (colType === 'etebase.vcard') return [mockCollection('contact-1')]
+      return []
+    })
+    mockSuccessfulSyncEngine()
+  }
+
+  it('invokes onDomainLoaded in calendar → tasks → contacts order with completed state visible', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'cal-1') return { items: [mockItem('event-1', 'VEVENT')], stoken: null, done: true }
+      if (collection.uid === 'task-1') return { items: [mockItem('task-item-1', 'VTODO')], stoken: null, done: true }
+      return { items: [mockItem('contact-item-1', 'VCARD')], stoken: null, done: true }
+    })
+
+    const events: { type: string; status: string }[] = []
+    let calendarItemsAtCalendarCallback = -1
+    let calendarStatusAtCalendarCallback = 'unseen'
+    await useEtebaseStore.getState().initialize({
+      onDomainLoaded: (event) => {
+        events.push({ type: event.type, status: event.status })
+        if (event.type === 'calendar') {
+          const state = useEtebaseStore.getState()
+          calendarItemsAtCalendarCallback = state.itemCache.size
+          calendarStatusAtCalendarCallback = state.domainLoadState.calendar
+        }
+      },
+    })
+
+    expect(events.map((e) => `${e.type}:${e.status}`)).toEqual([
+      'calendar:loaded',
+      'tasks:loaded',
+      'contacts:loaded',
+    ])
+    // Calendar was published as loaded, with its item already in the cache,
+    // before tasks/contacts were enumerated.
+    expect(calendarStatusAtCalendarCallback).toBe('loaded')
+    expect(calendarItemsAtCalendarCallback).toBe(1)
+    expect(useEtebaseStore.getState().isInitialized).toBe(true)
+  })
+
+  it('marks a failed domain without aborting later domains and still starts sync', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'task-1') throw new Error('server 500 on tasks')
+      return { items: [], stoken: null, done: true }
+    })
+
+    const events: string[] = []
+    await useEtebaseStore.getState().initialize({
+      onDomainLoaded: (event) => {
+        events.push(`${event.type}:${event.status}`)
+      },
+    })
+
+    expect(events).toEqual(['calendar:loaded', 'tasks:failed', 'contacts:loaded'])
+    const state = useEtebaseStore.getState()
+    expect(state.domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'failed', contacts: 'loaded' })
+    expect(state.restoreBlocked).toBe(false)
+    expect(state.isInitialized).toBe(true)
+    expect(state.syncEngine).toBeTruthy()
+  })
+
+  it('preserves calendar map mutations made during early paint while slower domains continue loading', async () => {
+    await primeSuccessfulRestore()
+    const originalCalendarItem = mockItem('event-1', 'VEVENT')
+    const userCreatedCalendarItem = mockItem('event-user', 'VEVENT')
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'cal-1') return { items: [originalCalendarItem], stoken: null, done: true }
+      if (collection.uid === 'task-1') return { items: [mockItem('task-1', 'VTODO')], stoken: null, done: true }
+      if (collection.uid === 'contact-1') return { items: [mockItem('contact-1', 'VCARD')], stoken: null, done: true }
+      return { items: [], stoken: null, done: true }
+    })
+
+    await useEtebaseStore.getState().initialize({
+      onDomainLoaded: (event) => {
+        if (event.type !== 'calendar') return
+        const itemCache = new Map(useEtebaseStore.getState().itemCache)
+        const itemTypeMap = new Map(useEtebaseStore.getState().itemTypeMap)
+        const itemCollectionMap = new Map(useEtebaseStore.getState().itemCollectionMap)
+        itemCache.delete('event-1')
+        itemTypeMap.delete('event-1')
+        itemCollectionMap.delete('event-1')
+        itemCache.set('event-user', userCreatedCalendarItem)
+        itemTypeMap.set('event-user', 'calendar')
+        itemCollectionMap.set('event-user', 'cal-1')
+        useEtebaseStore.setState({ itemCache, itemTypeMap, itemCollectionMap })
+      },
+    })
+
+    const finalState = useEtebaseStore.getState()
+    expect(finalState.itemCache.has('event-1')).toBe(false)
+    expect(finalState.itemCache.get('event-user')).toBe(userCreatedCalendarItem)
+    expect(finalState.itemTypeMap.get('event-user')).toBe('calendar')
+    expect(finalState.itemCollectionMap.get('event-user')).toBe('cal-1')
+    expect(finalState.itemTypeMap.get('task-1')).toBe('tasks')
+    expect(finalState.itemTypeMap.get('contact-1')).toBe('contacts')
+  })
+
+  it('emits only privacy-safe aggregate fields in the domain event payload', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
+      if (collection.uid === 'cal-1') return { items: [mockItem('event-1', 'VEVENT')], stoken: null, done: true }
+      return { items: [], stoken: null, done: true }
+    })
+
+    const captured: Record<string, unknown>[] = []
+    await useEtebaseStore.getState().initialize({
+      onDomainLoaded: (event) => {
+        captured.push({ ...event })
+      },
+    })
+
+    expect(captured).toHaveLength(3)
+    for (const event of captured) {
+      expect(Object.keys(event).sort()).toEqual([
+        'collectionCount',
+        'itemCount',
+        'pageCount',
+        'status',
+        'type',
+      ])
+      expect(typeof event.itemCount).toBe('number')
+      expect(typeof event.pageCount).toBe('number')
+      expect(typeof event.collectionCount).toBe('number')
+    }
+    const calendarEvent = captured.find((e) => e.type === 'calendar')
+    expect(calendarEvent).toMatchObject({ type: 'calendar', status: 'loaded', itemCount: 1, collectionCount: 1 })
+  })
+
+  it('hydrates local cache only after fingerprint survives and envelope is available', async () => {
+    await primeSuccessfulRestore()
+    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
+    dataCacheMock.isCacheEnabled.mockReturnValueOnce(false).mockReturnValue(true)
+    dataCacheMock.ensureFingerprint.mockResolvedValueOnce(true)
+    dataCacheMock.ensureEncryptedEnvelope.mockResolvedValueOnce(true)
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    const calls: string[] = []
+    await useEtebaseStore.getState().initialize({
+      onCacheHydrate: () => calls.push('cacheHydrate'),
+      onDomainLoaded: (event) => calls.push(`domain:${event.type}`),
+    })
+
+    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint')
+    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledTimes(1)
+    expect(calls).toEqual(['cacheHydrate', 'domain:calendar', 'domain:tasks', 'domain:contacts'])
+  })
+
+  it('does not hydrate local cache when fingerprint mismatch wipes stale cache', async () => {
+    await primeSuccessfulRestore()
+    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
+    dataCacheMock.isCacheEnabled.mockReturnValueOnce(false).mockReturnValue(true)
+    dataCacheMock.ensureFingerprint.mockResolvedValueOnce(false)
+    dataCacheMock.ensureEncryptedEnvelope.mockResolvedValueOnce(true)
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    const onCacheHydrate = vi.fn()
+    await useEtebaseStore.getState().initialize({ onCacheHydrate })
+
+    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint')
+    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledTimes(1)
+    expect(onCacheHydrate).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().isInitialized).toBe(true)
+  })
+
+  it('continues restore when encrypted cache envelope setup fails', async () => {
+    await primeSuccessfulRestore()
+    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
+    dataCacheMock.ensureFingerprint.mockResolvedValueOnce(true)
+    dataCacheMock.ensureEncryptedEnvelope.mockRejectedValueOnce(new Error('quota'))
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    const onCacheHydrate = vi.fn()
+    await useEtebaseStore.getState().initialize({ onCacheHydrate })
+
+    expect(onCacheHydrate).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().isInitialized).toBe(true)
+    expect(useEtebaseStore.getState().domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'loaded', contacts: 'loaded' })
+  })
+
+  it('remains backwards-compatible when called with no options', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    await useEtebaseStore.getState().initialize()
+
+    const state = useEtebaseStore.getState()
+    expect(state.isInitialized).toBe(true)
+    expect(state.domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'loaded', contacts: 'loaded' })
   })
 })
 
@@ -380,6 +768,7 @@ describe('useEtebaseStore.moveItem', () => {
       itemTypeMap: new Map([['item-old', 'calendar']]),
       itemCollectionMap: new Map([['item-old', 'col-1']]),
       isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
       syncEngine: null,
     })
 
@@ -414,6 +803,7 @@ describe('useEtebaseStore.moveItem', () => {
       itemTypeMap: new Map([['item-old', 'calendar']]),
       itemCollectionMap: new Map([['item-old', 'col-1']]),
       isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
       syncEngine: null,
     })
 
@@ -449,6 +839,34 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
     })
   })
 
+  it('refuses to clear a collection before that domain is fully loaded', async () => {
+    const itemManager = { batch: vi.fn(async () => {}) }
+    const account = {
+      getCollectionManager: () => ({
+        getItemManager: () => itemManager,
+      }),
+    }
+
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map([['item-1', { uid: 'item-1', delete: vi.fn() }]]),
+      itemTypeMap: new Map([['item-1', 'calendar']]),
+      itemCollectionMap: new Map([['item-1', 'col-1']]),
+      isInitialized: true,
+      domainLoadState: { ...loadedDomainLoadState(), calendar: 'failed' },
+      syncEngine: null,
+    })
+
+    const deleted = await useEtebaseStore.getState().deleteItemsInCollection('calendar', 'col-1')
+
+    expect(deleted).toBe(0)
+    expect(itemManager.batch).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith(
+      "This data hasn't finished loading yet. Retry sync, then try again.",
+    )
+  })
+
   it('deletes only items in the requested collection and clears local maps', async () => {
     const deleteItemOne = { uid: 'item-1', delete: vi.fn() }
     const deleteItemTwo = { uid: 'item-2', delete: vi.fn() }
@@ -479,6 +897,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
         ['item-3', 'col-2'],
       ]),
       isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
       syncEngine: null,
     })
 
@@ -523,6 +942,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
       itemTypeMap: new Map(),
       itemCollectionMap: new Map(),
       isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
       syncEngine: null,
     })
     useCalendarStore.setState({
@@ -561,6 +981,7 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
       itemTypeMap: new Map(items.map((item) => [item.uid, 'calendar' as const])),
       itemCollectionMap: new Map(items.map((item) => [item.uid, 'col-1'])),
       isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
       syncEngine: null,
     })
     useCalendarStore.setState({
@@ -632,6 +1053,7 @@ describe('useEtebaseStore.refreshCollection', () => {
         ['keep-col-2', 'col-2'],
       ]),
       isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
       syncEngine: null,
     })
 
@@ -644,6 +1066,7 @@ describe('useEtebaseStore.refreshCollection', () => {
     expect(state.itemCollectionMap.get('new-col-1')).toBe('col-1')
     expect(state.itemCache.get('keep-col-2')).toBe(survivorItem)
     expect(state.itemCollectionMap.get('keep-col-2')).toBe('col-2')
+    expect(state.domainLoadState.calendar).toBe('loaded')
     expect(itemManagers['col-2'].list).not.toHaveBeenCalled()
   })
 
@@ -665,6 +1088,7 @@ describe('useEtebaseStore.refreshCollection', () => {
       itemTypeMap: new Map([['existing', 'calendar']]),
       itemCollectionMap: new Map([['existing', 'col-1']]),
       isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
       syncEngine: null,
     })
 
@@ -674,7 +1098,45 @@ describe('useEtebaseStore.refreshCollection', () => {
     expect(result).toEqual([{ uid: 'existing', content: 'existing calendar', collectionUid: 'col-1' }])
     expect(state.itemCache.get('existing')).toBe(existingItem)
     expect(state.itemCollectionMap.get('existing')).toBe('col-1')
+    expect(state.domainLoadState.calendar).toBe('failed')
     errorSpy.mockRestore()
+  })
+
+  it('does not mark a failed domain loaded after only one collection refresh succeeds', async () => {
+    const existingItem = mockItem('existing-col-2', 'existing calendar')
+    const freshItem = mockItem('fresh-col-1', 'fresh calendar')
+    const collections = [{ uid: 'col-1' }, { uid: 'col-2' }]
+    const itemManagers = {
+      'col-1': { list: vi.fn(async () => ({ data: [freshItem], stoken: null, done: true })) },
+      'col-2': { list: vi.fn(async () => ({ data: [existingItem], stoken: null, done: true })) },
+    }
+    const account = {
+      getCollectionManager: () => ({
+        fetch: vi.fn(async (uid: string) => ({ uid })),
+        getItemManager: (collection: { uid: keyof typeof itemManagers }) => itemManagers[collection.uid],
+      }),
+    }
+
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map([['existing-col-2', existingItem]]),
+      itemTypeMap: new Map([['existing-col-2', 'calendar']]),
+      itemCollectionMap: new Map([['existing-col-2', 'col-2']]),
+      isInitialized: true,
+      domainLoadState: { ...loadedDomainLoadState(), calendar: 'failed' },
+      syncEngine: null,
+    })
+
+    const scoped = await useEtebaseStore.getState().refreshCollection('calendar', 'col-1')
+    expect(scoped).toEqual([{ uid: 'fresh-col-1', content: 'fresh calendar', collectionUid: 'col-1' }])
+    expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('failed')
+    expect(useEtebaseStore.getState().itemCache.get('existing-col-2')).toBe(existingItem)
+    expect(itemManagers['col-2'].list).not.toHaveBeenCalled()
+
+    await useEtebaseStore.getState().refreshCollection('calendar')
+    expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('loaded')
+    expect(itemManagers['col-2'].list).toHaveBeenCalledTimes(1)
   })
 })
 

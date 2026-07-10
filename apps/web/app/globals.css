@@ -30,6 +30,8 @@
   --sx-color-on-primary: #fff;
   --sx-color-primary-container: rgb(var(--primary) / 0.15);
   --sx-color-on-primary-container: rgb(var(--primary));
+  --sx-color-background: rgb(var(--background));
+  --sx-color-on-background: rgb(var(--foreground));
   --sx-color-surface: rgb(var(--background));
   --sx-color-on-surface: rgb(var(--foreground));
   --sx-color-surface-container-low: rgb(var(--surface));
@@ -75,6 +77,11 @@
   border: none;
   border-radius: 0;
   box-shadow: none;
+  background: rgb(var(--background));
+}
+
+.sx-silentsuite-calendar .sx__calendar,
+.sx-silentsuite-calendar .sx__view-container {
   background: rgb(var(--background));
 }
 

@@ -46,10 +46,8 @@ class AuthenticationError(Exception):
 
 def _auth_error_message(exc):
     error_text = str(exc)
-    if "401" in error_text or "Unauthorized" in error_text:
+    if any(marker in error_text for marker in ("401", "Unauthorized", "404", "Not Found")):
         return "Invalid email or password."
-    if "404" in error_text:
-        return "Account not found."
     return "Authentication failed. Check the server URL and try again."
 
 
@@ -427,6 +425,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
         }
         .docs-link a { color: #4ade80; text-decoration: none; }
         .docs-link a:hover { text-decoration: underline; }
+        .redirect-note { color: #4ade80; font-size: 13px; margin-top: 12px; }
     </style>
 </head>
 <body>
@@ -443,11 +442,13 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                 <button class="copy-btn" onclick="copyUrl(event, 'bridgeUrl')">Copy</button>
             </div>
             <p class="url-note">CalDAV and CardDAV share the same base URL &mdash; this is normal. Your app will discover calendars and contacts automatically.</p>
+            <p class="url-note" style="color:#f59e0b;">If your browser address bar shows another localhost port, that is only the temporary sign-in page. Use the copied app URL above, not the address-bar URL.</p>
             <p class="url-note" style="color:#f59e0b;">This URL is for calendar/contact apps, not a web browser. Copy it into your app &mdash; opening it in a browser can expose your password in the address bar.</p>
             DASHBOARD_BOOKMARK
             <div class="next-step">
-                You're signed in. You can close this tab &mdash; the bridge is already running in the background and will keep syncing on its own.
+                You're signed in. If you installed through PowerShell, this tab will switch to the bridge dashboard as soon as the installer starts it. Wait for the installer to say the bridge dashboard is reachable before adding the URL to your app.
             </div>
+            <p class="redirect-note" id="redirectNote">Waiting for the bridge dashboard...</p>
         </div>
 
         <div class="card">
@@ -612,6 +613,32 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
             document.body.removeChild(ta);
             setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
         }
+        (function redirectWhenDashboardIsReady() {
+            var dashboardUrl = 'DASHBOARD_URL';
+            var note = document.getElementById('redirectNote');
+            if (!dashboardUrl) {
+                if (note) { note.textContent = 'Dashboard is disabled for this bridge bind.'; }
+                return;
+            }
+
+            var attempts = 0;
+            var maxAttempts = 45;
+            function tryDashboard() {
+                attempts += 1;
+                fetch(dashboardUrl, { mode: 'no-cors', cache: 'no-store' }).then(function() {
+                    window.location.href = dashboardUrl;
+                }).catch(function() {
+                    if (attempts >= maxAttempts) {
+                        if (note) {
+                            note.textContent = 'Dashboard did not open automatically. Keep this tab as a reference and open ' + dashboardUrl + ' after the installer reports success.';
+                        }
+                        return;
+                    }
+                    window.setTimeout(tryDashboard, 1000);
+                });
+            }
+            window.setTimeout(tryDashboard, 1000);
+        })();
     </script>
 </body>
 </html>"""
@@ -642,20 +669,22 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             if not email:
                 self.send_error(404)
                 return
-            bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+            bridge_url = f"{config.local_base_url()}/{email}/"
             if config.is_dashboard_enabled():
-                dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+                dashboard_url = f"{config.local_base_url()}/"
                 dashboard_bookmark = (
                     '<div class="bookmark-box">&#11088; Bookmark '
                     f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
                     "to find these details later</div>"
                 )
             else:
+                dashboard_url = ""
                 dashboard_bookmark = '<div class="bookmark-box">Dashboard is disabled for remote bridge binds.</div>'
 
             page = SUCCESS_PAGE_HTML
             page = page.replace("USER_EMAIL", html_mod.escape(email))
             page = page.replace("BRIDGE_URL", html_mod.escape(bridge_url))
+            page = page.replace("DASHBOARD_URL", html_mod.escape(dashboard_url))
             page = page.replace("DASHBOARD_BOOKMARK", dashboard_bookmark)
 
             self.send_response(200)
@@ -780,7 +809,7 @@ def browser_login(running_bridge=False):
     email = server.authenticated_email
     if email:
         used_server = server.authenticated_server_url
-        base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+        base_url = f"{config.local_base_url()}/{email}/"
         if running_bridge:
             print(f"\n  Login successful! The bridge is already running.")
         else:
@@ -789,7 +818,7 @@ def browser_login(running_bridge=False):
         print()
         print(f"  Etebase server: {used_server}")
         if config.is_dashboard_enabled():
-            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+            dashboard_url = f"{config.local_base_url()}/"
             print(f"  Dashboard will be available at: {dashboard_url}")
         else:
             print("  Dashboard is disabled for remote bridge binds.")
