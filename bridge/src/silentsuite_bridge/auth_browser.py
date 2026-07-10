@@ -671,9 +671,9 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             if not email:
                 self.send_error(404)
                 return
-            bridge_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+            bridge_url = f"{config.local_base_url()}/{email}/"
             if config.is_dashboard_enabled():
-                dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+                dashboard_url = f"{config.local_base_url()}/"
                 dashboard_bookmark = (
                     '<div class="bookmark-box">&#11088; Bookmark '
                     f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
@@ -811,7 +811,7 @@ def browser_login(running_bridge=False):
     email = server.authenticated_email
     if email:
         used_server = server.authenticated_server_url
-        base_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/{email}/"
+        base_url = f"{config.local_base_url()}/{email}/"
         if running_bridge:
             print(f"\n  Login successful! The bridge is already running.")
         else:
@@ -820,7 +820,7 @@ def browser_login(running_bridge=False):
         print()
         print(f"  Etebase server: {used_server}")
         if config.is_dashboard_enabled():
-            dashboard_url = f"http://{config.LISTEN_ADDRESS}:{config.LISTEN_PORT}/"
+            dashboard_url = f"{config.local_base_url()}/"
             print(f"  Dashboard will be available at: {dashboard_url}")
         else:
             print("  Dashboard is disabled for remote bridge binds.")

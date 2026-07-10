@@ -9,7 +9,7 @@ import urllib.request
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from silentsuite_bridge.auth_browser import AUTH_PAGE_HTML, AuthCallbackHandler
+from silentsuite_bridge.auth_browser import AUTH_PAGE_HTML, AuthCallbackHandler, browser_login
 
 
 def _post_auth(server, fields):
@@ -149,3 +149,48 @@ def test_success_page_links_root_dashboard():
     assert status == 200
     assert "http://127.0.0.1:37358/" in body
     assert "/.web/" not in body
+
+
+def test_success_page_uses_https_bridge_urls_when_ssl_enabled():
+    server = http.server.HTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
+    server.csrf_token = "expected-token"
+    server.authenticated_email = "alice@example.com"
+    thread = threading.Thread(target=server.handle_request)
+    thread.start()
+    try:
+        with patch("silentsuite_bridge.auth_browser.config.SSL_ENABLED", True):
+            status, body = _get_auth_path(server, "/success")
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 200
+    assert "https://127.0.0.1:37358/" in body
+    assert "https://127.0.0.1:37358/alice@example.com/" in body
+    assert "http://127.0.0.1:37358/" not in body
+
+
+def test_browser_login_completion_prints_https_bridge_urls(capsys):
+    server = MagicMock()
+    event = MagicMock()
+
+    def complete_auth(*_args, **_kwargs):
+        server.authenticated_email = "alice@example.com"
+        server.authenticated_server_url = "https://server.silentsuite.io"
+        return True
+
+    event.wait.side_effect = complete_auth
+    with (
+        patch("silentsuite_bridge.auth_browser.config.ensure_data_dir"),
+        patch("silentsuite_bridge.auth_browser.config.SSL_ENABLED", True),
+        patch("silentsuite_bridge.auth_browser.http.server.HTTPServer", return_value=server),
+        patch("silentsuite_bridge.auth_browser.threading.Event", return_value=event),
+        patch("silentsuite_bridge.auth_browser.threading.Thread"),
+        patch("silentsuite_bridge.auth_browser.webbrowser.open"),
+        patch("silentsuite_bridge.auth_browser._find_free_port", return_value=43999),
+    ):
+        assert browser_login(running_bridge=True) == "alice@example.com"
+
+    output = capsys.readouterr().out
+    assert "Dashboard will be available at: https://127.0.0.1:37358/" in output
+    assert "CalDAV/CardDAV URL for your apps: https://127.0.0.1:37358/alice@example.com/" in output
