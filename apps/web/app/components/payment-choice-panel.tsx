@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { Crown, Lock, Zap } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
@@ -143,7 +143,6 @@ export default function PaymentChoicePanel({
   const [error, setError] = useState<string | null>(null)
   const [options, setOptions] = useState<PaymentOption[]>([])
   const [optionsLoaded, setOptionsLoaded] = useState(false)
-  const shouldCancelOnPageExitRef = useRef(false)
 
   async function loadOptionsForInterval(nextInterval: BillingInterval, isCancelled: () => boolean = () => false) {
     setOptionsLoaded(false)
@@ -179,7 +178,6 @@ export default function PaymentChoicePanel({
       if (!res.ok) return
       const data = await res.json()
       const flow = data.flow ?? null
-      shouldCancelOnPageExitRef.current = Boolean(flow?.cancellable && flow.flowKind === 'stripe_pay_now')
       setCurrentFlow(flow)
     } catch {
       // Payment options still render if the recovery endpoint is temporarily unavailable.
@@ -211,7 +209,6 @@ export default function PaymentChoicePanel({
       setClientSecret(null)
       setStripePaymentSummary(null)
       setBitcoinSession(null)
-      shouldCancelOnPageExitRef.current = false
       await loadOptionsForInterval(interval)
       await loadCurrentFlow()
     } catch (err) {
@@ -220,24 +217,6 @@ export default function PaymentChoicePanel({
       setLoading(null)
     }
   }
-
-  useEffect(() => {
-    shouldCancelOnPageExitRef.current = Boolean(clientSecret || (currentFlow?.cancellable && currentFlow.flowKind === 'stripe_pay_now'))
-  }, [clientSecret, currentFlow])
-
-  useEffect(() => {
-    function cancelOnPageExit() {
-      if (!shouldCancelOnPageExitRef.current) return
-      void fetch(`${BILLING_API_URL}/subscription/payment-flows/cancel`, {
-        method: 'POST',
-        credentials: 'include',
-        keepalive: true,
-      }).catch(() => undefined)
-    }
-
-    window.addEventListener('pagehide', cancelOnPageExit)
-    return () => window.removeEventListener('pagehide', cancelOnPageExit)
-  }, [])
 
   const startStripe = async () => {
     setLoading('stripe')
@@ -258,7 +237,6 @@ export default function PaymentChoicePanel({
         throw new Error(data?.detail ?? 'Failed to set up payment')
       }
       const data = await res.json()
-      shouldCancelOnPageExitRef.current = true
       setClientSecret(data.clientSecret)
       setStripePaymentSummary({
         planId: typeof data.planId === 'string' ? data.planId : planId,
@@ -317,7 +295,6 @@ export default function PaymentChoicePanel({
         settledMessage="Payment settled. Refreshing your subscription..."
         onBack={cancelCurrentFlow}
         onPaymentComplete={async () => {
-          shouldCancelOnPageExitRef.current = false
           await onSuccess()
           await successPoll?.()
         }}
@@ -359,12 +336,12 @@ export default function PaymentChoicePanel({
         <StripePaymentForm
           clientSecret={clientSecret}
           onSuccess={async () => {
-            shouldCancelOnPageExitRef.current = false
             await onSuccess()
             await successPoll?.()
           }}
           submitLabel={`Pay ${formatAmount(stripePaymentSummary?.amount ?? amountForInterval(interval), stripePaymentSummary?.currency ?? 'EUR')}`}
           mode="payment"
+          returnPath="/settings/subscription"
         />
         <button
           onClick={() => { void cancelCurrentFlow() }}

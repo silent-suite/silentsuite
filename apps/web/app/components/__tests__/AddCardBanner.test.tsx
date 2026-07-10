@@ -3,8 +3,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import AddCardBanner from '../add-card-banner'
 
 vi.mock('next/dynamic', () => ({
-  default: () => function MockStripePaymentForm({ mode, submitLabel }: { mode: string; submitLabel: string }) {
-    return <div data-testid="stripe-payment-form">{mode}:{submitLabel}</div>
+  default: () => function MockStripePaymentForm({ mode, submitLabel, returnPath }: { mode: string; submitLabel: string; returnPath?: string }) {
+    return <div data-testid="stripe-payment-form">{mode}:{submitLabel}:{returnPath ?? 'signup'}</div>
   },
 }))
 
@@ -70,7 +70,7 @@ describe('AddCardBanner', () => {
     expect(await screen.findByText('14 bonus days included after today\'s payment.')).toBeInTheDocument()
     expect(screen.getByText('Amount due')).toBeInTheDocument()
     expect(screen.getByText('Powered by Stripe')).toBeInTheDocument()
-    expect(screen.getByTestId('stripe-payment-form')).toHaveTextContent('payment:Pay €3.60')
+    expect(screen.getByTestId('stripe-payment-form')).toHaveTextContent('payment:Pay €3.60:/settings/subscription')
   })
 
   it('switches monthly Bitcoin banner to annual and starts annual BTCPay flow', async () => {
@@ -140,7 +140,7 @@ describe('AddCardBanner', () => {
     ))
   })
 
-  it('best-effort cancels an active payment flow when the page is hidden during unload', async () => {
+  it('keeps an active card flow intact during pagehide for Stripe redirect authentication', async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.includes('/subscription/payment-flows/current')) return { ok: true, json: async () => ({ flow: null }) } as Response
@@ -157,9 +157,6 @@ describe('AddCardBanner', () => {
 
     window.dispatchEvent(new Event('pagehide'))
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
-      'https://billing.example.test/subscription/payment-flows/cancel',
-      expect.objectContaining({ method: 'POST', credentials: 'include', keepalive: true }),
-    ))
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/subscription/payment-flows/cancel'))).toBe(false)
   })
 })
