@@ -31,6 +31,7 @@ import {
 } from '@/app/lib/data-cache'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { RestoreDiagnosticsRecorder, classifySessionPersistence } from '@/app/lib/sync-restore-diagnostics'
+import { AccountBoundaryChangedError, assertCurrentAccountEpoch, bumpAccountEpoch, getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 
 /**
  * Holds live Etebase SDK objects (Account, Collections, Items, SyncEngine).
@@ -340,12 +341,16 @@ function getCollectionColor(collection: any): string | undefined {
   }
 }
 
-async function hydrateListStores(collections: Record<CollectionTypeKey, any[]>): Promise<void> {
+async function hydrateListStores(
+  collections: Record<CollectionTypeKey, any[]>,
+  accountEpoch = getAccountEpoch(),
+): Promise<void> {
   const [calendarListStore, taskListStore, contactListStore] = await Promise.all([
     import('@/app/stores/use-calendar-list-store'),
     import('@/app/stores/use-task-list-store'),
     import('@/app/stores/use-contact-list-store'),
   ])
+  assertCurrentAccountEpoch(accountEpoch)
 
   calendarListStore.useCalendarListStore.getState().replaceCalendarsFromRemote(
     collections.calendar.map((collection, index) => ({
@@ -646,6 +651,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   syncEngine: null,
 
   initialize: async (options?: InitializeOptions) => {
+    const accountEpoch = getAccountEpoch()
     const serverUrl = getServerUrl()
     const diagnostics = new RestoreDiagnosticsRecorder({
       source: 'restore',
@@ -666,6 +672,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         diagnostics.persist()
         // Authenticated (initialize only runs under ProtectedRoute) but no local
         // vault to unlock -- re-entering credentials re-persists the session.
+        assertCurrentAccountEpoch(accountEpoch)
         set({ restoreBlocked: true })
         logger.debug('[etebase-store] No saved session, restore blocked')
         return
@@ -680,6 +687,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const account = await core.restoreSession(serverUrl, savedSession)
       const accountFingerprint = core.getAccountFingerprint(account)
       diagnostics.completePhase('restoreSession')
+      assertCurrentAccountEpoch(accountEpoch)
       set({ account, accountFingerprint })
       logger.debug('[etebase-store] Session restored')
 
@@ -707,9 +715,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
       })
 
+      assertCurrentAccountEpoch(accountEpoch)
       set({ collections })
       diagnostics.startPhase('hydrateLists')
-      await hydrateListStores(collections)
+      await hydrateListStores(collections, accountEpoch)
       diagnostics.completePhase('hydrateLists')
 
       // 3. Load items from each visible collection into the cache, one domain
@@ -761,6 +770,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
         // Publish incrementally using the current live maps. Do not overwrite
         // previously painted domains with the snapshot from earlier awaits.
+        assertCurrentAccountEpoch(accountEpoch)
         set((state) => buildInitialDomainPublish(state, key, loadedMaps, domainLoadState, status))
 
         await options?.onDomainLoaded?.({
@@ -770,6 +780,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           pageCount,
           collectionCount: typedCollections.length,
         })
+        assertCurrentAccountEpoch(accountEpoch)
       }
 
       logger.debug(`[etebase-store] Loaded ${totalLoadedItemCount} items into cache`)
@@ -805,11 +816,16 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
       diagnostics.startPhase('syncEngineStart')
       await engine.start(account)
+      if (!isCurrentAccountEpoch(accountEpoch)) {
+        engine.stop()
+        return
+      }
       diagnostics.completePhase('syncEngineStart')
       set({ syncEngine: engine, isInitialized: true })
       diagnostics.persist()
       logger.debug('[etebase-store] SyncEngine started')
     } catch (err) {
+      if (err instanceof AccountBoundaryChangedError) return
       diagnostics.failActivePhase(err)
       diagnostics.persist()
       console.error('[etebase-store] Initialization failed', getSafeErrorDetails(err))
@@ -1717,6 +1733,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   destroy: () => {
+    bumpAccountEpoch()
     const { syncEngine } = get()
     if (syncEngine) {
       syncEngine.stop()
