@@ -353,12 +353,14 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     vi.useFakeTimers()
     window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&redirect_status=succeeded')
     mockSubscription({
-      status: 'none',
-      renewalDate: null,
+      status: 'trialing',
+      trialPath: '7day',
+      trial: { active: true, endsAt: '2026-07-17T00:00:00.000Z', daysRemaining: 7 },
       capabilities: {
         ...baseSubscription.capabilities,
-        canRetryPayment: true,
-        canStartPaidSubscription: true,
+        trialActive: true,
+        needsPaymentMethod: true,
+        canSetupCard: true,
       },
     })
 
@@ -376,6 +378,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^retry payment$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /choose payment/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
   })
 
@@ -392,11 +395,12 @@ describe('SubscriptionPage billing recovery CTAs', () => {
   it('offers a manual status retry when every redirect poll fails', async () => {
     vi.useFakeTimers()
     window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&redirect_status=processing')
-    vi.stubGlobal('fetch', vi.fn(async () => ({
+    const fetchMock = vi.fn(async () => ({
       ok: false,
       status: 503,
       json: async () => ({}),
-    })))
+    }))
+    vi.stubGlobal('fetch', fetchMock)
 
     render(<SubscriptionPage />)
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
@@ -411,6 +415,22 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(screen.getByText(/payment needs attention/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
     expect(screen.queryByText(/unable to load subscription details/i)).not.toBeInTheDocument()
+
+    const firstAttemptCalls = fetchMock.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: /retry payment status/i }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(firstAttemptCalls)
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/payment needs attention/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
   })
 
   it('shows an actionable retry path after a failed Stripe redirect', async () => {

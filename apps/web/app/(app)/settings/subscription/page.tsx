@@ -510,7 +510,10 @@ export default function SubscriptionPage() {
         </div>
       </section>
 
-      {capabilities.canSetupCard && data.trial.daysRemaining != null && (
+      {capabilities.canSetupCard
+        && data.trial.daysRemaining != null
+        && !paymentConfirmationPending
+        && !paymentReturnFailure && (
         <AddCardBanner daysRemaining={data.trial.daysRemaining} onCardAdded={startPaymentConfirmation} />
       )}
 
