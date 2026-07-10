@@ -1,4 +1,4 @@
-# Store listing paste copy for SilentSuite v0.3.0-beta
+# Store listing paste copy for SilentSuite v0.4.0-beta
 
 Use with the final 8 screenshots exported from Figma on 2026-06-27.
 
