@@ -143,6 +143,8 @@ export default function PaymentChoicePanel({
   const [error, setError] = useState<string | null>(null)
   const [options, setOptions] = useState<PaymentOption[]>([])
   const [optionsLoaded, setOptionsLoaded] = useState(false)
+  const [currentFlowLoaded, setCurrentFlowLoaded] = useState(false)
+  const [currentFlowLoadFailed, setCurrentFlowLoadFailed] = useState(false)
 
   async function loadOptionsForInterval(nextInterval: BillingInterval, isCancelled: () => boolean = () => false) {
     setOptionsLoaded(false)
@@ -172,20 +174,32 @@ export default function PaymentChoicePanel({
   const bitcoinSwitchOption = useMemo(() => options.find(option => option.id === 'bitcoin_annual_switch' && option.enabled), [options])
   const planId = stripeOption?.planIds?.[0] ?? (interval === 'monthly' ? 'early_monthly' : 'early_annual')
 
-  async function loadCurrentFlow() {
+  async function loadCurrentFlow(isCancelled: () => boolean = () => false) {
+    if (!isCancelled()) {
+      setCurrentFlowLoaded(false)
+      setCurrentFlowLoadFailed(false)
+    }
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows/current`, { credentials: 'include' })
-      if (!res.ok) return
+      if (!res.ok) throw new Error('Could not verify the current payment flow.')
       const data = await res.json()
       const flow = data.flow ?? null
-      setCurrentFlow(flow)
+      if (!isCancelled()) {
+        setCurrentFlow(flow)
+        setCurrentFlowLoaded(true)
+      }
     } catch {
-      // Payment options still render if the recovery endpoint is temporarily unavailable.
+      if (!isCancelled()) {
+        setCurrentFlowLoadFailed(true)
+        setError('Could not verify whether a payment is already in progress. Retry before starting another payment.')
+      }
     }
   }
 
   useEffect(() => {
-    void loadCurrentFlow()
+    let cancelled = false
+    void loadCurrentFlow(() => cancelled)
+    return () => { cancelled = true }
   }, [])
 
   async function handleFlowInProgress() {
@@ -206,6 +220,7 @@ export default function PaymentChoicePanel({
         throw new Error(data?.detail ?? 'Could not cancel the pending payment flow.')
       }
       setCurrentFlow(null)
+      setCurrentFlowLoaded(true)
       setClientSecret(null)
       setStripePaymentSummary(null)
       setBitcoinSession(null)
@@ -416,7 +431,7 @@ export default function PaymentChoicePanel({
         </div>
       )}
 
-      {bitcoinSwitchOption && interval === 'monthly' && (
+      {currentFlowLoaded && bitcoinSwitchOption && interval === 'monthly' && (
         <button
           type="button"
           onClick={() => setInterval('annual')}
@@ -427,13 +442,22 @@ export default function PaymentChoicePanel({
         </button>
       )}
 
-      {interval === 'annual' && btcpayAnnualOption && (
+      {currentFlowLoaded && interval === 'annual' && btcpayAnnualOption && (
         <Button onClick={startBtcpay} disabled={loading !== null} variant="outline" className="w-full">
           {loading === 'btcpay' ? 'Opening Bitcoin checkout...' : 'Pay annual with Bitcoin'}
         </Button>
       )}
 
-      {!optionsLoaded ? (
+      {!currentFlowLoaded ? (
+        <Button
+          disabled={!currentFlowLoadFailed || loading !== null}
+          onClick={() => { void loadCurrentFlow() }}
+          variant="outline"
+          className="w-full"
+        >
+          {currentFlowLoadFailed ? 'Retry payment status' : 'Checking current payment...'}
+        </Button>
+      ) : !optionsLoaded ? (
         <Button disabled className="w-full">
           Loading payment options...
         </Button>
