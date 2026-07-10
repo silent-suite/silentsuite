@@ -1,6 +1,6 @@
 import React from 'react'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import SubscriptionPage from '../page'
 
 vi.mock('next/dynamic', () => ({
@@ -103,6 +103,11 @@ function mockSubscription(subscription: Record<string, unknown>) {
 describe('SubscriptionPage billing recovery CTAs', () => {
   beforeEach(() => {
     vi.unstubAllGlobals()
+    window.history.replaceState({}, '', '/settings/subscription')
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('shows choose payment for active no-card trials without making cancel the only action', async () => {
@@ -244,6 +249,94 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(await screen.findByText(/confirming your payment/i)).toBeInTheDocument()
     expect(screen.queryByText(/payment incomplete/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /retry payment/i })).not.toBeInTheDocument()
+  })
+
+  it('recovers a processing Stripe redirect on remount and polls until the subscription activates', async () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&payment_intent_client_secret=secret_123&redirect_status=processing')
+    let subscriptionFetches = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://billing.test/subscription' && !init?.method) {
+        subscriptionFetches += 1
+        const active = subscriptionFetches >= 2
+        return { ok: true, json: async () => active
+          ? baseSubscription
+          : {
+              ...baseSubscription,
+              status: 'none',
+              renewalDate: null,
+              capabilities: { ...baseSubscription.capabilities, canRetryPayment: true, canStartPaidSubscription: true },
+            } }
+      }
+      return { ok: false, status: 404, json: async () => ({}) }
+    }))
+
+    render(<SubscriptionPage />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /retry payment/i })).not.toBeInTheDocument()
+    expect(window.location.search).toBe('')
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+    expect(subscriptionFetches).toBeGreaterThanOrEqual(2)
+  })
+
+  it('stops bounded redirect polling with an actionable timeout', async () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&redirect_status=succeeded')
+    mockSubscription({
+      status: 'none',
+      renewalDate: null,
+      capabilities: {
+        ...baseSubscription.capabilities,
+        canRetryPayment: true,
+        canStartPaidSubscription: true,
+      },
+    })
+
+    render(<SubscriptionPage />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText(/payment needs attention/i)).toBeInTheDocument()
+    expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment/i })).toBeInTheDocument()
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+  })
+
+  it('shows an actionable retry path after a failed Stripe redirect', async () => {
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&payment_intent_client_secret=secret_123&redirect_status=failed')
+    mockSubscription({
+      status: 'none',
+      renewalDate: null,
+      capabilities: {
+        ...baseSubscription.capabilities,
+        canRetryPayment: true,
+        canStartPaidSubscription: true,
+      },
+    })
+
+    render(<SubscriptionPage />)
+
+    expect(await screen.findByText(/payment needs attention/i)).toBeInTheDocument()
+    expect(screen.getByText(/Stripe could not confirm this payment/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment/i })).toBeInTheDocument()
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+    expect(window.location.search).toBe('')
   })
 
   it('does not route cancel-at-period-end users into reactivation', async () => {

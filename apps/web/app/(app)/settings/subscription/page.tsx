@@ -140,6 +140,8 @@ const REACTIVATION_PLANS = [
   { id: 'standard_annual', name: 'Standard Annual', price: '48', period: '/yr', description: 'Save with annual billing', icon: Crown, badge: 'Best value', earlyOnly: false },
 ] as const
 
+const PAYMENT_CONFIRMATION_POLL_DELAYS_MS = [2000, 5000, 10000] as const
+
 export default function SubscriptionPage() {
   const [data, setData] = useState<SubscriptionData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -155,6 +157,7 @@ export default function SubscriptionPage() {
   const [changePlanToast, setChangePlanToast] = useState<string | null>(null)
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
   const [paymentConfirmationPending, setPaymentConfirmationPending] = useState(false)
+  const [paymentReturnFailure, setPaymentReturnFailure] = useState<string | null>(null)
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -162,22 +165,82 @@ export default function SubscriptionPage() {
         credentials: 'include',
       })
       if (res.ok) {
-        setData(await res.json())
+        const nextData = await res.json() as SubscriptionData
+        setData(nextData)
+        return nextData
       }
     } catch {
       // API may not be running in dev
     } finally {
       setLoading(false)
     }
+    return null
   }, [])
 
   useEffect(() => {
-    fetchSubscription()
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('payment_intent') && params.get('redirect_status')) return
+    void fetchSubscription()
+  }, [fetchSubscription])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const paymentIntent = params.get('payment_intent')
+    const redirectStatus = params.get('redirect_status')
+    if (!paymentIntent || !redirectStatus) return
+
+    const cleanedUrl = new URL(window.location.href)
+    cleanedUrl.searchParams.delete('payment_intent')
+    cleanedUrl.searchParams.delete('payment_intent_client_secret')
+    cleanedUrl.searchParams.delete('redirect_status')
+    window.history.replaceState({}, '', `${cleanedUrl.pathname}${cleanedUrl.search}${cleanedUrl.hash}`)
+
+    if (redirectStatus !== 'succeeded' && redirectStatus !== 'processing') {
+      setPaymentConfirmationPending(false)
+      setPaymentReturnFailure('Stripe could not confirm this payment. You can retry or choose another payment method.')
+      void fetchSubscription()
+      return
+    }
+
+    let cancelled = false
+    let settled = false
+    const timers: number[] = []
+    setPaymentConfirmationPending(true)
+    setPaymentReturnFailure(null)
+    setShowPlanSelection(false)
+
+    const pollSubscription = async (finalAttempt = false) => {
+      const nextData = await fetchSubscription()
+      if (cancelled) return
+      if (nextData?.status === 'active' || nextData?.status === 'trialing') {
+        settled = true
+        setPaymentConfirmationPending(false)
+        setPaymentReturnFailure(null)
+        return
+      }
+      if (finalAttempt && !settled) {
+        setPaymentConfirmationPending(false)
+        setPaymentReturnFailure('Payment confirmation is taking longer than expected. Retry the payment status or choose another payment method.')
+      }
+    }
+
+    void pollSubscription()
+    PAYMENT_CONFIRMATION_POLL_DELAYS_MS.forEach((delayMs, index) => {
+      timers.push(window.setTimeout(() => {
+        if (!settled) void pollSubscription(index === PAYMENT_CONFIRMATION_POLL_DELAYS_MS.length - 1)
+      }, delayMs))
+    })
+
+    return () => {
+      cancelled = true
+      timers.forEach(timer => window.clearTimeout(timer))
+    }
   }, [fetchSubscription])
 
   useEffect(() => {
     if (data?.status === 'active' || data?.status === 'trialing') {
       setPaymentConfirmationPending(false)
+      setPaymentReturnFailure(null)
     }
   }, [data?.status])
 
@@ -381,7 +444,14 @@ export default function SubscriptionPage() {
         </div>
       )}
 
-      {capabilities.canRetryPayment && !paymentConfirmationPending && (
+      {paymentReturnFailure && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
+        </div>
+      )}
+
+      {capabilities.canRetryPayment && !paymentConfirmationPending && !paymentReturnFailure && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment incomplete. Please try again.</p>
           <p className="mt-1 text-xs text-[rgb(var(--muted))]">Your subscription will activate after payment is completed.</p>
@@ -427,7 +497,7 @@ export default function SubscriptionPage() {
               }}
               onCancel={() => setShowPlanSelection(false)}
               title="Continue with silentsuite.io"
-              successPoll={fetchSubscription}
+              successPoll={async () => { await fetchSubscription() }}
             />
           </div>
         </div>
