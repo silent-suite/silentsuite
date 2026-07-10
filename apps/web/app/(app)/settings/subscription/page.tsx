@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Crown, Loader2, Check } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
@@ -180,24 +180,29 @@ export default function SubscriptionPage() {
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly')
   const [paymentConfirmationPending, setPaymentConfirmationPending] = useState(false)
   const [paymentReturnFailure, setPaymentReturnFailure] = useState<string | null>(null)
+  const [paymentConfirmationAttempt, setPaymentConfirmationAttempt] = useState(0)
+  const stripeReturnHandledRef = useRef(false)
 
-  const fetchSubscription = useCallback(async () => {
+  const requestSubscription = useCallback(async (): Promise<SubscriptionData | null> => {
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription`, {
         credentials: 'include',
       })
       if (res.ok) {
-        const nextData = await res.json() as SubscriptionData
-        setData(nextData)
-        return nextData
+        return await res.json() as SubscriptionData
       }
     } catch {
       // API may not be running in dev
-    } finally {
-      setLoading(false)
     }
     return null
   }, [])
+
+  const fetchSubscription = useCallback(async () => {
+    const nextData = await requestSubscription()
+    if (nextData) setData(nextData)
+    setLoading(false)
+    return nextData
+  }, [requestSubscription])
 
   useEffect(() => {
     if (stripePaymentReturn.paymentIntent && stripePaymentReturn.redirectStatus) return
@@ -214,6 +219,8 @@ export default function SubscriptionPage() {
       window.history.replaceState({}, '', `${cleanedUrl.pathname}${cleanedUrl.search}${cleanedUrl.hash}`)
     }
     if (!paymentIntent || !redirectStatus) return
+    if (stripeReturnHandledRef.current) return
+    stripeReturnHandledRef.current = true
 
     if (redirectStatus !== 'succeeded' && redirectStatus !== 'processing') {
       setPaymentConfirmationPending(false)
@@ -222,16 +229,29 @@ export default function SubscriptionPage() {
       return
     }
 
-    let cancelled = false
-    let settled = false
-    const timers: number[] = []
     setPaymentConfirmationPending(true)
     setPaymentReturnFailure(null)
     setShowPlanSelection(false)
+    setPaymentConfirmationAttempt(attempt => attempt + 1)
+  }, [fetchSubscription, stripePaymentReturn])
+
+  useEffect(() => {
+    if (paymentConfirmationAttempt === 0) return
+
+    let cancelled = false
+    let settled = false
+    let requestSequence = 0
+    let latestCommittedSequence = 0
+    const timers: number[] = []
+    const clearTimers = () => timers.forEach(timer => window.clearTimeout(timer))
 
     const pollSubscription = async (finalAttempt = false) => {
-      const nextData = await fetchSubscription()
-      if (cancelled) return
+      const sequence = ++requestSequence
+      const nextData = await requestSubscription()
+      if (cancelled || settled || sequence < latestCommittedSequence) return
+      latestCommittedSequence = sequence
+      setLoading(false)
+      if (nextData) setData(nextData)
       const capabilities = nextData ? getCapabilities(nextData) : null
       const paymentConfirmed = nextData?.status === 'active'
         || (nextData?.status === 'trialing'
@@ -240,6 +260,7 @@ export default function SubscriptionPage() {
           && capabilities.canRetryPayment === false)
       if (paymentConfirmed) {
         settled = true
+        clearTimers()
         setPaymentConfirmationPending(false)
         setPaymentReturnFailure(null)
         return
@@ -259,9 +280,9 @@ export default function SubscriptionPage() {
 
     return () => {
       cancelled = true
-      timers.forEach(timer => window.clearTimeout(timer))
+      clearTimers()
     }
-  }, [fetchSubscription, stripePaymentReturn])
+  }, [paymentConfirmationAttempt, requestSubscription])
 
   useEffect(() => {
     if (!data) return
@@ -276,6 +297,13 @@ export default function SubscriptionPage() {
       setPaymentReturnFailure(null)
     }
   }, [data])
+
+  function startPaymentConfirmation() {
+    setPaymentConfirmationPending(true)
+    setPaymentReturnFailure(null)
+    setShowPlanSelection(false)
+    setPaymentConfirmationAttempt(attempt => attempt + 1)
+  }
 
   async function handleCancel() {
     setCancelling(true)
@@ -342,7 +370,7 @@ export default function SubscriptionPage() {
               <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
               <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
             </div>
-            <Button size="sm" onClick={() => { void fetchSubscription() }}>Retry payment status</Button>
+            <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
           </div>
         ) : !paymentConfirmationPending && (
           <p className="text-sm text-[rgb(var(--muted))]">Unable to load subscription details.</p>
@@ -366,7 +394,7 @@ export default function SubscriptionPage() {
     && !capabilities.trialExpired
     && !capabilities.canRetryPayment
     && !capabilities.canStartPaidSubscription
-  const canOpenPaidRecovery = !paymentConfirmationPending && (
+  const canOpenPaidRecovery = !paymentConfirmationPending && !paymentReturnFailure && (
     capabilities.canRetryPayment
     || capabilities.canStartPaidSubscription
     || capabilities.canReactivate
@@ -483,7 +511,7 @@ export default function SubscriptionPage() {
       </section>
 
       {capabilities.canSetupCard && data.trial.daysRemaining != null && (
-        <AddCardBanner daysRemaining={data.trial.daysRemaining} onCardAdded={fetchSubscription} />
+        <AddCardBanner daysRemaining={data.trial.daysRemaining} onCardAdded={startPaymentConfirmation} />
       )}
 
       {paymentConfirmationPending && (
@@ -494,9 +522,12 @@ export default function SubscriptionPage() {
       )}
 
       {paymentReturnFailure && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
-          <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
+        <div className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <div>
+            <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Payment needs attention.</p>
+            <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
+          </div>
+          <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
         </div>
       )}
 
@@ -536,17 +567,9 @@ export default function SubscriptionPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(var(--background))]/80 backdrop-blur-sm">
           <div className="mx-4 w-full max-w-md rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6">
             <PaymentChoicePanel
-              onSuccess={async () => {
-                setPaymentConfirmationPending(true)
-                setShowPlanSelection(false)
-                await fetchSubscription()
-                for (const delayMs of [2000, 5000, 10000]) {
-                  window.setTimeout(() => { void fetchSubscription() }, delayMs)
-                }
-              }}
+              onSuccess={startPaymentConfirmation}
               onCancel={() => setShowPlanSelection(false)}
               title="Continue with silentsuite.io"
-              successPoll={async () => { await fetchSubscription() }}
             />
           </div>
         </div>

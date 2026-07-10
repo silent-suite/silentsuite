@@ -244,11 +244,21 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     fireEvent.click(await screen.findByRole('button', { name: /continue to card payment/i }))
     expect(await screen.findByText('Amount due')).toBeInTheDocument()
     expect(screen.getByText('Powered by Stripe')).toBeInTheDocument()
-    fireEvent.click(await screen.findByRole('button', { name: /mock payment success/i }))
+    vi.useFakeTimers()
+    fireEvent.click(screen.getByRole('button', { name: /mock payment success/i }))
 
-    expect(await screen.findByText(/confirming your payment/i)).toBeInTheDocument()
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
     expect(screen.queryByText(/payment incomplete/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /retry payment/i })).not.toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^retry payment$/i })).not.toBeInTheDocument()
   })
 
   it('keeps polling a no-card trial until Stripe confirmation removes payment requirements', async () => {
@@ -295,6 +305,50 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(subscriptionFetches).toBeGreaterThanOrEqual(2)
   })
 
+  it('ignores an older pending poll response after a newer response confirms payment', async () => {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&redirect_status=processing')
+    let subscriptionFetches = 0
+    let resolveFirst: ((response: { ok: boolean; json: () => Promise<Record<string, unknown>> }) => void) | undefined
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      if (url === 'https://billing.test/subscription' && !init?.method) {
+        subscriptionFetches += 1
+        if (subscriptionFetches === 1) {
+          return new Promise(resolve => { resolveFirst = resolve })
+        }
+        return Promise.resolve({ ok: true, json: async () => baseSubscription })
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) })
+    }))
+
+    render(<SubscriptionPage />)
+    await act(async () => {
+      vi.advanceTimersByTime(2000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(subscriptionFetches).toBe(2)
+
+    await act(async () => {
+      resolveFirst?.({
+        ok: true,
+        json: async () => ({
+          ...baseSubscription,
+          status: 'none',
+          renewalDate: null,
+          capabilities: { ...baseSubscription.capabilities, canRetryPayment: true, canStartPaidSubscription: true },
+        }),
+      })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^retry payment$/i })).not.toBeInTheDocument()
+  })
+
   it('stops bounded redirect polling with an actionable timeout', async () => {
     vi.useFakeTimers()
     window.history.replaceState({}, '', '/settings/subscription?payment_intent=pi_123&redirect_status=succeeded')
@@ -320,7 +374,8 @@ describe('SubscriptionPage billing recovery CTAs', () => {
 
     expect(screen.getByText(/payment needs attention/i)).toBeInTheDocument()
     expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /retry payment/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^retry payment$/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
   })
 
