@@ -431,7 +431,7 @@ export default function PaymentChoicePanel({
         </div>
       )}
 
-      {bitcoinSwitchOption && interval === 'monthly' && (
+      {currentFlowLoaded && bitcoinSwitchOption && interval === 'monthly' && (
         <button
           type="button"
           onClick={() => setInterval('annual')}
@@ -442,7 +442,7 @@ export default function PaymentChoicePanel({
         </button>
       )}
 
-      {interval === 'annual' && btcpayAnnualOption && (
+      {currentFlowLoaded && interval === 'annual' && btcpayAnnualOption && (
         <Button onClick={startBtcpay} disabled={loading !== null} variant="outline" className="w-full">
           {loading === 'btcpay' ? 'Opening Bitcoin checkout...' : 'Pay annual with Bitcoin'}
         </Button>

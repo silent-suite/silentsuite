@@ -73,7 +73,7 @@ describe('AddCardBanner', () => {
     expect(screen.getByTestId('stripe-payment-form')).toHaveTextContent('payment:Pay €3.60:/settings/subscription')
   })
 
-  it('does not enable payment creation before the current-flow lookup completes', async () => {
+  it('does not enable card or Bitcoin payment creation before the current-flow lookup completes', async () => {
     let resolveCurrentFlow: ((response: Response) => void) | undefined
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input)
@@ -82,6 +82,9 @@ describe('AddCardBanner', () => {
       }
       if (url.includes('/subscription/payment-options?interval=monthly')) {
         return { ok: true, json: async () => monthlyOptions } as Response
+      }
+      if (url.includes('/subscription/payment-options?interval=annual')) {
+        return { ok: true, json: async () => annualOptions } as Response
       }
       return { ok: false, json: async () => ({}) } as Response
     })
@@ -92,12 +95,15 @@ describe('AddCardBanner', () => {
     expect(await screen.findByText('Checking current payment...')).toBeInTheDocument()
     expect(screen.queryByText('Continue to card payment')).not.toBeInTheDocument()
 
+    fireEvent.click(screen.getByText('Annual'))
+    expect(screen.queryByText('Pay annual with Bitcoin')).not.toBeInTheDocument()
+
     await act(async () => {
       resolveCurrentFlow?.({ ok: true, json: async () => ({ flow: null }) } as Response)
       await Promise.resolve()
     })
 
-    expect(await screen.findByText('Continue to card payment')).toBeInTheDocument()
+    expect(await screen.findByText('Pay annual with Bitcoin')).toBeInTheDocument()
   })
 
   it('switches monthly Bitcoin banner to annual and starts annual BTCPay flow', async () => {
