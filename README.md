@@ -17,7 +17,7 @@ Open-source, zero-knowledge sync. Plaintext stays off the server; encryption key
 <br />
 
 <a href="https://silentsuite.io">
-  <img src="./.github/assets/readme-hero.png" alt="SilentSuite web calendar alongside the Android sync app" width="100%" />
+  <img src="./.github/assets/product-showcase.png" alt="SilentSuite calendar on a laptop and phone" width="100%" />
 </a>
 
 <br />
@@ -58,7 +58,7 @@ SilentSuite takes a different approach:
 
 ## How it works
 
-<img src="./.github/assets/how-it-works.svg" alt="A trusted device encrypts data locally, the server stores ciphertext, and another trusted device decrypts locally" width="100%" />
+<img src="./.github/assets/encryption-flow.png" alt="Readable calendar, task, and contact data is encrypted before reaching the server and decrypted on another trusted device" width="100%" />
 
 1. A trusted client derives and uses encryption keys locally.
 2. Calendar, contact, and task records are encrypted before upload.
