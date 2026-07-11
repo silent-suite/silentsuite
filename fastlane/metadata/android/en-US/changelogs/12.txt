@@ -1,0 +1,1 @@
+Improves account isolation and macOS DAV Bridge discovery compatibility while preserving zero-knowledge encryption and on-device keys.
