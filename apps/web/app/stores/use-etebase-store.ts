@@ -807,10 +807,13 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // advance handler so subsequent stoken updates are persisted too.
       if (cacheEnabled) {
         engine.onStokenAdvance((event: { collectionType: string; collectionUid: string; stoken: string | null }) => {
+          if (!isCurrentAccountEpoch(accountEpoch)) return
           const key = collectionTypeToKey(event.collectionType)
           if (!key) return
-          // Fire-and-forget — persistence failures are logged inside the cache module.
-          void cacheSetStoken(key, event.collectionUid, event.stoken)
+          void cacheSetStoken(key, event.collectionUid, event.stoken, accountEpoch).catch((err) => {
+            if (err instanceof AccountBoundaryChangedError) return
+            logger.warn('[etebase-store] Failed to persist sync cursor', getSafeErrorDetails(err))
+          })
         })
       }
 
@@ -825,6 +828,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       diagnostics.persist()
       logger.debug('[etebase-store] SyncEngine started')
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch)) return
       if (err instanceof AccountBoundaryChangedError) return
       diagnostics.failActivePhase(err)
       diagnostics.persist()
@@ -1627,6 +1631,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   refreshCollection: async (type: CollectionTypeKey, collectionUid?: string) => {
+    const accountEpoch = getAccountEpoch()
     const { account, collections } = get()
     const targetCollections = collectionUid
       ? [resolveCollection(collections, type, collectionUid)].filter(Boolean)
@@ -1641,6 +1646,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       for (const collection of targetCollections) {
         // Fetch fresh collection reference from server
         const freshCollection = await colManager.fetch(collection.uid)
+        assertCurrentAccountEpoch(accountEpoch)
 
         // Fetch ALL items (no stoken = full fetch)
         const itemManager = colManager.getItemManager(freshCollection)
@@ -1651,14 +1657,17 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         let done = false
         while (!done) {
           const response: { data: any[]; stoken: string | null; done: boolean } = await itemManager.list({ stoken })
+          assertCurrentAccountEpoch(accountEpoch)
           for (const item of response.data) {
             if (!item.isDeleted) {
               try {
                 const content = await item.getContent()
+                assertCurrentAccountEpoch(accountEpoch)
                 const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
                 collectionItems.push({ item, content: contentStr })
                 allResults.push({ uid: item.uid, content: contentStr, collectionUid: freshCollection.uid })
-              } catch {
+              } catch (err) {
+                if (err instanceof AccountBoundaryChangedError) throw err
                 // Skip items that fail to decode
               }
             }
@@ -1671,6 +1680,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
 
       const refreshedUids = new Set(refreshed.map((entry) => entry.collection.uid))
+      assertCurrentAccountEpoch(accountEpoch)
       const newItemCache = new Map(get().itemCache)
       const newItemTypeMap = new Map(get().itemTypeMap)
       const newItemCollectionMap = new Map(get().itemCollectionMap)
@@ -1700,6 +1710,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       )
       const nextDomainStatus = collectionUid ? get().domainLoadState[type] : 'loaded'
 
+      assertCurrentAccountEpoch(accountEpoch)
       set((state) => ({
         itemCache: newItemCache,
         itemTypeMap: newItemTypeMap,
@@ -1711,6 +1722,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // Mirror the refresh into the local cache. Use replace-style writes so
       // items deleted upstream are also dropped from disk.
       for (const { collection, items } of refreshed) {
+        assertCurrentAccountEpoch(accountEpoch)
         if (isLocalCacheEnabled()) {
           const cached: CachedItem[] = items.map(({ item, content }) => ({
             itemUid: item.uid,
@@ -1719,13 +1731,16 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
             content,
             lastModified: Date.now(),
           }))
-          void cacheReplaceItemsForCollection(collection.uid, cached)
+          await cacheReplaceItemsForCollection(collection.uid, cached, accountEpoch)
+          assertCurrentAccountEpoch(accountEpoch)
         }
       }
 
       logger.debug(`[etebase-store] Refreshed ${type}: ${allResults.length} items`)
       return allResults
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+      if (err instanceof AccountBoundaryChangedError) throw err
       console.error(`[etebase-store] Failed to refresh ${type}`, getSafeErrorDetails(err))
       set((state) => ({ domainLoadState: { ...state.domainLoadState, [type]: 'failed' } }))
       return get().fetchAllItems(type)

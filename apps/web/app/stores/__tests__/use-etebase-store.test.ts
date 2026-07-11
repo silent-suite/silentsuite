@@ -4,6 +4,7 @@ import { useCalendarStore } from '../use-calendar-store'
 import { useCalendarListStore } from '../use-calendar-list-store'
 import { useTaskListStore } from '../use-task-list-store'
 import { useContactListStore } from '../use-contact-list-store'
+import { AccountBoundaryChangedError, bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 const offlineQueueMock = vi.hoisted(() => ({
   enqueue: vi.fn(async () => {}),
@@ -206,6 +207,36 @@ describe('useEtebaseStore.initialize restore diagnostics', () => {
     expect(raw).not.toContain('user@example.com')
     expect(toastStoreMock.showErrorToast).toHaveBeenCalledWith('Failed to restore session. Please try signing in again.')
   })
+
+  it('does not publish initialization failure state when an old secure read rejects after an account boundary', async () => {
+    const { secureGet } = await import('@/app/lib/secure-storage')
+    let rejectRead!: (error: Error) => void
+    let markReadStarted!: () => void
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve
+    })
+    vi.mocked(secureGet).mockImplementationOnce(() => {
+      markReadStarted()
+      return new Promise((_resolve, reject) => {
+        rejectRead = reject
+      })
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const initialize = useEtebaseStore.getState().initialize()
+    await readStarted
+    bumpAccountEpoch()
+    useEtebaseStore.setState({ isInitialized: false, restoreBlocked: false })
+    rejectRead(new Error('old account read failed'))
+    await initialize
+
+    expect(useEtebaseStore.getState().isInitialized).toBe(false)
+    expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
+    expect(sessionStorage.getItem('silentsuite.restore-diagnostics.v1')).toBeNull()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    expect(errorSpy).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
 })
 
 describe('useEtebaseStore.initialize restoreBlocked flag', () => {
@@ -401,6 +432,30 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     expect(calendarStatusAtCalendarCallback).toBe('loaded')
     expect(calendarItemsAtCalendarCallback).toBe(1)
     expect(useEtebaseStore.getState().isInitialized).toBe(true)
+  })
+
+  it('ignores SyncEngine stoken callbacks from an old account epoch', async () => {
+    await primeSuccessfulRestore()
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+    dataCacheMock.isCacheEnabled.mockReturnValue(true)
+    let stokenHandler!: (event: { collectionType: string; collectionUid: string; stoken: string | null }) => void
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = vi.fn()
+      this.onStokenAdvance = vi.fn((handler) => {
+        stokenHandler = handler
+      })
+      this.start = vi.fn(async () => {})
+    })
+
+    await useEtebaseStore.getState().initialize()
+    expect(stokenHandler).toBeTruthy()
+    dataCacheMock.setStoken.mockClear()
+
+    bumpAccountEpoch()
+    stokenHandler({ collectionType: 'etebase.vevent', collectionUid: 'old-calendar', stoken: 'old-stoken' })
+    await Promise.resolve()
+
+    expect(dataCacheMock.setStoken).not.toHaveBeenCalled()
   })
 
   it('marks a failed domain without aborting later domains and still starts sync', async () => {
@@ -1137,6 +1192,106 @@ describe('useEtebaseStore.refreshCollection', () => {
     await useEtebaseStore.getState().refreshCollection('calendar')
     expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('loaded')
     expect(itemManagers['col-2'].list).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not publish an old-account refresh after the account epoch changes', async () => {
+    let releaseList!: (value: { data: any[]; stoken: null; done: true }) => void
+    let markListStarted!: () => void
+    const listStarted = new Promise<void>((resolve) => {
+      markListStarted = resolve
+    })
+    const staleItem = mockItem('stale-account-item', 'old account calendar')
+    const oldAccount = {
+      getCollectionManager: () => ({
+        fetch: vi.fn(async (uid: string) => ({ uid })),
+        getItemManager: () => ({
+          list: vi.fn(() => {
+            markListStarted()
+            return new Promise<{ data: any[]; stoken: null; done: true }>((resolve) => {
+              releaseList = resolve
+            })
+          }),
+        }),
+      }),
+    }
+
+    dataCacheMock.isCacheEnabled.mockReturnValue(true)
+    useEtebaseStore.setState({
+      account: oldAccount as any,
+      collections: { calendar: [{ uid: 'old-calendar' }] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
+      syncEngine: null,
+    })
+
+    const refresh = useEtebaseStore.getState().refreshCollection('calendar', 'old-calendar')
+    await listStarted
+
+    bumpAccountEpoch()
+    useEtebaseStore.setState({
+      account: { id: 'new-account' } as any,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      domainLoadState: loadedDomainLoadState(),
+    })
+    releaseList({ data: [staleItem], stoken: null, done: true })
+
+    await expect(refresh).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+    expect(useEtebaseStore.getState().collections.calendar).toEqual([])
+    expect(dataCacheMock.replaceItemsForCollection).not.toHaveBeenCalled()
+  })
+
+  it('does not mark the new account failed when an old-account refresh rejects', async () => {
+    let rejectList!: (error: Error) => void
+    let markListStarted!: () => void
+    const listStarted = new Promise<void>((resolve) => {
+      markListStarted = resolve
+    })
+    const oldAccount = {
+      getCollectionManager: () => ({
+        fetch: vi.fn(async (uid: string) => ({ uid })),
+        getItemManager: () => ({
+          list: vi.fn(() => {
+            markListStarted()
+            return new Promise((_resolve, reject) => {
+              rejectList = reject
+            })
+          }),
+        }),
+      }),
+    }
+
+    useEtebaseStore.setState({
+      account: oldAccount as any,
+      collections: { calendar: [{ uid: 'old-calendar' }] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      isInitialized: true,
+      domainLoadState: loadedDomainLoadState(),
+      syncEngine: null,
+    })
+
+    const refresh = useEtebaseStore.getState().refreshCollection('calendar', 'old-calendar')
+    await listStarted
+
+    bumpAccountEpoch()
+    useEtebaseStore.setState({
+      account: { id: 'new-account' } as any,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      domainLoadState: loadedDomainLoadState(),
+    })
+    rejectList(new Error('old account request failed'))
+
+    await expect(refresh).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+    expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('loaded')
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
   })
 })
 

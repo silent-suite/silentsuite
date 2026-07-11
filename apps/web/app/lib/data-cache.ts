@@ -17,6 +17,7 @@
  * encrypted-envelope availability check.
  */
 import { logger } from '@/app/lib/logger'
+import { AccountBoundaryChangedError, assertCurrentAccountEpoch } from '@/app/lib/account-epoch'
 
 export type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
 
@@ -323,6 +324,79 @@ export async function deleteItem(itemUid: string): Promise<void> {
   }
 }
 
+async function replaceItemsForIndex(
+  indexName: 'byCollectionType' | 'byCollectionUid',
+  indexKey: IDBValidKey,
+  items: CachedItem[],
+  accountEpoch: number | undefined,
+  operation: 'replaceItemsForType' | 'replaceItemsForCollection',
+): Promise<void> {
+  if (!canWriteItemContent(operation)) return
+  try {
+    const expectedFingerprint = accountEpoch === undefined ? undefined : (await getMeta())?.accountFingerprint
+    if (accountEpoch !== undefined) {
+      assertCurrentAccountEpoch(accountEpoch)
+      if (!expectedFingerprint) throw new AccountBoundaryChangedError()
+    }
+    const storedItems = await Promise.all(items.map(toStoredItem))
+    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+    const db = await openDB()
+    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([STORE_ITEMS, STORE_META], 'readwrite')
+      const store = tx.objectStore(STORE_ITEMS)
+      const metaReq = tx.objectStore(STORE_META).get(META_KEY)
+
+      const abortForBoundary = () => {
+        const err = new AccountBoundaryChangedError()
+        reject(err)
+        tx.abort()
+      }
+
+      metaReq.onsuccess = () => {
+        const currentFingerprint = (metaReq.result as CacheMeta | undefined)?.accountFingerprint
+        if (accountEpoch !== undefined && currentFingerprint !== expectedFingerprint) {
+          abortForBoundary()
+          return
+        }
+
+        const cursorReq = store.index(indexName).openCursor(indexKey)
+        cursorReq.onsuccess = () => {
+          try {
+            if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+          } catch {
+            abortForBoundary()
+            return
+          }
+          const cursor = cursorReq.result
+          if (cursor) {
+            cursor.delete()
+            cursor.continue()
+          } else {
+            for (const item of storedItems) store.put(item)
+            const commitGuard = store.get('__account-epoch-commit-guard__')
+            commitGuard.onsuccess = () => {
+              try {
+                if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+              } catch {
+                abortForBoundary()
+              }
+            }
+            commitGuard.onerror = () => reject(commitGuard.error)
+          }
+        }
+        cursorReq.onerror = () => reject(cursorReq.error)
+      }
+      metaReq.onerror = () => reject(metaReq.error)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) throw err
+    logger.warn(`[data-cache] ${operation} failed`, err)
+  }
+}
+
 /**
  * Replace all cached items for a collection type with the given list.
  * Used after a full refresh so removed-on-server items don't linger.
@@ -330,32 +404,9 @@ export async function deleteItem(itemUid: string): Promise<void> {
 export async function replaceItemsForType(
   type: CollectionTypeKey,
   items: CachedItem[],
+  accountEpoch?: number,
 ): Promise<void> {
-  if (!canWriteItemContent('replaceItemsForType')) return
-  try {
-    const storedItems = await Promise.all(items.map(toStoredItem))
-    const db = await openDB()
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_ITEMS, 'readwrite')
-      const store = tx.objectStore(STORE_ITEMS)
-      const idx = store.index('byCollectionType')
-      const cursorReq = idx.openCursor(type)
-      cursorReq.onsuccess = () => {
-        const cursor = cursorReq.result
-        if (cursor) {
-          cursor.delete()
-          cursor.continue()
-        } else {
-          for (const item of storedItems) store.put(item)
-        }
-      }
-      cursorReq.onerror = () => reject(cursorReq.error)
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
-  } catch (err) {
-    logger.warn('[data-cache] replaceItemsForType failed', err)
-  }
+  return replaceItemsForIndex('byCollectionType', type, items, accountEpoch, 'replaceItemsForType')
 }
 
 /**
@@ -365,32 +416,9 @@ export async function replaceItemsForType(
 export async function replaceItemsForCollection(
   collectionUid: string,
   items: CachedItem[],
+  accountEpoch?: number,
 ): Promise<void> {
-  if (!canWriteItemContent('replaceItemsForCollection')) return
-  try {
-    const storedItems = await Promise.all(items.map(toStoredItem))
-    const db = await openDB()
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_ITEMS, 'readwrite')
-      const store = tx.objectStore(STORE_ITEMS)
-      const idx = store.index('byCollectionUid')
-      const cursorReq = idx.openCursor(collectionUid)
-      cursorReq.onsuccess = () => {
-        const cursor = cursorReq.result
-        if (cursor) {
-          cursor.delete()
-          cursor.continue()
-        } else {
-          for (const item of storedItems) store.put(item)
-        }
-      }
-      cursorReq.onerror = () => reject(cursorReq.error)
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-    })
-  } catch (err) {
-    logger.warn('[data-cache] replaceItemsForCollection failed', err)
-  }
+  return replaceItemsForIndex('byCollectionUid', collectionUid, items, accountEpoch, 'replaceItemsForCollection')
 }
 
 // ── Collections / stokens ──
@@ -422,14 +450,71 @@ export async function setStoken(
   type: CollectionTypeKey,
   collectionUid: string,
   stoken: string | null,
+  accountEpoch?: number,
 ): Promise<void> {
-  const existing = await getCollection(collectionUid)
-  await putCollection({
-    collectionType: type,
-    collectionUid,
-    stoken,
-    lastFullSyncAt: existing?.lastFullSyncAt ?? Date.now(),
-  })
+  if (accountEpoch === undefined) {
+    const existing = await getCollection(collectionUid)
+    await putCollection({
+      collectionType: type,
+      collectionUid,
+      stoken,
+      lastFullSyncAt: existing?.lastFullSyncAt ?? Date.now(),
+    })
+    return
+  }
+
+  try {
+    const expectedFingerprint = (await getMeta())?.accountFingerprint
+    assertCurrentAccountEpoch(accountEpoch)
+    if (!expectedFingerprint) throw new AccountBoundaryChangedError()
+    const db = await openDB()
+    assertCurrentAccountEpoch(accountEpoch)
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([STORE_COLLECTIONS, STORE_META], 'readwrite')
+      const collectionStore = tx.objectStore(STORE_COLLECTIONS)
+      const metaStore = tx.objectStore(STORE_META)
+      const metaReq = metaStore.get(META_KEY)
+
+      const abortForBoundary = () => {
+        reject(new AccountBoundaryChangedError())
+        tx.abort()
+      }
+
+      metaReq.onsuccess = () => {
+        const currentFingerprint = (metaReq.result as CacheMeta | undefined)?.accountFingerprint
+        if (currentFingerprint !== expectedFingerprint) {
+          abortForBoundary()
+          return
+        }
+        const collectionReq = collectionStore.get(collectionUid)
+        collectionReq.onsuccess = () => {
+          const existing = collectionReq.result as CachedCollection | undefined
+          collectionStore.put({
+            collectionType: type,
+            collectionUid,
+            stoken,
+            lastFullSyncAt: existing?.lastFullSyncAt ?? Date.now(),
+          })
+          const commitGuard = metaStore.get(META_KEY)
+          commitGuard.onsuccess = () => {
+            try {
+              assertCurrentAccountEpoch(accountEpoch)
+            } catch {
+              abortForBoundary()
+            }
+          }
+          commitGuard.onerror = () => reject(commitGuard.error)
+        }
+        collectionReq.onerror = () => reject(collectionReq.error)
+      }
+      metaReq.onerror = () => reject(metaReq.error)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) throw err
+    logger.warn('[data-cache] setStoken failed', err)
+  }
 }
 
 /**
@@ -514,8 +599,21 @@ export async function ensureFingerprint(accountFingerprint: string): Promise<boo
       fingerprintMismatch,
       schemaMismatch,
     })
-    await clearAll()
-    await putMeta({ ...current, lastInvalidatedAt: Date.now() })
+    envelopeKey = null
+    envelopeReady = false
+    const replacementMeta = { ...current, lastInvalidatedAt: Date.now() }
+    const db = await openDB()
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([STORE_ITEMS, STORE_COLLECTIONS, STORE_META, STORE_CRYPTO], 'readwrite')
+      tx.objectStore(STORE_ITEMS).clear()
+      tx.objectStore(STORE_COLLECTIONS).clear()
+      const metaStore = tx.objectStore(STORE_META)
+      metaStore.clear()
+      metaStore.put(replacementMeta, META_KEY)
+      tx.objectStore(STORE_CRYPTO).clear()
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
     return false
   }
 

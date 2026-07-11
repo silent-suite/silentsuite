@@ -25,6 +25,7 @@ import {
   _setEnvelopeKeyForTests,
   type CachedItem,
 } from '../data-cache'
+import { AccountBoundaryChangedError, bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 
 beforeEach(async () => {
   await _resetForTests()
@@ -278,6 +279,68 @@ describe('data-cache', () => {
       expect(tasks.map((item) => item.itemUid).sort()).toEqual(['b', 'z'])
       expect(tasks.find((item) => item.itemUid === 'b')!.collectionUid).toBe('col-b')
     })
+
+    it('aborts a collection replacement when encryption crosses an account boundary', async () => {
+      await putItem(makeItem('existing', 'tasks', 'current cache', 'col-a'))
+      await ensureFingerprint('current-account')
+      const accountEpoch = getAccountEpoch()
+      const originalEncrypt = globalThis.crypto.subtle.encrypt.bind(globalThis.crypto.subtle)
+      let releaseEncryption!: () => void
+      let markEncryptionStarted!: () => void
+      const encryptionStarted = new Promise<void>((resolve) => {
+        markEncryptionStarted = resolve
+      })
+      const encryptionGate = new Promise<void>((resolve) => {
+        releaseEncryption = resolve
+      })
+      const encryptSpy = vi.spyOn(globalThis.crypto.subtle, 'encrypt').mockImplementationOnce(async (algorithm, key, data) => {
+        markEncryptionStarted()
+        await encryptionGate
+        return originalEncrypt(algorithm, key, data)
+      })
+
+      const replacement = replaceItemsForCollection(
+        'col-a',
+        [makeItem('stale', 'tasks', 'old account cache', 'col-a')],
+        accountEpoch,
+      )
+      await encryptionStarted
+      bumpAccountEpoch()
+      releaseEncryption()
+
+      await expect(replacement).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      const tasks = await getItemsByType('tasks')
+      expect(tasks.map((item) => item.itemUid)).toEqual(['existing'])
+      encryptSpy.mockRestore()
+    })
+
+    it('serializes an account fingerprint switch after a queued stale cache write', async () => {
+      await ensureFingerprint('old-account')
+      const accountEpoch = getAccountEpoch()
+      const originalPut = IDBObjectStore.prototype.put
+      let accountSwitch: Promise<boolean> | null = null
+      const putSpy = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (value, key) {
+        const request = key === undefined
+          ? originalPut.call(this, value)
+          : originalPut.call(this, value, key)
+        if (!accountSwitch && (value as { itemUid?: string }).itemUid === 'stale') {
+          bumpAccountEpoch()
+          accountSwitch = ensureFingerprint('new-account')
+        }
+        return request
+      })
+
+      await expect(replaceItemsForCollection(
+        'col-a',
+        [makeItem('stale', 'tasks', 'old account cache', 'col-a')],
+        accountEpoch,
+      )).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      await accountSwitch!
+
+      expect(await getItemsByType('tasks')).toEqual([])
+      expect((await getMeta())?.accountFingerprint).toBe('new-account')
+      putSpy.mockRestore()
+    })
   })
 
   describe('collections / stokens', () => {
@@ -297,6 +360,26 @@ describe('data-cache', () => {
       expect(col).not.toBeNull()
       expect(col!.stoken).toBe('stk-1')
       expect(col!.collectionUid).toBe('col-tasks')
+    })
+
+    it('aborts a queued stoken write when the account epoch changes before commit', async () => {
+      await ensureFingerprint('current-account')
+      const accountEpoch = getAccountEpoch()
+      const originalPut = IDBObjectStore.prototype.put
+      const putSpy = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (value, key) {
+        const request = key === undefined
+          ? originalPut.call(this, value)
+          : originalPut.call(this, value, key)
+        if ((value as { collectionUid?: string }).collectionUid === 'old-collection') {
+          bumpAccountEpoch()
+        }
+        return request
+      })
+
+      await expect(setStoken('calendar', 'old-collection', 'old-stoken', accountEpoch))
+        .rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      expect(await getCollection('old-collection')).toBeNull()
+      putSpy.mockRestore()
     })
 
     it('setStoken creates and updates the cursor', async () => {
