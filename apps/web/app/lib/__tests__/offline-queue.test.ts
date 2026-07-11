@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import 'fake-indexeddb/auto'
+import { AccountBoundaryChangedError, bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import {
   enqueue,
   getAll,
@@ -147,7 +148,7 @@ describe('offline-queue', () => {
 
       _setEncryptedQueuePersistenceAvailableForTests(false)
 
-      expect(await getAll()).toHaveLength(0)
+      expect(await getAll({ accountEpoch: getAccountEpoch(), accountFingerprint: 'different-account' })).toHaveLength(0)
       expect(JSON.stringify(await readRawMutations())).not.toContain('PRIVATE_SENTINEL_TASK')
     })
 
@@ -159,6 +160,102 @@ describe('offline-queue', () => {
 
       expect(await getAll()).toHaveLength(0)
       expect(await getPendingCount()).toBe(0)
+    })
+  })
+
+  describe('transactional account boundary', () => {
+    const guard = (fingerprint: string) => ({ accountEpoch: getAccountEpoch(), accountFingerprint: fingerprint })
+
+    it('aborts an enqueue after the actual put is issued without records or listeners', async () => {
+      const counts: number[] = []
+      const enqueues: number[] = []
+      onCountChange((count) => counts.push(count))
+      onEnqueue(() => enqueues.push(1))
+      const originalPut = IDBObjectStore.prototype.put
+      const putSpy = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (...args: Parameters<IDBObjectStore['put']>) {
+        const request = originalPut.apply(this, args)
+        bumpAccountEpoch()
+        return request
+      })
+
+      await expect(enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: 'same', itemUid: 'same' }, guard('old')))
+        .rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      putSpy.mockRestore()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(await getAll()).toEqual([])
+      expect(counts).toEqual([])
+      expect(enqueues).toEqual([])
+    })
+
+    it('aborts a guarded removal after the actual delete is issued', async () => {
+      const owner = guard('old')
+      const id = await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: 'same', itemUid: 'same' }, owner)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const counts: number[] = []
+      onCountChange((count) => counts.push(count))
+      const originalDelete = IDBObjectStore.prototype.delete
+      const deleteSpy = vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementation(function (...args: Parameters<IDBObjectStore['delete']>) {
+        const request = originalDelete.apply(this, args)
+        bumpAccountEpoch()
+        return request
+      })
+
+      await expect(remove(id, owner)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      deleteSpy.mockRestore()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect((await getAll()).map((entry) => entry.id)).toEqual([id])
+      expect(counts).toEqual([])
+    })
+
+    it('aborts a compaction update after its actual put is issued', async () => {
+      const owner = guard('old')
+      const id = await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: 'same', itemUid: 'same', content: 'before' }, owner)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const counts: number[] = []
+      onCountChange((count) => counts.push(count))
+      const originalPut = IDBObjectStore.prototype.put
+      const putSpy = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (...args: Parameters<IDBObjectStore['put']>) {
+        const request = originalPut.apply(this, args)
+        bumpAccountEpoch()
+        return request
+      })
+
+      await expect(enqueue({ type: 'update', collectionType: 'tasks', collectionUid: 'same', itemUid: 'same', content: 'after' }, owner))
+        .rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      putSpy.mockRestore()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(await getAll()).toEqual([expect.objectContaining({ id, content: 'before' })])
+      expect(counts).toEqual([])
+    })
+
+    it('isolates compaction for different fingerprints sharing collection and item UIDs', async () => {
+      await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: 'same', itemUid: 'same', content: 'account A' }, guard('A'))
+      await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: 'same', itemUid: 'same' }, guard('B'))
+
+      const entries = await getAll()
+      expect(entries).toHaveLength(2)
+      expect(entries.find((entry) => entry.accountFingerprint === 'A')).toMatchObject({ type: 'update', content: 'account A' })
+      expect(entries.find((entry) => entry.accountFingerprint === 'B')).toMatchObject({ type: 'delete' })
+    })
+
+    it('notifies listeners with only the committing account queue count', async () => {
+      await enqueue({ type: 'delete', collectionType: 'tasks', itemUid: 'a' }, guard('A'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const counts: number[] = []
+      onCountChange((count) => counts.push(count))
+
+      await enqueue({ type: 'delete', collectionType: 'tasks', itemUid: 'b' }, guard('B'))
+      await vi.waitFor(() => expect(counts).toEqual([1]))
+    })
+
+    it('fails closed when a guarded operation has no fingerprint', async () => {
+      await expect(enqueue({ type: 'delete', collectionType: 'tasks', itemUid: 'x' }, {
+        accountEpoch: getAccountEpoch(),
+        accountFingerprint: '',
+      })).rejects.toBeInstanceOf(AccountBoundaryChangedError)
     })
   })
 
@@ -623,6 +720,37 @@ describe('offline-queue', () => {
       expect(results).toHaveLength(2)
       expect(results.every((r) => r.success)).toBe(true)
       expect(await getPendingCount()).toBe(0)
+    })
+  })
+
+  describe('account-bound replay', () => {
+    it('never executes or removes entries owned by another account fingerprint', async () => {
+      const oldGuard = { accountEpoch: getAccountEpoch(), accountFingerprint: 'old-account' }
+      const id = await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: 'shared', itemUid: 'same-id' }, oldGuard)
+      const newGuard = { accountEpoch: getAccountEpoch(), accountFingerprint: 'new-account' }
+      const execute = vi.fn().mockResolvedValue({})
+
+      expect(await replay(execute, newGuard)).toEqual([])
+      expect(execute).not.toHaveBeenCalled()
+      expect((await getAll()).map((entry) => entry.id)).toContain(id)
+    })
+
+    it('quietly stops when the boundary changes during execute without retry mutation or publication', async () => {
+      const guard = { accountEpoch: getAccountEpoch(), accountFingerprint: 'current-account' }
+      const id = await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: 'tasks', itemUid: 'task-1' }, guard)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const listener = vi.fn()
+      const unsubscribe = onCountChange(listener)
+      const results = await replay(async () => {
+        bumpAccountEpoch()
+        return { itemUid: 'must-not-publish' }
+      }, guard)
+      unsubscribe()
+
+      expect(results).toEqual([])
+      const entry = (await getAll()).find((candidate) => candidate.id === id)
+      expect(entry).toMatchObject({ retryCount: 0, status: 'pending' })
+      expect(listener).not.toHaveBeenCalled()
     })
   })
 })

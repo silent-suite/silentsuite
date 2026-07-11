@@ -23,6 +23,17 @@ const coreMock = vi.hoisted(() => ({
   createItem: vi.fn(),
   deleteItem: vi.fn(),
   updateCollectionMeta: vi.fn(),
+  updateItem: vi.fn(),
+  listIncomingInvitations: vi.fn(),
+  listOutgoingInvitations: vi.fn(),
+  cancelOutgoingInvitation: vi.fn(),
+  acceptInvitation: vi.fn(),
+  rejectInvitation: vi.fn(),
+  inviteToCollection: vi.fn(),
+  listCollectionMembers: vi.fn(),
+  removeCollectionMember: vi.fn(),
+  leaveCollection: vi.fn(),
+  modifyCollectionMemberAccess: vi.fn(),
 }))
 
 const toastStoreMock = vi.hoisted(() => ({
@@ -79,6 +90,17 @@ beforeEach(() => {
   coreMock.createItem.mockReset()
   coreMock.deleteItem.mockReset()
   coreMock.updateCollectionMeta.mockReset()
+  coreMock.updateItem.mockReset()
+  coreMock.listIncomingInvitations.mockReset()
+  coreMock.listOutgoingInvitations.mockReset()
+  coreMock.cancelOutgoingInvitation.mockReset()
+  coreMock.acceptInvitation.mockReset()
+  coreMock.rejectInvitation.mockReset()
+  coreMock.inviteToCollection.mockReset()
+  coreMock.listCollectionMembers.mockReset()
+  coreMock.removeCollectionMember.mockReset()
+  coreMock.leaveCollection.mockReset()
+  coreMock.modifyCollectionMemberAccess.mockReset()
   toastStoreMock.showErrorToast.mockReset()
   dataCacheMock.ensureEncryptedEnvelope.mockReset().mockResolvedValue(true)
   dataCacheMock.ensureFingerprint.mockReset().mockResolvedValue(true)
@@ -90,6 +112,7 @@ beforeEach(() => {
   dataCacheMock.deleteItem.mockReset().mockResolvedValue(undefined)
   dataCacheMock.replaceItemsForCollection.mockReset().mockResolvedValue(undefined)
   dataCacheMock.isCacheEnabled.mockReset().mockReturnValue(false)
+  useEtebaseStore.setState({ accountFingerprint: 'test-account-fingerprint' })
   sessionStorage.clear()
 })
 
@@ -400,6 +423,41 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     mockSuccessfulSyncEngine()
   }
 
+  it('quietly cancels deferred initial item enumeration after an account boundary', async () => {
+    await primeSuccessfulRestore()
+    let resolveList!: (value: { items: any[]; stoken: null; done: boolean }) => void
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => { markStarted = resolve })
+    coreMock.listItems.mockImplementationOnce(() => {
+      markStarted()
+      return new Promise((resolve) => { resolveList = resolve })
+    })
+    const onDomainLoaded = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const initialize = useEtebaseStore.getState().initialize({ onDomainLoaded })
+    await started
+    bumpAccountEpoch()
+    useEtebaseStore.setState({
+      account: { id: 'new-account' },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      domainLoadState: unknownDomainLoadState(),
+      isInitialized: false,
+    })
+    sessionStorage.removeItem('silentsuite.restore-diagnostics.v1')
+    resolveList({ items: [mockItem('old-private-item', 'PRIVATE_OLD_PLAINTEXT')], stoken: null, done: true })
+    await initialize
+
+    expect(warnSpy).not.toHaveBeenCalled()
+    expect(sessionStorage.getItem('silentsuite.restore-diagnostics.v1')).toBeNull()
+    expect(onDomainLoaded).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+    expect(useEtebaseStore.getState().isInitialized).toBe(false)
+    warnSpy.mockRestore()
+  })
+
   it('invokes onDomainLoaded in calendar → tasks → contacts order with completed state visible', async () => {
     await primeSuccessfulRestore()
     coreMock.listItems.mockImplementation(async (_account: unknown, collection: { uid: string }) => {
@@ -561,8 +619,8 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
       onDomainLoaded: (event) => calls.push(`domain:${event.type}`),
     })
 
-    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint')
-    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledTimes(1)
+    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint', expect.any(Number))
+    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledWith(expect.any(Number))
     expect(calls).toEqual(['cacheHydrate', 'domain:calendar', 'domain:tasks', 'domain:contacts'])
   })
 
@@ -577,8 +635,8 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     const onCacheHydrate = vi.fn()
     await useEtebaseStore.getState().initialize({ onCacheHydrate })
 
-    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint')
-    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledTimes(1)
+    expect(dataCacheMock.ensureFingerprint).toHaveBeenCalledWith('fingerprint', expect.any(Number))
+    expect(dataCacheMock.ensureEncryptedEnvelope).toHaveBeenCalledWith(expect.any(Number))
     expect(onCacheHydrate).not.toHaveBeenCalled()
     expect(useEtebaseStore.getState().isInitialized).toBe(true)
   })
@@ -598,6 +656,46 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     expect(useEtebaseStore.getState().domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'loaded', contacts: 'loaded' })
   })
 
+  it('quietly cancels cache setup after an account boundary without logging or hydrating', async () => {
+    await primeSuccessfulRestore()
+    dataCacheMock.getCacheCapabilityStatus.mockReturnValue({ featureFlagEnabled: true, encryptedEnvelopeAvailable: false, enabled: false })
+    let releaseFingerprint!: () => void
+    dataCacheMock.ensureFingerprint.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+      releaseFingerprint = () => resolve(true)
+    }))
+    const onCacheHydrate = vi.fn()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const initialize = useEtebaseStore.getState().initialize({ onCacheHydrate })
+    await vi.waitFor(() => expect(dataCacheMock.ensureFingerprint).toHaveBeenCalled())
+    bumpAccountEpoch()
+    releaseFingerprint()
+    await initialize
+
+    expect(dataCacheMock.ensureEncryptedEnvelope).not.toHaveBeenCalled()
+    expect(onCacheHydrate).not.toHaveBeenCalled()
+    expect(coreMock.listCollections).not.toHaveBeenCalled()
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('does not create default collections when the account changes during listing', async () => {
+    await primeSuccessfulRestore()
+    let releaseList!: (collections: unknown[]) => void
+    coreMock.listCollections.mockImplementationOnce(() => new Promise((resolve) => { releaseList = resolve }))
+    const onCacheHydrate = vi.fn()
+
+    const initialize = useEtebaseStore.getState().initialize({ onCacheHydrate })
+    await vi.waitFor(() => expect(coreMock.listCollections).toHaveBeenCalledTimes(1))
+    bumpAccountEpoch()
+    releaseList([])
+    await initialize
+
+    expect(coreMock.createCollection).not.toHaveBeenCalled()
+    expect(coreMock.listCollections).toHaveBeenCalledTimes(1)
+    expect(onCacheHydrate).not.toHaveBeenCalled()
+  })
+
   it('remains backwards-compatible when called with no options', async () => {
     await primeSuccessfulRestore()
     coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
@@ -607,6 +705,30 @@ describe('useEtebaseStore.initialize incremental domain loading', () => {
     const state = useEtebaseStore.getState()
     expect(state.isInitialized).toBe(true)
     expect(state.domainLoadState).toMatchObject({ calendar: 'loaded', tasks: 'loaded', contacts: 'loaded' })
+  })
+})
+
+describe('useEtebaseStore nested offline queue boundary errors', () => {
+  it('quietly cancels a stale nested enqueue rejection', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    coreMock.createItem.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    offlineQueueMock.isOfflineError.mockReturnValue(true)
+    offlineQueueMock.enqueue.mockRejectedValueOnce(new AccountBoundaryChangedError())
+    useEtebaseStore.setState({
+      account: { id: 'old' } as any,
+      accountFingerprint: 'old-fingerprint',
+      collections: { calendar: [{ uid: 'old-calendar' }] as any[], tasks: [], contacts: [], preferences: [] },
+    })
+
+    await expect(useEtebaseStore.getState().createItem('calendar', 'OLD', 'old-temp')).resolves.toBeNull()
+
+    expect(offlineQueueMock.enqueue).toHaveBeenCalledWith(expect.objectContaining({ tempId: 'old-temp' }), {
+      accountEpoch: expect.any(Number),
+      accountFingerprint: 'old-fingerprint',
+    })
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
   })
 })
 
@@ -791,6 +913,125 @@ describe('useEtebaseStore.createItemsBatch', () => {
     expect(uids.slice(0, 20).every((u) => typeof u === 'string')).toBe(true)
     expect(uids.slice(20).every((u) => u === null)).toBe(true)
   })
+  it('cancels after an item create crosses the account boundary', async () => {
+    let releaseCreate!: () => void
+    const itemManager: MockItemManager = {
+      create: vi.fn(() => new Promise((resolve) => { releaseCreate = () => resolve({ uid: 'old-created' }) })),
+      batch: vi.fn(async () => {}),
+    }
+    setupStoreWithMocks(itemManager, { pause: vi.fn(), resume: vi.fn() })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const mutation = useEtebaseStore.getState().createItemsBatch('calendar', [{ content: 'OLD', tempId: 'old' }])
+    await vi.waitFor(() => expect(itemManager.create).toHaveBeenCalled())
+    bumpAccountEpoch()
+    releaseCreate()
+
+    await expect(mutation).resolves.toEqual([null])
+    expect(itemManager.batch).not.toHaveBeenCalled()
+    expect(dataCacheMock.putItems).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().itemCache.has('old-created')).toBe(false)
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('cancels after the cooperative yield crosses the account boundary', async () => {
+    let nextUid = 0
+    const itemManager: MockItemManager = {
+      create: vi.fn(async () => ({ uid: `old-${nextUid++}` })),
+      batch: vi.fn(async () => {}),
+    }
+    setupStoreWithMocks(itemManager, { pause: vi.fn(), resume: vi.fn() })
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void) => {
+      bumpAccountEpoch()
+      callback()
+      return 1
+    }) as typeof setTimeout)
+
+    const result = await useEtebaseStore.getState().createItemsBatch('calendar',
+      Array.from({ length: 26 }, (_, i) => ({ content: `OLD-${i}`, tempId: `old-${i}` })))
+    timerSpy.mockRestore()
+
+    expect(result).toEqual(Array(26).fill(null))
+    expect(itemManager.batch).not.toHaveBeenCalled()
+    expect(dataCacheMock.putItems).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('cancels after retry backoff crosses the account boundary without another batch attempt', async () => {
+    const itemManager: MockItemManager = {
+      create: vi.fn(async () => ({ uid: 'old-retry' })),
+      batch: vi.fn(async () => { throw new Error('transient') }),
+    }
+    setupStoreWithMocks(itemManager, { pause: vi.fn(), resume: vi.fn() })
+    const timerSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void) => {
+      bumpAccountEpoch()
+      callback()
+      return 1
+    }) as typeof setTimeout)
+
+    const result = await useEtebaseStore.getState().createItemsBatch('calendar', [{ content: 'OLD', tempId: 'old' }])
+    timerSpy.mockRestore()
+
+    expect(result).toEqual([null])
+    expect(itemManager.batch).toHaveBeenCalledTimes(1)
+    expect(dataCacheMock.putItems).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('does not publish or cache batch-created items after the account epoch changes', async () => {
+    let releaseBatch!: () => void
+    const batchGate = new Promise<void>((resolve) => { releaseBatch = resolve })
+    const itemManager: MockItemManager = {
+      create: vi.fn(async () => ({ uid: 'old-batch-item' })),
+      batch: vi.fn(() => batchGate),
+    }
+    const syncEngine: MockSyncEngine = { pause: vi.fn(), resume: vi.fn() }
+    setupStoreWithMocks(itemManager, syncEngine)
+    dataCacheMock.isCacheEnabled.mockReturnValue(true)
+
+    const mutation = useEtebaseStore.getState().createItemsBatch('calendar', [{ content: 'OLD', tempId: 'old-temp' }])
+    await vi.waitFor(() => expect(itemManager.batch).toHaveBeenCalled())
+    bumpAccountEpoch()
+    useEtebaseStore.setState({ itemCache: new Map(), itemTypeMap: new Map(), itemCollectionMap: new Map() })
+    releaseBatch()
+
+    await expect(mutation).resolves.toEqual([null])
+    expect(useEtebaseStore.getState().itemCache.has('old-batch-item')).toBe(false)
+    expect(dataCacheMock.putItems).not.toHaveBeenCalled()
+    expect(syncEngine.resume).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+})
+
+describe('useEtebaseStore.updateItem account boundary', () => {
+  it('does not publish or cache an update that resolves after the account epoch changes', async () => {
+    let releaseUpdate!: (item: unknown) => void
+    coreMock.updateItem.mockImplementationOnce(() => new Promise((resolve) => { releaseUpdate = resolve }))
+    const oldItem = { uid: 'item-old' }
+    useEtebaseStore.setState({
+      account: { id: 'old-account' } as any,
+      collections: { calendar: [{ uid: 'col-1' }] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map([['item-old', oldItem]]),
+      itemTypeMap: new Map([['item-old', 'calendar']]),
+      itemCollectionMap: new Map([['item-old', 'col-1']]),
+    })
+    dataCacheMock.isCacheEnabled.mockReturnValue(true)
+
+    const mutation = useEtebaseStore.getState().updateItem('calendar', 'item-old', 'OLD CONTENT')
+    await vi.waitFor(() => expect(coreMock.updateItem).toHaveBeenCalled())
+    bumpAccountEpoch()
+    useEtebaseStore.setState({ itemCache: new Map(), itemTypeMap: new Map(), itemCollectionMap: new Map() })
+    releaseUpdate({ uid: 'item-old', oldAccount: true })
+    await mutation
+
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+    expect(dataCacheMock.putItem).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
 })
 
 describe('useEtebaseStore.moveItem', () => {
@@ -873,11 +1114,70 @@ describe('useEtebaseStore.moveItem', () => {
       collectionType: 'calendar',
       collectionUid: 'col-1',
       itemUid: 'item-old',
+    }, {
+      accountEpoch: expect.any(Number),
+      accountFingerprint: 'test-account-fingerprint',
     })
     expect(state.itemCache.get('item-old')).toBe(sourceItem)
     expect(state.itemCache.get('item-new')).toBe(targetItem)
     expect(state.itemCollectionMap.get('item-old')).toBe('col-1')
     expect(state.itemCollectionMap.get('item-new')).toBe('col-2')
+  })
+
+  it('quietly cancels when the source delete completes after an account switch', async () => {
+    let releaseDelete!: () => void
+    coreMock.createItem.mockResolvedValue({ uid: 'old-target' })
+    coreMock.deleteItem.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseDelete = resolve }))
+    useEtebaseStore.setState({
+      account: { id: 'old' } as any,
+      collections: { calendar: [{ uid: 'source' }, { uid: 'target' }] as any[], tasks: [], contacts: [], preferences: [] },
+      itemCache: new Map([['old-source', { uid: 'old-source' }]]),
+      itemTypeMap: new Map([['old-source', 'calendar']]),
+      itemCollectionMap: new Map([['old-source', 'source']]),
+    })
+
+    const move = useEtebaseStore.getState().moveItem('calendar', 'old-source', 'OLD', 'target')
+    await vi.waitFor(() => expect(coreMock.deleteItem).toHaveBeenCalledTimes(1))
+    bumpAccountEpoch()
+    useEtebaseStore.setState({ itemCache: new Map(), itemTypeMap: new Map(), itemCollectionMap: new Map() })
+    releaseDelete()
+
+    await expect(move).resolves.toBeNull()
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+    expect(offlineQueueMock.enqueue).not.toHaveBeenCalled()
+    expect(dataCacheMock.putItem).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+})
+
+describe('useEtebaseStore sharing account boundary', () => {
+  it('does not return stale invitation results', async () => {
+    let release!: (value: any[]) => void
+    coreMock.listIncomingInvitations.mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+    useEtebaseStore.setState({ account: { id: 'old' } as any })
+    const listing = useEtebaseStore.getState().listIncomingInvitations()
+    await vi.waitFor(() => expect(coreMock.listIncomingInvitations).toHaveBeenCalled())
+    bumpAccountEpoch()
+    release([{ uid: 'old-invite' }])
+    await expect(listing).resolves.toEqual([])
+  })
+
+  it('does not log or toast an old-account sharing error', async () => {
+    let reject!: (error: Error) => void
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    coreMock.listCollectionMembers.mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise }))
+    useEtebaseStore.setState({
+      account: { id: 'old' } as any,
+      collections: { calendar: [{ uid: 'old-col' }] as any[], tasks: [], contacts: [], preferences: [] },
+    })
+    const listing = useEtebaseStore.getState().listCollectionMembers('calendar', 'old-col')
+    await vi.waitFor(() => expect(coreMock.listCollectionMembers).toHaveBeenCalled())
+    bumpAccountEpoch()
+    reject(new Error('old failure'))
+    await expect(listing).resolves.toEqual([])
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
   })
 })
 
@@ -1008,7 +1308,10 @@ describe('useEtebaseStore.deleteItemsInCollection', () => {
     const deleted = await useEtebaseStore.getState().deleteItemsInCollection('calendar', 'col-1')
 
     expect(deleted).toBe(1)
-    expect(offlineQueueMock.remove).toHaveBeenCalledWith('queue-1')
+    expect(offlineQueueMock.remove).toHaveBeenCalledWith('queue-1', {
+      accountEpoch: expect.any(Number),
+      accountFingerprint: 'test-account-fingerprint',
+    })
     expect(useCalendarStore.getState().events).toHaveLength(0)
     expect(useCalendarStore.getState().selectedEventId).toBeNull()
   })
@@ -1293,6 +1596,25 @@ describe('useEtebaseStore.refreshCollection', () => {
     expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('loaded')
     expect(useEtebaseStore.getState().itemCache.size).toBe(0)
   })
+
+  it('does not return old-account plaintext when cached content resolves after a boundary', async () => {
+    let resolveContent!: (content: string) => void
+    const getContent = vi.fn(() => new Promise<string>((resolve) => { resolveContent = resolve }))
+    useEtebaseStore.setState({
+      itemCache: new Map([['old-item', { getContent }]]),
+      itemTypeMap: new Map([['old-item', 'calendar']]),
+      itemCollectionMap: new Map([['old-item', 'old-calendar']]),
+    })
+
+    const fetch = useEtebaseStore.getState().fetchAllItems('calendar')
+    await vi.waitFor(() => expect(getContent).toHaveBeenCalled())
+    bumpAccountEpoch()
+    useEtebaseStore.setState({ itemCache: new Map(), itemTypeMap: new Map(), itemCollectionMap: new Map() })
+    resolveContent('PRIVATE_OLD_ACCOUNT_PLAINTEXT')
+
+    await expect(fetch).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+  })
 })
 
 describe('useEtebaseStore.reconcileCollections', () => {
@@ -1380,6 +1702,44 @@ describe('useEtebaseStore.reconcileCollections', () => {
     expect(syncEngine.resume).toHaveBeenCalledTimes(1)
     expect(syncEngine.untrackCollection).toHaveBeenCalledWith('deleted-cal')
     expect(syncEngine.trackCollection).toHaveBeenCalledWith('etebase.vevent', 'new-default-cal')
+  })
+
+  it('does not continue queued cleanup after the account changes', async () => {
+    let releaseQueue!: (entries: any[]) => void
+    offlineQueueMock.getAll.mockImplementationOnce(() => new Promise((resolve) => { releaseQueue = resolve }))
+    const oldCalendar = mockCollection('old-cal')
+    const newCalendar = mockCollection('replacement-cal')
+    const tasks = mockCollection('tasks-1')
+    const contacts = mockCollection('contacts-1')
+    coreMock.listCollections.mockImplementation(async (_account: unknown, collectionType: string) => {
+      if (collectionType === 'etebase.vevent') return [newCalendar]
+      if (collectionType === 'etebase.vtodo') return [tasks]
+      if (collectionType === 'etebase.vcard') return [contacts]
+      return []
+    })
+    const oldSyncEngine = { pause: vi.fn(), resume: vi.fn(), untrackCollection: vi.fn(), trackCollection: vi.fn() }
+    useEtebaseStore.setState({
+      account: { id: 'old' } as any,
+      collections: { calendar: [oldCalendar] as any[], tasks: [tasks] as any[], contacts: [contacts] as any[], preferences: [] },
+      itemCache: new Map(),
+      itemTypeMap: new Map(),
+      itemCollectionMap: new Map(),
+      syncEngine: oldSyncEngine as any,
+    })
+
+    const reconcile = useEtebaseStore.getState().reconcileCollections()
+    await vi.waitFor(() => expect(offlineQueueMock.getAll).toHaveBeenCalled())
+    bumpAccountEpoch()
+    useEtebaseStore.setState({
+      account: { id: 'new' } as any,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+    })
+    releaseQueue([{ id: 'old-queued', type: 'create', collectionType: 'calendar', collectionUid: 'old-cal' }])
+
+    await expect(reconcile).resolves.toBeUndefined()
+    expect(offlineQueueMock.remove).not.toHaveBeenCalled()
+    expect(oldSyncEngine.resume).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().collections.calendar).toEqual([])
   })
 })
 

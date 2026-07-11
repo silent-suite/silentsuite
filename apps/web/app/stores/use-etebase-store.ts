@@ -157,6 +157,7 @@ function keyToCollectionType(type: CollectionTypeKey): string {
 async function ensureCollectionsForAccount(
   account: any,
   core: EtebaseCore,
+  accountEpoch?: number,
 ): Promise<Record<CollectionTypeKey, any[]>> {
   const collections: Record<CollectionTypeKey, any[]> = {
     calendar: [],
@@ -167,11 +168,14 @@ async function ensureCollectionsForAccount(
 
   for (const [key, colType, defaultName] of COLLECTION_DEFINITIONS) {
     const existing = await core.listCollections(account, colType)
+    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
     if (existing.length > 0) {
       collections[key] = existing
       logger.debug(`[etebase-store] Found ${existing.length} existing ${key} collection(s)`)
     } else {
+      if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
       const created = await core.createCollection(account, colType, { name: defaultName })
+      if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
       collections[key] = [created]
       logger.debug(`[etebase-store] Created ${key} collection: ${created.uid}`)
     }
@@ -195,6 +199,7 @@ async function loadInitialDomainItems(
     itemTypeMap: Map<string, CollectionTypeKey>
     itemCollectionMap: Map<string, string>
   },
+  accountEpoch: number,
 ): Promise<{ itemCount: number; pageCount: number }> {
   let itemCount = 0
   let pageCount = 0
@@ -205,8 +210,10 @@ async function loadInitialDomainItems(
 
     while (!done) {
       const response = await core.listItems(account, collection, stoken)
+      assertCurrentAccountEpoch(accountEpoch)
       pageCount += 1
       for (const item of response.items) {
+        assertCurrentAccountEpoch(accountEpoch)
         if (!item.isDeleted) {
           maps.itemCache.set(item.uid, item)
           maps.itemTypeMap.set(item.uid, key)
@@ -272,17 +279,21 @@ async function trackCollectionWithSyncEngine(
   collectionType: string,
   type: CollectionTypeKey,
   collectionUid: string,
+  accountEpoch?: number,
 ): Promise<void> {
+  if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
   if (!syncEngine) return
   syncEngine.trackCollection(collectionType as CollectionType, collectionUid)
   if (!isLocalCacheEnabled()) return
   try {
     const stoken = await cacheGetStoken(collectionUid)
+    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
     if (stoken) {
       syncEngine.setStoken?.(collectionUid, stoken)
       logger.debug(`[etebase-store] Seeded ${type} stoken from cache`)
     }
   } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) throw err
     logger.warn(`[etebase-store] Failed to seed ${type} stoken`, err)
   }
 }
@@ -297,6 +308,7 @@ async function writeItemToCache(
   collectionUid: string,
   itemUid: string,
   content: string,
+  accountEpoch: number,
 ): Promise<void> {
   if (!isLocalCacheEnabled()) return
   const record: CachedItem = {
@@ -306,7 +318,7 @@ async function writeItemToCache(
     content,
     lastModified: Date.now(),
   }
-  await cachePutItem(record)
+  await cachePutItem(record, accountEpoch)
 }
 
 function resolveCollection(
@@ -378,13 +390,15 @@ async function hydrateListStores(
   )
 }
 
-async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid: string, itemUids?: string[]): Promise<number> {
+async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid: string, itemUids?: string[], accountEpoch?: number): Promise<number> {
   if (type === 'preferences') return 0
+  if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
 
   const itemUidSet = itemUids ? new Set(itemUids) : null
 
   if (type === 'calendar') {
     const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
+    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
     let removed = 0
     useCalendarStore.setState((state) => {
       const events = state.events.filter((event) => {
@@ -405,6 +419,7 @@ async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid
   }
   if (type === 'tasks') {
     const { useTaskStore } = await import('@/app/stores/use-task-store')
+    if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
     let removed = 0
     useTaskStore.setState((state) => ({
       tasks: state.tasks.filter((task) => {
@@ -418,6 +433,7 @@ async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid
     return removed
   }
   const { useContactStore } = await import('@/app/stores/use-contact-store')
+  if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
   let removed = 0
   useContactStore.setState((state) => ({
     contacts: state.contacts.filter((contact) => {
@@ -431,19 +447,31 @@ async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid
   return removed
 }
 
-async function removeQueuedMutationsForCollection(type: CollectionTypeKey, collectionUid: string, includeDeletes: boolean): Promise<number> {
+async function removeQueuedMutationsForCollection(
+  type: CollectionTypeKey,
+  collectionUid: string,
+  includeDeletes: boolean,
+  accountEpoch: number,
+  accountFingerprint: string | null,
+): Promise<number> {
   try {
-    const entries = await getQueuedMutations()
+    const guard = { accountEpoch, accountFingerprint: accountFingerprint ?? '' }
+    assertCurrentAccountEpoch(accountEpoch)
+    const entries = await getQueuedMutations(guard)
+    assertCurrentAccountEpoch(accountEpoch)
     const matching = entries.filter((entry) => (
       entry.collectionType === type
       && entry.collectionUid === collectionUid
       && (includeDeletes || entry.type !== 'delete')
     ))
     for (const entry of matching) {
-      await removeQueuedMutation(entry.id)
+      assertCurrentAccountEpoch(accountEpoch)
+      await removeQueuedMutation(entry.id, guard)
+      assertCurrentAccountEpoch(accountEpoch)
     }
     return matching.length
   } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) throw err
     logger.warn(`[etebase-store] Failed to prune queued mutations for ${type}/${collectionUid}`, err)
     return 0
   }
@@ -612,7 +640,7 @@ interface EtebaseActions {
   /**
    * Fetch all items from the local cache for a collection type.
    */
-  fetchAllItems: (type: CollectionTypeKey) => Promise<CachedContentItem[]>
+  fetchAllItems: (type: CollectionTypeKey, accountEpoch?: number) => Promise<CachedContentItem[]>
 
   /**
    * Re-fetch all items from the Etebase server for a collection type.
@@ -697,20 +725,27 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       let cacheEnabled = isLocalCacheEnabled()
       if (getCacheCapabilityStatus().featureFlagEnabled) {
         try {
-          const cacheSurvived = await cacheEnsureFingerprint(accountFingerprint)
-          await cacheEnsureEncryptedEnvelope()
+          const cacheSurvived = await cacheEnsureFingerprint(accountFingerprint, accountEpoch)
+          assertCurrentAccountEpoch(accountEpoch)
+          await cacheEnsureEncryptedEnvelope(accountEpoch)
+          assertCurrentAccountEpoch(accountEpoch)
           cacheEnabled = isLocalCacheEnabled()
           if (cacheSurvived && cacheEnabled) {
             await options?.onCacheHydrate?.()
+            assertCurrentAccountEpoch(accountEpoch)
           }
         } catch (err) {
+          if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) {
+            throw new AccountBoundaryChangedError()
+          }
           logger.warn('[etebase-store] Cache fingerprint check failed', err)
         }
       }
 
       // 2. Ensure collections exist (create if first login, fetch if returning)
       diagnostics.startPhase('ensureCollections')
-      const collections = await ensureCollectionsForAccount(account, core)
+      const collections = await ensureCollectionsForAccount(account, core, accountEpoch)
+      assertCurrentAccountEpoch(accountEpoch)
       diagnostics.completePhase('ensureCollections', {
         collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
       })
@@ -719,6 +754,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       set({ collections })
       diagnostics.startPhase('hydrateLists')
       await hydrateListStores(collections, accountEpoch)
+      assertCurrentAccountEpoch(accountEpoch)
       diagnostics.completePhase('hydrateLists')
 
       // 3. Load items from each visible collection into the cache, one domain
@@ -749,7 +785,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
             itemCache: loadedMaps.itemCache,
             itemTypeMap: loadedMaps.itemTypeMap,
             itemCollectionMap: loadedMaps.itemCollectionMap,
-          })
+          }, accountEpoch)
           itemCount = counts.itemCount
           pageCount = counts.pageCount
           totalLoadedItemCount += itemCount
@@ -762,6 +798,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
             pageCount,
           })
         } catch (err) {
+          if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) {
+            throw new AccountBoundaryChangedError()
+          }
           domainLoadState[key] = 'failed'
           status = 'failed'
           diagnostics.failActivePhase(err)
@@ -795,7 +834,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       diagnostics.startPhase('syncEngineTrackCollections')
       for (const [key, colType] of COLLECTION_DEFINITIONS) {
         for (const collection of collections[key]) {
-          await trackCollectionWithSyncEngine(engine, colType, key, collection.uid)
+          await trackCollectionWithSyncEngine(engine, colType, key, collection.uid, accountEpoch)
+          assertCurrentAccountEpoch(accountEpoch)
         }
       }
       diagnostics.completePhase('syncEngineTrackCollections', {
@@ -849,6 +889,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   createCollection: async (type: CollectionTypeKey, name: string, color?: string) => {
+    const accountEpoch = getAccountEpoch()
     const { account, collections, syncEngine } = get()
     if (!account) {
       logger.warn('[etebase-store] Cannot create collection: no account')
@@ -859,15 +900,17 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const core = await import('@silentsuite/core')
       const colType = keyToCollectionType(type)
       const collection = await core.createCollection(account, colType, { name, color })
+      assertCurrentAccountEpoch(accountEpoch)
       const newCollections = {
         ...collections,
         [type]: [...collections[type], collection],
       }
       syncEngine?.trackCollection(colType as CollectionType, collection.uid)
       set({ collections: newCollections })
-      await hydrateListStores(newCollections)
+      await hydrateListStores(newCollections, accountEpoch)
       return collection.uid
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
       console.error(`[etebase-store] Failed to create ${type} collection`, getSafeErrorDetails(err))
       showErrorToast(`Failed to create ${collectionDisplayName(type)}. Please try again.`)
       return null
@@ -875,7 +918,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   deleteCollection: async (type: CollectionTypeKey, collectionUid: string) => {
-    const { account, collections, domainLoadState, syncEngine } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, domainLoadState, syncEngine, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot delete ${type} collection ${collectionUid}: missing account or collection`)
@@ -894,6 +938,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.deleteCollection(account, collection)
+      assertCurrentAccountEpoch(accountEpoch)
 
       const newItemCache = new Map(get().itemCache)
       const newItemTypeMap = new Map(get().itemTypeMap)
@@ -918,13 +963,17 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         itemCollectionMap: newItemCollectionMap,
       })
       if (isLocalCacheEnabled()) {
-        void cacheReplaceItemsForCollection(collection.uid, [])
+        await cacheReplaceItemsForCollection(collection.uid, [], accountEpoch)
       }
-      await removeQueuedMutationsForCollection(type, collection.uid, true)
-      await removeItemsFromDomainStore(type, collection.uid)
-      await hydrateListStores(newCollections)
+      assertCurrentAccountEpoch(accountEpoch)
+      await removeQueuedMutationsForCollection(type, collection.uid, true, accountEpoch, accountFingerprint)
+      assertCurrentAccountEpoch(accountEpoch)
+      await removeItemsFromDomainStore(type, collection.uid, undefined, accountEpoch)
+      assertCurrentAccountEpoch(accountEpoch)
+      await hydrateListStores(newCollections, accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error(`[etebase-store] Failed to delete ${type} collection`, getSafeErrorDetails(err))
       showErrorToast(`Failed to delete ${collectionDisplayName(type)}. Please try again.`)
       return false
@@ -932,7 +981,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   updateCollectionMeta: async (type: CollectionTypeKey, collectionUid: string, updates: CollectionMetaUpdates) => {
-    const { account, collections } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot update ${type} collection ${collectionUid}: missing account or collection`)
@@ -950,6 +1000,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (updates.color !== undefined) updatedMeta.color = updates.color
       else if (currentMeta.color !== undefined) updatedMeta.color = currentMeta.color
       const updatedCollection = await core.updateCollectionMeta(account, collection, updatedMeta)
+      assertCurrentAccountEpoch(accountEpoch)
       const newCollections = {
         ...get().collections,
         [type]: get().collections[type].map((existing) =>
@@ -957,9 +1008,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         ),
       }
       set({ collections: newCollections })
-      await hydrateListStores(newCollections)
+      await hydrateListStores(newCollections, accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error(`[etebase-store] Failed to update ${type} collection`, getSafeErrorDetails(err))
       showErrorToast(`Failed to update ${collectionDisplayName(type)}. Please try again.`)
       return false
@@ -967,7 +1019,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   reconcileCollections: async () => {
-    const { account, syncEngine } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, syncEngine, accountFingerprint } = get()
     if (!account) {
       logger.warn('[etebase-store] Cannot reconcile collections: no account')
       return
@@ -977,7 +1030,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       const previousCollections = get().collections
-      const activeCollections = await ensureCollectionsForAccount(account, core)
+      const activeCollections = await ensureCollectionsForAccount(account, core, accountEpoch)
+      assertCurrentAccountEpoch(accountEpoch)
       const newItemCache = new Map(get().itemCache)
       const newItemTypeMap = new Map(get().itemTypeMap)
       const newItemCollectionMap = new Map(get().itemCollectionMap)
@@ -1000,6 +1054,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
 
         for (const collectionUid of removedUids) {
+          assertCurrentAccountEpoch(accountEpoch)
           removedCollectionCount++
           syncEngine?.untrackCollection(collectionUid)
           for (const [itemUid, mappedCollectionUid] of Array.from(newItemCollectionMap.entries())) {
@@ -1008,20 +1063,21 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
             newItemTypeMap.delete(itemUid)
             newItemCollectionMap.delete(itemUid)
           }
-          cleanupPromises.push(removeQueuedMutationsForCollection(type, collectionUid, true))
-          cleanupPromises.push(removeItemsFromDomainStore(type, collectionUid))
+          cleanupPromises.push(removeQueuedMutationsForCollection(type, collectionUid, true, accountEpoch, accountFingerprint))
+          cleanupPromises.push(removeItemsFromDomainStore(type, collectionUid, undefined, accountEpoch))
           if (isLocalCacheEnabled()) {
-            cleanupPromises.push(cacheReplaceItemsForCollection(collectionUid, []))
+            cleanupPromises.push(cacheReplaceItemsForCollection(collectionUid, [], accountEpoch))
           }
         }
 
         for (const collection of activeCollections[type]) {
           if (!previousUids.has(collection.uid)) {
-            await trackCollectionWithSyncEngine(syncEngine, colType, type, collection.uid)
+            await trackCollectionWithSyncEngine(syncEngine, colType, type, collection.uid, accountEpoch)
           }
         }
       }
 
+      assertCurrentAccountEpoch(accountEpoch)
       set({
         collections: activeCollections,
         itemCache: newItemCache,
@@ -1029,24 +1085,30 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         itemCollectionMap: newItemCollectionMap,
       })
       await Promise.all(cleanupPromises)
-      await hydrateListStores(activeCollections)
+      assertCurrentAccountEpoch(accountEpoch)
+      await hydrateListStores(activeCollections, accountEpoch)
       logger.debug(`[etebase-store] Reconciled collections (${removedCollectionCount} removed)`)
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return
       console.error('[etebase-store] Failed to reconcile collections', getSafeErrorDetails(err))
       throw err
     } finally {
-      syncEngine?.resume?.()
+      if (isCurrentAccountEpoch(accountEpoch) && get().syncEngine === syncEngine) syncEngine?.resume?.()
     }
   },
 
   listIncomingInvitations: async () => {
+    const accountEpoch = getAccountEpoch()
     const { account } = get()
     if (!account) return []
 
     try {
       const core = await import('@silentsuite/core')
-      return await core.listIncomingInvitations(account)
+      const invitations = await core.listIncomingInvitations(account)
+      assertCurrentAccountEpoch(accountEpoch)
+      return invitations
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return []
       console.error('[etebase-store] Failed to list incoming invitations', getSafeErrorDetails(err))
       showErrorToast('Failed to load sharing invitations. Please try again.')
       return []
@@ -1054,13 +1116,17 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   listOutgoingInvitations: async () => {
+    const accountEpoch = getAccountEpoch()
     const { account } = get()
     if (!account) return []
 
     try {
       const core = await import('@silentsuite/core')
-      return await core.listOutgoingInvitations(account)
+      const invitations = await core.listOutgoingInvitations(account)
+      assertCurrentAccountEpoch(accountEpoch)
+      return invitations
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return []
       console.error('[etebase-store] Failed to list outgoing invitations', getSafeErrorDetails(err))
       showErrorToast('Failed to load sent sharing invitations. Please try again.')
       return []
@@ -1068,6 +1134,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   cancelOutgoingInvitation: async (invitation: any) => {
+    const accountEpoch = getAccountEpoch()
     const { account } = get()
     if (!account) {
       logger.warn('[etebase-store] Cannot cancel outgoing invitation: no account')
@@ -1077,8 +1144,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.cancelOutgoingInvitation(account, invitation)
+      assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error('[etebase-store] Failed to cancel outgoing invitation', getSafeErrorDetails(err))
       showErrorToast('Failed to cancel sharing invitation. Please try again.')
       return false
@@ -1086,6 +1155,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   acceptInvitation: async (invitation: any) => {
+    const accountEpoch = getAccountEpoch()
     const { account } = get()
     if (!account) {
       logger.warn('[etebase-store] Cannot accept invitation: no account')
@@ -1095,9 +1165,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.acceptInvitation(account, invitation)
+      assertCurrentAccountEpoch(accountEpoch)
       await get().reconcileCollections()
+      assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error('[etebase-store] Failed to accept invitation', getSafeErrorDetails(err))
       showErrorToast('Failed to accept sharing invitation. Please try again.')
       return false
@@ -1105,6 +1178,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   rejectInvitation: async (invitation: any) => {
+    const accountEpoch = getAccountEpoch()
     const { account } = get()
     if (!account) {
       logger.warn('[etebase-store] Cannot reject invitation: no account')
@@ -1114,8 +1188,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.rejectInvitation(account, invitation)
+      assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error('[etebase-store] Failed to reject invitation', getSafeErrorDetails(err))
       showErrorToast('Failed to reject sharing invitation. Please try again.')
       return false
@@ -1123,7 +1199,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   inviteToCollection: async (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => {
-    const { account, collections } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot invite to ${type} collection ${collectionUid}: missing account or collection`)
@@ -1133,8 +1210,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.inviteToCollection(account, collection, username, accessLevel)
+      assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error('[etebase-store] Failed to create sharing invitation', getSafeErrorDetails(err))
       showErrorToast('Failed to create sharing invitation. Please verify the username and try again.')
       return false
@@ -1142,14 +1221,18 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   listCollectionMembers: async (type: CollectionTypeKey, collectionUid: string) => {
-    const { account, collections } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) return []
 
     try {
       const core = await import('@silentsuite/core')
-      return await core.listCollectionMembers(account, collection)
+      const members = await core.listCollectionMembers(account, collection)
+      assertCurrentAccountEpoch(accountEpoch)
+      return members
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return []
       console.error('[etebase-store] Failed to list collection members', getSafeErrorDetails(err))
       showErrorToast('Failed to load collection members. Please try again.')
       return []
@@ -1157,7 +1240,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   removeCollectionMember: async (type: CollectionTypeKey, collectionUid: string, username: string) => {
-    const { account, collections } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot remove member from ${type} collection ${collectionUid}: missing account or collection`)
@@ -1167,8 +1251,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.removeCollectionMember(account, collection, username)
+      assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error('[etebase-store] Failed to remove collection member', getSafeErrorDetails(err))
       showErrorToast('Failed to remove collection member. Please try again.')
       return false
@@ -1176,7 +1262,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   leaveCollection: async (type: CollectionTypeKey, collectionUid: string) => {
-    const { account, collections } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot leave ${type} collection ${collectionUid}: missing account or collection`)
@@ -1186,9 +1273,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.leaveCollection(account, collection)
+      assertCurrentAccountEpoch(accountEpoch)
       await get().reconcileCollections()
+      assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error('[etebase-store] Failed to leave collection', getSafeErrorDetails(err))
       showErrorToast('Failed to leave shared collection. Please try again.')
       return false
@@ -1196,7 +1286,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   modifyCollectionMemberAccess: async (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => {
-    const { account, collections } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot modify member access for ${type} collection ${collectionUid}: missing account or collection`)
@@ -1206,8 +1297,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.modifyCollectionMemberAccess(account, collection, username, accessLevel)
+      assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error('[etebase-store] Failed to change collection member access', getSafeErrorDetails(err))
       showErrorToast('Failed to update collection member access. Please try again.')
       return false
@@ -1215,7 +1308,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   deleteItemsInCollection: async (type: CollectionTypeKey, collectionUid: string) => {
-    const { account, collections, domainLoadState, itemCache, itemCollectionMap } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, domainLoadState, itemCache, itemCollectionMap, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot clear ${type} collection ${collectionUid}: missing account or collection`)
@@ -1227,8 +1321,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return 0
     }
 
-    const removeCachedItems = (uids: string[]) => {
+    const removeCachedItems = async (uids: string[]) => {
       if (uids.length === 0) return
+      assertCurrentAccountEpoch(accountEpoch)
       const uidSet = new Set(uids)
       const newItemCache = new Map(get().itemCache)
       const newItemTypeMap = new Map(get().itemTypeMap)
@@ -1238,9 +1333,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         newItemTypeMap.delete(uid)
         newItemCollectionMap.delete(uid)
         if (isLocalCacheEnabled()) {
-          void cacheDeleteItem(uid)
+          await cacheDeleteItem(uid, accountEpoch)
+          assertCurrentAccountEpoch(accountEpoch)
         }
       }
+      assertCurrentAccountEpoch(accountEpoch)
       set({ itemCache: newItemCache, itemTypeMap: newItemTypeMap, itemCollectionMap: newItemCollectionMap })
     }
 
@@ -1250,8 +1347,13 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       .filter((entry): entry is { uid: string; item: any } => Boolean(entry.item))
 
     if (itemEntries.length === 0) {
-      await removeQueuedMutationsForCollection(type, collection.uid, true)
-      return await removeItemsFromDomainStore(type, collection.uid)
+      try {
+        await removeQueuedMutationsForCollection(type, collection.uid, true, accountEpoch, accountFingerprint)
+        return await removeItemsFromDomainStore(type, collection.uid, undefined, accountEpoch)
+      } catch (err) {
+        if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return 0
+        throw err
+      }
     }
 
     const successfulUids: string[] = []
@@ -1266,51 +1368,68 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const batchItems = batchEntries.map(({ item }) => item)
         for (const item of batchItems) item.delete()
         await itemManager.batch(batchItems)
+        assertCurrentAccountEpoch(accountEpoch)
         successfulUids.push(...batchEntries.map(({ uid }) => uid))
       }
 
-      removeCachedItems(successfulUids)
+      await removeCachedItems(successfulUids)
       if (isLocalCacheEnabled()) {
-        void cacheReplaceItemsForCollection(collection.uid, [])
+        await cacheReplaceItemsForCollection(collection.uid, [], accountEpoch)
+        assertCurrentAccountEpoch(accountEpoch)
       }
-      await removeQueuedMutationsForCollection(type, collection.uid, true)
-      const removedLocal = await removeItemsFromDomainStore(type, collection.uid)
+      await removeQueuedMutationsForCollection(type, collection.uid, true, accountEpoch, accountFingerprint)
+      const removedLocal = await removeItemsFromDomainStore(type, collection.uid, undefined, accountEpoch)
+      assertCurrentAccountEpoch(accountEpoch)
       return Math.max(successfulUids.length, removedLocal)
     } catch (err) {
-      if (isOfflineError(err)) {
-        logger.warn(`[etebase-store] Offline — queuing clear for ${type}/${collection.uid}`)
-        await removeQueuedMutationsForCollection(type, collection.uid, false)
-        const alreadyDeleted = new Set(successfulUids)
-        for (const { uid } of itemEntries) {
-          if (alreadyDeleted.has(uid)) continue
-          try {
-            await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid: uid })
-          } catch (queueErr) {
-            console.error('[etebase-store] Failed to enqueue collection item delete', getSafeErrorDetails(queueErr))
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return 0
+      try {
+        if (isOfflineError(err)) {
+          assertCurrentAccountEpoch(accountEpoch)
+          logger.warn(`[etebase-store] Offline — queuing clear for ${type}/${collection.uid}`)
+          await removeQueuedMutationsForCollection(type, collection.uid, false, accountEpoch, accountFingerprint)
+          const alreadyDeleted = new Set(successfulUids)
+          for (const { uid } of itemEntries) {
+            if (alreadyDeleted.has(uid)) continue
+            try {
+              assertCurrentAccountEpoch(accountEpoch)
+              await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid: uid }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+              assertCurrentAccountEpoch(accountEpoch)
+            } catch (queueErr) {
+              if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return 0
+              console.error('[etebase-store] Failed to enqueue collection item delete', getSafeErrorDetails(queueErr))
+            }
           }
+          await removeCachedItems(itemEntries.map(({ uid }) => uid))
+          if (isLocalCacheEnabled()) {
+            await cacheReplaceItemsForCollection(collection.uid, [], accountEpoch)
+            assertCurrentAccountEpoch(accountEpoch)
+          }
+          const removedLocal = await removeItemsFromDomainStore(type, collection.uid, undefined, accountEpoch)
+          assertCurrentAccountEpoch(accountEpoch)
+          return Math.max(itemEntries.length, removedLocal)
         }
-        removeCachedItems(itemEntries.map(({ uid }) => uid))
-        if (isLocalCacheEnabled()) {
-          void cacheReplaceItemsForCollection(collection.uid, [])
-        }
-        const removedLocal = await removeItemsFromDomainStore(type, collection.uid)
-        return Math.max(itemEntries.length, removedLocal)
-      }
 
-      console.error(`[etebase-store] Failed to clear ${type} collection`, getSafeErrorDetails(err))
-      if (successfulUids.length > 0) {
-        removeCachedItems(successfulUids)
-        await removeItemsFromDomainStore(type, collection.uid, successfulUids)
-        showErrorToast(`Deleted ${successfulUids.length} of ${itemEntries.length} ${collectionItemNoun(type)}. Please try again to delete the rest.`)
-      } else {
-        showErrorToast(`Failed to delete ${collectionItemNoun(type)}. Please try again.`)
+        console.error(`[etebase-store] Failed to clear ${type} collection`, getSafeErrorDetails(err))
+        if (successfulUids.length > 0) {
+          await removeCachedItems(successfulUids)
+          await removeItemsFromDomainStore(type, collection.uid, successfulUids, accountEpoch)
+          assertCurrentAccountEpoch(accountEpoch)
+          showErrorToast(`Deleted ${successfulUids.length} of ${itemEntries.length} ${collectionItemNoun(type)}. Please try again to delete the rest.`)
+        } else {
+          showErrorToast(`Failed to delete ${collectionItemNoun(type)}. Please try again.`)
+        }
+        return 0
+      } catch (cleanupErr) {
+        if (!isCurrentAccountEpoch(accountEpoch) || cleanupErr instanceof AccountBoundaryChangedError) return 0
+        throw cleanupErr
       }
-      return 0
     }
   },
 
   createItem: async (type: CollectionTypeKey, content: string, tempId?: string, collectionUid?: string) => {
-    const { account, collections } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot create item: no account or ${type} collection`)
@@ -1320,6 +1439,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       const item = await core.createItem(account, collection, content)
+      assertCurrentAccountEpoch(accountEpoch)
       // Cache the item for future update/delete
       const itemCache = new Map(get().itemCache)
       const itemTypeMap = new Map(get().itemTypeMap)
@@ -1329,15 +1449,18 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       itemCollectionMap.set(item.uid, collection.uid)
       set({ itemCache, itemTypeMap, itemCollectionMap })
       // Write through to the local persistence cache so a reload paints it.
-      void writeItemToCache(type, collection.uid, item.uid, content)
+      await writeItemToCache(type, collection.uid, item.uid, content, accountEpoch)
       return item.uid
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
       if (isOfflineError(err)) {
         const queueTempId = tempId ?? `pending-${Date.now()}`
         logger.warn(`[etebase-store] Offline — queuing create for ${type} (tempId: ${queueTempId})`)
         try {
-          await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId: queueTempId })
+          await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId: queueTempId }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+          assertCurrentAccountEpoch(accountEpoch)
         } catch (queueErr) {
+          if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return null
           console.error('[etebase-store] Failed to enqueue create', getSafeErrorDetails(queueErr))
         }
       } else {
@@ -1349,7 +1472,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   createItemsBatch: async (type: CollectionTypeKey, contents: { content: string; tempId: string }[], collectionUid?: string) => {
-    const { account, collections } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
     if (!account || !collection) {
       logger.warn(`[etebase-store] Cannot create items: no account or ${type} collection`)
@@ -1374,9 +1498,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       const items: any[] = []
       for (let i = 0; i < contents.length; i++) {
         const item = await itemManager.create({}, contents[i]!.content)
+        assertCurrentAccountEpoch(accountEpoch)
         items.push(item)
         if (i > 0 && i % YIELD_EVERY === 0) {
           await new Promise((r) => setTimeout(r, 0))
+          assertCurrentAccountEpoch(accountEpoch)
         }
       }
 
@@ -1396,11 +1522,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
         while (attempt < MAX_BATCH_RETRIES) {
           try {
+            assertCurrentAccountEpoch(accountEpoch)
             await itemManager.batch(batch)
+            assertCurrentAccountEpoch(accountEpoch)
             succeeded = true
             lastSuccessfulItemIndex = i + batch.length - 1
             break
           } catch (err) {
+            if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
             // Offline errors are handled by the outer catch + offline queue —
             // bubble out instead of retrying on a known-down network.
             if (isOfflineError(err)) throw err
@@ -1415,6 +1544,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
               err,
             )
             await new Promise((r) => setTimeout(r, backoffMs))
+            assertCurrentAccountEpoch(accountEpoch)
           }
         }
 
@@ -1449,9 +1579,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
           uids.push(null)
         }
       }
+      assertCurrentAccountEpoch(accountEpoch)
       set({ itemCache, itemTypeMap, itemCollectionMap })
       if (isLocalCacheEnabled() && cachedRecords.length > 0) {
-        void cachePutItems(cachedRecords)
+        await cachePutItems(cachedRecords, accountEpoch)
+        assertCurrentAccountEpoch(accountEpoch)
       }
 
       if (permanentFailure) {
@@ -1468,12 +1600,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
       return uids
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return contents.map(() => null)
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing ${contents.length} creates for ${type}`)
         for (const { content, tempId } of contents) {
           try {
-            await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId })
+            await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+            assertCurrentAccountEpoch(accountEpoch)
           } catch (queueErr) {
+            if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return contents.map(() => null)
             console.error('[etebase-store] Failed to enqueue create', getSafeErrorDetails(queueErr))
           }
         }
@@ -1483,12 +1618,13 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
       return contents.map(() => null)
     } finally {
-      syncEngine?.resume()
+      if (isCurrentAccountEpoch(accountEpoch) && get().syncEngine === syncEngine) syncEngine?.resume()
     }
   },
 
   updateItem: async (type: CollectionTypeKey, itemUid: string, content: string) => {
-    const { account, collections, itemCache, itemCollectionMap } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, itemCollectionMap.get(itemUid))
     const item = itemCache.get(itemUid)
     if (!account || !collection || !item) {
@@ -1498,17 +1634,22 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       const updated = await core.updateItem(account, collection, item, content)
+      assertCurrentAccountEpoch(accountEpoch)
       const newCache = new Map(get().itemCache)
       newCache.set(itemUid, updated)
       set({ itemCache: newCache })
-      void writeItemToCache(type, collection.uid, itemUid, content)
+      await writeItemToCache(type, collection.uid, itemUid, content, accountEpoch)
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
         try {
-          await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid })
+          await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+          assertCurrentAccountEpoch(accountEpoch)
         } catch (queueErr) {
+          if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return
           console.error('[etebase-store] Failed to enqueue update', getSafeErrorDetails(queueErr))
         }
       } else {
@@ -1519,7 +1660,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   moveItem: async (type: CollectionTypeKey, itemUid: string, content: string, targetCollectionUid: string, sourceCollectionUid?: string) => {
-    const { account, collections, itemCache, itemCollectionMap } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
     const resolvedSourceCollectionUid = itemCollectionMap.get(itemUid) ?? sourceCollectionUid
     const sourceCollection = resolveCollection(collections, type, resolvedSourceCollectionUid)
     const targetCollection = resolveCollection(collections, type, targetCollectionUid)
@@ -1529,53 +1671,75 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       return null
     }
 
-    if (sourceCollection.uid === targetCollection.uid) {
-      await get().updateItem(type, itemUid, content)
-      return itemUid
-    }
-
-    const core = await import('@silentsuite/core')
-    const created = await core.createItem(account, targetCollection, content)
-    let keepSourceUntilQueuedDelete = false
-
     try {
-      await core.deleteItem(account, sourceCollection, item)
-    } catch (err) {
-      if (isOfflineError(err)) {
-        logger.warn(`[etebase-store] Offline after moving ${type}/${itemUid} - queuing source delete`)
-        await enqueue({ type: 'delete', collectionType: type, collectionUid: sourceCollection.uid, itemUid })
-        keepSourceUntilQueuedDelete = true
-      } else {
-        try {
-          await core.deleteItem(account, targetCollection, created)
-        } catch (rollbackErr) {
-          logger.warn(`[etebase-store] Failed to roll back moved ${type} item ${created.uid}`, rollbackErr)
-        }
-        throw err
+      if (sourceCollection.uid === targetCollection.uid) {
+        await get().updateItem(type, itemUid, content)
+        assertCurrentAccountEpoch(accountEpoch)
+        return itemUid
       }
-    }
 
-    const newCache = new Map(get().itemCache)
-    const newTypeMap = new Map(get().itemTypeMap)
-    const newCollectionMap = new Map(get().itemCollectionMap)
-    if (!keepSourceUntilQueuedDelete) {
-      newCache.delete(itemUid)
-      newTypeMap.delete(itemUid)
-      newCollectionMap.delete(itemUid)
+      const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
+      const created = await core.createItem(account, targetCollection, content)
+      assertCurrentAccountEpoch(accountEpoch)
+      let keepSourceUntilQueuedDelete = false
+
+      try {
+        await core.deleteItem(account, sourceCollection, item)
+        assertCurrentAccountEpoch(accountEpoch)
+      } catch (err) {
+        if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
+        if (isOfflineError(err)) {
+          assertCurrentAccountEpoch(accountEpoch)
+          logger.warn(`[etebase-store] Offline after moving ${type}/${itemUid} - queuing source delete`)
+          await enqueue({ type: 'delete', collectionType: type, collectionUid: sourceCollection.uid, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+          assertCurrentAccountEpoch(accountEpoch)
+          keepSourceUntilQueuedDelete = true
+        } else {
+          try {
+            assertCurrentAccountEpoch(accountEpoch)
+            await core.deleteItem(account, targetCollection, created)
+            assertCurrentAccountEpoch(accountEpoch)
+          } catch (rollbackErr) {
+            if (!isCurrentAccountEpoch(accountEpoch) || rollbackErr instanceof AccountBoundaryChangedError) return null
+            logger.warn(`[etebase-store] Failed to roll back moved ${type} item ${created.uid}`, rollbackErr)
+          }
+          throw err
+        }
+      }
+
+      assertCurrentAccountEpoch(accountEpoch)
+      const newCache = new Map(get().itemCache)
+      const newTypeMap = new Map(get().itemTypeMap)
+      const newCollectionMap = new Map(get().itemCollectionMap)
+      if (!keepSourceUntilQueuedDelete) {
+        newCache.delete(itemUid)
+        newTypeMap.delete(itemUid)
+        newCollectionMap.delete(itemUid)
+      }
+      newCache.set(created.uid, created)
+      newTypeMap.set(created.uid, type)
+      newCollectionMap.set(created.uid, targetCollection.uid)
+      assertCurrentAccountEpoch(accountEpoch)
+      set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
+      if (isLocalCacheEnabled()) {
+        if (!keepSourceUntilQueuedDelete) await cacheDeleteItem(itemUid, accountEpoch)
+        assertCurrentAccountEpoch(accountEpoch)
+        await writeItemToCache(type, targetCollection.uid, created.uid, content, accountEpoch)
+        assertCurrentAccountEpoch(accountEpoch)
+      }
+      return created.uid
+    } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
+      console.error(`[etebase-store] Failed to move ${type} item`, getSafeErrorDetails(err))
+      showErrorToast(`Failed to move ${collectionItemNoun(type).replace(/s$/, '')}. Please try again.`)
+      return null
     }
-    newCache.set(created.uid, created)
-    newTypeMap.set(created.uid, type)
-    newCollectionMap.set(created.uid, targetCollection.uid)
-    set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
-    if (isLocalCacheEnabled()) {
-      if (!keepSourceUntilQueuedDelete) void cacheDeleteItem(itemUid)
-      void writeItemToCache(type, targetCollection.uid, created.uid, content)
-    }
-    return created.uid
   },
 
   deleteItem: async (type: CollectionTypeKey, itemUid: string) => {
-    const { account, collections, itemCache, itemCollectionMap } = get()
+    const accountEpoch = getAccountEpoch()
+    const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, itemCollectionMap.get(itemUid))
     const item = itemCache.get(itemUid)
     if (!account || !collection || !item) {
@@ -1586,6 +1750,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     try {
       const core = await import('@silentsuite/core')
       await core.deleteItem(account, collection, item)
+      assertCurrentAccountEpoch(accountEpoch)
       const newCache = new Map(get().itemCache)
       const newTypeMap = new Map(get().itemTypeMap)
       const newCollectionMap = new Map(get().itemCollectionMap)
@@ -1594,14 +1759,18 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCollectionMap.delete(itemUid)
       set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
       if (isLocalCacheEnabled()) {
-        void cacheDeleteItem(itemUid)
+        await cacheDeleteItem(itemUid, accountEpoch)
+        assertCurrentAccountEpoch(accountEpoch)
       }
     } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing delete for ${type}/${itemUid}`)
         try {
-          await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid })
+          await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+          assertCurrentAccountEpoch(accountEpoch)
         } catch (queueErr) {
+          if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return
           console.error('[etebase-store] Failed to enqueue delete', getSafeErrorDetails(queueErr))
         }
       } else {
@@ -1611,7 +1780,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  fetchAllItems: async (type: CollectionTypeKey) => {
+  fetchAllItems: async (type: CollectionTypeKey, accountEpoch = getAccountEpoch()) => {
+    assertCurrentAccountEpoch(accountEpoch)
     const { itemCache, itemTypeMap, itemCollectionMap } = get()
     const results: CachedContentItem[] = []
 
@@ -1619,20 +1789,23 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (itemTypeMap.get(uid) !== type) continue
       try {
         const content = await item.getContent()
+        assertCurrentAccountEpoch(accountEpoch)
         const contentStr = typeof content === 'string' ? content : new TextDecoder().decode(content)
         const collectionUid = itemCollectionMap.get(uid)
         if (collectionUid) results.push({ uid, content: contentStr, collectionUid })
-      } catch {
+      } catch (err) {
+        if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
         // Skip items that fail to decode
       }
     }
 
+    assertCurrentAccountEpoch(accountEpoch)
     return results
   },
 
   refreshCollection: async (type: CollectionTypeKey, collectionUid?: string) => {
     const accountEpoch = getAccountEpoch()
-    const { account, collections } = get()
+    const { account, collections, accountFingerprint } = get()
     const targetCollections = collectionUid
       ? [resolveCollection(collections, type, collectionUid)].filter(Boolean)
       : collections[type]
@@ -1741,9 +1914,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
       if (err instanceof AccountBoundaryChangedError) throw err
+      assertCurrentAccountEpoch(accountEpoch)
       console.error(`[etebase-store] Failed to refresh ${type}`, getSafeErrorDetails(err))
+      assertCurrentAccountEpoch(accountEpoch)
       set((state) => ({ domainLoadState: { ...state.domainLoadState, [type]: 'failed' } }))
-      return get().fetchAllItems(type)
+      assertCurrentAccountEpoch(accountEpoch)
+      return get().fetchAllItems(type, accountEpoch)
     }
   },
 

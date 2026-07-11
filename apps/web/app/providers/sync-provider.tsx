@@ -138,7 +138,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           })
           .catch((err) => logger.warn('[sync-provider] Label suggestions initialization failed', getSafeErrorDetails(err)))
         void usePreferencesSyncStore.getState().initialize()
-          .catch((err) => logger.warn('[sync-provider] Preferences sync initialization failed', getSafeErrorDetails(err)))
+          .catch((err) => {
+            if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) return
+            logger.warn('[sync-provider] Preferences sync initialization failed', getSafeErrorDetails(err))
+          })
 
         // Wire SyncEngine status
         const statusHandlerStartedAt = nowMs()
@@ -271,7 +274,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const startedAt = nowMs()
       const cacheEnabled = isLocalCacheEnabled()
       try {
-        const items = await useEtebaseStore.getState().fetchAllItems(type)
+        const items = await useEtebaseStore.getState().fetchAllItems(type, accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
         let domainItemCount = 0
         if (useEtebaseStore.getState().domainLoadState[type] === 'loaded') {
@@ -339,7 +342,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             assertCurrentAccountEpoch(accountEpoch)
             updatePartialLoadFlag()
             if (useEtebaseStore.getState().domainLoadState.tasks === 'loaded') {
-              const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks')
+              const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks', accountEpoch)
               assertCurrentAccountEpoch(accountEpoch)
               const tasks = taskItems.map((item) => {
                 const task = core.deserializeTask(item.content)
@@ -358,7 +361,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             assertCurrentAccountEpoch(accountEpoch)
             updatePartialLoadFlag()
             if (useEtebaseStore.getState().domainLoadState.contacts === 'loaded') {
-              const contactItems = await useEtebaseStore.getState().fetchAllItems('contacts')
+              const contactItems = await useEtebaseStore.getState().fetchAllItems('contacts', accountEpoch)
               assertCurrentAccountEpoch(accountEpoch)
               const contacts = contactItems.map((item) => {
                 const contact = core.deserializeContact(item.content)
@@ -377,7 +380,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             assertCurrentAccountEpoch(accountEpoch)
             updatePartialLoadFlag()
             if (useEtebaseStore.getState().domainLoadState.calendar === 'loaded') {
-              const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar')
+              const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar', accountEpoch)
               assertCurrentAccountEpoch(accountEpoch)
               const events = eventItems.map((item) => {
                 const event = core.deserializeCalendarEvent(item.content)

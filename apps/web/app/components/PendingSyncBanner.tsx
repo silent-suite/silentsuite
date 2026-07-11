@@ -4,12 +4,16 @@ import { useState, useEffect } from 'react'
 import { AlertTriangle, CloudOff, RefreshCw, Trash2 } from 'lucide-react'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { clearFailed, retryFailed, getStaleEntries, MAX_QUEUE_SIZE } from '@/app/lib/offline-queue'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { AccountBoundaryChangedError, getAccountEpoch } from '@/app/lib/account-epoch'
 
 export function PendingSyncBanner() {
   const pendingCount = useSyncStore((s) => s.pendingQueueCount)
   const failedCount = useSyncStore((s) => s.failedQueueCount)
   const isOnline = useSyncStore((s) => s.isOnline)
   const replayOfflineQueue = useSyncStore((s) => s.replayOfflineQueue)
+  const account = useEtebaseStore((s) => s.account)
+  const accountFingerprint = useEtebaseStore((s) => s.accountFingerprint)
 
   const [hasStaleEntries, setHasStaleEntries] = useState(false)
 
@@ -22,9 +26,11 @@ export function PendingSyncBanner() {
 
     let cancelled = false
     const check = () => {
-      getStaleEntries().then((stale) => {
+      if (!account || !accountFingerprint) return
+      const guard = { accountEpoch: getAccountEpoch(), accountFingerprint }
+      getStaleEntries(guard).then((stale) => {
         if (!cancelled) setHasStaleEntries(stale.length > 0)
-      })
+      }).catch(() => {})
     }
     check()
     const interval = setInterval(check, 60_000) // re-check every minute
@@ -32,21 +38,33 @@ export function PendingSyncBanner() {
       cancelled = true
       clearInterval(interval)
     }
-  }, [pendingCount])
+  }, [pendingCount, account, accountFingerprint])
 
   if (pendingCount === 0 && failedCount === 0) return null
 
   const isQueueNearLimit = pendingCount >= MAX_QUEUE_SIZE
 
   const handleRetryFailed = async () => {
-    await retryFailed()
-    if (isOnline) {
-      await replayOfflineQueue()
+    if (!account || !accountFingerprint) return
+    try {
+      await retryFailed({ accountEpoch: getAccountEpoch(), accountFingerprint })
+      if (isOnline) {
+        await replayOfflineQueue()
+      }
+    } catch (err) {
+      if (err instanceof AccountBoundaryChangedError) return
+      throw err
     }
   }
 
   const handleDiscardFailed = async () => {
-    await clearFailed()
+    if (!account || !accountFingerprint) return
+    try {
+      await clearFailed({ accountEpoch: getAccountEpoch(), accountFingerprint })
+    } catch (err) {
+      if (err instanceof AccountBoundaryChangedError) return
+      throw err
+    }
   }
 
   return (
