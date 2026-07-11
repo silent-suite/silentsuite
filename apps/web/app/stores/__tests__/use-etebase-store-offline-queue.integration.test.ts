@@ -1,13 +1,9 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getAll, getPendingCount, replay } from '@/app/lib/offline-queue'
-import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, queueGuard, resetRealOfflineQueue } from './offline-queue-store-test-utils'
+import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, changeAccountWhenQueuePutRuns, queueGuard, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
-const coreMock = vi.hoisted(() => ({
-  createItem: vi.fn(),
-  updateItem: vi.fn(),
-  deleteItem: vi.fn(),
-}))
+const coreMock = vi.hoisted(() => ({ createItem: vi.fn(), updateItem: vi.fn(), deleteItem: vi.fn() }))
 const toastMock = vi.hoisted(() => ({ showErrorToast: vi.fn() }))
 
 vi.mock('@silentsuite/core', async (importOriginal) => ({
@@ -45,6 +41,22 @@ function setAccount(options: {
   return manager
 }
 
+function switchAccountAtBoundary() {
+  useEtebaseStore.setState({
+    account: {} as any,
+    accountFingerprint: 'new-account',
+    itemCache: new Map([['new-item', cachedItem('new-item')]]),
+    itemTypeMap: new Map([['new-item', 'calendar']]),
+    itemCollectionMap: new Map([['new-item', 'new-col']]),
+  })
+}
+
+function expectNewAccountStateUntouched() {
+  expect([...useEtebaseStore.getState().itemCache.keys()]).toEqual(['new-item'])
+  expect([...useEtebaseStore.getState().itemTypeMap.keys()]).toEqual(['new-item'])
+  expect([...useEtebaseStore.getState().itemCollectionMap.entries()]).toEqual([['new-item', 'new-col']])
+}
+
 async function expectOwned(types: string[]) {
   const entries = await getAll(queueGuard())
   expect(entries.map((entry) => entry.type)).toEqual(types)
@@ -69,9 +81,7 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
   it('real createItem fallback persists the active fingerprint and is visible to guarded count and replay', async () => {
     setAccount()
     coreMock.createItem.mockRejectedValueOnce(offlineError())
-
     await expect(useEtebaseStore.getState().createItem('calendar', 'VEVENT', 'temp-1', 'col-1')).resolves.toBeNull()
-
     await expectOwned(['create'])
   })
 
@@ -79,29 +89,40 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     setAccount()
     coreMock.createItem.mockRejectedValueOnce(offlineError())
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const putSpy = bumpEpochWhenQueuePutRuns(() => {
-      useEtebaseStore.setState({ account: {} as any, accountFingerprint: 'new-account', itemCache: new Map() })
-    })
-
-    await expect(useEtebaseStore.getState().createItem('calendar', 'OLD', 'temp-old', 'col-1')).resolves.toBeNull()
-    putSpy.mockRestore()
-
-    expect(await getAll()).toEqual([])
-    expect(errorSpy).not.toHaveBeenCalled()
-    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
-    errorSpy.mockRestore()
+    const putSpy = bumpEpochWhenQueuePutRuns(switchAccountAtBoundary)
+    try {
+      await expect(useEtebaseStore.getState().createItem('calendar', 'OLD', 'temp-old', 'col-1')).resolves.toBeNull()
+      expect(await getAll()).toEqual([])
+      expectNewAccountStateUntouched()
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    } finally {
+      putSpy.mockRestore()
+      errorSpy.mockRestore()
+    }
   })
 
   it('batch create fallback enqueues each create with the captured owner', async () => {
     const manager = setAccount()
     manager.create.mockRejectedValueOnce(offlineError())
-
-    await useEtebaseStore.getState().createItemsBatch('calendar', [
-      { content: 'A', tempId: 'a' },
-      { content: 'B', tempId: 'b' },
-    ], 'col-1')
-
+    await useEtebaseStore.getState().createItemsBatch('calendar', [{ content: 'A', tempId: 'a' }, { content: 'B', tempId: 'b' }], 'col-1')
     await expectOwned(['create', 'create'])
+  })
+
+  it('batch create stops after a second put boundary and preserves the first committed create', async () => {
+    const manager = setAccount()
+    manager.create.mockRejectedValueOnce(offlineError())
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const putSpy = changeAccountWhenQueuePutRuns(switchAccountAtBoundary, { putNumber: 2 })
+    try {
+      await expect(useEtebaseStore.getState().createItemsBatch('calendar', [
+        { content: 'A', tempId: 'a' }, { content: 'B', tempId: 'b' }, { content: 'C', tempId: 'c' },
+      ], 'col-1')).resolves.toEqual([null, null, null])
+      expect((await getAll()).map((entry) => entry.tempId)).toEqual(['a'])
+      expectNewAccountStateUntouched()
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    } finally { putSpy.mockRestore(); errorSpy.mockRestore() }
   })
 
   it.each([
@@ -111,10 +132,26 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
     coreMock.updateItem.mockRejectedValueOnce(offlineError())
     coreMock.deleteItem.mockRejectedValueOnce(offlineError())
-
     await mutate()
-
     await expectOwned([expectedType])
+  })
+
+  it.each([
+    ['updateItem', async () => useEtebaseStore.getState().updateItem('calendar', 'item-1', 'NEW')],
+    ['deleteItem', async () => useEtebaseStore.getState().deleteItem('calendar', 'item-1')],
+  ] as const)('%s quietly cancels at its real queue put boundary', async (_name, mutate) => {
+    setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
+    coreMock.updateItem.mockRejectedValueOnce(offlineError())
+    coreMock.deleteItem.mockRejectedValueOnce(offlineError())
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const putSpy = changeAccountWhenQueuePutRuns(switchAccountAtBoundary)
+    try {
+      await expect(mutate()).resolves.toBeUndefined()
+      expect(await getAll()).toEqual([])
+      expectNewAccountStateUntouched()
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    } finally { putSpy.mockRestore(); errorSpy.mockRestore() }
   })
 
   it('collection clear fallback enqueues remaining source deletes with the captured owner', async () => {
@@ -123,24 +160,65 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
       { uid: 'item-2', collectionUid: 'col-1', item: cachedItem('item-2') },
     ] })
     manager.batch.mockRejectedValueOnce(offlineError())
-
     await useEtebaseStore.getState().deleteItemsInCollection('calendar', 'col-1')
-
     await expectOwned(['delete', 'delete'])
   })
 
+  it('collection clear stops after a later put abort, preserves prior committed deletes, and skips stale cleanup', async () => {
+    const manager = setAccount({ items: [
+      { uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') },
+      { uid: 'item-2', collectionUid: 'col-1', item: cachedItem('item-2') },
+      { uid: 'item-3', collectionUid: 'col-1', item: cachedItem('item-3') },
+    ] })
+    manager.batch.mockRejectedValueOnce(offlineError())
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const putSpy = changeAccountWhenQueuePutRuns(switchAccountAtBoundary, { putNumber: 2 })
+    try {
+      await expect(useEtebaseStore.getState().deleteItemsInCollection('calendar', 'col-1')).resolves.toBe(0)
+      expect((await getAll()).map((entry) => entry.itemUid)).toEqual(['item-1'])
+      expectNewAccountStateUntouched()
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    } finally { putSpy.mockRestore(); errorSpy.mockRestore() }
+  })
+
   it('move source-delete fallback enqueues against the source collection with the captured owner', async () => {
-    setAccount({
-      collections: [collection('source'), collection('target')],
-      items: [{ uid: 'item-1', collectionUid: 'source', item: cachedItem('item-1') }],
-    })
+    setAccount({ collections: [collection('source'), collection('target')], items: [{ uid: 'item-1', collectionUid: 'source', item: cachedItem('item-1') }] })
     coreMock.createItem.mockResolvedValueOnce(cachedItem('created-target'))
     coreMock.deleteItem.mockRejectedValueOnce(offlineError())
-
     await useEtebaseStore.getState().moveItem('calendar', 'item-1', 'NEW', 'target', 'source')
-
     const [entry] = await getAll(queueGuard())
     expect(entry).toMatchObject({ type: 'delete', collectionUid: 'source', itemUid: 'item-1', accountFingerprint: TEST_FINGERPRINT })
     await expectOwned(['delete'])
+  })
+
+  it('move source-delete quietly cancels at the real queue put boundary without publishing the target', async () => {
+    setAccount({ collections: [collection('source'), collection('target')], items: [{ uid: 'item-1', collectionUid: 'source', item: cachedItem('item-1') }] })
+    coreMock.createItem.mockResolvedValueOnce(cachedItem('created-target'))
+    coreMock.deleteItem.mockRejectedValueOnce(offlineError())
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const putSpy = changeAccountWhenQueuePutRuns(switchAccountAtBoundary)
+    try {
+      await expect(useEtebaseStore.getState().moveItem('calendar', 'item-1', 'NEW', 'target', 'source')).resolves.toBeNull()
+      expect(await getAll()).toEqual([])
+      expectNewAccountStateUntouched()
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    } finally { putSpy.mockRestore(); errorSpy.mockRestore() }
+  })
+
+  it('missing fingerprint quietly cancels before queue persistence', async () => {
+    setAccount()
+    useEtebaseStore.setState({ accountFingerprint: null })
+    coreMock.createItem.mockRejectedValueOnce(offlineError())
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const putSpy = vi.spyOn(IDBObjectStore.prototype, 'put')
+    try {
+      await expect(useEtebaseStore.getState().createItem('calendar', 'OLD', 'temp-old', 'col-1')).resolves.toBeNull()
+      expect(await getAll()).toEqual([])
+      expect(putSpy).not.toHaveBeenCalled()
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    } finally { putSpy.mockRestore(); errorSpy.mockRestore() }
   })
 })

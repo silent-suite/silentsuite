@@ -32,6 +32,7 @@ import {
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { RestoreDiagnosticsRecorder, classifySessionPersistence } from '@/app/lib/sync-restore-diagnostics'
 import { AccountBoundaryChangedError, assertCurrentAccountEpoch, bumpAccountEpoch, getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
+import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard } from '@/app/lib/offline-queue-account'
 
 /**
  * Holds live Etebase SDK objects (Account, Collections, Items, SyncEngine).
@@ -1311,8 +1312,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   deleteItemsInCollection: async (type: CollectionTypeKey, collectionUid: string) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, domainLoadState, itemCache, itemCollectionMap, accountFingerprint } = get()
+    const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+    if (!offlineQueueGuard) return 0
     const collection = resolveCollection(collections, type, collectionUid)
-    if (!account || !collection || !accountFingerprint) {
+    if (!collection) {
       logger.warn(`[etebase-store] Cannot clear ${type} collection ${collectionUid}: missing account or collection`)
       return 0
     }
@@ -1387,15 +1390,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       try {
         if (isOfflineError(err)) {
           assertCurrentAccountEpoch(accountEpoch)
-          logger.warn(`[etebase-store] Offline — queuing clear for ${type}/${collection.uid}`)
           await removeQueuedMutationsForCollection(type, collection.uid, false, accountEpoch, accountFingerprint)
           const alreadyDeleted = new Set(successfulUids)
           for (const { uid } of itemEntries) {
             if (alreadyDeleted.has(uid)) continue
             try {
-              assertCurrentAccountEpoch(accountEpoch)
-              await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid: uid }, { accountEpoch, accountFingerprint: accountFingerprint })
-              assertCurrentAccountEpoch(accountEpoch)
+              assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+              await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid: uid }, offlineQueueGuard)
+              assertOfflineQueueAccountGuard(offlineQueueGuard, get())
             } catch (queueErr) {
               if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return 0
               console.error('[etebase-store] Failed to enqueue collection item delete', getSafeErrorDetails(queueErr))
@@ -1431,9 +1433,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   createItem: async (type: CollectionTypeKey, content: string, tempId?: string, collectionUid?: string) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, accountFingerprint } = get()
+    const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+    if (!offlineQueueGuard) return null
     const collection = resolveCollection(collections, type, collectionUid)
-    if (!account || !collection || !accountFingerprint) {
-      logger.warn(`[etebase-store] Cannot create item: no account or ${type} collection`)
+    if (!collection) {
+      logger.warn(`[etebase-store] Cannot create item: no ${type} collection`)
       return null
     }
 
@@ -1456,10 +1460,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
       if (isOfflineError(err)) {
         const queueTempId = tempId ?? `pending-${Date.now()}`
-        logger.warn(`[etebase-store] Offline — queuing create for ${type} (tempId: ${queueTempId})`)
         try {
-          await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId: queueTempId }, { accountEpoch, accountFingerprint: accountFingerprint })
-          assertCurrentAccountEpoch(accountEpoch)
+          assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+          await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId: queueTempId }, offlineQueueGuard)
+          assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+          logger.warn(`[etebase-store] Offline — queued create for ${type} (tempId: ${queueTempId})`)
         } catch (queueErr) {
           if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return null
           console.error('[etebase-store] Failed to enqueue create', getSafeErrorDetails(queueErr))
@@ -1475,9 +1480,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   createItemsBatch: async (type: CollectionTypeKey, contents: { content: string; tempId: string }[], collectionUid?: string) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, accountFingerprint } = get()
+    const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+    if (!offlineQueueGuard) return contents.map(() => null)
     const collection = resolveCollection(collections, type, collectionUid)
-    if (!account || !collection || !accountFingerprint) {
-      logger.warn(`[etebase-store] Cannot create items: no account or ${type} collection`)
+    if (!collection) {
+      logger.warn(`[etebase-store] Cannot create items: no ${type} collection`)
       return contents.map(() => null)
     }
 
@@ -1603,11 +1610,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return contents.map(() => null)
       if (isOfflineError(err)) {
-        logger.warn(`[etebase-store] Offline — queuing ${contents.length} creates for ${type}`)
         for (const { content, tempId } of contents) {
           try {
-            await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId }, { accountEpoch, accountFingerprint: accountFingerprint })
-            assertCurrentAccountEpoch(accountEpoch)
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+            await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId }, offlineQueueGuard)
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
           } catch (queueErr) {
             if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return contents.map(() => null)
             console.error('[etebase-store] Failed to enqueue create', getSafeErrorDetails(queueErr))
@@ -1626,10 +1633,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   updateItem: async (type: CollectionTypeKey, itemUid: string, content: string) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
+    const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+    if (!offlineQueueGuard) return
     const collection = resolveCollection(collections, type, itemCollectionMap.get(itemUid))
     const item = itemCache.get(itemUid)
-    if (!account || !collection || !item || !accountFingerprint) {
-      logger.warn(`[etebase-store] Cannot update item ${itemUid}: missing account, collection, or item`)
+    if (!collection || !item) {
+      logger.warn(`[etebase-store] Cannot update item ${itemUid}: missing collection or item`)
       return
     }
 
@@ -1645,10 +1654,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return
       if (isOfflineError(err)) {
-        logger.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
         try {
-          await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint })
-          assertCurrentAccountEpoch(accountEpoch)
+          assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+          await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid }, offlineQueueGuard)
+          assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+          logger.warn(`[etebase-store] Offline — queued update for ${type}/${itemUid}`)
         } catch (queueErr) {
           if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return
           console.error('[etebase-store] Failed to enqueue update', getSafeErrorDetails(queueErr))
@@ -1663,12 +1673,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   moveItem: async (type: CollectionTypeKey, itemUid: string, content: string, targetCollectionUid: string, sourceCollectionUid?: string) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
+    const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+    if (!offlineQueueGuard) return null
     const resolvedSourceCollectionUid = itemCollectionMap.get(itemUid) ?? sourceCollectionUid
     const sourceCollection = resolveCollection(collections, type, resolvedSourceCollectionUid)
     const targetCollection = resolveCollection(collections, type, targetCollectionUid)
     const item = itemCache.get(itemUid)
-    if (!account || !sourceCollection || !targetCollection || !item || !accountFingerprint) {
-      logger.warn(`[etebase-store] Cannot move item ${itemUid}: missing account, source collection, target collection, or item`)
+    if (!sourceCollection || !targetCollection || !item) {
+      logger.warn(`[etebase-store] Cannot move item ${itemUid}: missing source collection, target collection, or item`)
       return null
     }
 
@@ -1691,10 +1703,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       } catch (err) {
         if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
         if (isOfflineError(err)) {
-          assertCurrentAccountEpoch(accountEpoch)
-          logger.warn(`[etebase-store] Offline after moving ${type}/${itemUid} - queuing source delete`)
-          await enqueue({ type: 'delete', collectionType: type, collectionUid: sourceCollection.uid, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint })
-          assertCurrentAccountEpoch(accountEpoch)
+          assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+          await enqueue({ type: 'delete', collectionType: type, collectionUid: sourceCollection.uid, itemUid }, offlineQueueGuard)
+          assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+          logger.warn(`[etebase-store] Offline after moving ${type}/${itemUid} - queued source delete`)
           keepSourceUntilQueuedDelete = true
         } else {
           try {
@@ -1741,10 +1753,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   deleteItem: async (type: CollectionTypeKey, itemUid: string) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
+    const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
+    if (!offlineQueueGuard) return
     const collection = resolveCollection(collections, type, itemCollectionMap.get(itemUid))
     const item = itemCache.get(itemUid)
-    if (!account || !collection || !item || !accountFingerprint) {
-      logger.warn(`[etebase-store] Cannot delete item ${itemUid}: missing account, collection, or item`)
+    if (!collection || !item) {
+      logger.warn(`[etebase-store] Cannot delete item ${itemUid}: missing collection or item`)
       return
     }
 
@@ -1766,10 +1780,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return
       if (isOfflineError(err)) {
-        logger.warn(`[etebase-store] Offline — queuing delete for ${type}/${itemUid}`)
         try {
-          await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint })
-          assertCurrentAccountEpoch(accountEpoch)
+          assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+          await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid }, offlineQueueGuard)
+          assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+          logger.warn(`[etebase-store] Offline — queued delete for ${type}/${itemUid}`)
         } catch (queueErr) {
           if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return
           console.error('[etebase-store] Failed to enqueue delete', getSafeErrorDetails(queueErr))

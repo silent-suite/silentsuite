@@ -65,18 +65,26 @@ export async function clearQueue(): Promise<void> {
   await clearAll()
 }
 
-export function bumpEpochWhenQueuePutRuns(onBoundary: () => void): ReturnType<typeof vi.spyOn> {
+export function changeAccountWhenQueuePutRuns(
+  onBoundary: () => void,
+  options: { putNumber?: number; bumpEpoch?: boolean } = {},
+): ReturnType<typeof vi.spyOn> {
   const originalPut = IDBObjectStore.prototype.put
-  let bumped = false
+  const targetPut = options.putNumber ?? 1
+  let putCount = 0
   return vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (...args: Parameters<IDBObjectStore['put']>) {
     const request = originalPut.apply(this, args)
-    if (!bumped) {
-      bumped = true
-      bumpAccountEpoch()
+    putCount += 1
+    if (putCount === targetPut) {
+      if (options.bumpEpoch !== false) bumpAccountEpoch()
       onBoundary()
     }
     return request
   })
+}
+
+export function bumpEpochWhenQueuePutRuns(onBoundary: () => void): ReturnType<typeof vi.spyOn> {
+  return changeAccountWhenQueuePutRuns(onBoundary)
 }
 
 export async function expectQuietQueueCommitCancellation(
