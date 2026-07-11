@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import 'fake-indexeddb/auto'
 import { AccountBoundaryChangedError, bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import {
-  enqueue,
+  enqueue as guardedEnqueue,
   getAll,
   getPendingCount,
   getFailedCount,
@@ -21,6 +21,17 @@ import {
   _resetForTests,
   _setEncryptedQueuePersistenceAvailableForTests,
 } from '../offline-queue'
+
+const TEST_FINGERPRINT = 'offline-queue-unit-test-account'
+function testGuard(accountFingerprint = TEST_FINGERPRINT) {
+  return { accountEpoch: getAccountEpoch(), accountFingerprint }
+}
+function enqueue(
+  entry: Parameters<typeof guardedEnqueue>[0],
+  guard = testGuard(),
+) {
+  return guardedEnqueue(entry, guard)
+}
 
 beforeEach(async () => {
   process.env.NEXT_PUBLIC_LOCAL_CACHE_ENABLED = 'true'
@@ -60,11 +71,11 @@ describe('offline-queue', () => {
     })
 
     it('increments pending count', async () => {
-      expect(await getPendingCount()).toBe(0)
+      expect(await getPendingCount(testGuard())).toBe(0)
       await enqueue({ type: 'update', collectionType: 'contacts', content: 'vcard', itemUid: 'uid-1' })
-      expect(await getPendingCount()).toBe(1)
+      expect(await getPendingCount(testGuard())).toBe(1)
       await enqueue({ type: 'delete', collectionType: 'calendar', itemUid: 'uid-2' })
-      expect(await getPendingCount()).toBe(2)
+      expect(await getPendingCount(testGuard())).toBe(2)
     })
   })
 
@@ -154,12 +165,12 @@ describe('offline-queue', () => {
 
     it('clearAll removes queued mutations for logout/account switch cleanup', async () => {
       await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: 'tasks', itemUid: 'task-1' })
-      expect(await getPendingCount()).toBe(1)
+      expect(await getPendingCount(testGuard())).toBe(1)
 
       await clearAll()
 
       expect(await getAll()).toHaveLength(0)
-      expect(await getPendingCount()).toBe(0)
+      expect(await getPendingCount(testGuard())).toBe(0)
     })
   })
 
@@ -251,6 +262,26 @@ describe('offline-queue', () => {
       await vi.waitFor(() => expect(counts).toEqual([1]))
     })
 
+    it('fails closed before IndexedDB work when the exported enqueue guard is undefined', async () => {
+      const counts: number[] = []
+      const enqueues: number[] = []
+      const openSpy = vi.spyOn(indexedDB, 'open')
+      onCountChange((count) => counts.push(count))
+      onEnqueue(() => enqueues.push(1))
+
+      await expect(guardedEnqueue(
+        { type: 'delete', collectionType: 'tasks', itemUid: 'x' },
+        undefined as any,
+      )).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(openSpy).not.toHaveBeenCalled()
+      expect(await getAll()).toEqual([])
+      expect(counts).toEqual([])
+      expect(enqueues).toEqual([])
+      openSpy.mockRestore()
+    })
+
     it('fails closed when a guarded operation has no fingerprint', async () => {
       await expect(enqueue({ type: 'delete', collectionType: 'tasks', itemUid: 'x' }, {
         accountEpoch: getAccountEpoch(),
@@ -275,7 +306,7 @@ describe('offline-queue', () => {
       expect(results[0].success).toBe(true)
       expect(results[0].itemUid).toBe('real-uid')
       expect(results[1].success).toBe(true)
-      expect(await getPendingCount()).toBe(0)
+      expect(await getPendingCount(testGuard())).toBe(0)
     })
 
     it('increments retryCount on failure, marks failed after MAX_RETRIES', async () => {
@@ -292,7 +323,7 @@ describe('offline-queue', () => {
       expect(all[0].status).toBe('failed')
 
       // Failed entries don't count as pending
-      expect(await getPendingCount()).toBe(0)
+      expect(await getPendingCount(testGuard())).toBe(0)
     })
 
     it('retries pending entries but skips failed ones', async () => {
@@ -433,7 +464,7 @@ describe('offline-queue', () => {
 
       const all = await getAll()
       expect(all).toHaveLength(0)
-      expect(await getPendingCount()).toBe(0)
+      expect(await getPendingCount(testGuard())).toBe(0)
     })
 
     it('update + update with same itemUid → merges to latest content', async () => {
@@ -573,12 +604,12 @@ describe('offline-queue', () => {
         await replay(async () => { throw new Error('fail') })
       }
 
-      expect(await getPendingCount()).toBe(0)
+      expect(await getPendingCount(testGuard())).toBe(0)
       expect(await getFailedCount()).toBe(1)
 
       await retryFailed()
 
-      expect(await getPendingCount()).toBe(1)
+      expect(await getPendingCount(testGuard())).toBe(1)
       expect(await getFailedCount()).toBe(0)
 
       const all = await getAll()
@@ -709,7 +740,7 @@ describe('offline-queue', () => {
       _setEncryptedQueuePersistenceAvailableForTests(true)
 
       // Verify entries persist across resets
-      const count = await getPendingCount()
+      const count = await getPendingCount(testGuard())
       expect(count).toBe(2)
 
       // Replay all pending entries (simulates cold-start replay)
@@ -719,7 +750,7 @@ describe('offline-queue', () => {
       expect(executeFn).toHaveBeenCalledTimes(2)
       expect(results).toHaveLength(2)
       expect(results.every((r) => r.success)).toBe(true)
-      expect(await getPendingCount()).toBe(0)
+      expect(await getPendingCount(testGuard())).toBe(0)
     })
   })
 

@@ -3,14 +3,20 @@ import { useCalendarStore } from '../use-calendar-store'
 import { serializeCalendarEvent, deserializeCalendarEvent } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 import { expandEventsForRange } from '@/app/(app)/calendar/lib/calendar-grid-events'
+import { getAll } from '@/app/lib/offline-queue'
+import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
+
+const toastMock = vi.hoisted(() => ({ showErrorToast: vi.fn() }))
 
 const etebaseMock = vi.hoisted(() => ({
   state: {
     account: null as unknown,
+    accountFingerprint: null as string | null,
     createItem: vi.fn(),
     createItemsBatch: vi.fn(),
     updateItem: vi.fn(),
     moveItem: vi.fn(),
+    deleteItem: vi.fn(),
     itemCache: new Map<string, unknown>(),
     itemCollectionMap: new Map<string, string>(),
   },
@@ -28,16 +34,16 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
   },
 }))
 
-vi.mock('@/app/stores/use-toast-store', () => ({
-  showErrorToast: vi.fn(),
-}))
+vi.mock('@/app/stores/use-toast-store', () => toastMock)
 
 function resetStore() {
   etebaseMock.state.account = null
+  etebaseMock.state.accountFingerprint = 'calendar-test-account'
   etebaseMock.state.createItem.mockReset()
   etebaseMock.state.createItemsBatch.mockReset()
   etebaseMock.state.updateItem.mockReset()
   etebaseMock.state.moveItem.mockReset()
+  etebaseMock.state.deleteItem.mockReset()
   etebaseMock.state.itemCache = new Map()
   etebaseMock.state.itemCollectionMap = new Map()
   useCalendarStore.setState({
@@ -48,6 +54,13 @@ function resetStore() {
     currentDate: new Date('2026-06-01T12:00:00Z'),
     selectedEventId: null,
   })
+}
+
+function offlineAccount() {
+  etebaseMock.state.account = {}
+  etebaseMock.state.accountFingerprint = TEST_FINGERPRINT
+  etebaseMock.state.itemCache = new Map()
+  etebaseMock.state.createItem.mockImplementation((type, content, tempId, collectionUid) => enqueueCreateFromStore(type, collectionUid, content, tempId))
 }
 
 function makeRecurringEvent(overrides?: Partial<CalendarEvent>): CalendarEvent {
@@ -398,5 +411,90 @@ describe('useCalendarStore.getFilteredEvents', () => {
     // Empty query returns everything
     useCalendarStore.getState().setSearchQuery('')
     expect(useCalendarStore.getState().getFilteredEvents()).toHaveLength(2)
+  })
+})
+
+describe('useCalendarStore guarded offline queue integration', () => {
+  // Enqueue surface map: create -> Etebase createItem; update + recurring updates ->
+  // syncEventToEtebase update; offline calendar moves -> that helper's move fallback;
+  // deleteEvent + recurring/all each have cached-item and temp-item delete branches.
+  const queuedEvent = (id = 'temp-event') => makeRecurringEvent({ id, uid: id, recurrenceRule: null, calendarId: 'cal-1' })
+  beforeEach(async () => { await resetRealOfflineQueue(); resetStore(); offlineAccount(); toastMock.showErrorToast.mockReset() })
+
+  it.each([
+    ['create', async () => { await useCalendarStore.getState().createEvent({ title: 'Create', startDate: new Date('2026-06-01T09:00:00Z'), endDate: new Date('2026-06-01T10:00:00Z'), calendarId: 'cal-1' }) }],
+    ['update', async () => { useCalendarStore.setState({ events: [queuedEvent()] }); await useCalendarStore.getState().updateEvent('temp-event', { title: 'Update' }) }],
+    ['delete', async () => { useCalendarStore.setState({ events: [queuedEvent()] }); await useCalendarStore.getState().deleteEvent('temp-event') }],
+  ] as const)('persists, exposes, and replays an owned offline %s', async (type, mutate) => {
+    await mutate()
+    await replayOwnedEntry(await expectOwnedQueueEntry(type, 'calendar'))
+  })
+
+  it('isolates equal calendar IDs across account fingerprints', async () => {
+    useCalendarStore.setState({ events: [queuedEvent()] })
+    await useCalendarStore.getState().updateEvent('temp-event', { title: 'Owned' })
+    expect(await getAll(queueGuard('other-account'))).toEqual([])
+    expect(await getAll(queueGuard(TEST_FINGERPRINT))).toHaveLength(1)
+  })
+
+  it('quietly cancels at the actual IndexedDB commit boundary', async () => {
+    useCalendarStore.setState({ events: [queuedEvent()] })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const putSpy = bumpEpochWhenQueuePutRuns(() => {
+      etebaseMock.state.account = {}; etebaseMock.state.accountFingerprint = 'new-account'
+      useCalendarStore.setState({ events: [], selectedEventId: null })
+    })
+    await expect(useCalendarStore.getState().updateEvent('temp-event', { title: 'Stale' })).resolves.toBeUndefined()
+    putSpy.mockRestore()
+    expect(useCalendarStore.getState().events).toEqual([])
+    expect(await getAll()).toEqual([])
+    expect(await getAll(queueGuard('new-account'))).toEqual([])
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it.each([
+    ['cached move fallback', () => {
+      const event = queuedEvent('cached-move')
+      useCalendarStore.setState({ events: [event] })
+      etebaseMock.state.itemCache = new Map([[event.id, {}]])
+      etebaseMock.state.itemCollectionMap = new Map([[event.id, 'cal-1']])
+      etebaseMock.state.moveItem.mockRejectedValue(new TypeError('offline'))
+      return useCalendarStore.getState().updateEvent(event.id, { calendarId: 'cal-2' })
+    }],
+    ['cached delete fallback', () => {
+      const event = queuedEvent('cached-delete')
+      useCalendarStore.setState({ events: [event] })
+      etebaseMock.state.itemCache = new Map([[event.id, {}]])
+      etebaseMock.state.itemCollectionMap = new Map([[event.id, 'cal-1']])
+      etebaseMock.state.deleteItem.mockRejectedValue(new TypeError('offline'))
+      return useCalendarStore.getState().deleteEvent(event.id)
+    }],
+    ['uncached delete', () => {
+      const event = queuedEvent('uncached-delete')
+      useCalendarStore.setState({ events: [event] })
+      return useCalendarStore.getState().deleteEvent(event.id)
+    }],
+    ['cached recurring delete fallback', () => {
+      const event = makeRecurringEvent({ id: 'cached-recurring-delete' })
+      useCalendarStore.setState({ events: [event] })
+      etebaseMock.state.itemCache = new Map([[event.id, {}]])
+      etebaseMock.state.itemCollectionMap = new Map([[event.id, 'cal-1']])
+      etebaseMock.state.deleteItem.mockRejectedValue(new TypeError('offline'))
+      return useCalendarStore.getState().deleteRecurringEvent(event.id, 'all', new Date('2026-06-03T09:00:00Z'))
+    }],
+    ['uncached recurring delete', () => {
+      const event = makeRecurringEvent({ id: 'uncached-recurring-delete' })
+      useCalendarStore.setState({ events: [event] })
+      return useCalendarStore.getState().deleteRecurringEvent(event.id, 'all', new Date('2026-06-03T09:00:00Z'))
+    }],
+  ] as const)('quietly cancels the %s direct branch at the actual IndexedDB commit boundary', async (_branch, mutate) => {
+    await expectQuietQueueCommitCancellation(
+      mutate,
+      () => { etebaseMock.state.account = {}; etebaseMock.state.accountFingerprint = 'new-account'; useCalendarStore.setState({ events: [], selectedEventId: null }) },
+      () => { expect(useCalendarStore.getState().events).toEqual([]); expect(useCalendarStore.getState().selectedEventId).toBeNull() },
+      toastMock,
+    )
   })
 })

@@ -454,8 +454,9 @@ async function removeQueuedMutationsForCollection(
   accountEpoch: number,
   accountFingerprint: string | null,
 ): Promise<number> {
+  if (!accountFingerprint) return 0
   try {
-    const guard = { accountEpoch, accountFingerprint: accountFingerprint ?? '' }
+    const guard = { accountEpoch, accountFingerprint: accountFingerprint }
     assertCurrentAccountEpoch(accountEpoch)
     const entries = await getQueuedMutations(guard)
     assertCurrentAccountEpoch(accountEpoch)
@@ -1311,7 +1312,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const accountEpoch = getAccountEpoch()
     const { account, collections, domainLoadState, itemCache, itemCollectionMap, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
-    if (!account || !collection) {
+    if (!account || !collection || !accountFingerprint) {
       logger.warn(`[etebase-store] Cannot clear ${type} collection ${collectionUid}: missing account or collection`)
       return 0
     }
@@ -1393,7 +1394,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
             if (alreadyDeleted.has(uid)) continue
             try {
               assertCurrentAccountEpoch(accountEpoch)
-              await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid: uid }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+              await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid: uid }, { accountEpoch, accountFingerprint: accountFingerprint })
               assertCurrentAccountEpoch(accountEpoch)
             } catch (queueErr) {
               if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return 0
@@ -1431,7 +1432,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const accountEpoch = getAccountEpoch()
     const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
-    if (!account || !collection) {
+    if (!account || !collection || !accountFingerprint) {
       logger.warn(`[etebase-store] Cannot create item: no account or ${type} collection`)
       return null
     }
@@ -1457,7 +1458,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const queueTempId = tempId ?? `pending-${Date.now()}`
         logger.warn(`[etebase-store] Offline — queuing create for ${type} (tempId: ${queueTempId})`)
         try {
-          await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId: queueTempId }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+          await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId: queueTempId }, { accountEpoch, accountFingerprint: accountFingerprint })
           assertCurrentAccountEpoch(accountEpoch)
         } catch (queueErr) {
           if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return null
@@ -1475,7 +1476,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const accountEpoch = getAccountEpoch()
     const { account, collections, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, collectionUid)
-    if (!account || !collection) {
+    if (!account || !collection || !accountFingerprint) {
       logger.warn(`[etebase-store] Cannot create items: no account or ${type} collection`)
       return contents.map(() => null)
     }
@@ -1605,7 +1606,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         logger.warn(`[etebase-store] Offline — queuing ${contents.length} creates for ${type}`)
         for (const { content, tempId } of contents) {
           try {
-            await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+            await enqueue({ type: 'create', collectionType: type, collectionUid: collection.uid, content, tempId }, { accountEpoch, accountFingerprint: accountFingerprint })
             assertCurrentAccountEpoch(accountEpoch)
           } catch (queueErr) {
             if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return contents.map(() => null)
@@ -1627,7 +1628,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, itemCollectionMap.get(itemUid))
     const item = itemCache.get(itemUid)
-    if (!account || !collection || !item) {
+    if (!account || !collection || !item || !accountFingerprint) {
       logger.warn(`[etebase-store] Cannot update item ${itemUid}: missing account, collection, or item`)
       return
     }
@@ -1646,7 +1647,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing update for ${type}/${itemUid}`)
         try {
-          await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+          await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint })
           assertCurrentAccountEpoch(accountEpoch)
         } catch (queueErr) {
           if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return
@@ -1666,7 +1667,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const sourceCollection = resolveCollection(collections, type, resolvedSourceCollectionUid)
     const targetCollection = resolveCollection(collections, type, targetCollectionUid)
     const item = itemCache.get(itemUid)
-    if (!account || !sourceCollection || !targetCollection || !item) {
+    if (!account || !sourceCollection || !targetCollection || !item || !accountFingerprint) {
       logger.warn(`[etebase-store] Cannot move item ${itemUid}: missing account, source collection, target collection, or item`)
       return null
     }
@@ -1692,7 +1693,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         if (isOfflineError(err)) {
           assertCurrentAccountEpoch(accountEpoch)
           logger.warn(`[etebase-store] Offline after moving ${type}/${itemUid} - queuing source delete`)
-          await enqueue({ type: 'delete', collectionType: type, collectionUid: sourceCollection.uid, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+          await enqueue({ type: 'delete', collectionType: type, collectionUid: sourceCollection.uid, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint })
           assertCurrentAccountEpoch(accountEpoch)
           keepSourceUntilQueuedDelete = true
         } else {
@@ -1742,7 +1743,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
     const collection = resolveCollection(collections, type, itemCollectionMap.get(itemUid))
     const item = itemCache.get(itemUid)
-    if (!account || !collection || !item) {
+    if (!account || !collection || !item || !accountFingerprint) {
       logger.warn(`[etebase-store] Cannot delete item ${itemUid}: missing account, collection, or item`)
       return
     }
@@ -1767,7 +1768,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       if (isOfflineError(err)) {
         logger.warn(`[etebase-store] Offline — queuing delete for ${type}/${itemUid}`)
         try {
-          await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint ?? '' })
+          await enqueue({ type: 'delete', collectionType: type, collectionUid: collection.uid, itemUid }, { accountEpoch, accountFingerprint: accountFingerprint })
           assertCurrentAccountEpoch(accountEpoch)
         } catch (queueErr) {
           if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return
