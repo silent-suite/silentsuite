@@ -250,6 +250,32 @@ describe('data-cache', () => {
       expect(items.map((i) => i.itemUid)).toEqual(['y'])
     })
 
+    it('aborts queued single-item put and delete commits when the account epoch changes', async () => {
+      await ensureFingerprint('current-account')
+      const putEpoch = getAccountEpoch()
+      const originalPut = IDBObjectStore.prototype.put
+      const putSpy = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (value, key) {
+        const request = key === undefined ? originalPut.call(this, value) : originalPut.call(this, value, key)
+        if ((value as { itemUid?: string }).itemUid === 'stale-put') bumpAccountEpoch()
+        return request
+      })
+      await expect(putItem(makeItem('stale-put'), putEpoch)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      expect((await getItemsByType('tasks')).some((item) => item.itemUid === 'stale-put')).toBe(false)
+      putSpy.mockRestore()
+
+      await putItem(makeItem('keep-delete'))
+      const deleteEpoch = getAccountEpoch()
+      const originalDelete = IDBObjectStore.prototype.delete
+      const deleteSpy = vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementation(function (query) {
+        const request = originalDelete.call(this, query)
+        if (query === 'keep-delete') bumpAccountEpoch()
+        return request
+      })
+      await expect(deleteItem('keep-delete', deleteEpoch)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      expect((await getItemsByType('tasks')).some((item) => item.itemUid === 'keep-delete')).toBe(true)
+      deleteSpy.mockRestore()
+    })
+
     it('replaceItemsForType drops existing of that type and inserts the new set', async () => {
       await putItems([
         makeItem('a', 'tasks'),
@@ -454,6 +480,27 @@ describe('data-cache', () => {
       const ok = await ensureFingerprint('alice@example.com')
       expect(ok).toBe(true)
       expect(await getStoken('col-tasks')).toBe('stk-a')
+    })
+
+    it('aborts a stale destructive fingerprint switch without touching the new account cache', async () => {
+      await ensureFingerprint('account-b')
+      await setStoken('tasks', 'b-collection', 'b-stoken')
+      await putItem(makeItem('b-item', 'tasks', 'B PRIVATE', 'b-collection'))
+      const cryptoKeys = await rawCryptoKeys()
+      const accountEpoch = getAccountEpoch()
+      const originalClear = IDBObjectStore.prototype.clear
+      const clearSpy = vi.spyOn(IDBObjectStore.prototype, 'clear').mockImplementation(function (this: IDBObjectStore) {
+        if (this.name === 'items') bumpAccountEpoch()
+        return originalClear.call(this)
+      })
+
+      await expect(ensureFingerprint('account-a', accountEpoch)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      clearSpy.mockRestore()
+
+      expect((await getMeta())?.accountFingerprint).toBe('account-b')
+      expect(await getStoken('b-collection')).toBe('b-stoken')
+      expect((await getItemsByType('tasks')).map((item) => item.content)).toEqual(['B PRIVATE'])
+      expect(await rawCryptoKeys()).toEqual(cryptoKeys)
     })
 
     it('upgrades and clears the rolled-back v4 encrypted cache schema', async () => {

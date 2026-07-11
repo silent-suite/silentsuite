@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSyncStore } from '../use-sync-store'
 import { getPendingCount, replay } from '@/app/lib/offline-queue'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 const etebaseMock = vi.hoisted(() => ({
   state: {
-    account: null as unknown,
+    account: {} as unknown,
+    accountFingerprint: 'test-account',
     syncEngine: null as { syncNow: ReturnType<typeof vi.fn> } | null,
     domainLoadState: { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' },
     reconcileCollections: vi.fn().mockResolvedValue(undefined),
@@ -77,7 +79,8 @@ vi.mock('@/app/stores/use-toast-store', () => ({
 }))
 
 function resetStore() {
-  etebaseMock.state.account = null
+  etebaseMock.state.account = {}
+  etebaseMock.state.accountFingerprint = 'test-account'
   etebaseMock.state.syncEngine = null
   etebaseMock.state.domainLoadState = { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' }
   etebaseMock.state.reconcileCollections.mockReset().mockResolvedValue(undefined)
@@ -148,6 +151,25 @@ describe('useSyncStore', () => {
 
     // Should remain synced (not transition to syncing)
     expect(useSyncStore.getState().syncStatus).toBe('synced')
+  })
+
+  it('quietly cancels a manual sync cycle when the account epoch changes', async () => {
+    let releaseReconcile!: () => void
+    etebaseMock.state.reconcileCollections.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseReconcile = resolve
+    }))
+
+    useSyncStore.getState().simulateSyncCycle()
+    await flushPromises()
+    bumpAccountEpoch()
+    useSyncStore.setState({ syncStatus: 'synced', error: null, lastSyncedAt: null })
+    releaseReconcile()
+    await flushPromises()
+    await flushPromises()
+
+    expect(etebaseMock.state.refreshCollection).not.toHaveBeenCalled()
+    expect(preferencesSyncMock.loadFromRemote).not.toHaveBeenCalled()
+    expect(useSyncStore.getState()).toMatchObject({ syncStatus: 'synced', error: null, lastSyncedAt: null })
   })
 
   it('supports offline→syncing→synced transition', async () => {
