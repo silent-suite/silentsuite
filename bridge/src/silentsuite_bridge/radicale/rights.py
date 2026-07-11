@@ -20,11 +20,14 @@ class Rights(OwnerOnlyRights):
     """Owner-only rights with read-only shared collection write gating."""
 
     def authorization(self, user: str, path: str) -> str:
+        sane_path = pathutils.strip_path(path)
+        if user and sane_path == "principals":
+            return "R"
+
         permissions = super().authorization(user, path)
         if "w" not in permissions:
             return permissions
 
-        sane_path = pathutils.strip_path(path)
         parts = sane_path.split("/", maxsplit=2)
         if len(parts) < 2 or not user or parts[0] != user:
             return permissions
