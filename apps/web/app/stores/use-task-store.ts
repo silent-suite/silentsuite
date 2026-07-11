@@ -5,6 +5,7 @@ import type { Task, TaskStatus, Priority, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
+import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard, isOfflineQueueBoundaryCancellation } from '@/app/lib/offline-queue-account'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
@@ -130,10 +131,20 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               showErrorToast('Failed to save task. Please try again.')
             }
           } else {
+            const guard = captureOfflineQueueAccountGuard(etebase)
+            if (!guard) return
             // Item was created offline — enqueue update with tempId so compaction merges into create
             const { serializeTask } = await import('@silentsuite/core')
+            assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
             const content = serializeTask(updated)
-            await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: updated.listId, content, tempId: id })
+            assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            try {
+              await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: updated.listId, content, tempId: id }, guard)
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            } catch (error) {
+              if (isOfflineQueueBoundaryCancellation(error)) return
+              throw error
+            }
           }
         }
       },
@@ -156,8 +167,17 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               showErrorToast('Failed to delete task. Please try again.')
             }
           } else {
+            const guard = captureOfflineQueueAccountGuard(etebase)
+            if (!guard) return
             // Item was created offline and not yet synced — enqueue delete with tempId for compaction
-            await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: taskToDelete?.listId, tempId: id })
+            try {
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: taskToDelete?.listId, tempId: id }, guard)
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            } catch (error) {
+              if (isOfflineQueueBoundaryCancellation(error)) return
+              throw error
+            }
           }
         }
       },
@@ -196,9 +216,19 @@ export const useTaskStore = create<TaskState & TaskActions>()(
               showErrorToast('Failed to save task. Please try again.')
             }
           } else {
+            const guard = captureOfflineQueueAccountGuard(etebase)
+            if (!guard) return
             const { serializeTask } = await import('@silentsuite/core')
+            assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
             const content = serializeTask(updated)
-            await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: updated.listId, content, tempId: id })
+            assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            try {
+              await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: updated.listId, content, tempId: id }, guard)
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            } catch (error) {
+              if (isOfflineQueueBoundaryCancellation(error)) return
+              throw error
+            }
           }
         }
       },

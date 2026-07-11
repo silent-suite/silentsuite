@@ -10,6 +10,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
+import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard, isOfflineQueueBoundaryCancellation } from '@/app/lib/offline-queue-account'
 
 type CalendarView = 'week' | 'month'
 
@@ -98,10 +99,13 @@ function addUntilToRRule(rrule: string, untilDate: Date): string {
 async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update', tempId?: string, sourceCalendarId?: string): Promise<string | null> {
   const etebase = useEtebaseStore.getState()
   if (!etebase.account) return null
+  const guard = captureOfflineQueueAccountGuard(etebase)
+  if (!guard) return null
 
   let content: string | undefined
   try {
     const { serializeCalendarEvent } = await import('@silentsuite/core')
+    assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
     content = serializeCalendarEvent(event)
     if (mode === 'create') {
       return await etebase.createItem('calendar', content, tempId, event.calendarId)
@@ -120,12 +124,14 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
         return event.id
       } else {
         const { enqueue } = await import('@/app/lib/offline-queue')
-        await enqueue({ type: 'update', collectionType: 'calendar', collectionUid: event.calendarId, content, tempId: event.id })
+        assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+        await enqueue({ type: 'update', collectionType: 'calendar', collectionUid: event.calendarId, content, tempId: event.id }, guard)
+        assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
         return event.id
       }
     }
   } catch (err) {
-    console.error(`[calendar-store] Failed to ${mode} event in Etebase`, getSafeErrorDetails(err))
+    try { assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState()) } catch { return null }
     const { enqueue, isOfflineError } = await import('@/app/lib/offline-queue')
     if (!isOfflineError(err)) {
       showErrorToast('Failed to save event. Please try again.')
@@ -138,16 +144,25 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
         && event.calendarId
         && event.calendarId !== sourceCollectionUid
       ) {
-        await enqueue({
-          type: 'move',
-          collectionType: 'calendar',
-          collectionUid: sourceCollectionUid,
-          targetCollectionUid: event.calendarId,
-          content,
-          itemUid: event.id,
-        })
+        try {
+          assertOfflineQueueAccountGuard(guard, latestEtebase)
+          await enqueue({
+            type: 'move',
+            collectionType: 'calendar',
+            collectionUid: sourceCollectionUid,
+            targetCollectionUid: event.calendarId,
+            content,
+            itemUid: event.id,
+          }, guard)
+          assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+        } catch (queueError) {
+          if (isOfflineQueueBoundaryCancellation(queueError)) return null
+          throw queueError
+        }
       }
     }
+    try { assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState()) } catch { return null }
+    console.error(`[calendar-store] Failed to ${mode} event in Etebase`, getSafeErrorDetails(err))
     return null
   }
 }
@@ -241,6 +256,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     // Sync to Etebase
     const etebase = useEtebaseStore.getState()
     if (etebase.account) {
+      const guard = captureOfflineQueueAccountGuard(etebase)
+      if (!guard) return
       const itemInCache = etebase.itemCache.has(id)
       if (itemInCache) {
         try {
@@ -249,8 +266,15 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           // If the error is a network/offline error, enqueue for later replay.
           // Non-offline errors are logged and the optimistic removal stands.
           const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
+          try { assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState()) } catch { return }
           if (isOfflineError(err)) {
-            await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(id), itemUid: id })
+            try {
+              await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(id), itemUid: id }, guard)
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            } catch (queueError) {
+              if (isOfflineQueueBoundaryCancellation(queueError)) return
+              throw queueError
+            }
           } else {
             showErrorToast('Failed to delete event. Please try again.')
           }
@@ -259,7 +283,14 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       } else {
         // Item was created offline — enqueue delete with tempId for compaction
         const { enqueue } = await import('@/app/lib/offline-queue')
-        await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: eventToDelete?.calendarId, tempId: id })
+        try {
+          assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+          await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: eventToDelete?.calendarId, tempId: id }, guard)
+          assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+        } catch (queueError) {
+          if (isOfflineQueueBoundaryCancellation(queueError)) return
+          throw queueError
+        }
       }
     }
   },
@@ -439,14 +470,23 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
+          const guard = captureOfflineQueueAccountGuard(etebase)
+          if (!guard) break
           const itemInCache = etebase.itemCache.has(id)
           if (itemInCache) {
             try {
               await etebase.deleteItem('calendar', id)
             } catch (err) {
               const { isOfflineError, enqueue } = await import('@/app/lib/offline-queue')
+              try { assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState()) } catch { break }
               if (isOfflineError(err)) {
-                await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(id), itemUid: id })
+                try {
+                  await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: etebase.itemCollectionMap.get(id), itemUid: id }, guard)
+                  assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+                } catch (queueError) {
+                  if (isOfflineQueueBoundaryCancellation(queueError)) break
+                  throw queueError
+                }
               } else {
                 showErrorToast('Failed to delete event. Please try again.')
               }
@@ -454,7 +494,14 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             }
           } else {
             const { enqueue } = await import('@/app/lib/offline-queue')
-            await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: master.calendarId, tempId: id })
+            try {
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: master.calendarId, tempId: id }, guard)
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            } catch (queueError) {
+              if (isOfflineQueueBoundaryCancellation(queueError)) break
+              throw queueError
+            }
           }
         }
         break

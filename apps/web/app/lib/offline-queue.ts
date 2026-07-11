@@ -236,9 +236,9 @@ async function compact(
   return null
 }
 
-export async function enqueue(
+async function enqueueInternal(
   entry: Omit<QueueEntry, 'id' | 'createdAt' | 'retryCount' | 'status'>,
-  guard?: OfflineQueueAccountGuard,
+  guard: OfflineQueueAccountGuard,
 ): Promise<string> {
   assertGuard(guard)
   // Try compaction first
@@ -260,7 +260,7 @@ export async function enqueue(
     createdAt: Date.now(),
     retryCount: 0,
     status: 'pending',
-    ...(guard ? { accountFingerprint: guard.accountFingerprint } : {}),
+    accountFingerprint: guard.accountFingerprint,
   }
   assertCanPersistEntry(record)
   return new Promise<string>((resolve, reject) => {
@@ -276,6 +276,17 @@ export async function enqueue(
     tx.onerror = () => reject(tx.error)
     tx.onabort = () => reject(guard ? new AccountBoundaryChangedError() : tx.error)
   })
+}
+
+/** Account-scoped production enqueue. A valid owner is mandatory by type. */
+export function enqueue(
+  entry: Omit<QueueEntry, 'id' | 'createdAt' | 'retryCount' | 'status'>,
+  guard: OfflineQueueAccountGuard,
+): Promise<string> {
+  // TypeScript cannot protect this runtime boundary from JavaScript callers,
+  // `any`, or stale bundles. Reject before compact/openDB can touch IndexedDB.
+  if (!guard) return Promise.reject(new AccountBoundaryChangedError())
+  return enqueueInternal(entry, guard)
 }
 
 export async function getAll(guard?: OfflineQueueAccountGuard): Promise<QueueEntry[]> {

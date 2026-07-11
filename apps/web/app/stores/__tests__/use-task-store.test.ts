@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useTaskStore } from '../use-task-store'
 import { useEtebaseStore } from '../use-etebase-store'
+import { getAll } from '@/app/lib/offline-queue'
+import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
+
+const toastMock = vi.hoisted(() => ({ showErrorToast: vi.fn() }))
+vi.mock('@/app/stores/use-toast-store', () => toastMock)
 
 // Mock the sync store to prevent side effects
 vi.mock('@/app/stores/use-sync-store', () => ({
@@ -19,6 +24,14 @@ function resetStore() {
     syncStatus: 'synced',
   })
   useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+}
+
+function offlineAccount() {
+  useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map(), createItem: vi.fn((type, content, tempId, collectionUid) => enqueueCreateFromStore(type, collectionUid, content, tempId!)) } as any)
+}
+
+function queuedTask(id = 'temp-task') {
+  return { id, uid: id, title: 'Task', description: '', start_date: null, due_date: null, priority: 'medium' as const, completed: false, status: 'needs-action' as const, percent_complete: 0, location: '', url: '', categories: [], listId: 'tasks-1', created_at: new Date(), updated_at: new Date() }
 }
 
 describe('useTaskStore', () => {
@@ -125,5 +138,54 @@ describe('useTaskStore', () => {
     expect(tasks).toHaveLength(2)
     expect(tasks[0]!.completed).toBe(true)
     expect(tasks[1]!.completed).toBe(false)
+  })
+
+  describe('guarded offline queue integration', () => {
+    beforeEach(async () => { await resetRealOfflineQueue(); resetStore(); offlineAccount(); toastMock.showErrorToast.mockReset() })
+
+    it.each([
+      ['create', 'create', async () => { await useTaskStore.getState().createTask({ title: 'Create', listId: 'tasks-1' }) }],
+      ['update', 'update', async () => { useTaskStore.setState({ tasks: [queuedTask()] }); await useTaskStore.getState().updateTask('temp-task', { title: 'Update' }) }],
+      ['delete', 'delete', async () => { useTaskStore.setState({ tasks: [queuedTask()] }); await useTaskStore.getState().deleteTask('temp-task') }],
+      ['toggleComplete', 'update', async () => { useTaskStore.setState({ tasks: [queuedTask()] }); await useTaskStore.getState().toggleComplete('temp-task') }],
+    ] as const)('%s persists and replays an owned offline mutation', async (_operation, type, mutate) => {
+      await mutate()
+      const entry = await expectOwnedQueueEntry(type, 'tasks')
+      await replayOwnedEntry(entry)
+    })
+
+    it('quietly cancels at the real enqueue boundary', async () => {
+      useTaskStore.setState({ tasks: [queuedTask()] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const putSpy = bumpEpochWhenQueuePutRuns(() => { useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any); useTaskStore.setState({ tasks: [] }) })
+      await expect(useTaskStore.getState().updateTask('temp-task', { title: 'Stale' })).resolves.toBeUndefined()
+      putSpy.mockRestore()
+      await vi.waitFor(() => expect(useTaskStore.getState().tasks).toEqual([]))
+      expect(await getAll(queueGuard('new-account'))).toEqual([])
+      expect(await getAll()).toEqual([])
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+      errorSpy.mockRestore()
+    })
+
+    it('quietly cancels an uncached delete at the actual IndexedDB commit boundary', async () => {
+      useTaskStore.setState({ tasks: [queuedTask()] })
+      await expectQuietQueueCommitCancellation(
+        () => useTaskStore.getState().deleteTask('temp-task'),
+        () => { useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any); useTaskStore.setState({ tasks: [] }) },
+        () => expect(useTaskStore.getState().tasks).toEqual([]),
+        toastMock,
+      )
+    })
+
+    it('quietly cancels an uncached toggle at the actual IndexedDB commit boundary', async () => {
+      useTaskStore.setState({ tasks: [queuedTask()] })
+      await expectQuietQueueCommitCancellation(
+        () => useTaskStore.getState().toggleComplete('temp-task'),
+        () => { useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any); useTaskStore.setState({ tasks: [] }) },
+        () => expect(useTaskStore.getState().tasks).toEqual([]),
+        toastMock,
+      )
+    })
   })
 })
