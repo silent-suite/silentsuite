@@ -282,6 +282,12 @@ silentsuite-bridge --login
 3. Check the dashboard sync log for errors
 4. If you installed on Windows, also check `%LOCALAPPDATA%\SilentSuite\install.log` and `%LOCALAPPDATA%\SilentSuite\bridge.log`
 
+### `SSL: WRONG_VERSION_NUMBER`
+
+A client connected using HTTP while bridge HTTPS is enabled. Enable SSL in the DAV client and use an `https://` URL. TLS fails before the request reaches the Bridge application, so an HTTPS-only listener cannot redirect that plaintext HTTP request.
+
+If HTTPS is not enabled for this bridge profile, use the `http://` URL shown by the dashboard instead. All clients using one bridge profile must use the listener's configured scheme.
+
 ### The sign-in page and dashboard show different ports
 
 This is expected during browser sign-in. `silentsuite-bridge --login` opens a temporary local sign-in page on a random port such as `65486`. The actual CalDAV/CardDAV bridge always uses `http://127.0.0.1:37358/` unless you changed `SILENTSUITE_LISTEN_PORT`.

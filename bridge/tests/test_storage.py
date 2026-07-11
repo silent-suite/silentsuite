@@ -114,8 +114,8 @@ class TestMetaMapping:
 # ---------------------------------------------------------------------------
 
 
-class TestAcquireLockForcesSync:
-    """Verify that acquire_lock calls force_sync, not request_sync."""
+class TestBackendDiscoveryForcesSync:
+    """Verify backend-backed reads force sync lazily."""
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
@@ -136,7 +136,7 @@ class TestAcquireLockForcesSync:
         storage = Storage(configuration)
 
         with storage.acquire_lock("r", user="test@example.com"):
-            pass
+            list(storage.discover("/test@example.com", depth="1"))
 
         mock_thread.force_sync.assert_called()
         mock_thread.request_sync.assert_not_called()
@@ -160,7 +160,7 @@ class TestAcquireLockForcesSync:
         storage = Storage(configuration)
 
         with storage.acquire_lock("r", user="test@example.com"):
-            pass
+            list(storage.discover("/test@example.com", depth="1"))
 
         mock_thread.wait_for_sync.assert_called_with(20)
 
