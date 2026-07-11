@@ -17,7 +17,7 @@ Open-source, zero-knowledge sync. Plaintext stays off the server; encryption key
 <br />
 
 <a href="https://silentsuite.io">
-  <img src="./.github/assets/readme-hero.png" alt="SilentSuite web calendar and Android sync app in the light editorial product design" width="100%" />
+  <img src="./.github/assets/readme-hero.png" alt="SilentSuite web calendar alongside the Android sync app" width="100%" />
 </a>
 
 <br />
@@ -71,13 +71,13 @@ Cryptographic building blocks include XChaCha20-Poly1305, Argon2id, libsodium, a
 
 ## Beta status
 
-The current public release is [`v0.4.0-beta`](https://github.com/silent-suite/silentsuite/releases/tag/v0.4.0-beta).
+See the [latest public beta release](https://github.com/silent-suite/silentsuite/releases/latest) for current Android and Bridge binaries, checksums, and release notes.
 
 | Status | Details |
 |---|---|
 | **Available now** | Hosted web app, self-hosting, signed Android APK, desktop Bridge binaries, import/export, GitHub Releases, and Zapstore |
 | **In progress** | Google Play update, official F-Droid review, broader Android testing, and more DAV compatibility reports |
-| **Not in this beta** | Native iOS app and OAuth-based Google/iCloud import |
+| **Not in this beta** | Native iOS app, push notifications, shared or multiple collections, first-class encrypted notes, and OAuth-based Google/iCloud import |
 
 The source is public for inspection, but SilentSuite has not yet completed an independent third-party security audit. See the [security page](https://silentsuite.io/security) for the threat model, limitations, and disclosure route.
 
@@ -165,6 +165,6 @@ The marketing site and hosted billing/accounts API live separately and have no c
 
 <div align="center">
 
-[**Star the repo to follow the Google Play and F-Droid launch**](https://github.com/silent-suite/silentsuite/stargazers)
+[**Star the repo to follow beta releases and app-store updates**](https://github.com/silent-suite/silentsuite/stargazers)
 
 </div>
