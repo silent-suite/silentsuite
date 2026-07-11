@@ -4,6 +4,7 @@
  * and replays them in FIFO order when connectivity returns.
  */
 import { logger } from '@/app/lib/logger'
+import { AccountBoundaryChangedError, assertCurrentAccountEpoch } from '@/app/lib/account-epoch'
 
 type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
 type MutationType = 'create' | 'update' | 'delete' | 'move'
@@ -20,6 +21,12 @@ export interface QueueEntry {
   createdAt: number
   retryCount: number
   status: 'pending' | 'failed'
+  accountFingerprint?: string
+}
+
+export interface OfflineQueueAccountGuard {
+  accountEpoch: number
+  accountFingerprint: string
 }
 
 export interface ReplayResult {
@@ -67,6 +74,20 @@ function assertCanPersistEntry(
   )
 }
 
+function assertGuard(guard?: OfflineQueueAccountGuard): void {
+  if (!guard) return
+  if (!guard.accountFingerprint) throw new AccountBoundaryChangedError()
+  assertCurrentAccountEpoch(guard.accountEpoch)
+}
+
+function queueCommitGuard(store: IDBObjectStore, tx: IDBTransaction, guard?: OfflineQueueAccountGuard): void {
+  if (!guard) return
+  const request = store.get('__account_boundary_commit_guard__')
+  request.onsuccess = () => {
+    try { assertGuard(guard) } catch { tx.abort() }
+  }
+}
+
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise
   dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
@@ -88,12 +109,20 @@ function generateId(): string {
   return `${Date.now()}-${++counter}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-function notifyListeners(): void {
-  // Read count async then notify — fire and forget
-  getPendingCount().then((count) => {
-    for (const fn of listeners) {
+function notifyListeners(guard?: OfflineQueueAccountGuard): void {
+  // Snapshot subscribers at commit notification time so listeners registered
+  // later cannot observe an earlier account transaction.
+  const subscribers = [...listeners]
+  const entriesPromise = guard ? getAll(guard) : getAll()
+  entriesPromise.then((entries) => entries.filter((entry) => entry.status === 'pending').length).then((count) => {
+    for (const fn of subscribers) {
       try { fn(count) } catch (err) { logger.warn('OfflineQueue', 'Listener callback failed', err) }
     }
+  }).catch((err) => {
+    if (err instanceof AccountBoundaryChangedError) return
+    logger.warn('OfflineQueue', 'Listener count refresh failed', {
+      errorName: err instanceof Error ? err.name : 'UnknownError',
+    })
   })
 }
 
@@ -116,10 +145,13 @@ function notifyListeners(): void {
  */
 async function compact(
   incoming: Omit<QueueEntry, 'id' | 'createdAt' | 'retryCount' | 'status'>,
+  guard?: OfflineQueueAccountGuard,
 ): Promise<string | null> {
   assertCanPersistEntry(incoming)
-  const entries = await getAll()
-  const pending = entries.filter((e) => e.status === 'pending')
+  assertGuard(guard)
+  const entries = await getAll(guard)
+  assertGuard(guard)
+  const pending = entries.filter((e) => e.status === 'pending' && (!guard || e.accountFingerprint === guard.accountFingerprint))
 
   // Match by tempId (for items created offline that haven't synced yet)
   if (incoming.tempId) {
@@ -129,17 +161,17 @@ async function compact(
     if (existing) {
       if (existing.type === 'create' && incoming.type === 'update') {
         // Merge: update content and target collection in the existing create entry.
-        await updateEntry({ ...existing, collectionUid: incoming.collectionUid ?? existing.collectionUid, content: incoming.content })
+        await updateEntry({ ...existing, collectionUid: incoming.collectionUid ?? existing.collectionUid, content: incoming.content }, guard)
         return existing.id
       }
       if (existing.type === 'create' && incoming.type === 'create') {
         // Merge duplicate creates for the same optimistic item, keeping latest content.
-        await updateEntry({ ...existing, collectionUid: incoming.collectionUid ?? existing.collectionUid, content: incoming.content })
+        await updateEntry({ ...existing, collectionUid: incoming.collectionUid ?? existing.collectionUid, content: incoming.content }, guard)
         return existing.id
       }
       if (existing.type === 'create' && incoming.type === 'delete') {
         // Cancel both: the item was created and deleted offline
-        await remove(existing.id)
+        await remove(existing.id, guard)
         return 'cancelled'
       }
     }
@@ -158,15 +190,15 @@ async function compact(
           collectionUid: incoming.collectionUid ?? moveRelated.collectionUid,
           targetCollectionUid: incoming.targetCollectionUid,
           content: incoming.content,
-        })
+        }, guard)
         return moveRelated.id
       }
       if (moveRelated.type === 'move' && incoming.type === 'update') {
         if (incoming.collectionUid && incoming.collectionUid === moveRelated.collectionUid) {
-          await updateEntry({ ...moveRelated, type: 'update', targetCollectionUid: undefined, content: incoming.content })
+          await updateEntry({ ...moveRelated, type: 'update', targetCollectionUid: undefined, content: incoming.content }, guard)
           return moveRelated.id
         }
-        await updateEntry({ ...moveRelated, content: incoming.content ?? moveRelated.content })
+        await updateEntry({ ...moveRelated, content: incoming.content ?? moveRelated.content }, guard)
         return moveRelated.id
       }
       if (moveRelated.type === 'move' && incoming.type === 'move') {
@@ -175,11 +207,11 @@ async function compact(
           collectionUid: incoming.collectionUid ?? moveRelated.collectionUid,
           targetCollectionUid: incoming.targetCollectionUid ?? moveRelated.targetCollectionUid,
           content: incoming.content ?? moveRelated.content,
-        })
+        }, guard)
         return moveRelated.id
       }
       if (moveRelated.type === 'move' && incoming.type === 'delete') {
-        await updateEntry({ ...moveRelated, type: 'delete', targetCollectionUid: undefined, content: undefined })
+        await updateEntry({ ...moveRelated, type: 'delete', targetCollectionUid: undefined, content: undefined }, guard)
         return moveRelated.id
       }
     }
@@ -190,12 +222,12 @@ async function compact(
     if (existing) {
       if (existing.type === 'update' && incoming.type === 'update') {
         // Merge: keep latest content
-        await updateEntry({ ...existing, content: incoming.content })
+        await updateEntry({ ...existing, content: incoming.content }, guard)
         return existing.id
       }
       if (existing.type === 'update' && incoming.type === 'delete') {
         // Replace update with delete
-        await updateEntry({ ...existing, type: 'delete', content: undefined })
+        await updateEntry({ ...existing, type: 'delete', content: undefined }, guard)
         return existing.id
       }
     }
@@ -206,39 +238,50 @@ async function compact(
 
 export async function enqueue(
   entry: Omit<QueueEntry, 'id' | 'createdAt' | 'retryCount' | 'status'>,
+  guard?: OfflineQueueAccountGuard,
 ): Promise<string> {
+  assertGuard(guard)
   // Try compaction first
-  const compactedId = await compact(entry)
+  const compactedId = await compact(entry, guard)
+  assertGuard(guard)
   if (compactedId) return compactedId
 
   // Enforce queue size limit (count only pending entries)
-  if (await isQueueFull()) {
+  if (await isQueueFull(guard)) {
     throw new Error(`Offline queue is full (max ${MAX_QUEUE_SIZE} pending entries). Connect to the internet to sync your changes.`)
   }
+  assertGuard(guard)
 
   const db = await openDB()
+  assertGuard(guard)
   const record: QueueEntry = {
     ...entry,
     id: generateId(),
     createdAt: Date.now(),
     retryCount: 0,
     status: 'pending',
+    ...(guard ? { accountFingerprint: guard.accountFingerprint } : {}),
   }
   assertCanPersistEntry(record)
   return new Promise<string>((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).put(record)
+    const store = tx.objectStore(STORE_NAME)
+    store.put(record)
+    queueCommitGuard(store, tx, guard)
     tx.oncomplete = () => {
-      notifyListeners()
+      notifyListeners(guard)
       notifyEnqueueListeners()
       resolve(record.id)
     }
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(guard ? new AccountBoundaryChangedError() : tx.error)
   })
 }
 
-export async function getAll(): Promise<QueueEntry[]> {
+export async function getAll(guard?: OfflineQueueAccountGuard): Promise<QueueEntry[]> {
+  assertGuard(guard)
   const db = await openDB()
+  assertGuard(guard)
   return new Promise((resolve, reject) => {
     // Use a readwrite transaction so legacy plaintext records can be purged
     // atomically before callers observe the queue.
@@ -247,58 +290,86 @@ export async function getAll(): Promise<QueueEntry[]> {
     const request = store.getAll()
     let safeEntries: QueueEntry[] = []
     request.onsuccess = () => {
-      const entries = (request.result as QueueEntry[]).sort(
+      const allEntries = (request.result as QueueEntry[]).sort(
         (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
       )
       if (!isEncryptedQueuePersistenceAvailable()) {
-        safeEntries = entries.filter((entry) => !hasPersistedPlaintextContent(entry))
-        for (const entry of entries) {
+        const safeAllEntries = allEntries.filter((entry) => !hasPersistedPlaintextContent(entry))
+        for (const entry of allEntries) {
           if (hasPersistedPlaintextContent(entry)) store.delete(entry.id)
         }
+        safeEntries = safeAllEntries.filter((entry) => !guard || entry.accountFingerprint === guard.accountFingerprint)
         return
       }
-      safeEntries = entries
+      safeEntries = allEntries.filter((entry) => !guard || entry.accountFingerprint === guard.accountFingerprint)
     }
     request.onerror = () => reject(request.error)
+    queueCommitGuard(store, tx, guard)
     tx.oncomplete = () => resolve(safeEntries)
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(guard ? new AccountBoundaryChangedError() : tx.error)
   })
 }
 
-export async function getPendingCount(): Promise<number> {
-  const entries = await getAll()
+export async function getPendingCount(guard: OfflineQueueAccountGuard): Promise<number> {
+  const entries = await getAll(guard)
+  assertGuard(guard)
   return entries.filter((e) => e.status === 'pending').length
 }
 
-export async function remove(id: string): Promise<void> {
+export async function remove(id: string, guard?: OfflineQueueAccountGuard): Promise<void> {
+  assertGuard(guard)
   const db = await openDB()
+  assertGuard(guard)
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).delete(id)
+    const store = tx.objectStore(STORE_NAME)
+    if (guard) {
+      const lookup = store.get(id)
+      lookup.onsuccess = () => {
+        try {
+          assertGuard(guard)
+          const entry = lookup.result as QueueEntry | undefined
+          if (entry?.accountFingerprint === guard.accountFingerprint) store.delete(id)
+          queueCommitGuard(store, tx, guard)
+        } catch { tx.abort() }
+      }
+      lookup.onerror = () => reject(lookup.error)
+    } else {
+      store.delete(id)
+    }
     tx.oncomplete = () => {
-      notifyListeners()
+      notifyListeners(guard)
       resolve()
     }
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(guard ? new AccountBoundaryChangedError() : tx.error)
   })
 }
 
-async function updateEntry(entry: QueueEntry): Promise<void> {
+async function updateEntry(entry: QueueEntry, guard?: OfflineQueueAccountGuard): Promise<void> {
   assertCanPersistEntry(entry)
+  assertGuard(guard)
+  if (guard && entry.accountFingerprint !== guard.accountFingerprint) throw new AccountBoundaryChangedError()
   const db = await openDB()
+  assertGuard(guard)
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).put(entry)
+    const store = tx.objectStore(STORE_NAME)
+    store.put(entry)
+    queueCommitGuard(store, tx, guard)
     tx.oncomplete = () => {
-      notifyListeners()
+      notifyListeners(guard)
       resolve()
     }
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(guard ? new AccountBoundaryChangedError() : tx.error)
   })
 }
 
-export async function getFailedCount(): Promise<number> {
-  const entries = await getAll()
+export async function getFailedCount(guard: OfflineQueueAccountGuard): Promise<number> {
+  const entries = await getAll(guard)
+  assertGuard(guard)
   return entries.filter((e) => e.status === 'failed').length
 }
 
@@ -315,31 +386,26 @@ export async function clearAll(): Promise<void> {
   })
 }
 
-export async function clearFailed(): Promise<void> {
-  const entries = await getAll()
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    for (const entry of entries) {
-      if (entry.status === 'failed') {
-        store.delete(entry.id)
-      }
-    }
-    tx.oncomplete = () => {
-      notifyListeners()
-      resolve()
-    }
-    tx.onerror = () => reject(tx.error)
-  })
+export async function clearFailed(guard: OfflineQueueAccountGuard): Promise<void> {
+  const entries = await getAll(guard)
+  assertGuard(guard)
+  for (const entry of entries) {
+    if (entry.status !== 'failed') continue
+    assertGuard(guard)
+    await remove(entry.id, guard)
+    assertGuard(guard)
+  }
 }
 
 /** Reset failed entries back to pending so they can be retried */
-export async function retryFailed(): Promise<void> {
-  const entries = await getAll()
+export async function retryFailed(guard: OfflineQueueAccountGuard): Promise<void> {
+  const entries = await getAll(guard)
+  assertGuard(guard)
   for (const entry of entries) {
     if (entry.status === 'failed') {
-      await updateEntry({ ...entry, status: 'pending', retryCount: 0 })
+      assertGuard(guard)
+      await updateEntry({ ...entry, status: 'pending', retryCount: 0 }, guard)
+      assertGuard(guard)
     }
   }
 }
@@ -351,20 +417,30 @@ export async function retryFailed(): Promise<void> {
  */
 export async function replay(
   executeMutation: (entry: QueueEntry) => Promise<{ itemUid?: string }>,
+  guard: OfflineQueueAccountGuard,
 ): Promise<ReplayResult[]> {
-  const entries = await getAll()
+  try {
+  assertGuard(guard)
+  const entries = await getAll(guard)
+  assertGuard(guard)
   const pending = entries.filter((e) => e.status === 'pending')
   const results: ReplayResult[] = []
 
   for (const entry of pending) {
     try {
+      assertGuard(guard)
       const result = await executeMutation(entry)
-      await remove(entry.id)
+      assertGuard(guard)
+      await remove(entry.id, guard)
+      assertGuard(guard)
       results.push({ entry, success: true, itemUid: result.itemUid })
     } catch (err) {
+      if (err instanceof AccountBoundaryChangedError) return []
+      assertGuard(guard)
       const retryCount = entry.retryCount + 1
       const status = retryCount >= MAX_RETRIES ? 'failed' : 'pending'
-      await updateEntry({ ...entry, retryCount, status })
+      await updateEntry({ ...entry, retryCount, status }, guard)
+      assertGuard(guard)
       results.push({
         entry,
         success: false,
@@ -375,7 +451,12 @@ export async function replay(
     }
   }
 
+  assertGuard(guard)
   return results
+  } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) return []
+    throw err
+  }
 }
 
 export function onCountChange(fn: CountListener): () => void {
@@ -384,14 +465,16 @@ export function onCountChange(fn: CountListener): () => void {
 }
 
 /** Returns true if pending entries have reached or exceeded MAX_QUEUE_SIZE */
-export async function isQueueFull(): Promise<boolean> {
-  const entries = await getAll()
+export async function isQueueFull(guard?: OfflineQueueAccountGuard): Promise<boolean> {
+  const entries = await getAll(guard)
+  assertGuard(guard)
   return entries.filter((e) => e.status === 'pending').length >= MAX_QUEUE_SIZE
 }
 
 /** Returns pending entries older than the given threshold (defaults to 24h) */
-export async function getStaleEntries(thresholdMs: number = STALE_THRESHOLD_MS): Promise<QueueEntry[]> {
-  const entries = await getAll()
+export async function getStaleEntries(guard: OfflineQueueAccountGuard, thresholdMs: number = STALE_THRESHOLD_MS): Promise<QueueEntry[]> {
+  const entries = await getAll(guard)
+  assertGuard(guard)
   const cutoff = Date.now() - thresholdMs
   return entries.filter((e) => e.status === 'pending' && e.createdAt < cutoff)
 }

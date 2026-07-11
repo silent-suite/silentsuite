@@ -10,6 +10,7 @@ import {
 import { logger } from '@/app/lib/logger'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
+import { assertCurrentAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 
 const COLLECTION_TYPE_PREFERENCES = 'silentsuite.preferences'
 const PREFERENCES_COLLECTION_NAME = 'Preferences'
@@ -29,7 +30,7 @@ interface PreferencesSyncState {
 
 interface PreferencesSyncActions {
   initialize: () => Promise<void>
-  loadFromRemote: (items?: { uid: string; content: string }[]) => Promise<void>
+  loadFromRemote: (items?: { uid: string; content: string }[], accountEpoch?: number) => Promise<void>
   pushNow: () => Promise<boolean>
   setRemoteItemUid: (uid: string) => void
   destroy: () => void
@@ -57,32 +58,42 @@ function mergeRemoteItems(items: RemotePreferenceItem[]): SyncedPreferencesV1 | 
   return mergeSyncedPreferences(items.map((item) => item.preferences))
 }
 
-async function listPreferencesCollections(): Promise<any[]> {
+async function listPreferencesCollections(accountEpoch: number): Promise<any[]> {
+  assertCurrentAccountEpoch(accountEpoch)
   const etebase = useEtebaseStore.getState()
   if (!etebase.account) return []
   if (etebase.collections.preferences.length > 0) return etebase.collections.preferences
 
   const core = await import('@silentsuite/core')
+  assertCurrentAccountEpoch(accountEpoch)
   const collections = await core.listCollections(etebase.account, COLLECTION_TYPE_PREFERENCES)
+  assertCurrentAccountEpoch(accountEpoch)
   if (collections.length > 0) {
+    const currentEtebase = useEtebaseStore.getState()
+    if (currentEtebase.account !== etebase.account || currentEtebase.syncEngine !== etebase.syncEngine) return []
     useEtebaseStore.setState((state) => ({
       collections: { ...state.collections, preferences: collections },
     }))
+    assertCurrentAccountEpoch(accountEpoch)
     for (const collection of collections) {
+      assertCurrentAccountEpoch(accountEpoch)
+      if (useEtebaseStore.getState().syncEngine !== etebase.syncEngine) return []
       etebase.syncEngine?.trackCollection(COLLECTION_TYPE_PREFERENCES as any, collection.uid)
     }
   }
   return collections
 }
 
-async function ensurePreferencesCollection(): Promise<string | null> {
-  const existing = await listPreferencesCollections()
+async function ensurePreferencesCollection(accountEpoch: number): Promise<string | null> {
+  const existing = await listPreferencesCollections(accountEpoch)
+  assertCurrentAccountEpoch(accountEpoch)
   if (existing[0]?.uid) return existing[0].uid
   return useEtebaseStore.getState().createCollection('preferences', PREFERENCES_COLLECTION_NAME)
 }
 
-async function readRemotePreferenceItems(): Promise<{ uid: string; content: string }[]> {
-  const collections = await listPreferencesCollections()
+async function readRemotePreferenceItems(accountEpoch: number): Promise<{ uid: string; content: string }[]> {
+  const collections = await listPreferencesCollections(accountEpoch)
+  assertCurrentAccountEpoch(accountEpoch)
   if (collections.length === 0) return []
   return useEtebaseStore.getState().refreshCollection('preferences')
 }
@@ -94,18 +105,23 @@ export const usePreferencesSyncStore = create<PreferencesSyncState & Preferences
   lastSyncedAt: null,
 
   initialize: async () => {
+    const epoch = getAccountEpoch()
     if (get().isInitialized) return
     if (!useEtebaseStore.getState().account) return
 
-    await get().loadFromRemote()
+    await get().loadFromRemote(undefined, epoch)
+    assertCurrentAccountEpoch(epoch)
     set({ isInitialized: true })
   },
 
-  loadFromRemote: async (itemsFromRefresh) => {
+  loadFromRemote: async (itemsFromRefresh, initiatingEpoch) => {
+    const epoch = initiatingEpoch ?? getAccountEpoch()
+    assertCurrentAccountEpoch(epoch)
     const etebase = useEtebaseStore.getState()
     if (!etebase.account) return
 
-    const items = itemsFromRefresh ?? await readRemotePreferenceItems()
+    const items = itemsFromRefresh ?? await readRemotePreferenceItems(epoch)
+    assertCurrentAccountEpoch(epoch)
     const remoteItems = parseRemoteItems(items)
     const canonical = chooseCanonical(remoteItems)
     const mergedRemote = mergeRemoteItems(remoteItems)
@@ -117,22 +133,27 @@ export const usePreferencesSyncStore = create<PreferencesSyncState & Preferences
 
     set({ isApplyingRemote: true, remoteItemUid: canonical.uid })
     try {
+      assertCurrentAccountEpoch(epoch)
       usePreferencesStore.getState().applySyncedPreferences(mergedRemote)
     } finally {
+      assertCurrentAccountEpoch(epoch)
       set({ isApplyingRemote: false, lastSyncedAt: new Date() })
     }
   },
 
   pushNow: async () => {
+    const epoch = getAccountEpoch()
     if (get().isApplyingRemote) return false
 
     const etebase = useEtebaseStore.getState()
     if (!etebase.account) return false
 
-    const collectionUid = await ensurePreferencesCollection()
+    const collectionUid = await ensurePreferencesCollection(epoch)
+    assertCurrentAccountEpoch(epoch)
     if (!collectionUid) return false
 
-    const remoteItems = parseRemoteItems(await readRemotePreferenceItems())
+    const remoteItems = parseRemoteItems(await readRemotePreferenceItems(epoch))
+    assertCurrentAccountEpoch(epoch)
     const mergedRemote = mergeRemoteItems(remoteItems)
     const merged = mergedRemote
       ? mergeSyncedPreferences([mergedRemote, usePreferencesStore.getState().toSyncedPreferences()])
@@ -149,6 +170,7 @@ export const usePreferencesSyncStore = create<PreferencesSyncState & Preferences
       }
       const beforeUpdateItem = useEtebaseStore.getState().itemCache.get(canonical.uid)
       await etebase.updateItem('preferences', canonical.uid, content)
+      assertCurrentAccountEpoch(epoch)
       const afterUpdateItem = useEtebaseStore.getState().itemCache.get(canonical.uid)
       if (!afterUpdateItem || afterUpdateItem === beforeUpdateItem) {
         return false
@@ -158,6 +180,7 @@ export const usePreferencesSyncStore = create<PreferencesSyncState & Preferences
     }
 
     const itemUid = await etebase.createItem('preferences', content, PREFERENCES_TEMP_ID, collectionUid)
+    assertCurrentAccountEpoch(epoch)
     if (itemUid) {
       set({ remoteItemUid: itemUid, lastSyncedAt: new Date() })
       return true

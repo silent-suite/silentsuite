@@ -3,6 +3,7 @@ import { createSyncedPreferences, serializePreferences } from '@silentsuite/core
 import { useEtebaseStore } from '../use-etebase-store'
 import { usePreferencesStore } from '../use-preferences-store'
 import { usePreferencesSyncStore } from '../use-preferences-sync-store'
+import { AccountBoundaryChangedError, bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 vi.mock('@/app/stores/use-toast-store', () => ({
   showErrorToast: vi.fn(),
@@ -74,6 +75,34 @@ describe('usePreferencesSyncStore', () => {
     expect(createItem).not.toHaveBeenCalled()
     expect(updateItem).not.toHaveBeenCalled()
     expect(usePreferencesSyncStore.getState()).toMatchObject({ isInitialized: true, remoteItemUid: null })
+  })
+
+  it('does not publish or track stale preferences collections after an account switch', async () => {
+    let releaseList!: (collections: any[]) => void
+    const oldTrack = vi.fn()
+    const newTrack = vi.fn()
+    listCollectionsMock.mockImplementationOnce(() => new Promise<any[]>((resolve) => {
+      releaseList = resolve
+    }))
+    useEtebaseStore.setState({
+      account: { id: 'old' } as any,
+      syncEngine: { trackCollection: oldTrack } as any,
+    })
+
+    const initialization = usePreferencesSyncStore.getState().initialize()
+    await vi.waitFor(() => expect(listCollectionsMock).toHaveBeenCalled())
+    bumpAccountEpoch()
+    useEtebaseStore.setState({
+      account: { id: 'new' } as any,
+      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      syncEngine: { trackCollection: newTrack } as any,
+    })
+    releaseList([{ uid: 'old-preferences' }])
+
+    await expect(initialization).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+    expect(useEtebaseStore.getState().collections.preferences).toEqual([])
+    expect(oldTrack).not.toHaveBeenCalled()
+    expect(newTrack).not.toHaveBeenCalled()
   })
 
   it('loads remote preferences without changing local notification sound or writing back', async () => {
