@@ -2,6 +2,7 @@ import { render, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SyncProvider } from '../sync-provider'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 const order: string[] = []
 
@@ -28,6 +29,7 @@ type OnCacheHydrate = () => void | Promise<void>
 
 const etebaseMock = vi.hoisted(() => {
   let syncChangeHandler: ((event: { collectionType: string; collectionUid: string; itemUids: string[]; changeType: string }) => Promise<void>) | null = null
+  let syncStatusHandler: ((status: string) => void) | null = null
   // Default initialize replays the real store contract: calendar → tasks →
   // contacts, one terminal callback each, statuses driven by domainLoadState.
   async function defaultInitialize(options?: { onCacheHydrate?: OnCacheHydrate; onDomainLoaded?: OnDomainLoaded }) {
@@ -48,8 +50,9 @@ const etebaseMock = vi.hoisted(() => {
       syncChangeHandler = handler ?? null
       return vi.fn()
     }),
-    onStatusChange: vi.fn(() => {
+    onStatusChange: vi.fn((handler?: typeof syncStatusHandler) => {
       order.push('wireStatusHandler')
+      syncStatusHandler = handler ?? null
       return vi.fn()
     }),
     isInitialized: false,
@@ -60,6 +63,10 @@ const etebaseMock = vi.hoisted(() => {
     state,
     defaultInitialize,
     getSyncChangeHandler: () => syncChangeHandler,
+    getSyncStatusHandler: () => syncStatusHandler,
+    setSyncStatusHandler: (handler: typeof syncStatusHandler) => {
+      syncStatusHandler = handler
+    },
     setSyncChangeHandler: (handler: typeof syncChangeHandler) => {
       syncChangeHandler = handler
     },
@@ -184,8 +191,9 @@ describe('SyncProvider timing instrumentation', () => {
       etebaseMock.setSyncChangeHandler(handler ?? null)
       return vi.fn()
     })
-    etebaseMock.state.onStatusChange.mockImplementation(() => {
+    etebaseMock.state.onStatusChange.mockImplementation((handler?: Parameters<typeof etebaseMock.state.onStatusChange>[0]) => {
       order.push('wireStatusHandler')
+      etebaseMock.setSyncStatusHandler(handler ?? null)
       return vi.fn()
     })
     cacheMock.isCacheEnabled.mockReturnValue(false)
@@ -312,9 +320,9 @@ describe('SyncProvider timing instrumentation', () => {
       'cacheGet:calendar',
       'fetchAllItems:calendar',
     ])
-    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('calendar', [])
-    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('tasks', [])
-    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('contacts', [])
+    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('calendar', [], expect.any(Number))
+    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('tasks', [], expect.any(Number))
+    expect(cacheMock.replaceItemsForType).toHaveBeenCalledWith('contacts', [], expect.any(Number))
   })
 
   it('lets cache hydrate first and then overwrites calendar with server truth', async () => {
@@ -396,5 +404,131 @@ describe('SyncProvider timing instrumentation', () => {
     expect(syncStoreMock.setPartialLoad).toHaveBeenCalledWith(true, 1)
     expect(order).toContain('refreshCalendarScoped')
     expect(order).not.toContain('syncCalendar')
+  })
+
+  it('does not publish an in-flight old-account change after the account epoch changes', async () => {
+    renderProvider()
+
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+    vi.clearAllMocks()
+    order.length = 0
+
+    let releaseRefresh!: (items: never[]) => void
+    let markRefreshStarted!: () => void
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefreshStarted = resolve
+    })
+    etebaseMock.state.refreshCollection.mockImplementation(() => {
+      markRefreshStarted()
+      return new Promise<never[]>((resolve) => {
+        releaseRefresh = resolve
+      })
+    })
+    etebaseMock.state.fetchAllItems.mockResolvedValue([
+      { uid: 'old-account-event', content: 'VEVENT:OLD', collectionUid: 'old-calendar' },
+    ])
+
+    const handler = etebaseMock.getSyncChangeHandler()
+    const change = handler!({
+      collectionType: 'etebase.vevent',
+      collectionUid: 'old-calendar',
+      itemUids: ['old-account-event'],
+      changeType: 'change',
+    })
+    await refreshStarted
+
+    bumpAccountEpoch()
+    releaseRefresh([])
+    await change
+
+    expect(calendarStoreMock.syncFromRemote).not.toHaveBeenCalled()
+    expect(syncStoreMock.setLastSynced).not.toHaveBeenCalled()
+    expect(sentryMock.captureException).not.toHaveBeenCalled()
+  })
+
+  it('ignores status callbacks from an old account epoch', async () => {
+    renderProvider()
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+
+    const statusHandler = etebaseMock.getSyncStatusHandler()
+    expect(statusHandler).toBeTruthy()
+    vi.clearAllMocks()
+
+    bumpAccountEpoch()
+    statusHandler!('error')
+
+    expect(syncStoreMock.setSyncStatus).not.toHaveBeenCalled()
+    expect(syncStoreMock.setLastSynced).not.toHaveBeenCalled()
+    expect(syncStoreMock.setError).not.toHaveBeenCalled()
+  })
+
+  it('does not publish partial-load state after an initialization callback crosses the account boundary', async () => {
+    let releaseFetch!: (items: never[]) => void
+    let markFetchStarted!: () => void
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve
+    })
+    let markInitializeFinished!: () => void
+    const initializeFinished = new Promise<void>((resolve) => {
+      markInitializeFinished = resolve
+    })
+    etebaseMock.state.fetchAllItems.mockImplementation(() => {
+      markFetchStarted()
+      return new Promise<never[]>((resolve) => {
+        releaseFetch = resolve
+      })
+    })
+    etebaseMock.state.initialize.mockImplementation(async (options) => {
+      try {
+        await options?.onDomainLoaded?.({
+          type: 'calendar',
+          status: 'loaded',
+          itemCount: 1,
+          pageCount: 1,
+          collectionCount: 1,
+        })
+      } finally {
+        markInitializeFinished()
+      }
+    })
+
+    renderProvider()
+    await fetchStarted
+    vi.clearAllMocks()
+
+    bumpAccountEpoch()
+    releaseFetch([])
+    await initializeFinished
+
+    expect(syncStoreMock.setPartialLoad).not.toHaveBeenCalled()
+    expect(syncStoreMock.setSyncStatus).not.toHaveBeenCalled()
+    expect(syncStoreMock.setError).not.toHaveBeenCalled()
+  })
+
+  it('suppresses an ordinary initialization rejection after the account epoch changes', async () => {
+    let rejectInitialize!: (error: Error) => void
+    let markInitializeStarted!: () => void
+    const initializeStarted = new Promise<void>((resolve) => {
+      markInitializeStarted = resolve
+    })
+    etebaseMock.state.initialize.mockImplementation(() => {
+      markInitializeStarted()
+      return new Promise<void>((_resolve, reject) => {
+        rejectInitialize = reject
+      })
+    })
+
+    renderProvider()
+    await initializeStarted
+    vi.clearAllMocks()
+
+    bumpAccountEpoch()
+    rejectInitialize(new Error('old account request failed'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(sentryMock.captureException).not.toHaveBeenCalled()
+    expect(syncStoreMock.setSyncStatus).not.toHaveBeenCalled()
+    expect(syncStoreMock.setError).not.toHaveBeenCalled()
   })
 })
