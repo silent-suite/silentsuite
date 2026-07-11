@@ -82,17 +82,23 @@ Make sure the SilentSuite Bridge is running. Open the dashboard URL shown by the
 3. Set **Trust > Secure Sockets Layer (SSL)** to **Always Trust**.
 4. Restart the bridge and retry Apple Internet Accounts.
 
+### `SSL: WRONG_VERSION_NUMBER`
+
+A client connected using HTTP while bridge HTTPS is enabled. Enable SSL in the DAV client and use an `https://` URL. The bridge has one listener, so it cannot redirect plaintext HTTP after HTTPS is enabled.
+
+An initial anonymous `401 Unauthorized` followed by a successful authenticated request is the normal Basic authentication challenge. An explicit `Invalid password for configured user` message is a separate credentials failure.
+
 ### Calendar shows but events are missing
 
 macOS may limit sync to recent events. Open **Calendar > Settings > Accounts**, select your DAV account, and check the sync range.
 
 ### Apple Internet Accounts still fails with `/principals/`
 
-If HTTPS + Advanced setup still fails, collect a redacted bridge log for support. Include paths such as:
+Current Bridge builds provide an authenticated, non-enumerating `/principals/` discovery container while keeping your account's normal `/your@email.com/` path canonical. If HTTPS + Advanced setup still fails, collect an ordered, redacted bridge trace for support. Include the method, path, Depth value, status, and returned href classes for paths such as:
 
 - `/principals/`
 - `/.well-known/caldav`
 - `/.well-known/carddav`
 - `/your@email.com/`
 
-Do **not** include passwords, session tokens, or full private logs. This evidence determines whether SilentSuite needs a follow-up DAV principal-discovery compatibility shim.
+Do **not** include passwords, Authorization headers, session tokens, contact/calendar contents, or full private logs. Record whether macOS requests `/principals/your@email.com/`; that account-specific alias remains denied unless real Apple protocol evidence proves it is required.

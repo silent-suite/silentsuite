@@ -26,8 +26,6 @@ from radicale.storage import (
 )
 
 from .. import config
-from ..local_cache import Etebase
-from ..local_cache import models as cache_models
 from ..local_cache.models import HrefMapper, ItemEntity
 from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
@@ -542,6 +540,18 @@ class Collection(BaseCollection):
         return " "
 
 
+class PrincipalDiscoveryCollection(Collection):
+    """Static authenticated DAV discovery container with no account children."""
+
+    @property
+    def is_principal(self) -> bool:
+        return False
+
+    @property
+    def owner(self) -> str:
+        return ""
+
+
 # --- Radicale Storage ---
 
 
@@ -566,14 +576,37 @@ class Storage(BaseStorage):
 
     def discover(self, path, depth="0"):
         """Discover collections and items under the given path."""
+        attributes = _get_attributes_from_path(path)
+        if self.user and attributes == ["principals"]:
+            yield PrincipalDiscoveryCollection(self, "/principals/")
+            return
+
+        if (
+            self.user
+            and self.etesync is None
+            and (not attributes or attributes == [self.user])
+        ):
+            yield Collection(self, path)
+            if depth == "0":
+                return
+            if self.etesync is None:
+                with self._acquire_read_backend():
+                    discovered = self.discover(path, depth)
+                    next(discovered, None)
+                    yield from discovered
+                return
+
+        if self.user and self.etesync is None:
+            with self._acquire_read_backend():
+                yield from self.discover(path, depth)
+            return
+
         if not self._path_belongs_to_user(path):
             logger.warning(
                 "Rejecting DAV path %s authenticated as configured account",
                 path,
             )
             return
-
-        attributes = _get_attributes_from_path(path)
 
         if len(attributes) == 3:
             if path.endswith("/"):
@@ -683,7 +716,7 @@ class Storage(BaseStorage):
         col_mgr.upload(col)
 
         # Cache it locally
-        from ..local_cache import models, db
+        from ..local_cache import db, models
         with db.database_proxy:
             cache_col = models.CollectionEntity(
                 local_user=self.etesync.user,
@@ -712,6 +745,15 @@ class Storage(BaseStorage):
         """Acquire storage lock and sync with Etebase server."""
         if not user:
             yield
+            return
+
+        if mode == "r":
+            with self._etesync_user_lock:
+                self.user = user
+                try:
+                    yield
+                finally:
+                    self.user = None
             return
 
         sync_thread = start_sync_thread(user)
@@ -746,3 +788,24 @@ class Storage(BaseStorage):
 
             self.etesync = None
             self.user = None
+
+    @contextmanager
+    def _acquire_read_backend(self):
+        """Initialize sync/cache lazily after static discovery paths are handled."""
+        user = self.user
+        sync_thread = start_sync_thread(user)
+        logger.info("acquire_lock(r): pre-yield sync")
+        sync_thread.force_sync()
+        try:
+            sync_thread.wait_for_sync(20)
+        except Exception as e:
+            logger.warning(
+                "Sync failed for configured account, continuing with local cache: %s", e
+            )
+
+        with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
+            self.etesync = etesync
+            try:
+                yield
+            finally:
+                self.etesync = None
