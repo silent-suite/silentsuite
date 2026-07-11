@@ -29,7 +29,12 @@ import {
   type SyncTimingPhase,
   type SyncTimingFields,
 } from '@/app/lib/sync-timing'
-import { AccountBoundaryChangedError, assertCurrentAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import {
+  AccountBoundaryChangedError,
+  assertCurrentAccountEpoch,
+  getAccountEpoch,
+  isCurrentAccountEpoch,
+} from '@/app/lib/account-epoch'
 
 function reportSyncError(operation: string, err: unknown) {
   Sentry.captureException(createSafeOperationalError('sync-provider', operation), {
@@ -113,6 +118,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           },
           onDomainLoaded: async (event) => {
             await loadDomainIntoStore(event.type)
+            assertCurrentAccountEpoch(accountEpoch)
             updatePartialLoadFlag()
           },
         })
@@ -139,10 +145,12 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         unsubStatus = wireStatusHandler()
         safeLogSyncTiming('wire-status-handler', statusHandlerStartedAt, { status: unsubStatus ? 'ok' : 'skipped' })
 
+        assertCurrentAccountEpoch(accountEpoch)
         setSyncStatus('synced')
         setLastSynced(new Date())
         safeLogSyncTiming('initial-sync-complete', initStartedAt)
       } catch (err) {
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         if (err instanceof AccountBoundaryChangedError) return
         safeLogSyncTiming('initial-sync-failed', initStartedAt, { errorCategory: safeTimingErrorCategory('unknown') })
         reportSyncError('init', err)
@@ -237,9 +245,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         lastModified: Date.now(),
       }))
       try {
-        await cacheReplaceItemsForType(type, records)
+        await cacheReplaceItemsForType(type, records, accountEpoch)
+        assertCurrentAccountEpoch(accountEpoch)
         safeLogSyncTiming('cache-mirror', startedAt, { type, itemCount: items.length })
       } catch (err) {
+        if (err instanceof AccountBoundaryChangedError) return
         logger.warn(`[sync-provider] Failed to mirror ${type} to cache`, getSafeErrorDetails(err))
         safeLogSyncTiming('cache-mirror-failed', startedAt, { type, itemCount: items.length, errorCategory: 'cache' })
       }
@@ -313,6 +323,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     function wireChangeHandler(): (() => void) | null {
       const etebase = useEtebaseStore.getState()
       return etebase.onSyncChange(async (event) => {
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         logger.log('[sync-provider] Sync change:', event.changeType, event.collectionType, event.itemUids.length, 'items')
 
         // Re-fetch ALL items from the Etebase server for the changed collection.
@@ -320,67 +331,86 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         const collectionType = event.collectionType
         const refresher = useEtebaseStore.getState().refreshCollection
         const core = await import('@silentsuite/core')
+        if (!isCurrentAccountEpoch(accountEpoch)) return
 
         if (collectionType === 'etebase.vtodo') {
           try {
             await refresher('tasks', event.collectionUid)
+            assertCurrentAccountEpoch(accountEpoch)
             updatePartialLoadFlag()
             if (useEtebaseStore.getState().domainLoadState.tasks === 'loaded') {
               const taskItems = await useEtebaseStore.getState().fetchAllItems('tasks')
+              assertCurrentAccountEpoch(accountEpoch)
               const tasks = taskItems.map((item) => {
                 const task = core.deserializeTask(item.content)
                 return { ...task, id: item.uid, listId: item.collectionUid }
               })
+              assertCurrentAccountEpoch(accountEpoch)
               useTaskStore.getState().syncFromRemote(tasks)
             }
           } catch (err) {
+            if (err instanceof AccountBoundaryChangedError) return
             reportSyncError('sync tasks', err)
           }
         } else if (collectionType === 'etebase.vcard') {
           try {
             await refresher('contacts', event.collectionUid)
+            assertCurrentAccountEpoch(accountEpoch)
             updatePartialLoadFlag()
             if (useEtebaseStore.getState().domainLoadState.contacts === 'loaded') {
               const contactItems = await useEtebaseStore.getState().fetchAllItems('contacts')
+              assertCurrentAccountEpoch(accountEpoch)
               const contacts = contactItems.map((item) => {
                 const contact = core.deserializeContact(item.content)
                 return { ...contact, id: item.uid, listId: item.collectionUid }
               })
+              assertCurrentAccountEpoch(accountEpoch)
               useContactStore.getState().syncFromRemote(contacts)
             }
           } catch (err) {
+            if (err instanceof AccountBoundaryChangedError) return
             reportSyncError('sync contacts', err)
           }
         } else if (collectionType === 'etebase.vevent') {
           try {
             await refresher('calendar', event.collectionUid)
+            assertCurrentAccountEpoch(accountEpoch)
             updatePartialLoadFlag()
             if (useEtebaseStore.getState().domainLoadState.calendar === 'loaded') {
               const eventItems = await useEtebaseStore.getState().fetchAllItems('calendar')
+              assertCurrentAccountEpoch(accountEpoch)
               const events = eventItems.map((item) => {
                 const event = core.deserializeCalendarEvent(item.content)
                 return { ...event, id: item.uid, calendarId: item.collectionUid }
               })
+              assertCurrentAccountEpoch(accountEpoch)
               useCalendarStore.getState().syncFromRemote(events)
             }
           } catch (err) {
+            if (err instanceof AccountBoundaryChangedError) return
             reportSyncError('sync calendar events', err)
           }
         } else if (collectionType === 'silentsuite.labelindex') {
           try {
             await useLabelSuggestionsStore.getState().refreshFromRemote()
+            assertCurrentAccountEpoch(accountEpoch)
           } catch (err) {
+            if (err instanceof AccountBoundaryChangedError) return
             logger.warn('[sync-provider] Label suggestions refresh failed', getSafeErrorDetails(err))
           }
         } else if (collectionType === 'silentsuite.preferences') {
           try {
             const preferenceItems = await refresher('preferences', event.collectionUid)
+            assertCurrentAccountEpoch(accountEpoch)
             await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
+            assertCurrentAccountEpoch(accountEpoch)
           } catch (err) {
+            if (err instanceof AccountBoundaryChangedError) return
             logger.warn('[sync-provider] Preferences refresh failed', getSafeErrorDetails(err))
           }
         }
 
+        assertCurrentAccountEpoch(accountEpoch)
         setLastSynced(new Date())
       })
     }
@@ -388,6 +418,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     function wireStatusHandler(): (() => void) | null {
       const etebase = useEtebaseStore.getState()
       return etebase.onStatusChange((status: string) => {
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         setSyncStatus(status as any)
         if (status === 'synced') {
           setLastSynced(new Date())
