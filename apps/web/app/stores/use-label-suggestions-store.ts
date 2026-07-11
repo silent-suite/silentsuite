@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { logger } from '@/app/lib/logger'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { AccountBoundaryChangedError, assertCurrentAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
@@ -112,41 +113,57 @@ export const useLabelSuggestionsStore = create<LabelSuggestionsState & LabelSugg
   remoteItem: null,
 
   initialize: async () => {
+    const epoch = getAccountEpoch()
     const { account } = useEtebaseStore.getState()
     if (!account) {
+      assertCurrentAccountEpoch(epoch)
       set({ isLoaded: true })
       return
     }
 
     try {
       const collection = await findExistingCollection(account)
+      assertCurrentAccountEpoch(epoch)
       if (collection) {
         trackCollection(collection)
         const remote = await readRemoteIndex(account, collection)
+        assertCurrentAccountEpoch(epoch)
         set({
-          index: mergeLabelIndexes(get().index, remote.index),
+          // Initialization establishes the current account boundary. Replace
+          // any prior in-memory index instead of merging across accounts.
+          index: remote.index,
           remoteCollection: collection,
           remoteItem: remote.item,
           isLoaded: true,
           lastError: null,
         })
       } else {
-        set({ isLoaded: true, lastError: null })
+        set({
+          index: createEmptyLabelIndex(),
+          remoteCollection: null,
+          remoteItem: null,
+          isLoaded: true,
+          lastError: null,
+        })
       }
     } catch (err) {
+      if (err instanceof AccountBoundaryChangedError) return
       logger.warn('[label-suggestions] Label index initialization failed', getSafeErrorDetails(err))
       set({ isLoaded: true, lastError: 'Label suggestions are temporarily unavailable.' })
     }
   },
 
   refreshFromRemote: async () => {
+    const epoch = getAccountEpoch()
     const { account } = useEtebaseStore.getState()
     if (!account) return
     try {
       const collection = get().remoteCollection ?? await findExistingCollection(account)
+      assertCurrentAccountEpoch(epoch)
       if (!collection) return
       trackCollection(collection)
       const remote = await readRemoteIndex(account, collection)
+      assertCurrentAccountEpoch(epoch)
       set({
         index: mergeLabelIndexes(get().index, remote.index),
         remoteCollection: collection,
@@ -155,6 +172,7 @@ export const useLabelSuggestionsStore = create<LabelSuggestionsState & LabelSugg
         lastError: null,
       })
     } catch (err) {
+      if (err instanceof AccountBoundaryChangedError) return
       logger.warn('[label-suggestions] Label index refresh failed', getSafeErrorDetails(err))
       set({ lastError: 'Label suggestions are temporarily unavailable.' })
     }
@@ -172,6 +190,7 @@ export const useLabelSuggestionsStore = create<LabelSuggestionsState & LabelSugg
   suggestions: (query = '', existingLabels = [], limit = 8) => suggestLabels(get().index, query, existingLabels, limit),
 
   recordUsage: async (source: LabelIndexSource, labels: string[]) => {
+    const epoch = getAccountEpoch()
     if (labels.length === 0) return
     const next = recordLabelsUsed(get().index, source, labels)
     set({ index: next })
@@ -181,18 +200,23 @@ export const useLabelSuggestionsStore = create<LabelSuggestionsState & LabelSugg
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(epoch)
       const collection = get().remoteCollection ?? await ensureCollection(account)
+      assertCurrentAccountEpoch(epoch)
       trackCollection(collection)
       const content = serializeLabelIndex(next)
       const existingItem = get().remoteItem
       if (existingItem) {
         const updated = await core.updateItem(account, collection, existingItem, content)
+        assertCurrentAccountEpoch(epoch)
         set({ remoteCollection: collection, remoteItem: updated, lastError: null })
       } else {
         const created = await core.createItem(account, collection, content)
+        assertCurrentAccountEpoch(epoch)
         set({ remoteCollection: collection, remoteItem: created, lastError: null })
       }
     } catch (err) {
+      if (err instanceof AccountBoundaryChangedError) return
       logger.warn('[label-suggestions] Label usage record failed', getSafeErrorDetails(err))
       set({ lastError: 'Label suggestions are temporarily unavailable.' })
     }

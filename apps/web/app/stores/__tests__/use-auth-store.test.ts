@@ -7,9 +7,33 @@ vi.stubGlobal('fetch', vi.fn())
 
 // Mock data-cache (used on logout). We use vi.hoisted so the mock fn is
 // declared before vi.mock factory runs (vi.mock is hoisted to the top).
-const { dataCacheClearAll, offlineQueueClearAll } = vi.hoisted(() => {
-  return { dataCacheClearAll: vi.fn(async () => {}), offlineQueueClearAll: vi.fn(async () => {}) }
-})
+const {
+  dataCacheClearAll,
+  offlineQueueClearAll,
+  calendarSetState,
+  taskSetState,
+  contactSetState,
+  calendarListSetState,
+  taskListSetState,
+  contactListSetState,
+  labelSuggestionsReset,
+  labelColorSetState,
+  preferencesReset,
+  preferencesSyncDestroy,
+} = vi.hoisted(() => ({
+  dataCacheClearAll: vi.fn(async () => {}),
+  offlineQueueClearAll: vi.fn(async () => {}),
+  calendarSetState: vi.fn(),
+  taskSetState: vi.fn(),
+  contactSetState: vi.fn(),
+  calendarListSetState: vi.fn(),
+  taskListSetState: vi.fn(),
+  contactListSetState: vi.fn(),
+  labelSuggestionsReset: vi.fn(),
+  labelColorSetState: vi.fn(),
+  preferencesReset: vi.fn(),
+  preferencesSyncDestroy: vi.fn(),
+}))
 vi.mock('@/app/lib/data-cache', () => ({
   clearAll: dataCacheClearAll,
 }))
@@ -50,6 +74,23 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
   },
 }))
 
+vi.mock('@/app/stores/use-calendar-store', () => ({ useCalendarStore: { setState: calendarSetState } }))
+vi.mock('@/app/stores/use-task-store', () => ({ useTaskStore: { setState: taskSetState } }))
+vi.mock('@/app/stores/use-contact-store', () => ({ useContactStore: { setState: contactSetState } }))
+vi.mock('@/app/stores/use-calendar-list-store', () => ({ useCalendarListStore: { setState: calendarListSetState } }))
+vi.mock('@/app/stores/use-task-list-store', () => ({ useTaskListStore: { setState: taskListSetState } }))
+vi.mock('@/app/stores/use-contact-list-store', () => ({ useContactListStore: { setState: contactListSetState } }))
+vi.mock('@/app/stores/use-label-suggestions-store', () => ({
+  useLabelSuggestionsStore: { getState: () => ({ reset: labelSuggestionsReset }) },
+}))
+vi.mock('@/app/stores/use-label-color-store', () => ({ useLabelColorStore: { setState: labelColorSetState } }))
+vi.mock('@/app/stores/use-preferences-store', () => ({
+  usePreferencesStore: { getState: () => ({ resetSyncedPreferences: preferencesReset }) },
+}))
+vi.mock('@/app/stores/use-preferences-sync-store', () => ({
+  usePreferencesSyncStore: { getState: () => ({ destroy: preferencesSyncDestroy }) },
+}))
+
 function resetStore() {
   useAuthStore.setState({
     user: null,
@@ -67,6 +108,16 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockReset()
     dataCacheClearAll.mockClear()
     offlineQueueClearAll.mockClear()
+    calendarSetState.mockClear()
+    taskSetState.mockClear()
+    contactSetState.mockClear()
+    calendarListSetState.mockClear()
+    taskListSetState.mockClear()
+    contactListSetState.mockClear()
+    labelSuggestionsReset.mockClear()
+    labelColorSetState.mockClear()
+    preferencesReset.mockClear()
+    preferencesSyncDestroy.mockClear()
     vi.mocked(secureClear).mockClear()
     vi.mocked(secureClear).mockImplementation(async () => { secureStore = {} })
     vi.stubGlobal('BroadcastChannel', undefined)
@@ -659,6 +710,27 @@ describe('useAuthStore', () => {
     expect(state.isAuthenticated).toBe(false)
   })
 
+  it('logout clears decrypted account stores before another account can authenticate', async () => {
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+
+    await useAuthStore.getState().logout()
+
+    expect(calendarSetState).toHaveBeenCalledWith(expect.objectContaining({ events: [] }))
+    expect(taskSetState).toHaveBeenCalledWith(expect.objectContaining({ tasks: [] }))
+    expect(contactSetState).toHaveBeenCalledWith(expect.objectContaining({ contacts: [] }))
+    expect(calendarListSetState).toHaveBeenCalledWith(expect.objectContaining({ defaultCalendarId: 'default' }))
+    expect(taskListSetState).toHaveBeenCalledWith(expect.objectContaining({ activeListId: 'all' }))
+    expect(contactListSetState).toHaveBeenCalledWith(expect.objectContaining({ activeListId: 'all' }))
+    expect(labelSuggestionsReset).toHaveBeenCalledTimes(1)
+    expect(labelColorSetState).toHaveBeenCalledWith({ colors: {} })
+    expect(preferencesReset).toHaveBeenCalled()
+    expect(preferencesSyncDestroy).toHaveBeenCalled()
+  })
+
   it('logout wipes the local data cache', async () => {
     useAuthStore.setState({
       user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
@@ -1043,6 +1115,42 @@ describe('useAuthStore', () => {
   // tab focus while the user is unverified. A transient billing 5xx or a
   // network blip used to null the session, silently logging out users who
   // had only alt-tabbed away.
+
+  it('refreshSession clears account-scoped stores before publishing a different hosted user', async () => {
+    useAuthStore.setState({
+      user: { id: 'account-a', email: 'a@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'account-b', email: 'b@example.com', planId: 'pro', rememberDevice: true }),
+    } as Response)
+
+    await useAuthStore.getState().refreshSession()
+
+    expect(useAuthStore.getState().user?.id).toBe('account-b')
+    expect(calendarSetState).toHaveBeenCalledWith(expect.objectContaining({ events: [] }))
+    expect(labelSuggestionsReset).toHaveBeenCalledTimes(1)
+    expect(preferencesReset).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshSession hides protected data before invalid-session deletion completes', async () => {
+    let resolveDelete!: (response: Response) => void
+    const pendingDelete = new Promise<Response>((resolve) => { resolveDelete = resolve })
+    useAuthStore.setState({
+      user: { id: 'account-a', email: 'a@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ ok: false, status: 401 } as Response)
+      .mockReturnValueOnce(pendingDelete)
+
+    const refresh = useAuthStore.getState().refreshSession()
+    await vi.waitFor(() => expect(useAuthStore.getState().isAuthenticated).toBe(false))
+    resolveDelete({ ok: true, status: 204 } as Response)
+    await refresh
+  })
 
   describe('refreshSession on transient errors', () => {
     function loggedIn() {

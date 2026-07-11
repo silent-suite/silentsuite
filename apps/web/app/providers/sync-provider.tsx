@@ -29,6 +29,7 @@ import {
   type SyncTimingPhase,
   type SyncTimingFields,
 } from '@/app/lib/sync-timing'
+import { AccountBoundaryChangedError, assertCurrentAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 
 function reportSyncError(operation: string, err: unknown) {
   Sentry.captureException(createSafeOperationalError('sync-provider', operation), {
@@ -88,6 +89,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (didInit.current) return
     didInit.current = true
+    const accountEpoch = getAccountEpoch()
 
     let unsubChange: (() => void) | null = null
     let unsubStatus: (() => void) | null = null
@@ -114,6 +116,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             updatePartialLoadFlag()
           },
         })
+        assertCurrentAccountEpoch(accountEpoch)
         safeLogSyncTiming('etebase-initialize', etebaseStartedAt)
 
         // Wire SyncEngine change events
@@ -123,7 +126,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         // Supporting metadata only: no passive writes and no visible restore blocking.
         void useLabelSuggestionsStore.getState().initialize()
-          .then(() => useLabelSuggestionsStore.getState().seedFromVisibleItems())
+          .then(() => {
+            assertCurrentAccountEpoch(accountEpoch)
+            useLabelSuggestionsStore.getState().seedFromVisibleItems()
+          })
           .catch((err) => logger.warn('[sync-provider] Label suggestions initialization failed', getSafeErrorDetails(err)))
         void usePreferencesSyncStore.getState().initialize()
           .catch((err) => logger.warn('[sync-provider] Preferences sync initialization failed', getSafeErrorDetails(err)))
@@ -137,6 +143,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         setLastSynced(new Date())
         safeLogSyncTiming('initial-sync-complete', initStartedAt)
       } catch (err) {
+        if (err instanceof AccountBoundaryChangedError) return
         safeLogSyncTiming('initial-sync-failed', initStartedAt, { errorCategory: safeTimingErrorCategory('unknown') })
         reportSyncError('init', err)
         setSyncStatus('error')
@@ -163,6 +170,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           cacheGetItemsByType('calendar'),
           import('@silentsuite/core'),
         ])
+        assertCurrentAccountEpoch(accountEpoch)
 
         if (taskItems.length > 0) {
           try {
@@ -209,6 +217,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           calendarItemCount: eventItems.length,
         })
       } catch (err) {
+        if (err instanceof AccountBoundaryChangedError) throw err
         logger.warn('[sync-provider] Cache hydration failed', getSafeErrorDetails(err))
         safeLogSyncTiming('cache-hydrate-failed', startedAt, { status: 'failed', errorCategory: 'cache' })
       }
@@ -253,9 +262,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       const cacheEnabled = isLocalCacheEnabled()
       try {
         const items = await useEtebaseStore.getState().fetchAllItems(type)
+        assertCurrentAccountEpoch(accountEpoch)
         let domainItemCount = 0
         if (useEtebaseStore.getState().domainLoadState[type] === 'loaded') {
           const core = await import('@silentsuite/core')
+          assertCurrentAccountEpoch(accountEpoch)
           if (type === 'tasks') {
             const tasks = items.map((item) => {
               // Use the Etebase item UID only as the local id so updates/deletes
@@ -293,6 +304,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           [countField]: domainItemCount,
         })
       } catch (err) {
+        if (err instanceof AccountBoundaryChangedError) return
         safeLogSyncTiming(TIMING_PHASE_BY_TYPE[type], startedAt, { source: 'server', status: 'failed', errorCategory: 'deserialize' })
         reportSyncError(`load ${type}`, err)
       }
