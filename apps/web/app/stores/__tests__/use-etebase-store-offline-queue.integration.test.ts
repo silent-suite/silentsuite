@@ -1,6 +1,12 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { enqueue, getAll, getPendingCount, replay } from '@/app/lib/offline-queue'
+import { _setEncryptedQueuePersistenceAvailableForTests, enqueue, getAll, getPendingCount, replay } from '@/app/lib/offline-queue'
+import {
+  _resetForTests as resetDataCache,
+  _setEncryptedCacheAvailableForTests,
+  _setEnvelopeKeyForTests,
+  getItemsByType,
+} from '@/app/lib/data-cache'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, changeAccountWhenQueuePutRuns, queueGuard, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
@@ -79,12 +85,44 @@ async function expectOwned(types: string[]) {
 describe('useEtebaseStore real guarded offline queue integration', () => {
   beforeEach(async () => {
     await resetRealOfflineQueue()
+    await resetDataCache()
+    _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
+    _setEncryptedCacheAvailableForTests(true)
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
     coreMock.createItem.mockReset()
     coreMock.updateItem.mockReset()
     coreMock.deleteItem.mockReset()
     coreMock.listItems.mockReset().mockResolvedValue({ items: [], stoken: null, done: true })
     toastMock.showErrorToast.mockReset()
+  })
+
+  it('queues an offline favorite-style update without plaintext queue content', async () => {
+    const sentinel = 'BEGIN:VCARD\r\nFN:PRIVATE FAVORITE\r\nX-SILENTSUITE-FAVORITE:1\r\nEND:VCARD'
+    setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
+    coreMock.updateItem.mockRejectedValueOnce(offlineError())
+    _setEncryptedQueuePersistenceAvailableForTests(false)
+
+    await expect(useEtebaseStore.getState().updateItem('calendar', 'item-1', sentinel, {
+      persistEncryptedOfflineContent: true,
+      suppressErrorToast: true,
+    })).resolves.toBe('queued')
+
+    const entries = await getAll(queueGuard())
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ type: 'update', itemUid: 'item-1', collectionUid: 'col-1' })
+    expect(entries[0]!.content).toBeUndefined()
+    expect(JSON.stringify(entries)).not.toContain('PRIVATE FAVORITE')
+    expect((await getItemsByType('calendar')).find((item) => item.itemUid === 'item-1')?.content).toBe(sentinel)
+
+    coreMock.updateItem.mockResolvedValueOnce(undefined)
+    await useSyncStore.getState().replayOfflineQueue()
+    expect(coreMock.updateItem).toHaveBeenLastCalledWith(
+      useEtebaseStore.getState().account,
+      expect.objectContaining({ uid: 'col-1' }),
+      expect.objectContaining({ uid: 'item-1' }),
+      sentinel,
+    )
+    expect(await getAll(queueGuard())).toEqual([])
   })
 
   it('real createItem fallback persists the active fingerprint and is visible to guarded count and replay', async () => {
@@ -146,16 +184,16 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
   })
 
   it.each([
-    ['updateItem', async () => useEtebaseStore.getState().updateItem('calendar', 'item-1', 'NEW')],
-    ['deleteItem', async () => useEtebaseStore.getState().deleteItem('calendar', 'item-1')],
-  ] as const)('%s quietly cancels at its real queue put boundary', async (_name, mutate) => {
+    ['updateItem', async () => useEtebaseStore.getState().updateItem('calendar', 'item-1', 'NEW'), false],
+    ['deleteItem', async () => useEtebaseStore.getState().deleteItem('calendar', 'item-1'), undefined],
+  ] as const)('%s quietly cancels at its real queue put boundary', async (_name, mutate, expectedResult) => {
     setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
     coreMock.updateItem.mockRejectedValueOnce(offlineError())
     coreMock.deleteItem.mockRejectedValueOnce(offlineError())
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const putSpy = changeAccountWhenQueuePutRuns(switchAccountAtBoundary)
     try {
-      await expect(mutate()).resolves.toBeUndefined()
+      await expect(mutate()).resolves.toBe(expectedResult)
       expect(await getAll()).toEqual([])
       expectNewAccountStateUntouched()
       expect(errorSpy).not.toHaveBeenCalled()

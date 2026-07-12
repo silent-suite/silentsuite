@@ -109,6 +109,108 @@ class TestMetaMapping:
         assert val == "#00FF00"
 
 
+class TestFavoriteStoragePrivacy:
+    def test_cache_schema_has_no_favorite_plaintext_fields_or_indexes(self):
+        forbidden = {"favorite", "starred", "x-silentsuite-favorite"}
+        for model in (CollectionEntity, ItemEntity, HrefMapper):
+            field_names = {name.lower() for name in model._meta.fields}
+            index_text = repr(model._meta.indexes).lower()
+            assert forbidden.isdisjoint(field_names)
+            assert not any(key in index_text for key in forbidden)
+
+    def test_collection_metadata_mapping_has_no_favorite_key(self):
+        keys = {str(key).lower() for key in MetaMappingContacts._mappings}
+        values = {str(value[0]).lower() for value in MetaMappingContacts._mappings.values()}
+        assert not ({"favorite", "starred", "x-silentsuite-favorite"} & (keys | values))
+
+
+class TestFavoriteCardDavRoundTrip:
+    @staticmethod
+    def _collection(mem_db, user, content, *, uid="fav-1", href="favorite.vcf"):
+        cache_col = CollectionEntity.create(
+            local_user=user, uid="contacts", eb_col=b"encrypted-collection"
+        )
+        cache_item = ItemEntity.create(
+            collection=cache_col, uid=uid, eb_item=b"encrypted-item"
+        )
+        HrefMapper.create(content=cache_item, href=href)
+
+        item = MagicMock()
+        item.cache_item = cache_item
+        item.content = content
+        item.etag = "etag-favorite"
+        item.meta = {"mtime": 1700000000000}
+
+        cached_collection = MagicMock()
+        cached_collection.col_type = "etebase.vcard"
+        cached_collection.cache_col = cache_col
+        cached_collection.stoken = "stoken-favorite"
+        cached_collection.get.side_effect = lambda requested_uid: item if requested_uid == uid else None
+        cached_collection.list.return_value = [item]
+
+        storage = MagicMock()
+        storage.etesync.get.return_value = cached_collection
+        collection = Collection(storage, "/test@example.com/contacts")
+        return collection, cached_collection, item
+
+    def test_get_update_and_removal_preserve_favorite_href_and_etag(self, mem_db, user):
+        content = "\r\n".join([
+            "BEGIN:VCARD", "VERSION:4.0", "UID:fav-1", "FN:Favorite",
+            "X-SILENTSUITE-FAVORITE:1", "END:VCARD",
+        ])
+        collection, _, item = self._collection(mem_db, user, content)
+
+        fetched = collection._get("favorite.vcf")
+        assert fetched.href == "favorite.vcf"
+        assert fetched.etag == '"etag-favorite"'
+        assert "X-SILENTSUITE-FAVORITE:1" in fetched.serialize()
+
+        replacement = MagicMock()
+        replacement.vobject_item = vobject.readOne(content.replace("X-SILENTSUITE-FAVORITE:1\r\n", ""))
+        updated = collection.upload("favorite.vcf", replacement)
+        assert "X-SILENTSUITE-FAVORITE" not in item.content
+        assert updated.href == "favorite.vcf"
+        item.save.assert_called_once()
+
+        collection.delete("favorite.vcf")
+        item.delete.assert_called_once()
+
+    def test_get_preserves_grouped_folded_duplicate_semantics_through_v4_to_v3(self, mem_db, user):
+        content = "\r\n".join([
+            "BEGIN:VCARD", "VERSION:4.0", "UID:fav-1", "FN:Favorite",
+            "item1.X-SILENTSUITE-FAVORITE;TYPE=pref:0",
+            "X-SILENTSUITE-FAVORITE:", " 1", "END:VCARD",
+        ])
+        collection, _, _ = self._collection(mem_db, user, content)
+        serialized = collection._get("favorite.vcf").serialize()
+        assert "VERSION:3.0" in serialized
+        assert "X-SILENTSUITE-FAVORITE" in serialized
+        assert ":1" in serialized
+
+    def test_create_persists_favorite_and_href(self, mem_db, user):
+        collection, cached_collection, _ = self._collection(mem_db, user, "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fav-1\r\nFN:Existing\r\nEND:VCARD")
+        new_cache_item = ItemEntity.create(
+            collection=cached_collection.cache_col, uid="fav-new", eb_item=b"encrypted-new-item"
+        )
+        new_item = MagicMock()
+        new_item.cache_item = new_cache_item
+        new_item.content = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:fav-new\r\nFN:New\r\nX-SILENTSUITE-FAVORITE:1\r\nEND:VCARD"
+        new_item.etag = "etag-new"
+        new_item.meta = {"mtime": 1700000000000}
+        cached_collection.create.return_value = new_item
+        original_get = cached_collection.get.side_effect
+        cached_collection.get.side_effect = lambda uid: new_item if uid == "fav-new" else original_get(uid)
+
+        incoming = MagicMock()
+        incoming.vobject_item = vobject.readOne(new_item.content)
+        created = collection.upload("new-name.vcf", incoming)
+
+        assert created.href == "new-name.vcf"
+        assert created.etag == '"etag-new"'
+        assert "X-SILENTSUITE-FAVORITE:1" in created.serialize()
+        assert HrefMapper.get_by_id(new_cache_item.id).href == "new-name.vcf"
+
+
 # ---------------------------------------------------------------------------
 # acquire_lock — sync is forced on every client request
 # ---------------------------------------------------------------------------
