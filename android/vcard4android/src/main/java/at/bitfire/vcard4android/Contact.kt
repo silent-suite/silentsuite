@@ -69,6 +69,10 @@ class Contact {
 
     var photo: ByteArray? = null
 
+    /** SilentSuite favorite/starred state, round-tripped via the
+     *  [PROPERTY_FAVORITE] extension (`X-SILENTSUITE-FAVORITE:1`). */
+    var favorite: Boolean = false
+
     /** unknown properties in text VCARD format */
     var unknownProperties: String? = null
 
@@ -85,6 +89,11 @@ class Contact {
         const val PROPERTY_PHONETIC_MIDDLE_NAME = "X-PHONETIC-MIDDLE-NAME"
         const val PROPERTY_PHONETIC_LAST_NAME = "X-PHONETIC-LAST-NAME"
         const val PROPERTY_SIP = "X-SIP"
+
+        /** SilentSuite-owned favorite flag. Canonical wire form is exactly
+         *  `X-SILENTSUITE-FAVORITE:1`; any other or absent value is false. */
+        const val PROPERTY_FAVORITE = "X-SILENTSUITE-FAVORITE"
+        const val PROPERTY_FAVORITE_VALUE = "1"
 
         val PHONE_TYPE_CALLBACK = TelephoneType.get("x-callback")!!
         val PHONE_TYPE_COMPANY_MAIN = TelephoneType.get("x-company_main")!!
@@ -258,6 +267,14 @@ class Contact {
                     PROPERTY_PHONETIC_LAST_NAME   -> c.phoneticFamilyName = StringUtils.trimToNull(prop.value)
 
                     PROPERTY_SIP -> c.impps += LabeledProperty(Impp("sip", prop.value), findLabel(prop.group))
+
+                    PROPERTY_FAVORITE ->
+                        // Reduce duplicates with "any exact `1` wins". Never trim
+                        // or unescape the scalar; leave remove = true so every
+                        // canonical property (1 or 0) is stripped and cannot leak
+                        // into unknownProperties.
+                        if (prop.value == PROPERTY_FAVORITE_VALUE)
+                            c.favorite = true
 
                     else -> remove = false      // don't remove unknown extended properties
                 }
@@ -485,6 +502,13 @@ class Contact {
             vCard.categories = cat
         }
 
+        // FAVORITE (SilentSuite-owned). Strip any canonical remnants that may
+        // have survived in the reparsed unknownProperties, then emit exactly
+        // one ungrouped, parameterless property when true.
+        vCard.removeExtendedProperty(PROPERTY_FAVORITE)
+        if (favorite)
+            vCard.addExtendedProperty(PROPERTY_FAVORITE, PROPERTY_FAVORITE_VALUE)
+
         // ANNIVERSARY, BDAY
         fun<T: DateOrTimeProperty> dateOrPartialDate(prop: T, generator: (Date) -> T): T? {
             if (vCardVersion == VCardVersion.V4_0 || prop.date != null)
@@ -549,7 +573,8 @@ class Contact {
         phoneNumbers, emails, impps, addresses,
         /* categories, */ urls, relations,
         note, anniversary, birthDay,
-        photo
+        photo,
+        favorite
         /* unknownProperties */
     )
 
@@ -566,7 +591,9 @@ class Contact {
 
     override fun toString(): String {
         val builder = ReflectionToStringBuilder(this)
-        builder.setExcludeFieldNames("photo")
+        // Favorite status is sensitive relationship metadata. Keep it out of
+        // diagnostic/log stringification just like contact photos.
+        builder.setExcludeFieldNames("photo", "favorite")
         return builder.toString()
     }
 

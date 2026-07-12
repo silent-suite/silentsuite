@@ -496,7 +496,10 @@ constructor(protected val context: Context, protected val account: Account, prot
                     // If it was only local, delete.
                     local.delete()
                 } else {
-                    local.clearDirty(null)
+                    // Reapply the authoritative cached remote content in this same
+                    // sync so discarded local edits (e.g. a native star toggle on a
+                    // read-only collection) are visibly reverted, then clear dirty.
+                    local.clearDirty(restoreLocalFromRemote(local))
                 }
                 numDiscarded++
             }
@@ -504,6 +507,15 @@ constructor(protected val context: Context, protected val account: Account, prot
             localDirty = LinkedList()
         }
     }
+
+    /**
+     * Reapply authoritative cached remote content over a locally-modified
+     * resource on a read-only collection, so a discarded local edit is visibly
+     * reverted within the same sync (no server write occurs). Default: no-op;
+     * resource-specific managers may override to rewrite provider fields.
+     */
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    protected open fun restoreLocalFromRemote(local: T): String? = null
 
     /**
      * For post-processing of entries, for instance assigning groups.

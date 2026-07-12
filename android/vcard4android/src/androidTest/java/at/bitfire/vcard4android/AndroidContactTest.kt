@@ -248,6 +248,228 @@ class AndroidContactTest {
     }
 
 
+    // ── favorite ↔ RawContacts.STARRED ──
+
+    private fun rawContactInt(id: Long, column: String): Int? {
+        provider.query(
+            ContactsContract.RawContacts.CONTENT_URI,
+            arrayOf(column),
+            "${ContactsContract.RawContacts._ID}=?",
+            arrayOf(id.toString()), null
+        )?.use { c ->
+            if (c.moveToNext() && !c.isNull(0)) return c.getInt(0)
+        }
+        return null
+    }
+
+    private fun aggregateStarred(rawId: Long): Int? {
+        var contactId: Long? = null
+        provider.query(
+            ContactsContract.RawContacts.CONTENT_URI,
+            arrayOf(ContactsContract.RawContacts.CONTACT_ID),
+            "${ContactsContract.RawContacts._ID}=?",
+            arrayOf(rawId.toString()), null
+        )?.use { c ->
+            if (c.moveToNext() && !c.isNull(0)) contactId = c.getLong(0)
+        }
+        val cid = contactId ?: return null
+        provider.query(
+            ContactsContract.Contacts.CONTENT_URI,
+            arrayOf(ContactsContract.Contacts.STARRED),
+            "${ContactsContract.Contacts._ID}=?",
+            arrayOf(cid.toString()), null
+        )?.use { c ->
+            if (c.moveToNext() && !c.isNull(0)) return c.getInt(0)
+        }
+        return null
+    }
+
+    @Test
+    @SmallTest
+    fun testFavoriteWritesStarredOnInsert() {
+        val vcard = Contact()
+        vcard.displayName = "Star Me"
+        vcard.givenName = "Star"
+        vcard.favorite = true
+
+        val contact = AndroidContact(addressBook, vcard, null, null)
+        contact.add()
+        val id = contact.id!!
+        try {
+            val readBack = addressBook.findContactByID(id).contact!!
+            assertTrue(readBack.favorite)
+            assertEquals(1, rawContactInt(id, ContactsContract.RawContacts.STARRED))
+            assertEquals(1, aggregateStarred(id))
+            assertEquals(0, rawContactInt(id, ContactsContract.RawContacts.DIRTY))
+            assertEquals(0, rawContactInt(id, ContactsContract.RawContacts.DELETED))
+        } finally {
+            addressBook.findContactByID(id).delete()
+        }
+    }
+
+    @Test
+    @SmallTest
+    fun testNonFavoriteWritesUnstarred() {
+        val vcard = Contact()
+        vcard.displayName = "Not Star"
+        vcard.favorite = false
+
+        val contact = AndroidContact(addressBook, vcard, null, null)
+        contact.add()
+        val id = contact.id!!
+        try {
+            assertFalse(addressBook.findContactByID(id).contact!!.favorite)
+            assertEquals(0, rawContactInt(id, ContactsContract.RawContacts.STARRED))
+        } finally {
+            addressBook.findContactByID(id).delete()
+        }
+    }
+
+    @Test
+    @SmallTest
+    fun testRemoteFavoriteUpdateSetsStarWithoutDirtyLoop() {
+        val original = Contact().apply { displayName = "Become Star"; favorite = false }
+        val contact = AndroidContact(addressBook, original, null, "etag-1")
+        contact.add()
+        val id = contact.id!!
+        try {
+            val local = addressBook.findContactByID(id)
+            local.eTag = "etag-2"
+            local.update(Contact().apply { displayName = "Become Star"; favorite = true })
+            assertEquals(1, rawContactInt(id, ContactsContract.RawContacts.STARRED))
+            assertEquals(0, rawContactInt(id, ContactsContract.RawContacts.DIRTY))
+            assertTrue(addressBook.findContactByID(id).contact!!.favorite)
+        } finally {
+            addressBook.findContactByID(id).delete()
+        }
+    }
+
+    @Test
+    @SmallTest
+    fun testFavoriteUpdatePreservesUnknownOemDataRow() {
+        val original = Contact().apply { displayName = "OEM Row"; favorite = false }
+        val contact = AndroidContact(addressBook, original, null, "etag-1")
+        contact.add()
+        val id = contact.id!!
+        val customMime = "vnd.android.cursor.item/important_people"
+        try {
+            val values = android.content.ContentValues().apply {
+                put(ContactsContract.Data.RAW_CONTACT_ID, id)
+                put(ContactsContract.Data.MIMETYPE, customMime)
+                put(ContactsContract.Data.DATA1, "opaque-oem-value")
+            }
+            assertNotNull(provider.insert(ContactsContract.Data.CONTENT_URI, values))
+            addressBook.findContactByID(id).update(Contact().apply { displayName = "OEM Row"; favorite = true })
+            provider.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.Data.DATA1),
+                "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                arrayOf(id.toString(), customMime), null
+            )?.use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("opaque-oem-value", cursor.getString(0))
+            }
+        } finally {
+            addressBook.findContactByID(id).delete()
+        }
+    }
+
+    @Test
+    @SmallTest
+    fun testRemoteUnfavoriteClearsStarWithoutDirtyLoop() {
+        val starred = Contact()
+        starred.displayName = "Was Star"
+        starred.favorite = true
+
+        val contact = AndroidContact(addressBook, starred, null, "etag-1")
+        contact.add()
+        val id = contact.id!!
+        try {
+            assertEquals(1, rawContactInt(id, ContactsContract.RawContacts.STARRED))
+
+            // Apply a remote revision without the favorite property.
+            val remote = Contact()
+            remote.displayName = "Was Star"
+            remote.favorite = false
+            val local = addressBook.findContactByID(id)
+            local.eTag = "etag-2"
+            local.update(remote)
+
+            assertEquals(0, rawContactInt(id, ContactsContract.RawContacts.STARRED))
+            assertEquals(0, rawContactInt(id, ContactsContract.RawContacts.DIRTY))
+            assertFalse(addressBook.findContactByID(id).contact!!.favorite)
+        } finally {
+            addressBook.findContactByID(id).delete()
+        }
+    }
+
+    @Test
+    @SmallTest
+    fun testNativeStarChangeIsReadBackAsFavorite() {
+        val vcard = Contact()
+        vcard.displayName = "Native Star"
+        vcard.favorite = false
+
+        val contact = AndroidContact(addressBook, vcard, null, null)
+        contact.add()
+        val id = contact.id!!
+        try {
+            // Simulate a native Contacts/Dialer app starring the aggregate.
+            var aggregateId: Long? = null
+            provider.query(
+                ContactsContract.RawContacts.CONTENT_URI,
+                arrayOf(ContactsContract.RawContacts.CONTACT_ID),
+                "${ContactsContract.RawContacts._ID}=?",
+                arrayOf(id.toString()), null
+            )?.use { cursor ->
+                if (cursor.moveToNext()) aggregateId = cursor.getLong(0)
+            }
+            assertNotNull(aggregateId)
+            val values = android.content.ContentValues(1)
+            values.put(ContactsContract.Contacts.STARRED, 1)
+            provider.update(
+                android.content.ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, aggregateId!!),
+                values,
+                null,
+                null
+            )
+
+            // Inspect constituent ownership explicitly; serialization below is
+            // performed only through this address book's raw-contact row.
+            provider.query(
+                ContactsContract.RawContacts.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.RawContacts._ID,
+                    ContactsContract.RawContacts.ACCOUNT_NAME,
+                    ContactsContract.RawContacts.ACCOUNT_TYPE,
+                    ContactsContract.RawContacts.STARRED
+                ),
+                "${ContactsContract.RawContacts.CONTACT_ID}=?",
+                arrayOf(aggregateId.toString()), null
+            )?.use { cursor ->
+                var foundOwnedRow = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getLong(0) == id) {
+                        assertEquals(testAccount.name, cursor.getString(1))
+                        assertEquals(testAccount.type, cursor.getString(2))
+                        assertEquals(1, cursor.getInt(3))
+                        foundOwnedRow = true
+                    }
+                }
+                assertTrue(foundOwnedRow)
+            }
+            val serialized = addressBook.findContactByID(id).contact!!
+            assertTrue(serialized.favorite)
+            assertEquals(1, rawContactInt(id, ContactsContract.RawContacts.DIRTY))
+            val os = ByteArrayOutputStream()
+            serialized.write(VCardVersion.V4_0, GroupMethod.GROUP_VCARDS, os)
+            assertEquals(1, Regex("X-SILENTSUITE-FAVORITE:1").findAll(os.toString()).count())
+        } finally {
+            addressBook.findContactByID(id).delete()
+        }
+    }
+
+
     @Test
     fun testLabelToXName() {
         assertEquals("X-AUNTIES_HOME", AndroidContact.labelToXName("auntie's home"))
