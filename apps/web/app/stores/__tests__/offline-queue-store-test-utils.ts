@@ -54,7 +54,7 @@ export async function expectOwnedQueueEntry(type: QueueEntry['type'], collection
 }
 
 export async function replayOwnedEntry(entry: QueueEntry): Promise<void> {
-  const execute = vi.fn(async () => ({}))
+  const execute = vi.fn(async () => ({ remoteMutationConfirmed: true }))
   const results = await replay(execute, queueGuard())
   if (results.length !== 1 || !results[0]!.success) throw new Error('Guarded replay did not execute entry')
   if (execute.mock.calls[0]?.[0].id !== entry.id) throw new Error('Replay executed a different entry')

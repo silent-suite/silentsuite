@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSyncStore } from '../use-sync-store'
-import { getPendingCount, replay } from '@/app/lib/offline-queue'
+import { getPendingCount, getStaleEntries, remove, replay } from '@/app/lib/offline-queue'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 const etebaseMock = vi.hoisted(() => ({
@@ -11,6 +11,7 @@ const etebaseMock = vi.hoisted(() => ({
     domainLoadState: { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' },
     reconcileCollections: vi.fn().mockResolvedValue(undefined),
     refreshCollection: vi.fn().mockResolvedValue([]),
+    replayQueuedMutation: vi.fn(),
     moveItem: vi.fn(),
   },
 }))
@@ -85,6 +86,7 @@ function resetStore() {
   etebaseMock.state.domainLoadState = { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' }
   etebaseMock.state.reconcileCollections.mockReset().mockResolvedValue(undefined)
   etebaseMock.state.refreshCollection.mockReset().mockResolvedValue([])
+  etebaseMock.state.replayQueuedMutation.mockReset()
   etebaseMock.state.moveItem.mockReset()
   calendarStoreMock.events = []
   calendarStoreMock.syncFromRemote.mockReset()
@@ -143,6 +145,22 @@ describe('useSyncStore', () => {
     expect(useSyncStore.getState().lastSyncedAt).toBeInstanceOf(Date)
     expect(preferencesSyncMock.loadFromRemote).toHaveBeenCalledTimes(1)
     expect(preferencesSyncMock.pushNow).not.toHaveBeenCalled()
+  })
+
+  it('never age-purges unconfirmed or checkpointed queue entries during sync', async () => {
+    vi.mocked(getStaleEntries).mockResolvedValueOnce([{
+      id: 'old-unconfirmed', type: 'move', collectionType: 'calendar',
+      collectionUid: 'source', targetCollectionUid: 'target', itemUid: 'item-1',
+      content: 'encrypted-at-rest-content', createdAt: 0, retryCount: 0,
+      status: 'pending', accountFingerprint: 'test-account',
+      replayPhase: 'target-confirmed', confirmedTargetUid: 'target-item',
+    }])
+
+    useSyncStore.getState().simulateSyncCycle()
+    await vi.waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('synced'))
+
+    expect(getStaleEntries).not.toHaveBeenCalled()
+    expect(remove).not.toHaveBeenCalled()
   })
 
   it('simulateSyncCycle does nothing when offline', () => {
@@ -229,7 +247,7 @@ describe('useSyncStore', () => {
 
   it('replays queued collection moves and remaps the calendar event id', async () => {
     etebaseMock.state.account = {}
-    etebaseMock.state.moveItem.mockResolvedValue('item-new')
+    etebaseMock.state.replayQueuedMutation.mockResolvedValue({ remoteMutationConfirmed: true, itemUid: 'item-new' })
     calendarStoreMock.events = [{ id: 'item-old', calendarId: 'cal-a' }]
     vi.mocked(getPendingCount).mockResolvedValueOnce(1)
     vi.mocked(replay).mockImplementationOnce(async (executeMutation) => {
@@ -251,7 +269,7 @@ describe('useSyncStore', () => {
 
     await useSyncStore.getState().replayOfflineQueue()
 
-    expect(etebaseMock.state.moveItem).toHaveBeenCalledWith('calendar', 'item-old', 'VEVENT content', 'cal-b', 'cal-a')
+    expect(etebaseMock.state.replayQueuedMutation).toHaveBeenCalledWith(expect.objectContaining({ type: 'move', itemUid: 'item-old' }), expect.objectContaining({ accountFingerprint: 'test-account' }), undefined)
     expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledWith([{ id: 'item-new', calendarId: 'cal-b' }])
   })
 })

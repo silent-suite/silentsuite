@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import type { SyncStatus } from '@silentsuite/core'
-import { replay, getPendingCount, getFailedCount, onCountChange, getStaleEntries, remove, type QueueEntry, type OfflineQueueAccountGuard } from '@/app/lib/offline-queue'
+import { replay, getPendingCount, getFailedCount, onCountChange, type ConfirmedRemoteMutation, type QueueEntry, type OfflineQueueAccountGuard, type ReplayCheckpoint } from '@/app/lib/offline-queue'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
@@ -131,55 +131,12 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
     logger.log(`[sync-store] Replaying ${count} queued offline mutations...`)
 
-    const executeMutation = async (entry: QueueEntry): Promise<{ itemUid?: string }> => {
+    const executeMutation = async (entry: QueueEntry, checkpoint: ReplayCheckpoint): Promise<ConfirmedRemoteMutation> => {
       const { useEtebaseStore } = await import('@/app/stores/use-etebase-store')
       assertCurrentAccountEpoch(guard.accountEpoch)
       const etebase = useEtebaseStore.getState()
       if (!etebase.account || etebase.accountFingerprint !== guard.accountFingerprint) throw new AccountBoundaryChangedError()
-
-      try {
-        switch (entry.type) {
-          case 'create': {
-            const uid = await etebase.createItem(entry.collectionType, entry.content!, entry.tempId, entry.collectionUid)
-            return { itemUid: uid ?? undefined }
-          }
-          case 'update': {
-            await etebase.updateItem(entry.collectionType, entry.itemUid!, entry.content!)
-            return {}
-          }
-          case 'delete': {
-            await etebase.deleteItem(entry.collectionType, entry.itemUid!)
-            return {}
-          }
-          case 'move': {
-            if (!entry.targetCollectionUid) throw new Error('Missing move target collection')
-            const uid = await etebase.moveItem(entry.collectionType, entry.itemUid!, entry.content!, entry.targetCollectionUid, entry.collectionUid)
-            if (!uid) throw new Error('Move did not return item UID')
-            return { itemUid: uid }
-          }
-        }
-      } catch (err) {
-        assertCurrentAccountEpoch(guard.accountEpoch)
-        // Handle 409 Conflict (ETag mismatch) — server-wins strategy
-        const is409 = err instanceof Error && (
-          err.message.includes('409') ||
-          err.message.includes('conflict') ||
-          err.message.includes('Conflict')
-        )
-        if (is409 && entry.type !== 'create') {
-          logger.warn(
-            `[sync-store] Conflict on ${entry.type} ${entry.collectionType}/${entry.itemUid} — discarding local change (server wins)`,
-          )
-          // Refresh the collection to get server's version
-          await etebase.refreshCollection(entry.collectionType, entry.collectionUid)
-          if (entry.type === 'move' && entry.targetCollectionUid && entry.targetCollectionUid !== entry.collectionUid) {
-            await etebase.refreshCollection(entry.collectionType, entry.targetCollectionUid)
-          }
-          // Return success so the entry is removed from queue
-          return {}
-        }
-        throw err
-      }
+      return etebase.replayQueuedMutation(entry, guard, checkpoint)
     }
 
     const results = await replay(executeMutation, guard)
@@ -326,14 +283,6 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       } catch (err) {
         assertCurrentAccountEpoch(accountEpoch)
         logger.warn('[sync-store] Preferences refresh failed during sync cycle', getSafeErrorDetails(err))
-      }
-
-      // Purge stale queue entries (older than 24h) that may cause phantom indicators
-      const stale = await getStaleEntries(guard)
-      for (const entry of stale) {
-        assertCurrentAccountEpoch(guard.accountEpoch)
-        await remove(entry.id, guard)
-        assertCurrentAccountEpoch(guard.accountEpoch)
       }
 
       // Refresh counts to ensure UI is accurate after sync
