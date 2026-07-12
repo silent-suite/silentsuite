@@ -11,6 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  android-privacy-guardrails:
+    name: Android Privacy Guardrail Fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Run tracker scanner and UID network evidence fixtures
+        run: python3 -m unittest tests.test_android_tracker_scan -v
+
   analytics-boundary:
     name: Public Analytics Boundary
     runs-on: ubuntu-latest
