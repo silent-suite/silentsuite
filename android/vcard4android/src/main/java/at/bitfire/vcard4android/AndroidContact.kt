@@ -183,6 +183,9 @@ open class AndroidContact(
         eTag = row.getAsString(COLUMN_ETAG)
 
         contact!!.uid = row.getAsString(COLUMN_UID)
+
+        // Native favorite/star state lives on this SilentSuite raw-contact row.
+        contact!!.favorite = (row.getAsInteger(RawContacts.STARRED) ?: 0) != 0
     }
 
     protected open fun populateStructuredName(row: ContentValues) {
@@ -618,6 +621,10 @@ open class AndroidContact(
                 .withValue(COLUMN_FILENAME, fileName)
                 .withValue(COLUMN_ETAG, eTag)
                 .withValue(COLUMN_UID, contact!!.uid)
+                // Only ever write this SilentSuite raw row's STARRED. Android
+                // recomputes the aggregate Contacts.STARRED from constituent
+                // rows; we never touch other accounts' rows.
+                .withValue(RawContacts.STARRED, if (contact!!.favorite) 1 else 0)
 
         if (addressBook.readOnly)
             builder.withValue(RawContacts.RAW_CONTACT_IS_READ_ONLY, 1)

@@ -106,6 +106,36 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         batch.commit()
     }
 
+    /**
+     * On a read-only collection, a native/OEM Contacts app may still let the
+     * user toggle the star. That local change must never be uploaded; instead
+     * we reapply the authoritative cached remote vCard (already downloaded in
+     * this sync) over the SilentSuite raw row so STARRED and every other field
+     * are restored to the server's state before the dirty flag is cleared.
+     */
+    override fun restoreLocalFromRemote(local: LocalAddress): String? {
+        if (local !is LocalContact)
+            return null
+        // The Etebase cache is keyed by the item/file UID, not the vCard UID.
+        val itemUid = local.fileName
+            ?: throw ContactsStorageException("Cannot restore read-only contact without cached item UID")
+
+        val cached = synchronized(etebaseLocalCache) {
+            etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, itemUid)
+        }
+        if (cached == null || cached.item.isDeleted)
+            throw ContactsStorageException("Authoritative cached read-only contact is unavailable")
+
+        val remote = Contact.fromReader(StringReader(cached.content), resourceDownloader)
+        if (remote.isEmpty())
+            throw ContactsStorageException("Authoritative cached read-only contact is invalid")
+
+        Logger.log.info("Reapplying authoritative remote contact over a discarded read-only change")
+        local.eTag = cached.item.etag
+        local.update(remote[0])
+        return cached.item.etag
+    }
+
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
     override fun postProcess() {
         super.postProcess()

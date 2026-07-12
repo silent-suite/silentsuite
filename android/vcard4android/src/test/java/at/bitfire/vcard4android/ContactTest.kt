@@ -488,4 +488,126 @@ class ContactTest {
         assertNull(c.unknownProperties)
     }
 
+
+    // ── X-SILENTSUITE-FAVORITE (favorite flag) ──
+
+    private fun parseInline(vararg propLines: String): Contact {
+        val vcard = (listOf("BEGIN:VCARD", "VERSION:3.0", "UID:fav-test", "FN:Fav Test") +
+                propLines.toList() + listOf("END:VCARD")).joinToString("\r\n")
+        return Contact.fromReader(StringReader(vcard), null).first()
+    }
+
+    @Test
+    fun testFavoriteDefaultsFalse() {
+        assertFalse(parseInline().favorite)
+    }
+
+    @Test
+    fun testFavoriteParsesCanonicalTrue() {
+        assertTrue(parseInline("X-SILENTSUITE-FAVORITE:1").favorite)
+    }
+
+    @Test
+    fun testFavoriteZeroAndMalformedAreFalse() {
+        assertFalse(parseInline("X-SILENTSUITE-FAVORITE:0").favorite)
+        assertFalse(parseInline("X-SILENTSUITE-FAVORITE:true").favorite)
+        assertFalse(parseInline("X-SILENTSUITE-FAVORITE:").favorite)
+    }
+
+    @Test
+    fun testFavoriteDuplicateAnyOneWins() {
+        assertTrue(parseInline("X-SILENTSUITE-FAVORITE:0", "X-SILENTSUITE-FAVORITE:1").favorite)
+        assertTrue(parseInline("X-SILENTSUITE-FAVORITE:1", "X-SILENTSUITE-FAVORITE:0").favorite)
+    }
+
+    @Test
+    fun testFavoriteNormalizesCaseGroupParametersAndFolding() {
+        assertTrue(parseInline("x-silentsuite-favorite:1").favorite)
+        assertTrue(parseInline("item3.X-SILENTSUITE-FAVORITE:1").favorite)
+        assertTrue(parseInline("X-SILENTSUITE-FAVORITE;TYPE=pref:1").favorite)
+        assertTrue(parseInline("X-SILENTSUITE-FAVORITE:", " 1").favorite)
+        assertFalse(parseInline("X-SILENTSUITE-FAVORITE: 1").favorite)
+        assertFalse(parseInline("X-SILENTSUITE-FAVORITE:1 ").favorite)
+    }
+
+    @Test
+    fun testFavoriteDoesNotLeakIntoUnknownProperties() {
+        val c = parseInline("X-SILENTSUITE-FAVORITE:1", "X-SILENTSUITE-FAVORITE:0")
+        assertTrue(c.favorite)
+        assertTrue(c.unknownProperties == null || !c.unknownProperties!!.contains("X-SILENTSUITE-FAVORITE"))
+    }
+
+    @Test
+    fun testFavoritePreservesUnrelatedUnknownProperties() {
+        val c = parseInline("X-SILENTSUITE-FAVORITE:1", "X-CUSTOM-OEM-FIELD:keepme")
+        assertTrue(c.favorite)
+        assertNotNull(c.unknownProperties)
+        assertTrue(c.unknownProperties!!.contains("X-CUSTOM-OEM-FIELD"))
+        assertFalse(c.unknownProperties!!.contains("X-SILENTSUITE-FAVORITE"))
+    }
+
+    @Test
+    fun testFavoriteEmitsExactlyOneCanonicalProperty() {
+        val c = Contact()
+        c.uid = UUID.randomUUID().toString()
+        c.favorite = true
+        val vCard = toString(c, GroupMethod.GROUP_VCARDS, VCardVersion.V4_0)
+        assertEquals(1, Regex("X-SILENTSUITE-FAVORITE:1").findAll(vCard).count())
+
+        val regenerated = regenerate(c, VCardVersion.V4_0)
+        assertTrue(regenerated.favorite)
+    }
+
+    @Test
+    fun testFavoriteFalseEmitsNoProperty() {
+        val c = Contact()
+        c.uid = UUID.randomUUID().toString()
+        c.favorite = false
+        val vCard = toString(c, GroupMethod.GROUP_VCARDS, VCardVersion.V4_0)
+        assertFalse(vCard.contains("X-SILENTSUITE-FAVORITE"))
+    }
+
+    @Test
+    fun testFavoriteTrueToFalseRemovesProperty() {
+        val c = parseInline("X-SILENTSUITE-FAVORITE:1")
+        assertTrue(c.favorite)
+        c.favorite = false
+        val vCard = toString(c, GroupMethod.GROUP_VCARDS, VCardVersion.V4_0)
+        assertFalse(vCard.contains("X-SILENTSUITE-FAVORITE"))
+    }
+
+    @Test
+    fun testFavoriteCanonicalizesMixedUnknownRemnantsOnWrite() {
+        val c = Contact().apply {
+            uid = "unknown-favorite"
+            favorite = true
+            unknownProperties = listOf(
+                "BEGIN:VCARD", "VERSION:4.0",
+                "item1.x-silentsuite-favorite;TYPE=pref:0",
+                "X-SILENTSUITE-FAVORITE:1",
+                "X-CUSTOM-OEM-FIELD:keepme", "END:VCARD"
+            ).joinToString("\r\n")
+        }
+
+        val favorite = toString(c, GroupMethod.GROUP_VCARDS, VCardVersion.V4_0)
+        assertEquals(1, Regex("(?im)^(?:[^.:;]+\\.)?X-SILENTSUITE-FAVORITE(?:;[^:]*)?:1\\r?$").findAll(favorite).count())
+        assertFalse(favorite.contains("X-SILENTSUITE-FAVORITE:0", ignoreCase = true))
+        assertTrue(favorite.contains("X-CUSTOM-OEM-FIELD:keepme"))
+
+        c.favorite = false
+        val notFavorite = toString(c, GroupMethod.GROUP_VCARDS, VCardVersion.V4_0)
+        assertFalse(notFavorite.contains("X-SILENTSUITE-FAVORITE", ignoreCase = true))
+        assertTrue(notFavorite.contains("X-CUSTOM-OEM-FIELD:keepme"))
+    }
+
+    @Test
+    fun testFavoriteParticipatesInEquality() {
+        val a = Contact().apply { uid = "eq"; favorite = false }
+        val b = Contact().apply { uid = "eq"; favorite = true }
+        assertNotEquals(a, b)
+        assertNotEquals(a.hashCode(), b.hashCode())
+        b.favorite = false
+        assertEquals(a, b)
+    }
+
 }
