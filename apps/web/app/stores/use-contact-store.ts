@@ -5,6 +5,7 @@ import type { Contact, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue } from '@/app/lib/offline-queue'
+import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard, isOfflineQueueBoundaryCancellation } from '@/app/lib/offline-queue-account'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
@@ -136,9 +137,19 @@ export const useContactStore = create<ContactState & ContactActions>()(
               showErrorToast('Failed to save contact. Please try again.')
             }
           } else {
+            const guard = captureOfflineQueueAccountGuard(etebase)
+            if (!guard) return
             const { serializeContact } = await import('@silentsuite/core')
-            const content = serializeContact(updated)
-            await enqueue({ type: 'update', collectionType: 'contacts', collectionUid: updated.listId, content, tempId: id })
+            try {
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              const content = serializeContact(updated)
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              await enqueue({ type: 'update', collectionType: 'contacts', collectionUid: updated.listId, content, tempId: id }, guard)
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            } catch (error) {
+              if (isOfflineQueueBoundaryCancellation(error)) return
+              throw error
+            }
           }
         }
       },
@@ -160,8 +171,17 @@ export const useContactStore = create<ContactState & ContactActions>()(
               showErrorToast('Failed to delete contact. Please try again.')
             }
           } else {
+            const guard = captureOfflineQueueAccountGuard(etebase)
+            if (!guard) return
             // Item was created offline and not yet synced — enqueue delete with tempId for compaction
-            await enqueue({ type: 'delete', collectionType: 'contacts', collectionUid: contactToDelete?.listId, tempId: id })
+            try {
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              await enqueue({ type: 'delete', collectionType: 'contacts', collectionUid: contactToDelete?.listId, tempId: id }, guard)
+              assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            } catch (error) {
+              if (isOfflineQueueBoundaryCancellation(error)) return
+              throw error
+            }
           }
         }
       },

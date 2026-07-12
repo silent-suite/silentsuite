@@ -2,6 +2,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useContactStore, getFilteredContacts } from '../use-contact-store'
 import { useEtebaseStore } from '../use-etebase-store'
 import type { Contact } from '@silentsuite/core'
+import { getAll } from '@/app/lib/offline-queue'
+import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
+
+const toastMock = vi.hoisted(() => ({ showErrorToast: vi.fn() }))
+vi.mock('@/app/stores/use-toast-store', () => toastMock)
 
 // Mock the sync store to prevent side effects
 vi.mock('@/app/stores/use-sync-store', () => ({
@@ -22,6 +27,14 @@ function resetStore() {
     pendingChanges: [],
   })
   useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+}
+
+function offlineAccount() {
+  useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map(), createItem: vi.fn((type, content, tempId, collectionUid) => enqueueCreateFromStore(type, collectionUid, content, tempId!)) } as any)
+}
+
+function queuedContact(id = 'temp-contact'): Contact {
+  return { id, uid: id, displayName: 'Contact', name: { prefix: '', given: '', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, categories: [], listId: 'contacts-1', created_at: new Date(), updated_at: new Date() }
 }
 
 describe('useContactStore', () => {
@@ -195,6 +208,55 @@ describe('useContactStore', () => {
       const vip = getFilteredContacts(tagged, 'vip')
       expect(vip).toHaveLength(1)
       expect(vip[0]!.displayName).toBe('Carol King')
+    })
+  })
+
+  describe('guarded offline queue integration', () => {
+    // Enqueue surface map: create -> Etebase createItem; uncached update/delete ->
+    // the direct guarded branches below; cached update/delete enqueue in Etebase store.
+    beforeEach(async () => { await resetRealOfflineQueue(); resetStore(); offlineAccount(); toastMock.showErrorToast.mockReset() })
+
+    it.each([
+      ['create', async () => { await useContactStore.getState().createContact({ displayName: 'Create', listId: 'contacts-1' }) }],
+      ['update', async () => { useContactStore.setState({ contacts: [queuedContact()] }); await useContactStore.getState().updateContact('temp-contact', { displayName: 'Update' }) }],
+      ['delete', async () => { useContactStore.setState({ contacts: [queuedContact()] }); await useContactStore.getState().deleteContact('temp-contact') }],
+    ] as const)('persists, exposes, and replays an owned offline %s', async (type, mutate) => {
+      await mutate()
+      await replayOwnedEntry(await expectOwnedQueueEntry(type, 'contacts'))
+    })
+
+    it('isolates equal contact IDs across account fingerprints', async () => {
+      useContactStore.setState({ contacts: [queuedContact()] })
+      await useContactStore.getState().updateContact('temp-contact', { displayName: 'Owned' })
+      expect(await getAll(queueGuard('other-account'))).toEqual([])
+      expect(await getAll(queueGuard(TEST_FINGERPRINT))).toHaveLength(1)
+    })
+
+    it('quietly cancels at the actual IndexedDB commit boundary', async () => {
+      useContactStore.setState({ contacts: [queuedContact()] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const putSpy = bumpEpochWhenQueuePutRuns(() => {
+        useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any)
+        useContactStore.setState({ contacts: [] })
+      })
+      await expect(useContactStore.getState().updateContact('temp-contact', { displayName: 'Stale' })).resolves.toBeUndefined()
+      putSpy.mockRestore()
+      expect(useContactStore.getState().contacts).toEqual([])
+      expect(await getAll()).toEqual([])
+      expect(await getAll(queueGuard('new-account'))).toEqual([])
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+      errorSpy.mockRestore()
+    })
+
+    it('quietly cancels its distinct uncached delete branch at the actual IndexedDB commit boundary', async () => {
+      useContactStore.setState({ contacts: [queuedContact()] })
+      await expectQuietQueueCommitCancellation(
+        () => useContactStore.getState().deleteContact('temp-contact'),
+        () => { useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any); useContactStore.setState({ contacts: [] }) },
+        () => expect(useContactStore.getState().contacts).toEqual([]),
+        toastMock,
+      )
     })
   })
 })

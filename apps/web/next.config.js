@@ -4,6 +4,8 @@ const withPWA = require('@ducanh2912/next-pwa').default
 const { withSentryConfig } = require('@sentry/nextjs')
 
 const withNextIntl = createNextIntlPlugin('./i18n/request.ts')
+const hostedConnectSources = "connect-src 'self' https://api.silentsuite.io https://server.silentsuite.io wss://server.silentsuite.io https://*.sentry.io"
+const signupConnectSources = `${hostedConnectSources} https://plausible.silentsuite.io https://api.stripe.com`
 
 // Resolve etebase CJS entry — it's a dep of @silentsuite/core,
 // not directly in apps/web's node_modules (pnpm strict isolation).
@@ -26,6 +28,19 @@ const nextConfig = {
     ignoreDuringBuilds: true,
   },
   transpilePackages: ['@silentsuite/ui', '@silentsuite/core'],
+  async headers() {
+    if (process.env.NEXT_PUBLIC_SELF_HOSTED === 'true') return []
+    return [
+      {
+        source: '/signup/:path*',
+        headers: [{ key: 'Content-Security-Policy', value: signupConnectSources }],
+      },
+      ...['/calendar/:path*', '/contacts/:path*', '/tasks/:path*', '/settings/:path*'].map((source) => ({
+        source,
+        headers: [{ key: 'Content-Security-Policy', value: hostedConnectSources }],
+      })),
+    ]
+  },
   webpack: (config) => {
     config.resolve.extensionAlias = {
       '.js': ['.ts', '.tsx', '.js'],
