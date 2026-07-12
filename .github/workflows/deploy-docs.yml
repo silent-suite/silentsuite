@@ -35,6 +35,8 @@ jobs:
 
       - name: Build docs
         run: pnpm run build --filter=@silentsuite/docs
+        env:
+          SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'
 
       - name: Deploy to production Worker
         uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3
