@@ -223,7 +223,7 @@ jobs:
             esac
             echo "=== Rename + checksum (inside container to avoid permission issues) ==="
             mv dist/silentsuite-bridge dist/${{ matrix.asset-name }}
-            sha256sum dist/${{ matrix.asset-name }} > dist/${{ matrix.asset-name }}.sha256
+            (cd dist && sha256sum "${{ matrix.asset-name }}" > "${{ matrix.asset-name }}.sha256")
             cat dist/${{ matrix.asset-name }}.sha256
             echo "Smoke test passed."
 
