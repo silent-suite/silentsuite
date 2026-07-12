@@ -408,8 +408,14 @@ async function commitItemMutations(
 }
 
 /** Insert/update a single item. Failures are logged and swallowed. */
-export async function putItem(item: CachedItem, accountEpoch?: number): Promise<void> {
-  if (!canWriteItemContent('putItem')) return
+export async function putItem(
+  item: CachedItem,
+  accountEpoch?: number,
+  options?: { allowWithoutFeatureFlag?: boolean },
+): Promise<void> {
+  if (options?.allowWithoutFeatureFlag) {
+    if (!hasEncryptedCacheEnvelope()) return
+  } else if (!canWriteItemContent('putItem')) return
   try {
     const stored = await toStoredItem(item)
     if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)

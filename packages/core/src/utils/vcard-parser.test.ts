@@ -404,3 +404,121 @@ describe('CATEGORIES', () => {
     expect(generateVCard(empty)).not.toContain('CATEGORIES');
   });
 });
+
+// ── X-SILENTSUITE-FAVORITE (favorite flag) ──
+
+describe('X-SILENTSUITE-FAVORITE parsing', () => {
+  function rawWith(...propLines: string[]): string {
+    return [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:vcf-fav',
+      'FN:Jane Doe',
+      ...propLines,
+      'END:VCARD',
+    ].join('\r\n');
+  }
+
+  it('defaults favorite to undefined when the property is absent', () => {
+    expect(parseVCard(rawWith()).favorite).toBeUndefined();
+  });
+
+  it('parses the canonical X-SILENTSUITE-FAVORITE:1 as true', () => {
+    expect(parseVCard(rawWith('X-SILENTSUITE-FAVORITE:1')).favorite).toBe(true);
+  });
+
+  it('treats value 0 as not favorite', () => {
+    expect(parseVCard(rawWith('X-SILENTSUITE-FAVORITE:0')).favorite).toBeUndefined();
+  });
+
+  it('treats malformed values as not favorite without unescaping/trimming', () => {
+    expect(parseVCard(rawWith('X-SILENTSUITE-FAVORITE:true')).favorite).toBeUndefined();
+    expect(parseVCard(rawWith('X-SILENTSUITE-FAVORITE: 1')).favorite).toBeUndefined();
+    expect(parseVCard(rawWith('X-SILENTSUITE-FAVORITE:1 ')).favorite).toBeUndefined();
+    expect(parseVCard(rawWith('X-SILENTSUITE-FAVORITE:01')).favorite).toBeUndefined();
+    expect(parseVCard(rawWith('X-SILENTSUITE-FAVORITE:')).favorite).toBeUndefined();
+  });
+
+  it('normalizes property name case-insensitively', () => {
+    expect(parseVCard(rawWith('x-silentsuite-favorite:1')).favorite).toBe(true);
+    expect(parseVCard(rawWith('X-SilentSuite-Favorite:1')).favorite).toBe(true);
+  });
+
+  it('accepts a grouped canonical property', () => {
+    expect(parseVCard(rawWith('item3.X-SILENTSUITE-FAVORITE:1')).favorite).toBe(true);
+  });
+
+  it('accepts a parameterized canonical property', () => {
+    expect(parseVCard(rawWith('X-SILENTSUITE-FAVORITE;TYPE=pref:1')).favorite).toBe(true);
+  });
+
+  it('resolves duplicates with "any exact 1 wins" regardless of order', () => {
+    expect(
+      parseVCard(rawWith('X-SILENTSUITE-FAVORITE:0', 'X-SILENTSUITE-FAVORITE:1')).favorite,
+    ).toBe(true);
+    expect(
+      parseVCard(rawWith('X-SILENTSUITE-FAVORITE:1', 'X-SILENTSUITE-FAVORITE:0')).favorite,
+    ).toBe(true);
+  });
+
+  it('resolves a duplicate false-only set to not favorite', () => {
+    expect(
+      parseVCard(rawWith('X-SILENTSUITE-FAVORITE:0', 'X-SILENTSUITE-FAVORITE:no')).favorite,
+    ).toBeUndefined();
+  });
+
+  it('parses a folded canonical property', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:vcf-fav-fold',
+      'FN:Jane Doe',
+      'X-SILENTSUITE-FAVORITE:',
+      ' 1',
+      'END:VCARD',
+    ].join('\r\n');
+    expect(parseVCard(raw).favorite).toBe(true);
+  });
+});
+
+describe('X-SILENTSUITE-FAVORITE generation', () => {
+  it('emits exactly one ungrouped, parameterless canonical line when true', () => {
+    const generated = generateVCard({ uid: 'g-fav', fn: 'Jane Doe', favorite: true });
+    const matches = generated.split('\r\n').filter((l) => l.startsWith('X-SILENTSUITE-FAVORITE'));
+    expect(matches).toEqual(['X-SILENTSUITE-FAVORITE:1']);
+  });
+
+  it('omits the property when favorite is false or undefined', () => {
+    expect(generateVCard({ uid: 'g-fav-0', fn: 'Jane Doe', favorite: false })).not.toContain(
+      'X-SILENTSUITE-FAVORITE',
+    );
+    expect(generateVCard({ uid: 'g-fav-u', fn: 'Jane Doe' })).not.toContain(
+      'X-SILENTSUITE-FAVORITE',
+    );
+  });
+
+  it('removes stale/duplicate favorite properties on true→false regeneration', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:vcf-fav-stale',
+      'FN:Jane Doe',
+      'X-SILENTSUITE-FAVORITE:1',
+      'item1.X-SILENTSUITE-FAVORITE:1',
+      'END:VCARD',
+    ].join('\r\n');
+    const parsed = parseVCard(raw);
+    expect(parsed.favorite).toBe(true);
+    parsed.favorite = false;
+    const regenerated = generateVCard(parsed);
+    expect(regenerated).not.toContain('X-SILENTSUITE-FAVORITE');
+  });
+
+  it('roundtrips a favorite through generate/parse producing one canonical line', () => {
+    const generated = generateVCard({ uid: 'g-fav-rt', fn: 'Jane Doe', favorite: true });
+    expect(parseVCard(generated).favorite).toBe(true);
+    expect(generated.split('\r\n').filter((l) => l.includes('X-SILENTSUITE-FAVORITE'))).toHaveLength(
+      1,
+    );
+  });
+});

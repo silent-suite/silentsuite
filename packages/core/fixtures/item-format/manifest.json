@@ -77,6 +77,19 @@
         "telNumber": "+1-555-0100",
         "cellNumber": "+1-555-0199"
       }
+    },
+    {
+      "path": "vcf/contact-favorite.vcf",
+      "kind": "vcard",
+      "covers": ["favorite", "categories"],
+      "expected": {
+        "uid": "golden-vcf-favorite-001",
+        "fn": "Star Favorite",
+        "n": { "family": "Favorite", "given": "Star" },
+        "categories": ["VIP"],
+        "email": [{ "type": "home", "value": "star@example.com" }],
+        "favorite": true
+      }
     }
   ]
 }

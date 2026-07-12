@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ContactsPage from '../page'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
@@ -25,6 +25,8 @@ const storeMock = vi.hoisted(() => ({
     createContact: vi.fn(),
     updateContact: vi.fn(),
     deleteContact: vi.fn(),
+    setContactFavorite: vi.fn(),
+    canWriteContact: vi.fn(() => true),
   },
   contactListState: {
     lists: [] as ContactList[],
@@ -63,7 +65,25 @@ describe('ContactsPage mobile reachability', () => {
   beforeEach(() => {
     storeMock.contactState.isLoading = true
     storeMock.contactState.searchQuery = ''
+    storeMock.contactState.contacts = []
+    storeMock.contactListState.lists = []
     storeMock.authState.canWrite.mockReturnValue(true)
+  })
+
+  it('uses separate valid row and star controls and filters favorites', () => {
+    storeMock.contactState.isLoading = false
+    storeMock.contactState.contacts = [
+      { id: '1', uid: '1', displayName: 'Ada', name: { prefix: '', given: 'Ada', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, favorite: true, listId: 'book', created_at: new Date(), updated_at: new Date() },
+      { id: '2', uid: '2', displayName: 'Bob', name: { prefix: '', given: 'Bob', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, favorite: false, listId: 'book', created_at: new Date(), updated_at: new Date() },
+    ]
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    renderWithIntl(<ContactsPage />)
+
+    expect(screen.getByRole('button', { name: 'Remove Ada from favorites' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add Bob to favorites' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Favorites' }))
+    expect(screen.getByText('Ada')).toBeInTheDocument()
+    expect(screen.queryByText('Bob')).not.toBeInTheDocument()
   })
 
   it('exposes the primary create action on all widths', () => {
