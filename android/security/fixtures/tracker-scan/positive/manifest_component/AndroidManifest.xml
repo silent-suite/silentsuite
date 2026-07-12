@@ -1,0 +1,1 @@
+<provider android:name="io.sentry.android.core.SentryInitProvider" />

@@ -1,0 +1,5 @@
+# Reviewed endpoint policy, schema 1. One lower-case host rule per line.
+# No endpoint is permitted before the user selects/configures a server.
+# Authenticated scenarios substitute only the dedicated test server host supplied
+# as ANDROID_NETWORK_TEST_SERVER_URL; the evidence checker records <user-selected-server>.
+<user-selected-server>

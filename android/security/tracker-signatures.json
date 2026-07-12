@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "policy": "No analytics, advertising, crash-reporting, attribution, install-referrer, or device-identifier runtime code in Android artifacts.",
+  "reviewed_on": "2026-07-12",
+  "review_due": "2026-10-12",
+  "catalog_baseline": {
+    "sources": ["Exodus Privacy tracker catalog", "TrackerControl tracker catalog", "Android advertising and identifier APIs"],
+    "manual_owner": "SilentSuite security/privacy owner",
+    "review_record": "Compare catalog additions, dependency graphs, Android APIs, and native libraries; record evidence in the reviewed manifest change."
+  },
+  "signatures": [
+    {"id":"firebase-analytics-dependency","category":"dependency","description":"Analytics, advertising, attribution, Firebase Performance (firebase-performance), or crash dependency coordinate","pattern":"(?:com\\.google\\.firebase:firebase-(?:analytics|crashlytics|performance)(?:[-a-z]*)|com\\.adjust\\.sdk:adjust-android|com\\.appsflyer:af-android-sdk|com\\.facebook\\.android:facebook-(?:core|marketing)|com\\.google\\.android\\.gms:play-services-ads|com\\.amplitude:android-sdk|com\\.bugsnag:bugsnag-android|com\\.datadoghq:dd-sdk-android|com\\.newrelic\\.agent\\.android:android-agent):"},
+    {"id":"tracker-package","category":"package","description":"Catalog-derived tracker package","pattern":"(?:com[./]mixpanel[./]android|com[./]posthog[./]android|io[./]sentry|org[./]acra|com[./]google[./]firebase[./](?:analytics|crashlytics|perf)|com[./]adjust[./]sdk|com[./]appsflyer|com[./]facebook[./]appevents|com[./]google[./]android[./]gms[./]ads|com[./]amplitude|com[./]bugsnag|com[./]datadog|com[./]newrelic)"},
+    {"id":"tracker-domain","category":"domain","description":"Known tracker collection endpoint","pattern":"(?:api\\.mixpanel\\.com|app\\.posthog\\.com|google-analytics\\.com|firebase-settings\\.crashlytics\\.com|sentry\\.io|app-measurement\\.com|adjust\\.com|appsflyer\\.com|graph\\.facebook\\.com|amplitude\\.com|bugsnag\\.com|datadoghq\\.com|newrelic\\.com)"},
+    {"id":"tracker-manifest-component","category":"manifest_component","description":"Tracker manifest component or metadata","pattern":"(?:com\\.google\\.android\\.datatransport\\.runtime\\.scheduling\\.jobscheduling\\.JobInfoSchedulerService|io\\.sentry\\.android\\.core\\.SentryInitProvider|com\\.google\\.firebase\\.components:|com\\.facebook\\.FacebookContentProvider|com\\.bugsnag\\.android\\.BugsnagContentProvider|com\\.newrelic\\.agent\\.android)"},
+    {"id":"identifier-attribution-api","category":"identifier_api","description":"Advertising ID, app-set ID, or install-referrer API","pattern":"(?:AdvertisingIdClient|AppSetIdClient|InstallReferrerClient|com[./]android[./]installreferrer|com[./]google[./]android[./]gms[./]ads[./]identifier)"},
+    {"id":"tracker-dex-signature","category":"dex_signature","description":"Tracker DEX class/string","pattern":"(?:com[./]mixpanel[./]android[./]mpmetrics|com[./]posthog[./]android[./]PostHog|FirebaseAnalytics|getAdvertisingIdInfo|AdjustConfig|AppsFlyerLib|AppEventsLogger|GoogleAds|FirebasePerformance|AmplitudeClient|Bugsnag|Datadog|NewRelic)"},
+    {"id":"tracker-native-symbol","category":"native_symbol","description":"Tracker native symbol/string","pattern":"(?:sentry_native_init|crashpad_handler|posthog_capture|mixpanel_track|appsflyer|bugsnag|datadog|newrelic)"}
+  ],
+  "exceptions": []
+}
