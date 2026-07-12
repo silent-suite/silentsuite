@@ -12,6 +12,7 @@
     "type-check": "turbo type-check",
     "i18n:check": "pnpm --filter @silentsuite/web i18n:check",
     "i18n:report": "pnpm --filter @silentsuite/web i18n:report",
+    "check:public-analytics": "node scripts/check-public-analytics.mjs && node --experimental-strip-types --test apps/docs/.vitepress/theme/public-analytics.test.mts",
     "audit:security": "node scripts/audit-high-critical.mjs"
   },
   "devDependencies": {
