@@ -335,6 +335,29 @@ describe('offline-queue', () => {
       expect(await getPendingCount(testGuard())).toBe(0)
     })
 
+    it('does not consume remote retries when a target-confirmed checkpoint transaction repeatedly fails', async () => {
+      await enqueue({ type: 'create', collectionType: 'calendar', content: 'PIM', tempId: 'temp-1' })
+      const originalPut = IDBObjectStore.prototype.put
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const putSpy = vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementationOnce(function (...args) {
+          const request = originalPut.apply(this, args)
+          this.transaction.abort()
+          return request
+        })
+        try {
+          await replay(async (_entry, checkpoint) => {
+            await checkpoint({ replayPhase: 'target-confirmed', confirmedTargetUid: 'server-1' })
+            return { remoteMutationConfirmed: true, itemUid: 'server-1' }
+          }, testGuard())
+        } finally {
+          putSpy.mockRestore()
+        }
+
+        expect((await getAll(testGuard()))[0]).toMatchObject({ retryCount: 0, status: 'pending' })
+      }
+    })
+
     it('increments retryCount on failure, marks failed after MAX_RETRIES', async () => {
       await enqueue({ type: 'update', collectionType: 'contacts', content: 'x', itemUid: 'u1' })
 
