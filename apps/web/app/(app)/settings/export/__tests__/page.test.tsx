@@ -109,11 +109,15 @@ vi.mock('@/app/stores/use-contact-list-store', () => ({
 }))
 
 // Mock @silentsuite/core serializers
-vi.mock('@silentsuite/core', () => ({
-  toVEvent: vi.fn(() => 'BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nEND:VEVENT'),
-  toVTodo: vi.fn(() => 'BEGIN:VTODO\r\nSUMMARY:Test task\r\nEND:VTODO'),
-  toVCard: vi.fn(() => 'BEGIN:VCARD\r\nFN:Alice\r\nEND:VCARD'),
-}))
+vi.mock('@silentsuite/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@silentsuite/core')>()
+  return {
+    ...actual,
+    toVEvent: vi.fn(() => 'BEGIN:VEVENT\r\nSUMMARY:Meeting\r\nEND:VEVENT'),
+    toVTodo: vi.fn(() => 'BEGIN:VTODO\r\nSUMMARY:Test task\r\nEND:VTODO'),
+    toVCard: vi.fn(actual.toVCard),
+  }
+})
 
 // Mock @silentsuite/ui
 vi.mock('@silentsuite/ui', () => ({
@@ -360,6 +364,14 @@ describe('ExportPage', () => {
     const blobCall = (URL.createObjectURL as ReturnType<typeof vi.fn>).mock
       .calls[0][0] as Blob
     expect(blobCall.type).toBe('text/vcard')
+  })
+
+  it('exports favorite contacts through the canonical contact serializer', () => {
+    mockData.contacts[0]!.favorite = true
+    render(<ExportPage />)
+    fireEvent.click(screen.getByText(/Export Contacts/))
+    expect(toVCard).toHaveBeenCalledWith(expect.objectContaining({ favorite: true }))
+    expect(vi.mocked(toVCard).mock.results[0]!.value).toContain('X-SILENTSUITE-FAVORITE:1')
   })
 
   it('skips events that fail to serialize and shows a warning toast', () => {

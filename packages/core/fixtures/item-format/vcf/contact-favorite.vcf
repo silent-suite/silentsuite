@@ -1,0 +1,10 @@
+BEGIN:VCARD
+VERSION:3.0
+UID:golden-vcf-favorite-001
+FN:Star Favorite
+N:Favorite;Star;;;
+EMAIL;TYPE=home:star@example.com
+CATEGORIES:VIP
+X-SILENTSUITE-FAVORITE:0
+X-SILENTSUITE-FAVORITE:1
+END:VCARD

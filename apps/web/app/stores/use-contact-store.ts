@@ -23,6 +23,7 @@ interface NewContact {
   birthday?: string | null
   photoUrl?: string | null
   categories?: string[]
+  favorite?: boolean
   listId?: string
 }
 
@@ -36,6 +37,8 @@ interface ContactState {
 interface ContactActions {
   createContact: (contact: NewContact) => Promise<Contact>
   updateContact: (id: string, patch: Partial<Contact>) => Promise<void>
+  canWriteContact: (contact: Contact) => boolean
+  setContactFavorite: (id: string, value: boolean) => Promise<void>
   deleteContact: (id: string) => Promise<void>
   setSearchQuery: (query: string) => void
   importContacts: (newContacts: NewContact[]) => Promise<number>
@@ -47,6 +50,8 @@ function defaultContactListId(): string | undefined {
   if (activeListId !== 'all' && lists.some((list) => list.id === activeListId)) return activeListId
   return lists[0]?.id
 }
+
+const favoriteMutationChains = new Map<string, Promise<void>>()
 
 export const useContactStore = create<ContactState & ContactActions>()(
     (set, get) => ({
@@ -78,6 +83,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
           birthday: newContact.birthday ?? null,
           photoUrl: newContact.photoUrl ?? null,
           categories: newContact.categories ?? [],
+          favorite: newContact.favorite ?? false,
           listId: newContact.listId ?? defaultContactListId(),
           created_at: now,
           updated_at: now,
@@ -154,6 +160,88 @@ export const useContactStore = create<ContactState & ContactActions>()(
         }
       },
 
+      canWriteContact: (contact: Contact) => {
+        if (!useAuthStore.getState().canWrite()) return false
+        const list = useContactListStore.getState().lists.find((entry) => entry.id === contact.listId)
+        return list?.accessLevel === 1 || list?.accessLevel === 2
+      },
+
+      setContactFavorite: async (id: string, value: boolean) => {
+        const contact = get().contacts.find((entry) => entry.id === id)
+        if (!contact || !get().canWriteContact(contact)) return
+
+        const etebase = useEtebaseStore.getState()
+        const guard = captureOfflineQueueAccountGuard(etebase)
+        if (!guard) return
+
+        const previous = contact.favorite === true
+        if (previous === value) return
+        const updated = { ...contact, favorite: value, updated_at: new Date() }
+        set((state) => ({ contacts: state.contacts.map((entry) => entry.id === id ? updated : entry) }))
+
+        const rollbackIfCurrent = () => set((state) => ({
+          contacts: state.contacts.map((entry) => (
+            entry.id === id && entry.updated_at === updated.updated_at && entry.favorite === value
+              ? { ...entry, favorite: previous }
+              : entry
+          )),
+        }))
+        const isCurrentFavoriteMutation = () => get().contacts.some((entry) => (
+          entry.id === id && entry.updated_at === updated.updated_at && entry.favorite === value
+        ))
+        let content: string
+        try {
+          assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+          const { serializeContact } = await import('@silentsuite/core')
+          assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+          content = serializeContact(updated)
+        } catch (error) {
+          if (isOfflineQueueBoundaryCancellation(error)) return
+          if (!isCurrentFavoriteMutation()) return
+          console.error('[contact-store] Failed to serialize favorite update', getSafeErrorDetails(error))
+          rollbackIfCurrent()
+          showErrorToast('Failed to update favorite. Please try again.')
+          return
+        }
+
+        const persistFavorite = async () => {
+          if (!etebase.itemCache.has(id)) {
+            // A contact without an authoritative SDK item cannot be replayed from
+            // a content-free queue record. Never fall back to plaintext vCard
+            // persistence; fail closed until the encrypted item cache is ready.
+            if (!isCurrentFavoriteMutation()) return
+            rollbackIfCurrent()
+            showErrorToast('Failed to update favorite. Please try again.')
+            return
+          }
+
+          try {
+            const outcome = await etebase.updateItem('contacts', id, content, {
+              suppressErrorToast: true,
+              persistEncryptedOfflineContent: true,
+            })
+            assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+            if (!outcome) {
+              if (!isCurrentFavoriteMutation()) return
+              rollbackIfCurrent()
+              showErrorToast('Failed to update favorite. Please try again.')
+            }
+          } catch (error) {
+            if (isOfflineQueueBoundaryCancellation(error)) return
+            if (!isCurrentFavoriteMutation()) return
+            console.error('[contact-store] Failed to update favorite', getSafeErrorDetails(error))
+            rollbackIfCurrent()
+            showErrorToast('Failed to update favorite. Please try again.')
+          }
+        }
+
+        const previousMutation = favoriteMutationChains.get(id) ?? Promise.resolve()
+        const mutation = previousMutation.catch(() => undefined).then(persistFavorite)
+        favoriteMutationChains.set(id, mutation)
+        await mutation
+        if (favoriteMutationChains.get(id) === mutation) favoriteMutationChains.delete(id)
+      },
+
       deleteContact: async (id: string) => {
         if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         const contactToDelete = get().contacts.find((c) => c.id === id)
@@ -214,6 +302,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
             birthday: nc.birthday ?? null,
             photoUrl: nc.photoUrl ?? null,
             categories: nc.categories ?? [],
+            favorite: nc.favorite ?? false,
             listId: nc.listId ?? defaultContactListId(),
             created_at: now,
             updated_at: now,

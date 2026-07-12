@@ -7,6 +7,8 @@ export interface ContactList {
   name: string
   color: string
   visible: boolean
+  /** Etebase access: 0 read-only, 1 admin, 2 read/write. Missing fails closed. */
+  accessLevel?: number
 }
 
 export const DEFAULT_CONTACT_LIST_COLORS = [

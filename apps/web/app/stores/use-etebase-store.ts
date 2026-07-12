@@ -29,6 +29,7 @@ import {
   setStoken as cacheSetStoken,
   putItems as cachePutItems,
   putItem as cachePutItem,
+  getItemsByType as cacheGetItemsByType,
   deleteItem as cacheDeleteItem,
   replaceItemsForCollection as cacheReplaceItemsForCollection,
   isCacheEnabled as isLocalCacheEnabled,
@@ -359,6 +360,10 @@ function getCollectionColor(collection: any): string | undefined {
   }
 }
 
+function getCollectionAccessLevel(collection: any): number | undefined {
+  return typeof collection?.accessLevel === 'number' ? collection.accessLevel : undefined
+}
+
 async function hydrateListStores(
   collections: Record<CollectionTypeKey, any[]>,
   accountEpoch = getAccountEpoch(),
@@ -392,6 +397,7 @@ async function hydrateListStores(
       name: getCollectionName(collection, index === 0 ? 'My Contacts' : `Contacts ${index + 1}`),
       color: getCollectionColor(collection) || contactListStore.DEFAULT_CONTACT_LIST_COLORS[index % contactListStore.DEFAULT_CONTACT_LIST_COLORS.length],
       visible: true,
+      accessLevel: getCollectionAccessLevel(collection),
     })),
   )
 }
@@ -634,7 +640,12 @@ interface EtebaseActions {
   /**
    * Update an existing item by UID.
    */
-  updateItem: (type: CollectionTypeKey, itemUid: string, content: string) => Promise<void>
+  updateItem: (
+    type: CollectionTypeKey,
+    itemUid: string,
+    content: string,
+    options?: { suppressErrorToast?: boolean; persistEncryptedOfflineContent?: boolean },
+  ) => Promise<'remote' | 'queued' | false>
 
   /**
    * Move an existing item to another concrete collection by recreating it there.
@@ -1547,11 +1558,18 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         return { remoteMutationConfirmed: true, itemUid: createdUid }
       }
       case 'update': {
-        if (typeof entry.content !== 'string') throw new ReplayNotConfirmedError('Replay update content is unavailable')
+        let content = entry.content
+        if (typeof content !== 'string' && entry.itemUid) {
+          assertOfflineQueueAccountGuard(guard, get())
+          const cachedItems = await cacheGetItemsByType(entry.collectionType)
+          assertOfflineQueueAccountGuard(guard, get())
+          content = cachedItems.find((cached) => cached.itemUid === entry.itemUid)?.content
+        }
+        if (typeof content !== 'string') throw new ReplayNotConfirmedError('Replay update content is unavailable')
         const collection = requireCollection(entry.collectionUid, 'owner')
         const item = requireItem()
         assertOfflineQueueAccountGuard(guard, get())
-        await core.updateItem(account, collection, item, entry.content)
+        await core.updateItem(account, collection, item, content)
         assertOfflineQueueAccountGuard(guard, get())
         return { remoteMutationConfirmed: true }
       }
@@ -1801,16 +1819,16 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  updateItem: async (type: CollectionTypeKey, itemUid: string, content: string) => {
+  updateItem: async (type: CollectionTypeKey, itemUid: string, content: string, options) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, itemCache, itemCollectionMap, accountFingerprint } = get()
     const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
-    if (!offlineQueueGuard) return
+    if (!offlineQueueGuard) return false
     const collection = resolveCollection(collections, type, itemCollectionMap.get(itemUid))
     const item = itemCache.get(itemUid)
     if (!collection || !item) {
       logger.warn(`[etebase-store] Cannot update item ${itemUid}: missing collection or item`)
-      return
+      return false
     }
 
     try {
@@ -1822,21 +1840,48 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCache.set(itemUid, updated)
       set({ itemCache: newCache })
       await writeItemToCache(type, collection.uid, itemUid, content, accountEpoch)
+      assertCurrentAccountEpoch(accountEpoch)
+      return 'remote'
     } catch (err) {
-      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       if (isOfflineError(err)) {
         try {
           assertOfflineQueueAccountGuard(offlineQueueGuard, get())
-          await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid }, offlineQueueGuard)
+          if (options?.persistEncryptedOfflineContent) {
+            if (!await cacheEnsureEncryptedEnvelope(accountEpoch)) return false
+            await cacheEnsureFingerprint(offlineQueueGuard.accountFingerprint, accountEpoch)
+            await cachePutItem({
+              itemUid,
+              collectionType: type,
+              collectionUid: collection.uid,
+              content,
+              lastModified: Date.now(),
+            }, accountEpoch, { allowWithoutFeatureFlag: true })
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+            const cachedItems = await cacheGetItemsByType(type)
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+            const persisted = cachedItems.find((cached) => cached.itemUid === itemUid)
+            if (persisted?.content !== content || persisted.collectionUid !== collection.uid) {
+              return false
+            }
+            await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, itemUid }, offlineQueueGuard)
+          } else {
+            await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid }, offlineQueueGuard)
+          }
           assertOfflineQueueAccountGuard(offlineQueueGuard, get())
           logger.warn(`[etebase-store] Offline — queued update for ${type}/${itemUid}`)
+          return 'queued'
         } catch (queueErr) {
-          if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return
+          if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return false
           console.error('[etebase-store] Failed to enqueue update', getSafeErrorDetails(queueErr))
+          return false
         }
       } else {
         console.error(`[etebase-store] Failed to update ${type} item`, getSafeErrorDetails(err))
-        showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
+        if (!options?.suppressErrorToast) {
+          showErrorToast(`Failed to save ${type === 'calendar' ? 'event' : type === 'tasks' ? 'task' : type === 'contacts' ? 'contact' : 'preferences'}. Please try again.`)
+        }
+        return false
       }
     }
   },

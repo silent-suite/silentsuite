@@ -203,8 +203,40 @@ def _assert_vcard(card, expected: dict, raw: str) -> None:
                 if "cell" in [t.lower() for t in prop.params.get("TYPE", [])]
             ]
             assert value in cells
+        elif key == "favorite":
+            props = [
+                prop
+                for name, values in card.contents.items()
+                if name.split(".")[-1].lower() == "x-silentsuite-favorite"
+                for prop in values
+            ]
+            assert any(prop.value == "1" for prop in props) is value
         else:
             raise AssertionError(f"unhandled expected key {key!r} for a vcard fixture")
+
+
+@pytest.mark.parametrize(
+    ("lines", "expected"),
+    [
+        ([], False),
+        (["X-SILENTSUITE-FAVORITE:0"], False),
+        (["X-SILENTSUITE-FAVORITE:true"], False),
+        (["item1.X-SILENTSUITE-FAVORITE;TYPE=pref:1"], True),
+        (["X-SILENTSUITE-FAVORITE:0", "x-silentsuite-favorite:1"], True),
+        (["X-SILENTSUITE-FAVORITE:", " 1"], True),
+    ],
+)
+def test_favorite_boolean_semantics_survive_vobject(lines, expected):
+    raw = "\r\n".join(["BEGIN:VCARD", "VERSION:4.0", "UID:fav", "FN:Favorite", *lines, "END:VCARD"])
+    serialized = vobject.readOne(raw).serialize()
+    unfolded = serialized.replace("\r\n ", "").replace("\n ", "")
+    values = []
+    for line in unfolded.splitlines():
+        name, separator, value = line.partition(":")
+        normalized = name.split(";", 1)[0].split(".")[-1].upper()
+        if separator and normalized == "X-SILENTSUITE-FAVORITE":
+            values.append(value)
+    assert any(value == "1" for value in values) is expected
 
 
 # ---------------------------------------------------------------------------

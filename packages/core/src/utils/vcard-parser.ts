@@ -44,7 +44,14 @@ export interface VCard {
   bday?: string;
   photo?: string;
   rev?: string;
+  /** SilentSuite-owned favorite flag, wire form `X-SILENTSUITE-FAVORITE:1`.
+   *  `true` means favorite; absence means not favorite. Only `true` is ever
+   *  emitted, so a false/absent value is represented as `undefined`. */
+  favorite?: boolean;
 }
+
+/** Canonical SilentSuite favorite extension property name (uppercased). */
+export const FAVORITE_PROPERTY = 'X-SILENTSUITE-FAVORITE';
 
 // ── Escaping ──
 
@@ -322,6 +329,15 @@ export function parseVCard(vcardStr: string): VCard {
       case 'REV':
         vcard.rev = prop.value;
         break;
+      case FAVORITE_PROPERTY:
+        // Canonical favorite is exactly `1`. Do not trim or unescape the
+        // scalar; group prefix and parameters are already normalized away by
+        // parseProperty(). Duplicates reduce with "any exact `1` wins", so we
+        // only ever set true and never clear it here.
+        if (prop.value === '1') {
+          vcard.favorite = true;
+        }
+        break;
     }
   }
 
@@ -397,6 +413,11 @@ export function generateVCard(vcard: VCard): string {
     lines.push(foldLine(`CATEGORIES:${vcard.categories.map(escapeText).join(',')}`));
   }
   if (vcard.note) lines.push(foldLine(`NOTE:${escapeText(vcard.note)}`));
+  // Emit exactly one ungrouped, parameterless canonical favorite property, and
+  // only when true. False/absent favorite produces no line at all.
+  if (vcard.favorite === true) {
+    lines.push(`${FAVORITE_PROPERTY}:1`);
+  }
   if (vcard.bday) lines.push(foldLine(`BDAY:${vcard.bday}`));
   if (vcard.photo) {
     if (vcard.photo.startsWith('data:') || vcard.photo.startsWith('http://') || vcard.photo.startsWith('https://')) {

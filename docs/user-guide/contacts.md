@@ -16,6 +16,12 @@ Open a contact, edit its fields, save. Or open and delete. Changes are re-encryp
 
 The search box at the top of the contacts list filters by name, email, phone, or organisation. Search runs against your locally decrypted data, so it's fast and works offline.
 
+## Favorites
+
+Use the star beside a contact, then choose **Favorites** to show starred contacts from your visible address books. Favorites use the shared vCard contract; Android synchronization requires a SilentSuite Android version that supports contact favorites. A favorite is global contact data, so members of a shared writable address book see and can change the same value.
+
+The favorite flag stays inside the end-to-end encrypted vCard content; it is not placed in collection metadata, indexes, or logs. Offline web changes are stored in the encrypted local item cache and queued without plaintext contact content, then sync after reconnecting. Failed online changes return the star to its previous state. Read-only address books cannot be changed.
+
 ## Import
 
 **Settings → Import** accepts `.vcf` files (vCard 3.0 and 4.0). Parsing is local-only — the file content never leaves your browser unencrypted. Multi-contact files are supported (one big `.vcf` with many `BEGIN:VCARD` blocks).
@@ -37,9 +43,13 @@ With the [desktop bridge](./getting-started.md#desktop-caldav--carddav-via-the-b
 
 Multiple address books are supported. Each address book is a separate encrypted collection and appears as its own CardDAV collection in compatible clients.
 
+The Bridge preserves `X-SILENTSUITE-FAVORITE` when a client sends it, but favorite is not a standard CardDAV field. Generic CardDAV clients, Thunderbird, DAVx5, Google CardDAV, and Apple Contacts/Phone do not have a promised compatible favorite UI. Clients that rewrite a complete card may strip unknown extensions.
+
 ## Sharing
 
-Shared address books between accounts are not supported in v0.1.0-beta. Your contacts are visible only to you, across your own devices.
+Favorites in a shared address book are shared contact state, not a private per-member preference. Writable members can change them; read-only members cannot.
+
+On Android, starring an aggregate contact may also affect constituent raw contacts owned by other accounts because the native Contacts provider controls aggregation. SilentSuite reads and writes only its own account row.
 
 ## Limits in this beta
 

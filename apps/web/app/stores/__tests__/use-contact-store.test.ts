@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useContactStore, getFilteredContacts } from '../use-contact-store'
 import { useEtebaseStore } from '../use-etebase-store'
+import { useContactListStore } from '../use-contact-list-store'
 import type { Contact } from '@silentsuite/core'
 import { getAll } from '@/app/lib/offline-queue'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
@@ -27,6 +28,7 @@ function resetStore() {
     pendingChanges: [],
   })
   useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+  useContactListStore.setState({ lists: [{ id: 'contacts-1', name: 'Contacts', color: '#fff', visible: true, accessLevel: 2 }], activeListId: 'contacts-1' })
 }
 
 function offlineAccount() {
@@ -257,6 +259,106 @@ describe('useContactStore', () => {
         () => expect(useContactStore.getState().contacts).toEqual([]),
         toastMock,
       )
+    })
+  })
+
+  describe('favorites', () => {
+    beforeEach(() => {
+      toastMock.showErrorToast.mockReset()
+      useContactStore.setState({ contacts: [queuedContact('remote-contact')] })
+    })
+
+    it('persists an authorized favorite as canonical encrypted item content', async () => {
+      const updateItem = vi.fn().mockResolvedValue('remote')
+      useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['remote-contact', {}]]), updateItem } as any)
+      await useContactStore.getState().setContactFavorite('remote-contact', true)
+      expect(useContactStore.getState().contacts[0]!.favorite).toBe(true)
+      expect(updateItem.mock.calls[0]![2]).toContain('X-SILENTSUITE-FAVORITE:1')
+      expect(updateItem.mock.calls[0]![3]).toEqual({ suppressErrorToast: true, persistEncryptedOfflineContent: true })
+    })
+
+    it('rolls back an online failure with static feedback', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['remote-contact', {}]]), updateItem: vi.fn().mockRejectedValue(new Error('private')) } as any)
+      await useContactStore.getState().setContactFavorite('remote-contact', true)
+      expect(useContactStore.getState().contacts[0]!.favorite).toBe(false)
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to update favorite. Please try again.')
+      errorSpy.mockRestore()
+    })
+
+    it('fails closed before mutation when access is read-only or missing', async () => {
+      for (const accessLevel of [0, undefined]) {
+        useContactListStore.setState({ lists: [{ id: 'contacts-1', name: 'Contacts', color: '#fff', visible: true, accessLevel }] })
+        const updateItem = vi.fn()
+        useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['remote-contact', {}]]), updateItem } as any)
+        await useContactStore.getState().setContactFavorite('remote-contact', true)
+        expect(useContactStore.getState().contacts[0]!.favorite).not.toBe(true)
+        expect(updateItem).not.toHaveBeenCalled()
+      }
+    })
+
+    it('allows both owner/admin and read-write collection access', () => {
+      const contact = useContactStore.getState().contacts[0]!
+      for (const accessLevel of [1, 2]) {
+        useContactListStore.setState({ lists: [{ id: 'contacts-1', name: 'Contacts', color: '#fff', visible: true, accessLevel }] })
+        expect(useContactStore.getState().canWriteContact(contact)).toBe(true)
+      }
+    })
+
+    it('does not optimistically mutate without an account fingerprint', async () => {
+      const updateItem = vi.fn()
+      useEtebaseStore.setState({ account: {}, accountFingerprint: null, itemCache: new Map([['remote-contact', {}]]), updateItem } as any)
+      await useContactStore.getState().setContactFavorite('remote-contact', true)
+      expect(useContactStore.getState().contacts[0]!.favorite).not.toBe(true)
+      expect(updateItem).not.toHaveBeenCalled()
+    })
+
+    it('rolls back when the authoritative collection is unavailable', async () => {
+      useEtebaseStore.setState({
+        account: {},
+        accountFingerprint: TEST_FINGERPRINT,
+        collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+        itemCache: new Map([['remote-contact', {}]]),
+      } as any)
+      await useContactStore.getState().setContactFavorite('remote-contact', true)
+      expect(useContactStore.getState().contacts[0]!.favorite).toBe(false)
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to update favorite. Please try again.')
+    })
+
+    it('does not let an older failed request roll back a newer favorite value', async () => {
+      let rejectFirst!: (reason: Error) => void
+      const first = new Promise<never>((_resolve, reject) => { rejectFirst = reject })
+      const updateItem = vi.fn()
+        .mockReturnValueOnce(first)
+        .mockResolvedValueOnce('remote')
+      useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['remote-contact', {}]]), updateItem } as any)
+
+      const older = useContactStore.getState().setContactFavorite('remote-contact', true)
+      const newer = useContactStore.getState().setContactFavorite('remote-contact', false)
+      rejectFirst(new Error('older request failed'))
+      await Promise.all([older, newer])
+
+      expect(useContactStore.getState().contacts[0]!.favorite).toBe(false)
+    })
+
+    it('serializes two successful writes so the latest value reaches the server last', async () => {
+      let resolveFirst!: (value: 'remote') => void
+      let resolveSecond!: (value: 'remote') => void
+      const first = new Promise<'remote'>((resolve) => { resolveFirst = resolve })
+      const second = new Promise<'remote'>((resolve) => { resolveSecond = resolve })
+      const updateItem = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second)
+      useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['remote-contact', {}]]), updateItem } as any)
+
+      const favorite = useContactStore.getState().setContactFavorite('remote-contact', true)
+      const unfavorite = useContactStore.getState().setContactFavorite('remote-contact', false)
+      await vi.waitFor(() => expect(updateItem).toHaveBeenCalledTimes(1))
+      expect(updateItem.mock.calls[0]![2]).toContain('X-SILENTSUITE-FAVORITE:1')
+      resolveFirst('remote')
+      await vi.waitFor(() => expect(updateItem).toHaveBeenCalledTimes(2))
+      expect(updateItem.mock.calls[1]![2]).not.toContain('X-SILENTSUITE-FAVORITE:1')
+      resolveSecond('remote')
+      await Promise.all([favorite, unfavorite])
+      expect(useContactStore.getState().contacts[0]!.favorite).toBe(false)
     })
   })
 })
