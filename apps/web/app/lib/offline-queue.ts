@@ -22,6 +22,9 @@ export interface QueueEntry {
   retryCount: number
   status: 'pending' | 'failed'
   accountFingerprint?: string
+  /** Durable, non-plaintext replay progress. Older records omit these fields. */
+  replayPhase?: 'target-confirmed'
+  confirmedTargetUid?: string
 }
 
 export interface OfflineQueueAccountGuard {
@@ -35,6 +38,22 @@ export interface ReplayResult {
   /** For create replays, the real UID returned by Etebase */
   itemUid?: string
   error?: string
+}
+
+/** A replay executor may acknowledge an entry only after the remote mutation succeeded. */
+export interface ConfirmedRemoteMutation {
+  remoteMutationConfirmed: true
+  itemUid?: string
+}
+
+export type ReplayCheckpoint = (progress: Pick<QueueEntry, 'replayPhase' | 'confirmedTargetUid'>) => Promise<void>
+
+/** The remote mutation was not attempted or could not be affirmatively confirmed. */
+export class ReplayNotConfirmedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ReplayNotConfirmedError'
+  }
 }
 
 const DB_NAME = 'silentsuite-offline-queue'
@@ -427,7 +446,7 @@ export async function retryFailed(guard: OfflineQueueAccountGuard): Promise<void
  * after MAX_RETRIES, marks as 'failed'.
  */
 export async function replay(
-  executeMutation: (entry: QueueEntry) => Promise<{ itemUid?: string }>,
+  executeMutation: (entry: QueueEntry, checkpoint: ReplayCheckpoint) => Promise<ConfirmedRemoteMutation>,
   guard: OfflineQueueAccountGuard,
 ): Promise<ReplayResult[]> {
   try {
@@ -438,19 +457,45 @@ export async function replay(
   const results: ReplayResult[] = []
 
   for (const entry of pending) {
+    let currentEntry = entry
+    let remoteMutationConfirmed = false
     try {
       assertGuard(guard)
-      const result = await executeMutation(entry)
+      const checkpoint: ReplayCheckpoint = async (progress) => {
+        const updated = { ...currentEntry, ...progress }
+        await updateEntry(updated, guard)
+        currentEntry = updated
+      }
+      const result = await executeMutation(currentEntry, checkpoint)
       assertGuard(guard)
+      if (!result || result.remoteMutationConfirmed !== true) {
+        throw new ReplayNotConfirmedError('Replay mutation did not receive affirmative remote confirmation')
+      }
+      remoteMutationConfirmed = true
       await remove(entry.id, guard)
       assertGuard(guard)
       results.push({ entry, success: true, itemUid: result.itemUid })
     } catch (err) {
       if (err instanceof AccountBoundaryChangedError) return []
       assertGuard(guard)
-      const retryCount = entry.retryCount + 1
+      if (remoteMutationConfirmed) {
+        // The server mutation is complete. A local checkpoint/removal failure
+        // must not consume the remote retry budget or mark completed work failed.
+        results.push({ entry, success: false, error: err instanceof Error ? err.message : String(err) })
+        continue
+      }
+      if (err instanceof ReplayNotConfirmedError || isOfflineError(err)) {
+        results.push({
+          entry,
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        if (isOfflineError(err)) break
+        continue
+      }
+      const retryCount = currentEntry.retryCount + 1
       const status = retryCount >= MAX_RETRIES ? 'failed' : 'pending'
-      await updateEntry({ ...entry, retryCount, status }, guard)
+      await updateEntry({ ...currentEntry, retryCount, status }, guard)
       assertGuard(guard)
       results.push({
         entry,

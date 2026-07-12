@@ -298,7 +298,7 @@ describe('offline-queue', () => {
       const order: string[] = []
       const results = await replay(async (entry) => {
         order.push(entry.type)
-        return { itemUid: entry.type === 'create' ? 'real-uid' : undefined }
+        return { remoteMutationConfirmed: true, itemUid: entry.type === 'create' ? 'real-uid' : undefined }
       })
 
       expect(order).toEqual(['create', 'update'])
@@ -744,7 +744,7 @@ describe('offline-queue', () => {
       expect(count).toBe(2)
 
       // Replay all pending entries (simulates cold-start replay)
-      const executeFn = vi.fn().mockResolvedValue({ itemUid: 'new-uid' })
+      const executeFn = vi.fn().mockResolvedValue({ remoteMutationConfirmed: true, itemUid: 'new-uid' })
       const results = await replay(executeFn)
 
       expect(executeFn).toHaveBeenCalledTimes(2)
@@ -774,7 +774,7 @@ describe('offline-queue', () => {
       const unsubscribe = onCountChange(listener)
       const results = await replay(async () => {
         bumpAccountEpoch()
-        return { itemUid: 'must-not-publish' }
+        return { remoteMutationConfirmed: true, itemUid: 'must-not-publish' }
       }, guard)
       unsubscribe()
 
