@@ -462,9 +462,16 @@ export async function replay(
   for (const entry of pending) {
     let currentEntry = entry
     let remoteMutationConfirmed = false
+    let remoteProgressConfirmed = false
     try {
       assertGuard(guard)
       const checkpoint: ReplayCheckpoint = async (progress) => {
+        // target-confirmed is emitted only after a remote item was found or
+        // created. Record that before the local transaction so an IndexedDB
+        // checkpoint failure cannot consume the remote retry budget.
+        if (progress.replayPhase === 'target-confirmed' && progress.confirmedTargetUid) {
+          remoteProgressConfirmed = true
+        }
         const updated = { ...currentEntry, ...progress }
         await updateEntry(updated, guard)
         currentEntry = updated
@@ -481,7 +488,7 @@ export async function replay(
     } catch (err) {
       if (err instanceof AccountBoundaryChangedError) return []
       assertGuard(guard)
-      if (remoteMutationConfirmed) {
+      if (remoteMutationConfirmed || remoteProgressConfirmed) {
         // The server mutation is complete. A local checkpoint/removal failure
         // must not consume the remote retry budget or mark completed work failed.
         results.push({ entry, success: false, error: err instanceof Error ? err.message : String(err) })
