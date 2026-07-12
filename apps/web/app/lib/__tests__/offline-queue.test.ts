@@ -291,6 +291,32 @@ describe('offline-queue', () => {
   })
 
   describe('replay', () => {
+    it('fails closed before IndexedDB or remote work when the exported replay guard is undefined', async () => {
+      const id = await enqueue({ type: 'delete', collectionType: 'tasks', itemUid: 'guard-required' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const counts: number[] = []
+      const enqueues: number[] = []
+      const execute = vi.fn(async () => ({ remoteMutationConfirmed: true as const }))
+      // Force the next queue access to open IndexedDB while preserving the record.
+      await _resetForTests()
+      _setEncryptedQueuePersistenceAvailableForTests(true)
+      const openSpy = vi.spyOn(indexedDB, 'open')
+      const unsubscribeCount = onCountChange((count) => counts.push(count))
+      const unsubscribeEnqueue = onEnqueue(() => enqueues.push(1))
+
+      await expect(replay(execute, undefined as any)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(openSpy).not.toHaveBeenCalled()
+      expect(execute).not.toHaveBeenCalled()
+      expect((await getAll()).map((entry) => entry.id)).toEqual([id])
+      expect(counts).toEqual([])
+      expect(enqueues).toEqual([])
+      unsubscribeCount()
+      unsubscribeEnqueue()
+      openSpy.mockRestore()
+    })
+
     it('processes entries in FIFO order and removes on success', async () => {
       await enqueue({ type: 'create', collectionType: 'tasks', content: 'a', tempId: 't1' })
       await enqueue({ type: 'update', collectionType: 'tasks', content: 'b', itemUid: 'u1' })
@@ -299,7 +325,7 @@ describe('offline-queue', () => {
       const results = await replay(async (entry) => {
         order.push(entry.type)
         return { remoteMutationConfirmed: true, itemUid: entry.type === 'create' ? 'real-uid' : undefined }
-      })
+      }, testGuard())
 
       expect(order).toEqual(['create', 'update'])
       expect(results).toHaveLength(2)
@@ -314,7 +340,7 @@ describe('offline-queue', () => {
 
       // Fail 3 times (MAX_RETRIES = 3)
       for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('server error') })
+        await replay(async () => { throw new Error('server error') }, testGuard())
       }
 
       const all = await getAll()
@@ -331,14 +357,14 @@ describe('offline-queue', () => {
 
       // Fail it 3 times to mark as failed
       for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('fail') })
+        await replay(async () => { throw new Error('fail') }, testGuard())
       }
 
       // Add a new pending entry
       await enqueue({ type: 'delete', collectionType: 'tasks', itemUid: 'u2' })
 
       const executeFn = vi.fn().mockResolvedValue({})
-      await replay(executeFn)
+      await replay(executeFn, testGuard())
 
       // Only the new pending entry should be replayed
       expect(executeFn).toHaveBeenCalledTimes(1)
@@ -360,7 +386,7 @@ describe('offline-queue', () => {
           // First entry (create) always fails; second (update) succeeds
           if (callCount % 2 === 1) throw new Error('fail')
           return {}
-        })
+        }, testGuard())
       }
 
       // After 3 rounds: create should be failed (3 retries), update should be gone (succeeded)
@@ -572,7 +598,7 @@ describe('offline-queue', () => {
       // Enqueue and fail an update 3 times to mark it as failed
       await enqueue({ type: 'update', collectionType: 'tasks', content: 'v1', itemUid: 'uid-3' })
       for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('fail') })
+        await replay(async () => { throw new Error('fail') }, testGuard())
       }
       // Now enqueue another update for the same uid — should NOT compact with failed entry
       await enqueue({ type: 'update', collectionType: 'tasks', content: 'v2', itemUid: 'uid-3' })
@@ -591,7 +617,7 @@ describe('offline-queue', () => {
       expect(await getFailedCount()).toBe(0)
 
       for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('fail') })
+        await replay(async () => { throw new Error('fail') }, testGuard())
       }
       expect(await getFailedCount()).toBe(1)
     })
@@ -601,7 +627,7 @@ describe('offline-queue', () => {
     it('resets failed entries back to pending with retryCount 0', async () => {
       await enqueue({ type: 'update', collectionType: 'tasks', content: 'x', itemUid: 'u1' })
       for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('fail') })
+        await replay(async () => { throw new Error('fail') }, testGuard())
       }
 
       expect(await getPendingCount(testGuard())).toBe(0)
@@ -684,7 +710,7 @@ describe('offline-queue', () => {
 
       // Fail it to mark as failed
       for (let i = 0; i < 3; i++) {
-        await replay(async () => { throw new Error('fail') })
+        await replay(async () => { throw new Error('fail') }, testGuard())
       }
 
       // Backdate createdAt
@@ -745,7 +771,7 @@ describe('offline-queue', () => {
 
       // Replay all pending entries (simulates cold-start replay)
       const executeFn = vi.fn().mockResolvedValue({ remoteMutationConfirmed: true, itemUid: 'new-uid' })
-      const results = await replay(executeFn)
+      const results = await replay(executeFn, testGuard())
 
       expect(executeFn).toHaveBeenCalledTimes(2)
       expect(results).toHaveLength(2)

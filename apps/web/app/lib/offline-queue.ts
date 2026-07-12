@@ -449,6 +449,9 @@ export async function replay(
   executeMutation: (entry: QueueEntry, checkpoint: ReplayCheckpoint) => Promise<ConfirmedRemoteMutation>,
   guard: OfflineQueueAccountGuard,
 ): Promise<ReplayResult[]> {
+  // Match enqueue's runtime boundary: JavaScript callers, `any`, and stale
+  // bundles must fail before getAll/openDB or any remote executor can run.
+  if (!guard) throw new AccountBoundaryChangedError()
   try {
   assertGuard(guard)
   const entries = await getAll(guard)
