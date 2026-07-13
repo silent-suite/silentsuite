@@ -237,7 +237,7 @@ describe('CalendarGrid timed-event integration', () => {
 
     await waitFor(() => expect(mocks.setEvents).toHaveBeenCalled())
     const projected = mocks.setEvents.mock.calls.at(-1)?.[0][0]
-    expect(String(projected.id)).toMatch(/^ss-render:[0-9a-f]{32}$/)
+    expect(String(projected.id)).toMatch(/^r[0-9a-f]{32}$/)
 
     act(() => mocks.latestConfig?.callbacks.onEventClick(projected))
     expect(mocks.calendarState.setSelectedEvent).toHaveBeenCalledWith('event-1')
