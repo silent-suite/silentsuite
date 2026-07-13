@@ -342,7 +342,15 @@ describe('hourly projection contracts', () => {
       new Set(reverse.events.map((event) => String(event.id))),
     )
     const ids = forward.events.map((event) => String(event.id))
-    expect(ids.every((id) => /^ss-render:[0-9a-f]{32}$/.test(id))).toBe(true)
+    expect(ids.every((id) => /^r[0-9a-f]{32}$/.test(id))).toBe(true)
+    expect(ids.every((id) => {
+      const probe = document.createElement('div')
+      probe.id = id
+      document.body.appendChild(probe)
+      const found = document.querySelector(`#${id}`) === probe
+      probe.remove()
+      return found
+    })).toBe(true)
     expect(ids.every((id) => !id.includes(first.id) && !id.includes(first.masterId))).toBe(true)
     expect(ids.every((id) => !decodeURIComponent(id).includes('cal-1'))).toBe(true)
   })

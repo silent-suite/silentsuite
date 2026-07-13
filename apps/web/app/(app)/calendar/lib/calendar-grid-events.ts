@@ -288,7 +288,7 @@ function renderIdentityFor(source: DisplayEvent, segmentDate?: Temporal.PlainDat
     source.endDate.getTime(),
     segmentDate?.toString() ?? null,
   ])
-  return { id: `ss-render:${opaqueDigest(canonicalKey)}`, canonicalKey }
+  return { id: `r${opaqueDigest(canonicalKey)}`, canonicalKey }
 }
 
 /** Build Schedule-X-only objects plus a direct map back to source display events. */
