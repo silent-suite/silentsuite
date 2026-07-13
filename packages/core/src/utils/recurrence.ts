@@ -142,48 +142,28 @@ export function expandRecurrence(
     if (rule.until && current.getTime() > rule.until.getTime()) break;
     if (current.getTime() > range.end.getTime()) break;
 
-    if (current.getTime() >= range.start.getTime()) {
-      let matches = true;
+    let matchesRule = true;
+    if (rule.byday && rule.byday.length > 0) {
+      matchesRule = matchesByday(current, rule.byday);
+    }
+    if (matchesRule && rule.bymonth && rule.bymonth.length > 0) {
+      matchesRule = rule.bymonth.includes(current.getMonth() + 1);
+    }
+    if (matchesRule && rule.bymonthday && rule.bymonthday.length > 0) {
+      matchesRule = rule.bymonthday.includes(current.getDate());
+    }
 
-      // BYDAY filter (for WEEKLY/DAILY freq mainly, simplified for MONTHLY)
-      if (rule.byday && rule.byday.length > 0) {
-        if (rule.freq === 'WEEKLY' || rule.freq === 'DAILY') {
-          matches = matchesByday(current, rule.byday);
-        } else if (rule.freq === 'MONTHLY' || rule.freq === 'YEARLY') {
-          matches = matchesByday(current, rule.byday);
-        }
-      }
-
-      // BYMONTH filter
-      if (matches && rule.bymonth && rule.bymonth.length > 0) {
-        matches = rule.bymonth.includes(current.getMonth() + 1);
-      }
-
-      // BYMONTHDAY filter
-      if (matches && rule.bymonthday && rule.bymonthday.length > 0) {
-        matches = rule.bymonthday.includes(current.getDate());
-      }
-
-      // EXDATE filter
-      if (matches && exdateSet.has(current.getTime())) {
-        matches = false;
-      }
-
-      if (matches) {
+    if (matchesRule) {
+      // COUNT applies to RRULE-generated candidates before EXDATE removes an
+      // occurrence from the recurrence set. Keep this independent of range.start.
+      count++;
+      if (
+        current.getTime() >= range.start.getTime()
+        && !exdateSet.has(current.getTime())
+      ) {
         results.push(new Date(current.getTime()));
-        count++;
-        if (rule.count !== undefined && count >= rule.count) break;
       }
-    } else {
-      // Before range: still count towards COUNT limit
-      let matches = true;
-      if (rule.byday && rule.byday.length > 0 && (rule.freq === 'WEEKLY' || rule.freq === 'DAILY')) {
-        matches = matchesByday(current, rule.byday);
-      }
-      if (matches) {
-        count++;
-        if (rule.count !== undefined && count >= rule.count) break;
-      }
+      if (rule.count !== undefined && count >= rule.count) break;
     }
 
     // Advance based on frequency

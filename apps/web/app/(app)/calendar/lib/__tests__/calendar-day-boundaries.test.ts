@@ -28,4 +28,17 @@ describe('calendar day boundaries', () => {
     expect(getScheduleXWeekLayout(9, 10, 900)).toEqual({ startHour: 3, endHour: 16, gridHeight: 900 })
     expect(getScheduleXWeekLayout(8, 22, 500)).toEqual({ startHour: 8, endHour: 22, gridHeight: 672 })
   })
+
+  it('expands outward to include required timed-event hours without shrinking preferences', () => {
+    expect(getScheduleXWeekLayout(7, 23, 0, { startHour: 2, endHour: 3 })).toEqual({
+      startHour: 2,
+      endHour: 23,
+      gridHeight: 1344,
+    })
+    expect(getScheduleXWeekLayout(7, 23, 0, { startHour: 0, endHour: 24 })).toEqual({
+      startHour: 0,
+      endHour: 24,
+      gridHeight: 1536,
+    })
+  })
 })

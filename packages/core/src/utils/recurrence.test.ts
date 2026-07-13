@@ -238,6 +238,26 @@ describe('COUNT limit', () => {
     expect(results).toHaveLength(3);
     expect(fmtDates(results)).toEqual(['2026-03-05', '2026-03-06', '2026-03-07']);
   });
+
+  it('keeps COUNT and EXDATE semantics independent of range start', () => {
+    const start = d(2026, 1, 1);
+    const exdates = [d(2026, 1, 1)];
+    const fromSeriesStart = expandRecurrence(
+      'FREQ=DAILY;COUNT=2',
+      start,
+      { start, end: d(2026, 1, 5) },
+      exdates,
+    );
+    const fromSecondDay = expandRecurrence(
+      'FREQ=DAILY;COUNT=2',
+      start,
+      { start: d(2026, 1, 2), end: d(2026, 1, 5) },
+      exdates,
+    );
+
+    expect(fmtDates(fromSeriesStart)).toEqual(['2026-01-02']);
+    expect(fmtDates(fromSecondDay)).toEqual(['2026-01-02']);
+  });
 });
 
 // ── UNTIL date limit ──
