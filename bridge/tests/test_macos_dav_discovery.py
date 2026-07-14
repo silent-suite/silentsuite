@@ -7,11 +7,13 @@ import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock
 from urllib.parse import quote
 
-from radicale.app import Application
+import pytest
 
 from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import config
+from silentsuite_bridge.radicale import application as bridge_application
 from silentsuite_bridge.radicale import storage as bridge_storage
+from silentsuite_bridge.radicale.application import Application
 from silentsuite_bridge.radicale.creds import Credentials
 
 USERNAME = "alice@example.test"
@@ -35,6 +37,9 @@ APPLE_PRINCIPAL_BODY = b"""<?xml version="1.0" encoding="utf-8"?>
 """
 ALLPROP_BODY = b'<d:propfind xmlns:d="DAV:"><d:allprop /></d:propfind>'
 PROPNAME_BODY = b'<d:propfind xmlns:d="DAV:"><d:propname /></d:propfind>'
+UNKNOWN_PROPERTY_BODY = b"""<d:propfind xmlns:d="DAV:" xmlns:x="urn:example:unsupported">
+  <d:prop><x:unsupported-property /></d:prop>
+</d:propfind>"""
 
 
 def _seed_user(credentials_file: str) -> None:
@@ -101,7 +106,7 @@ def _request(
     return captured["status"], captured["headers"], response_body
 
 
-def _application(tmp_path, monkeypatch):
+def _application(tmp_path, monkeypatch, application_class=Application):
     credentials_file = str(tmp_path / "credentials.json")
     monkeypatch.setattr(config, "CREDS_FILE", credentials_file)
     monkeypatch.setattr(config, "DATABASE_FILE", str(tmp_path / "bridge.sqlite"))
@@ -125,7 +130,7 @@ def _application(tmp_path, monkeypatch):
         "silentsuite_bridge.radicale.storage.etesync_for_user",
         lambda _user: context,
     )
-    return Application(bridge_main.build_radicale_configuration())
+    return application_class(bridge_main.build_radicale_configuration())
 
 
 def _response_hrefs(body: bytes) -> list[str]:
@@ -139,24 +144,63 @@ def _prop_names(body: bytes) -> set[str]:
     return {child.tag for child in prop}
 
 
+def _normalized_xml_value(element: ET.Element) -> tuple:
+    """Return a stable representation of an XML element regardless of child order."""
+    return (
+        element.tag,
+        element.text or "",
+        tuple(sorted(_normalized_xml_value(child) for child in element)),
+    )
+
+
+def _normalized_propfind_response(body: bytes) -> tuple:
+    """Normalize DAV response properties, values, hrefs, and propstat partitions."""
+    normalized_responses = []
+    for response in ET.fromstring(body).findall(f"{DAV}response"):
+        propstats: dict[int, dict[str, tuple]] = {}
+        for propstat in response.findall(f"{DAV}propstat"):
+            status = propstat.findtext(f"{DAV}status")
+            assert status is not None
+            status_code = int(status.split()[1])
+            assert status_code in {200, 404}
+            prop = propstat.find(f"{DAV}prop")
+            assert prop is not None
+            properties = propstats.setdefault(status_code, {})
+            properties.update({child.tag: _normalized_xml_value(child) for child in prop})
+        normalized_responses.append(
+            (
+                response.findtext(f"{DAV}href") or "",
+                tuple(
+                    sorted(
+                        (status_code, tuple(sorted(properties.items())))
+                        for status_code, properties in propstats.items()
+                    )
+                ),
+            )
+        )
+    return tuple(sorted(normalized_responses))
+
+
 def test_authenticated_apple_principal_container_points_to_canonical_home(tmp_path, monkeypatch):
     app = _application(tmp_path, monkeypatch)
     start_sync_thread = MagicMock()
     etesync_for_user = MagicMock()
+    etesync = MagicMock()
+    etesync.list.return_value = []
+    context = MagicMock()
+    context.__enter__.return_value = (etesync, False)
+    context.__exit__.return_value = False
+    etesync_for_user.return_value = context
     monkeypatch.setattr(bridge_storage, "start_sync_thread", start_sync_thread)
     monkeypatch.setattr(bridge_storage, "etesync_for_user", etesync_for_user)
-    status, _headers, body = _request(
-        app, "/principals/", body=APPLE_PRINCIPAL_BODY, auth=_basic_auth()
-    )
+    status, _headers, body = _request(app, "/principals/", body=APPLE_PRINCIPAL_BODY, auth=_basic_auth())
 
     assert status == "207 Multi-Status"
     root = ET.fromstring(body)
     responses = root.findall(f"{DAV}response")
     assert len(responses) == 1
     assert responses[0].findtext(f"{DAV}href") == "/principals/"
-    principal_href = responses[0].find(
-        f"{DAV}propstat/{DAV}prop/{DAV}current-user-principal/{DAV}href"
-    )
+    principal_href = responses[0].find(f"{DAV}propstat/{DAV}prop/{DAV}current-user-principal/{DAV}href")
     assert principal_href is not None
     assert principal_href.text == f"/{quote(USERNAME)}/"
     resource_type = responses[0].find(f"{DAV}propstat/{DAV}prop/{DAV}resourcetype")
@@ -209,9 +253,7 @@ def test_authenticated_allprop_and_empty_body_expose_only_static_metadata(tmp_pa
         f"{DAV}owner",
     }
     for body in (ALLPROP_BODY, b""):
-        status, _headers, response_body = _request(
-            app, "/principals/", body=body, auth=_basic_auth()
-        )
+        status, _headers, response_body = _request(app, "/principals/", body=body, auth=_basic_auth())
         assert status == "207 Multi-Status"
         assert _prop_names(response_body) == expected_properties
         assert _response_hrefs(response_body) == [
@@ -223,9 +265,7 @@ def test_authenticated_allprop_and_empty_body_expose_only_static_metadata(tmp_pa
 
 def test_authenticated_propname_exposes_only_static_property_names(tmp_path, monkeypatch):
     app = _application(tmp_path, monkeypatch)
-    status, _headers, body = _request(
-        app, "/principals/", body=PROPNAME_BODY, auth=_basic_auth()
-    )
+    status, _headers, body = _request(app, "/principals/", body=PROPNAME_BODY, auth=_basic_auth())
     assert status == "207 Multi-Status"
     assert _prop_names(body) == {
         f"{DAV}principal-collection-set",
@@ -252,15 +292,33 @@ def test_authenticated_depth_forms_never_enumerate_principals(tmp_path, monkeypa
         assert _response_hrefs(body) == ["/principals/", f"/{quote(USERNAME)}/"]
 
 
-def test_principal_aliases_do_not_reveal_account_existence(tmp_path, monkeypatch):
+def test_authenticated_same_account_principal_alias_resolves_to_canonical_home(tmp_path, monkeypatch):
     app = _application(tmp_path, monkeypatch)
-    responses = [
-        _request(app, "/principals/bob@example.test/", auth=_basic_auth()),
-        _request(app, "/principals/nobody@example.test/", auth=_basic_auth()),
-        _request(app, f"/principals/{USERNAME}/", auth=_basic_auth()),
-    ]
-    assert responses[0] == responses[1] == responses[2]
-    assert responses[0][0] == "403 Forbidden"
+    status, _headers, body = _request(
+        app,
+        f"/principals/{USERNAME}/",
+        body=APPLE_PRINCIPAL_BODY,
+        auth=_basic_auth(),
+        user_agent="macOS/15.7.7 AddressBookCore/2695.500.71",
+    )
+
+    assert status == "207 Multi-Status"
+    root = ET.fromstring(body)
+    response = root.find(f"{DAV}response")
+    assert response is not None
+    assert response.findtext(f"{DAV}href") == f"/{quote(USERNAME)}/"
+    properties = response.find(f"{DAV}propstat/{DAV}prop")
+    assert properties is not None
+    resource_type = properties.find(f"{DAV}resourcetype")
+    assert resource_type is not None
+    assert resource_type.find(f"{DAV}principal") is not None
+    assert resource_type.find(f"{DAV}collection") is not None
+    expected_href = f"/{quote(USERNAME)}/"
+    assert properties.findtext(f"{DAV}current-user-principal/{DAV}href") == expected_href
+    assert properties.findtext(f"{DAV}principal-URL/{DAV}href") == expected_href
+    assert properties.findtext(f"{CALDAV}calendar-home-set/{DAV}href") == expected_href
+    assert properties.findtext(f"{CARDDAV}addressbook-home-set/{DAV}href") == expected_href
+    assert f"/principals/{quote(USERNAME)}/" not in _response_hrefs(body)
 
 
 def test_principal_path_sanitation_preserves_existing_owner_boundary(tmp_path, monkeypatch):
@@ -277,11 +335,6 @@ def test_principal_path_sanitation_preserves_existing_owner_boundary(tmp_path, m
         assert _response_hrefs(body)[0] == "/principals/"
 
     for path in (
-        f"/principals/{USERNAME}/",
-        f"/principals//{USERNAME}/",
-        f"/principals%2F{USERNAME}/",
-        f"/principals/%2F{USERNAME}/",
-        f"/principals/%2e%2e/{USERNAME}/",
         f"/principals\\{USERNAME}/",
         "/Principals/",
         "/príncipals/",
@@ -289,26 +342,154 @@ def test_principal_path_sanitation_preserves_existing_owner_boundary(tmp_path, m
         status, _headers, _body = _request(app, path, auth=_basic_auth())
         assert status == "403 Forbidden"
 
-    status, _headers, body = _request(
-        app, f"/principals/../{USERNAME}/", auth=_basic_auth()
-    )
+    status, _headers, body = _request(app, f"/principals/../{USERNAME}/", auth=_basic_auth())
     assert status == "207 Multi-Status"
     assert _response_hrefs(body)[0] == f"/{quote(USERNAME)}/"
-    status, _headers, _body = _request(
-        app, "/principals/../bob@example.test/", auth=_basic_auth()
-    )
+    status, _headers, _body = _request(app, "/principals/../bob@example.test/", auth=_basic_auth())
     assert status == "403 Forbidden"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(APPLE_PRINCIPAL_BODY, id="explicit"),
+        pytest.param(ALLPROP_BODY, id="allprop"),
+        pytest.param(PROPNAME_BODY, id="propname"),
+        pytest.param(b"", id="empty"),
+        pytest.param(UNKNOWN_PROPERTY_BODY, id="unsupported-property"),
+    ],
+)
+@pytest.mark.parametrize("depth", ["0", "1", None, "", "infinity", "2", "unknown"])
+def test_same_account_alias_matches_canonical_property_and_depth_semantics(tmp_path, monkeypatch, body, depth):
+    app = _application(tmp_path, monkeypatch)
+    alias = _request(app, f"/principals/{USERNAME}/", body=body, depth=depth, auth=_basic_auth())
+    canonical = _request(app, f"/{USERNAME}/", body=body, depth=depth, auth=_basic_auth())
+
+    assert alias[0] == canonical[0] == "207 Multi-Status"
+    assert _normalized_propfind_response(alias[2]) == _normalized_propfind_response(canonical[2])
+    assert f"/principals/{quote(USERNAME)}/" not in _response_hrefs(alias[2])
+
+
+def test_same_account_alias_depth_zero_avoids_backend_and_depth_one_matches_canonical(tmp_path, monkeypatch):
+    app = _application(tmp_path, monkeypatch)
+    start_sync_thread = MagicMock()
+    etesync_for_user = MagicMock()
+    etesync = MagicMock()
+    etesync.list.return_value = []
+    context = MagicMock()
+    context.__enter__.return_value = (etesync, False)
+    context.__exit__.return_value = False
+    etesync_for_user.return_value = context
+    monkeypatch.setattr(bridge_storage, "start_sync_thread", start_sync_thread)
+    monkeypatch.setattr(bridge_storage, "etesync_for_user", etesync_for_user)
+
+    status, _headers, _body = _request(app, f"/principals/{USERNAME}/", auth=_basic_auth(), depth="0")
+    assert status == "207 Multi-Status"
+    start_sync_thread.assert_not_called()
+    etesync_for_user.assert_not_called()
+
+    alias = _request(app, f"/principals/{USERNAME}/", auth=_basic_auth(), depth="1")
+    alias_accessor_calls = (
+        start_sync_thread.call_args_list,
+        etesync_for_user.call_args_list,
+        etesync.list.call_args_list,
+    )
+    start_sync_thread.reset_mock()
+    etesync_for_user.reset_mock()
+    etesync.list.reset_mock()
+
+    canonical = _request(app, f"/{USERNAME}/", auth=_basic_auth(), depth="1")
+    canonical_accessor_calls = (
+        start_sync_thread.call_args_list,
+        etesync_for_user.call_args_list,
+        etesync.list.call_args_list,
+    )
+
+    assert alias[0] == canonical[0] == "207 Multi-Status"
+    assert _response_hrefs(alias[2]) == _response_hrefs(canonical[2])
+    assert alias_accessor_calls == canonical_accessor_calls
+    assert start_sync_thread.call_args_list == [((USERNAME,), {})]
+    assert etesync_for_user.call_args_list == [((USERNAME,), {})]
+    assert etesync.list.call_args_list == [()]
+
+
+def test_alias_authentication_and_cross_account_denials_remain_fail_closed(tmp_path, monkeypatch):
+    app = _application(tmp_path, monkeypatch)
+    start_sync_thread = MagicMock()
+    etesync_for_user = MagicMock()
+    monkeypatch.setattr(bridge_storage, "start_sync_thread", start_sync_thread)
+    monkeypatch.setattr(bridge_storage, "etesync_for_user", etesync_for_user)
+    for auth in (
+        None,
+        _basic_auth("unknown@example.test", PASSWORD),
+        _basic_auth(USERNAME, ""),
+        _basic_auth(USERNAME, "wrong"),
+    ):
+        status, headers, _body = _request(app, f"/principals/{USERNAME}/", auth=auth)
+        assert status == "401 Unauthorized"
+        assert headers["WWW-Authenticate"] == 'Basic realm="Radicale - Password Required"'
+
+    start_sync_thread.assert_not_called()
+    etesync_for_user.assert_not_called()
+
+    responses = [
+        _request(app, "/principals/bob@example.test/", auth=_basic_auth()),
+        _request(app, "/principals/nobody@example.test/", auth=_basic_auth()),
+        _request(app, "/principals/Alice@example.test/", auth=_basic_auth()),
+        _request(app, f"/principals/{USERNAME}/child/", auth=_basic_auth()),
+    ]
+    assert all(response[0] == "403 Forbidden" for response in responses)
+    assert responses[0] == responses[1]
+    start_sync_thread.assert_not_called()
+    etesync_for_user.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("authorization", "expected_status"),
+    [
+        ("Basic !!!", "500 Internal Server Error"),
+        ("Basic bm9jb2xvbg==", "500 Internal Server Error"),
+        ("Basic /zo=", "401 Unauthorized"),
+    ],
+)
+def test_malformed_basic_auth_stays_pre_dispatch(tmp_path, monkeypatch, authorization, expected_status):
+    app = _application(tmp_path, monkeypatch)
+    helper = MagicMock(wraps=bridge_application.canonical_principal_alias_path)
+    start_sync_thread = MagicMock()
+    etesync_for_user = MagicMock()
+    monkeypatch.setattr(bridge_application, "canonical_principal_alias_path", helper)
+    monkeypatch.setattr(bridge_storage, "start_sync_thread", start_sync_thread)
+    monkeypatch.setattr(bridge_storage, "etesync_for_user", etesync_for_user)
+
+    status, _headers, _body = _request(app, f"/principals/{USERNAME}/", auth=authorization)
+    assert status == expected_status
+    helper.assert_not_called()
+    start_sync_thread.assert_not_called()
+    etesync_for_user.assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["PUT", "DELETE", "MKCOL", "MKCALENDAR", "PROPPATCH", "REPORT", "OPTIONS"])
+def test_alias_non_propfind_methods_are_not_canonicalized(tmp_path, monkeypatch, method):
+    from radicale.app import Application as RadicaleApplication
+
+    upstream_app = _application(tmp_path, monkeypatch, application_class=RadicaleApplication)
+    app = _application(tmp_path, monkeypatch)
+    helper = MagicMock(wraps=bridge_application.canonical_principal_alias_path)
+    monkeypatch.setattr(bridge_application, "canonical_principal_alias_path", helper)
+
+    path = f"/principals/{USERNAME}/"
+    upstream_response = _request(upstream_app, path, method=method, auth=_basic_auth())
+    bridge_response = _request(app, path, method=method, auth=_basic_auth())
+
+    assert bridge_response == upstream_response
+    helper.assert_not_called()
 
 
 def test_direct_dav_paths_and_user_agent_behavior_are_unchanged(tmp_path, monkeypatch):
     app = _application(tmp_path, monkeypatch)
     for user_agent in ("macOS/15.7.7 AddressBookCore/2695.500.71", None):
-        root_status, _headers, root_body = _request(
-            app, "/", auth=_basic_auth(), user_agent=user_agent
-        )
-        home_status, _headers, home_body = _request(
-            app, f"/{USERNAME}/", auth=_basic_auth(), user_agent=user_agent
-        )
+        root_status, _headers, root_body = _request(app, "/", auth=_basic_auth(), user_agent=user_agent)
+        home_status, _headers, home_body = _request(app, f"/{USERNAME}/", auth=_basic_auth(), user_agent=user_agent)
         assert root_status == home_status == "207 Multi-Status"
         assert f"/{quote(USERNAME)}/" in _response_hrefs(root_body)
         assert _response_hrefs(home_body)[0] == f"/{quote(USERNAME)}/"
