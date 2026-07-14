@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 
 from . import __version__, config
 
@@ -25,6 +26,7 @@ _ACCOUNT_ACTION_FLAGS = (
     "--logout",
     "--remove-account",
 )
+_RADICALE_SERVER_APPLICATION_LOCK = threading.Lock()
 
 
 def configure_logging():
@@ -96,8 +98,7 @@ def _verify_radicale_ssl_schema(schema) -> None:
     missing = [key for key in ("ssl", "certificate", "key") if key not in server_schema]
     if missing:
         raise RuntimeError(
-            "Installed Radicale does not expose required SSL server config key(s): "
-            + ", ".join(missing)
+            "Installed Radicale does not expose required SSL server config key(s): " + ", ".join(missing)
         )
 
 
@@ -316,11 +317,20 @@ def _generate_localhost_certificate(cert_path: str, key_path: str) -> None:
         try:
             result = subprocess.run(
                 [
-                    "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-                    "-days", str(_CERT_VALIDITY_DAYS),
-                    "-keyout", key_path,
-                    "-out", cert_path,
-                    "-config", cfg_path,
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-days",
+                    str(_CERT_VALIDITY_DAYS),
+                    "-keyout",
+                    key_path,
+                    "-out",
+                    cert_path,
+                    "-config",
+                    cfg_path,
                 ],
                 capture_output=True,
                 text=True,
@@ -497,8 +507,6 @@ def setup_macos_apple_accounts() -> int:
 
 def run_server():
     """Start the Radicale server with SilentSuite backends."""
-    from radicale.server import serve
-
     configuration = build_radicale_configuration()
 
     logger.info(
@@ -536,7 +544,7 @@ def run_server():
         tray = start_tray()
 
     try:
-        serve(configuration)
+        _serve_radicale_with_bridge_application(configuration)
     except KeyboardInterrupt:
         logger.info("Bridge stopped by user")
     except Exception:
@@ -544,6 +552,34 @@ def run_server():
         if tray:
             tray.update_state("error", "Bridge crashed")
         sys.exit(1)
+
+
+def _serve_radicale_with_bridge_application(configuration) -> None:
+    """Run Radicale once with the Bridge's narrowly compatible application.
+
+    Radicale 3.2.3 constructs its module-global ``Application`` internally.
+    Keep the temporary replacement single-process, non-reentrant, and
+    ownership-aware so another caller cannot have its replacement overwritten.
+    """
+    from radicale import server as radicale_server
+    from radicale.app import Application as RadicaleApplication
+
+    from .radicale.application import Application as BridgeApplication
+
+    if not _RADICALE_SERVER_APPLICATION_LOCK.acquire(blocking=False):
+        raise RuntimeError("Radicale server application injection is already active")
+    try:
+        if radicale_server.Application is not RadicaleApplication:
+            raise RuntimeError("Unexpected Radicale server Application entry state")
+        expected_application = radicale_server.Application
+        radicale_server.Application = BridgeApplication
+        try:
+            radicale_server.serve(configuration)
+        finally:
+            if radicale_server.Application is BridgeApplication:
+                radicale_server.Application = expected_application
+    finally:
+        _RADICALE_SERVER_APPLICATION_LOCK.release()
 
 
 def main():

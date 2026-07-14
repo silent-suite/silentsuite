@@ -20,8 +20,8 @@ android {
         minSdkVersion 21
         targetSdkVersion 35
 
-        versionCode 12
-        versionName "0.4.1-beta"
+        versionCode 13
+        versionName "0.4.2-beta"
 
         buildConfigField "boolean", "customCerts", "true"
     }
@@ -183,9 +183,6 @@ dependencies {
     implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
     implementation "androidx.legacy:legacy-preference-v14:$supportVersion"
     implementation 'com.github.yukuku:ambilwarna:2.0.1'
-    implementation ('com.github.worker8:tourguide:1.0.18-SNAPSHOT@aar') {
-        transitive = true
-    }
 
     // Requery ORM removed — Etebase uses EtebaseLocalCache for data persistence
     implementation 'com.google.code.findbugs:jsr305:3.0.2'

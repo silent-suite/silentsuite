@@ -40,9 +40,6 @@
     <string name="crash_message">Please send stack trace to developers.</string>
     <string name="crash_email_body">If possible, please include any other relevant information such as what you did to trigger this error.</string>
 
-    <!-- tourguide -->
-    <string name="tourguide_title">Did you know?</string>
-
     <!-- startup dialogs -->
     <string name="startup_battery_optimization">Battery Optimization</string>
     <string name="startup_battery_optimization_message">Android may disable/reduce SilentSuite synchronization after a few days. To prevent this, turn off battery optimization.</string>
