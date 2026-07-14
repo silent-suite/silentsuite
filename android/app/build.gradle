@@ -29,7 +29,7 @@ android {
     buildTypes {
         debug {
             minifyEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt', 'proguard-debug-test-rules.pro'
             testProguardFile 'proguard-rules.txt'
 
             /*
@@ -205,8 +205,10 @@ dependencies {
     // for tests
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test:rules:1.6.1'
+    androidTestImplementation 'androidx.test:core:1.6.1'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'junit:junit:4.13.2'
+    androidTestImplementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
     androidTestImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
     // UIAutomator for store screenshot capture instrumentation tests
     androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'

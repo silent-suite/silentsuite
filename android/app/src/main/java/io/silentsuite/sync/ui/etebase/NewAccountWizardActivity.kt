@@ -47,10 +47,15 @@ class NewAccountWizardActivity : BaseActivity() {
         val etebaseSession = SetupSecretHolder.consumePendingSession(account.name)
 
         setContentView(R.layout.etebase_fragment_activity)
+        setTitle(R.string.account_wizard_collections_title)
+
+        // AccountSettings is the durable source after process death. The process-only session
+        // is only an optional first-launch override while AccountManager user data settles.
+        // initialize() is idempotent for a retained ViewModel, but starts a fresh ViewModel on
+        // every new Activity instance.
+        model.initialize(this, account, etebaseSession)
 
         if (savedInstanceState == null) {
-            setTitle(R.string.account_wizard_collections_title)
-            model.loadAccount(this, account, etebaseSession)
             supportFragmentManager.commit {
                 replace(R.id.fragment_container, WizardCheckFragment())
             }
@@ -64,7 +69,7 @@ class NewAccountWizardActivity : BaseActivity() {
     // the user inside the app on the just-created account.
     override fun finish() {
         startActivity(
-            Intent(this, AccountActivity::class.java)
+            AccountActivity.newIntent(this, account)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
         )
         super.finish()
@@ -95,27 +100,24 @@ class WizardCheckFragment : Fragment() {
     private val loadingModel: LoadingViewModel by viewModels()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
-        val ret = inflater.inflate(R.layout.account_wizard_check, container, false)
-
-        if (savedInstanceState == null) {
-            if (container != null) {
-                initUi(inflater, ret)
-                model.observe(this, {
-                    checkAccountInit()
-                })
-            }
-        }
-
-        return ret
+        return inflater.inflate(R.layout.account_wizard_check, container, false)
     }
 
-    private fun initUi(inflater: LayoutInflater, v: View) {
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        initUi(view)
+        model.observe(viewLifecycleOwner) {
+            checkAccountInit()
+        }
+    }
+
+    private fun initUi(v: View) {
         val button = v.findViewById<Button>(R.id.button_retry)
         val progress = v.findViewById<ProgressBar>(R.id.loading)
         button.setOnClickListener {
             checkAccountInit()
         }
-        loadingModel.observe(this, {
+        loadingModel.observe(viewLifecycleOwner, {
             if (it) {
                 progress.visibility = View.VISIBLE
                 button.visibility = View.GONE
@@ -128,6 +130,8 @@ class WizardCheckFragment : Fragment() {
 
     private fun checkAccountInit() {
         val colMgr = model.value?.colMgr ?: return
+        if (loadingModel.isLoading)
+            return
         loadingModel.setLoading(true)
         lifecycleScope.launch {
             try {
@@ -152,26 +156,33 @@ class WizardCheckFragment : Fragment() {
 class WizardFragment : Fragment() {
     private val model: AccountViewModel by activityViewModels()
     private val loadingModel: LoadingViewModel by viewModels()
+    private var automaticCreationStarted = false
 
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
-        val ret = inflater.inflate(R.layout.account_wizard_collections, container, false)
-
-        if (savedInstanceState == null) {
-            if (container != null) {
-                initUi(inflater, ret)
-                // Auto-create default collections immediately — no need to ask the user
-                model.observe(this, {
-                    if (it != null) {
-                        createCollections()
-                    }
-                })
-            }
-        }
-
-        return ret
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        automaticCreationStarted = savedInstanceState?.getBoolean(KEY_AUTOMATIC_CREATION_STARTED) ?: false
     }
 
-    private fun initUi(inflater: LayoutInflater, v: View) {
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
+        return inflater.inflate(R.layout.account_wizard_collections, container, false)
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        initUi(view)
+        // Auto-create once per restored wizard state. A recreated view still receives model
+        // updates and working controls, but does not start a second collection creation job.
+        model.observe(viewLifecycleOwner) {
+            if (!automaticCreationStarted) {
+                automaticCreationStarted = true
+                createCollections()
+            } else if (!loadingModel.isLoading) {
+                loadingModel.setLoading(false)
+            }
+        }
+    }
+
+    private fun initUi(v: View) {
         v.findViewById<Button>(R.id.button_create).setOnClickListener {
             createCollections()
         }
@@ -185,7 +196,7 @@ class WizardFragment : Fragment() {
         // Hide buttons — auto-creation in progress
         buttons.visibility = View.GONE
         progress.visibility = View.VISIBLE
-        loadingModel.observe(this, {
+        loadingModel.observe(viewLifecycleOwner, {
             if (it) {
                 progress.visibility = View.VISIBLE
                 buttons.visibility = View.GONE
@@ -196,8 +207,15 @@ class WizardFragment : Fragment() {
         })
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_AUTOMATIC_CREATION_STARTED, automaticCreationStarted)
+    }
+
     private fun createCollections() {
         val accountHolder = model.value ?: return
+        if (loadingModel.isLoading)
+            return
         val colMgr = accountHolder.colMgr
         loadingModel.setLoading(true)
 
@@ -255,5 +273,9 @@ class WizardFragment : Fragment() {
             )
             throw e
         }
+    }
+
+    companion object {
+        private const val KEY_AUTOMATIC_CREATION_STARTED = "automaticCreationStarted"
     }
 }

@@ -37,18 +37,19 @@ class DetectConfigurationFragment : DialogFragment() {
 
         Logger.log.fine("DetectConfigurationFragment: loading")
 
-        if (savedInstanceState == null) {
-            val credentials = SetupSecretHolder.getLoginCredentials()
-            if (credentials == null) {
-                Logger.log.warning("Setup login credentials expired before configuration detection")
-                SetupSecretHolder.clearLoginCredentials()
-                parentFragmentManager.beginTransaction()
-                        .add(NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
-                        .commitAllowingStateLoss()
-                dismissAllowingStateLoss()
-            } else {
-                findConfiguration(credentials)
-            }
+        val credentials = SetupSecretHolder.getLoginCredentials()
+        if (credentials == null) {
+            Logger.log.warning("Setup login credentials expired before configuration detection")
+            SetupSecretHolder.clearLoginCredentials()
+            notifySubmissionFailed()
+            parentFragmentManager.beginTransaction()
+                    .add(NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
+                    .commitAllowingStateLoss()
+            dismissAllowingStateLoss()
+        } else {
+            // Credentials live only in process memory. Restarting detection is safe after a
+            // recreated dialog and avoids restoring a non-running progress indicator.
+            findConfiguration(credentials)
         }
     }
 
@@ -79,8 +80,18 @@ class DetectConfigurationFragment : DialogFragment() {
         } else
             Logger.log.severe("Configuration detection failed")
 
-        SetupSecretHolder.clearLoginCredentials()
+        if (data == null || data.isFailed)
+            SetupSecretHolder.clearProcessOnlySecrets()
+        else
+            SetupSecretHolder.clearLoginCredentials()
+        if (data == null || data.isFailed)
+            notifySubmissionFailed()
         dismissAllowingStateLoss()
+    }
+
+    private fun notifySubmissionFailed() {
+        (parentFragmentManager.findFragmentById(android.R.id.content) as? LoginCredentialsFragment)
+            ?.onSubmissionFailed()
     }
 
     class NothingDetectedFragment : DialogFragment() {

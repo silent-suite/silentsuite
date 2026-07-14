@@ -22,4 +22,9 @@ object ActiveAccountManager {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY_NAME, account.name).apply()
     }
+
+    fun clearActiveAccount(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().remove(KEY_NAME).apply()
+    }
 }

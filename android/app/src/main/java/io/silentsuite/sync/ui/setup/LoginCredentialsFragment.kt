@@ -36,7 +36,7 @@ class LoginCredentialsFragment : Fragment() {
     internal lateinit var showAdvanced: TextView
     internal lateinit var customServer: EditText
     private var advancedExpanded = false
-
+    private var submissionInProgress = false
     internal var initialUsername: String? = null
     internal var initialPassword: String? = null
 
@@ -59,9 +59,10 @@ class LoginCredentialsFragment : Fragment() {
 
         val createAccount = v.findViewById<View>(R.id.create_account) as TextView
         createAccount.setOnClickListener {
+            val callbackUri = (requireActivity() as LoginActivity).issueSignupCallbackUri()
             val signupUri = Constants.webAppUri.buildUpon()
                 .appendEncodedPath("signup")
-                .appendQueryParameter("return_to", Constants.signupCompleteReturnUri.toString())
+                .appendQueryParameter("return_to", callbackUri.toString())
                 .build()
             startActivity(Intent(Intent.ACTION_VIEW, signupUri))
         }
@@ -69,9 +70,12 @@ class LoginCredentialsFragment : Fragment() {
         val login = v.findViewById<View>(R.id.login) as Button
         login.setOnClickListener {
             val credentials = validateLoginData()
-            if (credentials != null) {
+            if (credentials != null && !submissionInProgress &&
+                parentFragmentManager.findFragmentByTag(DETECT_CONFIGURATION_TAG) == null) {
+                // This guard closes the gap before DialogFragment.show() commits its transaction.
+                submissionInProgress = true
                 SetupSecretHolder.setLoginCredentials(credentials)
-                DetectConfigurationFragment.newInstance().show(requireFragmentManager(), null)
+                DetectConfigurationFragment.newInstance().show(requireFragmentManager(), DETECT_CONFIGURATION_TAG)
             }
         }
 
@@ -140,6 +144,10 @@ class LoginCredentialsFragment : Fragment() {
         return if (valid) LoginCredentials(uri, userName, password) else null
     }
 
+    internal fun onSubmissionFailed() {
+        submissionInProgress = false
+    }
+
     private fun updateAdvancedDisclosure() {
         showAdvanced.contentDescription = getString(
                 if (advancedExpanded) R.string.login_custom_server_expanded else R.string.login_custom_server_collapsed
@@ -178,12 +186,11 @@ class LoginCredentialsFragment : Fragment() {
 
     companion object {
         private const val KEY_ADVANCED_EXPANDED = "advancedExpanded"
-
-        fun newInstance(initialUsername: String?, initialPassword: String?): LoginCredentialsFragment {
-            val ret = LoginCredentialsFragment()
-            ret.initialUsername = initialUsername
-            ret.initialPassword = initialPassword
-            return ret
-        }
+        private const val DETECT_CONFIGURATION_TAG = "detect_configuration"
+        fun newInstance(initialUsername: String?, initialPassword: String?): LoginCredentialsFragment =
+            LoginCredentialsFragment().also {
+                it.initialUsername = initialUsername
+                it.initialPassword = initialPassword
+            }
     }
 }

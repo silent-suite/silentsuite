@@ -78,6 +78,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private lateinit var settings: AccountSettings
     private var accountInfo: AccountInfo? = null
 
+    internal val hasDeliveredAccountInfo: Boolean
+        get() = accountInfo != null
+
     internal var listCalDAV: ListView? = null
     internal var listCardDAV: ListView? = null
     internal var listTaskDAV: ListView? = null
@@ -225,13 +228,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         // Load subscription status
         loadSubscriptionStatus()
 
-        // load CardDAV/CalDAV journals
-        if (savedInstanceState == null) {
-            model.initialize(this, account)
+        // The ViewModel survives rotation, but each Activity must observe its LiveData.
+        // A fresh ViewModel after process death still needs initialization even when Android
+        // supplies saved instance state.
+        model.initialize(this, account)
+        model.observe(this) {
+            updateUi(it)
+        }
+        if (model.value == null) {
             model.loadAccount()
-            model.observe(this) {
-                updateUi(it)
-            }
         }
 
         PermissionsActivity.requestAllPermissions(this)
@@ -439,7 +444,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             R.id.nav_tasks -> scrollToSection(R.id.taskdav)
             R.id.nav_contacts -> scrollToSection(R.id.carddav)
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
-            R.id.nav_app_settings -> startActivity(Intent(this, AppSettingsActivity::class.java))
+            R.id.nav_app_settings -> startActivity(AppSettingsActivity.newIntent(this, account))
             R.id.nav_invitations -> startActivity(InvitationsActivity.newIntent(this, account))
             R.id.nav_show_fingerprint -> showFingerprintDialog()
             R.id.nav_export_data -> showExportDialog()
@@ -670,10 +675,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private var davService: AccountUpdateService.InfoBinder? = null
         private var syncStatusListener: Any? = null
         private var serviceBound = false
+        private var initializedAccount: Account? = null
 
         fun initialize(context: Context, account: Account) {
+            if (initializedAccount == account)
+                return
+            check(initializedAccount == null) { "AccountInfoViewModel cannot be reused for another account" }
             this.context = context.applicationContext
             this.account = account
+            initializedAccount = account
 
             syncStatusListener = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_ACTIVE, this)
 
@@ -998,6 +1008,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val EXTRA_ACCOUNT = "account"
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
+
+        fun newIntent(context: Context, account: Account): Intent =
+            Intent(context, AccountActivity::class.java).putExtra(EXTRA_ACCOUNT, account)
     }
 
 }

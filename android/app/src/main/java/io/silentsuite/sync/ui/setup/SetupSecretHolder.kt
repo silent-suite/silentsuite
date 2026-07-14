@@ -58,4 +58,9 @@ object SetupSecretHolder {
         signupCredentials = null
         pendingConfiguration = null
     }
+
+    fun clearProcessOnlySecrets() {
+        clearCredentialsAndConfiguration()
+        pendingSessions.clear()
+    }
 }

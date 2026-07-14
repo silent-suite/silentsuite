@@ -41,7 +41,7 @@ class CreateAccountFragment : DialogFragment() {
         val config = SetupSecretHolder.getPendingConfiguration()
         if (config == null) {
             Logger.log.severe("Setup configuration expired before account creation")
-            SetupSecretHolder.clearCredentialsAndConfiguration()
+            notifyAccountCreationFailed()
             parentFragmentManager.beginTransaction()
                     .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
                     .commitAllowingStateLoss()
@@ -53,10 +53,14 @@ class CreateAccountFragment : DialogFragment() {
         val account = try {
             createAccount(config.userName, config)
         } catch (e: InvalidAccountException) {
-            SetupSecretHolder.clearCredentialsAndConfiguration()
+            notifyAccountCreationFailed()
+            throw e
+        } catch (e: Exception) {
+            notifyAccountCreationFailed()
             throw e
         }
         if (account != null) {
+            (activity as? LoginActivity)?.onAccountCreated(account)
             activity.setResult(Activity.RESULT_OK)
             SetupSecretHolder.setPendingSession(account.name, config.etebaseSession)
             SetupSecretHolder.clearCredentialsAndConfiguration()
@@ -69,9 +73,18 @@ class CreateAccountFragment : DialogFragment() {
             // staring at a frozen "setting up encryption" progress dialog. Log the failure
             // and dismiss the dialog so the operator notices and the user can retry.
             Logger.log.log(Level.SEVERE, "addAccountExplicitly returned false")
-            SetupSecretHolder.clearCredentialsAndConfiguration()
+            notifyAccountCreationFailed()
             dismissAllowingStateLoss()
         }
+    }
+
+    private fun notifyAccountCreationFailed() {
+        SetupSecretHolder.clearCredentialsAndConfiguration()
+        // LoginCredentialsFragment is retained in FragmentManager's active fragments while
+        // this dialog replaces the content and is on the back stack. Reset it directly rather
+        // than serializing state through Android saved state or relying on newer Fragment APIs.
+        parentFragmentManager.fragments.filterIsInstance<LoginCredentialsFragment>()
+            .forEach { it.onSubmissionFailed() }
     }
 
     @Throws(InvalidAccountException::class)

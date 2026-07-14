@@ -11,6 +11,7 @@ package io.silentsuite.sync.ui
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
+import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
 import android.os.Bundle
@@ -34,6 +35,15 @@ import java.net.URI
 import java.net.URISyntaxException
 
 class AppSettingsActivity : BaseActivity() {
+
+    companion object {
+        const val EXTRA_ACCOUNT = "account"
+
+        fun newIntent(context: Context, account: Account?): Intent =
+            Intent(context, AppSettingsActivity::class.java).apply {
+                account?.let { putExtra(EXTRA_ACCOUNT, it) }
+            }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,11 +74,14 @@ class AppSettingsActivity : BaseActivity() {
         override fun onCreate(savedInstanceState: Bundle?) {
             settings = requireContext().getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE)
 
-            // Find the SilentSuite account (single-account model)
+            // Prefer the caller's exact account. Global settings entry points have no account
+            // context and intentionally fall back to the active account.
             val accountManager = AccountManager.get(requireContext())
             val accounts = accountManager.getAccountsByType(App.accountType)
-            if (accounts.isNotEmpty()) {
-                account = accounts[0]
+            val requestedAccount = requireActivity().intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)
+            account = requestedAccount?.takeIf { requested -> accounts.any { it == requested } }
+                ?: ActiveAccountManager.getActiveAccount(requireContext())
+            if (account != null) {
                 try {
                     accountSettings = AccountSettings(requireContext(), account!!)
                 } catch (e: InvalidAccountException) {
