@@ -10,6 +10,8 @@ package at.bitfire.cert4android
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.databinding.DataBindingUtil
@@ -66,13 +68,13 @@ class TrustCertificateActivity: AppCompatActivity() {
     }
 
     private fun sendDecision(trusted: Boolean) {
+        val decision = model.decision() ?: return
         val intent = Intent(this, CustomCertService::class.java)
         with(intent) {
             action = CustomCertService.CMD_CERTIFICATION_DECISION
-            putExtra(CustomCertService.EXTRA_CERTIFICATE, getIntent().getByteArrayExtra(EXTRA_CERTIFICATE))
+            putExtra(CustomCertService.EXTRA_CERTIFICATE, decision.certificate)
             putExtra(CustomCertService.EXTRA_TRUSTED, trusted)
-            putExtra(CustomCertService.EXTRA_DECISION_GENERATION,
-                getIntent().getStringExtra(CustomCertService.EXTRA_DECISION_GENERATION))
+            putExtra(CustomCertService.EXTRA_DECISION_GENERATION, decision.generation)
         }
         startService(intent)
     }
@@ -84,48 +86,54 @@ class TrustCertificateActivity: AppCompatActivity() {
             val certFactory = CertificateFactory.getInstance("X.509")!!
         }
 
-        val issuedFor = MutableLiveData<String>()
-        val issuedBy = MutableLiveData<String>()
-
-        val validFrom = MutableLiveData<String>()
-        val validTo = MutableLiveData<String>()
-
-        val sha1 = MutableLiveData<String>()
-        val sha256 = MutableLiveData<String>()
-
+        private val certificateState = TrustCertificateState()
+        private val mainHandler = Handler(Looper.getMainLooper())
+        val screen = MutableLiveData(TrustCertificateState.Screen())
         val verifiedByUser = MutableLiveData<Boolean>()
 
         fun processIntent(intent: Intent?) {
-            intent?.getByteArrayExtra(EXTRA_CERTIFICATE)?.let { raw ->
-                thread {
-                    val cert = certFactory.generateCertificate(ByteArrayInputStream(raw)) as? X509Certificate ?: return@thread
-
-                    try {
-                        val subject = cert.subjectAlternativeNames?.let { altNames ->
-                            val sb = StringBuilder()
-                            for (altName in altNames) {
-                                val name = altName[1]
-                                if (name is String)
-                                    sb.append("[").append(altName[0]).append("]").append(name).append(" ")
-                            }
-                            sb.toString()
-                        } ?: /* use CN if alternative names are not available */ cert.subjectDN.name
-                        issuedFor.postValue(subject)
-
-                        issuedBy.postValue(cert.issuerDN.toString())
-
-                        val formatter = DateFormat.getDateInstance(DateFormat.LONG)
-                        validFrom.postValue(formatter.format(cert.notBefore))
-                        validTo.postValue(formatter.format(cert.notAfter))
-
-                        sha1.postValue(fingerprint(cert, SHA1.digestAlgorithm))
-                        sha256.postValue(fingerprint(cert, SHA256.digestAlgorithm))
-
-                    } catch(e: CertificateParsingException) {
-                        Constants.log.log(Level.WARNING, "Couldn't parse certificate", e)
-                    }
+            // Clear the previous screen synchronously: neither button may decide while the
+            // current intent is loading or malformed.
+            verifiedByUser.value = false
+            screen.value = TrustCertificateState.Screen()
+            val request = certificateState.begin(
+                intent?.getStringExtra(CustomCertService.EXTRA_DECISION_GENERATION),
+                intent?.getByteArrayExtra(EXTRA_CERTIFICATE)
+            ) ?: return
+            thread {
+                val details = parse(request.certificate) ?: return@thread
+                mainHandler.post {
+                    // This guard runs on the UI thread, after any onNewIntent processing.
+                    certificateState.complete(request, details)?.let { screen.value = it }
                 }
             }
+        }
+
+        fun decision() = certificateState.decision()
+
+        private fun parse(raw: ByteArray): TrustCertificateState.Details? = try {
+            val cert = synchronized(certFactory) {
+                certFactory.generateCertificate(ByteArrayInputStream(raw)) as? X509Certificate
+            } ?: return null
+            val subject = cert.subjectAlternativeNames?.let { altNames ->
+                buildString {
+                    for (altName in altNames) {
+                        val name = altName[1]
+                        if (name is String)
+                            append("[").append(altName[0]).append("]").append(name).append(" ")
+                    }
+                }
+            } ?: cert.subjectDN.name
+            val formatter = DateFormat.getDateInstance(DateFormat.LONG)
+            TrustCertificateState.Details(subject, cert.issuerDN.toString(),
+                formatter.format(cert.notBefore), formatter.format(cert.notAfter),
+                fingerprint(cert, SHA1.digestAlgorithm), fingerprint(cert, SHA256.digestAlgorithm))
+        } catch(e: CertificateParsingException) {
+            Constants.log.log(Level.WARNING, "Couldn't parse certificate", e)
+            null
+        } catch(e: Exception) {
+            Constants.log.log(Level.WARNING, "Couldn't parse certificate", e)
+            null
         }
 
         private fun fingerprint(cert: X509Certificate, algorithm: String) =

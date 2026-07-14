@@ -123,6 +123,23 @@ class DesugarRuntimeVerifierTest(unittest.TestCase):
     def test_real_dex_mutf8_nul_is_accepted(self):
         self.assertEqual(VERIFIER.decode_mutf8(b"a\xc0\x80b"), "a\0b")
 
+    def test_mutf8_accepts_bmp_and_surrogate_code_units(self):
+        self.assertEqual(VERIFIER.decode_mutf8("\u20ac".encode()), "\u20ac")
+        self.assertEqual(VERIFIER.decode_mutf8(b"\xed\xa0\xbd\xed\xb8\x80"), "\U0001f600")
+
+    def test_mutf8_rejects_noncanonical_and_invalid_sequences(self):
+        for encoded in (b"\xc0\x81", b"\xe0\x80\x80", b"\xc2\x20", b"\xf0\x90\x80\x80"):
+            with self.subTest(encoded=encoded), self.assertRaises(VERIFIER.VerificationError):
+                VERIFIER.decode_mutf8(encoded)
+
+    def test_dex_rejects_declared_utf16_length_mismatch(self):
+        dex = bytearray(synthetic_dex("Lexample/Test;"))
+        _, string_ids_off = struct.unpack_from("<II", dex, 56)
+        first_string_off = struct.unpack_from("<I", dex, string_ids_off)[0]
+        dex[first_string_off] = 127
+        with self.assertRaisesRegex(VERIFIER.VerificationError, "UTF-16 length mismatch"):
+            VERIFIER.Dex(bytes(dex))
+
     def test_malformed_dex_is_a_controlled_verification_error(self):
         mutations = [
             lambda dex: dex[:80],

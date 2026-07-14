@@ -114,11 +114,14 @@ class Dex:
         values = []
         for index in range(self.string_size):
             cursor = u32(self.data, self.string_off + index * 4, "string_id")
-            _, cursor = uleb(self.data, cursor, "string_data length")
+            utf16_size, cursor = uleb(self.data, cursor, "string_data length")
             end = self.data.find(b"\0", cursor)
             if end < 0:
                 fail("unterminated string_data")
-            values.append(decode_mutf8(self.data[cursor:end]))
+            value = decode_mutf8(self.data[cursor:end])
+            if len(value.encode("utf-16-le", "surrogatepass")) // 2 != utf16_size:
+                fail("string_data UTF-16 length mismatch")
+            values.append(value)
         return values
 
     def _types(self) -> list[int]:
@@ -256,10 +259,16 @@ def decode_mutf8(data: bytes) -> str:
             units.append(first)
             cursor += 1
         elif first & 0xE0 == 0xC0 and cursor + 1 < len(data) and data[cursor + 1] & 0xC0 == 0x80:
-            units.append(((first & 0x1F) << 6) | (data[cursor + 1] & 0x3F))
+            unit = ((first & 0x1F) << 6) | (data[cursor + 1] & 0x3F)
+            if unit < 0x80 and unit != 0:
+                fail("overlong MUTF-8 string_data")
+            units.append(unit)
             cursor += 2
         elif first & 0xF0 == 0xE0 and cursor + 2 < len(data) and all(byte & 0xC0 == 0x80 for byte in data[cursor + 1:cursor + 3]):
-            units.append(((first & 0x0F) << 12) | ((data[cursor + 1] & 0x3F) << 6) | (data[cursor + 2] & 0x3F))
+            unit = ((first & 0x0F) << 12) | ((data[cursor + 1] & 0x3F) << 6) | (data[cursor + 2] & 0x3F)
+            if unit < 0x800:
+                fail("overlong MUTF-8 string_data")
+            units.append(unit)
             cursor += 3
         else:
             fail("invalid MUTF-8 string_data")
