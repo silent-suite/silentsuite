@@ -38,7 +38,7 @@
             android:layout_height="wrap_content"
             android:layout_weight=".8"
             android:autoLink="all"
-            android:textColor="@color/White"
+            android:textColor="@color/white"
             android:textIsSelectable="true"
             android:textSize="24sp"
             android:textStyle="bold" />
@@ -55,7 +55,7 @@
         android:layout_marginTop="4dip"
         android:ellipsize="end"
         android:singleLine="false"
-        android:textColor="@color/White"
+        android:textColor="@color/white"
         android:textIsSelectable="true"
         android:textSize="14sp" />
 
