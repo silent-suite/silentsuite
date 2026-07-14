@@ -1,0 +1,1 @@
+SilentSuite v0.4.2-beta aligns the Android package with the latest release. Android sync behavior is unchanged; this patch fixes macOS Contacts/CardDAV Bridge account discovery.
