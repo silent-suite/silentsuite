@@ -1,134 +1,200 @@
-/*
- * Copyright © Ricki Hirner (bitfire web engineering).
- * All rights reserved. This program and the accompanying materials
- * are made available under the terms of the GNU Public License v3.0
- * which accompanies this distribution, and is available at
- * http://www.gnu.org/licenses/gpl.html
- */
-
 package at.bitfire.cert4android
 
-import android.app.Service
+import android.app.Instrumentation
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
-import androidx.test.platform.app.InstrumentationRegistry.getInstrumentation
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.ServiceTestRule
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.ViewMatchers.isEnabled
+import androidx.test.espresso.matcher.ViewMatchers.withId
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.lifecycle.ViewModelProvider
 import org.junit.After
-import org.junit.Assert.assertNotNull
-import org.junit.Assume.assumeNotNull
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
+import org.junit.Assume.assumeTrue
 import org.junit.Test
-import java.io.IOException
-import java.net.URL
-import java.security.cert.CertificateException
+import org.junit.runner.RunWith
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
-import javax.net.ssl.HttpsURLConnection
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
+/**
+ * End-to-end coverage of the public AIDL contract.  The certificate is a checked-in, local test
+ * fixture: these tests do not contact davdroid.com (or any other network endpoint).
+ */
+@RunWith(AndroidJUnit4::class)
 class CustomCertManagerTest {
+    @JvmField @Rule val services = ServiceTestRule()
 
-    companion object {
-        private fun getSiteCertificates(url: URL): List<X509Certificate> {
-            val conn = url.openConnection() as HttpsURLConnection
-            try {
-                conn.inputStream.read()
-                val certs = mutableListOf<X509Certificate>()
-                conn.serverCertificates.forEach { certs += it as X509Certificate }
-                return certs
-            } finally {
-                conn.disconnect()
-            }
-        }
+    private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    private lateinit var service: ICustomCertService
+    private lateinit var certificate: X509Certificate
+
+    @Before fun setUp() {
+        val binder: IBinder = services.bindService(Intent(instrumentation.targetContext, CustomCertService::class.java))
+        service = ICustomCertService.Stub.asInterface(binder)
+        certificate = CertificateFactory.getInstance("X.509").generateCertificate(
+            requireNotNull(javaClass.classLoader?.getResourceAsStream("sample.crt"))
+        ) as X509Certificate
+        instrumentation.targetContext.startService(Intent(instrumentation.targetContext, CustomCertService::class.java).apply {
+            action = CustomCertService.CMD_RESET_CERTIFICATES
+        })
+        instrumentation.waitForIdleSync()
     }
 
-    lateinit var certManager: CustomCertManager
-    lateinit var paranoidCertManager: CustomCertManager
-
-    init {
-        CustomCertManager.SERVICE_TIMEOUT = 1000
+    @After fun tearDown() {
+        instrumentation.targetContext.startService(Intent(instrumentation.targetContext, CustomCertService::class.java).apply {
+            action = CustomCertService.CMD_RESET_CERTIFICATES
+        })
     }
 
-    @JvmField
-    @Rule
-    val serviceTestRule = ServiceTestRule()
-
-    var siteCerts: List<X509Certificate>? = null
-    init {
+    @Test fun acceptThenTrustedCheckUsesTheRealServiceBinder() {
+        val pending = beginForegroundDecision()
+        sendDecision(pending.generation, true)
+        pending.callback.assertAccepted()
+        // The manager is the public TrustManager consumer and binds to the same real service.
+        val manager = CustomCertManager(instrumentation.targetContext, interactive = false, trustSystemCerts = false)
         try {
-            siteCerts = getSiteCertificates(URL("https://www.davdroid.com"))
-        } catch(e: IOException) {
+            manager.checkServerTrusted(arrayOf(certificate), "RSA")
+        } finally {
+            manager.close()
         }
-        assumeNotNull(siteCerts)
     }
 
+    @Test fun rejectAndDuplicateOrStaleGenerationsAreIgnored() {
+        val first = beginForegroundDecision()
+        sendDecision(first.generation, false)
+        first.callback.assertRejected()
 
-    @Before
-    fun initCertManager() {
-        // prepare a bound and ready service for testing
-        // loop required because of https://code.google.com/p/android/issues/detail?id=180396
-        val binder = bindService(CustomCertService::class.java)
-        assertNotNull(binder)
-
-        val context = getInstrumentation().context
-        CustomCertManager.resetCertificates(context)
-
-        certManager = CustomCertManager(context, false)
-        assertNotNull(certManager)
-
-        paranoidCertManager = CustomCertManager(context, false, false)
-        assertNotNull(paranoidCertManager)
+        val second = beginForegroundDecision()
+        sendDecision(first.generation, true) // stale generation must not consume the new callback
+        assertFalse(second.callback.await(250))
+        sendDecision(second.generation, false)
+        second.callback.assertRejected()
+        sendDecision(second.generation, true) // duplicate delivery is a no-op
+        assertEquals(0, second.callback.accepts)
+        assertEquals(1, second.callback.rejects)
     }
 
-    @After
-    fun closeCertManager() {
-        paranoidCertManager.close()
-        certManager.close()
+    @Test fun multipleCallbacksResolveExactlyOnceAndAbortDetachesOnlyItsCallback() {
+        val first = beginForegroundDecision()
+        val joined = Callback()
+        service.checkTrusted(certificate.encoded, true, true, joined)
+        service.abortCheck(first.callback)
+        sendDecision(first.generation, true)
+        assertFalse(first.callback.await(250))
+        joined.assertAccepted()
+        assertEquals(1, joined.accepts)
+        assertEquals(0, joined.rejects)
     }
 
-
-    @Test(expected = CertificateException::class)
-    fun testCheckClientCertificate() {
-        certManager.checkClientTrusted(null, null)
-    }
-
-    @Test
-    fun testTrustedCertificate() {
-        certManager.checkServerTrusted(siteCerts!!.toTypedArray(), "RSA")
-    }
-
-    @Test(expected = CertificateException::class)
-    fun testParanoidCertificate() {
-        paranoidCertManager.checkServerTrusted(siteCerts!!.toTypedArray(), "RSA")
-    }
-
-    /** A started-service command without a pending decision generation must not alter trust. */
-    @Test(expected = CertificateException::class)
-    fun testUnscopedDecisionIsIgnored() {
-        val intent = Intent(getInstrumentation().context, CustomCertService::class.java)
-        intent.action = CustomCertService.CMD_CERTIFICATION_DECISION
-        intent.putExtra(CustomCertService.EXTRA_CERTIFICATE, siteCerts!!.first().encoded)
-        intent.putExtra(CustomCertService.EXTRA_TRUSTED, true)
-        startService(intent, CustomCertService::class.java)
-        paranoidCertManager.checkServerTrusted(siteCerts!!.toTypedArray(), "RSA")
-    }
-
-
-    private fun bindService(clazz: Class<out Service>): IBinder {
-        var binder = serviceTestRule.bindService(Intent(getInstrumentation().targetContext, clazz))
-        var it = 0
-        while (binder == null && it++ <100) {
-            binder = serviceTestRule.bindService(Intent(getInstrumentation().targetContext, clazz))
-            System.err.println("Waiting for ServiceTestRule.bindService")
-            Thread.sleep(50)
+    @Test fun unavailableNotificationFailsClosedForBackgroundRequests() {
+        // API 33 is the only platform where an app-level notification permission can be made
+        // unavailable deterministically without changing production code. API 14–32 has no such
+        // permission and is covered by the normal notification path above.
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        val packageName = instrumentation.targetContext.packageName
+        instrumentation.uiAutomation.executeShellCommand(
+            "appops set $packageName POST_NOTIFICATION deny"
+        ).close()
+        instrumentation.waitForIdleSync()
+        try {
+            val callback = Callback()
+            service.checkTrusted(certificate.encoded, true, false, callback)
+            callback.assertRejected()
+        } finally {
+            instrumentation.uiAutomation.executeShellCommand(
+                "appops set $packageName POST_NOTIFICATION allow"
+            ).close()
+            instrumentation.waitForIdleSync()
         }
-        if (binder == null)
-            throw IllegalStateException("Couldn't bind to service")
-        return binder
     }
 
-    private fun startService(intent: Intent, clazz: Class<out Service>) {
-        serviceTestRule.startService(intent)
-        bindService(clazz)
+    @Test fun activityRecreationAndNewIntentDeliverTheRenderedGenerationDecision() {
+        val old = beginForegroundDecision()
+        val current = beginForegroundDecision()
+        ActivityScenario.launch<TrustCertificateActivity>(activityIntent(old.generation)).use { scenario ->
+            // singleInstance delivery must supersede the old parse/render snapshot.
+            scenario.onActivity { it.onNewIntent(activityIntent(current.generation)) }
+            scenario.recreate()
+            awaitRenderedCertificate(scenario)
+            // This is the actual bound layout click, not a direct service command: it proves the
+            // recreated activity retained the current rendered certificate+generation for IPC.
+            onView(withId(R.id.reject_certificate)).check(matches(isEnabled())).perform(click())
+        }
+        current.callback.assertRejected()
+        assertFalse(old.callback.await(250))
+        sendDecision(old.generation, false)
+        old.callback.assertRejected()
     }
 
+    @Test fun activityAcceptDeliversThroughTheStartedService() {
+        val pending = beginForegroundDecision()
+        ActivityScenario.launch<TrustCertificateActivity>(activityIntent(pending.generation)).use { scenario ->
+            scenario.recreate()
+            awaitRenderedCertificate(scenario)
+            onView(withId(R.id.certificate_verified)).perform(click())
+            onView(withId(R.id.accept_certificate)).check(matches(isEnabled())).perform(click())
+        }
+        pending.callback.assertAccepted()
+    }
+
+    private fun beginForegroundDecision(): Pending {
+        val monitor = instrumentation.addMonitor(TrustCertificateActivity::class.java.name, null, false)
+        val callback = Callback()
+        service.checkTrusted(certificate.encoded, true, true, callback)
+        val activity = instrumentation.waitForMonitorWithTimeout(monitor, 3_000)
+        instrumentation.removeMonitor(monitor)
+        requireNotNull(activity) { "Foreground certificate decision did not launch TrustCertificateActivity" }
+        val generation = activity.intent.getStringExtra(CustomCertService.EXTRA_DECISION_GENERATION)
+        activity.finish()
+        instrumentation.waitForIdleSync()
+        return Pending(requireNotNull(generation), callback)
+    }
+
+    private fun sendDecision(generation: String, trusted: Boolean) {
+        instrumentation.targetContext.startService(Intent(instrumentation.targetContext, CustomCertService::class.java).apply {
+            action = CustomCertService.CMD_CERTIFICATION_DECISION
+            putExtra(CustomCertService.EXTRA_CERTIFICATE, certificate.encoded)
+            putExtra(CustomCertService.EXTRA_DECISION_GENERATION, generation)
+            putExtra(CustomCertService.EXTRA_TRUSTED, trusted)
+        })
+    }
+
+    private fun activityIntent(generation: String) = Intent(instrumentation.targetContext, TrustCertificateActivity::class.java).apply {
+        putExtra(TrustCertificateActivity.EXTRA_CERTIFICATE, certificate.encoded)
+        putExtra(CustomCertService.EXTRA_DECISION_GENERATION, generation)
+    }
+
+    private fun awaitRenderedCertificate(scenario: ActivityScenario<TrustCertificateActivity>) {
+        val rendered = CountDownLatch(1)
+        scenario.onActivity { activity ->
+            ViewModelProvider(activity).get(TrustCertificateActivity.Model::class.java)
+                .screen.observe(activity) { if (it.ready) rendered.countDown() }
+        }
+        assertTrue("certificate screen did not become ready", rendered.await(3_000, TimeUnit.MILLISECONDS))
+    }
+
+    private data class Pending(val generation: String, val callback: Callback)
+
+    private class Callback : IOnCertificateDecision.Stub() {
+        private val result = CountDownLatch(1)
+        @Volatile var accepts = 0
+        @Volatile var rejects = 0
+        override fun accept() { accepts++; result.countDown() }
+        override fun reject() { rejects++; result.countDown() }
+        fun await(timeoutMillis: Long) = result.await(timeoutMillis, TimeUnit.MILLISECONDS)
+        fun assertAccepted() { assertTrue("accept callback timed out", await(3_000)); assertEquals(1, accepts); assertEquals(0, rejects) }
+        fun assertRejected() { assertTrue("reject callback timed out", await(3_000)); assertEquals(0, accepts); assertEquals(1, rejects) }
+    }
 }

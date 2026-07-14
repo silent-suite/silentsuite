@@ -67,12 +67,11 @@ def test_notification_permission_prompt_is_foreground_only_and_one_time():
     assert 'Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU' in notifications
     assert 'KEY_POST_NOTIFICATIONS_REQUESTED' in notifications
     assert 'putBoolean(KEY_POST_NOTIFICATIONS_REQUESTED, true)' in notifications
-    assert 'ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS)' in notifications
-    assert 'outState.putBoolean(KEY_WAITING_FOR_NOTIFICATION_PERMISSION' not in account_activity
-    assert 'savedInstanceState?.getBoolean(KEY_WAITING_FOR_NOTIFICATION_PERMISSION' not in account_activity
-    assert 'waitingForNotificationPermissionResult = false' in account_activity
-    assert 'waitingForNotificationPermissionResult = NotificationUtils.requestPermissionIfNeeded(this)' in account_activity
-    assert 'if (requestCode == NotificationUtils.REQUEST_CODE_POST_NOTIFICATIONS)' in account_activity
+    assert 'ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS)' not in notifications
+    assert 'outState.putBoolean(KEY_NOTIFICATION_PERMISSION_PENDING' in account_activity
+    assert 'savedInstanceState?.getBoolean(KEY_NOTIFICATION_PERMISSION_PENDING' in account_activity
+    assert 'ActivityResultContracts.RequestPermission()' in account_activity
+    assert 'KEY_NOTIFICATION_PERMISSION_PENDING' in account_activity
     assert 'PermissionsActivity.requestAllPermissions(this)' in account_activity
 
 

@@ -105,6 +105,7 @@
                         tools:text="SHA-256: abcdef"/>
 
                     <CheckBox
+                        android:id="@+id/certificate_verified"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
@@ -118,6 +119,7 @@
                         android:orientation="horizontal">
 
                         <Button
+                            android:id="@+id/accept_certificate"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginRight="16dp"
@@ -127,6 +129,7 @@
                             android:enabled="@{model.screen.ready &amp;&amp; model.verifiedByUser}" />
 
                         <Button
+                            android:id="@+id/reject_certificate"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             style="@style/Widget.MaterialComponents.Button.TextButton"

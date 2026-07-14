@@ -114,7 +114,10 @@ tasks.register('verifySlice4DependencyCohort') {
                 ],
                 debugAndroidTestRuntimeClasspath: [
                     'androidx.test:runner': versions.testRunner,
-                    'androidx.test:rules': versions.testRules
+                    'androidx.test:rules': versions.testRules,
+                    'androidx.test:core': versions.testCore,
+                    'androidx.test.ext:junit': versions.testExtJunit,
+                    'androidx.test.espresso:espresso-core': versions.espresso
                 ]
             ],
             ':ical4android': [
