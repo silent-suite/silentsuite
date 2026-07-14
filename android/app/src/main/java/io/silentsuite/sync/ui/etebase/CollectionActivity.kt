@@ -90,8 +90,14 @@ class CollectionActivity() : BaseActivity() {
 
 class AccountViewModel : ViewModel() {
     private val holder = MutableLiveData<AccountHolder>()
+    private var initializedAccount: Account? = null
 
-    fun loadAccount(context: Context, account: Account, sessionOverride: String? = null) {
+    fun initialize(context: Context, account: Account, sessionOverride: String? = null) {
+        if (initializedAccount == account)
+            return
+        check(initializedAccount == null) { "AccountViewModel cannot be reused for another account" }
+        initializedAccount = account
+
         viewModelScope.launch {
             val accountHolder = withContext(Dispatchers.IO) {
                 val settings = AccountSettings(context, account)
@@ -109,6 +115,9 @@ class AccountViewModel : ViewModel() {
             holder.value = accountHolder
         }
     }
+
+    fun loadAccount(context: Context, account: Account, sessionOverride: String? = null) =
+        initialize(context, account, sessionOverride)
 
     fun observe(owner: LifecycleOwner, observer: (AccountHolder) -> Unit) =
             holder.observe(owner, observer)
@@ -165,7 +174,7 @@ class ItemsViewModel : ViewModel() {
 
 
 class LoadingViewModel : ViewModel() {
-    private val loading = MutableLiveData<Boolean>()
+    private val loading = MutableLiveData(false)
 
     fun setLoading(value: Boolean) {
         loading.value = value
@@ -173,4 +182,7 @@ class LoadingViewModel : ViewModel() {
 
     fun observe(owner: LifecycleOwner, observer: (Boolean) -> Unit) =
             loading.observe(owner, observer)
+
+    val isLoading: Boolean
+        get() = loading.value == true
 }

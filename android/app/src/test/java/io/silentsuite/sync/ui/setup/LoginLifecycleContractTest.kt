@@ -27,9 +27,10 @@ class LoginLifecycleContractTest {
     }
 
     @Test
-    fun loginSubmissionIsGuardedBeforeTheDetectorTransactionAndResetsOnlyOnFailure() {
+    fun loginSubmissionIsGuardedBeforeTheDetectorTransactionAndResetsForEverySetupFailure() {
         val loginSource = File(sourceRoot, "LoginCredentialsFragment.kt").readText()
         val detectorSource = File(sourceRoot, "DetectConfigurationFragment.kt").readText()
+        val createAccountSource = File(sourceRoot, "CreateAccountFragment.kt").readText()
 
         assertTrue(loginSource.contains("private var submissionInProgress = false"))
         assertTrue(loginSource.contains("internal fun onSubmissionFailed()"))
@@ -38,6 +39,17 @@ class LoginLifecycleContractTest {
         assertTrue(loginSource.indexOf("submissionInProgress = true") < loginSource.indexOf("DetectConfigurationFragment.newInstance().show"))
         assertTrue(detectorSource.contains("findFragmentById(android.R.id.content) as? LoginCredentialsFragment"))
         assertTrue(detectorSource.contains("?.onSubmissionFailed()"))
+        assertTrue(createAccountSource.contains("private fun notifyAccountCreationFailed()"))
+        assertTrue(createAccountSource.contains("fragments.filterIsInstance<LoginCredentialsFragment>()"))
+        assertTrue(createAccountSource.contains(".forEach { it.onSubmissionFailed() }"))
+        val missingConfiguration = createAccountSource.substringAfter("if (config == null)").substringBefore("val activity")
+        val invalidAccount = createAccountSource.substringAfter("catch (e: InvalidAccountException)").substringBefore("if (account != null)")
+        val unexpectedAccountFailure = createAccountSource.substringAfter("catch (e: Exception)").substringBefore("if (account != null)")
+        val rejectedAccount = createAccountSource.substringAfter("addAccountExplicitly returned false").substringBefore("}\n    }")
+        assertTrue(missingConfiguration.contains("notifyAccountCreationFailed()"))
+        assertTrue(invalidAccount.contains("notifyAccountCreationFailed()"))
+        assertTrue(unexpectedAccountFailure.contains("notifyAccountCreationFailed()"))
+        assertTrue(rejectedAccount.contains("notifyAccountCreationFailed()"))
     }
 
     @Test
