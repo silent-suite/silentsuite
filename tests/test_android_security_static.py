@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LOGIN_ACTIVITY = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/setup/LoginActivity.kt"
 MANIFEST = ROOT / "android/app/src/main/AndroidManifest.xml"
+APP_GRADLE = ROOT / "android/app/build.gradle"
 
 
 def test_login_activity_rejects_credential_prefill_extras_and_is_not_exported():
@@ -17,3 +18,9 @@ def test_login_activity_rejects_credential_prefill_extras_and_is_not_exported():
     login_decl = manifest[manifest.index('android:name=".ui.setup.LoginActivity"'):]
     login_decl = login_decl[:login_decl.index("</activity>")]
     assert 'android:exported="false"' in login_decl
+
+
+def test_android_app_runtime_dependencies_are_not_snapshots():
+    app_gradle = APP_GRADLE.read_text(encoding="utf-8")
+
+    assert "SNAPSHOT" not in app_gradle
