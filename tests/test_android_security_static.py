@@ -5,6 +5,7 @@ LOGIN_ACTIVITY = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/setup/
 MANIFEST = ROOT / "android/app/src/main/AndroidManifest.xml"
 APP_GRADLE = ROOT / "android/app/build.gradle"
 APP_RESOURCES = ROOT / "android/app/src/main/res"
+ANDROID_BUILD_WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 
 
 def test_login_activity_credential_prefill_extras_are_debug_only_and_not_exported():
@@ -34,3 +35,15 @@ def test_android_resources_do_not_reference_tourguide_owned_white():
     )
 
     assert "@color/White" not in resource_xml
+
+
+def test_bundletool_uses_a_private_temporary_password_file():
+    workflow = ANDROID_BUILD_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "--ks-pass=env:" not in workflow
+    assert "--key-pass=env:" not in workflow
+    assert "umask 077" in workflow
+    assert 'BUNDLETOOL_PASSWORD_FILE="$RUNNER_TEMP/keystore/bundletool-password"' in workflow
+    assert 'printf \'%s\' "$KSTOREPWD" > "$BUNDLETOOL_PASSWORD_FILE"' in workflow
+    assert '--ks-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in workflow
+    assert '--key-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in workflow
