@@ -11,6 +11,26 @@ ext {
     gradle_version = '8.11.1'
     compileSdkVersion = 36
     buildToolsVersion = '36.0.0'
+
+    // Keep this cohort compatible with cert4android's API 14 contract. Newer
+    // Core and Material releases raise their minimum API level.
+    androidXVersions = [
+        annotation: '1.7.1',
+        core: '1.12.0',
+        appcompat: '1.4.2',
+        cardview: '1.0.0',
+        fragment: '1.4.1',
+        lifecycle: '2.6.1',
+        material: '1.5.0',
+        preference: '1.2.1',
+        coroutines: '1.7.3',
+        testCore: '1.6.1',
+        testRunner: '1.6.2',
+        testRules: '1.6.1',
+        testExtJunit: '1.2.1',
+        espresso: '3.6.1',
+        uiAutomator: '2.3.0'
+    ]
 }
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
@@ -43,6 +63,106 @@ subprojects {
     tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
         compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+tasks.register('verifySlice4DependencyCohort') {
+    group = 'verification'
+    description = 'Checks the Slice 4 AndroidX graph and default-preference continuity contracts.'
+
+    doLast {
+        def versions = rootProject.ext.androidXVersions
+        def required = [
+            ':app': [
+                debugRuntimeClasspath: [
+                    'androidx.core:core': versions.core,
+                    'androidx.appcompat:appcompat': versions.appcompat,
+                    'androidx.lifecycle:lifecycle-runtime': versions.lifecycle,
+                    'androidx.preference:preference': versions.preference,
+                    'com.google.android.material:material': versions.material,
+                    'org.jetbrains.kotlinx:kotlinx-coroutines-android': versions.coroutines
+                ],
+                releaseRuntimeClasspath: [
+                    'androidx.core:core': versions.core,
+                    'androidx.appcompat:appcompat': versions.appcompat,
+                    'androidx.preference:preference': versions.preference
+                ],
+                debugAndroidTestRuntimeClasspath: [
+                    'androidx.test:runner': versions.testRunner,
+                    'androidx.test:rules': versions.testRules,
+                    'androidx.test:core': versions.testCore,
+                    'androidx.test.ext:junit': versions.testExtJunit,
+                    'androidx.test.espresso:espresso-core': versions.espresso,
+                    'androidx.test.uiautomator:uiautomator': versions.uiAutomator
+                ]
+            ],
+            ':cert4android': [
+                debugRuntimeClasspath: [
+                    'androidx.core:core': versions.core,
+                    'androidx.appcompat:appcompat': versions.appcompat,
+                    'androidx.lifecycle:lifecycle-runtime': versions.lifecycle,
+                    'com.google.android.material:material': versions.material
+                ],
+                debugAndroidTestRuntimeClasspath: [
+                    'androidx.test:runner': versions.testRunner,
+                    'androidx.test:rules': versions.testRules
+                ]
+            ],
+            ':ical4android': [
+                debugRuntimeClasspath: ['androidx.core:core': versions.core],
+                debugAndroidTestRuntimeClasspath: [
+                    'androidx.test:runner': versions.testRunner,
+                    'androidx.test:rules': versions.testRules,
+                    'androidx.test:core': versions.testCore
+                ]
+            ],
+            ':vcard4android': [
+                debugRuntimeClasspath: ['androidx.annotation:annotation': versions.annotation],
+                debugAndroidTestRuntimeClasspath: [
+                    'androidx.test:runner': versions.testRunner,
+                    'androidx.test:rules': versions.testRules
+                ]
+            ]
+        ]
+        def forbidden = [
+            'androidx.lifecycle:lifecycle-extensions',
+            'androidx.legacy:legacy-support-core-ui',
+            'androidx.legacy:legacy-preference-v14'
+        ]
+
+        required.each { projectPath, configurations ->
+            def project = project(projectPath)
+            configurations.each { configurationName, expected ->
+                def selected = project.configurations.getByName(configurationName)
+                        .incoming.resolutionResult.allDependencies
+                        .collectEntries { dependency ->
+                            if (!dependency.hasProperty('selected'))
+                                return [:]
+                            def coordinates = dependency.selected.id.displayName.split(':', 3)
+                            coordinates.length == 3 ?
+                                    [("${coordinates[0]}:${coordinates[1]}".toString()): coordinates[2]] : [:]
+                        }
+                forbidden.each { coordinate ->
+                    if (selected.containsKey(coordinate))
+                        throw new GradleException("$configurationName in $projectPath contains obsolete $coordinate")
+                }
+                expected.each { coordinate, version ->
+                    if (selected[coordinate] != version)
+                        throw new GradleException("$configurationName in $projectPath resolves $coordinate as ${selected[coordinate]}, expected $version")
+                }
+            }
+        }
+
+        def logger = file('app/src/main/java/io/silentsuite/sync/log/Logger.kt').text
+        def preferences = file('app/src/main/java/io/silentsuite/sync/utils/AsyncUtils.kt').text
+        ['import androidx.preference.PreferenceManager', 'PreferenceManager.getDefaultSharedPreferences('].each { contract ->
+            if (!logger.contains(contract) || !preferences.contains(contract))
+                throw new GradleException("Default SharedPreferences continuity contract missing: $contract")
+        }
+    }
+}
+
+project(':app').tasks.matching { it.name == 'testDebugUnitTest' }.configureEach {
+    dependsOn(rootProject.tasks.named('verifySlice4DependencyCohort'))
 }
 
 

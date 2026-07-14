@@ -50,7 +50,9 @@ android {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:${rootProject.ext.kotlin_version}"
+    def androidX = rootProject.ext.androidXVersions
+
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}"
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.1.1'
 
     api("org.mnode.ical4j:ical4j:${versions.ical4j}") {
@@ -62,11 +64,11 @@ dependencies {
     implementation "commons-io:commons-io:${versions.commonsIO}"
 
     implementation 'org.slf4j:slf4j-jdk14:1.7.30'
-    implementation 'androidx.core:core-ktx:1.3.2'
+    implementation "androidx.core:core-ktx:${androidX.core}"
 
-    androidTestImplementation 'androidx.test:core:1.5.0'
-    androidTestImplementation 'androidx.test:runner:1.5.0'
-    androidTestImplementation 'androidx.test:rules:1.5.0'
+    androidTestImplementation "androidx.test:core:${androidX.testCore}"
+    androidTestImplementation "androidx.test:runner:${androidX.testRunner}"
+    androidTestImplementation "androidx.test:rules:${androidX.testRules}"
     testImplementation 'junit:junit:4.13'
 
     // groovy is not really used, but required for running the tests
