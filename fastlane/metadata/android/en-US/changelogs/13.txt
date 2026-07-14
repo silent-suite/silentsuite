@@ -1,0 +1,1 @@
+Adds encrypted contact favorite synchronization with Android's native starred state and improves macOS Contacts/CardDAV Bridge account discovery.
