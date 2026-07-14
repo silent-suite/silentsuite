@@ -183,6 +183,16 @@ tasks.register('verifySlice4DependencyCohort') {
     }
 }
 
+// The instrumentation APK has its own L8 output and class loader. Verify the runtime it owns,
+// rather than trusting the app module's dependency report, because it shadows the target APK.
+tasks.register('verifyDebugAndroidTestDesugarRuntime', Exec) {
+    group = 'verification'
+    description = 'Verifies the app androidTest APK owns the desugared FragmentManager API.'
+    dependsOn(':app:packageDebugAndroidTest')
+    commandLine 'python3', 'scripts/verify-androidtest-desugar-runtime.py',
+            'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
+}
+
 project(':app').tasks.matching { it.name == 'testDebugUnitTest' }.configureEach {
     dependsOn(rootProject.tasks.named('verifySlice4DependencyCohort'))
 }

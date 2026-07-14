@@ -79,6 +79,7 @@ jobs:
           app:testDebugUnitTest
           app:lintDebug
           app:assembleDebugAndroidTest
+          verifyDebugAndroidTestDesugarRuntime
           cert4android:assembleDebugAndroidTest
           ical4android:assembleDebugAndroidTest
           vcard4android:assembleDebugAndroidTest

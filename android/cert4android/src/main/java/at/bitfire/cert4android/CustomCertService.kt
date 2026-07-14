@@ -10,6 +10,7 @@ package at.bitfire.cert4android
 
 import android.app.PendingIntent
 import android.app.Service
+import android.app.NotificationManager
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -18,6 +19,7 @@ import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import org.conscrypt.Conscrypt
 import java.io.ByteArrayInputStream
@@ -30,7 +32,6 @@ import java.security.Security
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.*
-import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Level
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
@@ -80,9 +81,11 @@ class CustomCertService: Service() {
     private val trustedKeyStore = KeyStore.getInstance(KeyStore.getDefaultType())!!
     private var customTrustManager: X509TrustManager? = null
 
-    private var untrustedCerts = Collections.synchronizedSet(HashSet<X509Certificate>())
-
-    private val pendingDecisions = ConcurrentHashMap<X509Certificate, MutableList<IOnCertificateDecision>>()
+    // One lock covers certificate state and the pending callback lists. A concurrent map alone
+    // does not make its mutable list values safe, and would let registration race resolution.
+    private val decisionLock = Any()
+    private val untrustedCerts = HashSet<X509Certificate>()
+    private val pendingDecisions = HashMap<X509Certificate, MutableList<IOnCertificateDecision>>()
 
 
     override fun onCreate() {
@@ -138,13 +141,15 @@ class CustomCertService: Service() {
                 }
             }
             CMD_RESET_CERTIFICATES -> {
-                untrustedCerts.clear()
-                try {
-                    for (alias in trustedKeyStore.aliases())
-                        trustedKeyStore.deleteEntry(alias)
-                    saveKeyStore()
-                } catch(e: KeyStoreException) {
-                    Constants.log.log(Level.SEVERE, "Couldn't reset custom certificates", e)
+                synchronized(decisionLock) {
+                    untrustedCerts.clear()
+                    try {
+                        for (alias in trustedKeyStore.aliases())
+                            trustedKeyStore.deleteEntry(alias)
+                        saveKeyStore()
+                    } catch(e: KeyStoreException) {
+                        Constants.log.log(Level.SEVERE, "Couldn't reset custom certificates", e)
+                    }
                 }
             }
         }
@@ -154,35 +159,44 @@ class CustomCertService: Service() {
 
     private fun onReceiveDecision(cert: X509Certificate, trusted: Boolean, showRejectionToast: Boolean = true) {
         // remove notification
-        val nm = NotificationUtils.createChannels(this)
+        val nm: NotificationManagerCompat = NotificationUtils.createChannels(this)
         nm.cancel(CertUtils.getTag(cert), Constants.NOTIFICATION_CERT_DECISION)
 
-        // put into trust store, if trusted
-        if (trusted) {
-            untrustedCerts.remove(cert)
+        // Publish the resolved state and atomically detach callbacks before any IPC delivery.
+        // New registrations can therefore only join an active decision or observe its result.
+        val callbacks = synchronized(decisionLock) {
+            if (trusted) {
+                untrustedCerts.remove(cert)
 
-            try {
-                trustedKeyStore.setCertificateEntry(cert.subjectDN.name, cert)
-                saveKeyStore()
-            } catch(e: KeyStoreException) {
-                Constants.log.log(Level.SEVERE, "Couldn't add certificate into key store", e)
+                try {
+                    trustedKeyStore.setCertificateEntry(cert.subjectDN.name, cert)
+                    saveKeyStore()
+                } catch(e: KeyStoreException) {
+                    Constants.log.log(Level.SEVERE, "Couldn't add certificate into key store", e)
+                }
+            } else {
+                untrustedCerts.add(cert)
             }
-        } else {
-            untrustedCerts.add(cert)
-            if (showRejectionToast)
-                Toast.makeText(this, R.string.service_rejected_temporarily, Toast.LENGTH_LONG).show()
-        }
 
-        // notify receivers which are waiting for a decision
-        pendingDecisions[cert]?.let { callbacks ->
+            pendingDecisions.remove(cert)?.toList().orEmpty()
+        }
+        if (!trusted && showRejectionToast)
+            Toast.makeText(this, R.string.service_rejected_temporarily, Toast.LENGTH_LONG).show()
+
+        if (callbacks.isNotEmpty()) {
             Constants.log.fine("Notifying ${callbacks.size} certificate decision listener(s)")
             callbacks.forEach {
-                if (trusted)
-                    it.accept()
-                else
-                    it.reject()
+                try {
+                    if (trusted)
+                        it.accept()
+                    else
+                        it.reject()
+                } catch (e: Exception) {
+                    // A dead or faulty IPC receiver must not prevent other callers resolving.
+                    // Do not include certificate material in logs.
+                    Constants.log.log(Level.WARNING, "Couldn't deliver certificate decision", e)
+                }
             }
-            pendingDecisions -= cert
         }
     }
 
@@ -212,66 +226,70 @@ class CustomCertService: Service() {
                 return
             }
 
-            // if there's already a pending decision for this certificate, just add this callback
-            pendingDecisions[cert]?.let { callbacks ->
-                callbacks += callback
-                return
+            val knownDecision = synchronized(decisionLock) {
+                pendingDecisions[cert]?.let { callbacks ->
+                    callbacks += callback
+                    return
+                }
+
+                when {
+                    untrustedCerts.contains(cert) -> false
+                    inTrustStore(cert) -> true
+                    interactive -> {
+                        // Register while holding the lock, before notification/activity creation.
+                        pendingDecisions[cert] = mutableListOf(callback)
+                        null
+                    }
+                    else -> false
+                }
             }
 
-            when {
-                untrustedCerts.contains(cert) -> {
+            when (knownDecision) {
+                false -> {
                     Constants.log.fine("Certificate is cached as untrusted, rejecting")
                     callback.reject()
                 }
-                inTrustStore(cert) -> {
+                true -> {
                     Constants.log.fine("Certificate is cached as trusted, accepting")
                     callback.accept()
                 }
-                else -> {
-                    if (interactive) {
-                        Constants.log.fine("Certificate not known and running in interactive mode, asking user")
+                null -> {
+                    Constants.log.fine("Certificate not known and running in interactive mode, asking user")
 
-                        // remember pending decision
-                        pendingDecisions[cert] = mutableListOf(callback)
+                    val decisionIntent = Intent(this@CustomCertService, TrustCertificateActivity::class.java)
+                    decisionIntent.putExtra(TrustCertificateActivity.EXTRA_CERTIFICATE, raw)
 
-                        val decisionIntent = Intent(this@CustomCertService, TrustCertificateActivity::class.java)
-                        decisionIntent.putExtra(TrustCertificateActivity.EXTRA_CERTIFICATE, raw)
+                    val rejectIntent = Intent(this@CustomCertService, CustomCertService::class.java)
+                    with(rejectIntent) {
+                        action = CMD_CERTIFICATION_DECISION
+                        putExtra(EXTRA_CERTIFICATE, raw)
+                        putExtra(EXTRA_TRUSTED, false)
+                    }
 
-                        val rejectIntent = Intent(this@CustomCertService, CustomCertService::class.java)
-                        with(rejectIntent) {
-                            action = CMD_CERTIFICATION_DECISION
-                            putExtra(EXTRA_CERTIFICATE, raw)
-                            putExtra(EXTRA_TRUSTED, false)
-                        }
-
-                        if (foreground) {
-                            // A foreground caller has a direct interaction path even if notification
-                            // permission is denied (or the system rejects the notification post).
-                            // Keep the existing activity flow so it can resolve all pending callbacks.
-                            postDecisionNotification(cert, raw, decisionIntent, rejectIntent)
-                            decisionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            startActivity(decisionIntent)
-                        } else if (!postDecisionNotification(cert, raw, decisionIntent, rejectIntent)) {
-                            // A background caller has no other way to obtain a decision. Resolve every
-                            // waiting IPC callback now rather than leaving TLS handshakes to timeout.
-                            Constants.log.warning("Certificate decision notification unavailable; rejecting pending decision")
-                            onReceiveDecision(cert, false, showRejectionToast = false)
-                            return
-                        }
-
-                    } else {
-                        Constants.log.fine("Certificate not known and running in non-interactive mode, rejecting")
-                        callback.reject()
+                    if (foreground) {
+                        // A foreground caller has a direct interaction path even when no notification
+                        // can be made visible. Keep the activity flow so it resolves all callbacks.
+                        postDecisionNotification(cert, raw, decisionIntent, rejectIntent)
+                        decisionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(decisionIntent)
+                    } else if (!postDecisionNotification(cert, raw, decisionIntent, rejectIntent)) {
+                        // A background caller has no other decision path; fail closed atomically.
+                        Constants.log.warning("Certificate decision notification unavailable; rejecting pending decision")
+                        onReceiveDecision(cert, false, showRejectionToast = false)
                     }
                 }
             }
         }
 
         override fun abortCheck(callback: IOnCertificateDecision) {
-            for ((cert, list) in pendingDecisions) {
-                list.removeAll { it == callback }
-                if (list.isEmpty())
-                    pendingDecisions -= cert
+            synchronized(decisionLock) {
+                val iterator = pendingDecisions.entries.iterator()
+                while (iterator.hasNext()) {
+                    val entry = iterator.next()
+                    entry.value.removeAll { it == callback }
+                    if (entry.value.isEmpty())
+                        iterator.remove()
+                }
             }
         }
 
@@ -289,6 +307,16 @@ class CustomCertService: Service() {
             return false
         }
 
+        val nm = NotificationUtils.createChannels(this)
+        if (!nm.areNotificationsEnabled())
+            return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .getNotificationChannel(NotificationUtils.CHANNEL_CERTIFICATES)
+            if (channel == null || channel.importance == NotificationManager.IMPORTANCE_NONE)
+                return false
+        }
+
         val id = raw.contentHashCode()
         val notification = NotificationCompat.Builder(this, NotificationUtils.CHANNEL_CERTIFICATES)
             .setSmallIcon(R.drawable.ic_lock_open_white)
@@ -301,7 +329,7 @@ class CustomCertService: Service() {
             .build()
 
         return try {
-            NotificationUtils.createChannels(this).notify(CertUtils.getTag(cert), Constants.NOTIFICATION_CERT_DECISION, notification)
+            nm.notify(CertUtils.getTag(cert), Constants.NOTIFICATION_CERT_DECISION, notification)
             true
         } catch (e: SecurityException) {
             // Do not include certificate material in logs.

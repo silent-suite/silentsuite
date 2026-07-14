@@ -150,7 +150,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         pendingExportKind = savedInstanceState?.getString(KEY_PENDING_EXPORT_KIND)?.let { name ->
             runCatching { AndroidExportKind.valueOf(name) }.getOrNull()
         }
-        waitingForNotificationPermissionResult = savedInstanceState?.getBoolean(KEY_WAITING_FOR_NOTIFICATION_PERMISSION, false) ?: false
+        waitingForNotificationPermissionResult = false
 
         // TODO(Phase2): Set username in Sentry crash reporting context
 
@@ -248,7 +248,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         pendingExportKind?.let { outState.putString(KEY_PENDING_EXPORT_KIND, it.name) }
-        outState.putBoolean(KEY_WAITING_FOR_NOTIFICATION_PERMISSION, waitingForNotificationPermissionResult)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
@@ -260,9 +259,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun requestStartupPermissions() {
-        if (waitingForNotificationPermissionResult)
-            return
-
+        // This is a transient platform request, not recoverable Activity state. Persisting it
+        // would deadlock the remaining permission sequence after process restoration.
         waitingForNotificationPermissionResult = NotificationUtils.requestPermissionIfNeeded(this)
         if (!waitingForNotificationPermissionResult)
             PermissionsActivity.requestAllPermissions(this)
@@ -1029,8 +1027,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val EXTRA_ACCOUNT = "account"
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
-        private const val KEY_WAITING_FOR_NOTIFICATION_PERMISSION = "waitingForNotificationPermission"
-
         fun newIntent(context: Context, account: Account): Intent =
             Intent(context, AccountActivity::class.java).putExtra(EXTRA_ACCOUNT, account)
     }
