@@ -12,8 +12,10 @@ ext {
     compileSdkVersion = 36
     buildToolsVersion = '36.0.0'
 
-    // Keep this cohort compatible with cert4android's API 14 contract. Newer
-    // Core and Material releases raise their minimum API level.
+    // Keep this cohort compatible with cert4android's API 14 contract. AndroidX
+    // Test 1.6/3.6 raised its minimum API level to 19, so all shared test
+    // artifacts stay on the last API-14-compatible stable cohort. UIAutomator
+    // remains app-only because the app itself has minSdk 21.
     androidXVersions = [
         annotation: '1.7.1',
         core: '1.12.0',
@@ -24,11 +26,11 @@ ext {
         material: '1.5.0',
         preference: '1.2.1',
         coroutines: '1.7.3',
-        testCore: '1.6.1',
-        testRunner: '1.6.2',
-        testRules: '1.6.1',
-        testExtJunit: '1.2.1',
-        espresso: '3.6.1',
+        testCore: '1.5.0',
+        testRunner: '1.5.2',
+        testRules: '1.5.0',
+        testExtJunit: '1.1.5',
+        espresso: '3.5.1',
         uiAutomator: '2.3.0'
     ]
 }
