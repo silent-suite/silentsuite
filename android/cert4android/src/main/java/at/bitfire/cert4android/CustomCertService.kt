@@ -152,18 +152,7 @@ class CustomCertService: Service() {
                     Constants.log.log(Level.SEVERE, "Couldn't process certificate", e)
                 }
             }
-            CMD_RESET_CERTIFICATES -> {
-                synchronized(decisionLock) {
-                    untrustedCerts.clear()
-                    try {
-                        for (alias in trustedKeyStore.aliases())
-                            trustedKeyStore.deleteEntry(alias)
-                        saveKeyStore()
-                    } catch(e: KeyStoreException) {
-                        Constants.log.log(Level.SEVERE, "Couldn't reset custom certificates", e)
-                    }
-                }
-            }
+            CMD_RESET_CERTIFICATES -> resetCertificates()
         }
         stopSelf()
         return START_NOT_STICKY
@@ -238,6 +227,8 @@ class CustomCertService: Service() {
     // bound service
 
     private val binder = object: ICustomCertService.Stub() {
+
+        override fun resetCertificates() = this@CustomCertService.resetCertificates()
 
         override fun checkTrusted(raw: ByteArray, interactive: Boolean, foreground: Boolean, callback: IOnCertificateDecision) {
             val cert: X509Certificate? = try {
@@ -321,6 +312,19 @@ class CustomCertService: Service() {
             }
         }
 
+    }
+
+    private fun resetCertificates() {
+        synchronized(decisionLock) {
+            untrustedCerts.clear()
+            try {
+                for (alias in trustedKeyStore.aliases())
+                    trustedKeyStore.deleteEntry(alias)
+                saveKeyStore()
+            } catch(e: KeyStoreException) {
+                Constants.log.log(Level.SEVERE, "Couldn't reset custom certificates", e)
+            }
+        }
     }
 
     /** Returns false when Android will not allow a certificate-decision notification to be shown. */

@@ -80,7 +80,7 @@ class TrustCertificateActivity: AppCompatActivity() {
     }
 
 
-    class Model: ViewModel() {
+    internal class Model: ViewModel() {
 
         companion object {
             val certFactory = CertificateFactory.getInstance("X.509")!!

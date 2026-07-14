@@ -46,16 +46,11 @@ class CustomCertManagerTest {
         certificate = CertificateFactory.getInstance("X.509").generateCertificate(
             requireNotNull(javaClass.classLoader?.getResourceAsStream("sample.crt"))
         ) as X509Certificate
-        instrumentation.targetContext.startService(Intent(instrumentation.targetContext, CustomCertService::class.java).apply {
-            action = CustomCertService.CMD_RESET_CERTIFICATES
-        })
-        instrumentation.waitForIdleSync()
+        service.resetCertificates()
     }
 
     @After fun tearDown() {
-        instrumentation.targetContext.startService(Intent(instrumentation.targetContext, CustomCertService::class.java).apply {
-            action = CustomCertService.CMD_RESET_CERTIFICATES
-        })
+        service.resetCertificates()
     }
 
     @Test fun acceptThenTrustedCheckUsesTheRealServiceBinder() {

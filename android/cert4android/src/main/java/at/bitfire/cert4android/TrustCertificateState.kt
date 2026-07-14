@@ -15,7 +15,7 @@ package at.bitfire.cert4android
  * controller deliberately keeps the raw certificate together with its generation, so a
  * decision can only be made for exactly what was rendered.
  */
-class TrustCertificateState {
+internal class TrustCertificateState {
 
     class ParseRequest internal constructor(
         internal val version: Long,
