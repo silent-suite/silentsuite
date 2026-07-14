@@ -10,11 +10,15 @@ package at.bitfire.cert4android
 
 import android.app.PendingIntent
 import android.app.Service
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import org.conscrypt.Conscrypt
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -120,7 +124,8 @@ class CustomCertService: Service() {
     // started service
 
     override fun onStartCommand(intent: Intent?, flags: Int, id: Int): Int {
-        Constants.log.fine("Received command: $intent")
+        // Intent extras can contain raw certificate bytes; log only the command name.
+        Constants.log.fine("Received command: ${intent?.action}")
 
         when (intent?.action) {
             CMD_CERTIFICATION_DECISION -> {
@@ -147,7 +152,7 @@ class CustomCertService: Service() {
         return START_NOT_STICKY
     }
 
-    private fun onReceiveDecision(cert: X509Certificate, trusted: Boolean) {
+    private fun onReceiveDecision(cert: X509Certificate, trusted: Boolean, showRejectionToast: Boolean = true) {
         // remove notification
         val nm = NotificationUtils.createChannels(this)
         nm.cancel(CertUtils.getTag(cert), Constants.NOTIFICATION_CERT_DECISION)
@@ -164,7 +169,8 @@ class CustomCertService: Service() {
             }
         } else {
             untrustedCerts.add(cert)
-            Toast.makeText(this, R.string.service_rejected_temporarily, Toast.LENGTH_LONG).show()
+            if (showRejectionToast)
+                Toast.makeText(this, R.string.service_rejected_temporarily, Toast.LENGTH_LONG).show()
         }
 
         // notify receivers which are waiting for a decision
@@ -238,22 +244,19 @@ class CustomCertService: Service() {
                             putExtra(EXTRA_TRUSTED, false)
                         }
 
-                        val id = raw.contentHashCode()
-                        val notify = NotificationCompat.Builder(this@CustomCertService, NotificationUtils.CHANNEL_CERTIFICATES)
-                                .setSmallIcon(R.drawable.ic_lock_open_white)
-                                .setContentTitle(this@CustomCertService.getString(R.string.certificate_notification_connection_security))
-                                .setContentText(this@CustomCertService.getString(R.string.certificate_notification_user_interaction))
-                                .setSubText(cert.subjectDN.name)
-                                .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                                .setContentIntent(PendingIntent.getActivity(this@CustomCertService, id, decisionIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
-                                .setDeleteIntent(PendingIntent.getService(this@CustomCertService, id, rejectIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
-                                .build()
-                        val nm = NotificationUtils.createChannels(this@CustomCertService)
-                        nm.notify(CertUtils.getTag(cert), Constants.NOTIFICATION_CERT_DECISION, notify)
-
                         if (foreground) {
+                            // A foreground caller has a direct interaction path even if notification
+                            // permission is denied (or the system rejects the notification post).
+                            // Keep the existing activity flow so it can resolve all pending callbacks.
+                            postDecisionNotification(cert, raw, decisionIntent, rejectIntent)
                             decisionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             startActivity(decisionIntent)
+                        } else if (!postDecisionNotification(cert, raw, decisionIntent, rejectIntent)) {
+                            // A background caller has no other way to obtain a decision. Resolve every
+                            // waiting IPC callback now rather than leaving TLS handshakes to timeout.
+                            Constants.log.warning("Certificate decision notification unavailable; rejecting pending decision")
+                            onReceiveDecision(cert, false, showRejectionToast = false)
+                            return
                         }
 
                     } else {
@@ -272,6 +275,39 @@ class CustomCertService: Service() {
             }
         }
 
+    }
+
+    /** Returns false when Android will not allow a certificate-decision notification to be shown. */
+    private fun postDecisionNotification(
+        cert: X509Certificate,
+        raw: ByteArray,
+        decisionIntent: Intent,
+        rejectIntent: Intent
+    ): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+
+        val id = raw.contentHashCode()
+        val notification = NotificationCompat.Builder(this, NotificationUtils.CHANNEL_CERTIFICATES)
+            .setSmallIcon(R.drawable.ic_lock_open_white)
+            .setContentTitle(getString(R.string.certificate_notification_connection_security))
+            .setContentText(getString(R.string.certificate_notification_user_interaction))
+            .setSubText(cert.subjectDN.name)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setContentIntent(PendingIntent.getActivity(this, id, decisionIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .setDeleteIntent(PendingIntent.getService(this, id, rejectIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .build()
+
+        return try {
+            NotificationUtils.createChannels(this).notify(CertUtils.getTag(cert), Constants.NOTIFICATION_CERT_DECISION, notification)
+            true
+        } catch (e: SecurityException) {
+            // Do not include certificate material in logs.
+            Constants.log.warning("Certificate decision notification was rejected by the system")
+            false
+        }
     }
 
     override fun onBind(intent: Intent?) = binder

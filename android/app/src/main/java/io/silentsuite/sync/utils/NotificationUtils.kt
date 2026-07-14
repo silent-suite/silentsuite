@@ -10,6 +10,7 @@ package io.silentsuite.sync.utils
 
 import android.annotation.TargetApi
 import android.Manifest
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationChannelGroup
@@ -20,10 +21,16 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 
 object NotificationUtils {
+
+    const val REQUEST_CODE_POST_NOTIFICATIONS = 125
+    private const val PREFERENCES = "notification_permissions"
+    private const val KEY_POST_NOTIFICATIONS_REQUESTED = "post_notifications_requested"
 
     // notification IDs
     const val NOTIFY_EXTERNAL_FILE_LOGGING = 1
@@ -78,6 +85,28 @@ object NotificationUtils {
             builder.setLargeIcon(App.getLauncherBitmap(context))
 
         return builder
+    }
+
+    /**
+     * Requests notification permission once from a foreground Activity. Android 12L and
+     * earlier grant notification posting at install time, so they must never see this prompt.
+     * Returning true means the caller must wait for the permission result before starting a
+     * different runtime-permission request.
+     */
+    fun requestPermissionIfNeeded(activity: Activity): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+
+        val preferences = activity.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        if (preferences.getBoolean(KEY_POST_NOTIFICATIONS_REQUESTED, false))
+            return false
+
+        // Set this before opening the system dialog so recreation or dismissal cannot prompt again.
+        preferences.edit().putBoolean(KEY_POST_NOTIFICATIONS_REQUESTED, true).apply()
+        ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_CODE_POST_NOTIFICATIONS)
+        return true
     }
 
     /**

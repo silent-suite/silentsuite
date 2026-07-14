@@ -59,6 +59,7 @@ import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.InvitationsActivity
 import io.silentsuite.sync.ui.setup.LoginActivity
 import io.silentsuite.sync.utils.TaskProviderHandling
+import io.silentsuite.sync.utils.NotificationUtils
 import io.silentsuite.sync.utils.packageInstalled
 import com.google.android.material.navigation.NavigationView
 import com.google.android.material.snackbar.Snackbar
@@ -94,6 +95,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private var swipeRefreshLayout: SwipeRefreshLayout? = null
     private var accountListExpanded = false
     private var pendingExportKind: AndroidExportKind? = null
+    private var waitingForNotificationPermissionResult = false
 
     private val onItemClickListener = AdapterView.OnItemClickListener { parent, view, position, _ ->
         val list = parent as ListView
@@ -148,6 +150,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         pendingExportKind = savedInstanceState?.getString(KEY_PENDING_EXPORT_KIND)?.let { name ->
             runCatching { AndroidExportKind.valueOf(name) }.getOrNull()
         }
+        waitingForNotificationPermissionResult = savedInstanceState?.getBoolean(KEY_WAITING_FOR_NOTIFICATION_PERMISSION, false) ?: false
 
         // TODO(Phase2): Set username in Sentry crash reporting context
 
@@ -239,12 +242,30 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             model.loadAccount()
         }
 
-        PermissionsActivity.requestAllPermissions(this)
+        requestStartupPermissions()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         pendingExportKind?.let { outState.putString(KEY_PENDING_EXPORT_KIND, it.name) }
+        outState.putBoolean(KEY_WAITING_FOR_NOTIFICATION_PERMISSION, waitingForNotificationPermissionResult)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == NotificationUtils.REQUEST_CODE_POST_NOTIFICATIONS) {
+            waitingForNotificationPermissionResult = false
+            PermissionsActivity.requestAllPermissions(this)
+        }
+    }
+
+    private fun requestStartupPermissions() {
+        if (waitingForNotificationPermissionResult)
+            return
+
+        waitingForNotificationPermissionResult = NotificationUtils.requestPermissionIfNeeded(this)
+        if (!waitingForNotificationPermissionResult)
+            PermissionsActivity.requestAllPermissions(this)
     }
 
     private fun setupNavHeader(navigationView: NavigationView) {
@@ -1008,6 +1029,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val EXTRA_ACCOUNT = "account"
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
+        private const val KEY_WAITING_FOR_NOTIFICATION_PERMISSION = "waitingForNotificationPermission"
 
         fun newIntent(context: Context, account: Account): Intent =
             Intent(context, AccountActivity::class.java).putExtra(EXTRA_ACCOUNT, account)

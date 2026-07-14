@@ -17,6 +17,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
