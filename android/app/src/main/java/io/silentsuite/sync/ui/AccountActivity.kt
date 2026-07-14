@@ -8,6 +8,7 @@
 
 package io.silentsuite.sync.ui
 
+import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Activity

@@ -23,6 +23,7 @@ import org.junit.Rule
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.FileInputStream
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.concurrent.CountDownLatch
@@ -39,12 +40,16 @@ class CustomCertManagerTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private lateinit var service: ICustomCertService
     private lateinit var certificate: X509Certificate
+    private lateinit var secondCertificate: X509Certificate
 
     @Before fun setUp() {
         val binder: IBinder = services.bindService(Intent(instrumentation.targetContext, CustomCertService::class.java))
         service = ICustomCertService.Stub.asInterface(binder)
         certificate = CertificateFactory.getInstance("X.509").generateCertificate(
             requireNotNull(javaClass.classLoader?.getResourceAsStream("sample.crt"))
+        ) as X509Certificate
+        secondCertificate = CertificateFactory.getInstance("X.509").generateCertificate(
+            requireNotNull(javaClass.classLoader?.getResourceAsStream("second.crt"))
         ) as X509Certificate
         service.resetCertificates()
     }
@@ -99,28 +104,29 @@ class CustomCertManagerTest {
         // permission and is covered by the normal notification path above.
         assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
         val packageName = instrumentation.targetContext.packageName
-        instrumentation.uiAutomation.executeShellCommand(
-            "appops set $packageName POST_NOTIFICATION deny"
-        ).close()
+        val originalMode = Regex("POST_NOTIFICATION:\\s+(\\w+)")
+            .find(shell("appops get $packageName POST_NOTIFICATION"))?.groupValues?.get(1)
+        shell("appops set $packageName POST_NOTIFICATION deny")
         instrumentation.waitForIdleSync()
         try {
             val callback = Callback()
             service.checkTrusted(certificate.encoded, true, false, callback)
             callback.assertRejected()
         } finally {
-            instrumentation.uiAutomation.executeShellCommand(
-                "appops set $packageName POST_NOTIFICATION allow"
-            ).close()
+            if (originalMode == null)
+                shell("appops reset $packageName POST_NOTIFICATION")
+            else
+                shell("appops set $packageName POST_NOTIFICATION $originalMode")
             instrumentation.waitForIdleSync()
         }
     }
 
     @Test fun activityRecreationAndNewIntentDeliverTheRenderedGenerationDecision() {
         val old = beginForegroundDecision()
-        val current = beginForegroundDecision()
+        val current = beginForegroundDecision(secondCertificate)
         ActivityScenario.launch<TrustCertificateActivity>(activityIntent(old.generation)).use { scenario ->
             // singleInstance delivery must supersede the old parse/render snapshot.
-            scenario.onActivity { it.onNewIntent(activityIntent(current.generation)) }
+            scenario.onActivity { it.onNewIntent(activityIntent(current.generation, secondCertificate)) }
             scenario.recreate()
             awaitRenderedCertificate(scenario)
             // This is the actual bound layout click, not a direct service command: it proves the
@@ -144,10 +150,10 @@ class CustomCertManagerTest {
         pending.callback.assertAccepted()
     }
 
-    private fun beginForegroundDecision(): Pending {
+    private fun beginForegroundDecision(cert: X509Certificate = certificate): Pending {
         val monitor = instrumentation.addMonitor(TrustCertificateActivity::class.java.name, null, false)
         val callback = Callback()
-        service.checkTrusted(certificate.encoded, true, true, callback)
+        service.checkTrusted(cert.encoded, true, true, callback)
         val activity = instrumentation.waitForMonitorWithTimeout(monitor, 3_000)
         instrumentation.removeMonitor(monitor)
         requireNotNull(activity) { "Foreground certificate decision did not launch TrustCertificateActivity" }
@@ -166,10 +172,15 @@ class CustomCertManagerTest {
         })
     }
 
-    private fun activityIntent(generation: String) = Intent(instrumentation.targetContext, TrustCertificateActivity::class.java).apply {
-        putExtra(TrustCertificateActivity.EXTRA_CERTIFICATE, certificate.encoded)
+    private fun activityIntent(generation: String, cert: X509Certificate = certificate) = Intent(instrumentation.targetContext, TrustCertificateActivity::class.java).apply {
+        putExtra(TrustCertificateActivity.EXTRA_CERTIFICATE, cert.encoded)
         putExtra(CustomCertService.EXTRA_DECISION_GENERATION, generation)
     }
+
+    private fun shell(command: String): String =
+        instrumentation.uiAutomation.executeShellCommand(command).use { descriptor ->
+            FileInputStream(descriptor.fileDescriptor).bufferedReader().readText()
+        }
 
     private fun awaitRenderedCertificate(scenario: ActivityScenario<TrustCertificateActivity>) {
         val rendered = CountDownLatch(1)
