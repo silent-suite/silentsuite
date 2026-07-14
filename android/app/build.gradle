@@ -208,6 +208,7 @@ dependencies {
     androidTestImplementation 'androidx.test:core:1.6.1'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'junit:junit:4.13.2'
+    androidTestImplementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
     androidTestImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
     // UIAutomator for store screenshot capture instrumentation tests
     androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'

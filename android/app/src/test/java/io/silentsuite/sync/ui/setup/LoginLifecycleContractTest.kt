@@ -43,6 +43,7 @@ class LoginLifecycleContractTest {
     @Test
     fun accountRecreationRuntimeJobUsesTheRequiredUnsignedMatrixAndPinnedRunner() {
         val workflow = File("../../.github/workflows/build-android.yml").readText()
+        val appBuild = File("build.gradle").readText()
         val job = workflow.substringAfter("account-recreation-runtime:").substringBefore("  # ─────────────────────────────────────────────────────────────────────\n  # Release")
         val runnerReference = Regex("ReactiveCircus/android-emulator-runner@([0-9a-f]{40})").find(job)
 
@@ -55,5 +56,6 @@ class LoginLifecycleContractTest {
         assertTrue(job.contains("-PrequireEtebase16Kb=true"))
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))
         assertFalse(job.contains("secrets."))
+        assertTrue(appBuild.contains("androidTestImplementation \"org.jetbrains.kotlin:kotlin-stdlib:\$kotlin_version\""))
     }
 }
