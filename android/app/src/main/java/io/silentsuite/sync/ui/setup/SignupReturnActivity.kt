@@ -10,7 +10,15 @@ class SignupReturnActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Toast.makeText(this, R.string.signup_returned_from_web, Toast.LENGTH_LONG).show()
-        startActivity(Intent(this, LoginActivity::class.java))
+        val continuationToken = intent.data?.getQueryParameter("continuation")
+        if (SignupContinuationRegistry.isValid(continuationToken)) {
+            startActivity(Intent(this, LoginActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(LoginActivity.EXTRA_SIGNUP_CONTINUATION_TOKEN, continuationToken))
+        } else {
+            // A process-death callback cannot safely resume an authenticator flow.
+            startActivity(Intent(this, LoginActivity::class.java))
+        }
         finish()
     }
 }

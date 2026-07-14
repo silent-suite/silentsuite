@@ -57,6 +57,7 @@ class CreateAccountFragment : DialogFragment() {
             throw e
         }
         if (account != null) {
+            (activity as? LoginActivity)?.onAccountCreated(account)
             activity.setResult(Activity.RESULT_OK)
             SetupSecretHolder.setPendingSession(account.name, config.etebaseSession)
             SetupSecretHolder.clearCredentialsAndConfiguration()

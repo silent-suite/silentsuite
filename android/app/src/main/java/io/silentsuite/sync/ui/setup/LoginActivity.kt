@@ -18,6 +18,7 @@ import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.BaseActivity
 import io.silentsuite.sync.ui.WebViewActivity
+import java.util.UUID
 
 /**
  * Activity to initially connect to a server and create an account.
@@ -28,10 +29,17 @@ class LoginActivity : BaseActivity() {
     companion object {
         const val EXTRA_INITIAL_USERNAME = "io.silentsuite.sync.extra.INITIAL_USERNAME"
         const val EXTRA_INITIAL_PASSWORD = "io.silentsuite.sync.extra.INITIAL_PASSWORD"
+        const val EXTRA_SIGNUP_CONTINUATION_TOKEN = "io.silentsuite.sync.extra.SIGNUP_CONTINUATION_TOKEN"
+        private const val KEY_FLOW_ID = "signup_flow_id"
     }
+
+    private lateinit var authenticatorResponse: AuthenticatorResponseController
+    private lateinit var flowId: String
 
     public override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        flowId = savedInstanceState?.getString(KEY_FLOW_ID) ?: UUID.randomUUID().toString()
+        authenticatorResponse = AuthenticatorResponseController(intent, savedInstanceState)
 
         if (savedInstanceState == null) {
             showLoginFragment(intent)
@@ -42,7 +50,36 @@ class LoginActivity : BaseActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        showLoginFragment(intent)
+        val continuationToken = intent.getStringExtra(EXTRA_SIGNUP_CONTINUATION_TOKEN)
+        if (SignupContinuationRegistry.consume(continuationToken, flowId)) {
+            showLoginFragment(intent)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        authenticatorResponse.onSaveInstanceState(outState)
+        outState.putString(KEY_FLOW_ID, flowId)
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun finish() {
+        val wasCompleted = authenticatorResponse.isCompleted
+        SignupContinuationRegistry.remove(flowId)
+        authenticatorResponse.finish()
+        if (!wasCompleted)
+            SetupSecretHolder.clearProcessOnlySecrets()
+        super.finish()
+    }
+
+    fun onAccountCreated(account: android.accounts.Account) {
+        authenticatorResponse.complete(account)
+    }
+
+    fun issueSignupCallbackUri(): android.net.Uri {
+        val token = SignupContinuationRegistry.issue(flowId)
+        return Constants.signupCompleteReturnUri.buildUpon()
+            .appendQueryParameter("continuation", token)
+            .build()
     }
 
     private fun showLoginFragment(intent: Intent) {

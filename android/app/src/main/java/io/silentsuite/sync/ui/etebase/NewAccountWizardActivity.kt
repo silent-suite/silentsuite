@@ -64,7 +64,7 @@ class NewAccountWizardActivity : BaseActivity() {
     // the user inside the app on the just-created account.
     override fun finish() {
         startActivity(
-            Intent(this, AccountActivity::class.java)
+            AccountActivity.newIntent(this, account)
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
         )
         super.finish()

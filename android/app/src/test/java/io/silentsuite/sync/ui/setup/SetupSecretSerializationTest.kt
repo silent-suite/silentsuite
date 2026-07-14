@@ -1,6 +1,7 @@
 package io.silentsuite.sync.ui.setup
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -39,4 +40,27 @@ class SetupSecretSerializationTest {
             assertFalse("Setup secret serialization pattern must stay removed: $pattern", source.contains(pattern))
         }
     }
+
+    @Test
+    fun setupSecretsAreNeverPutIntoAndroidStateAndPasswordViewStateIsDisabled() {
+        val setupSource = File(sourceRoot, "io/silentsuite/sync/ui/setup").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .joinToString("\n") { it.readText() }
+        val loginLayout = File("src/main/res/layout/login_credentials_fragment.xml").readText()
+
+        listOf(
+            "putString(\"password\"",
+            "putString(\"session\"",
+            "putExtra(\"password\"",
+            "putExtra(\"session\"",
+            "SavedStateHandle",
+            "LoginCredentials : Parcelable",
+            "Serializable"
+        ).forEach { pattern ->
+            assertFalse("Setup secrets must not be serialized through Android state: $pattern", setupSource.contains(pattern))
+        }
+        assertTrue("The actual login password field must not save view state", loginLayout.contains(
+            "android:id=\"@+id/login_password\"") && loginLayout.contains("android:saveEnabled=\"false\""))
+    }
+
 }

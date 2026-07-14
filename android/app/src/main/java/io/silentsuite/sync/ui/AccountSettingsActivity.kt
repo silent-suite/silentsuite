@@ -8,7 +8,6 @@
 
 package io.silentsuite.sync.ui
 
-import android.content.Intent
 import android.os.Bundle
 
 /**
@@ -20,7 +19,7 @@ class AccountSettingsActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Redirect to the consolidated App Settings screen
-        startActivity(Intent(this, AppSettingsActivity::class.java))
+        startActivity(AppSettingsActivity.newIntent(this, intent.getParcelableExtra(AppSettingsActivity.EXTRA_ACCOUNT)))
         finish()
     }
 }

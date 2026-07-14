@@ -59,9 +59,10 @@ class LoginCredentialsFragment : Fragment() {
 
         val createAccount = v.findViewById<View>(R.id.create_account) as TextView
         createAccount.setOnClickListener {
+            val callbackUri = (requireActivity() as LoginActivity).issueSignupCallbackUri()
             val signupUri = Constants.webAppUri.buildUpon()
                 .appendEncodedPath("signup")
-                .appendQueryParameter("return_to", Constants.signupCompleteReturnUri.toString())
+                .appendQueryParameter("return_to", callbackUri.toString())
                 .build()
             startActivity(Intent(Intent.ACTION_VIEW, signupUri))
         }
@@ -71,7 +72,8 @@ class LoginCredentialsFragment : Fragment() {
             val credentials = validateLoginData()
             if (credentials != null) {
                 SetupSecretHolder.setLoginCredentials(credentials)
-                DetectConfigurationFragment.newInstance().show(requireFragmentManager(), null)
+                if (requireFragmentManager().findFragmentByTag(DETECT_CONFIGURATION_TAG) == null)
+                    DetectConfigurationFragment.newInstance().show(requireFragmentManager(), DETECT_CONFIGURATION_TAG)
             }
         }
 
@@ -178,6 +180,7 @@ class LoginCredentialsFragment : Fragment() {
 
     companion object {
         private const val KEY_ADVANCED_EXPANDED = "advancedExpanded"
+        private const val DETECT_CONFIGURATION_TAG = "detect_configuration"
 
         fun newInstance(initialUsername: String?, initialPassword: String?): LoginCredentialsFragment {
             val ret = LoginCredentialsFragment()
