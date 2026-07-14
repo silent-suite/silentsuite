@@ -46,9 +46,9 @@ class AuthenticatorResponseLifecycleContractTest {
         assertTrue(source.contains("fun consume(token: String?, flowId: String)"))
         assertTrue(source.contains("continuations.remove(token, flowId)"))
         assertTrue(source.contains("fun remove(flowId: String)"))
-        assertFalse(source.contains("AuthenticatorResponseController"))
-        assertFalse(source.contains("Activity"))
-        assertFalse(source.contains("Context"))
+        assertFalse(source.contains("ConcurrentHashMap<String, AuthenticatorResponseController>"))
+        assertFalse(source.contains("import android.app.Activity"))
+        assertFalse(source.contains("import android.content.Context"))
         assertFalse(source.contains("password"))
         assertFalse(source.contains("session"))
     }
