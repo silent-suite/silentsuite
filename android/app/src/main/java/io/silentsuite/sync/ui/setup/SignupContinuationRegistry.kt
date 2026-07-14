@@ -8,6 +8,7 @@ object SignupContinuationRegistry {
     private val continuations = ConcurrentHashMap<String, String>()
 
     fun issue(flowId: String): String {
+        remove(flowId)
         val token = UUID.randomUUID().toString()
         continuations[token] = flowId
         return token

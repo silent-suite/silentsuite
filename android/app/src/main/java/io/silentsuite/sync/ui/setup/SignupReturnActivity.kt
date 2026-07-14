@@ -17,7 +17,9 @@ class SignupReturnActivity : Activity() {
                 .putExtra(LoginActivity.EXTRA_SIGNUP_CONTINUATION_TOKEN, continuationToken))
         } else {
             // A process-death callback cannot safely resume an authenticator flow.
-            startActivity(Intent(this, LoginActivity::class.java))
+            // Clear any restored task so its obsolete response is finished/canceled.
+            startActivity(Intent(this, LoginActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
         }
         finish()
     }

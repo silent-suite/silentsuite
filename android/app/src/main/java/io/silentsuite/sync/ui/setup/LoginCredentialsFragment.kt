@@ -36,7 +36,7 @@ class LoginCredentialsFragment : Fragment() {
     internal lateinit var showAdvanced: TextView
     internal lateinit var customServer: EditText
     private var advancedExpanded = false
-
+    private var submissionInProgress = false
     internal var initialUsername: String? = null
     internal var initialPassword: String? = null
 
@@ -51,6 +51,10 @@ class LoginCredentialsFragment : Fragment() {
         editUrlPassword = v.findViewById<TextInputLayout>(R.id.url_password)
         showAdvanced = v.findViewById<TextView>(R.id.show_advanced)
         customServer = v.findViewById<TextInputEditText>(R.id.custom_server)
+
+        parentFragmentManager.setFragmentResultListener(SUBMISSION_FAILED_RESULT, this) { _, _ ->
+            submissionInProgress = false
+        }
 
         if (savedInstanceState == null) {
             editUserName.setText(initialUsername ?: "")
@@ -70,10 +74,12 @@ class LoginCredentialsFragment : Fragment() {
         val login = v.findViewById<View>(R.id.login) as Button
         login.setOnClickListener {
             val credentials = validateLoginData()
-            if (credentials != null) {
+            if (credentials != null && !submissionInProgress &&
+                parentFragmentManager.findFragmentByTag(DETECT_CONFIGURATION_TAG) == null) {
+                // This guard closes the gap before DialogFragment.show() commits its transaction.
+                submissionInProgress = true
                 SetupSecretHolder.setLoginCredentials(credentials)
-                if (requireFragmentManager().findFragmentByTag(DETECT_CONFIGURATION_TAG) == null)
-                    DetectConfigurationFragment.newInstance().show(requireFragmentManager(), DETECT_CONFIGURATION_TAG)
+                DetectConfigurationFragment.newInstance().show(requireFragmentManager(), DETECT_CONFIGURATION_TAG)
             }
         }
 
@@ -181,12 +187,12 @@ class LoginCredentialsFragment : Fragment() {
     companion object {
         private const val KEY_ADVANCED_EXPANDED = "advancedExpanded"
         private const val DETECT_CONFIGURATION_TAG = "detect_configuration"
+        const val SUBMISSION_FAILED_RESULT = "login_submission_failed"
 
-        fun newInstance(initialUsername: String?, initialPassword: String?): LoginCredentialsFragment {
-            val ret = LoginCredentialsFragment()
-            ret.initialUsername = initialUsername
-            ret.initialPassword = initialPassword
-            return ret
-        }
+        fun newInstance(initialUsername: String?, initialPassword: String?): LoginCredentialsFragment =
+            LoginCredentialsFragment().also {
+                it.initialUsername = initialUsername
+                it.initialPassword = initialPassword
+            }
     }
 }

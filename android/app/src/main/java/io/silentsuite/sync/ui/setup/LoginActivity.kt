@@ -13,7 +13,6 @@ import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 
-import io.silentsuite.sync.BuildConfig
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.BaseActivity
@@ -22,13 +21,11 @@ import java.util.UUID
 
 /**
  * Activity to initially connect to a server and create an account.
- * Fields for server/user data can be pre-filled with extras in the Intent.
+ * Login credentials are entered only in the UI and remain process-only.
  */
 class LoginActivity : BaseActivity() {
 
     companion object {
-        const val EXTRA_INITIAL_USERNAME = "io.silentsuite.sync.extra.INITIAL_USERNAME"
-        const val EXTRA_INITIAL_PASSWORD = "io.silentsuite.sync.extra.INITIAL_PASSWORD"
         const val EXTRA_SIGNUP_CONTINUATION_TOKEN = "io.silentsuite.sync.extra.SIGNUP_CONTINUATION_TOKEN"
         private const val KEY_FLOW_ID = "signup_flow_id"
     }
@@ -42,7 +39,7 @@ class LoginActivity : BaseActivity() {
         authenticatorResponse = AuthenticatorResponseController(intent, savedInstanceState)
 
         if (savedInstanceState == null) {
-            showLoginFragment(intent)
+            showLoginFragment()
         }
 
     }
@@ -52,7 +49,7 @@ class LoginActivity : BaseActivity() {
         setIntent(intent)
         val continuationToken = intent.getStringExtra(EXTRA_SIGNUP_CONTINUATION_TOKEN)
         if (SignupContinuationRegistry.consume(continuationToken, flowId)) {
-            showLoginFragment(intent)
+            showLoginFragment()
         }
     }
 
@@ -82,13 +79,9 @@ class LoginActivity : BaseActivity() {
             .build()
     }
 
-    private fun showLoginFragment(intent: Intent) {
-        // Optional extras are only for debug screenshot instrumentation.
-        // Do not accept plaintext credential prefill extras in release builds.
-        val initialUsername = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_USERNAME) else null
-        val initialPassword = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_PASSWORD) else null
+    private fun showLoginFragment() {
         supportFragmentManager.beginTransaction()
-                .replace(android.R.id.content, LoginCredentialsFragment.newInstance(initialUsername, initialPassword))
+                .replace(android.R.id.content, LoginCredentialsFragment())
                 .commit()
     }
 

@@ -78,6 +78,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private lateinit var settings: AccountSettings
     private var accountInfo: AccountInfo? = null
 
+    internal val hasDeliveredAccountInfo: Boolean
+        get() = accountInfo != null
+
     internal var listCalDAV: ListView? = null
     internal var listCardDAV: ListView? = null
     internal var listTaskDAV: ListView? = null

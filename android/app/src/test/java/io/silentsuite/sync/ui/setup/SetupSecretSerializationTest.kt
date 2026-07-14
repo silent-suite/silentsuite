@@ -63,4 +63,20 @@ class SetupSecretSerializationTest {
             "android:id=\"@+id/login_password\"") && loginLayout.contains("android:saveEnabled=\"false\""))
     }
 
+    @Test
+    fun loginActivityNeverAcceptsCredentialsFromAnIntent() {
+        val loginSource = File(sourceRoot, "io/silentsuite/sync/ui/setup/LoginActivity.kt").readText()
+
+        listOf(
+            "EXTRA_INITIAL_PASSWORD",
+            "EXTRA_INITIAL_USERNAME",
+            "getStringExtra(EXTRA_INITIAL_PASSWORD)",
+            "getStringExtra(EXTRA_INITIAL_USERNAME)",
+            "putExtra(EXTRA_INITIAL_PASSWORD",
+            "putExtra(EXTRA_INITIAL_USERNAME"
+        ).forEach { pattern ->
+            assertFalse("LoginActivity must not transport credentials through Intent extras: $pattern", loginSource.contains(pattern))
+        }
+    }
+
 }

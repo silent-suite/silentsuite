@@ -41,6 +41,7 @@ class DetectConfigurationFragment : DialogFragment() {
         if (credentials == null) {
             Logger.log.warning("Setup login credentials expired before configuration detection")
             SetupSecretHolder.clearLoginCredentials()
+            parentFragmentManager.setFragmentResult(LoginCredentialsFragment.SUBMISSION_FAILED_RESULT, Bundle())
             parentFragmentManager.beginTransaction()
                     .add(NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
                     .commitAllowingStateLoss()
@@ -83,6 +84,8 @@ class DetectConfigurationFragment : DialogFragment() {
             SetupSecretHolder.clearProcessOnlySecrets()
         else
             SetupSecretHolder.clearLoginCredentials()
+        if (data == null || data.isFailed)
+            parentFragmentManager.setFragmentResult(LoginCredentialsFragment.SUBMISSION_FAILED_RESULT, Bundle())
         dismissAllowingStateLoss()
     }
 
