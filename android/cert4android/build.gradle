@@ -13,7 +13,8 @@ android {
     compileSdkVersion rootProject.ext.compileSdkVersion
 
     defaultConfig {
-        minSdkVersion 14            // Android 4.0
+        // cert4android is consumed only by this API-21 application.
+        minSdkVersion 21            // Android 5.0
         targetSdkVersion 33
     }
 
@@ -38,7 +39,8 @@ android {
 }
 
 // Keep release-library packaging unchanged. Only the generated androidTest APK
-// exceeds the 64K limit (68,523 references) and needs multidex on API 14.
+// exceeds the single-DEX reference limit (68,523 references). API 21 natively
+// loads the additional DEX files, so no legacy multidex support library is needed.
 androidComponents {
     beforeVariants(selector().all()) { variantBuilder ->
         variantBuilder.androidTest?.enableMultiDex = true
@@ -63,7 +65,6 @@ dependencies {
     androidTestImplementation "androidx.test:core:${androidX.testCore}"
     androidTestImplementation "androidx.test.ext:junit:${androidX.testExtJunit}"
     androidTestImplementation "androidx.test.espresso:espresso-core:${androidX.espresso}"
-    androidTestImplementation 'androidx.multidex:multidex:2.0.1'
     androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.9.0'
 
     testImplementation 'junit:junit:4.13'

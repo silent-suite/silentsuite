@@ -2,59 +2,6 @@
 <!-- Dark theme overrides for SilentSuite -->
 <resources>
 
-    <!-- Dark mode info card background -->
-    <color name="infoColor">#0F2A3D</color>
-
-    <!-- Nav header colors (dark mode) -->
-    <color name="nav_header_email">@color/teal400</color>
-    <color name="nav_header_subtitle">#B0BEC5</color>
-
-    <!-- Dark mode AppTheme overrides -->
-    <style name="AppTheme" parent="Theme.MaterialComponents.DayNight">
-        <item name="colorPrimary">@color/navy700</item>
-        <item name="colorPrimaryDark">@color/navy900</item>
-        <item name="colorPrimaryVariant">@color/navy600</item>
-        <item name="colorOnPrimary">@android:color/white</item>
-
-        <item name="colorSecondary">@color/teal400</item>
-        <item name="colorSecondaryVariant">@color/teal500</item>
-        <item name="colorOnSecondary">@color/navy900</item>
-
-        <item name="colorError">@color/errorColor</item>
-        <item name="colorOnError">@android:color/white</item>
-
-        <item name="android:colorBackground">@color/navy900</item>
-        <item name="colorSurface">@color/navy600</item>
-        <item name="colorOnSurface">@android:color/white</item>
-
-        <!-- Dark mode text colors -->
-        <item name="android:textColorPrimary">@color/grey200</item>
-        <item name="android:textColorSecondary">@color/navy100</item>
-        <item name="android:textColorHint">@color/navy100</item>
-
-        <!-- Force white text/icons on the dark ActionBar -->
-        <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
-
-        <!-- Solid navy system bars keep light status/navigation icons readable. -->
-        <item name="android:statusBarColor">@color/navy700</item>
-        <item name="android:navigationBarColor">@color/navy700</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
-
-        <!-- Shared rounded dialog treatment for Material dialogs. -->
-        <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
-        <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
-    </style>
-
-    <style name="AppTheme.NoActionBar">
-        <item name="windowActionBar">false</item>
-        <item name="windowNoTitle">true</item>
-        <item name="android:statusBarColor">@color/navy700</item>
-        <item name="android:navigationBarColor">@color/navy700</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
-    </style>
-
     <style name="AppTheme.Dialog.Alert" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
         <item name="colorAccent">@color/teal400</item>
         <item name="colorPrimary">@color/teal400</item>

@@ -32,7 +32,7 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     private fun applyReadableSystemBars() {
-        val systemBarColor = ContextCompat.getColor(this, R.color.navy700)
+        val systemBarColor = ContextCompat.getColor(this, R.color.semantic_system_bar)
 
         window.statusBarColor = systemBarColor
         window.navigationBarColor = systemBarColor
