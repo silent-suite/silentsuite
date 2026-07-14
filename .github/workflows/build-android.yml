@@ -260,12 +260,16 @@ jobs:
             "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar" \
             --output "$RUNNER_TEMP/bundletool.jar"
           echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum --check --strict
+          umask 077
+          BUNDLETOOL_PASSWORD_FILE="$RUNNER_TEMP/keystore/bundletool-password"
+          printf '%s' "$KSTOREPWD" > "$BUNDLETOOL_PASSWORD_FILE"
           java -jar "$RUNNER_TEMP/bundletool.jar" build-apks \
             --bundle app/build/outputs/bundle/release/app-release.aab \
             --output build/privacy-evidence/signed-release.apks \
             --mode universal \
             --ks="$KEYSTORE_PATH" --ks-key-alias="$KEY_ALIAS" \
-            --ks-pass=env:KSTOREPWD --key-pass=env:KSTOREPWD
+            --ks-pass="file:$BUNDLETOOL_PASSWORD_FILE" \
+            --key-pass="file:$BUNDLETOOL_PASSWORD_FILE"
           unzip -q build/privacy-evidence/signed-release.apks \
             -d build/privacy-evidence/signed-release-splits
           test -s app/build/outputs/mapping/release/mapping.txt
