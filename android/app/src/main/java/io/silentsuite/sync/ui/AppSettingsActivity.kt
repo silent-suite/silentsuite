@@ -71,6 +71,10 @@ class AppSettingsActivity : BaseActivity() {
         private var account: Account? = null
         private var accountSettings: AccountSettings? = null
 
+        private inline fun <reified T : Preference> requirePreference(key: String): T =
+            findPreference<T>(key)
+                ?: throw IllegalStateException("Required preference '$key' is missing from settings_app")
+
         override fun onCreate(savedInstanceState: Bundle?) {
             settings = requireContext().getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE)
 
@@ -99,7 +103,7 @@ class AppSettingsActivity : BaseActivity() {
             setupSyncSettings()
 
             // --- Encryption / Change password ---
-            val prefEncryptionPassword = findPreference("password")
+            val prefEncryptionPassword = requirePreference<Preference>("password")
             if (account != null) {
                 prefEncryptionPassword.onPreferenceClickListener = Preference.OnPreferenceClickListener { _ ->
                     startActivity(ChangeEncryptionPasswordActivity.newIntent(requireActivity(), account!!))
@@ -111,7 +115,7 @@ class AppSettingsActivity : BaseActivity() {
             }
 
             // --- Theme ---
-            val prefTheme = findPreference("theme_mode") as ListPreference
+            val prefTheme = requirePreference<ListPreference>("theme_mode")
             val currentMode = settings.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
             prefTheme.value = currentMode.toString()
             prefTheme.summary = when (currentMode) {
@@ -132,11 +136,11 @@ class AppSettingsActivity : BaseActivity() {
             }
 
             // --- UI settings ---
-            findPreference("notification_settings").apply {
+            requirePreference<Preference>("notification_settings").apply {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                     onPreferenceClickListener = Preference.OnPreferenceClickListener {
                         startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, requireContext().packageName)
                         })
                         false
                     }
@@ -144,13 +148,13 @@ class AppSettingsActivity : BaseActivity() {
                     isVisible = false
             }
 
-            prefResetHints = findPreference("reset_hints")
+            prefResetHints = requirePreference<Preference>("reset_hints")
 
-            val prefChangeNotification = findPreference("show_change_notification") as SwitchPreferenceCompat
+            val prefChangeNotification = requirePreference<SwitchPreferenceCompat>("show_change_notification")
             prefChangeNotification.isChecked = requireContext().defaultSharedPreferences.getBoolean(App.CHANGE_NOTIFICATION, true)
 
             // --- Sync: Prefer Tasks.org ---
-            prefPreferTasksOrg = findPreference("prefer_tasksorg") as SwitchPreferenceCompat
+            prefPreferTasksOrg = requirePreference<SwitchPreferenceCompat>("prefer_tasksorg")
             prefPreferTasksOrg.isChecked = requireContext().defaultSharedPreferences.getBoolean(App.PREFER_TASKSORG, false)
             prefPreferTasksOrg.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
                 requireContext().defaultSharedPreferences.edit().putBoolean(App.PREFER_TASKSORG, newValue as Boolean).apply()
@@ -159,14 +163,14 @@ class AppSettingsActivity : BaseActivity() {
             }
 
             // --- Connection: Proxy ---
-            prefOverrideProxy = findPreference("override_proxy") as SwitchPreferenceCompat
+            prefOverrideProxy = requirePreference<SwitchPreferenceCompat>("override_proxy")
             prefOverrideProxy.isChecked = settings.getBoolean(App.OVERRIDE_PROXY, false)
             prefOverrideProxy.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
                 settings.edit().putBoolean(App.OVERRIDE_PROXY, newValue as Boolean).apply()
                 true
             }
 
-            prefProxyHost = findPreference("proxy_host") as EditTextPreference
+            prefProxyHost = requirePreference<EditTextPreference>("proxy_host")
             val proxyHost = settings.getString(App.OVERRIDE_PROXY_HOST, App.OVERRIDE_PROXY_HOST_DEFAULT)
             prefProxyHost.text = proxyHost
             prefProxyHost.summary = proxyHost
@@ -184,7 +188,7 @@ class AppSettingsActivity : BaseActivity() {
                 true
             }
 
-            prefProxyPort = findPreference("proxy_port") as EditTextPreference
+            prefProxyPort = requirePreference<EditTextPreference>("proxy_port")
             val proxyPort = settings.getString(App.OVERRIDE_PROXY_PORT, App.OVERRIDE_PROXY_PORT_DEFAULT.toString()) ?: App.OVERRIDE_PROXY_PORT_DEFAULT.toString()
             prefProxyPort.text = proxyPort
             prefProxyPort.summary = proxyPort
@@ -203,10 +207,10 @@ class AppSettingsActivity : BaseActivity() {
             }
 
             // --- Security ---
-            prefDistrustSystemCerts = findPreference("distrust_system_certs") as SwitchPreferenceCompat
+            prefDistrustSystemCerts = requirePreference<SwitchPreferenceCompat>("distrust_system_certs")
             prefDistrustSystemCerts.isChecked = settings.getBoolean(App.DISTRUST_SYSTEM_CERTIFICATES, false)
 
-            findPreference("reset_certificates").apply {
+            requirePreference<Preference>("reset_certificates").apply {
                 isVisible = BuildConfig.customCerts
                 isEnabled = true
                 onPreferenceClickListener = Preference.OnPreferenceClickListener {
@@ -223,7 +227,7 @@ class AppSettingsActivity : BaseActivity() {
             val acctSettings = accountSettings
 
             // Sync interval
-            val prefSync = findPreference("sync_interval") as ListPreference
+            val prefSync = requirePreference<ListPreference>("sync_interval")
             if (acctSettings != null) {
                 val syncInterval = acctSettings.getSyncInterval(CalendarContract.AUTHORITY)
                 if (syncInterval != null) {
@@ -256,7 +260,7 @@ class AppSettingsActivity : BaseActivity() {
             }
 
             // WiFi only
-            val prefWifiOnly = findPreference("sync_wifi_only") as SwitchPreferenceCompat
+            val prefWifiOnly = requirePreference<SwitchPreferenceCompat>("sync_wifi_only")
             if (acctSettings != null) {
                 prefWifiOnly.isChecked = acctSettings.syncWifiOnly
                 prefWifiOnly.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, wifiOnly ->
@@ -268,7 +272,7 @@ class AppSettingsActivity : BaseActivity() {
             }
 
             // WiFi SSID
-            val prefWifiOnlySSID = findPreference("sync_wifi_only_ssid") as EditTextPreference
+            val prefWifiOnlySSID = requirePreference<EditTextPreference>("sync_wifi_only_ssid")
             if (acctSettings != null) {
                 val onlySSID = acctSettings.syncWifiOnlySSID
                 prefWifiOnlySSID.text = onlySSID
@@ -291,7 +295,7 @@ class AppSettingsActivity : BaseActivity() {
         }
 
         private fun initSelectLanguageList() {
-            val listPreference = findPreference("select_language") as ListPreference
+            val listPreference = requirePreference<ListPreference>("select_language")
             lifecycleScope.launch {
                 val locales = withContext(Dispatchers.IO) {
                     LanguageUtils.getAppLanguages(requireContext())
@@ -309,7 +313,7 @@ class AppSettingsActivity : BaseActivity() {
 
                     settings.edit().putString(App.FORCE_LANGUAGE, newValue.toString()).apply()
 
-                    val intent = Intent(context, AccountsActivity::class.java)
+                    val intent = Intent(requireContext(), AccountsActivity::class.java)
                     intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)
