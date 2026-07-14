@@ -5,6 +5,7 @@ import {
   _resetForTests as resetDataCache,
   _setEncryptedCacheAvailableForTests,
   _setEnvelopeKeyForTests,
+  getMeta,
   getItemsByType,
 } from '@/app/lib/data-cache'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
@@ -22,6 +23,8 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({ useLabelSuggestions
 
 import { useEtebaseStore } from '../use-etebase-store'
 import { useSyncStore } from '../use-sync-store'
+import { useContactStore } from '../use-contact-store'
+import { useContactListStore } from '../use-contact-list-store'
 
 // These tests exercise real fake-IndexedDB transactions and remote-replay
 // reconciliation. Leave headroom for heavily loaded CI/review workers so a
@@ -96,33 +99,57 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     toastMock.showErrorToast.mockReset()
   })
 
-  it('queues an offline favorite-style update without plaintext queue content', async () => {
-    const sentinel = 'BEGIN:VCARD\r\nFN:PRIVATE FAVORITE\r\nX-SILENTSUITE-FAVORITE:1\r\nEND:VCARD'
+  it('persists and replays an offline favorite update from a cold cache without plaintext queue content', async () => {
+    // Production leaves the general local-cache feature disabled. This
+    // favorite-specific path must nevertheless create its encrypted envelope
+    // and fingerprint from an empty IndexedDB database before it queues.
+    await resetDataCache()
+    _setEncryptedCacheAvailableForTests(true)
+    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', '')
+    expect(await getMeta()).toBeNull()
     setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
+    useEtebaseStore.setState({
+      collections: { calendar: [], tasks: [], contacts: [collection('col-1')], preferences: [] },
+    } as any)
+    useContactListStore.setState({
+      lists: [{ id: 'col-1', name: 'Contacts', color: '#fff', visible: true, accessLevel: 2 }],
+      activeListId: 'col-1',
+    })
+    useContactStore.setState({
+      contacts: [{
+        id: 'item-1', uid: 'contact-uid', displayName: 'PRIVATE FAVORITE',
+        name: { prefix: '', given: 'PRIVATE', family: 'FAVORITE', suffix: '' },
+        phones: [], emails: [], addresses: [], organization: '', title: '', notes: '',
+        birthday: null, photoUrl: null, categories: [], favorite: false, listId: 'col-1',
+        created_at: new Date(), updated_at: new Date(),
+      }],
+    })
     coreMock.updateItem.mockRejectedValueOnce(offlineError())
-    _setEncryptedQueuePersistenceAvailableForTests(false)
+    try {
+      await useContactStore.getState().setContactFavorite('item-1', true)
+      expect(useContactStore.getState().contacts[0]!.favorite).toBe(true)
 
-    await expect(useEtebaseStore.getState().updateItem('calendar', 'item-1', sentinel, {
-      persistEncryptedOfflineContent: true,
-      suppressErrorToast: true,
-    })).resolves.toBe('queued')
+      const entries = await getAll(queueGuard())
+      expect(entries).toHaveLength(1)
+      expect(entries[0]).toMatchObject({ type: 'update', itemUid: 'item-1', collectionUid: 'col-1' })
+      expect(entries[0]!.content).toBeUndefined()
+      expect(JSON.stringify(entries)).not.toContain('PRIVATE FAVORITE')
+      const persistedContent = (await getItemsByType('contacts')).find((item) => item.itemUid === 'item-1')?.content
+      expect(persistedContent).toContain('X-SILENTSUITE-FAVORITE:1')
 
-    const entries = await getAll(queueGuard())
-    expect(entries).toHaveLength(1)
-    expect(entries[0]).toMatchObject({ type: 'update', itemUid: 'item-1', collectionUid: 'col-1' })
-    expect(entries[0]!.content).toBeUndefined()
-    expect(JSON.stringify(entries)).not.toContain('PRIVATE FAVORITE')
-    expect((await getItemsByType('calendar')).find((item) => item.itemUid === 'item-1')?.content).toBe(sentinel)
-
-    coreMock.updateItem.mockResolvedValueOnce(undefined)
-    await useSyncStore.getState().replayOfflineQueue()
-    expect(coreMock.updateItem).toHaveBeenLastCalledWith(
-      useEtebaseStore.getState().account,
-      expect.objectContaining({ uid: 'col-1' }),
-      expect.objectContaining({ uid: 'item-1' }),
-      sentinel,
-    )
-    expect(await getAll(queueGuard())).toEqual([])
+      coreMock.updateItem.mockResolvedValueOnce(undefined)
+      await useSyncStore.getState().replayOfflineQueue()
+      expect(coreMock.updateItem).toHaveBeenLastCalledWith(
+        useEtebaseStore.getState().account,
+        expect.objectContaining({ uid: 'col-1' }),
+        expect.objectContaining({ uid: 'item-1' }),
+        persistedContent,
+      )
+      expect(await getAll(queueGuard())).toEqual([])
+      expect((await getItemsByType('contacts')).find((item) => item.itemUid === 'item-1')?.content).toBe(persistedContent)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('real createItem fallback persists the active fingerprint and is visible to guarded count and replay', async () => {

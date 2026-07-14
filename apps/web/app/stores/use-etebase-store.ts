@@ -1848,8 +1848,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         try {
           assertOfflineQueueAccountGuard(offlineQueueGuard, get())
           if (options?.persistEncryptedOfflineContent) {
-            if (!await cacheEnsureEncryptedEnvelope(accountEpoch)) return false
             await cacheEnsureFingerprint(offlineQueueGuard.accountFingerprint, accountEpoch)
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+            // The encrypted envelope commit validates the account fingerprint
+            // meta record. Seed that record first so a cold, flag-disabled
+            // cache can safely persist this content-free replay payload.
+            const encryptedEnvelopeReady = await cacheEnsureEncryptedEnvelope(accountEpoch)
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
+            if (!encryptedEnvelopeReady) return false
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
             await cachePutItem({
               itemUid,
               collectionType: type,
@@ -1864,8 +1871,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
             if (persisted?.content !== content || persisted.collectionUid !== collection.uid) {
               return false
             }
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
             await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, itemUid }, offlineQueueGuard)
           } else {
+            assertOfflineQueueAccountGuard(offlineQueueGuard, get())
             await enqueue({ type: 'update', collectionType: type, collectionUid: collection.uid, content, itemUid }, offlineQueueGuard)
           }
           assertOfflineQueueAccountGuard(offlineQueueGuard, get())
