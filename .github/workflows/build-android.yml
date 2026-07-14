@@ -70,6 +70,31 @@ jobs:
       - name: Build 16 KB-aligned Etebase client AAR
         run: scripts/build-etebase-client-16kb.sh
 
+      - name: Run debug unit tests and lint
+        run: ./gradlew app:testDebugUnitTest app:lintDebug --continue --no-daemon -PrequireEtebase16Kb=true
+
+      - name: Upload unit test reports and results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-unit-test-results-${{ github.sha }}
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-lint-reports-${{ github.sha }}
+          path: |
+            android/app/build/reports/lint-results-debug.html
+            android/app/build/reports/lint-results-debug.xml
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Capture debug and release runtime dependency graphs
         run: |
           mkdir -p build/privacy-evidence/dependencies
