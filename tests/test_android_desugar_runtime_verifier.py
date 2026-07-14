@@ -140,6 +140,13 @@ class DesugarRuntimeVerifierTest(unittest.TestCase):
         with self.assertRaisesRegex(VERIFIER.VerificationError, "UTF-16 length mismatch"):
             VERIFIER.Dex(bytes(dex))
 
+    def test_class_access_flags_are_not_parsed_as_superclass_index(self):
+        dex = bytearray(synthetic_dex("Lexample/Test;"))
+        _, class_defs_off = struct.unpack_from("<II", dex, 96)
+        struct.pack_into("<I", dex, class_defs_off + 4, 0x4000)  # ACC_ENUM
+        struct.pack_into("<I", dex, class_defs_off + 8, 0xFFFFFFFF)  # NO_INDEX
+        VERIFIER.Dex(bytes(dex))
+
     def test_malformed_dex_is_a_controlled_verification_error(self):
         mutations = [
             lambda dex: dex[:80],

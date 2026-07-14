@@ -126,7 +126,10 @@ class CustomCertManagerTest {
         val current = beginForegroundDecision(secondCertificate)
         ActivityScenario.launch<TrustCertificateActivity>(activityIntent(old.generation)).use { scenario ->
             // singleInstance delivery must supersede the old parse/render snapshot.
-            scenario.onActivity { it.onNewIntent(activityIntent(current.generation, secondCertificate)) }
+            scenario.onActivity {
+                it.startActivity(activityIntent(current.generation, secondCertificate))
+            }
+            instrumentation.waitForIdleSync()
             scenario.recreate()
             awaitRenderedCertificate(scenario)
             // This is the actual bound layout click, not a direct service command: it proves the

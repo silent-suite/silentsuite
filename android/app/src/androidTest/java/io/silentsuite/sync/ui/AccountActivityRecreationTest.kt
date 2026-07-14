@@ -30,12 +30,15 @@ class AccountActivityRecreationTest {
         AccountSettings.setUserData(accountManager, account, URI("https://example.invalid/"), account.name)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
-            listOf(
+            val permissions = mutableListOf(
                 Manifest.permission.READ_CALENDAR,
                 Manifest.permission.WRITE_CALENDAR,
                 Manifest.permission.READ_CONTACTS,
                 Manifest.permission.WRITE_CONTACTS
-            ).forEach { permission ->
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                permissions += Manifest.permission.POST_NOTIFICATIONS
+            permissions.forEach { permission ->
                 uiAutomation.executeShellCommand("pm grant ${context.packageName} $permission").close()
             }
         }

@@ -184,7 +184,7 @@ class Dex:
             offset = self.class_off + class_index * 32
             class_type = u32(self.data, offset, "class type")
             self._index(class_type, self.type_size, "class type")
-            superclass = u32(self.data, offset + 4, "class superclass")
+            superclass = u32(self.data, offset + 8, "class superclass")
             if superclass != 0xFFFFFFFF:
                 self._index(superclass, self.type_size, "class superclass")
             interfaces_off = u32(self.data, offset + 12, "class interfaces")
