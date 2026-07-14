@@ -57,5 +57,6 @@ class LoginLifecycleContractTest {
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))
         assertFalse(job.contains("secrets."))
         assertTrue(appBuild.contains("androidTestImplementation \"org.jetbrains.kotlin:kotlin-stdlib:\$kotlin_version\""))
+        assertTrue(appBuild.contains("'proguard-debug-test-rules.pro'"))
     }
 }
