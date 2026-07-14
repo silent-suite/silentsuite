@@ -53,7 +53,7 @@ dependencies {
     def androidX = rootProject.ext.androidXVersions
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}"
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.1.1'
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:${rootProject.ext.desugarJdkLibsVersion}"
 
     api("org.mnode.ical4j:ical4j:${versions.ical4j}") {
         exclude module: 'javax.mail'

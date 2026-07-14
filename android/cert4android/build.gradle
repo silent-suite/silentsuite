@@ -37,6 +37,14 @@ android {
     }
 }
 
+// Keep release-library packaging unchanged. Only the generated androidTest APK
+// exceeds the 64K limit (68,523 references) and needs multidex on API 14.
+androidComponents {
+    beforeVariants(selector().all()) { variantBuilder ->
+        variantBuilder.androidTest?.enableMultiDex = true
+    }
+}
+
 dependencies {
     def androidX = rootProject.ext.androidXVersions
 
@@ -52,6 +60,7 @@ dependencies {
 
     androidTestImplementation "androidx.test:runner:${androidX.testRunner}"
     androidTestImplementation "androidx.test:rules:${androidX.testRules}"
+    androidTestImplementation 'androidx.multidex:multidex:2.0.1'
     androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.9.0'
 
     testImplementation 'junit:junit:4.13'

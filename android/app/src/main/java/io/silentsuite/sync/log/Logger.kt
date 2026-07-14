@@ -104,7 +104,7 @@ object Logger : SharedPreferences.OnSharedPreferenceChangeListener {
                 Toast.makeText(context, context.getString(R.string.logging_couldnt_create_file), Toast.LENGTH_LONG).show()
             }
 
-            nm.notify(Constants.NOTIFICATION_EXTERNAL_FILE_LOGGING, builder.build())
+            NotificationUtils.notify(context, Constants.NOTIFICATION_EXTERNAL_FILE_LOGGING, builder.build())
         } else {
             nm.cancel(Constants.NOTIFICATION_EXTERNAL_FILE_LOGGING)
 

@@ -17,7 +17,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
@@ -251,8 +250,7 @@ class BillingManager private constructor() {
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .build()
 
-        NotificationManagerCompat.from(context)
-            .notify(NOTIFICATION_SUBSCRIPTION_EXPIRED, notification)
+        NotificationUtils.notify(context, NOTIFICATION_SUBSCRIPTION_EXPIRED, notification)
     }
 
     private fun dismissExpiredNotification(context: Context) {
@@ -269,8 +267,7 @@ class BillingManager private constructor() {
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .build()
 
-        NotificationManagerCompat.from(context)
-            .notify("degraded_billing", Constants.NOTIFICATION_ACCOUNT_UPDATE, notification)
+        NotificationUtils.notify(context, "degraded_billing", Constants.NOTIFICATION_ACCOUNT_UPDATE, notification)
     }
 
     // --- API fetch ---

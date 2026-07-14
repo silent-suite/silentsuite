@@ -101,7 +101,7 @@ class SyncNotification(internal val context: Context, internal val notificationT
             builder.setStyle(NotificationCompat.BigTextStyle()
                     .bigText(bigText))
 
-        notificationManager.notify(notificationTag, notificationId, builder.build())
+        NotificationUtils.notify(context, notificationManager, notificationTag, notificationId, builder.build())
     }
 
 

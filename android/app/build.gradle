@@ -135,7 +135,7 @@ dependencies {
     def androidX = rootProject.ext.androidXVersions
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.1.5'
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:${rootProject.ext.desugarJdkLibsVersion}"
 
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:${androidX.coroutines}"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:${androidX.coroutines}"

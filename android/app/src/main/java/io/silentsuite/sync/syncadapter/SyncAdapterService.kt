@@ -18,7 +18,6 @@ import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import at.bitfire.ical4android.CalendarStorageException
 import at.bitfire.vcard4android.ContactsStorageException
 import com.etebase.client.FetchOptions
@@ -122,8 +121,7 @@ abstract class SyncAdapterService : Service() {
                     .setContentIntent(PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
                     .setCategory(NotificationCompat.CATEGORY_ERROR)
                     .build()
-            val nm = NotificationManagerCompat.from(context)
-            nm.notify(Constants.NOTIFICATION_PERMISSIONS, notify)
+            NotificationUtils.notify(context, Constants.NOTIFICATION_PERMISSIONS, notify)
         }
 
         protected fun checkSyncConditions(settings: AccountSettings): Boolean {

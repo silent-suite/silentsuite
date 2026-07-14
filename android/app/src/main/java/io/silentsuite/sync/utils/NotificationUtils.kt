@@ -9,12 +9,17 @@
 package io.silentsuite.sync.utils
 
 import android.annotation.TargetApi
+import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 
@@ -73,6 +78,36 @@ object NotificationUtils {
             builder.setLargeIcon(App.getLauncherBitmap(context))
 
         return builder
+    }
+
+    /**
+     * Posts only when notifications are permitted. POST_NOTIFICATIONS can be
+     * denied on Android 13+, and OEM/system policy can still reject a post
+     * after the permission check, so retain the SecurityException fallback.
+     */
+    fun notify(context: Context, id: Int, notification: Notification) {
+        notify(context, NotificationManagerCompat.from(context), null, id, notification)
+    }
+
+    fun notify(context: Context, tag: String, id: Int, notification: Notification) {
+        notify(context, NotificationManagerCompat.from(context), tag, id, notification)
+    }
+
+    fun notify(context: Context, manager: NotificationManagerCompat, tag: String?, id: Int, notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            Log.i("NotificationUtils", "Notification permission denied; skipping notification $id")
+            return
+        }
+
+        try {
+            if (tag == null)
+                manager.notify(id, notification)
+            else
+                manager.notify(tag, id, notification)
+        } catch (e: SecurityException) {
+            Log.w("NotificationUtils", "Notification posting was rejected", e)
+        }
     }
 
 }

@@ -11,6 +11,10 @@ ext {
     gradle_version = '8.11.1'
     compileSdkVersion = 36
     buildToolsVersion = '36.0.0'
+    // AGP 8.11 supports desugar_jdk_libs 2.1.x (AGP 8.0+ is required). Keep
+    // every desugaring consumer on one runtime API surface: Fragment 1.4.1
+    // calls DesugarCollections.synchronizedMap(), which 1.1.x lacks.
+    desugarJdkLibsVersion = '2.1.5'
 
     // Keep this cohort compatible with cert4android's API 14 contract. AndroidX
     // Test 1.6/3.6 raised its minimum API level to 19, so all shared test
@@ -130,6 +134,22 @@ tasks.register('verifySlice4DependencyCohort') {
             'androidx.legacy:legacy-support-core-ui',
             'androidx.legacy:legacy-preference-v14'
         ]
+
+        // Core-library desugaring is packaged into each consuming APK. A
+        // mismatched library is therefore a runtime compatibility bug, not
+        // merely a dependency-report discrepancy.
+        [':app', ':ical4android'].each { projectPath ->
+            def project = project(projectPath)
+            def buildFile = project.buildFile.text
+            if (!buildFile.contains('coreLibraryDesugaringEnabled true') || !buildFile.contains('coreLibraryDesugaring'))
+                throw new GradleException("$projectPath must enable core-library desugaring")
+
+            def resolved = project.configurations.getByName('coreLibraryDesugaring')
+                    .incoming.resolutionResult.allDependencies
+                    .find { dependency -> dependency.hasProperty('selected') && dependency.selected.id.displayName == "com.android.tools:desugar_jdk_libs:${rootProject.ext.desugarJdkLibsVersion}" }
+            if (resolved == null)
+                throw new GradleException("coreLibraryDesugaring in $projectPath does not resolve desugar_jdk_libs:${rootProject.ext.desugarJdkLibsVersion}")
+        }
 
         required.each { projectPath, configurations ->
             def project = project(projectPath)
