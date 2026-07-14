@@ -92,7 +92,7 @@ An initial anonymous `401 Unauthorized` followed by a successful authenticated r
 
 macOS may limit sync to recent events. Open **Calendar > Settings > Accounts**, select your DAV account, and check the sync range.
 
-### Apple Internet Accounts still fails with `/principals/`
+### Apple Internet Accounts still fails during principal discovery
 
 Current Bridge builds provide an authenticated, non-enumerating `/principals/` discovery container while keeping your account's normal `/your@email.com/` path canonical. If HTTPS + Advanced setup still fails, collect an ordered, redacted bridge trace for support. Include the method, path, Depth value, status, and returned href classes for paths such as:
 
@@ -101,4 +101,4 @@ Current Bridge builds provide an authenticated, non-enumerating `/principals/` d
 - `/.well-known/carddav`
 - `/your@email.com/`
 
-Do **not** include passwords, Authorization headers, session tokens, contact/calendar contents, or full private logs. Record whether macOS requests `/principals/your@email.com/`; that account-specific alias remains denied unless real Apple protocol evidence proves it is required.
+Do **not** include passwords, Authorization headers, session tokens, contact/calendar contents, or full private logs. Apple may also probe `/principals/your@email.com/`. For an authenticated exact same-account probe, the Bridge resolves that compatibility path to the canonical `/your@email.com/` account home; it does not create a separate principal or storage namespace.

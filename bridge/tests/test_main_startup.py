@@ -2,11 +2,19 @@
 
 import logging
 import sys
+import threading
+from importlib.metadata import version
+from unittest.mock import MagicMock
 
 import pytest
 
 from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import config
+from silentsuite_bridge.radicale.application import Application as BridgeApplication
+
+
+def test_radicale_runtime_is_pinned_to_the_server_adapter_contract():
+    assert version("Radicale") == "3.2.3"
 
 
 def test_check_credentials_allows_no_accounts_when_dashboard_enabled(tmp_path, monkeypatch, capsys):
@@ -140,6 +148,127 @@ def _run_server_until_keyboard_interrupt(monkeypatch):
     monkeypatch.setattr(bridge_main, "start_tray", lambda: None)
     monkeypatch.setattr(radicale_server, "serve", stop_server)
     bridge_main.run_server()
+
+
+@pytest.mark.parametrize("outcome", [None, RuntimeError("boom"), KeyboardInterrupt()])
+def test_server_application_injection_restores_upstream_application(monkeypatch, outcome):
+    from radicale import server as radicale_server
+    from radicale.app import Application as RadicaleApplication
+
+    def serve(_configuration):
+        assert radicale_server.Application is BridgeApplication
+        if outcome is not None:
+            raise outcome
+
+    monkeypatch.setattr(radicale_server, "serve", serve)
+    if isinstance(outcome, BaseException):
+        with pytest.raises(type(outcome)):
+            bridge_main._serve_radicale_with_bridge_application(object())
+    else:
+        bridge_main._serve_radicale_with_bridge_application(object())
+    assert radicale_server.Application is RadicaleApplication
+
+
+def test_server_application_injection_rejects_nested_entry(monkeypatch):
+    from radicale import server as radicale_server
+
+    def serve(_configuration):
+        with pytest.raises(RuntimeError, match="already active"):
+            bridge_main._serve_radicale_with_bridge_application(object())
+
+    monkeypatch.setattr(radicale_server, "serve", serve)
+    bridge_main._serve_radicale_with_bridge_application(object())
+
+
+def test_server_application_injection_rejects_real_two_thread_contention(monkeypatch):
+    from radicale import server as radicale_server
+    from radicale.app import Application as RadicaleApplication
+
+    entered_serve = threading.Event()
+    release_serve = threading.Event()
+    serve_barrier = threading.Barrier(2)
+    holder_errors = []
+
+    def serve(_configuration):
+        assert radicale_server.Application is BridgeApplication
+        entered_serve.set()
+        serve_barrier.wait()
+        assert release_serve.wait(timeout=5)
+
+    def hold_server():
+        try:
+            bridge_main._serve_radicale_with_bridge_application(object())
+        except BaseException as exc:  # pragma: no cover - asserted from the parent thread
+            holder_errors.append(exc)
+
+    monkeypatch.setattr(radicale_server, "serve", serve)
+    holder = threading.Thread(target=hold_server)
+    holder.start()
+    assert entered_serve.wait(timeout=5)
+    serve_barrier.wait()
+
+    try:
+        with pytest.raises(RuntimeError, match="already active"):
+            bridge_main._serve_radicale_with_bridge_application(object())
+    finally:
+        release_serve.set()
+
+    holder.join(timeout=5)
+    assert not holder.is_alive()
+    assert holder_errors == []
+    assert radicale_server.Application is RadicaleApplication
+
+    serve_after_release = MagicMock()
+    monkeypatch.setattr(radicale_server, "serve", serve_after_release)
+    bridge_main._serve_radicale_with_bridge_application(object())
+    serve_after_release.assert_called_once()
+    assert radicale_server.Application is RadicaleApplication
+
+
+def test_server_application_injection_rejects_unexpected_entry_state(monkeypatch):
+    from radicale import server as radicale_server
+
+    unexpected = object()
+    monkeypatch.setattr(radicale_server, "Application", unexpected)
+    with pytest.raises(RuntimeError, match="Unexpected Radicale"):
+        bridge_main._serve_radicale_with_bridge_application(object())
+    assert radicale_server.Application is unexpected
+
+
+def test_server_application_injection_does_not_overwrite_third_party_replacement(monkeypatch):
+    from radicale import server as radicale_server
+
+    replacement = object()
+    monkeypatch.setattr(radicale_server, "Application", radicale_server.Application)
+
+    def serve(_configuration):
+        radicale_server.Application = replacement
+
+    monkeypatch.setattr(radicale_server, "serve", serve)
+    bridge_main._serve_radicale_with_bridge_application(object())
+    assert radicale_server.Application is replacement
+
+
+def test_real_radicale_serve_constructs_bridge_application_before_no_bind_error(monkeypatch):
+    from radicale import server as radicale_server
+
+    from silentsuite_bridge.radicale import application as bridge_application
+
+    constructed = MagicMock()
+
+    class SpyApplication(BridgeApplication):
+        def __init__(self, *args, **kwargs):
+            constructed(*args, **kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(bridge_application, "Application", SpyApplication)
+    monkeypatch.setattr(radicale_server.socket, "getaddrinfo", lambda *_args: [])
+    configuration = bridge_main.build_radicale_configuration()
+
+    with pytest.raises(RuntimeError, match="No servers started"):
+        bridge_main._serve_radicale_with_bridge_application(configuration)
+
+    constructed.assert_called_once()
 
 
 def test_remote_bind_warning_mentions_plaintext_when_ssl_disabled(monkeypatch, caplog):
