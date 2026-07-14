@@ -101,34 +101,15 @@ class CustomCertManagerTest {
         paranoidCertManager.checkServerTrusted(siteCerts!!.toTypedArray(), "RSA")
     }
 
-    @Test
-    fun testAddCustomCertificate() {
-        addCustomCertificate()
-        paranoidCertManager.checkServerTrusted(siteCerts!!.toTypedArray(), "RSA")
-    }
-
-    // fails randomly for unknown reason:
+    /** A started-service command without a pending decision generation must not alter trust. */
     @Test(expected = CertificateException::class)
-    fun testRemoveCustomCertificate() {
-        addCustomCertificate()
-
-        // remove certificate and check again
-        // should now be rejected for the whole session, i.e. no timeout anymore
-        val intent = Intent(getInstrumentation().context, CustomCertService::class.java)
-        intent.action = CustomCertService.CMD_CERTIFICATION_DECISION
-        intent.putExtra(CustomCertService.EXTRA_CERTIFICATE, siteCerts!!.first().encoded)
-        intent.putExtra(CustomCertService.EXTRA_TRUSTED, false)
-        startService(intent, CustomCertService::class.java)
-        paranoidCertManager.checkServerTrusted(siteCerts!!.toTypedArray(), "RSA")
-    }
-
-    private fun addCustomCertificate() {
-        // add certificate and check again
+    fun testUnscopedDecisionIsIgnored() {
         val intent = Intent(getInstrumentation().context, CustomCertService::class.java)
         intent.action = CustomCertService.CMD_CERTIFICATION_DECISION
         intent.putExtra(CustomCertService.EXTRA_CERTIFICATE, siteCerts!!.first().encoded)
         intent.putExtra(CustomCertService.EXTRA_TRUSTED, true)
         startService(intent, CustomCertService::class.java)
+        paranoidCertManager.checkServerTrusted(siteCerts!!.toTypedArray(), "RSA")
     }
 
 

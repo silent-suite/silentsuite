@@ -50,6 +50,8 @@ class TrustCertificateActivity: AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // singleInstance activities receive a new intent; decisions must use its generation.
+        setIntent(intent)
         model.processIntent(intent)
     }
 
@@ -69,6 +71,8 @@ class TrustCertificateActivity: AppCompatActivity() {
             action = CustomCertService.CMD_CERTIFICATION_DECISION
             putExtra(CustomCertService.EXTRA_CERTIFICATE, getIntent().getByteArrayExtra(EXTRA_CERTIFICATE))
             putExtra(CustomCertService.EXTRA_TRUSTED, trusted)
+            putExtra(CustomCertService.EXTRA_DECISION_GENERATION,
+                getIntent().getStringExtra(CustomCertService.EXTRA_DECISION_GENERATION))
         }
         startService(intent)
     }

@@ -14,6 +14,7 @@ import android.app.NotificationManager
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
@@ -58,6 +59,8 @@ class CustomCertService: Service() {
 
         const val EXTRA_CERTIFICATE = "certificate"
         const val EXTRA_TRUSTED = "trusted"
+        /** Non-secret marker that makes a decision intent valid for one pending entry. */
+        const val EXTRA_DECISION_GENERATION = "decisionGeneration"
 
         const val KEYSTORE_DIR = "KeyStore"
         const val KEYSTORE_NAME = "KeyStore.bks"
@@ -81,11 +84,16 @@ class CustomCertService: Service() {
     private val trustedKeyStore = KeyStore.getInstance(KeyStore.getDefaultType())!!
     private var customTrustManager: X509TrustManager? = null
 
-    // One lock covers certificate state and the pending callback lists. A concurrent map alone
-    // does not make its mutable list values safe, and would let registration race resolution.
+    // One lock covers certificate state and pending generations. A concurrent map alone would not
+    // make callback lists safe, and would let registration race a decision delivery.
     private val decisionLock = Any()
     private val untrustedCerts = HashSet<X509Certificate>()
-    private val pendingDecisions = HashMap<X509Certificate, MutableList<IOnCertificateDecision>>()
+    private val pendingDecisions = HashMap<X509Certificate, PendingDecision>()
+
+    private data class PendingDecision(
+        val generation: String,
+        val callbacks: MutableList<IOnCertificateDecision>
+    )
 
 
     override fun onCreate() {
@@ -135,7 +143,11 @@ class CustomCertService: Service() {
                 val raw = intent.getByteArrayExtra(EXTRA_CERTIFICATE)
                 try {
                     val cert = certFactory.generateCertificate(ByteArrayInputStream(raw)) as X509Certificate
-                    onReceiveDecision(cert, intent.getBooleanExtra(EXTRA_TRUSTED, false))
+                    onReceiveDecision(
+                        cert,
+                        intent.getStringExtra(EXTRA_DECISION_GENERATION),
+                        intent.getBooleanExtra(EXTRA_TRUSTED, false)
+                    )
                 } catch (e: Exception) {
                     Constants.log.log(Level.SEVERE, "Couldn't process certificate", e)
                 }
@@ -157,29 +169,42 @@ class CustomCertService: Service() {
         return START_NOT_STICKY
     }
 
-    private fun onReceiveDecision(cert: X509Certificate, trusted: Boolean, showRejectionToast: Boolean = true) {
-        // remove notification
+    private fun onReceiveDecision(
+        cert: X509Certificate,
+        generation: String?,
+        trusted: Boolean,
+        showRejectionToast: Boolean = true
+    ) {
+        // Validate and consume the generation under the same lock as state publication. An absent,
+        // duplicate, or stale command must not alter certificate state or affect new callbacks.
+        val callbacks: List<IOnCertificateDecision>? = synchronized(decisionLock) {
+            val pending = pendingDecisions[cert]
+            if (generation == null || pending == null || pending.generation != generation)
+                null
+            else {
+                // Publish the resolved state and atomically detach callbacks before any IPC delivery.
+                // New registrations can therefore only join an active decision or observe its result.
+                pendingDecisions.remove(cert)
+                if (trusted) {
+                    untrustedCerts.remove(cert)
+                    try {
+                        trustedKeyStore.setCertificateEntry(cert.subjectDN.name, cert)
+                        saveKeyStore()
+                    } catch(e: KeyStoreException) {
+                        Constants.log.log(Level.SEVERE, "Couldn't add certificate into key store", e)
+                    }
+                } else {
+                    untrustedCerts.add(cert)
+                }
+                pending.callbacks.toList()
+            }
+        }
+        if (callbacks == null)
+            return
+
+        // Cancel only the notification belonging to a decision that was actually consumed.
         val nm: NotificationManagerCompat = NotificationUtils.createChannels(this)
         nm.cancel(CertUtils.getTag(cert), Constants.NOTIFICATION_CERT_DECISION)
-
-        // Publish the resolved state and atomically detach callbacks before any IPC delivery.
-        // New registrations can therefore only join an active decision or observe its result.
-        val callbacks = synchronized(decisionLock) {
-            if (trusted) {
-                untrustedCerts.remove(cert)
-
-                try {
-                    trustedKeyStore.setCertificateEntry(cert.subjectDN.name, cert)
-                    saveKeyStore()
-                } catch(e: KeyStoreException) {
-                    Constants.log.log(Level.SEVERE, "Couldn't add certificate into key store", e)
-                }
-            } else {
-                untrustedCerts.add(cert)
-            }
-
-            pendingDecisions.remove(cert)?.toList().orEmpty()
-        }
         if (!trusted && showRejectionToast)
             Toast.makeText(this, R.string.service_rejected_temporarily, Toast.LENGTH_LONG).show()
 
@@ -227,8 +252,8 @@ class CustomCertService: Service() {
             }
 
             val knownDecision = synchronized(decisionLock) {
-                pendingDecisions[cert]?.let { callbacks ->
-                    callbacks += callback
+                pendingDecisions[cert]?.let { pending ->
+                    pending.callbacks += callback
                     return
                 }
 
@@ -237,8 +262,9 @@ class CustomCertService: Service() {
                     inTrustStore(cert) -> true
                     interactive -> {
                         // Register while holding the lock, before notification/activity creation.
-                        pendingDecisions[cert] = mutableListOf(callback)
-                        null
+                        val generation = UUID.randomUUID().toString()
+                        pendingDecisions[cert] = PendingDecision(generation, mutableListOf(callback))
+                        generation
                     }
                     else -> false
                 }
@@ -253,17 +279,19 @@ class CustomCertService: Service() {
                     Constants.log.fine("Certificate is cached as trusted, accepting")
                     callback.accept()
                 }
-                null -> {
+                is String -> {
                     Constants.log.fine("Certificate not known and running in interactive mode, asking user")
 
                     val decisionIntent = Intent(this@CustomCertService, TrustCertificateActivity::class.java)
                     decisionIntent.putExtra(TrustCertificateActivity.EXTRA_CERTIFICATE, raw)
+                    decisionIntent.putExtra(EXTRA_DECISION_GENERATION, knownDecision)
 
                     val rejectIntent = Intent(this@CustomCertService, CustomCertService::class.java)
                     with(rejectIntent) {
                         action = CMD_CERTIFICATION_DECISION
                         putExtra(EXTRA_CERTIFICATE, raw)
                         putExtra(EXTRA_TRUSTED, false)
+                        putExtra(EXTRA_DECISION_GENERATION, knownDecision)
                     }
 
                     if (foreground) {
@@ -275,7 +303,7 @@ class CustomCertService: Service() {
                     } else if (!postDecisionNotification(cert, raw, decisionIntent, rejectIntent)) {
                         // A background caller has no other decision path; fail closed atomically.
                         Constants.log.warning("Certificate decision notification unavailable; rejecting pending decision")
-                        onReceiveDecision(cert, false, showRejectionToast = false)
+                        onReceiveDecision(cert, knownDecision, false, showRejectionToast = false)
                     }
                 }
             }
@@ -286,8 +314,8 @@ class CustomCertService: Service() {
                 val iterator = pendingDecisions.entries.iterator()
                 while (iterator.hasNext()) {
                     val entry = iterator.next()
-                    entry.value.removeAll { it == callback }
-                    if (entry.value.isEmpty())
+                    entry.value.callbacks.removeAll { it == callback }
+                    if (entry.value.callbacks.isEmpty())
                         iterator.remove()
                 }
             }
@@ -317,15 +345,22 @@ class CustomCertService: Service() {
                 return false
         }
 
-        val id = raw.contentHashCode()
+        // Extras do not form PendingIntent identity. Include the generation in data so an old
+        // PendingIntent cannot be updated to point at a later decision for the same certificate.
+        val contentIntent = Intent(decisionIntent).setData(decisionUri(
+            "content", decisionIntent.getStringExtra(EXTRA_DECISION_GENERATION)!!
+        ))
+        val deleteIntent = Intent(rejectIntent).setData(decisionUri(
+            "delete", rejectIntent.getStringExtra(EXTRA_DECISION_GENERATION)!!
+        ))
         val notification = NotificationCompat.Builder(this, NotificationUtils.CHANNEL_CERTIFICATES)
             .setSmallIcon(R.drawable.ic_lock_open_white)
             .setContentTitle(getString(R.string.certificate_notification_connection_security))
             .setContentText(getString(R.string.certificate_notification_user_interaction))
             .setSubText(cert.subjectDN.name)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setContentIntent(PendingIntent.getActivity(this, id, decisionIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
-            .setDeleteIntent(PendingIntent.getService(this, id, rejectIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .setContentIntent(PendingIntent.getActivity(this, 0, contentIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
+            .setDeleteIntent(PendingIntent.getService(this, 0, deleteIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             .build()
 
         return try {
@@ -337,6 +372,13 @@ class CustomCertService: Service() {
             false
         }
     }
+
+    private fun decisionUri(kind: String, generation: String): Uri = Uri.Builder()
+        .scheme("cert-decision")
+        .authority(packageName)
+        .appendPath(kind)
+        .appendPath(generation)
+        .build()
 
     override fun onBind(intent: Intent?) = binder
 

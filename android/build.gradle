@@ -15,6 +15,7 @@ ext {
     // every desugaring consumer on one runtime API surface: Fragment 1.4.1
     // calls DesugarCollections.synchronizedMap(), which 1.1.x lacks.
     desugarJdkLibsVersion = '2.1.5'
+    keeperVersion = '0.16.1'
 
     // Keep this cohort compatible with cert4android's API 14 contract. AndroidX
     // Test 1.6/3.6 raised its minimum API level to 19, so all shared test
@@ -51,6 +52,9 @@ buildscript {
     dependencies {
         classpath "com.android.tools.build:gradle:$gradle_version"
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        // Keeper is on Maven Central; 0.16.1 is the final Slack release with
+        // automatic L8 rule sharing for androidTest and its tested variant.
+        classpath 'com.slack.keeper:keeper:0.16.1'
     }
 }
 
@@ -183,13 +187,14 @@ tasks.register('verifySlice4DependencyCohort') {
     }
 }
 
-// The instrumentation APK has its own L8 output and class loader. Verify the runtime it owns,
-// rather than trusting the app module's dependency report, because it shadows the target APK.
+// Keeper gives the target APK the merged target+androidTest L8 rules and removes the
+// androidTest backport DEX. Verify that single-runtime ownership, not a source-level anchor.
 tasks.register('verifyDebugAndroidTestDesugarRuntime', Exec) {
     group = 'verification'
-    description = 'Verifies the app androidTest APK owns the desugared FragmentManager API.'
-    dependsOn(':app:packageDebugAndroidTest')
+    description = 'Verifies that debug owns the shared desugar runtime and androidTest owns none.'
+    dependsOn(':app:packageDebug', ':app:packageDebugAndroidTest')
     commandLine 'python3', 'scripts/verify-androidtest-desugar-runtime.py',
+            'app/build/outputs/apk/debug/app-debug.apk',
             'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
 }
 

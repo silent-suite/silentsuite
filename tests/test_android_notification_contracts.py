@@ -11,6 +11,7 @@ APP_NOTIFICATIONS = ROOT / "android/app/src/main/java/io/silentsuite/sync/utils/
 ACCOUNT_ACTIVITY = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/AccountActivity.kt"
 CERT_SERVICE = ROOT / "android/cert4android/src/main/java/at/bitfire/cert4android/CustomCertService.kt"
 ANDROID_BUILD = ROOT / "android/build.gradle"
+APP_BUILD = ROOT / "android/app/build.gradle"
 DESUGAR_APK_GUARD = ROOT / "android/scripts/verify-androidtest-desugar-runtime.py"
 RECREATION_TEST = ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountActivityRecreationTest.kt"
 
@@ -109,11 +110,11 @@ def test_cert_notification_visibility_matrix_preserves_foreground_activity_and_f
     assert 'getNotificationChannel(NotificationUtils.CHANNEL_CERTIFICATES)' in service
     assert 'channel.importance == NotificationManager.IMPORTANCE_NONE' in service
     assert 'catch (e: SecurityException)' in service
-    assert 'onReceiveDecision(cert, false, showRejectionToast = false)' in service
+    assert 'onReceiveDecision(cert, knownDecision, false, showRejectionToast = false)' in service
     assert 'if (foreground) {' in service
     assert 'postDecisionNotification(cert, raw, decisionIntent, rejectIntent)\n                        decisionIntent.addFlags' in service
     assert '} else if (!postDecisionNotification(cert, raw, decisionIntent, rejectIntent)) {' in service
-    assert 'pendingDecisions.remove(cert)?.toList().orEmpty()' in service
+    assert 'pendingDecisions.remove(cert)' in service
     assert 'nm.cancel(CertUtils.getTag(cert), Constants.NOTIFICATION_CERT_DECISION)' in service
     assert 'Received command: $intent' not in service
     assert 'io.silentsuite.sync' not in service
@@ -126,23 +127,53 @@ def test_cert_callbacks_are_atomically_detached_and_isolated():
     # the callback collection is detached. Delivery is outside that lock and each receiver
     # is independently guarded, so it cannot duplicate, lose, or block another callback.
     assert 'private val decisionLock = Any()' in service
-    assert 'private val pendingDecisions = HashMap<X509Certificate, MutableList<IOnCertificateDecision>>()' in service
-    assert 'val callbacks = synchronized(decisionLock)' in service
-    assert 'pendingDecisions.remove(cert)?.toList().orEmpty()' in service
+    assert 'private val pendingDecisions = HashMap<X509Certificate, PendingDecision>()' in service
+    assert 'val callbacks: List<IOnCertificateDecision>? = synchronized(decisionLock)' in service
+    assert 'pendingDecisions.remove(cert)' in service
     assert 'synchronized(decisionLock) {\n                val iterator = pendingDecisions.entries.iterator()' in service
     assert 'callbacks.forEach {\n                try {' in service
     assert 'catch (e: Exception)' in service
-    assert 'pendingDecisions[cert] = mutableListOf(callback)' in service
+    assert 'pendingDecisions[cert] = PendingDecision(generation, mutableListOf(callback))' in service
 
 
-def test_androidtest_desugar_guard_checks_the_runtime_owner_not_just_resolution():
+def test_cert_decision_generation_guards_all_return_paths_and_pending_intent_identity():
+    service = CERT_SERVICE.read_text(encoding="utf-8")
+    activity = (ROOT / "android/cert4android/src/main/java/at/bitfire/cert4android/TrustCertificateActivity.kt").read_text(encoding="utf-8")
+
+    # A decision is consumed only while its stored generation matches. Thus an accept followed by
+    # delete, duplicate delivery, absent token, and old token after a new registration are no-ops.
+    assert 'const val EXTRA_DECISION_GENERATION = "decisionGeneration"' in service
+    assert 'val generation = UUID.randomUUID().toString()' in service
+    assert 'generation == null || pending == null || pending.generation != generation' in service
+    assert 'if (callbacks == null)\n            return' in service
+    assert 'onReceiveDecision(cert, knownDecision, false, showRejectionToast = false)' in service
+    assert service.count('putExtra(EXTRA_DECISION_GENERATION, knownDecision)') == 2
+    assert 'putExtra(CustomCertService.EXTRA_DECISION_GENERATION' in activity
+    assert 'setIntent(intent)' in activity
+    assert 'setData(decisionUri(' in service
+    assert 'PendingIntent.getActivity(this, 0, contentIntent, PendingIntent.FLAG_UPDATE_CURRENT' in service
+    assert 'PendingIntent.getService(this, 0, deleteIntent, PendingIntent.FLAG_UPDATE_CURRENT' in service
+
+
+def test_keeper_desugar_guard_checks_single_runtime_ownership_not_source_anchors():
     build = ANDROID_BUILD.read_text(encoding="utf-8")
+    app_build = APP_BUILD.read_text(encoding="utf-8")
     guard = DESUGAR_APK_GUARD.read_text(encoding="utf-8")
 
     assert "verifyDebugAndroidTestDesugarRuntime" in build
-    assert "dependsOn(':app:packageDebugAndroidTest')" in build
+    assert "com.slack.keeper:keeper:0.16.1" in build
+    assert "dependsOn(':app:packageDebug', ':app:packageDebugAndroidTest')" in build
     assert "verify-androidtest-desugar-runtime.py" in build
+    assert 'REQUIRED_TARGET_METHODS' in guard
     assert 'Lj$/util/DesugarCollections;' in guard
-    assert 'synchronizedMap' in guard
+    assert 'Lj$/util/Objects;' in guard
+    assert 'defines j$ classes' in guard
+    assert 'proto_ids' in guard
+    assert 'owns_method' in guard
     assert 'class_data_off' in guard
-    assert 'Collections.synchronizedMap(HashMap<String, String>())' in RECREATION_TEST.read_text(encoding="utf-8")
+    assert "apply plugin: 'com.slack.keeper'" in app_build
+    assert "KeeperVariantMarker.class, KeeperVariantMarker.INSTANCE" in app_build
+    assert "selector().withBuildType('debug')" in app_build
+    recreation_test = RECREATION_TEST.read_text(encoding="utf-8")
+    assert 'Collections.synchronizedMap' not in recreation_test
+    assert 'Keeper assigns the shared desugared runtime' in recreation_test

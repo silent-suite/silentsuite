@@ -6,8 +6,11 @@
  * http://www.gnu.org/licenses/gpl.html
  */
 
+import com.slack.keeper.KeeperVariantMarker
+
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+apply plugin: 'com.slack.keeper'
 // kotlin-kapt removed — was only used by Requery ORM (now deleted)
 
 android {
@@ -117,6 +120,14 @@ android {
     lint {
         baseline file('lint-baseline.xml')
         disable 'GoogleAppIndexingWarning', 'GradleDependency', 'GradleDynamicVersion', 'IconColors', 'IconLauncherShape', 'IconMissingDensityFolder', 'ImpliedQuantity', 'MissingQuantity', 'MissingTranslation', 'ExtraTranslation', 'Recycle', 'RtlEnabled', 'RtlHardcoded', 'Typos', 'RestrictedApi'
+    }
+}
+
+// Only the minified debug variant that is exercised by instrumentation tests may inherit
+// androidTest keep rules. Production release assemblies remain independent of test sources.
+androidComponents {
+    beforeVariants(selector().withBuildType('debug')) { builder ->
+        builder.registerExtension(KeeperVariantMarker.class, KeeperVariantMarker.INSTANCE)
     }
 }
 

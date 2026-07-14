@@ -12,8 +12,6 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.utils.AndroidCompat
 import java.net.URI
-import java.util.Collections
-import java.util.HashMap
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,9 +21,8 @@ import org.junit.runner.RunWith
 class AccountActivityRecreationTest {
     @Test
     fun recreationKeepsTheExactAccountRouteAndDeliversModelStateToTheRecreatedUi() {
-        // The test APK has its own L8 runtime, separate from the target APK. Keep the exact
-        // FragmentManager ABI in that owner so its partial desugared class cannot shadow it.
-        Collections.synchronizedMap(HashMap<String, String>())
+        // Keeper assigns the shared desugared runtime to the target debug APK; androidTest
+        // deliberately contains no j$ classes, so it cannot shadow the target's L8 runtime.
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val account = Account("recreation-${System.nanoTime()}@example.invalid", App.accountType)
         val accountManager = AccountManager.get(context)
