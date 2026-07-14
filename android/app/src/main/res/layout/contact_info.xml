@@ -42,7 +42,7 @@
             android:elevation="2dp"
             android:padding="16dp"
             android:textAppearance="?android:attr/textAppearanceLarge"
-            android:textColor="@color/White"
+            android:textColor="@color/white"
             android:textIsSelectable="true"
             android:textStyle="bold" />
 
