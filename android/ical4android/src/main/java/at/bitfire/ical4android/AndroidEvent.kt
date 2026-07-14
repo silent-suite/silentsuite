@@ -874,7 +874,7 @@ abstract class AndroidEvent(
                 .newInsert(calendar.remindersSyncUri())
                 .withEventId(Reminders.EVENT_ID, idxEvent)
 
-        val method = when (alarm.action?.value?.toUpperCase(Locale.ROOT)) {
+        val method = when (alarm.action?.value?.uppercase(Locale.ROOT)) {
             Action.DISPLAY.value,
             Action.AUDIO.value -> Reminders.METHOD_ALERT
 
