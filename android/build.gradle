@@ -7,16 +7,16 @@
  */
 
 ext {
-    kotlin_version = '1.8.21'
-    gradle_version = '8.5.2'
+    kotlin_version = '2.2.20'
+    gradle_version = '8.11.1'
     compileSdkVersion = 36
     buildToolsVersion = '36.0.0'
 }
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 buildscript {
-    ext.kotlin_version = '1.8.21'
-    ext.gradle_version = '8.5.2'
+    ext.kotlin_version = '2.2.20'
+    ext.gradle_version = '8.11.1'
 
     repositories {
         google()
@@ -41,7 +41,7 @@ allprojects {
 
 subprojects {
     tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-        kotlinOptions.jvmTarget = '17'
+        compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 

@@ -50,14 +50,6 @@ android {
             testProguardFile 'proguard-rules.txt'
             buildConfigField 'String', 'DEBUG_REMOTE_URL', 'null'
 
-            // Configure Kotlin compiler optimisations for releases
-            kotlinOptions {
-                freeCompilerArgs = [
-                        '-Xno-param-assertions',
-                        '-Xno-call-assertions',
-                        '-Xno-receiver-assertions'
-                ]
-            }
         }
     }
 
@@ -125,6 +117,17 @@ android {
     lint {
         baseline file('lint-baseline.xml')
         disable 'GoogleAppIndexingWarning', 'GradleDependency', 'GradleDynamicVersion', 'IconColors', 'IconLauncherShape', 'IconMissingDensityFolder', 'ImpliedQuantity', 'MissingQuantity', 'MissingTranslation', 'ExtraTranslation', 'Recycle', 'RtlEnabled', 'RtlHardcoded', 'Typos', 'RestrictedApi'
+    }
+}
+
+// Kotlin 2.2 removes the legacy compiler-options DSL; retain release-only optimisations.
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    if (name.toLowerCase().contains('release')) {
+        compilerOptions.freeCompilerArgs.addAll(
+                '-Xno-param-assertions',
+                '-Xno-call-assertions',
+                '-Xno-receiver-assertions'
+        )
     }
 }
 
