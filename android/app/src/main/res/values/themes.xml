@@ -20,8 +20,6 @@
         <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
         <item name="android:navigationBarColor">@color/semantic_system_bar</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
         <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
         <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
     </style>
@@ -31,8 +29,6 @@
         <item name="windowNoTitle">true</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
         <item name="android:navigationBarColor">@color/semantic_system_bar</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <!-- Reserved for later target-surface migration; the manifest remains legacy in Slice 5. -->
@@ -47,8 +43,6 @@
         <item name="colorOnError">@color/semantic_surface</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
         <item name="android:navigationBarColor">@color/semantic_system_bar</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <style name="AppTheme.Material3.NoActionBar" parent="Theme.Material3.DayNight.NoActionBar">
@@ -59,7 +53,5 @@
         <item name="colorPrimary">@color/semantic_primary</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
         <item name="android:navigationBarColor">@color/semantic_system_bar</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
 </resources>

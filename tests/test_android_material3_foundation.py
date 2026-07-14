@@ -61,6 +61,25 @@ def test_material_113_and_product_floor_are_shared_by_app_and_cert4android():
     assert "androidx.multidex:multidex" not in cert_build
 
 
+def test_api21_foundation_keeps_api23_system_bar_flags_out_of_base_resources_and_vcard_tests_compatible():
+    light_themes = read("android/app/src/main/res/values/themes.xml")
+    dark_themes = read("android/app/src/main/res/values-night/themes.xml")
+    vcard_build = read("android/vcard4android/build.gradle")
+
+    # Base resources are selected on API 21. BaseActivity applies readable system
+    # bars at runtime, so API-23-only window flags must not live in these files.
+    assert "android:windowLightStatusBar" not in light_themes
+    assert "android:windowLightStatusBar" not in dark_themes
+    assert "android:windowLightNavigationBar" not in light_themes
+    assert "android:windowLightNavigationBar" not in dark_themes
+
+    # vcard4android intentionally preserves its API-16 library contract. Its
+    # instrumentation dependencies therefore cannot share the API-19 test lane.
+    assert "minSdkVersion 16" in vcard_build
+    assert "androidx.test:runner:1.5.2" in vcard_build
+    assert "androidx.test:rules:1.5.0" in vcard_build
+
+
 def test_foundation_resource_files_are_well_formed_and_keep_responsibilities_separate():
     color_files = (RES / "values/colors.xml", RES / "values-night/colors.xml")
     theme_files = (RES / "values/themes.xml", RES / "values-night/themes.xml")
@@ -111,8 +130,6 @@ def test_incremental_material3_themes_use_semantic_roles_and_readable_navy_syste
             "colorPrimary": "@color/semantic_primary",
             "android:statusBarColor": "@color/semantic_system_bar",
             "android:navigationBarColor": "@color/semantic_system_bar",
-            "android:windowLightStatusBar": "false",
-            "android:windowLightNavigationBar": "false",
         }.items():
             assert material3.get(item) == color
 
