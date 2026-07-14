@@ -52,10 +52,6 @@ class LoginCredentialsFragment : Fragment() {
         showAdvanced = v.findViewById<TextView>(R.id.show_advanced)
         customServer = v.findViewById<TextInputEditText>(R.id.custom_server)
 
-        parentFragmentManager.setFragmentResultListener(SUBMISSION_FAILED_RESULT, this) { _, _ ->
-            submissionInProgress = false
-        }
-
         if (savedInstanceState == null) {
             editUserName.setText(initialUsername ?: "")
             editUrlPassword.editText?.setText(initialPassword ?: "")
@@ -148,6 +144,10 @@ class LoginCredentialsFragment : Fragment() {
         return if (valid) LoginCredentials(uri, userName, password) else null
     }
 
+    internal fun onSubmissionFailed() {
+        submissionInProgress = false
+    }
+
     private fun updateAdvancedDisclosure() {
         showAdvanced.contentDescription = getString(
                 if (advancedExpanded) R.string.login_custom_server_expanded else R.string.login_custom_server_collapsed
@@ -187,8 +187,6 @@ class LoginCredentialsFragment : Fragment() {
     companion object {
         private const val KEY_ADVANCED_EXPANDED = "advancedExpanded"
         private const val DETECT_CONFIGURATION_TAG = "detect_configuration"
-        const val SUBMISSION_FAILED_RESULT = "login_submission_failed"
-
         fun newInstance(initialUsername: String?, initialPassword: String?): LoginCredentialsFragment =
             LoginCredentialsFragment().also {
                 it.initialUsername = initialUsername

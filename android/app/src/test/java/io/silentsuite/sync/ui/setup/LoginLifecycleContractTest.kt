@@ -32,11 +32,12 @@ class LoginLifecycleContractTest {
         val detectorSource = File(sourceRoot, "DetectConfigurationFragment.kt").readText()
 
         assertTrue(loginSource.contains("private var submissionInProgress = false"))
-        assertTrue(loginSource.contains("setFragmentResultListener(SUBMISSION_FAILED_RESULT, this)"))
+        assertTrue(loginSource.contains("internal fun onSubmissionFailed()"))
         assertTrue(loginSource.contains("if (credentials != null && !submissionInProgress &&"))
         assertTrue(loginSource.contains("findFragmentByTag(DETECT_CONFIGURATION_TAG) == null"))
         assertTrue(loginSource.indexOf("submissionInProgress = true") < loginSource.indexOf("DetectConfigurationFragment.newInstance().show"))
-        assertTrue(detectorSource.contains("setFragmentResult(LoginCredentialsFragment.SUBMISSION_FAILED_RESULT"))
+        assertTrue(detectorSource.contains("findFragmentById(android.R.id.content) as? LoginCredentialsFragment"))
+        assertTrue(detectorSource.contains("?.onSubmissionFailed()"))
     }
 
     @Test
@@ -49,7 +50,7 @@ class LoginLifecycleContractTest {
         assertTrue(job.contains("api-level: 21") && job.contains("arch: x86"))
         assertTrue(job.contains("api-level: 35") && job.contains("arch: x86_64"))
         assertTrue(runnerReference != null)
-        assertTrue(job.contains("script: cd android && ./gradlew connectedDebugAndroidTest"))
+        assertTrue(job.contains("script: cd android && ./gradlew app:connectedDebugAndroidTest"))
         assertTrue(job.contains("io.silentsuite.sync.ui.AccountActivityRecreationTest"))
         assertTrue(job.contains("-PrequireEtebase16Kb=true"))
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))

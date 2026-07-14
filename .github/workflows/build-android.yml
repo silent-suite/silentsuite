@@ -234,7 +234,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
-          script: cd android && ./gradlew connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest
+          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest
 
       - name: Upload focused androidTest reports and results
         if: always()
