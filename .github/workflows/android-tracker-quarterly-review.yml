@@ -1,0 +1,59 @@
+name: Android tracker policy quarterly review
+
+on:
+  schedule:
+    # Weekly enforcement prevents a due date from remaining overdue for a quarter.
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Run positive fixtures and policy checks
+        run: |
+          python3 -m unittest tests.test_android_tracker_scan -v
+          python3 - <<'PY'
+          import datetime as dt, json
+          from pathlib import Path
+          policy = json.loads(Path('android/security/tracker-signatures.json').read_text())
+          due = dt.date.fromisoformat(policy['review_due'])
+          baseline = policy.get('catalog_baseline', {})
+          required = {'sources', 'manual_owner', 'review_record'}
+          if not required.issubset(baseline) or not baseline['sources']:
+              raise SystemExit('catalog baseline review_record and manual owner are required')
+          if due <= dt.date.today():
+              raise SystemExit(f'tracker signature review overdue: {due}')
+          print(f"tracker manifest review due {due}; signatures={len(policy['signatures'])}")
+          PY
+      - name: Preserve quarterly review result
+        run: |
+          mkdir -p android-quarterly-review
+          python3 android/scripts/scan-tracker-signatures.py \
+            --manifest android/security/tracker-signatures.json \
+            --summary android-quarterly-review/tracker-scan-summary.json \
+            android/security/fixtures/tracker-scan/clean
+          cp android/security/tracker-signatures.json android/security/android-network-endpoints.txt android-quarterly-review/
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          policy = json.loads(Path('android/security/tracker-signatures.json').read_text())
+          baseline = policy['catalog_baseline']
+          Path('android-quarterly-review/review_record.json').write_text(json.dumps({
+              'schema_version': 1,
+              'reviewed_on': policy['reviewed_on'],
+              'review_due': policy['review_due'],
+              'manual_owner': baseline['manual_owner'],
+              'catalog_sources': baseline['sources'],
+              'review_record': baseline['review_record'],
+          }, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-tracker-quarterly-review-${{ github.sha }}
+          path: android-quarterly-review/
+          retention-days: 30

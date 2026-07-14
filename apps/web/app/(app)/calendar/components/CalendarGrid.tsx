@@ -16,7 +16,15 @@ import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import type { CalendarEvent, DateRange, FirstDayOfWeek } from '@silentsuite/core'
 import { resolveUserTimezone, instantFromWallClock } from '@/app/lib/tz'
 import { startOfWeek, endOfWeek } from '@/app/lib/date'
-import { expandEventsForRange, toScheduleXEvents, type DisplayEvent } from '../lib/calendar-grid-events'
+import {
+  expandGridEventsForRange,
+  getRequiredTimedHourBounds,
+  isTimeGridGestureEligible,
+  toScheduleXProjection,
+  visibleDateRangeToInstantRange,
+  type DisplayEvent,
+  type VisibleDateRange,
+} from '../lib/calendar-grid-events'
 import {
   getScheduleXWeekLayout,
   toScheduleXDayBoundariesExternal,
@@ -86,6 +94,28 @@ function getViewRange(currentDate: Date, view: CalendarGridDisplayView, firstDay
       const end = endOfWeek(monthEnd, firstDay)
       return { start, end }
     }
+  }
+}
+
+function getVisibleDateRange(
+  currentDate: Date,
+  view: CalendarGridDisplayView,
+  firstDay: FirstDayOfWeek,
+): VisibleDateRange {
+  const d = new Date(currentDate)
+  if (view === 'threeDay' || view === 'sevenDay') {
+    const start = toPlainDate(d)
+    return { start, end: start.add({ days: view === 'threeDay' ? 2 : 6 }) }
+  }
+  if (view === 'week') {
+    const start = toPlainDate(startOfWeek(d, firstDay))
+    return { start, end: start.add({ days: 6 }) }
+  }
+  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1)
+  const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+  return {
+    start: toPlainDate(startOfWeek(monthStart, firstDay)),
+    end: toPlainDate(endOfWeek(monthEnd, firstDay)),
   }
 }
 
@@ -225,12 +255,6 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
 
   const rootRef = useRef<HTMLDivElement>(null)
   const [calendarPaneHeight, setCalendarPaneHeight] = useState(0)
-  const weekLayout = useMemo(
-    () => getScheduleXWeekLayout(dayStartHour, dayEndHour, calendarPaneHeight),
-    [dayStartHour, dayEndHour, calendarPaneHeight],
-  )
-  const displayDayStartHour = weekLayout.startHour
-  const displayDayEndHour = weekLayout.endHour
   const lastClickPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
   // Ref to prevent feedback loops between store↔Schedule-X sync
@@ -245,25 +269,47 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
 
   const [eventsPlugin] = useState(() => createEventsServicePlugin())
 
-  // Expand recurring events for the visible range
+  // Keep the browser-local range only for existing pointer-coordinate math.
   const viewRange = useMemo(() => getViewRange(currentDate, effectiveView, firstDayOfWeek), [currentDate, effectiveView, firstDayOfWeek])
-  const displayEvents = useMemo(() => expandEventsForRange(events, viewRange), [events, viewRange])
-
-  // Keep a ref map to look up display events by schedule-x id
-  const displayEventMap = useMemo(() => {
-    const map = new Map<string, DisplayEvent>()
-    for (const de of displayEvents) {
-      map.set(de.id, de)
-    }
-    return map
-  }, [displayEvents])
-  const displayEventMapRef = useRef(displayEventMap)
-  displayEventMapRef.current = displayEventMap
-
-  const sxEvents = useMemo(
-    () => toScheduleXEvents(displayEvents, calendarColors, userTz, effectiveView === 'threeDay' || effectiveView === 'sevenDay' ? 'week' : effectiveView, toScheduleXDateTime),
-    [displayEvents, calendarColors, userTz, effectiveView],
+  const visibleDates = useMemo(
+    () => getVisibleDateRange(currentDateForSx, effectiveView, firstDayOfWeek),
+    [currentDateForSx, effectiveView, firstDayOfWeek],
   )
+  const instantViewRange = useMemo(
+    () => visibleDateRangeToInstantRange(visibleDates, userTz),
+    [visibleDates, userTz],
+  )
+  const expansion = useMemo(
+    () => expandGridEventsForRange(events, instantViewRange),
+    [events, instantViewRange],
+  )
+  const displayEvents = expansion.events
+  const projectionView = effectiveView === 'month' ? 'month' : 'week'
+  const projection = useMemo(
+    () => toScheduleXProjection(
+      displayEvents,
+      calendarColors,
+      userTz,
+      projectionView,
+      visibleDates,
+      toScheduleXDateTime,
+      expansion.droppedCount,
+    ),
+    [displayEvents, calendarColors, userTz, projectionView, visibleDates, expansion.droppedCount],
+  )
+  const displayEventMapRef = useRef(projection.sourceByRenderId)
+  displayEventMapRef.current = projection.sourceByRenderId
+  const sxEvents = projection.events
+  const requiredTimedBounds = useMemo(
+    () => projectionView === 'week' ? getRequiredTimedHourBounds(sxEvents) : undefined,
+    [projectionView, sxEvents],
+  )
+  const weekLayout = useMemo(
+    () => getScheduleXWeekLayout(dayStartHour, dayEndHour, calendarPaneHeight, requiredTimedBounds),
+    [dayStartHour, dayEndHour, calendarPaneHeight, requiredTimedBounds],
+  )
+  const displayDayStartHour = weekLayout.startHour
+  const displayDayEndHour = weekLayout.endHour
 
   // Inject calendar color styles via useInsertionEffect (avoids dangerouslySetInnerHTML)
   useInsertionEffect(() => {
@@ -418,17 +464,9 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
       if (de) {
         setSelectedEvent(de.masterId)
         onEventClick?.({
-          eventId: sxId,
+          eventId: de.id,
           masterEventId: de.masterId,
           instanceDate: de.instanceDate,
-          position: { ...lastClickPos.current },
-        })
-      } else {
-        setSelectedEvent(sxId)
-        onEventClick?.({
-          eventId: sxId,
-          masterEventId: sxId,
-          instanceDate: new Date(),
           position: { ...lastClickPos.current },
         })
       }
@@ -825,7 +863,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         timeZone: userTz,
       })}`
 
-      const de = displayEventMapRef.current.get(dragMoveStartRef.current.eventId)
+      const de = displayEvents.find((event) => event.id === dragMoveStartRef.current?.eventId)
 
       setDragMovePreview({
         left: dayInfo.rect.left - wrapperRect.left,
@@ -838,7 +876,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         newEnd: clampedEnd,
       })
     },
-    [getDayColumnInfo, getTimeFromY, buildDateFromHour, use12h, userTz, displayDayStartHour, displayDayEndHour],
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, use12h, userTz, displayDayStartHour, displayDayEndHour, displayEvents],
   )
 
   /** Shared helper: complete drag-move drop */
@@ -909,6 +947,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
       if (effectiveView === 'month') return
 
       const target = e.target as HTMLElement
+      if (!isTimeGridGestureEligible(target)) return
       const wrapper = e.currentTarget as HTMLElement
       const gridEl = wrapper.querySelector(
         '.sx__week-grid, .sx__day-grid-wrapper, .sx__time-grid',
@@ -997,7 +1036,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         const target = e.target as HTMLElement
         const eventEl = target.closest('.sx__time-grid-event') as HTMLElement | null
         if (eventEl) {
-          if (!canWrite) {
+          if (!canWrite || !isTimeGridGestureEligible(target)) {
             eventEl.style.cursor = 'default'
           } else {
             const rect = eventEl.getBoundingClientRect()
@@ -1371,6 +1410,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
       const touch = e.touches[0]
       const target = touch.target as HTMLElement
       if (!target.closest('.sx__time-grid-event')) return
+      if (!isTimeGridGestureEligible(target)) return
 
       const wrapper = e.currentTarget as HTMLElement
       const gridEl = wrapper.querySelector(

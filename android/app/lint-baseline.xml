@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.5.2">
+    <issue
+        id="OnClick"
+        severity="Error"
+        message="Corresponding method handler &apos;`public void onAddMemberClicked(android.view.View)`&apos; not found">
+        <location
+            file="src/main/res/layout/view_collection_members.xml"
+            line="31"
+            column="9"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="Call requires API level 22 (current min is 21): `android.accounts.AccountManager#removeAccountExplicitly`">
+        <location
+            file="src/main/java/io/silentsuite/sync/ui/AccountActivity.kt"
+            line="545"
+            column="40"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightStatusBar` requires API level 23 (current min is 21)">
+        <location
+            file="src/main/res/values-v21/styles.xml"
+            line="21"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightNavigationBar` requires API level 27 (current min is 21)">
+        <location
+            file="src/main/res/values-v21/styles.xml"
+            line="22"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightStatusBar` requires API level 23 (current min is 21)">
+        <location
+            file="src/main/res/values-night/styles.xml"
+            line="41"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightNavigationBar` requires API level 27 (current min is 21)">
+        <location
+            file="src/main/res/values-night/styles.xml"
+            line="42"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightStatusBar` requires API level 23 (current min is 21)">
+        <location
+            file="src/main/res/values-night/styles.xml"
+            line="54"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightNavigationBar` requires API level 27 (current min is 21)">
+        <location
+            file="src/main/res/values-night/styles.xml"
+            line="55"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightStatusBar` requires API level 23 (current min is 21)">
+        <location
+            file="src/main/res/values/styles.xml"
+            line="87"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightNavigationBar` requires API level 27 (current min is 21)">
+        <location
+            file="src/main/res/values/styles.xml"
+            line="88"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightStatusBar` requires API level 23 (current min is 21)">
+        <location
+            file="src/main/res/values/styles.xml"
+            line="101"
+            column="15"/>
+    </issue>
+    <issue
+        id="NewApi"
+        severity="Error"
+        message="`android:windowLightNavigationBar` requires API level 27 (current min is 21)">
+        <location
+            file="src/main/res/values/styles.xml"
+            line="102"
+            column="15"/>
+    </issue>
+</issues>

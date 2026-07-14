@@ -1,6 +1,13 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { enqueue, getAll, getPendingCount, replay } from '@/app/lib/offline-queue'
+import { _setEncryptedQueuePersistenceAvailableForTests, enqueue, getAll, getPendingCount, replay } from '@/app/lib/offline-queue'
+import {
+  _resetForTests as resetDataCache,
+  _setEncryptedCacheAvailableForTests,
+  _setEnvelopeKeyForTests,
+  getMeta,
+  getItemsByType,
+} from '@/app/lib/data-cache'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, changeAccountWhenQueuePutRuns, queueGuard, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
@@ -16,6 +23,8 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({ useLabelSuggestions
 
 import { useEtebaseStore } from '../use-etebase-store'
 import { useSyncStore } from '../use-sync-store'
+import { useContactStore } from '../use-contact-store'
+import { useContactListStore } from '../use-contact-list-store'
 
 // These tests exercise real fake-IndexedDB transactions and remote-replay
 // reconciliation. Leave headroom for heavily loaded CI/review workers so a
@@ -79,12 +88,68 @@ async function expectOwned(types: string[]) {
 describe('useEtebaseStore real guarded offline queue integration', () => {
   beforeEach(async () => {
     await resetRealOfflineQueue()
+    await resetDataCache()
+    _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
+    _setEncryptedCacheAvailableForTests(true)
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
     coreMock.createItem.mockReset()
     coreMock.updateItem.mockReset()
     coreMock.deleteItem.mockReset()
     coreMock.listItems.mockReset().mockResolvedValue({ items: [], stoken: null, done: true })
     toastMock.showErrorToast.mockReset()
+  })
+
+  it('persists and replays an offline favorite update from a cold cache without plaintext queue content', async () => {
+    // Production leaves the general local-cache feature disabled. This
+    // favorite-specific path must nevertheless create its encrypted envelope
+    // and fingerprint from an empty IndexedDB database before it queues.
+    await resetDataCache()
+    _setEncryptedCacheAvailableForTests(true)
+    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', '')
+    expect(await getMeta()).toBeNull()
+    setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
+    useEtebaseStore.setState({
+      collections: { calendar: [], tasks: [], contacts: [collection('col-1')], preferences: [] },
+    } as any)
+    useContactListStore.setState({
+      lists: [{ id: 'col-1', name: 'Contacts', color: '#fff', visible: true, accessLevel: 2 }],
+      activeListId: 'col-1',
+    })
+    useContactStore.setState({
+      contacts: [{
+        id: 'item-1', uid: 'contact-uid', displayName: 'PRIVATE FAVORITE',
+        name: { prefix: '', given: 'PRIVATE', family: 'FAVORITE', suffix: '' },
+        phones: [], emails: [], addresses: [], organization: '', title: '', notes: '',
+        birthday: null, photoUrl: null, categories: [], favorite: false, listId: 'col-1',
+        created_at: new Date(), updated_at: new Date(),
+      }],
+    })
+    coreMock.updateItem.mockRejectedValueOnce(offlineError())
+    try {
+      await useContactStore.getState().setContactFavorite('item-1', true)
+      expect(useContactStore.getState().contacts[0]!.favorite).toBe(true)
+
+      const entries = await getAll(queueGuard())
+      expect(entries).toHaveLength(1)
+      expect(entries[0]).toMatchObject({ type: 'update', itemUid: 'item-1', collectionUid: 'col-1' })
+      expect(entries[0]!.content).toBeUndefined()
+      expect(JSON.stringify(entries)).not.toContain('PRIVATE FAVORITE')
+      const persistedContent = (await getItemsByType('contacts')).find((item) => item.itemUid === 'item-1')?.content
+      expect(persistedContent).toContain('X-SILENTSUITE-FAVORITE:1')
+
+      coreMock.updateItem.mockResolvedValueOnce(undefined)
+      await useSyncStore.getState().replayOfflineQueue()
+      expect(coreMock.updateItem).toHaveBeenLastCalledWith(
+        useEtebaseStore.getState().account,
+        expect.objectContaining({ uid: 'col-1' }),
+        expect.objectContaining({ uid: 'item-1' }),
+        persistedContent,
+      )
+      expect(await getAll(queueGuard())).toEqual([])
+      expect((await getItemsByType('contacts')).find((item) => item.itemUid === 'item-1')?.content).toBe(persistedContent)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('real createItem fallback persists the active fingerprint and is visible to guarded count and replay', async () => {
@@ -146,16 +211,16 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
   })
 
   it.each([
-    ['updateItem', async () => useEtebaseStore.getState().updateItem('calendar', 'item-1', 'NEW')],
-    ['deleteItem', async () => useEtebaseStore.getState().deleteItem('calendar', 'item-1')],
-  ] as const)('%s quietly cancels at its real queue put boundary', async (_name, mutate) => {
+    ['updateItem', async () => useEtebaseStore.getState().updateItem('calendar', 'item-1', 'NEW'), false],
+    ['deleteItem', async () => useEtebaseStore.getState().deleteItem('calendar', 'item-1'), undefined],
+  ] as const)('%s quietly cancels at its real queue put boundary', async (_name, mutate, expectedResult) => {
     setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
     coreMock.updateItem.mockRejectedValueOnce(offlineError())
     coreMock.deleteItem.mockRejectedValueOnce(offlineError())
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const putSpy = changeAccountWhenQueuePutRuns(switchAccountAtBoundary)
     try {
-      await expect(mutate()).resolves.toBeUndefined()
+      await expect(mutate()).resolves.toBe(expectedResult)
       expect(await getAll()).toEqual([])
       expectNewAccountStateUntouched()
       expect(errorSpy).not.toHaveBeenCalled()

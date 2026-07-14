@@ -86,3 +86,10 @@ def test_bridge_release_workflow_validates_frozen_version_without_runtime_env_ov
     assert "Removed stale generated version stamp" in spec
     assert "target.unlink()" in spec
     assert "VERSION = {version!r}" in spec
+
+
+def test_bridge_release_checksums_use_downloadable_asset_basenames():
+    workflow = read(".github/workflows/build-bridge.yml")
+
+    assert '(cd dist && sha256sum "${{ matrix.asset-name }}"' in workflow
+    assert "sha256sum dist/${{ matrix.asset-name }}" not in workflow

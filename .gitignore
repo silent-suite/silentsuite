@@ -40,6 +40,9 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+*.py[cod]
+__pycache__/
+.pytest_cache/
 .vercel
 package-lock.json
 tsconfig.tsbuildinfo

@@ -2,23 +2,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import ContactImport from '../ContactImport'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
-import type { VCard } from '@silentsuite/core/utils/vcard-parser'
 const mocks = vi.hoisted(() => ({
   importContacts: vi.fn(),
   createCollection: vi.fn(),
   onImportComplete: vi.fn(),
 }))
 
-vi.mock('@silentsuite/core/utils/vcard-parser', () => ({
-  parseVCard: vi.fn((vc: string): VCard => {
-    void vc
-    return {
-      uid: 'vc-1',
-      fn: 'Jane Doe',
-      categories: [' Work ', 'work', 'Home'],
-    }
-  }),
-}))
 
 vi.mock('@/app/stores/use-contact-store', () => ({
   useContactStore: function useContactStore<T>(selector: (state: {
@@ -60,7 +49,7 @@ describe('ContactImport categories normalization', () => {
 
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
     const file = new File(
-      ['BEGIN:VCARD\nVERSION:4.0\nFN:Jane Doe\nEND:VCARD'],
+      ['BEGIN:VCARD\nVERSION:4.0\nUID:vc-1\nFN:Jane Doe\nCATEGORIES: Work ,work,Home\nX-SILENTSUITE-FAVORITE:1\nEND:VCARD'],
       'contacts.vcf',
       { type: 'text/vcard' },
     )
@@ -73,7 +62,8 @@ describe('ContactImport categories normalization', () => {
       expect(mocks.importContacts).toHaveBeenCalledTimes(1)
     })
 
-    const payload = mocks.importContacts.mock.calls[0]![0] as Array<{ categories: string[] }>
+    const payload = mocks.importContacts.mock.calls[0]![0] as Array<{ categories: string[]; favorite: boolean }>
     expect(payload[0]!.categories).toEqual(['Work', 'Home'])
+    expect(payload[0]!.favorite).toBe(true)
   })
 })

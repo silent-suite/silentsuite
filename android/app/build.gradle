@@ -123,6 +123,7 @@ android {
          buildConfig = true
     }
     lint {
+        baseline file('lint-baseline.xml')
         disable 'GoogleAppIndexingWarning', 'GradleDependency', 'GradleDynamicVersion', 'IconColors', 'IconLauncherShape', 'IconMissingDensityFolder', 'ImpliedQuantity', 'MissingQuantity', 'MissingTranslation', 'ExtraTranslation', 'Recycle', 'RtlEnabled', 'RtlHardcoded', 'Typos', 'RestrictedApi'
     }
 }

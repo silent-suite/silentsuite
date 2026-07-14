@@ -175,6 +175,11 @@ function assertVCardExpectations(vcard: VCard, expected: Record<string, unknown>
       case 'cellNumber':
         expect(vcard.tel).toContainEqual({ type: 'cell', value: value as string });
         break;
+      case 'favorite':
+        // Canonical `X-SILENTSUITE-FAVORITE:1` resolves to true; the parser
+        // leaves the field undefined when the resolved value is false.
+        expect(vcard.favorite ?? false).toBe(value);
+        break;
       default:
         throw new Error(`unhandled expected key "${key}" for a vcard fixture`);
     }

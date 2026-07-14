@@ -120,6 +120,56 @@ describe('categories roundtrip (#291)', () => {
   });
 });
 
+// ── favorite roundtrip (X-SILENTSUITE-FAVORITE) ──
+
+describe('favorite roundtrip', () => {
+  it('emits exactly one X-SILENTSUITE-FAVORITE:1 line when favorite is true', () => {
+    const original = makeFullContact({ favorite: true });
+    const vcardStr = toVCard(original);
+
+    const matches = vcardStr.split('\r\n').filter((l) => l.startsWith('X-SILENTSUITE-FAVORITE'));
+    expect(matches).toEqual(['X-SILENTSUITE-FAVORITE:1']);
+
+    expect(fromVCard(vcardStr).favorite).toBe(true);
+  });
+
+  it('omits the favorite property when favorite is false', () => {
+    const vcardStr = toVCard(makeFullContact({ favorite: false }));
+    expect(vcardStr).not.toContain('X-SILENTSUITE-FAVORITE');
+    expect(fromVCard(vcardStr).favorite).toBe(false);
+  });
+
+  it('omits the favorite property when favorite is undefined', () => {
+    const contact = makeFullContact();
+    delete contact.favorite;
+    const vcardStr = toVCard(contact);
+    expect(vcardStr).not.toContain('X-SILENTSUITE-FAVORITE');
+    expect(fromVCard(vcardStr).favorite).toBe(false);
+  });
+
+  it('defaults favorite to false when deserializing a legacy vCard', () => {
+    const legacy = [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      'UID:legacy-nofav',
+      'FN:Legacy Contact',
+      'END:VCARD',
+    ].join('\r\n');
+    expect(deserializeContact(legacy).favorite).toBe(false);
+  });
+
+  it('removes stale favorite state on a true→false serialize', () => {
+    const original = makeFullContact({ favorite: true });
+    const asFavorite = toVCard(original);
+    expect(asFavorite).toContain('X-SILENTSUITE-FAVORITE:1');
+
+    const restored = fromVCard(asFavorite);
+    restored.favorite = false;
+    const unfavorited = toVCard(restored);
+    expect(unfavorited).not.toContain('X-SILENTSUITE-FAVORITE');
+  });
+});
+
 // ── toVCard / fromVCard roundtrip ──
 
 describe('toVCard / fromVCard roundtrip', () => {

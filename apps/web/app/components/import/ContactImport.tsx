@@ -142,6 +142,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         birthday: contact.bday ?? null,
         photoUrl: contact.photo ?? null,
         categories: normalizeLabels(contact.categories ?? []),
+        favorite: contact.favorite === true,
         listId: selectedListId,
       }))
       const count = await importContacts(newContacts)

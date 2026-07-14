@@ -70,8 +70,84 @@ jobs:
       - name: Build 16 KB-aligned Etebase client AAR
         run: scripts/build-etebase-client-16kb.sh
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon -PrequireEtebase16Kb=true
+      - name: Run debug unit tests and lint
+        run: ./gradlew app:testDebugUnitTest app:lintDebug --continue --no-daemon -PrequireEtebase16Kb=true
+
+      - name: Upload unit test reports and results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-unit-test-results-${{ github.sha }}
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-lint-reports-${{ github.sha }}
+          path: |
+            android/app/build/reports/lint-results-debug.html
+            android/app/build/reports/lint-results-debug.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Capture debug and release runtime dependency graphs
+        run: |
+          mkdir -p build/privacy-evidence/dependencies
+          ./gradlew app:dependencies --configuration debugRuntimeClasspath --no-daemon \
+            > build/privacy-evidence/dependencies/debug-runtime.txt
+          ./gradlew app:dependencies --configuration releaseRuntimeClasspath --no-daemon \
+            > build/privacy-evidence/dependencies/release-runtime.txt
+
+      - name: Build debug APK and unsigned release APK/AAB
+        run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon -PrequireEtebase16Kb=true
+
+      - name: Generate universal split set from unsigned AAB
+        env:
+          BUNDLETOOL_VERSION: '1.18.1'
+          BUNDLETOOL_SHA256: '675786493983787ffa11550bdb7c0715679a44e1643f3ff980a529e9c822595c'
+        run: |
+          curl --fail --location --silent --show-error \
+            "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar" \
+            --output "$RUNNER_TEMP/bundletool.jar"
+          echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum --check --strict
+          java -jar "$RUNNER_TEMP/bundletool.jar" build-apks \
+            --bundle app/build/outputs/bundle/release/app-release.aab \
+            --output build/privacy-evidence/unsigned-release.apks \
+            --mode universal
+          unzip -q build/privacy-evidence/unsigned-release.apks \
+            -d build/privacy-evidence/unsigned-release-splits
+
+      - name: Scan dependency, manifest, mapping, resources, APK, AAB, splits, DEX, and native payloads
+        run: |
+          set -euo pipefail
+          mkdir -p build/privacy-evidence/build-metadata
+          test -s app/build/outputs/mapping/release/mapping.txt
+          mkdir -p build/privacy-evidence/build-metadata/app/build/outputs/mapping/release
+          cp app/build/outputs/mapping/release/mapping.txt \
+            build/privacy-evidence/build-metadata/app/build/outputs/mapping/release/mapping.txt
+          find app/build/intermediates -type f \
+            \( -iname '*manifest*.xml' -o -iname '*mapping*.txt' -o -iname 'resources*.txt' -o -iname 'resources*.arsc' \) \
+            -exec cp --parents {} build/privacy-evidence/build-metadata/ \;
+          sha256sum app/build/outputs/apk/debug/*.apk \
+            app/build/outputs/apk/release/*.apk \
+            app/build/outputs/bundle/release/*.aab \
+            build/privacy-evidence/unsigned-release.apks \
+            > build/privacy-evidence/artifact-sha256.txt
+          python3 scripts/scan-tracker-signatures.py \
+            --manifest security/tracker-signatures.json \
+            --summary build/privacy-evidence/tracker-scan-summary.json \
+            build/privacy-evidence/dependencies \
+            build/privacy-evidence/build-metadata \
+            app/build/outputs/apk/debug \
+            app/build/outputs/apk/release \
+            app/build/outputs/bundle/release \
+            build/privacy-evidence/unsigned-release.apks \
+            build/privacy-evidence/unsigned-release-splits
 
       - name: Verify debug native library alignment
         run: |
@@ -79,6 +155,13 @@ jobs:
             --require-lib libetebase_android.so \
             --require-lib libconscrypt_jni.so \
             app/build/outputs/apk/debug/*.apk
+
+      - name: Upload tracker verification evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-tracker-scan-${{ github.sha }}
+          path: android/build/privacy-evidence/
+          retention-days: 14
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
@@ -161,6 +244,57 @@ jobs:
             -PrequireEtebase16Kb=true \
             -PsigningStoreLocation="$KEYSTORE_PATH" \
             -PsigningKeyAlias="$KEY_ALIAS"
+
+      - name: Capture release dependency graph and generate signed-release splits
+        env:
+          BUNDLETOOL_VERSION: '1.18.1'
+          BUNDLETOOL_SHA256: '675786493983787ffa11550bdb7c0715679a44e1643f3ff980a529e9c822595c'
+          KSTOREPWD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/privacy-evidence/dependencies build/privacy-evidence/build-metadata
+          ./gradlew app:dependencies --configuration releaseRuntimeClasspath --no-daemon \
+            > build/privacy-evidence/dependencies/release-runtime.txt
+          curl --fail --location --silent --show-error \
+            "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar" \
+            --output "$RUNNER_TEMP/bundletool.jar"
+          echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum --check --strict
+          java -jar "$RUNNER_TEMP/bundletool.jar" build-apks \
+            --bundle app/build/outputs/bundle/release/app-release.aab \
+            --output build/privacy-evidence/signed-release.apks \
+            --mode universal \
+            --ks="$KEYSTORE_PATH" --ks-key-alias="$KEY_ALIAS" \
+            --ks-pass=env:KSTOREPWD --key-pass=env:KSTOREPWD
+          unzip -q build/privacy-evidence/signed-release.apks \
+            -d build/privacy-evidence/signed-release-splits
+          test -s app/build/outputs/mapping/release/mapping.txt
+          mkdir -p build/privacy-evidence/build-metadata/app/build/outputs/mapping/release
+          cp app/build/outputs/mapping/release/mapping.txt \
+            build/privacy-evidence/build-metadata/app/build/outputs/mapping/release/mapping.txt
+          find app/build/intermediates -type f \
+            \( -iname '*manifest*.xml' -o -iname '*mapping*.txt' -o -iname 'resources*.txt' -o -iname 'resources*.arsc' \) \
+            -exec cp --parents {} build/privacy-evidence/build-metadata/ \;
+          sha256sum app/build/outputs/apk/release/*.apk \
+            app/build/outputs/bundle/release/*.aab \
+            build/privacy-evidence/signed-release.apks \
+            > build/privacy-evidence/artifact-sha256.txt
+          python3 scripts/scan-tracker-signatures.py \
+            --manifest security/tracker-signatures.json \
+            --summary build/privacy-evidence/tracker-scan-summary.json \
+            build/privacy-evidence/dependencies \
+            build/privacy-evidence/build-metadata \
+            app/build/outputs/apk/release \
+            app/build/outputs/bundle/release \
+            build/privacy-evidence/signed-release.apks \
+            build/privacy-evidence/signed-release-splits
+
+      - name: Upload signed tracker verification evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-tracker-scan-${{ github.sha }}
+          path: android/build/privacy-evidence/
+          retention-days: 30
 
       - name: Verify release native library alignment
         run: |

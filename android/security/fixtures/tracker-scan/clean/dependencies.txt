@@ -1,0 +1,2 @@
+io.etebase:client:2.3.2
+org.conscrypt:conscrypt-android:2.5.0

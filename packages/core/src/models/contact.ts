@@ -30,6 +30,10 @@ export interface Contact {
    *  Round-tripped via the vCard CATEGORIES property (comma-separated).
    *  Optional so existing callers keep compiling; deserialize paths default to []. */
   categories?: string[];
+  /** Favorite/starred state, round-tripped via the SilentSuite-owned
+   *  `X-SILENTSUITE-FAVORITE:1` vCard extension. Optional so existing callers
+   *  keep compiling; deserialize paths default to false. */
+  favorite?: boolean;
   listId?: string;
   created_at: Date;
   updated_at: Date;
@@ -54,6 +58,7 @@ export function toVCard(contact: Contact): string {
     note: contact.notes || undefined,
     bday: contact.birthday ?? undefined,
     photo: contact.photoUrl ?? undefined,
+    favorite: contact.favorite === true ? true : undefined,
     rev: formatRevTimestamp(contact.updated_at),
   };
 
@@ -97,6 +102,8 @@ export function fromVCard(vcardStr: string): Contact {
     photoUrl: vcard.photo ?? null,
     // Preserve CATEGORIES for round-trip; default to [] for legacy records
     categories: vcard.categories ?? [],
+    // Preserve favorite state; legacy/absent cards deserialize to false
+    favorite: vcard.favorite ?? false,
     created_at: now,
     updated_at: vcard.rev ? parseRevTimestamp(vcard.rev) : now,
   };

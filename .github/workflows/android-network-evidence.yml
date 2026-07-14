@@ -1,0 +1,95 @@
+name: Validate Android UID network evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_sha256:
+        description: SHA-256 of the exact tested APK
+        required: true
+        type: string
+      app_uid:
+        description: Single Android app UID used for every captured scenario
+        required: true
+        type: string
+      raw_capture_sha256:
+        description: SHA-256 of the raw capture retained outside public GitHub artifacts
+        required: true
+        type: string
+      restricted_evidence_reference:
+        description: Opaque owner record ID for access-controlled raw evidence (never a public URL)
+        required: true
+        type: string
+      manual_owner:
+        description: Named human owner accountable for restricted evidence and correlation checklist
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-evidence:
+    runs-on: ubuntu-latest
+    environment: android-network-evidence
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Materialize sanitized evidence only
+        env:
+          NETWORK_EVIDENCE_JSONL: ${{ secrets.ANDROID_NETWORK_EVIDENCE_JSONL }}
+        run: |
+          set -euo pipefail
+          test -n "$NETWORK_EVIDENCE_JSONL"
+          mkdir -p network-evidence/summary
+          printf '%s\n' "$NETWORK_EVIDENCE_JSONL" > network-evidence/summary/endpoints.jsonl
+      - name: Enforce provenance, one app UID, scenarios, and endpoint allowlist
+        env:
+          APP_UID: ${{ inputs.app_uid }}
+          ARTIFACT_SHA256: ${{ inputs.artifact_sha256 }}
+          RAW_CAPTURE_SHA256: ${{ inputs.raw_capture_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 android/scripts/check-network-evidence.py \
+            --allowlist android/security/android-network-endpoints.txt \
+            --evidence network-evidence/summary/endpoints.jsonl \
+            --app-uid "$APP_UID" \
+            --artifact-sha256 "$ARTIFACT_SHA256" \
+            --raw-capture-sha256 "$RAW_CAPTURE_SHA256" \
+            --provenance-output network-evidence/summary/provenance.json \
+            --require-complete
+      - name: Record accountable restricted/manual review
+        env:
+          RESTRICTED_REFERENCE: ${{ inputs.restricted_evidence_reference }}
+          MANUAL_OWNER: ${{ inputs.manual_owner }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          reference = os.environ['RESTRICTED_REFERENCE'].strip()
+          owner = os.environ['MANUAL_OWNER'].strip()
+          if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/-]{2,127}', reference):
+              raise SystemExit('restricted evidence reference must be an opaque record ID')
+          if len(owner) < 3 or len(owner) > 100:
+              raise SystemExit('manual owner must be a named accountable owner')
+          record = {
+              'schema_version': 1,
+              'restricted_evidence_reference': reference,
+              'manual_owner': owner,
+              'commit': os.environ['COMMIT_SHA'],
+              'owner_attestations': [
+                  'raw capture remains in access-controlled storage and is not a GitHub artifact',
+                  'raw capture digest matches provenance',
+                  'installed APK digest matches provenance',
+                  'dumpsys package UID matches the one UID in every JSONL row',
+                  'raw capture was filtered to that UID and destinations were transcribed without hiding unexpected hosts',
+                  'capture excludes bodies, credentials, tokens, PIM data, and TLS key material'
+              ]
+          }
+          Path('network-evidence/summary/manual-review.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+      - name: Upload sanitized summary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-network-summary-${{ github.sha }}
+          path: network-evidence/summary/
+          retention-days: 30

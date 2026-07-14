@@ -14,6 +14,11 @@ export interface ScheduleXWeekLayout {
   gridHeight: number
 }
 
+export interface RequiredTimedHourBounds {
+  startHour: number
+  endHour: number
+}
+
 const DEFAULT_WEEK_HOUR_HEIGHT = 64
 const MIN_WEEK_HOUR_HEIGHT = 48
 const MAX_WEEK_HOUR_HEIGHT = 72
@@ -75,16 +80,25 @@ export function getScheduleXWeekLayout(
   startHour: number,
   endHour: number,
   availableHeight = 0,
+  requiredBounds?: RequiredTimedHourBounds,
 ): ScheduleXWeekLayout {
   const preferredStart = clamp(Math.floor(startHour), 0, HOURS_PER_DAY - 1)
   const preferredEnd = clamp(Math.ceil(endHour), preferredStart + 1, HOURS_PER_DAY)
-  const preferredHours = preferredEnd - preferredStart
+  const requiredStart = Number.isFinite(requiredBounds?.startHour)
+    ? clamp(Math.floor(requiredBounds!.startHour), 0, HOURS_PER_DAY - 1)
+    : preferredStart
+  const requiredEnd = Number.isFinite(requiredBounds?.endHour)
+    ? clamp(Math.ceil(requiredBounds!.endHour), requiredStart + 1, HOURS_PER_DAY)
+    : preferredEnd
+  const effectiveStart = Math.min(preferredStart, requiredStart)
+  const effectiveEnd = Math.max(preferredEnd, requiredEnd)
+  const preferredHours = effectiveEnd - effectiveStart
   const hoursNeededForHeight = availableHeight > 0 ? Math.ceil(availableHeight / MAX_WEEK_HOUR_HEIGHT) : 0
   const targetHours = Math.min(
     HOURS_PER_DAY,
     Math.max(preferredHours, MIN_WEEK_VISIBLE_HOURS, hoursNeededForHeight),
   )
-  const { startHour: expandedStart, endHour: expandedEnd } = expandDayWindow(preferredStart, preferredEnd, targetHours)
+  const { startHour: expandedStart, endHour: expandedEnd } = expandDayWindow(effectiveStart, effectiveEnd, targetHours)
   const visibleHours = expandedEnd - expandedStart
 
   const idealHourHeight = availableHeight > 0 ? availableHeight / visibleHours : DEFAULT_WEEK_HOUR_HEIGHT

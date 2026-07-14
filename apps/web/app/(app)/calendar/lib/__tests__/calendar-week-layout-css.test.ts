@@ -17,3 +17,11 @@ describe('Schedule-X week layout CSS', () => {
     expect(globalsCss).not.toMatch(/\.sx-silentsuite-calendar \.sx__week-wrapper[\s\S]*min-height: 100%/)
   })
 })
+
+describe('Schedule-X month layout CSS', () => {
+  it('allows connected multi-day bars to keep the width calculated by Schedule-X', () => {
+    expect(globalsCss).toMatch(
+      /\.sx-silentsuite-calendar \.sx__month-grid-event\.ss-month-multiday\s*\{[^}]*max-width:\s*none/,
+    )
+  })
+})

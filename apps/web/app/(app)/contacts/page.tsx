@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
-  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder, Tag,
+  StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder, Tag, Star,
 } from 'lucide-react'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
@@ -172,34 +172,47 @@ function ContactListItem({
   contact,
   isSelected,
   onSelect,
+  onToggleFavorite,
+  canFavorite,
 }: {
   contact: Contact
   isSelected: boolean
   onSelect: () => void
+  onToggleFavorite: () => void
+  canFavorite: boolean
 }) {
   const primaryEmail = contact.emails[0]?.value ?? ''
   const primaryPhone = contact.phones[0]?.value ?? ''
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
+    <div
       className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
         isSelected
           ? 'bg-emerald-600/15 border border-emerald-500/30'
           : 'border border-transparent hover:bg-[rgb(var(--surface))]'
       }`}
     >
-      <ContactAvatar contact={contact} size="sm" />
-      <div className="min-w-0 flex-1">
+      <button type="button" onClick={onSelect} className="flex min-h-11 min-w-0 flex-1 items-center gap-3 text-left">
+        <ContactAvatar contact={contact} size="sm" />
+        <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-[rgb(var(--foreground))]">
           {contact.displayName}
         </div>
         <div className="truncate text-xs text-[rgb(var(--muted))]">
           {primaryEmail || primaryPhone || ''}
         </div>
-      </div>
-    </button>
+        </div>
+      </button>
+      <button
+        type="button"
+        onClick={onToggleFavorite}
+        disabled={!canFavorite}
+        aria-label={`${contact.favorite ? 'Remove' : 'Add'} ${contact.displayName} ${contact.favorite ? 'from' : 'to'} favorites`}
+        className="touch-target shrink-0 rounded-md text-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Star className={`h-5 w-5 ${contact.favorite ? 'fill-current' : ''}`} />
+      </button>
+    </div>
   )
 }
 
@@ -639,6 +652,8 @@ function ContactDetail({
 }) {
   const updateContact = useContactStore((s) => s.updateContact)
   const deleteContact = useContactStore((s) => s.deleteContact)
+  const setContactFavorite = useContactStore((s) => s.setContactFavorite)
+  const canFavorite = useContactStore((s) => s.canWriteContact(contact))
   const canWrite = useAuthStore((s) => s.canWrite())
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
@@ -765,6 +780,15 @@ function ContactDetail({
             Back
           </button>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setContactFavorite(contact.id, !contact.favorite)}
+              disabled={!canFavorite}
+              aria-label={`${contact.favorite ? 'Remove' : 'Add'} ${contact.displayName} ${contact.favorite ? 'from' : 'to'} favorites`}
+              className="touch-target rounded text-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Star className={`h-5 w-5 ${contact.favorite ? 'fill-current' : ''}`} />
+            </button>
             {canWrite && (
               <>
                 <button
@@ -1082,9 +1106,12 @@ export default function ContactsPage() {
   const searchQuery = useContactStore((s) => s.searchQuery)
   const isOnline = useSyncStore((s) => s.isOnline)
   const contactLists = useContactListStore((s) => s.lists)
+  const setContactFavorite = useContactStore((s) => s.setContactFavorite)
+  const canWriteContact = useContactStore((s) => s.canWriteContact)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [showNewForm, setShowNewForm] = useState(false)
   const [collectionSheetOpen, setCollectionSheetOpen] = useState(false)
+  const [contactView, setContactView] = useState<'all' | 'favorites'>('all')
 
   // Filter contacts by visible lists
   const visibleListIds = useMemo(() => new Set(contactLists.filter(l => l.visible).map(l => l.id)), [contactLists])
@@ -1092,10 +1119,14 @@ export default function ContactsPage() {
     () => contacts.filter((c) => visibleListIds.has(c.listId ?? 'default')),
     [contacts, visibleListIds],
   )
+  const viewFilteredContacts = useMemo(
+    () => contactView === 'favorites' ? listFilteredContacts.filter((contact) => contact.favorite === true) : listFilteredContacts,
+    [contactView, listFilteredContacts],
+  )
 
   const filtered = useMemo(
-    () => sortContacts(getFilteredContacts(listFilteredContacts, searchQuery)),
-    [listFilteredContacts, searchQuery],
+    () => sortContacts(getFilteredContacts(viewFilteredContacts, searchQuery)),
+    [viewFilteredContacts, searchQuery],
   )
 
   const selectedContact = useMemo(
@@ -1103,8 +1134,9 @@ export default function ContactsPage() {
     [contacts, selectedId],
   )
 
-  const isEmpty = listFilteredContacts.length === 0 && !isLoading
+  const isEmpty = contactView === 'all' && listFilteredContacts.length === 0 && !isLoading
   const isEmptySearch = filtered.length === 0 && searchQuery.trim() !== '' && !isLoading
+  const isEmptyFavorites = contactView === 'favorites' && viewFilteredContacts.length === 0 && !searchQuery.trim() && !isLoading
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -1146,6 +1178,20 @@ export default function ContactsPage() {
       {/* Search */}
       <SearchBar />
 
+      <div className="inline-flex w-fit rounded-lg bg-[rgb(var(--surface))] p-1" role="group" aria-label="Contact view">
+        {(['all', 'favorites'] as const).map((view) => (
+          <button
+            key={view}
+            type="button"
+            aria-pressed={contactView === view}
+            onClick={() => setContactView(view)}
+            className={`min-h-11 rounded-md px-3 text-sm ${contactView === view ? 'bg-emerald-600 text-white' : 'text-[rgb(var(--muted))]'}`}
+          >
+            {view === 'all' ? 'All' : 'Favorites'}
+          </button>
+        ))}
+      </div>
+
       {/* New Contact Form */}
       {showNewForm && (
         <ContactForm
@@ -1162,6 +1208,12 @@ export default function ContactsPage() {
         <ContactSkeleton />
       ) : isEmpty ? (
         <ContactsEmptyState onAddContact={canWrite ? () => setShowNewForm(true) : undefined} />
+      ) : isEmptyFavorites ? (
+        <div className="flex flex-1 flex-col items-center justify-center text-center">
+          <Star className="mb-3 h-10 w-10 text-[rgb(var(--muted))]" />
+          <h3 className="font-medium text-[rgb(var(--foreground))]">No favorite contacts</h3>
+          <p className="mt-1 text-sm text-[rgb(var(--muted))]">Star a contact to see it here.</p>
+        </div>
       ) : isEmptySearch ? (
         <SearchEmptyState query={searchQuery} />
       ) : (
@@ -1178,6 +1230,8 @@ export default function ContactsPage() {
                 contact={contact}
                 isSelected={contact.id === selectedId}
                 onSelect={() => setSelectedId(contact.id)}
+                onToggleFavorite={() => setContactFavorite(contact.id, !contact.favorite)}
+                canFavorite={canWriteContact(contact)}
               />
             ))}
           </div>
