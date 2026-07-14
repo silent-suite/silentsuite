@@ -148,3 +148,11 @@ def test_foundation_dimensions_and_component_previews_use_accessible_semantic_to
         assert name in previews
     assert previews["ShapeAppearance.AppTheme.Material3.Standard"].get("cornerSize") == "@dimen/shape_radius_standard"
     assert previews["Widget.AppTheme.Material3.Button"].get("android:minHeight") == "@dimen/touch_target_min"
+
+
+def test_updated_androidx_nullability_keeps_event_invitation_attachment_failure_safe():
+    fragment = read("android/app/src/main/java/io/silentsuite/sync/ui/etebase/CollectionItemFragment.kt")
+    invitation = read("android/app/src/main/java/io/silentsuite/sync/utils/EventEmailInvitation.kt")
+
+    assert "fun createIntent(event: Event, icsContent: String): Intent?" in invitation
+    assert "intent?.let(::startActivity)" in fragment
