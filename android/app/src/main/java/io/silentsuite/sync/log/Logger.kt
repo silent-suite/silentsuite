@@ -14,7 +14,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Process
-import android.preference.PreferenceManager
+import androidx.preference.PreferenceManager
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -104,7 +104,7 @@ object Logger : SharedPreferences.OnSharedPreferenceChangeListener {
                 Toast.makeText(context, context.getString(R.string.logging_couldnt_create_file), Toast.LENGTH_LONG).show()
             }
 
-            nm.notify(Constants.NOTIFICATION_EXTERNAL_FILE_LOGGING, builder.build())
+            NotificationUtils.notify(context, Constants.NOTIFICATION_EXTERNAL_FILE_LOGGING, builder.build())
         } else {
             nm.cancel(Constants.NOTIFICATION_EXTERNAL_FILE_LOGGING)
 

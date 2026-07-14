@@ -55,7 +55,7 @@ class LoginLifecycleContractTest {
     @Test
     fun accountRecreationRuntimeJobUsesTheRequiredUnsignedMatrixAndPinnedRunner() {
         val workflow = File("../../.github/workflows/build-android.yml").readText()
-        val appBuild = File("build.gradle").readText()
+        val unsignedBuild = workflow.substringAfter("  build-pr:").substringBefore("  account-recreation-runtime:")
         val job = workflow.substringAfter("account-recreation-runtime:").substringBefore("  # ─────────────────────────────────────────────────────────────────────\n  # Release")
         val runnerReference = Regex("ReactiveCircus/android-emulator-runner@([0-9a-f]{40})").find(job)
 
@@ -63,12 +63,16 @@ class LoginLifecycleContractTest {
         assertTrue(job.contains("api-level: 21") && job.contains("arch: x86"))
         assertTrue(job.contains("api-level: 35") && job.contains("arch: x86_64"))
         assertTrue(runnerReference != null)
-        assertTrue(job.contains("script: cd android && ./gradlew app:connectedDebugAndroidTest"))
-        assertTrue(job.contains("io.silentsuite.sync.ui.AccountActivityRecreationTest"))
-        assertTrue(job.contains("-PrequireEtebase16Kb=true"))
+        listOf(
+            "app:testDebugUnitTest", "app:lintDebug", "app:assembleDebugAndroidTest",
+            "cert4android:assembleDebugAndroidTest", "ical4android:assembleDebugAndroidTest",
+            "vcard4android:assembleDebugAndroidTest"
+        ).forEach { command -> assertTrue(unsignedBuild.contains(command)) }
+        listOf(
+            "app:connectedDebugAndroidTest", "io.silentsuite.sync.ui.AccountActivityRecreationTest",
+            "-PrequireEtebase16Kb=true", "--no-daemon"
+        ).forEach { command -> assertTrue(job.contains(command)) }
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))
         assertFalse(job.contains("secrets."))
-        assertTrue(appBuild.contains("androidTestImplementation \"org.jetbrains.kotlin:kotlin-stdlib:\$kotlin_version\""))
-        assertTrue(appBuild.contains("'proguard-debug-test-rules.pro'"))
     }
 }

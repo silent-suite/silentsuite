@@ -11,6 +11,33 @@ ext {
     gradle_version = '8.11.1'
     compileSdkVersion = 36
     buildToolsVersion = '36.0.0'
+    // AGP 8.11 supports desugar_jdk_libs 2.1.x (AGP 8.0+ is required). Keep
+    // every desugaring consumer on one runtime API surface: Fragment 1.4.1
+    // calls DesugarCollections.synchronizedMap(), which 1.1.x lacks.
+    desugarJdkLibsVersion = '2.1.5'
+    keeperVersion = '0.16.1'
+
+    // Keep this cohort compatible with cert4android's API 14 contract. AndroidX
+    // Test 1.6/3.6 raised its minimum API level to 19, so all shared test
+    // artifacts stay on the last API-14-compatible stable cohort. UIAutomator
+    // remains app-only because the app itself has minSdk 21.
+    androidXVersions = [
+        annotation: '1.7.1',
+        core: '1.12.0',
+        appcompat: '1.4.2',
+        cardview: '1.0.0',
+        fragment: '1.4.1',
+        lifecycle: '2.6.1',
+        material: '1.5.0',
+        preference: '1.2.1',
+        coroutines: '1.7.3',
+        testCore: '1.5.0',
+        testRunner: '1.5.2',
+        testRules: '1.5.0',
+        testExtJunit: '1.1.5',
+        espresso: '3.5.1',
+        uiAutomator: '2.3.0'
+    ]
 }
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
@@ -25,6 +52,9 @@ buildscript {
     dependencies {
         classpath "com.android.tools.build:gradle:$gradle_version"
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        // Keeper is on Maven Central; 0.16.1 is the final Slack release with
+        // automatic L8 rule sharing for androidTest and its tested variant.
+        classpath 'com.slack.keeper:keeper:0.16.1'
     }
 }
 
@@ -43,6 +73,136 @@ subprojects {
     tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
         compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+tasks.register('verifySlice4DependencyCohort') {
+    group = 'verification'
+    description = 'Checks the Slice 4 AndroidX graph and default-preference continuity contracts.'
+
+    doLast {
+        def versions = rootProject.ext.androidXVersions
+        def required = [
+            ':app': [
+                debugRuntimeClasspath: [
+                    'androidx.core:core': versions.core,
+                    'androidx.appcompat:appcompat': versions.appcompat,
+                    'androidx.lifecycle:lifecycle-runtime': versions.lifecycle,
+                    'androidx.preference:preference': versions.preference,
+                    'com.google.android.material:material': versions.material,
+                    'org.jetbrains.kotlinx:kotlinx-coroutines-android': versions.coroutines
+                ],
+                releaseRuntimeClasspath: [
+                    'androidx.core:core': versions.core,
+                    'androidx.appcompat:appcompat': versions.appcompat,
+                    'androidx.preference:preference': versions.preference
+                ],
+                debugAndroidTestRuntimeClasspath: [
+                    'androidx.test:runner': versions.testRunner,
+                    'androidx.test:rules': versions.testRules,
+                    'androidx.test:core': versions.testCore,
+                    'androidx.test.ext:junit': versions.testExtJunit,
+                    'androidx.test.espresso:espresso-core': versions.espresso,
+                    'androidx.test.uiautomator:uiautomator': versions.uiAutomator
+                ]
+            ],
+            ':cert4android': [
+                debugRuntimeClasspath: [
+                    'androidx.core:core': versions.core,
+                    'androidx.appcompat:appcompat': versions.appcompat,
+                    'androidx.lifecycle:lifecycle-runtime': versions.lifecycle,
+                    'com.google.android.material:material': versions.material
+                ],
+                debugAndroidTestRuntimeClasspath: [
+                    'androidx.test:runner': versions.testRunner,
+                    'androidx.test:rules': versions.testRules,
+                    'androidx.test:core': versions.testCore,
+                    'androidx.test.ext:junit': versions.testExtJunit,
+                    'androidx.test.espresso:espresso-core': versions.espresso
+                ]
+            ],
+            ':ical4android': [
+                debugRuntimeClasspath: ['androidx.core:core': versions.core],
+                debugAndroidTestRuntimeClasspath: [
+                    'androidx.test:runner': versions.testRunner,
+                    'androidx.test:rules': versions.testRules,
+                    'androidx.test:core': versions.testCore
+                ]
+            ],
+            ':vcard4android': [
+                debugRuntimeClasspath: ['androidx.annotation:annotation': versions.annotation],
+                debugAndroidTestRuntimeClasspath: [
+                    'androidx.test:runner': versions.testRunner,
+                    'androidx.test:rules': versions.testRules
+                ]
+            ]
+        ]
+        def forbidden = [
+            'androidx.lifecycle:lifecycle-extensions',
+            'androidx.legacy:legacy-support-core-ui',
+            'androidx.legacy:legacy-preference-v14'
+        ]
+
+        // Core-library desugaring is packaged into each consuming APK. A
+        // mismatched library is therefore a runtime compatibility bug, not
+        // merely a dependency-report discrepancy.
+        [':app', ':ical4android'].each { projectPath ->
+            def project = project(projectPath)
+            def buildFile = project.buildFile.text
+            if (!buildFile.contains('coreLibraryDesugaringEnabled true') || !buildFile.contains('coreLibraryDesugaring'))
+                throw new GradleException("$projectPath must enable core-library desugaring")
+
+            def resolved = project.configurations.getByName('coreLibraryDesugaring')
+                    .incoming.resolutionResult.allDependencies
+                    .find { dependency -> dependency.hasProperty('selected') && dependency.selected.id.displayName == "com.android.tools:desugar_jdk_libs:${rootProject.ext.desugarJdkLibsVersion}" }
+            if (resolved == null)
+                throw new GradleException("coreLibraryDesugaring in $projectPath does not resolve desugar_jdk_libs:${rootProject.ext.desugarJdkLibsVersion}")
+        }
+
+        required.each { projectPath, configurations ->
+            def project = project(projectPath)
+            configurations.each { configurationName, expected ->
+                def selected = project.configurations.getByName(configurationName)
+                        .incoming.resolutionResult.allDependencies
+                        .collectEntries { dependency ->
+                            if (!dependency.hasProperty('selected'))
+                                return [:]
+                            def coordinates = dependency.selected.id.displayName.split(':', 3)
+                            coordinates.length == 3 ?
+                                    [("${coordinates[0]}:${coordinates[1]}".toString()): coordinates[2]] : [:]
+                        }
+                forbidden.each { coordinate ->
+                    if (selected.containsKey(coordinate))
+                        throw new GradleException("$configurationName in $projectPath contains obsolete $coordinate")
+                }
+                expected.each { coordinate, version ->
+                    if (selected[coordinate] != version)
+                        throw new GradleException("$configurationName in $projectPath resolves $coordinate as ${selected[coordinate]}, expected $version")
+                }
+            }
+        }
+
+        def logger = file('app/src/main/java/io/silentsuite/sync/log/Logger.kt').text
+        def preferences = file('app/src/main/java/io/silentsuite/sync/utils/AsyncUtils.kt').text
+        ['import androidx.preference.PreferenceManager', 'PreferenceManager.getDefaultSharedPreferences('].each { contract ->
+            if (!logger.contains(contract) || !preferences.contains(contract))
+                throw new GradleException("Default SharedPreferences continuity contract missing: $contract")
+        }
+    }
+}
+
+// Keeper gives the target APK the merged target+androidTest L8 rules and removes the
+// androidTest backport DEX. Verify that single-runtime ownership, not a source-level anchor.
+tasks.register('verifyDebugAndroidTestDesugarRuntime', Exec) {
+    group = 'verification'
+    description = 'Verifies that debug owns the shared desugar runtime and androidTest owns none.'
+    dependsOn(':app:packageDebug', ':app:packageDebugAndroidTest')
+    commandLine 'python3', 'scripts/verify-androidtest-desugar-runtime.py',
+            'app/build/outputs/apk/debug/app-debug.apk',
+            'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
+}
+
+project(':app').tasks.matching { it.name == 'testDebugUnitTest' }.configureEach {
+    dependsOn(rootProject.tasks.named('verifySlice4DependencyCohort'))
 }
 
 

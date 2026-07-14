@@ -9,16 +9,25 @@
 package io.silentsuite.sync.utils
 
 import android.annotation.TargetApi
+import android.Manifest
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationChannelGroup
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 
 object NotificationUtils {
+
+    private const val PREFERENCES = "notification_permissions"
+    private const val KEY_POST_NOTIFICATIONS_REQUESTED = "post_notifications_requested"
 
     // notification IDs
     const val NOTIFY_EXTERNAL_FILE_LOGGING = 1
@@ -73,6 +82,51 @@ object NotificationUtils {
             builder.setLargeIcon(App.getLauncherBitmap(context))
 
         return builder
+    }
+
+    /** True only for Android 13+ applications which have not yet been asked. */
+    fun shouldRequestPermission(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
+            return false
+        return !context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean(KEY_POST_NOTIFICATIONS_REQUESTED, false)
+    }
+
+    /** Record the one system prompt before launching it, so a denial is never nagged. */
+    fun markPermissionRequested(context: Context) {
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_POST_NOTIFICATIONS_REQUESTED, true).apply()
+    }
+
+    /**
+     * Posts only when notifications are permitted. POST_NOTIFICATIONS can be
+     * denied on Android 13+, and OEM/system policy can still reject a post
+     * after the permission check, so retain the SecurityException fallback.
+     */
+    fun notify(context: Context, id: Int, notification: Notification) {
+        notify(context, NotificationManagerCompat.from(context), null, id, notification)
+    }
+
+    fun notify(context: Context, tag: String, id: Int, notification: Notification) {
+        notify(context, NotificationManagerCompat.from(context), tag, id, notification)
+    }
+
+    fun notify(context: Context, manager: NotificationManagerCompat, tag: String?, id: Int, notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            Log.i("NotificationUtils", "Notification permission denied; skipping notification $id")
+            return
+        }
+
+        try {
+            if (tag == null)
+                manager.notify(id, notification)
+            else
+                manager.notify(tag, id, notification)
+        } catch (e: SecurityException) {
+            Log.w("NotificationUtils", "Notification posting was rejected", e)
+        }
     }
 
 }

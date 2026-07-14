@@ -70,8 +70,20 @@ jobs:
       - name: Build 16 KB-aligned Etebase client AAR
         run: scripts/build-etebase-client-16kb.sh
 
-      - name: Run debug unit tests, lint, and compile instrumentation tests
-        run: ./gradlew app:testDebugUnitTest app:lintDebug app:assembleDebugAndroidTest --continue --no-daemon -PrequireEtebase16Kb=true
+      - name: Run debug unit tests, lint, and assemble instrumentation APKs
+        # Assemble each Android module's androidTest APK so AGP merges and
+        # validates its instrumentation manifest. Runtime coverage stays
+        # focused on the app test below (API 21 and API 35).
+        run: >-
+          ./gradlew
+          app:testDebugUnitTest
+          app:lintDebug
+          app:assembleDebugAndroidTest
+          verifyDebugAndroidTestDesugarRuntime
+          cert4android:assembleDebugAndroidTest
+          ical4android:assembleDebugAndroidTest
+          vcard4android:assembleDebugAndroidTest
+          --continue --no-daemon -PrequireEtebase16Kb=true
 
       - name: Upload unit test reports and results
         if: always()

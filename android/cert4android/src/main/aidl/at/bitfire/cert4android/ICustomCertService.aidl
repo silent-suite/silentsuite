@@ -6,5 +6,6 @@ interface ICustomCertService {
 
     void checkTrusted(in byte[] cert, boolean interactive, boolean foreground, IOnCertificateDecision callback);
     void abortCheck(IOnCertificateDecision callback);
+    void resetCertificates();
 
 }

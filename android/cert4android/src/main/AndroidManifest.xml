@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="at.bitfire.cert4android">
 
+    <!-- Merged into consuming applications because certificate decisions use notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application>
 
         <service android:name=".CustomCertService"/>
@@ -11,7 +14,7 @@
             android:label="@string/certificate_notification_connection_security"
             android:launchMode="singleInstance"
             android:excludeFromRecents="true"
-            android:exported="true"/>
+            android:exported="false"/>
 
     </application>
 

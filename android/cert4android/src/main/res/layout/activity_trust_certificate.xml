@@ -54,7 +54,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="16dp"
                         style="@style/TextAppearance.MaterialComponents.Body1"
-                        android:text="@{model.issuedFor}"
+                        android:text="@{model.screen.details.issuedFor}"
                         tools:text="CN=example.com"/>
 
                     <TextView
@@ -67,7 +67,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="16dp"
                         style="@style/TextAppearance.MaterialComponents.Body1"
-                        android:text="@{model.issuedBy}"
+                        android:text="@{model.screen.details.issuedBy}"
                         tools:text="CN=example.com"/>
 
                     <TextView
@@ -80,7 +80,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginBottom="16dp"
                         style="@style/TextAppearance.MaterialComponents.Body1"
-                        android:text="@{@string/trust_certificate_validity_period_value(model.validFrom, model.validTo)}"
+                        android:text="@{@string/trust_certificate_validity_period_value(model.screen.details.validFrom, model.screen.details.validTo)}"
                         tools:text="1.1.1000 – 2.2.2000"/>
 
                     <TextView
@@ -93,7 +93,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         style="@style/TextAppearance.MaterialComponents.Body1"
-                        android:text="@{model.sha1}"
+                        android:text="@{model.screen.details.sha1}"
                         tools:text="SHA-1: abcdef"/>
                     <TextView
                         android:layout_width="match_parent"
@@ -101,10 +101,11 @@
                         android:layout_marginTop="4dp"
                         android:layout_marginBottom="16dp"
                         style="@style/TextAppearance.MaterialComponents.Body1"
-                        android:text="@{model.sha256}"
+                        android:text="@{model.screen.details.sha256}"
                         tools:text="SHA-256: abcdef"/>
 
                     <CheckBox
+                        android:id="@+id/certificate_verified"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
@@ -118,20 +119,23 @@
                         android:orientation="horizontal">
 
                         <Button
+                            android:id="@+id/accept_certificate"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginRight="16dp"
                             style="@style/Widget.MaterialComponents.Button.TextButton"
                             android:text="@string/trust_certificate_accept"
                             android:onClick="acceptCertificate"
-                            android:enabled="@{model.verifiedByUser}" />
+                            android:enabled="@{model.screen.ready &amp;&amp; model.verifiedByUser}" />
 
                         <Button
+                            android:id="@+id/reject_certificate"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             style="@style/Widget.MaterialComponents.Button.TextButton"
                             android:text="@string/trust_certificate_reject"
-                            android:onClick="rejectCertificate"/>
+                            android:onClick="rejectCertificate"
+                            android:enabled="@{model.screen.ready}"/>
 
                     </LinearLayout>
 

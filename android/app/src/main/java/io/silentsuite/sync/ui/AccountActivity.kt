@@ -8,6 +8,7 @@
 
 package io.silentsuite.sync.ui
 
+import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Activity
@@ -23,6 +24,7 @@ import android.text.TextUtils
 import android.view.*
 import android.widget.*
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.ActionBarDrawerToggle
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -59,6 +61,7 @@ import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.InvitationsActivity
 import io.silentsuite.sync.ui.setup.LoginActivity
 import io.silentsuite.sync.utils.TaskProviderHandling
+import io.silentsuite.sync.utils.NotificationUtils
 import io.silentsuite.sync.utils.packageInstalled
 import com.google.android.material.navigation.NavigationView
 import com.google.android.material.snackbar.Snackbar
@@ -94,6 +97,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private var swipeRefreshLayout: SwipeRefreshLayout? = null
     private var accountListExpanded = false
     private var pendingExportKind: AndroidExportKind? = null
+    private lateinit var notificationPermissionFlow: NotificationPermissionFlow
+
+    // ActivityResultRegistry keeps this registration across recreation and delivers an outstanding
+    // platform result to the recreated Activity.  Do not replace this with onRequestPermissionsResult:
+    // it would lose the association while the Android 13 dialog owns the window.
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        dispatchNotificationPermissionAction(notificationPermissionFlow.onNotificationResult())
+    }
 
     private val onItemClickListener = AdapterView.OnItemClickListener { parent, view, position, _ ->
         val list = parent as ListView
@@ -148,6 +161,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         pendingExportKind = savedInstanceState?.getString(KEY_PENDING_EXPORT_KIND)?.let { name ->
             runCatching { AndroidExportKind.valueOf(name) }.getOrNull()
         }
+        // This marker belongs to the Activity Result registration, rather than the global
+        // "asked once" preference. Restore it before any resume work can begin.
+        notificationPermissionFlow = NotificationPermissionFlow(
+            savedInstanceState?.getBoolean(KEY_NOTIFICATION_PERMISSION_PENDING, false) ?: false,
+            savedInstanceState?.getBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, false) ?: false
+        )
 
         // TODO(Phase2): Set username in Sentry crash reporting context
 
@@ -239,12 +258,32 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             model.loadAccount()
         }
 
-        PermissionsActivity.requestAllPermissions(this)
+        requestStartupPermissions()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         pendingExportKind?.let { outState.putString(KEY_PENDING_EXPORT_KIND, it.name) }
+        outState.putBoolean(KEY_NOTIFICATION_PERMISSION_PENDING, notificationPermissionFlow.notificationRequestPending)
+        outState.putBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, notificationPermissionFlow.runtimePermissionFlowStarted)
+    }
+
+    private fun requestStartupPermissions() {
+        // An outstanding RequestPermission contract is reattached by ActivityResultRegistry. It
+        // must keep exclusive ownership of runtime permission UI until its callback arrives.
+        dispatchNotificationPermissionAction(notificationPermissionFlow.start(NotificationUtils.shouldRequestPermission(this)))
+    }
+
+    private fun dispatchNotificationPermissionAction(action: NotificationPermissionFlow.Action) {
+        when (action) {
+            NotificationPermissionFlow.Action.LAUNCH_NOTIFICATION_REQUEST -> {
+                NotificationUtils.markPermissionRequested(this)
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            NotificationPermissionFlow.Action.CONTINUE_RUNTIME_PERMISSIONS -> PermissionsActivity.requestAllPermissions(this)
+            NotificationPermissionFlow.Action.WAIT_FOR_NOTIFICATION_RESULT,
+            NotificationPermissionFlow.Action.NONE -> Unit
+        }
     }
 
     private fun setupNavHeader(navigationView: NavigationView) {
@@ -1008,7 +1047,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val EXTRA_ACCOUNT = "account"
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
-
+        private const val KEY_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
+        private const val KEY_STARTUP_PERMISSION_FLOW_STARTED = "startup_permission_flow_started"
         fun newIntent(context: Context, account: Account): Intent =
             Intent(context, AccountActivity::class.java).putExtra(EXTRA_ACCOUNT, account)
     }

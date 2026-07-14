@@ -21,6 +21,8 @@ import org.junit.runner.RunWith
 class AccountActivityRecreationTest {
     @Test
     fun recreationKeepsTheExactAccountRouteAndDeliversModelStateToTheRecreatedUi() {
+        // Keeper assigns the shared desugared runtime to the target debug APK; androidTest
+        // deliberately contains no j$ classes, so it cannot shadow the target's L8 runtime.
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val account = Account("recreation-${System.nanoTime()}@example.invalid", App.accountType)
         val accountManager = AccountManager.get(context)
@@ -28,12 +30,15 @@ class AccountActivityRecreationTest {
         AccountSettings.setUserData(accountManager, account, URI("https://example.invalid/"), account.name)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
-            listOf(
+            val permissions = mutableListOf(
                 Manifest.permission.READ_CALENDAR,
                 Manifest.permission.WRITE_CALENDAR,
                 Manifest.permission.READ_CONTACTS,
                 Manifest.permission.WRITE_CONTACTS
-            ).forEach { permission ->
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                permissions += Manifest.permission.POST_NOTIFICATIONS
+            permissions.forEach { permission ->
                 uiAutomation.executeShellCommand("pm grant ${context.packageName} $permission").close()
             }
         }
