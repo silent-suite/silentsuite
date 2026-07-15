@@ -104,6 +104,23 @@ class SyncStatusStoreTest {
         assertEquals(52L, store.status(first, SyncStatusStore.Service.CALENDAR).lastSuccessAt)
     }
 
+    @Test fun `malformed and extreme fault sentinels fail closed with stable bounded evidence`() {
+        assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 50))
+        storage.failNextCommit = true
+        assertFalse(store.recordFailure(first, SyncStatusStore.Service.CALENDAR, SyncStatusStore.FailureCategory.NETWORK, 60))
+        val faultKey = storage.values.keys.single { it.startsWith("fault.") && it.endsWith(".CALENDAR") }
+
+        storage.values[faultKey] = "malformed"
+        val malformed = freshStore().status(first, SyncStatusStore.Service.CALENDAR)
+        assertEquals(51L, malformed.lastFailureAt)
+        assertEquals(malformed.lastFailureAt, freshStore().status(first, SyncStatusStore.Service.CALENDAR).lastFailureAt)
+
+        storage.values[faultKey] = "1|${Long.MAX_VALUE}|STORAGE"
+        val extreme = freshStore().status(first, SyncStatusStore.Service.CALENDAR)
+        assertEquals(51L, extreme.lastFailureAt)
+        assertEquals(extreme.lastFailureAt, freshStore().status(first, SyncStatusStore.Service.CALENDAR).lastFailureAt)
+    }
+
     @Test fun `latest contacts generation stays incomplete over historical success`() {
         val childOne = child("book-one")
         val firstAttempt = started(store.beginContacts(first, setOf(childOne)))
@@ -197,6 +214,26 @@ class SyncStatusStoreTest {
 
         assertEquals(SyncStatusStore.ContactsStart.SetupRequired, store.beginContacts(second, emptySet()))
         assertEquals(SyncStatusStore.FailureCategory.SETUP_REQUIRED, store.status(second, SyncStatusStore.Service.CONTACTS).lastFailureCategory)
+    }
+
+    @Test fun `confirmed child removal snapshots main generation once`() {
+        val child = child("removed-book")
+        started(store.beginContacts(first, setOf(child)))
+        var lookups = 0
+        val changingIdentityStore = SyncStatusStore(
+            storage,
+            mainAccountKey = {
+                lookups++
+                if (lookups == 1) "first-generation-$namespace" else "readded-generation-$namespace"
+            },
+            childAccountKey = { childKeys[it] ?: error("missing child test identity") },
+        )
+        assertTrue(changingIdentityStore.recordContactsChildRemoved(first, child))
+        assertEquals(1, lookups)
+        assertEquals(
+            SyncStatusStore.FailureCategory.CHILD_REMOVED,
+            store.status(first, SyncStatusStore.Service.CONTACTS).lastFailureCategory,
+        )
     }
 
     @Test fun `new contacts generation supersedes incomplete old attempt`() {

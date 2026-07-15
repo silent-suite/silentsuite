@@ -147,10 +147,20 @@ class SyncStatusStore internal constructor(
         failureCategory: FailureCategory = FailureCategory.PROVIDER,
     ): ChildWrite = synchronized(STORE_LOCK) {
         val identity = mainAccountKey(account)
+        recordContactsChild(identity, attemptId, childAccount, result, failureCategory)
+    }
+
+    private fun recordContactsChild(
+        identity: String,
+        attemptId: String,
+        childAccount: Account,
+        result: ChildResult,
+        failureCategory: FailureCategory,
+    ): ChildWrite {
         val current = readContacts(identity)
         val child = childAccountKey(childAccount)
         if (current.attemptId != attemptId || child !in current.expected || child in current.terminal)
-            return@synchronized ChildWrite.REJECTED
+            return ChildWrite.REJECTED
 
         val terminal = current.terminal + (child to result)
         val outcome = when {
@@ -168,8 +178,9 @@ class SyncStatusStore internal constructor(
 
     @Synchronized
     fun recordContactsChildRemoved(account: Account, childAccount: Account): Boolean = synchronized(STORE_LOCK) {
-        val attempt = readContacts(mainAccountKey(account)).attemptId ?: return@synchronized false
-        recordContactsChild(account, attempt, childAccount, ChildResult.REMOVED) == ChildWrite.RECORDED
+        val identity = mainAccountKey(account)
+        val attempt = readContacts(identity).attemptId ?: return@synchronized false
+        recordContactsChild(identity, attempt, childAccount, ChildResult.REMOVED, FailureCategory.PROVIDER) == ChildWrite.RECORDED
     }
 
     @Synchronized
@@ -198,7 +209,7 @@ class SyncStatusStore internal constructor(
         val failureAt = storedFault?.let(::decodeFault) ?: failedWrites[key]
         if (storedFault == null && failureAt == null) return this
         return copy(
-            lastFailureAt = failureAt ?: failureTimestampFor(key),
+            lastFailureAt = failureAt ?: failureTimestampFor(key, 0L),
             lastFailureCategory = FailureCategory.STORAGE,
             latestGenerationIncomplete = latestGenerationIncomplete || key.endsWith(".${Service.CONTACTS.name}"),
         )
@@ -225,7 +236,8 @@ class SyncStatusStore internal constructor(
 
     /** One bounded recovery write. Total-disk failure remains visible in-process and to the caller. */
     private fun persistFaults(keys: Set<String>) {
-        val timestamps = keys.associateWith(::failureTimestampFor)
+        val now = System.currentTimeMillis()
+        val timestamps = keys.associateWith { failureTimestampFor(it, now) }
         val sentinels = timestamps.mapKeys { faultKey(it.key) }.mapValues { encodeFault(it.value) }
         val persisted = storage.commit(sentinels)
         if (persisted) {
@@ -235,15 +247,21 @@ class SyncStatusStore internal constructor(
         }
     }
 
-    private fun failureTimestampFor(key: String): Long {
+    private fun failureTimestampFor(key: String, candidate: Long): Long {
         val parts = storage.get(key)?.split('|', limit = 4).orEmpty()
         val success = parts.getOrNull(1)?.toLongOrNull()
         val failure = parts.getOrNull(2)?.toLongOrNull()
         return maxOf(
-            System.currentTimeMillis(),
-            (success ?: Long.MIN_VALUE) + 1,
-            (failure ?: Long.MIN_VALUE) + 1,
+            candidate,
+            orderedAfterValue(success),
+            orderedAfterValue(failure),
         )
+    }
+
+    private fun orderedAfterValue(value: Long?): Long = when (value) {
+        null -> 0L
+        Long.MAX_VALUE -> Long.MAX_VALUE
+        else -> value + 1
     }
 
     private fun encodeFault(timestamp: Long) = "$FAULT_VERSION|$timestamp|STORAGE"
@@ -251,7 +269,11 @@ class SyncStatusStore internal constructor(
     private fun decodeFault(value: String): Long? {
         val parts = value.split('|', limit = 3)
         if (parts.size != 3 || parts[0] != FAULT_VERSION || parts[2] != "STORAGE") return null
-        return parts[1].toLongOrNull()?.takeIf { it >= 0 }
+        val timestamp = parts[1].toLongOrNull() ?: return null
+        val latestAccepted = System.currentTimeMillis().let { now ->
+            if (now > Long.MAX_VALUE - MAX_FUTURE_SKEW_MILLIS) Long.MAX_VALUE else now + MAX_FUTURE_SKEW_MILLIS
+        }
+        return timestamp.takeIf { it in 0..latestAccepted }
     }
 
     private fun readContacts(identity: String): ContactsRecord {
@@ -306,6 +328,7 @@ class SyncStatusStore internal constructor(
         const val EXTRA_CONTACTS_ATTEMPT = "io.silentsuite.sync.CONTACTS_ATTEMPT"
         private const val RECORD_VERSION = "1"
         private const val FAULT_VERSION = "1"
+        private const val MAX_FUTURE_SKEW_MILLIS = 5 * 60 * 1000L
         private val STORE_LOCK = Any()
         private val failedWrites = mutableMapOf<String, Long>()
 
