@@ -289,11 +289,15 @@
     <string name="login_encryption_extra_info">* This password is used to encrypt your data, unlike the previous one, which is used to log into the service.\nYou are asked to choose a separate encryption password for security reasons. For more information, please refer to the FAQ at: %s</string>
     <string name="login_password_required">Password required</string>
     <string name="login_login">Log In</string>
+    <string name="login_sign_in_and_connect">Sign in and connect</string>
     <string name="login_signup">Sign Up</string>
     <string name="login_signup_prompt">Don\'t have an account? Sign up</string>
     <string name="login_finish">Finish</string>
     <string name="login_back">Back</string>
     <string name="login_enter_service_details">Connect Android sync</string>
+    <string name="login_sign_in_title">Sign in to SilentSuite</string>
+    <string name="login_sign_in_supporting_copy">Connect your account to sync your calendars, contacts, and tasks with Android.</string>
+    <string name="login_privacy_reassurance">Your password is used only to sign in and is not saved on this device.</string>
     <string name="login_bridge_sync">Syncs with your phone\'s calendar, contacts, and task apps.</string>
     <string name="login_bridge_encrypted">Your data is encrypted before it leaves this device.</string>
     <string name="login_enter_encryption_details">Secret Encryption Password</string>

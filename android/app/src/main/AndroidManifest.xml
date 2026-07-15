@@ -235,6 +235,7 @@
             android:name=".ui.setup.LoginActivity"
             android:exported="false"
             android:label="@string/login_title"
+            android:theme="@style/AppTheme.Material3"
             android:windowSoftInputMode="adjustResize"
             android:parentActivityName=".ui.AccountActivity">
             <intent-filter>
