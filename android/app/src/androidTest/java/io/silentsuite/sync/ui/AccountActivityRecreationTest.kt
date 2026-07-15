@@ -11,6 +11,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.silentsuite.sync.App
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.utils.AndroidCompat
+import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
+import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import java.net.URI
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -28,6 +30,8 @@ class AccountActivityRecreationTest {
         val accountManager = AccountManager.get(context)
         accountManager.addAccountExplicitly(account, null, null)
         AccountSettings.setUserData(accountManager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(accountManager, account, AccountSettings.KEY_CREATION_ID, "test-generation"))
+        check(AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.COMPLETE))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
             val permissions = mutableListOf(
@@ -67,4 +71,25 @@ class AccountActivityRecreationTest {
             ActiveAccountManager.clearActiveAccount(context)
         }
     }
+
+    @Test
+    fun readyDoneCompletesOnlyTheExactGeneratedAccount() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val account = Account("setup-${System.nanoTime()}@example.invalid", App.accountType)
+        val manager = AccountManager.get(context)
+        check(manager.addAccountExplicitly(account, null, null))
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, "setup-generation"))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeSetupState(manager, account, PostLoginSetupState.READY))
+        try {
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, account)).use { scenario ->
+                scenario.onActivity { activity -> activity.findViewById<android.widget.Button>(io.silentsuite.sync.R.id.setup_done).performClick() }
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, account, true))
+            }
+        } finally {
+            AndroidCompat.removeAccount(manager, account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
 }

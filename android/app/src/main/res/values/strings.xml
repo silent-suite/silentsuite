@@ -538,4 +538,25 @@
         <item>-1</item>
     </string-array>
 
+    <string name="post_login_setup_title">Finish setting up</string>
+    <string name="post_login_setup_status">Setup: %1$s</string>
+    <string name="post_login_setup_continue">Continue setup</string>
+    <string name="post_login_setup_skip_integrations">Continue without integrations</string>
+    <string name="post_login_setup_remove_incomplete">Remove incomplete account</string>
+    <string name="post_login_setup_done">Done</string>
+    <string name="post_login_setup_permissions">Choose which Android integrations to enable. You can change these later in Permissions.</string>
+    <string name="post_login_setup_ready">Setup is ready. Initial sync was requested and may continue later; permissions, provider availability, network access, and Android sync settings can limit when data appears.</string>
+    <string name="post_login_setup_ready_master_sync_off">Setup is ready. Initial sync was requested, but Android master sync is off. You can finish now and enable it later in Android settings.</string>
+    <string name="post_login_setup_ready_requested">Setup is ready; initial sync was requested only and may still be delayed or unavailable offline.</string>
+    <string name="post_login_setup_limit_master_sync">Android master sync is off.</string>
+    <string name="post_login_setup_limit_calendar">Calendar permission is not granted.</string>
+    <string name="post_login_setup_limit_contacts">Contacts permission is not granted.</string>
+    <string name="post_login_setup_limit_tasks">No supported task provider is installed.</string>
+    <string name="post_login_setup_limit_offline">Network connectivity is currently unavailable.</string>
+    <string name="post_login_setup_recovery">This incomplete account needs recovery before setup can continue. Remove it here only if you want to start over.</string>
+    <string name="post_login_setup_removal_pending">Removing the incomplete account…</string>
+    <string name="post_login_setup_removal_failed">The incomplete account could not be removed. You can retry.</string>
+    <string name="setup_account_busy_retry">An account with these details is still being created or already exists. Please try again.</string>
+    <string name="post_login_setup_retry_inventory">Retry collection recovery</string>
+    <string name="post_login_setup_resolve_ambiguity">Resolve account in Android Settings</string>
 </resources>
