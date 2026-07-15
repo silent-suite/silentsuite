@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -76,6 +77,22 @@ class LoginCredentialsFragment : Fragment() {
                 submissionInProgress = true
                 SetupSecretHolder.setLoginCredentials(credentials)
                 DetectConfigurationFragment.newInstance().show(requireFragmentManager(), DETECT_CONFIGURATION_TAG)
+            }
+        }
+        editUrlPassword.editText?.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                login.performClick()
+                true
+            } else {
+                false
+            }
+        }
+        customServer.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                login.performClick()
+                true
+            } else {
+                false
             }
         }
 
