@@ -452,7 +452,10 @@ public class StoreScreenshotsTest {
             drawer.click();
             sleep(1000);
         }
-        tapTextContains("Invitations");
+        UiObject2 invitations = device.wait(
+                Until.findObject(By.res(device.getCurrentPackageName(), "nav_invitations")), NAV_TIMEOUT);
+        if (invitations == null) throw new AssertionError("Stable Invitations drawer row not found");
+        invitations.click();
         sleep(2000);
         capture("6-invitations");
         device.pressBack();
