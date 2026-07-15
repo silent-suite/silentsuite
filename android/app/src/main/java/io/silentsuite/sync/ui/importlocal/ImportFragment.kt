@@ -245,8 +245,10 @@ class ImportFragment : DialogFragment() {
             try {
                 val context = requireContext()
                 val identity = CollectionLifecycleIdentity.from(arguments)
-                if (identity == null || !identity.validate(context))
+                if (identity == null || !identity.validate(context)) {
+                    closeSelectedInput()
                     return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
+                }
                 val importReader = InputStreamReader(
                         inputStream ?: throw FileNotFoundException("Failed to open selected file."),
                         StandardCharsets.UTF_8
@@ -509,6 +511,14 @@ class ImportFragment : DialogFragment() {
                 return result
             }
 
+        }
+    }
+
+    private fun closeSelectedInput() {
+        try {
+            inputStream?.close()
+        } finally {
+            inputStream = null
         }
     }
 

@@ -93,6 +93,8 @@ class CollectionLifecycleContractTest {
         assertTrue(fileImport.contains("if (savedInstanceState == null)"))
         assertTrue(fileImport.contains("if (!activeProcessWork ||"))
         assertTrue(fileImport.split("identity.validate(context)").size - 1 >= 8)
+        assertTrue(fileImport.contains("closeSelectedInput()"))
+        assertTrue(fileImport.contains("inputStream?.close()"))
         assertTrue(calendarImport.contains("if (importInProgress) return"))
         assertTrue(calendarImport.split("identity.validate(applicationContext)").size - 1 >= 2)
         assertTrue(contactImport.contains("if (importInProgress) return"))
