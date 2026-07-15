@@ -89,9 +89,11 @@ class AccountDrawerSignOutRuntimeTest {
         val target = Fixture("actual-target")
         val sibling = Fixture("actual-sibling")
         val child = Account("child-${System.nanoTime()}@example.invalid", App.addressBookAccountType)
-        check(target.manager.addAccountExplicitly(child, null, null))
-        target.manager.setUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_TYPE, target.account.type)
-        target.manager.setUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_NAME, target.account.name)
+        check(target.manager.addAccountExplicitly(
+            child,
+            null,
+            LocalAddressBook.initialUserData(target.account, "https://example.invalid/address-book"),
+        ))
         try {
             assertTrue(ActiveAccountManager.setActiveAccount(target.context, target.account))
             val statusStore = SyncStatusStore(target.context)
