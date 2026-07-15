@@ -9,100 +9,6 @@
 
 <resources>
 
-    <!-- SilentSuite brand colors -->
-    <!-- Navy palette (backgrounds/surfaces) -->
-    <color name="navy900">#0A1018</color>
-    <color name="navy800">#111B27</color>
-    <color name="navy700">#1B2838</color>
-    <color name="navy600">#253549</color>
-    <color name="navy100">#D9DFE8</color>
-
-    <!-- Teal/green palette (primary accents) -->
-    <color name="teal500">#10B981</color>
-    <color name="teal400">#34D399</color>
-    <color name="teal600">#059669</color>
-    <color name="teal700">#047857</color>
-
-    <!-- Neutrals -->
-    <color name="grey200">#E2E8F0</color>
-    <color name="grey700">#1B2838</color>
-    <color name="white">#FFFFFF</color>
-    <color name="offwhite">#F0F3F7</color>
-
-    <!-- Semantic colors -->
-    <color name="errorColor">#EF4444</color>
-
-    <!-- Nav header colors (light mode) -->
-    <color name="nav_header_email">@color/teal700</color>
-    <color name="nav_header_subtitle">@color/navy600</color>
-    <!-- Light mode: subtle tinted card background; dark mode override in values-night -->
-    <color name="infoColor">#E0EDF4</color>
-
-    <!-- Legacy aliases (referenced by layouts/code) -->
-    <color name="light_green500">@color/teal500</color>
-    <color name="light_green700">@color/navy700</color>
-    <color name="orange400">@color/teal600</color>
-    <color name="orangeA700">@color/teal500</color>
-    <color name="primaryColor">@color/navy700</color>
-    <color name="primaryLightColor">@color/navy600</color>
-    <color name="primaryDarkColor">@color/navy900</color>
-    <color name="secondaryColor">@color/teal500</color>
-    <color name="secondaryLightColor">@color/teal400</color>
-    <color name="secondaryDarkColor">@color/teal700</color>
-    <color name="primaryTextColor">#FFFFFF</color>
-    <!-- preference-v14 uses this color for categories text -->
-    <color name="preference_fallback_accent_color">@color/teal500</color>
-
-
-    <!-- app theme (light mode defaults) -->
-
-    <style name="AppTheme" parent="Theme.MaterialComponents.DayNight">
-        <item name="colorPrimary">@color/navy700</item>
-        <item name="colorPrimaryDark">@color/navy900</item>
-        <item name="colorPrimaryVariant">@color/navy600</item>
-        <item name="colorOnPrimary">@android:color/white</item>
-
-        <item name="colorSecondary">@color/teal600</item>
-        <item name="colorSecondaryVariant">@color/teal700</item>
-        <item name="colorOnSecondary">@android:color/white</item>
-
-        <item name="colorError">@color/errorColor</item>
-        <item name="colorOnError">@android:color/white</item>
-
-        <item name="android:colorBackground">@color/offwhite</item>
-        <item name="colorSurface">@android:color/white</item>
-        <item name="colorOnSurface">@color/navy800</item>
-
-        <!-- Light mode text colors -->
-        <item name="android:textColorPrimary">@color/navy800</item>
-        <item name="android:textColorSecondary">@color/navy600</item>
-        <item name="android:textColorHint">@color/navy600</item>
-
-        <!-- Force white text/icons on the dark ActionBar -->
-        <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
-
-        <!-- Solid navy system bars keep light status/navigation icons readable. -->
-        <item name="android:statusBarColor">@color/navy700</item>
-        <item name="android:navigationBarColor">@color/navy700</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
-
-        <!-- Shared rounded dialog treatment for Material dialogs. -->
-        <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
-        <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
-    </style>
-
-    <style name="AppTheme.NoActionBar">
-        <item name="windowActionBar">false</item>
-        <item name="windowNoTitle">true</item>
-        <!-- Solid navy status bar so light system icons stay readable (see values-v21). -->
-        <item name="android:statusBarColor">@color/navy700</item>
-        <item name="android:navigationBarColor">@color/navy700</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
-    </style>
-
-
     <!-- dialogs -->
 
     <style name="AppTheme.Dialog.Alert" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
@@ -195,6 +101,30 @@
 
 
     <!-- widgets -->
+
+    <!-- Material 3 preview contracts; later slices opt individual surfaces into them. -->
+    <style name="TextAppearance.AppTheme.Material3.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">@color/semantic_on_surface</item>
+    </style>
+
+    <style name="TextAppearance.AppTheme.Material3.Title" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textColor">@color/semantic_on_surface</item>
+    </style>
+
+    <style name="ShapeAppearance.AppTheme.Material3.Standard" parent="ShapeAppearance.Material3.Corner.Medium">
+        <item name="cornerSize">@dimen/shape_radius_standard</item>
+    </style>
+
+    <style name="Widget.AppTheme.Material3.Button" parent="Widget.Material3.Button">
+        <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
+    </style>
+
+    <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.FilledBox">
+        <item name="boxStrokeColor">@color/semantic_outline</item>
+        <item name="boxStrokeErrorColor">@color/semantic_error</item>
+        <item name="boxStrokeWidthFocused">2dp</item>
+    </style>
 
     <style name="tablayout" parent="Base.Widget.Design.TabLayout">
         <item name="android:background">@color/navy700</item>

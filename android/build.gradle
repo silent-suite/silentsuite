@@ -17,27 +17,30 @@ ext {
     desugarJdkLibsVersion = '2.1.5'
     keeperVersion = '0.16.1'
 
-    // Keep this cohort compatible with cert4android's API 14 contract. AndroidX
-    // Test 1.6/3.6 raised its minimum API level to 19, so all shared test
-    // artifacts stay on the last API-14-compatible stable cohort. UIAutomator
-    // remains app-only because the app itself has minSdk 21.
+    // cert4android is app-internal and shares SilentSuite's API-21 product floor.
+    // Keep the Material 1.13-compatible AndroidX/test cohort explicit so resolved
+    // graphs cannot silently drift across app and certificate code paths.
     androidXVersions = [
         annotation: '1.7.1',
-        core: '1.12.0',
-        appcompat: '1.4.2',
+        core: '1.15.0',
+        appcompat: '1.7.1',
         cardview: '1.0.0',
-        fragment: '1.4.1',
-        lifecycle: '2.6.1',
-        material: '1.5.0',
+        fragment: '1.8.5',
+        lifecycle: '2.8.7',
+        material: '1.13.0',
         preference: '1.2.1',
         coroutines: '1.7.3',
-        testCore: '1.5.0',
-        testRunner: '1.5.2',
-        testRules: '1.5.0',
-        testExtJunit: '1.1.5',
-        espresso: '3.5.1',
+        testCore: '1.6.1',
+        testRunner: '1.6.2',
+        testRules: '1.6.1',
+        testExtJunit: '1.2.1',
+        espresso: '3.6.1',
         uiAutomator: '2.3.0'
     ]
+    // vcard4android is published with minSdk 16. AndroidX Test 1.6/3.6 needs
+    // API 19, so keep its instrumentation artifact cohort explicit instead of
+    // incorrectly applying the app/cert4android API-21 verification contract.
+    vcardAndroidTestVersions = [runner: '1.5.2', rules: '1.5.0']
 }
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
@@ -77,7 +80,7 @@ subprojects {
 
 tasks.register('verifySlice4DependencyCohort') {
     group = 'verification'
-    description = 'Checks the Slice 4 AndroidX graph and default-preference continuity contracts.'
+    description = 'Checks the API-21 AndroidX/Material 1.13 graph and default-preference continuity contracts.'
 
     doLast {
         def versions = rootProject.ext.androidXVersions
@@ -131,8 +134,8 @@ tasks.register('verifySlice4DependencyCohort') {
             ':vcard4android': [
                 debugRuntimeClasspath: ['androidx.annotation:annotation': versions.annotation],
                 debugAndroidTestRuntimeClasspath: [
-                    'androidx.test:runner': versions.testRunner,
-                    'androidx.test:rules': versions.testRules
+                    'androidx.test:runner': rootProject.ext.vcardAndroidTestVersions.runner,
+                    'androidx.test:rules': rootProject.ext.vcardAndroidTestVersions.rules
                 ]
             ]
         ]

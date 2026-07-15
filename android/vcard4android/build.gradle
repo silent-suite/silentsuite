@@ -68,8 +68,11 @@ dependencies {
         exclude group: 'com.fasterxml.jackson.core'
     }
 
-    androidTestImplementation "androidx.test:runner:${androidX.testRunner}"
-    androidTestImplementation "androidx.test:rules:${androidX.testRules}"
+    // vcard4android retains its upstream API-16 library contract. AndroidX
+    // Test 1.6/3.6 require API 19, so keep this module's instrumentation lane
+    // on the last compatible versions rather than raising its published floor.
+    androidTestImplementation "androidx.test:runner:1.5.2"
+    androidTestImplementation "androidx.test:rules:1.5.0"
 
     testImplementation 'junit:junit:4.13'
 }

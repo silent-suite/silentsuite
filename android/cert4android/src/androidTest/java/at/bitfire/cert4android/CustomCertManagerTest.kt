@@ -100,7 +100,7 @@ class CustomCertManagerTest {
 
     @Test fun unavailableNotificationFailsClosedForBackgroundRequests() {
         // API 33 is the only platform where an app-level notification permission can be made
-        // unavailable deterministically without changing production code. API 14–32 has no such
+        // unavailable deterministically without changing production code. API 21–32 has no such
         // permission and is covered by the normal notification path above.
         assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
         val packageName = instrumentation.targetContext.packageName
