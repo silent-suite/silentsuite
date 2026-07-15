@@ -93,10 +93,6 @@
     <string name="accounts_showcase_add">Tap here to sign in or create an account to start syncing.</string>
     <string name="accounts_missing_permissions">Missing permissions: %s</string>
 
-    <!-- Account Wizard -->
-    <string name="account_wizard_collections_title">Welcome to SilentSuite!</string>
-    <string name="account_wizard_collections_body">Setting up your encrypted contacts, calendar, and tasks…</string>
-
     <!-- Legacy v1 migration strings removed — not applicable to SilentSuite -->
 
     <!-- AccountUpdateService -->
@@ -254,22 +250,6 @@
     <string name="permissions_tasks_org_details">To synchronize tasks with your local task lists, SilentSuite needs to access Tasks.org.</string>
     <string name="permissions_tasks_org_request">Request Tasks.org permissions</string>
 
-    <!-- Welcome screen -->
-    <string name="welcome_title">Welcome to SilentSuite</string>
-    <string name="welcome_subtitle">End-to-end encrypted sync for your calendar, contacts, and tasks.</string>
-    <string name="welcome_feature_sync">Syncs seamlessly with your phone\'s calendar, contacts, and task apps.</string>
-    <string name="welcome_feature_encrypted">Your data is encrypted before it leaves your device. Only you can read it.</string>
-    <string name="welcome_feature_background">Runs quietly in the background \u2014 use your favorite apps as usual.</string>
-    <string name="welcome_get_started">Get Started</string>
-
-    <!-- Mode selector -->
-    <string name="mode_selector_title">How would you like to use SilentSuite?</string>
-    <string name="mode_bridge_title">Bridge Mode</string>
-    <string name="mode_bridge_description">Sync to your phone\'s calendar, contacts, and task apps. Use your favorite apps as usual.</string>
-    <string name="mode_bridge_recommended">(Recommended)</string>
-
-    <string name="mode_continue">Continue</string>
-
     <!-- AddAccountActivity -->
     <string name="login_title">Add account</string>
     <string name="login_username">Email</string>
@@ -316,9 +296,6 @@
     <string name="wrong_encryption_password">Wrong encryption password</string>
     <string name="wrong_encryption_password_content">Got an integrity error while accessing your account, which most likely means you put in the wrong encryption password.\nPlease note that the username is case sensitive, so please also try different capitalizations, for example make the first character uppercase.\n\nError: %s</string>
 
-    <string name="signup_title">Create your account</string>
-    <string name="signup_trial_notice">Create your account at app.silentsuite.io, then sign in here.</string>
-    <string name="signup_password_restrictions">Password should be at least 8 characters long</string>
 
     <!-- ChangeEncryptionPasswordActivity -->
     <string name="change_encryption_password_title">Change Encryption Password</string>

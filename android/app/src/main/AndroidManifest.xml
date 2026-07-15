@@ -265,14 +265,6 @@
             android:label="@string/post_login_setup_title"
             android:theme="@style/AppTheme.Material3" />
         <activity
-            android:name=".ui.setup.ModeSelectionActivity"
-            android:exported="false"
-            />
-        <activity
-            android:name=".ui.etebase.NewAccountWizardActivity"
-            android:exported="false"
-            />
-        <activity
             android:name=".ui.etebase.InvitationsActivity"
             android:exported="false"
             />
