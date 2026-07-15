@@ -15,7 +15,6 @@ import at.bitfire.vcard4android.BatchOperation
 import at.bitfire.vcard4android.Contact
 import at.bitfire.vcard4android.ContactsStorageException
 import ezvcard.io.CannotParseException
-import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
@@ -146,6 +145,12 @@ class ImportFragment : DialogFragment() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         when (requestCode) {
             REQUEST_CODE -> {
+                if (!activeProcessWork || CollectionLifecycleIdentity.from(arguments)?.validate(requireContext()) != true) {
+                    activeProcessWork = false
+                    dismissAllowingStateLoss()
+                    super.onActivityResult(requestCode, resultCode, data)
+                    return
+                }
                 if (resultCode == Activity.RESULT_OK) {
                     val uri = data?.data
                     if (uri != null) {
@@ -261,6 +266,8 @@ class ImportFragment : DialogFragment() {
 
                         finishParsingFile(events.size)
 
+                        if (!identity.validate(context))
+                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                         val provider = context.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
                         if (provider == null) {
                             result.e = Exception("Failed to acquire calendar content provider.")
@@ -286,6 +293,8 @@ class ImportFragment : DialogFragment() {
                             }
 
                             for (event in events) {
+                                if (!identity.validate(context))
+                                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                 try {
                                     var localEvent = localCalendar.findByUid(event.uid!!)
                                     if (localEvent != null) {
@@ -318,6 +327,8 @@ class ImportFragment : DialogFragment() {
 
                         finishParsingFile(tasks.size)
 
+                        if (!identity.validate(context))
+                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                         val providerName = TaskProviderHandling.getWantedTaskSyncProvider(context)
                         if (providerName == null) {
                             result.e = Exception("Failed to acquire tasks content provider.")
@@ -345,6 +356,8 @@ class ImportFragment : DialogFragment() {
                             }
 
                             for (task in tasks) {
+                                if (!identity.validate(context))
+                                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                 try {
                                     var localTask = localTaskList.findByUid(task.uid!!)
                                     if (localTask != null) {
@@ -381,6 +394,8 @@ class ImportFragment : DialogFragment() {
 
                         finishParsingFile(contacts.size)
 
+                        if (!identity.validate(context))
+                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                         val provider = context.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
                         if (provider == null) {
                             result.e = Exception("Failed to acquire contacts content provider.")
@@ -395,6 +410,8 @@ class ImportFragment : DialogFragment() {
                             }
 
                             for (contact in contacts.filter { contact -> !contact.group }) {
+                                if (!identity.validate(context))
+                                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                 try {
                                     var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
                                     var addedContact = false
@@ -412,8 +429,12 @@ class ImportFragment : DialogFragment() {
                                     // Apply categories
                                     val batch = BatchOperation(localAddressBook.provider!!)
                                     for (category in contact.categories) {
+                                        if (!identity.validate(context))
+                                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                         localContact.addToGroup(batch, localAddressBook.findOrCreateGroup(category))
                                     }
+                                    if (!identity.validate(context))
+                                        return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                     batch.commit()
 
                                     if (addedContact)
@@ -429,6 +450,8 @@ class ImportFragment : DialogFragment() {
                             }
 
                             for (contact in contacts.filter { contact -> contact.group }) {
+                                if (!identity.validate(context))
+                                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                 try {
                                     val memberIds = contact.members.mapNotNull { memberUid ->
                                         uidToLocalId[memberUid]
@@ -501,43 +524,10 @@ class ImportFragment : DialogFragment() {
 
         private val TAG_PROGRESS_MAX = "progressMax"
 
-        fun newInstance(account: Account, info: CollectionInfo): ImportFragment {
-            val uid = requireNotNull(info.uid) { "Import requires a collection UID" }
-            val type = requireNotNull(info.enumType) { "Import requires a collection type" }.toEtebaseType()
-            return ImportFragment().apply {
-                arguments = Bundle().apply {
-                    putParcelable(CollectionLifecycleIdentity.ARG_ACCOUNT, account)
-                    putString(CollectionLifecycleIdentity.ARG_COLLECTION_UID, uid)
-                    putString(CollectionLifecycleIdentity.ARG_COLLECTION_TYPE, type)
-                }
-            }
-        }
-
-        fun newInstance(account: Account, cachedCollection: CachedCollection): ImportFragment {
-            when (cachedCollection.collectionType) {
-                ETEBASE_TYPE_CALENDAR -> CollectionInfo.Type.CALENDAR
-                ETEBASE_TYPE_TASKS -> CollectionInfo.Type.TASKS
-                ETEBASE_TYPE_ADDRESS_BOOK -> CollectionInfo.Type.ADDRESS_BOOK
-                else -> throw Exception("Got unsupported collection type")
-            }
-            return ImportFragment().apply {
-                arguments = Bundle().apply {
-                    putParcelable(CollectionLifecycleIdentity.ARG_ACCOUNT, account)
-                    putString(CollectionLifecycleIdentity.ARG_COLLECTION_UID, cachedCollection.col.uid)
-                    putString(CollectionLifecycleIdentity.ARG_COLLECTION_TYPE, cachedCollection.collectionType)
-                }
-            }
-        }
-
         fun newInstance(identity: CollectionLifecycleIdentity) = ImportFragment().apply {
             requireNotNull(identity.collectionUid) { "Import requires an existing collection" }
             arguments = identity.toBundle()
         }
 
-        private fun CollectionInfo.Type.toEtebaseType() = when (this) {
-            CollectionInfo.Type.CALENDAR -> ETEBASE_TYPE_CALENDAR
-            CollectionInfo.Type.TASKS -> ETEBASE_TYPE_TASKS
-            CollectionInfo.Type.ADDRESS_BOOK -> ETEBASE_TYPE_ADDRESS_BOOK
-        }
     }
 }

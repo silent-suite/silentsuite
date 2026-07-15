@@ -102,7 +102,7 @@ class EditCollectionFragment : Fragment() {
         desc.isSaveEnabled = false
 
         val meta = cachedCollection.meta
-        draft.initialize(meta.name, meta.description, LocalCalendar.parseColor(meta.color))
+        draft.initialize(meta.name.orEmpty(), meta.description, LocalCalendar.parseColor(meta.color))
         title.setText(draft.name)
         desc.setText(draft.description)
         title.addTextChangedListener(DraftWatcher { draft.name = it })
@@ -187,25 +187,30 @@ class EditCollectionFragment : Fragment() {
     }
 
     private fun doDeleteCollection() {
-        if (!requireNotNull(CollectionLifecycleIdentity.from(arguments)).validate(requireContext())) {
+        val identity = requireNotNull(CollectionLifecycleIdentity.from(arguments))
+        if (!identity.validate(requireContext())) {
             requireActivity().finish()
             return
         }
         if (loadingModel.isLoading) return
         loadingModel.setLoading(true)
+        val applicationContext = requireContext().applicationContext
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                val deleted = withContext(Dispatchers.IO) {
+                    if (!identity.validate(applicationContext)) return@withContext false
                     val col = cachedCollection.col
                     val meta = col.meta
                     meta.mtime = System.currentTimeMillis()
                     col.meta = meta
                     col.delete()
                     uploadCollection(col)
-                    val applicationContext = activity?.applicationContext
-                    if (applicationContext != null) {
-                        requestSync(applicationContext, model.value!!.account)
-                    }
+                    requestSync(applicationContext, model.value!!.account)
+                    true
+                }
+                if (!deleted) {
+                    activity?.finish()
+                    return@launch
                 }
                 activity?.finish()
             } catch (e: EtebaseException) {
@@ -224,7 +229,8 @@ class EditCollectionFragment : Fragment() {
     }
 
     private fun saveCollection() {
-        if (!requireNotNull(CollectionLifecycleIdentity.from(arguments)).validate(requireContext())) {
+        val identity = requireNotNull(CollectionLifecycleIdentity.from(arguments))
+        if (!identity.validate(requireContext())) {
             requireActivity().finish()
             return
         }
@@ -258,17 +264,20 @@ class EditCollectionFragment : Fragment() {
             }
 
             loadingModel.setLoading(true)
+            val applicationContext = requireContext().applicationContext
             lifecycleScope.launch {
                 try {
                     val colUid = withContext(Dispatchers.IO) {
+                        if (!identity.validate(applicationContext)) return@withContext null
                         val col = cachedCollection.col
                         col.meta = meta
                         uploadCollection(col)
-                        val applicationContext = activity?.applicationContext
-                        if (applicationContext != null) {
-                            requestSync(applicationContext, model.value!!.account)
-                        }
+                        requestSync(applicationContext, model.value!!.account)
                         col.uid
+                    }
+                    if (colUid == null) {
+                        activity?.finish()
+                        return@launch
                     }
                     collectionModel.loadCollection(model.value!!, colUid)
                     if (isCreating) {
@@ -277,7 +286,7 @@ class EditCollectionFragment : Fragment() {
                         parentFragmentManager.commit {
                             val identity = CollectionLifecycleIdentity.existing(
                                 model.value!!.account,
-                                requireNotNull(CollectionLifecycleIdentity.from(arguments)).creationId,
+                                identity.creationId,
                                 colUid,
                                 cachedCollection.collectionType
                             )

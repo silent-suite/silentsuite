@@ -32,6 +32,7 @@ class CollectionLifecycleContractTest {
     @Test
     fun everyActiveFragmentRestoresExactNonSecretIdentityFromArguments() {
         val activity = File(etebase, "CollectionActivity.kt").readText()
+        val importActivity = File(imports, "ImportActivity.kt").readText()
         val identity = File(etebase, "CollectionLifecycleIdentity.kt").readText()
         val sources = listOf(
             File(etebase, "ViewCollectionFragment.kt"),
@@ -53,6 +54,11 @@ class CollectionLifecycleContractTest {
         assertTrue(activity.contains("ExactAccountRouting.validate(route.account, route.creationId"))
         assertTrue(activity.contains("private data class CollectionRoute"))
         assertFalse(activity.contains("provisional"))
+        assertTrue(importActivity.contains("EXTRA_CREATION_ID"))
+        assertTrue(importActivity.contains("CollectionLifecycleIdentity.existing"))
+        assertTrue(importActivity.contains("ImportFragment.newInstance(identity)"))
+        assertTrue(importActivity.contains("LocalCalendarImportFragment.newInstance(identity)"))
+        assertTrue(importActivity.contains("LocalContactImportFragment.newInstance(identity)"))
         sources.forEach { source ->
             assertTrue(source.contains("CollectionLifecycleIdentity.from(arguments)"))
             assertTrue(source.contains("identity.validate(requireContext())"))
@@ -80,11 +86,17 @@ class CollectionLifecycleContractTest {
         assertTrue(members.contains("MemberActionViewModel by activityViewModels()"))
         assertTrue(members.contains("ARG_ACTION_TOKEN"))
         assertTrue(members.contains("identity.validate(applicationContext)"))
+        assertTrue(members.split("identity.validate(applicationContext)").size - 1 >= 3)
         assertTrue(edit.contains("LoadingViewModel by activityViewModels()"))
         assertTrue(edit.contains("if (loadingModel.isLoading) return"))
+        assertTrue(edit.split("identity.validate(applicationContext)").size - 1 >= 2)
         assertTrue(fileImport.contains("if (savedInstanceState == null)"))
+        assertTrue(fileImport.contains("if (!activeProcessWork ||"))
+        assertTrue(fileImport.split("identity.validate(context)").size - 1 >= 8)
         assertTrue(calendarImport.contains("if (importInProgress) return"))
+        assertTrue(calendarImport.split("identity.validate(applicationContext)").size - 1 >= 2)
         assertTrue(contactImport.contains("if (importInProgress) return"))
+        assertTrue(contactImport.split("identity.validate(applicationContext)").size - 1 >= 3)
         val view = File(etebase, "ViewCollectionFragment.kt").readText()
         val export = view.substringAfter("private fun createExportDocument")
         assertTrue(export.contains("identity.validate(applicationContext)"))

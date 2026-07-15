@@ -127,10 +127,11 @@ class LocalContactImportFragment : Fragment() {
             iconRes = R.drawable.ic_import_export_black
         )
         progressDialog.show()
+        val applicationContext = requireContext().applicationContext
 
         lifecycleScope.launch {
             val result = try {
-                withContext(Dispatchers.IO) { doImportContacts(localAddressBook, progressDialog) }
+                withContext(Dispatchers.IO) { doImportContacts(localAddressBook, progressDialog, identity, applicationContext) }
             } finally {
                 importInProgress = false
             }
@@ -148,15 +149,22 @@ class LocalContactImportFragment : Fragment() {
         }
     }
 
-    private fun doImportContacts(localAddressBook: LocalAddressBook, progressDialog: Dialog): ResultFragment.ImportResult {
+    private fun doImportContacts(
+        localAddressBook: LocalAddressBook,
+        progressDialog: Dialog,
+        identity: CollectionLifecycleIdentity,
+        applicationContext: Context,
+    ): ResultFragment.ImportResult {
         val result = ResultFragment.ImportResult()
         try {
-            val addressBook = LocalAddressBook.findByUid(requireContext(),
-                    requireContext().contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)!!,
-                    account, uid)
-                    ?: throw Exception("Could not find address book")
             val localContacts = localAddressBook.findAllContacts()
             val localGroups = localAddressBook.findAllGroups()
+            if (!identity.validate(applicationContext)) return staleImportResult()
+            val provider = applicationContext.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
+                ?: throw Exception("Could not acquire contacts provider")
+            try {
+                val addressBook = LocalAddressBook.findByUid(applicationContext, provider, account, uid)
+                    ?: throw Exception("Could not find address book")
             val oldIdToNewId = HashMap<Long, Long>()
             val total = localContacts.size + localGroups.size
             val progressBar = ProgressDialogHelper.getProgressBar(progressDialog)
@@ -164,6 +172,7 @@ class LocalContactImportFragment : Fragment() {
             result.total = total.toLong()
             var progress = 0
             for (currentLocalContact in localContacts) {
+                if (!identity.validate(applicationContext)) return staleImportResult()
                 val contact = currentLocalContact.contact
 
                 try {
@@ -192,6 +201,7 @@ class LocalContactImportFragment : Fragment() {
                 activity?.runOnUiThread { progressBar.progress = currentProgress }
             }
             for (currentLocalGroup in localGroups) {
+                if (!identity.validate(applicationContext)) return staleImportResult()
                 val group = currentLocalGroup.contact
 
                 try {
@@ -221,11 +231,18 @@ class LocalContactImportFragment : Fragment() {
                 val currentProgress = ++progress
                 activity?.runOnUiThread { progressBar.progress = currentProgress }
             }
+            } finally {
+                provider.release()
+            }
         } catch (e: Exception) {
             result.e = e
         }
 
         return result
+    }
+
+    private fun staleImportResult() = ResultFragment.ImportResult().apply {
+        e = Exception("The account route is no longer valid.")
     }
 
     fun onImportResult(importResult: ResultFragment.ImportResult) {
@@ -341,12 +358,5 @@ class LocalContactImportFragment : Fragment() {
             arguments = identity.toBundle()
         }
 
-        fun newInstance(account: Account, uid: String) = LocalContactImportFragment().apply {
-            arguments = Bundle().apply {
-                putParcelable(CollectionLifecycleIdentity.ARG_ACCOUNT, account)
-                putString(CollectionLifecycleIdentity.ARG_COLLECTION_UID, uid)
-                putString(CollectionLifecycleIdentity.ARG_COLLECTION_TYPE, Constants.ETEBASE_TYPE_ADDRESS_BOOK)
-            }
-        }
     }
 }

@@ -192,10 +192,11 @@ class LocalCalendarImportFragment : ListFragment() {
             iconRes = R.drawable.ic_import_export_black
         )
         progressDialog.show()
+        val applicationContext = requireContext().applicationContext
 
         lifecycleScope.launch {
             val result = try {
-                withContext(Dispatchers.IO) { doImportEvents(fromCalendar, progressDialog) }
+                withContext(Dispatchers.IO) { doImportEvents(fromCalendar, progressDialog, identity, applicationContext) }
             } finally {
                 importInProgress = false
             }
@@ -213,23 +214,30 @@ class LocalCalendarImportFragment : ListFragment() {
         }
     }
 
-    private fun doImportEvents(fromCalendar: LocalCalendar, progressDialog: Dialog): ResultFragment.ImportResult {
+    private fun doImportEvents(
+        fromCalendar: LocalCalendar,
+        progressDialog: Dialog,
+        identity: CollectionLifecycleIdentity,
+        applicationContext: Context,
+    ): ResultFragment.ImportResult {
         val result = ResultFragment.ImportResult()
         try {
-            val localCalendar = LocalCalendar.findByName(account,
-                    requireContext().contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)!!,
-                    LocalCalendar.Factory, uid)
             val localEvents = fromCalendar.findAll()
+            if (!identity.validate(applicationContext)) return staleImportResult()
+            val provider = applicationContext.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
+                ?: throw Exception("Could not acquire calendar provider")
+            try {
+                val localCalendar = LocalCalendar.findByName(account, provider, LocalCalendar.Factory, uid)
+                    ?: throw Exception("Could not find calendar")
             val total = localEvents.size
             val progressBar = ProgressDialogHelper.getProgressBar(progressDialog)
             activity?.runOnUiThread { progressBar.max = total }
             result.total = total.toLong()
             var progress = 0
             for (currentLocalEvent in localEvents) {
+                if (!identity.validate(applicationContext)) return staleImportResult()
                 val event = currentLocalEvent.event
                 try {
-                    localCalendar!!
-
                     var localEvent = if (event == null || event.uid == null)
                         null
                     else
@@ -251,12 +259,19 @@ class LocalCalendarImportFragment : ListFragment() {
                 val currentProgress = ++progress
                 activity?.runOnUiThread { progressBar.progress = currentProgress }
             }
+            } finally {
+                provider.release()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             result.e = e
         }
 
         return result
+    }
+
+    private fun staleImportResult() = ResultFragment.ImportResult().apply {
+        e = Exception("The account route is no longer valid.")
     }
 
     fun onImportResult(importResult: ResultFragment.ImportResult) {
@@ -274,12 +289,5 @@ class LocalCalendarImportFragment : ListFragment() {
                 arguments = identity.toBundle()
             }
 
-        fun newInstance(account: Account, uid: String) = LocalCalendarImportFragment().apply {
-            arguments = Bundle().apply {
-                putParcelable(CollectionLifecycleIdentity.ARG_ACCOUNT, account)
-                putString(CollectionLifecycleIdentity.ARG_COLLECTION_UID, uid)
-                putString(CollectionLifecycleIdentity.ARG_COLLECTION_TYPE, Constants.ETEBASE_TYPE_CALENDAR)
-            }
-        }
     }
 }

@@ -109,15 +109,19 @@ class CollectionMembersFragment : Fragment() {
                 }
                 if (loadingModel.isLoading) return@setOnClickListener
                 loadingModel.setLoading(true)
+                val applicationContext = requireContext().applicationContext
                 lifecycleScope.launch {
                     try {
-                        withContext(Dispatchers.IO) {
+                        val left = withContext(Dispatchers.IO) {
+                            if (!identity.validate(applicationContext)) return@withContext false
                             val membersManager = model.value!!.colMgr.getMemberManager(cachedCollection.col)
                             membersManager.leave()
-                            val applicationContext = activity?.applicationContext
-                            if (applicationContext != null) {
-                                requestSync(applicationContext, model.value!!.account)
-                            }
+                            requestSync(applicationContext, model.value!!.account)
+                            true
+                        }
+                        if (!left) {
+                            activity?.finish()
+                            return@launch
                         }
                         activity?.finish()
                     } finally {
@@ -215,8 +219,15 @@ class AddMemberFragment : DialogFragment() {
             }
             val invitationManager = accountHolder.etebase.invitationManager
             try {
+                val applicationContext = requireContext().applicationContext
                 val profile = withContext(Dispatchers.IO) {
+                    if (!identity.validate(applicationContext)) return@withContext null
                     invitationManager.fetchUserProfile(username)
+                }
+                if (profile == null) {
+                    clearAction()
+                    activity?.finish()
+                    return@launch
                 }
                 val fingerprint = Utils.prettyFingerprint(profile.pubkey)
                 val view = LayoutInflater.from(context).inflate(R.layout.fingerprint_alertdialog, null)
