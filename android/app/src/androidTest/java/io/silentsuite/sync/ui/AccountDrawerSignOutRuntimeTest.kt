@@ -7,6 +7,8 @@ import android.content.Context
 import android.os.Build
 import android.view.View
 import androidx.core.view.ViewCompat
+import androidx.core.view.GravityCompat
+import androidx.drawerlayout.widget.DrawerLayout
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -32,6 +34,8 @@ class AccountDrawerSignOutRuntimeTest {
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(fixture.context, account)).use { scenario ->
                 scenario.recreate()
                 scenario.onActivity { activity ->
+                    activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                        .openDrawer(GravityCompat.START, false)
                     val header = activity.findViewById<View>(R.id.nav_account_header)
                     header.performClick()
                     val add = activity.findViewById<View>(R.id.nav_add_account_row)
@@ -143,8 +147,13 @@ class AccountDrawerSignOutRuntimeTest {
             assertTrue(AccountSettings.writeVerified(
                 fixture.manager, fixture.account, AccountSettings.KEY_CREATION_ID, "replacement-generation"))
 
+            val callbackReceived = CountDownLatch(1)
             var callback: Boolean? = null
-            adapter.removeMain(oldIdentity) { callback = it }
+            adapter.removeMain(oldIdentity) {
+                callback = it
+                callbackReceived.countDown()
+            }
+            assertTrue("replacement refusal callback timed out", callbackReceived.await(10, TimeUnit.SECONDS))
             assertEquals(false, callback)
             assertTrue(adapter.mainGenerationAbsent(oldIdentity))
             assertTrue(fixture.account in fixture.manager.getAccountsByType(fixture.account.type))
