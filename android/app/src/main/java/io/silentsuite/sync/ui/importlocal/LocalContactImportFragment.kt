@@ -23,12 +23,14 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalContact
 import io.silentsuite.sync.resource.LocalGroup
 import io.silentsuite.sync.utils.ProgressDialogHelper
+import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -38,11 +40,20 @@ import java.util.*
 class LocalContactImportFragment : Fragment() {
     private lateinit var account: Account
     private lateinit var uid: String
+    private var importInProgress = false
 
     private var recyclerView: RecyclerView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity?.collectionUid == null || !identity.validate(requireContext()) ||
+            identity.collectionType != Constants.ETEBASE_TYPE_ADDRESS_BOOK) {
+            requireActivity().finish()
+            return
+        }
+        account = identity.account
+        uid = identity.collectionUid
         retainInstance = true
     }
 
@@ -102,6 +113,13 @@ class LocalContactImportFragment : Fragment() {
     }
 
     private fun importContacts(localAddressBook: LocalAddressBook) {
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity == null || !identity.validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
+        if (importInProgress) return
+        importInProgress = true
         val progressDialog = ProgressDialogHelper.createHorizontal(
             requireContext(),
             R.string.import_dialog_title,
@@ -109,10 +127,13 @@ class LocalContactImportFragment : Fragment() {
             iconRes = R.drawable.ic_import_export_black
         )
         progressDialog.show()
+        val applicationContext = requireContext().applicationContext
 
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                doImportContacts(localAddressBook, progressDialog)
+            val result = try {
+                withContext(Dispatchers.IO) { doImportContacts(localAddressBook, progressDialog, identity, applicationContext) }
+            } finally {
+                importInProgress = false
             }
 
             val currentActivity = activity
@@ -128,15 +149,22 @@ class LocalContactImportFragment : Fragment() {
         }
     }
 
-    private fun doImportContacts(localAddressBook: LocalAddressBook, progressDialog: Dialog): ResultFragment.ImportResult {
+    private fun doImportContacts(
+        localAddressBook: LocalAddressBook,
+        progressDialog: Dialog,
+        identity: CollectionLifecycleIdentity,
+        applicationContext: Context,
+    ): ResultFragment.ImportResult {
         val result = ResultFragment.ImportResult()
         try {
-            val addressBook = LocalAddressBook.findByUid(requireContext(),
-                    requireContext().contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)!!,
-                    account, uid)
-                    ?: throw Exception("Could not find address book")
             val localContacts = localAddressBook.findAllContacts()
             val localGroups = localAddressBook.findAllGroups()
+            if (!identity.validate(applicationContext)) return staleImportResult()
+            val provider = applicationContext.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
+                ?: throw Exception("Could not acquire contacts provider")
+            try {
+                val addressBook = LocalAddressBook.findByUid(applicationContext, provider, account, uid)
+                    ?: throw Exception("Could not find address book")
             val oldIdToNewId = HashMap<Long, Long>()
             val total = localContacts.size + localGroups.size
             val progressBar = ProgressDialogHelper.getProgressBar(progressDialog)
@@ -144,6 +172,7 @@ class LocalContactImportFragment : Fragment() {
             result.total = total.toLong()
             var progress = 0
             for (currentLocalContact in localContacts) {
+                if (!identity.validate(applicationContext)) return staleImportResult()
                 val contact = currentLocalContact.contact
 
                 try {
@@ -172,6 +201,7 @@ class LocalContactImportFragment : Fragment() {
                 activity?.runOnUiThread { progressBar.progress = currentProgress }
             }
             for (currentLocalGroup in localGroups) {
+                if (!identity.validate(applicationContext)) return staleImportResult()
                 val group = currentLocalGroup.contact
 
                 try {
@@ -201,11 +231,18 @@ class LocalContactImportFragment : Fragment() {
                 val currentProgress = ++progress
                 activity?.runOnUiThread { progressBar.progress = currentProgress }
             }
+            } finally {
+                provider.release()
+            }
         } catch (e: Exception) {
             result.e = e
         }
 
         return result
+    }
+
+    private fun staleImportResult() = ResultFragment.ImportResult().apply {
+        e = Exception("The account route is no longer valid.")
     }
 
     fun onImportResult(importResult: ResultFragment.ImportResult) {
@@ -316,11 +353,10 @@ class LocalContactImportFragment : Fragment() {
 
     companion object {
 
-        fun newInstance(account: Account, uid: String): LocalContactImportFragment {
-            val ret = LocalContactImportFragment()
-            ret.account = account
-            ret.uid = uid
-            return ret
+        fun newInstance(identity: CollectionLifecycleIdentity) = LocalContactImportFragment().apply {
+            requireNotNull(identity.collectionUid)
+            arguments = identity.toBundle()
         }
+
     }
 }
