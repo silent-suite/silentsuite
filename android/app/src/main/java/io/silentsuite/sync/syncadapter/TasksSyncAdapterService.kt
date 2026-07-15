@@ -26,6 +26,8 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.dmfs.tasks.contract.TaskContract
 import java.util.*
 
+internal val TASK_OUTCOME_PROVIDERS = setOf(ProviderName.OpenTasks, ProviderName.TasksOrg)
+
 /**
  * Synchronization manager for CalDAV collections; handles tasks ({@code VTODO}).
  */
@@ -37,7 +39,13 @@ class TasksSyncAdapterService: SyncAdapterService() {
             context: Context,
             private val name: ProviderName
     ): SyncAdapter(context) {
-        override fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult) {
+        init {
+            require(name in TASK_OUTCOME_PROVIDERS) { "Unsupported task outcome provider" }
+        }
+
+        override val outcomeService = SyncStatusStore.Service.TASKS
+
+        override fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult): Completion {
 
             val taskProvider = TaskProvider.fromProviderClient(context, name, provider)
 
@@ -51,7 +59,7 @@ class TasksSyncAdapterService: SyncAdapterService() {
                - this is is an automatic sync (i.e. manual syncs are run regardless of sync conditions)
              */
             if (!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(accountSettings))
-                return
+                return Completion.SKIPPED
 
             RefreshCollections(
                 account,
@@ -63,17 +71,26 @@ class TasksSyncAdapterService: SyncAdapterService() {
 
             val principal = accountSettings.uri?.toHttpUrlOrNull() ?: run {
                 Logger.log.warning("Task sync skipped: no valid URI")
-                return
+                return Completion.SKIPPED
             }
 
+            var providerOutcome = DirectProviderAggregate.NONE
             for (taskList in AndroidTaskList.find(account, taskProvider, LocalTaskList.Factory, "${TaskContract.TaskLists.SYNC_ENABLED}!=0", null)) {
                 Logger.log.info("Synchronizing task list #${taskList.id}")
                 TasksSyncManager(context, account, accountSettings, extras, authority, syncResult, taskList, principal).use {
-                    it.performSync()
+                    val outcome = it.performSync()
+                    providerOutcome = aggregateDirectProviderOutcome(providerOutcome, outcome)
+                    if (providerOutcome == DirectProviderAggregate.CANCELLED)
+                        return Completion.SKIPPED
                 }
             }
 
             Logger.log.info("Task sync complete")
+            return when (providerOutcome) {
+                DirectProviderAggregate.FAILURE -> Completion.FAILURE
+                DirectProviderAggregate.SUCCESS -> Completion.SUCCESS
+                else -> Completion.SKIPPED
+            }
         }
 
         private fun updateLocalTaskLists(provider: TaskProvider, account: Account, settings: AccountSettings) {
