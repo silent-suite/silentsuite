@@ -129,7 +129,7 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
         val manager = etebase.collectionManager
         val required = Constants.COLLECTION_TYPES.toList()
         fun checkpoint() = viewModelScope.coroutineContext.ensureActive()
-        return when (CollectionReconciliation.reconcile(required,
+        val reconciliation = CollectionReconciliation.reconcile(required,
             refresh = {
             checkpoint()
             val byUid = linkedMapOf<String, CollectionEligibility.Collection>()
@@ -171,7 +171,8 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
             // Cache failure is an uncertain result; the coordinator refreshes remotely before retrying.
             checkpoint()
             synchronized(cache) { cache.collectionSet(manager, created) }
-        })) {
+        })
+        return when (reconciliation) {
             CollectionReconciliation.Result.Ready -> false
             CollectionReconciliation.Result.Limited -> true
             CollectionReconciliation.Result.Recovery -> throw IllegalStateException("No recoverable remote collection inventory")
