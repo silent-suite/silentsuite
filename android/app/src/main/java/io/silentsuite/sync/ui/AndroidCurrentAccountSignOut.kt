@@ -14,9 +14,9 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.resource.LocalAddressBook
+import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.utils.AndroidCompat
 
-/** Slice 10 plugs exact sync-outcome cleanup into this seam; Slice 9 intentionally stores none. */
 fun interface ExactAccountStatusCleanup {
     fun clear(identity: ExactAccountIdentity): Boolean
 
@@ -27,10 +27,16 @@ internal class AndroidCurrentAccountSignOut(
     private val context: Context,
     private val account: Account,
     private val creationId: String,
-    private val statusCleanup: ExactAccountStatusCleanup = ExactAccountStatusCleanup.NO_OP
+    injectedStatusCleanup: ExactAccountStatusCleanup? = null,
 ) : CurrentAccountSignOutCoordinator.Seams {
     private val manager = AccountManager.get(context)
     private val main = ExactAccountIdentity(account.type, account.name, creationId)
+    private val statusCleanup = injectedStatusCleanup ?: run {
+        val store = SyncStatusStore(context)
+        // Snapshot before AccountManager removal; cleanup retries retain this exact generation key.
+        val statusIdentity = store.identity(account)
+        ExactAccountStatusCleanup { requested -> requested == main && store.clear(statusIdentity) }
+    }
 
     override fun snapshot(): CurrentAccountSignOutSnapshot? {
         if (creationId.isBlank() || account !in manager.getAccountsByType(account.type) ||

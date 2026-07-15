@@ -369,13 +369,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 ExactAccountIdentity(acc.type, acc.name, it) to acc
             }
         }.sortedWith(compareBy({ it.first.name }, { it.first.creationId }, { it.first.type }))
-        val usedRowIds = mutableSetOf<Int>()
+        val rowIds = accountRowViewIds(ordered.map { it.first })
         for ((identity, acc) in ordered) {
             val row = LayoutInflater.from(this).inflate(R.layout.nav_account_row, container, false)
-            var rowId = accountRowViewId(identity)
-            while (!usedRowIds.add(rowId))
-                rowId = if (rowId == ACCOUNT_ROW_ID_MAX) ACCOUNT_ROW_ID_MIN else rowId + 1
-            row.id = rowId
+            row.id = rowIds.getValue(identity)
             val textView = row.findViewById<TextView>(R.id.nav_account_name)
             val currentIndicator = row.findViewById<View>(R.id.nav_account_current_indicator)
             textView.text = acc.name
@@ -1041,6 +1038,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private const val ACCOUNT_ROW_ID_MAX = 0x02ffffff
         internal fun accountRowViewId(identity: ExactAccountIdentity) =
             ACCOUNT_ROW_ID_MIN or (identity.hashCode() and 0x00ffffff)
+
+        internal fun accountRowViewIds(identities: List<ExactAccountIdentity>): Map<ExactAccountIdentity, Int> {
+            val used = mutableSetOf<Int>()
+            return AccountSwitcherPolicy.ordered(identities).associateWith { identity ->
+                var rowId = accountRowViewId(identity)
+                while (!used.add(rowId))
+                    rowId = if (rowId == ACCOUNT_ROW_ID_MAX) ACCOUNT_ROW_ID_MIN else rowId + 1
+                rowId
+            }
+        }
         fun newIntent(context: Context, account: Account): Intent = Intent(context, AccountActivity::class.java)
             .putExtra(EXTRA_ACCOUNT, account)
             .putExtra(EXTRA_CREATION_ID, AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID))

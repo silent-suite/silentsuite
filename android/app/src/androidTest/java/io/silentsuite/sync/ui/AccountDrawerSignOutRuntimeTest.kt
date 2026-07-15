@@ -14,6 +14,7 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import io.silentsuite.sync.resource.LocalAddressBook
+import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.utils.AndroidCompat
 import java.net.URI
@@ -89,6 +90,10 @@ class AccountDrawerSignOutRuntimeTest {
         target.manager.setUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_NAME, target.account.name)
         try {
             assertTrue(ActiveAccountManager.setActiveAccount(target.context, target.account))
+            val statusStore = SyncStatusStore(target.context)
+            assertTrue(statusStore.recordSuccess(target.account, SyncStatusStore.Service.CALENDAR, 123L))
+            assertEquals(123L,
+                statusStore.status(target.account, SyncStatusStore.Service.CALENDAR).lastSuccessAt)
             val expectedReplacement = target.manager.getAccountsByType(App.accountType).mapNotNull { candidate ->
                 target.manager.getUserData(candidate, AccountSettings.KEY_CREATION_ID)?.takeIf(String::isNotBlank)?.let {
                     ExactAccountIdentity(candidate.type, candidate.name, it)
@@ -110,6 +115,13 @@ class AccountDrawerSignOutRuntimeTest {
             assertEquals(expectedReplacement, (finalState as CurrentAccountSignOutState.Complete).replacement)
             assertFalse(target.account in target.manager.getAccountsByType(target.account.type))
             assertFalse(child in target.manager.getAccountsByType(child.type))
+            // Recreate the same exact generation temporarily. Any uncleared status would now be
+            // visible again because SyncStatusStore keys include this creation ID.
+            assertTrue(target.manager.addAccountExplicitly(target.account, null, null))
+            assertTrue(AccountSettings.writeVerified(target.manager, target.account,
+                AccountSettings.KEY_CREATION_ID, target.creationId))
+            assertEquals(SyncStatusStore.Status(),
+                statusStore.status(target.account, SyncStatusStore.Service.CALENDAR))
             assertEquals(
                 Account(expectedReplacement.name, expectedReplacement.type),
                 ActiveAccountManager.getActiveAccount(target.context),

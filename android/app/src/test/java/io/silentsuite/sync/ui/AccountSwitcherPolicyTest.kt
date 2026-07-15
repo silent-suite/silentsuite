@@ -31,4 +31,17 @@ class AccountSwitcherPolicyTest {
         assertEquals(ActiveAccountReplacementDecision.Replace(null),
             ActiveAccountReplacementPolicy.decide(removed.name, removed.creationId, removed, null))
     }
+
+    @Test fun `colliding account row hashes probe to stable unique ids`() {
+        val first = ExactAccountIdentity("type", "Aa", "generation")
+        val second = ExactAccountIdentity("type", "BB", "generation")
+        assertEquals(first.hashCode(), second.hashCode())
+
+        val forward = AccountActivity.accountRowViewIds(listOf(first, second))
+        val reversed = AccountActivity.accountRowViewIds(listOf(second, first))
+        assertEquals(forward, reversed)
+        assertEquals(2, forward.values.toSet().size)
+        assertEquals(AccountActivity.accountRowViewId(first), forward.getValue(first))
+        assertEquals(AccountActivity.accountRowViewId(first) + 1, forward.getValue(second))
+    }
 }
