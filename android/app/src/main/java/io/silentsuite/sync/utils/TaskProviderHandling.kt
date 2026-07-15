@@ -16,6 +16,8 @@ class TaskProviderHandling {
     companion object {
         /** Same-module instrumentation override; null preserves package/provider discovery. */
         @JvmField internal var wantedProviderResolver: ((Context) -> TaskProvider.ProviderName?)? = null
+        @JvmField internal var providerAuthorityResolver: ((TaskProvider.ProviderName) -> String)? = null
+        @JvmField internal var calendarIntervalResolver: ((AccountSettings) -> Long?)? = null
         internal fun eligibleAccounts(accounts: Iterable<android.accounts.Account>, explicitCreatingTarget: android.accounts.Account? = null, load: (android.accounts.Account) -> PostLoginSetupState?): List<android.accounts.Account> =
             accounts.filter { account ->
                 val state = runCatching { load(account) }.getOrNull()
@@ -45,13 +47,15 @@ class TaskProviderHandling {
         }
 
         fun updateTaskSync(context: Context, provider: TaskProvider.ProviderName, explicitCreatingTarget: android.accounts.Account? = null) {
+            val providerAuthority = providerAuthorityResolver?.invoke(provider) ?: provider.authority
             for (account in eligibleAccounts(AccountManager.get(context).getAccountsByType(App.accountType).asIterable(), explicitCreatingTarget) { account ->
                 try { AccountSettings(context, account); AccountSettings.setupState(AccountManager.get(context), account, true) } catch (_: Exception) { PostLoginSetupState.RECOVERY_REQUIRED }
             }) {
                 val settings = try { AccountSettings(context, account) } catch (_: Exception) { continue }
                 if (AccountSettings.setupState(AccountManager.get(context), account, true) == PostLoginSetupState.RECOVERY_REQUIRED)
                     continue
-                val calendarSyncInterval = settings.getSyncInterval(CalendarContract.AUTHORITY)
+                val calendarSyncInterval = calendarIntervalResolver?.invoke(settings)
+                    ?: settings.getSyncInterval(CalendarContract.AUTHORITY)
                 val wantedProvider = wantedProviderResolver?.invoke(context) ?: getWantedTaskSyncProvider(context)
                 val shouldSync = wantedProvider == provider
 
@@ -59,12 +63,12 @@ class TaskProviderHandling {
                 if (shouldSync) {
                     if (calendarSyncInterval == null) {
                         // do nothing atm
-                    } else if (ContentResolver.getIsSyncable(account, provider.authority) <= 0) {
-                        ContentResolver.setIsSyncable(account, provider.authority, 1)
-                        settings.setSyncInterval(provider.authority, calendarSyncInterval)
+                    } else if (ContentResolver.getIsSyncable(account, providerAuthority) <= 0) {
+                        ContentResolver.setIsSyncable(account, providerAuthority, 1)
+                        settings.setSyncInterval(providerAuthority, calendarSyncInterval)
                     }
                 } else {
-                    ContentResolver.setIsSyncable(account, provider.authority, 0)
+                    ContentResolver.setIsSyncable(account, providerAuthority, 0)
                 }
             }
         }

@@ -11,6 +11,7 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
+import io.silentsuite.sync.ui.setup.PostLoginSetupMigration
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry
 import io.silentsuite.sync.ui.setup.LoginActivity
@@ -150,9 +151,16 @@ class PostLoginSetupRuntimeTest {
         check(AccountSettings.writeSetupState(manager, target, PostLoginSetupState.READY))
         check(AccountSettings.writeSetupState(manager, sibling, PostLoginSetupState.COMPLETE))
         check(ActiveAccountManager.setActiveAccount(context, sibling))
+        val previousBootstrap=App.postLoginBootstrapSucceeded
+        App.postLoginBootstrapSucceeded=PostLoginSetupMigration.bootstrap(context)
+        check(App.postLoginBootstrapSucceeded)
+        PostLoginSetupViewModel.inventoryOverride={ candidate ->
+            check(candidate==target)
+            PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
+        }
         try {
             // Exact incomplete launcher route must not fall back to the active sibling.
-            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target)).use {
+            val scenario=ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target)); try {
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync()
                 val setup = resumedActivity() as PostLoginSetupActivity
                 org.junit.Assert.assertTrue(setup.findViewById<android.widget.Button>(R.id.setup_done).isShown)
@@ -162,23 +170,38 @@ class PostLoginSetupRuntimeTest {
                 InstrumentationRegistry.getInstrumentation().runOnMainSync {
                     recreated.findViewById<android.widget.Button>(R.id.setup_done).performClick()
                 }
+            } finally { runCatching { scenario.close() } }
+            val deadline=android.os.SystemClock.uptimeMillis()+5000
+            var dashboard: AccountActivity?=null
+            while (android.os.SystemClock.uptimeMillis()<deadline) {
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                val resumed=resumedActivityOrNull()
+                if (AccountSettings.setupState(manager,target,true)==PostLoginSetupState.COMPLETE &&
+                    ActiveAccountManager.getActiveAccount(context)==target && resumed is AccountActivity &&
+                    resumed.title.toString()==target.name) {
+                    dashboard=resumed
+                    break
+                }
+                android.os.SystemClock.sleep(25)
             }
             assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, target, true))
             assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, sibling, true))
             assertEquals(target, ActiveAccountManager.getActiveAccount(context))
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            val dashboard = resumedActivity() as AccountActivity
-            assertEquals(target.name, dashboard.title.toString())
-            org.junit.Assert.assertTrue(dashboard.findViewById<android.view.View>(R.id.drawer_layout).isShown)
+            val exactDashboard=requireNotNull(dashboard) { "Exact target dashboard did not resume before the deadline" }
+            assertEquals(target.name, exactDashboard.title.toString())
+            org.junit.Assert.assertTrue(exactDashboard.findViewById<android.view.View>(R.id.drawer_layout).isShown)
         } finally {
+            PostLoginSetupViewModel.inventoryOverride=null
+            App.postLoginBootstrapSucceeded=previousBootstrap
             AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling); ActiveAccountManager.clearActiveAccount(context)
         }
     }
-    private fun resumedActivity(): android.app.Activity {
+    private fun resumedActivityOrNull(): android.app.Activity? {
         var current: android.app.Activity? = null
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            current = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).single()
+            current = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).singleOrNull()
         }
-        return requireNotNull(current)
+        return current
     }
+    private fun resumedActivity(): android.app.Activity = requireNotNull(resumedActivityOrNull())
 }

@@ -65,4 +65,19 @@ class AccountCreationRegistryTest {
         assertFalse(registry.updateOwned(newer.copy(creationId = "stale", phase = AccountCreationRegistry.Phase.CREATING)))
         assertEquals(newer, registry.get("type", "alice"))
     }
+
+    @Test fun `replaying identical exact-owned recovery succeeds`() {
+        val storage = object : AccountCreationRegistry.Store {
+            var value: String? = null
+            override fun read() = value
+            override fun commit(value: String?) = true.also { this.value = value }
+        }
+        val registry = AccountCreationRegistry(storage)
+        val recovery = AccountCreationRegistry.Record(
+            "alice", "exact", AccountCreationRegistry.Phase.RECOVERY_REQUIRED, 3, "type")
+        assertTrue(registry.prepare(recovery))
+        assertTrue(registry.updateOwned(recovery))
+        assertEquals(recovery, registry.get("type", "alice"))
+        assertFalse(registry.updateOwned(recovery.copy(creationId = "stale")))
+    }
 }

@@ -12,6 +12,7 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.utils.AndroidCompat
 import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
+import io.silentsuite.sync.ui.setup.PostLoginSetupMigration
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import java.net.URI
 import org.junit.Assert.assertEquals
@@ -32,6 +33,9 @@ class AccountActivityRecreationTest {
         AccountSettings.setUserData(accountManager, account, URI("https://example.invalid/"), account.name)
         check(AccountSettings.writeVerified(accountManager, account, AccountSettings.KEY_CREATION_ID, "test-generation"))
         check(AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.COMPLETE))
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        App.postLoginBootstrapSucceeded = PostLoginSetupMigration.bootstrap(context)
+        check(App.postLoginBootstrapSucceeded)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
             val permissions = mutableListOf(
@@ -49,6 +53,7 @@ class AccountActivityRecreationTest {
 
         try {
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { scenario ->
+                scenario.onActivity { assertTrue(it is AccountActivity) }
                 scenario.recreate()
                 var delivered = false
                 for (attempt in 0 until 50) {
@@ -67,6 +72,7 @@ class AccountActivityRecreationTest {
                 }
             }
         } finally {
+            App.postLoginBootstrapSucceeded = previousBootstrap
             AndroidCompat.removeAccount(accountManager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }

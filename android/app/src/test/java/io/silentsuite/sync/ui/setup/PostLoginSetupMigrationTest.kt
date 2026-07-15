@@ -1,5 +1,6 @@
 package io.silentsuite.sync.ui.setup
 
+import io.silentsuite.sync.AccountSettings
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

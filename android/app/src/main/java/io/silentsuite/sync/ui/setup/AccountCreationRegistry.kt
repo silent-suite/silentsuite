@@ -18,9 +18,15 @@ class AccountCreationRegistry(private val store: Store) {
         // A duplicate submit must leave the first owner's durable record intact.
         current ?: record
     } }
-    fun updateOwned(record: Record): Boolean = synchronized(LOCK) { update(record.accountType, record.accountName) { current ->
-        if (owns(current, record.creationId)) record else current
-    } }
+    fun updateOwned(record: Record): Boolean = synchronized(LOCK) {
+        val current = decode(store.read())?.get(key(record.accountType, record.accountName))
+            ?: return@synchronized false
+        if (!owns(current, record.creationId)) return@synchronized false
+        if (current == record) return@synchronized true
+        update(record.accountType, record.accountName) { owned ->
+            if (owns(owned, record.creationId)) record else owned
+        }
+    }
     fun clearOwned(accountType: String, accountName: String, creationId: String): Boolean = synchronized(LOCK) {
         update(accountType, accountName) { current -> if (owns(current, creationId)) null else current }
     }
