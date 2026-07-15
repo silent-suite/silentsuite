@@ -3,6 +3,7 @@ package io.silentsuite.sync.syncadapter
 import android.accounts.Account
 import at.bitfire.ical4android.TaskProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -48,7 +49,9 @@ class ProviderBoundaryPolicyTest {
 
     @Test fun `contacts child outcome requires exact main mapping and propagated attempt`() {
         val main = Account("main", "main-type")
-        assertEquals(ContactsChildTarget(main, "attempt"), contactsChildTarget(main, "attempt"))
+        val target = contactsChildTarget(main, "attempt")
+        assertSame(main, target?.mainAccount)
+        assertEquals("attempt", target?.attemptId)
         assertEquals(null, contactsChildTarget(main, null))
         assertEquals(null, contactsChildTarget(null, "attempt"))
     }
