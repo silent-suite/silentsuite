@@ -38,7 +38,7 @@
         <item name="colorOnSurface">@color/semantic_on_surface</item>
         <item name="colorOutline">@color/semantic_outline</item>
         <item name="colorPrimary">@color/semantic_primary</item>
-        <item name="colorOnPrimary">@color/semantic_on_surface</item>
+        <item name="colorOnPrimary">@color/navy900</item>
         <item name="colorError">@color/semantic_error</item>
         <item name="colorOnError">@color/semantic_surface</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>

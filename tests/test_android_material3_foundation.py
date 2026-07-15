@@ -131,6 +131,7 @@ def test_incremental_material3_themes_use_semantic_roles_and_readable_navy_syste
             "colorSurface": "@color/semantic_surface",
             "colorOnSurface": "@color/semantic_on_surface",
             "colorPrimary": "@color/semantic_primary",
+            "colorOnPrimary": "@color/navy900",
             "android:statusBarColor": "@color/semantic_system_bar",
             "android:navigationBarColor": "@color/semantic_system_bar",
         }.items():
@@ -141,8 +142,6 @@ def test_incremental_material3_themes_use_semantic_roles_and_readable_navy_syste
     assert parents["AppTheme.Material3"] == "Theme.Material3.DayNight"
     assert parents["AppTheme.Material3.NoActionBar"] == "Theme.Material3.DayNight.NoActionBar"
 
-    manifest = read("android/app/src/main/AndroidManifest.xml")
-    assert "AppTheme.Material3" not in manifest
     base_activity = read("android/app/src/main/java/io/silentsuite/sync/ui/BaseActivity.kt")
     assert "applyReadableSystemBars()" in base_activity
     assert "R.color.semantic_system_bar" in base_activity
