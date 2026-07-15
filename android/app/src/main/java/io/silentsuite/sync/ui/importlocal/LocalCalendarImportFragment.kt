@@ -17,11 +17,13 @@ import androidx.fragment.app.commit
 import androidx.lifecycle.lifecycleScope
 import at.bitfire.ical4android.CalendarStorageException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.resource.LocalEvent
 import io.silentsuite.sync.utils.ProgressDialogHelper
+import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -30,9 +32,18 @@ import kotlinx.coroutines.withContext
 class LocalCalendarImportFragment : ListFragment() {
     private lateinit var account: Account
     private lateinit var uid: String
+    private var importInProgress = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity?.collectionUid == null || !identity.validate(requireContext()) ||
+            identity.collectionType !in setOf(Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS)) {
+            requireActivity().finish()
+            return
+        }
+        account = identity.account
+        uid = identity.collectionUid
         retainInstance = true
     }
 
@@ -167,6 +178,13 @@ class LocalCalendarImportFragment : ListFragment() {
     }
 
     private fun importEvents(fromCalendar: LocalCalendar) {
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity == null || !identity.validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
+        if (importInProgress) return
+        importInProgress = true
         val progressDialog = ProgressDialogHelper.createHorizontal(
             requireContext(),
             R.string.import_dialog_title,
@@ -176,8 +194,10 @@ class LocalCalendarImportFragment : ListFragment() {
         progressDialog.show()
 
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                doImportEvents(fromCalendar, progressDialog)
+            val result = try {
+                withContext(Dispatchers.IO) { doImportEvents(fromCalendar, progressDialog) }
+            } finally {
+                importInProgress = false
             }
 
             val currentActivity = activity
@@ -248,11 +268,18 @@ class LocalCalendarImportFragment : ListFragment() {
 
     companion object {
 
-        fun newInstance(account: Account, uid: String): LocalCalendarImportFragment {
-            val ret = LocalCalendarImportFragment()
-            ret.account = account
-            ret.uid = uid
-            return ret
+        fun newInstance(identity: CollectionLifecycleIdentity) =
+            LocalCalendarImportFragment().apply {
+                requireNotNull(identity.collectionUid)
+                arguments = identity.toBundle()
+            }
+
+        fun newInstance(account: Account, uid: String) = LocalCalendarImportFragment().apply {
+            arguments = Bundle().apply {
+                putParcelable(CollectionLifecycleIdentity.ARG_ACCOUNT, account)
+                putString(CollectionLifecycleIdentity.ARG_COLLECTION_UID, uid)
+                putString(CollectionLifecycleIdentity.ARG_COLLECTION_TYPE, Constants.ETEBASE_TYPE_CALENDAR)
+            }
         }
     }
 }

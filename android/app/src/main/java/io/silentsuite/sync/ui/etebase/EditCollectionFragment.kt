@@ -3,13 +3,16 @@ package io.silentsuite.sync.ui.etebase
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.text.TextUtils
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.*
 import android.widget.EditText
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
-import androidx.fragment.app.commit
 import androidx.fragment.app.viewModels
+import androidx.lifecycle.ViewModel
+import androidx.fragment.app.commit
 import com.etebase.client.Collection
 import com.etebase.client.exceptions.EtebaseException
 import io.silentsuite.sync.CachedCollection
@@ -30,23 +33,44 @@ class EditCollectionFragment : Fragment() {
     private val model: AccountViewModel by activityViewModels()
     private val collectionModel: CollectionViewModel by activityViewModels()
     private val itemsModel: ItemsViewModel by activityViewModels()
-    private val loadingModel: LoadingViewModel by viewModels()
+    private val loadingModel: LoadingViewModel by activityViewModels()
+    private val draft: CollectionDraftViewModel by viewModels()
 
-    private lateinit var cachedCollection: CachedCollection
     private var isCreating: Boolean = false
+
+    private val cachedCollection: CachedCollection
+        get() = requireNotNull(collectionModel.value) { "Collection is not loaded" }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity == null || !identity.validate(requireContext()) ||
+            (identity.collectionUid == null) != requireArguments().getBoolean(ARG_IS_CREATING)) {
+            requireActivity().finish()
+            return
+        }
+        isCreating = requireArguments().getBoolean(ARG_IS_CREATING)
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val ret = inflater.inflate(R.layout.activity_create_collection, container, false)
         setHasOptionsMenu(true)
 
-        if (savedInstanceState == null) {
-            updateTitle()
-            if (container != null) {
-                initUi(inflater, ret)
-            }
-        }
-
         return ret
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        collectionModel.observe(viewLifecycleOwner) { collection ->
+            val identity = CollectionLifecycleIdentity.from(arguments)
+            if (identity == null || identity.account != model.value?.account || identity.collectionType != collection.collectionType ||
+                (identity.collectionUid != null && identity.collectionUid != collection.col.uid)) {
+                requireActivity().finish()
+                return@observe
+            }
+            updateTitle()
+            initUi(view)
+        }
     }
 
     fun updateTitle() {
@@ -71,21 +95,25 @@ class EditCollectionFragment : Fragment() {
         }
     }
 
-    private fun initUi(inflater: LayoutInflater, v: View) {
+    private fun initUi(v: View) {
         val title = v.findViewById<EditText>(R.id.display_name)
         val desc = v.findViewById<EditText>(R.id.description)
+        title.isSaveEnabled = false
+        desc.isSaveEnabled = false
 
         val meta = cachedCollection.meta
-
-        title.setText(meta.name)
-        desc.setText(meta.description)
+        draft.initialize(meta.name, meta.description, LocalCalendar.parseColor(meta.color))
+        title.setText(draft.name)
+        desc.setText(draft.description)
+        title.addTextChangedListener(DraftWatcher { draft.name = it })
+        desc.addTextChangedListener(DraftWatcher { draft.description = it })
 
         val colorSquare = v.findViewById<View>(R.id.color)
         when (cachedCollection.collectionType) {
             Constants.ETEBASE_TYPE_CALENDAR -> {
                 title.setHint(R.string.create_calendar_display_name_hint)
 
-                val color = LocalCalendar.parseColor(meta.color)
+                val color = draft.color
                 colorSquare.setBackgroundColor(color)
                 colorSquare.setOnClickListener {
                     AmbilWarnaDialog(context, (colorSquare.background as ColorDrawable).color, true, object : AmbilWarnaDialog.OnAmbilWarnaListener {
@@ -93,6 +121,7 @@ class EditCollectionFragment : Fragment() {
 
                         override fun onOk(dialog: AmbilWarnaDialog, color: Int) {
                             colorSquare.setBackgroundColor(color)
+                            draft.color = color
                         }
                     }).show()
                 }
@@ -100,7 +129,7 @@ class EditCollectionFragment : Fragment() {
             Constants.ETEBASE_TYPE_TASKS -> {
                 title.setHint(R.string.create_tasklist_display_name_hint)
 
-                val color = LocalCalendar.parseColor(meta.color)
+                val color = draft.color
                 colorSquare.setBackgroundColor(color)
                 colorSquare.setOnClickListener {
                     AmbilWarnaDialog(context, (colorSquare.background as ColorDrawable).color, true, object : AmbilWarnaDialog.OnAmbilWarnaListener {
@@ -108,6 +137,7 @@ class EditCollectionFragment : Fragment() {
 
                         override fun onOk(dialog: AmbilWarnaDialog, color: Int) {
                             colorSquare.setBackgroundColor(color)
+                            draft.color = color
                         }
                     }).show()
                 }
@@ -157,6 +187,11 @@ class EditCollectionFragment : Fragment() {
     }
 
     private fun doDeleteCollection() {
+        if (!requireNotNull(CollectionLifecycleIdentity.from(arguments)).validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
+        if (loadingModel.isLoading) return
         loadingModel.setLoading(true)
         lifecycleScope.launch {
             try {
@@ -189,6 +224,11 @@ class EditCollectionFragment : Fragment() {
     }
 
     private fun saveCollection() {
+        if (!requireNotNull(CollectionLifecycleIdentity.from(arguments)).validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
+        if (loadingModel.isLoading) return
         var ok = true
 
         val meta = cachedCollection.meta
@@ -235,7 +275,13 @@ class EditCollectionFragment : Fragment() {
                         // Load the items since we just created it
                         itemsModel.loadItems(model.value!!, cachedCollection)
                         parentFragmentManager.commit {
-                            replace(R.id.fragment_container, ViewCollectionFragment())
+                            val identity = CollectionLifecycleIdentity.existing(
+                                model.value!!.account,
+                                requireNotNull(CollectionLifecycleIdentity.from(arguments)).creationId,
+                                colUid,
+                                cachedCollection.collectionType
+                            )
+                            replace(R.id.fragment_container, ViewCollectionFragment.newInstance(identity))
                         }
                     } else {
                         parentFragmentManager.popBackStack()
@@ -267,11 +313,32 @@ class EditCollectionFragment : Fragment() {
     }
 
     companion object {
-        fun newInstance(cachedCollection: CachedCollection, isCreating: Boolean = false): EditCollectionFragment {
-            val ret = EditCollectionFragment()
-            ret.cachedCollection = cachedCollection
-            ret.isCreating = isCreating
-            return ret
-        }
+        private const val ARG_IS_CREATING = "collection.edit.isCreating"
+
+        fun newInstance(identity: CollectionLifecycleIdentity, isCreating: Boolean = false) =
+            EditCollectionFragment().apply {
+                arguments = identity.toBundle().apply { putBoolean(ARG_IS_CREATING, isCreating) }
+            }
     }
+}
+
+class CollectionDraftViewModel : ViewModel() {
+    var name = ""
+    var description: String? = null
+    var color = 0
+    private var initialized = false
+
+    fun initialize(name: String, description: String?, color: Int) {
+        if (initialized) return
+        initialized = true
+        this.name = name
+        this.description = description
+        this.color = color
+    }
+}
+
+private class DraftWatcher(private val changed: (String) -> Unit) : TextWatcher {
+    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = changed(s?.toString().orEmpty())
+    override fun afterTextChanged(s: Editable?) = Unit
 }

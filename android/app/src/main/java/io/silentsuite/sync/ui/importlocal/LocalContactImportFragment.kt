@@ -23,12 +23,14 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalContact
 import io.silentsuite.sync.resource.LocalGroup
 import io.silentsuite.sync.utils.ProgressDialogHelper
+import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -38,11 +40,20 @@ import java.util.*
 class LocalContactImportFragment : Fragment() {
     private lateinit var account: Account
     private lateinit var uid: String
+    private var importInProgress = false
 
     private var recyclerView: RecyclerView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity?.collectionUid == null || !identity.validate(requireContext()) ||
+            identity.collectionType != Constants.ETEBASE_TYPE_ADDRESS_BOOK) {
+            requireActivity().finish()
+            return
+        }
+        account = identity.account
+        uid = identity.collectionUid
         retainInstance = true
     }
 
@@ -102,6 +113,13 @@ class LocalContactImportFragment : Fragment() {
     }
 
     private fun importContacts(localAddressBook: LocalAddressBook) {
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity == null || !identity.validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
+        if (importInProgress) return
+        importInProgress = true
         val progressDialog = ProgressDialogHelper.createHorizontal(
             requireContext(),
             R.string.import_dialog_title,
@@ -111,8 +129,10 @@ class LocalContactImportFragment : Fragment() {
         progressDialog.show()
 
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                doImportContacts(localAddressBook, progressDialog)
+            val result = try {
+                withContext(Dispatchers.IO) { doImportContacts(localAddressBook, progressDialog) }
+            } finally {
+                importInProgress = false
             }
 
             val currentActivity = activity
@@ -316,11 +336,17 @@ class LocalContactImportFragment : Fragment() {
 
     companion object {
 
-        fun newInstance(account: Account, uid: String): LocalContactImportFragment {
-            val ret = LocalContactImportFragment()
-            ret.account = account
-            ret.uid = uid
-            return ret
+        fun newInstance(identity: CollectionLifecycleIdentity) = LocalContactImportFragment().apply {
+            requireNotNull(identity.collectionUid)
+            arguments = identity.toBundle()
+        }
+
+        fun newInstance(account: Account, uid: String) = LocalContactImportFragment().apply {
+            arguments = Bundle().apply {
+                putParcelable(CollectionLifecycleIdentity.ARG_ACCOUNT, account)
+                putString(CollectionLifecycleIdentity.ARG_COLLECTION_UID, uid)
+                putString(CollectionLifecycleIdentity.ARG_COLLECTION_TYPE, Constants.ETEBASE_TYPE_ADDRESS_BOOK)
+            }
         }
     }
 }
