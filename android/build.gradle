@@ -37,6 +37,10 @@ ext {
         espresso: '3.6.1',
         uiAutomator: '2.3.0'
     ]
+    // vcard4android is published with minSdk 16. AndroidX Test 1.6/3.6 needs
+    // API 19, so keep its instrumentation artifact cohort explicit instead of
+    // incorrectly applying the app/cert4android API-21 verification contract.
+    vcardAndroidTestVersions = [runner: '1.5.2', rules: '1.5.0']
 }
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
@@ -130,8 +134,8 @@ tasks.register('verifySlice4DependencyCohort') {
             ':vcard4android': [
                 debugRuntimeClasspath: ['androidx.annotation:annotation': versions.annotation],
                 debugAndroidTestRuntimeClasspath: [
-                    'androidx.test:runner': versions.testRunner,
-                    'androidx.test:rules': versions.testRules
+                    'androidx.test:runner': rootProject.ext.vcardAndroidTestVersions.runner,
+                    'androidx.test:rules': rootProject.ext.vcardAndroidTestVersions.rules
                 ]
             ]
         ]
