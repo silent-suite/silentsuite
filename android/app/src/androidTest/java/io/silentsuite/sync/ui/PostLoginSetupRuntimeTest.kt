@@ -91,6 +91,10 @@ class PostLoginSetupRuntimeTest {
         val context=InstrumentationRegistry.getInstrumentation().targetContext; val manager=AccountManager.get(context)
         val account=Account("outcome-${System.nanoTime()}@example.invalid",App.accountType)
         check(manager.addAccountExplicitly(account,null,null)); check(AccountSettings.writeVerified(manager,account,AccountSettings.KEY_CREATION_ID,"outcome-id")); check(AccountSettings.writeSetupState(manager,account,PostLoginSetupState.PERMISSIONS))
+        PostLoginSetupViewModel.inventoryOverride={ candidate ->
+            check(candidate==account)
+            PostLoginSetupViewModel.InventoryOutcome.Recovery to emptySet()
+        }
         try {
             ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account)).use { scenario ->
                 scenario.onActivity { a ->
@@ -103,7 +107,7 @@ class PostLoginSetupRuntimeTest {
                 }
             }
             assertEquals(PostLoginSetupState.READY,AccountSettings.setupState(manager,account,true)); org.junit.Assert.assertEquals("true",manager.getUserData(account,AccountSettings.KEY_LIMITED_INTEGRATIONS))
-        } finally { AndroidCompat.removeAccount(manager,account) }
+        } finally { PostLoginSetupViewModel.inventoryOverride=null; AndroidCompat.removeAccount(manager,account) }
     }
     @Test fun recoveryRemovalConfirmedRoutesCleanLoginAndPreservesSibling() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -157,19 +161,19 @@ class PostLoginSetupRuntimeTest {
             check(candidate==target)
             PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
         }
+        var scenario: ActivityScenario<AccountActivity>?=null
         try {
             // Exact incomplete launcher route must not fall back to the active sibling.
-            val scenario=ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target)); try {
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-                val setup = resumedActivity() as PostLoginSetupActivity
-                org.junit.Assert.assertTrue(setup.findViewById<android.widget.Button>(R.id.setup_done).isShown)
-                InstrumentationRegistry.getInstrumentation().runOnMainSync { setup.recreate() }
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-                val recreated = resumedActivity() as PostLoginSetupActivity
-                InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                    recreated.findViewById<android.widget.Button>(R.id.setup_done).performClick()
-                }
-            } finally { runCatching { scenario.close() } }
+            scenario=ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target))
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            val setup = resumedActivity() as PostLoginSetupActivity
+            org.junit.Assert.assertTrue(setup.findViewById<android.widget.Button>(R.id.setup_done).isShown)
+            InstrumentationRegistry.getInstrumentation().runOnMainSync { setup.recreate() }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            val recreated = resumedActivity() as PostLoginSetupActivity
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                recreated.findViewById<android.widget.Button>(R.id.setup_done).performClick()
+            }
             val deadline=android.os.SystemClock.uptimeMillis()+5000
             var dashboard: AccountActivity?=null
             while (android.os.SystemClock.uptimeMillis()<deadline) {
@@ -190,6 +194,7 @@ class PostLoginSetupRuntimeTest {
             assertEquals(target.name, exactDashboard.title.toString())
             org.junit.Assert.assertTrue(exactDashboard.findViewById<android.view.View>(R.id.drawer_layout).isShown)
         } finally {
+            runCatching { scenario?.close() }
             PostLoginSetupViewModel.inventoryOverride=null
             App.postLoginBootstrapSucceeded=previousBootstrap
             AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling); ActiveAccountManager.clearActiveAccount(context)

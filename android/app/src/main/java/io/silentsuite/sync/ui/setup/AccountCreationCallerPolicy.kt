@@ -8,6 +8,7 @@ object AccountCreationCallerPolicy {
         AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED -> Disposition.ContinueToSetup
         AccountCreationCoordinator.Result.EXISTS_OR_BUSY,
         AccountCreationCoordinator.Result.NOT_ADDED -> Disposition.RetryCredentials
-        AccountCreationCoordinator.Result.QUARANTINED -> Disposition.CancelAuthenticator
+        AccountCreationCoordinator.Result.QUARANTINED,
+        AccountCreationCoordinator.Result.QUARANTINE_FAILED -> Disposition.CancelAuthenticator
     }
 }

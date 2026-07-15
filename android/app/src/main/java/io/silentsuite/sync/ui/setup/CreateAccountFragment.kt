@@ -161,9 +161,15 @@ class CreateAccountFragment : DialogFragment() {
                     ?.onAccountCreated(account, id) ?: true
                 override fun activateAndReadBack() = ActiveAccountManager.setActiveAccount(requireContext(), account)
                 override fun clear(id: String) = registry.clearOwned(App.accountType, accountName, id)
-                override fun quarantine(id: String) =
-                    AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.RECOVERY_REQUIRED) &&
-                    registry.updateOwned(AccountCreationRegistry.Record(accountName, id, AccountCreationRegistry.Phase.RECOVERY_REQUIRED, System.currentTimeMillis(), App.accountType))
+                override fun quarantine(id: String) = PostLoginSetupMigration.persistPendingRecovery(
+                    writeState = {
+                        AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.RECOVERY_REQUIRED)
+                    },
+                    updateRegistry = {
+                        registry.updateOwned(AccountCreationRegistry.Record(accountName, id,
+                            AccountCreationRegistry.Phase.RECOVERY_REQUIRED, System.currentTimeMillis(), App.accountType))
+                    }
+                )
             })
             return when (val result = coordinator.create(creationId, fields)) {
                 AccountCreationCoordinator.Result.CREATED,

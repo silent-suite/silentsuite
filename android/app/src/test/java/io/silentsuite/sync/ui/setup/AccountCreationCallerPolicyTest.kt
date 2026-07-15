@@ -12,4 +12,8 @@ class AccountCreationCallerPolicyTest {
         assertEquals(AccountCreationCallerPolicy.Disposition.RetryCredentials,
             AccountCreationCallerPolicy.disposition(AccountCreationCoordinator.Result.NOT_ADDED))
     }
+    @Test fun `failed durable quarantine cancels authenticator`() {
+        assertEquals(AccountCreationCallerPolicy.Disposition.CancelAuthenticator,
+            AccountCreationCallerPolicy.disposition(AccountCreationCoordinator.Result.QUARANTINE_FAILED))
+    }
 }

@@ -18,23 +18,29 @@ class TaskProviderHandling {
         @JvmField internal var wantedProviderResolver: ((Context) -> TaskProvider.ProviderName?)? = null
         @JvmField internal var providerAuthorityResolver: ((TaskProvider.ProviderName) -> String)? = null
         @JvmField internal var calendarIntervalResolver: ((AccountSettings) -> Long?)? = null
+        @JvmField internal var syncIntervalWriteObserver: ((android.accounts.Account, String, Long) -> Unit)? = null
+        internal fun sameAccountIdentity(leftName: String?, leftType: String?, rightName: String?, rightType: String?): Boolean =
+            !leftName.isNullOrBlank() && !leftType.isNullOrBlank() && leftName == rightName && leftType == rightType
         private fun sameAccount(left: android.accounts.Account, right: android.accounts.Account?): Boolean {
             if (right == null) return false
             if (left === right) return true
             return runCatching {
-                left.name.isNotBlank() && left.type.isNotBlank() &&
-                    left.name == right.name && left.type == right.type
+                sameAccountIdentity(left.name, left.type, right.name, right.type)
             }.getOrDefault(false)
         }
-        internal fun eligibleAccounts(accounts: Iterable<android.accounts.Account>, explicitCreatingTarget: android.accounts.Account? = null, load: (android.accounts.Account) -> PostLoginSetupState?): List<android.accounts.Account> =
+        internal fun <T> eligibleItems(accounts: Iterable<T>, explicitCreatingTarget: T?, same: (T, T?) -> Boolean,
+                                       load: (T) -> PostLoginSetupState?): List<T> =
             accounts.filter { account ->
                 val state = runCatching { load(account) }.getOrNull()
                 state in setOf(
                     PostLoginSetupState.ACCOUNT_CREATED, PostLoginSetupState.COLLECTIONS,
                     PostLoginSetupState.PERMISSIONS, PostLoginSetupState.INITIAL_SYNC,
                     PostLoginSetupState.READY, PostLoginSetupState.COMPLETE
-                ) || (sameAccount(account, explicitCreatingTarget) && state == PostLoginSetupState.CREATING)
+                ) || (same(account, explicitCreatingTarget) && state == PostLoginSetupState.CREATING)
             }
+        internal fun eligibleAccounts(accounts: Iterable<android.accounts.Account>, explicitCreatingTarget: android.accounts.Account? = null,
+                                      load: (android.accounts.Account) -> PostLoginSetupState?): List<android.accounts.Account> =
+            eligibleItems(accounts, explicitCreatingTarget, ::sameAccount, load)
         fun getWantedTaskSyncProvider(context: Context): TaskProvider.ProviderName? {
             val openTasksAvailable = LocalTaskList.tasksProviderAvailable(context, TaskProvider.ProviderName.OpenTasks)
             val tasksOrgAvailable = LocalTaskList.tasksProviderAvailable(context, TaskProvider.ProviderName.TasksOrg)
@@ -74,6 +80,7 @@ class TaskProviderHandling {
                     } else if (ContentResolver.getIsSyncable(account, providerAuthority) <= 0) {
                         ContentResolver.setIsSyncable(account, providerAuthority, 1)
                         settings.setSyncInterval(providerAuthority, calendarSyncInterval)
+                        syncIntervalWriteObserver?.invoke(account, providerAuthority, calendarSyncInterval)
                     }
                 } else {
                     ContentResolver.setIsSyncable(account, providerAuthority, 0)

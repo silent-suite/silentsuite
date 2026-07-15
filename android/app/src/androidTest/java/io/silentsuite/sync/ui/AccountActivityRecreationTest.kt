@@ -14,6 +14,7 @@ import io.silentsuite.sync.utils.AndroidCompat
 import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
 
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
+import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
 import java.net.URI
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -86,12 +87,17 @@ class AccountActivityRecreationTest {
         check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, "setup-generation"))
         AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
         check(AccountSettings.writeSetupState(manager, account, PostLoginSetupState.READY))
+        PostLoginSetupViewModel.inventoryOverride={ candidate ->
+            check(candidate==account)
+            PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
+        }
         try {
             ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, account)).use { scenario ->
                 scenario.onActivity { activity -> activity.findViewById<android.widget.Button>(io.silentsuite.sync.R.id.setup_done).performClick() }
                 assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, account, true))
             }
         } finally {
+            PostLoginSetupViewModel.inventoryOverride=null
             AndroidCompat.removeAccount(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }

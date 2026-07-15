@@ -5,7 +5,7 @@ import org.junit.Test
 
 class AccountCreationCoordinatorTest {
     private class Fake : AccountCreationCoordinator.Seams {
-        var exists = false; var add = true; var fail: String? = null; val calls = mutableListOf<String>()
+        var exists = false; var add = true; var fail: String? = null; var quarantineSucceeds = true; val calls = mutableListOf<String>()
         override fun rowExists() = exists
         override fun prepare(id: String) = (fail != "prepare").also { calls += "prepare" }
         override fun add() = add.also { calls += "add" }
@@ -15,11 +15,15 @@ class AccountCreationCoordinatorTest {
         override fun activateAndReadBack() = (fail != "active").also { calls += "active" }
         override fun phase(id: String, phase: AccountCreationRegistry.Phase) = (fail != "phase").also { calls += "phase" }
         override fun clear(id: String) = (fail != "clear").also { calls += "clear" }
-        override fun quarantine(id: String) = true.also { calls += "quarantine" }
+        override fun quarantine(id: String) = quarantineSucceeds.also { calls += "quarantine" }
     }
     @Test fun `post add pre boundary faults invoke durable recovery quarantine`() {
         val fake=Fake().apply { fail="uri" }; AccountCreationCoordinator(fake).create("one", fields)
         org.junit.Assert.assertTrue(fake.calls.contains("quarantine"))
+    }
+    @Test fun `failed durable recovery quarantine is reported separately`() {
+        assertEquals(AccountCreationCoordinator.Result.QUARANTINE_FAILED,
+            AccountCreationCoordinator(Fake().apply { fail="uri"; quarantineSucceeds=false }).create("one", fields))
     }
     private val fields = listOf("uri" to null, "user_name" to "alice", "version" to "2", "etebase_session" to "established")
 
