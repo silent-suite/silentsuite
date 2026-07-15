@@ -125,17 +125,18 @@ def test_incremental_material3_themes_use_semantic_roles_and_readable_navy_syste
     for theme_set in (light, dark):
         assert "AppTheme.Material3" in theme_set
         assert "AppTheme.Material3.NoActionBar" in theme_set
-        material3 = theme_set["AppTheme.Material3"]
-        for item, color in {
-            "android:colorBackground": "@color/semantic_background",
-            "colorSurface": "@color/semantic_surface",
-            "colorOnSurface": "@color/semantic_on_surface",
-            "colorPrimary": "@color/semantic_primary",
-            "colorOnPrimary": "@color/navy900",
-            "android:statusBarColor": "@color/semantic_system_bar",
-            "android:navigationBarColor": "@color/semantic_system_bar",
-        }.items():
-            assert material3.get(item) == color
+        for theme_name in ("AppTheme.Material3", "AppTheme.Material3.NoActionBar"):
+            material3 = theme_set[theme_name]
+            for item, color in {
+                "android:colorBackground": "@color/semantic_background",
+                "colorSurface": "@color/semantic_surface",
+                "colorOnSurface": "@color/semantic_on_surface",
+                "colorPrimary": "@color/semantic_primary",
+                "colorOnPrimary": "@color/navy900",
+                "android:statusBarColor": "@color/semantic_system_bar",
+                "android:navigationBarColor": "@color/semantic_system_bar",
+            }.items():
+                assert material3.get(item) == color
 
     theme_root = ET.parse(RES / "values/themes.xml").getroot()
     parents = {style.attrib["name"]: style.attrib.get("parent") for style in theme_root.findall("style")}
