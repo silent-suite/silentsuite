@@ -43,6 +43,18 @@ class PostLoginSetupMigrationTest {
         val store=MemoryStore(listOf(PostLoginSetupMigration.Row("t\\u0000a",PostLoginSetupMigration.LegacyRow("2","a",null,"session",false),null,null))).apply { failState=true }
         assertEquals(true,PostLoginSetupMigration.bootstrap(store){_,_->true}); assertEquals(store.rows().single().creationId,store.recoveredId)
     }
+    @Test fun `pending reconciliation accepts durable registry fallback when account state write fails`() {
+        val calls = mutableListOf<String>()
+        assertEquals(true, PostLoginSetupMigration.persistPendingRecovery(
+            writeState = { calls += "state"; false },
+            updateRegistry = { calls += "registry"; true }
+        ))
+        assertEquals(listOf("state", "registry"), calls)
+        assertEquals(false, PostLoginSetupMigration.persistPendingRecovery(
+            writeState = { true },
+            updateRegistry = { false }
+        ))
+    }
     @Test fun `valid legacy row completes and invalid rows recover`() {
         assertEquals(PostLoginSetupState.COMPLETE, PostLoginSetupMigration.classify(PostLoginSetupMigration.LegacyRow("2", "user", null, "session", false)) { _, _ -> true })
         assertEquals(PostLoginSetupState.RECOVERY_REQUIRED, PostLoginSetupMigration.classify(PostLoginSetupMigration.LegacyRow("bad", "user", null, "session", false)))

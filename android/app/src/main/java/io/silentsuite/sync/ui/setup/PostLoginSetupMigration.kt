@@ -40,6 +40,15 @@ object PostLoginSetupMigration {
         context.getSharedPreferences("post_login_setup_migration", Context.MODE_PRIVATE)
             .getInt("version", 0) == MIGRATION_VERSION
 
+    /**
+     * AccountManager state is the preferred user-visible recovery marker, but the exact
+     * compare-owned registry record is the durable fallback when user-data persistence fails.
+     */
+    internal fun persistPendingRecovery(writeState: () -> Boolean, updateRegistry: () -> Boolean): Boolean {
+        writeState()
+        return updateRegistry()
+    }
+
     fun classify(row: LegacyRow, sessionParses: (String, String?) -> Boolean = { session, uri ->
         locallyParseSession(session, uri)
     }): PostLoginSetupState {
@@ -165,8 +174,12 @@ object PostLoginSetupMigration {
             } else {
                 // API 21 removal is asynchronous. Keep exact-owned partial rows quarantined
                 // for explicit Settings/user recovery instead of pretending removal completed.
-                if (!AccountSettings.writeSetupState(manager, account, PostLoginSetupState.RECOVERY_REQUIRED) ||
-                    !registry.updateOwned(record.copy(phase = AccountCreationRegistry.Phase.RECOVERY_REQUIRED))) return false
+                // A verified AccountManager state is preferred, but a durable exact registry
+                // record is sufficient to finish bootstrap when user-data persistence fails.
+                if (!persistPendingRecovery(
+                        writeState = { AccountSettings.writeSetupState(manager, account, PostLoginSetupState.RECOVERY_REQUIRED) },
+                        updateRegistry = { registry.updateOwned(record.copy(phase = AccountCreationRegistry.Phase.RECOVERY_REQUIRED)) }
+                    )) return false
             }
         }
         return true
