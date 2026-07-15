@@ -10,6 +10,7 @@ class LoginMaterial3ContractTest {
     private val layout = File("src/main/res/layout/login_credentials_fragment.xml").readText()
     private val strings = File("src/main/res/values/strings.xml").readText()
     private val manifest = File("src/main/AndroidManifest.xml").readText()
+    private val menu = File("src/main/res/menu/activity_login.xml").readText()
     private val fragment = File("src/main/java/io/silentsuite/sync/ui/setup/LoginCredentialsFragment.kt").readText()
 
     @Test
@@ -18,6 +19,8 @@ class LoginMaterial3ContractTest {
             .substringBefore("</activity>")
 
         assertTrue(loginActivity.contains("android:theme=\"@style/AppTheme.Material3\""))
+        assertTrue(menu.contains("android:icon=\"@drawable/ic_help_light\""))
+        assertTrue(menu.contains("app:iconTint=\"@color/semantic_on_surface\""))
         assertTrue(layout.contains("@style/TextAppearance.AppTheme.Material3.Title"))
         assertTrue(layout.contains("@style/TextAppearance.AppTheme.Material3.Body"))
         assertEquals(3, Regex("@style/Widget.AppTheme.Material3.TextInputLayout").findAll(layout).count())
