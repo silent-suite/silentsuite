@@ -170,7 +170,7 @@ class SyncStatusStore internal constructor(
                 current.outcome.copy(successAt = orderedAfter(System.currentTimeMillis(), current.outcome.failureAt))
             else -> current.outcome
         }
-        if (writeContacts(identity, current.copy(outcome = outcome, terminal = terminal)))
+        return if (writeContacts(identity, current.copy(outcome = outcome, terminal = terminal)))
             ChildWrite.RECORDED
         else
             ChildWrite.STORAGE_FAILURE
