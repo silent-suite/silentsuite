@@ -8,7 +8,6 @@
 package io.silentsuite.sync.syncadapter
 
 import android.accounts.Account
-import android.accounts.AccountManager
 import android.content.*
 import android.os.Bundle
 import android.provider.ContactsContract
@@ -27,17 +26,19 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
 
 
     private class AddressBooksSyncAdapter(context: Context) : SyncAdapterService.SyncAdapter(context) {
-        override fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult) {
+        override val outcomeService = SyncStatusStore.Service.CONTACTS
+
+        override fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult): Completion {
             val contactsProvider = context.contentResolver.acquireContentProviderClient(ContactsContract.AUTHORITY)
             if (contactsProvider == null) {
                 Logger.log.severe("Couldn't access contacts provider")
                 syncResult.databaseError = true
-                return
+                return Completion.FAILURE
             }
 
             val settings = AccountSettings(context, account)
             if (!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(settings))
-                return
+                return Completion.SKIPPED
 
             RefreshCollections(
                 account,
@@ -49,17 +50,33 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
 
             contactsProvider.release()
 
-            val accountManager = AccountManager.get(context)
-            for (addressBookAccount in accountManager.getAccountsByType(App.addressBookAccountType)) {
+            val childAccounts = LocalAddressBook.find(context, null, account).map { it.androidAccount }.toSet()
+            val attemptId = when (val start = SyncStatusStore(context).beginContacts(account, childAccounts)) {
+                is SyncStatusStore.ContactsStart.Started -> start.attemptId
+                SyncStatusStore.ContactsStart.SetupRequired -> return Completion.DISPATCHED
+                SyncStatusStore.ContactsStart.StorageFailure -> {
+                    syncResult.stats.numIoExceptions++
+                    syncResult.delayUntil = maxOf(syncResult.delayUntil, Constants.DEFAULT_RETRY_DELAY)
+                    return Completion.DISPATCHED
+                }
+            }
+            for (addressBookAccount in childAccounts) {
                 Logger.log.log(Level.INFO, "Running sync for address book", addressBookAccount)
                 val syncExtras = Bundle(extras)
                 syncExtras.putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_SETTINGS, true)
                 syncExtras.putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)
                 syncExtras.putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)     // run immediately (don't queue)
+                putContactsAttempt(syncExtras, attemptId)
                 ContentResolver.requestSync(addressBookAccount, ContactsContract.AUTHORITY, syncExtras)
             }
 
             Logger.log.info("Address book sync complete")
+            return Completion.DISPATCHED
+        }
+
+        override fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): Boolean {
+            val safeCategory = if (category == SyncStatusStore.FailureCategory.PERMISSION) category else SyncStatusStore.FailureCategory.PARENT_REFRESH
+            return SyncStatusStore(context).failContactsParent(account, safeCategory)
         }
 
         private fun updateLocalAddressBooks(provider: ContentProviderClient, account: Account, settings: AccountSettings) {

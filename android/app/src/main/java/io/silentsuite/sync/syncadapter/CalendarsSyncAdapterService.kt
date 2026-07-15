@@ -26,10 +26,12 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
 
 
     private class SyncAdapter(context: Context) : SyncAdapterService.SyncAdapter(context) {
-        override fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult) {
+        override val outcomeService = SyncStatusStore.Service.CALENDAR
+
+        override fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult): Completion {
             val settings = AccountSettings(context, account)
             if (!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(settings))
-                return
+                return Completion.SKIPPED
 
             RefreshCollections(
                 account,
@@ -41,17 +43,26 @@ class CalendarsSyncAdapterService : SyncAdapterService() {
 
             val principal = settings.uri?.toHttpUrlOrNull() ?: run {
                 Logger.log.warning("Calendar sync skipped: no valid URI")
-                return
+                return Completion.SKIPPED
             }
 
+            var providerOutcome = DirectProviderAggregate.NONE
             for (calendar in AndroidCalendar.find(account, provider, LocalCalendar.Factory, CalendarContract.Calendars.SYNC_EVENTS + "!=0", null)) {
                 Logger.log.info("Synchronizing calendar #" + calendar.id)
                 CalendarSyncManager(context, account, settings, extras, authority, syncResult, calendar, principal).use {
-                    it.performSync()
+                    val outcome = it.performSync()
+                    providerOutcome = aggregateDirectProviderOutcome(providerOutcome, outcome)
+                    if (providerOutcome == DirectProviderAggregate.CANCELLED)
+                        return Completion.SKIPPED
                 }
             }
 
             Logger.log.info("Calendar sync complete")
+            return when (providerOutcome) {
+                DirectProviderAggregate.FAILURE -> Completion.FAILURE
+                DirectProviderAggregate.SUCCESS -> Completion.SUCCESS
+                else -> Completion.SKIPPED
+            }
         }
 
         private fun updateLocalCalendars(provider: ContentProviderClient, account: Account, settings: AccountSettings) {

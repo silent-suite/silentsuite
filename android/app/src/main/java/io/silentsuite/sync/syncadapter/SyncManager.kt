@@ -39,6 +39,21 @@ import java.util.*
 import java.util.logging.Level
 import javax.net.ssl.SSLHandshakeException
 
+internal enum class DirectProviderAggregate { NONE, SUCCESS, FAILURE, CANCELLED }
+
+/** Failure evidence dominates a later cancellation; cancellation dominates only evidence-free work. */
+internal fun aggregateDirectProviderOutcome(
+    current: DirectProviderAggregate,
+    next: SyncManager.ProviderOutcome,
+): DirectProviderAggregate = when {
+    current == DirectProviderAggregate.FAILURE -> DirectProviderAggregate.FAILURE
+    next == SyncManager.ProviderOutcome.FAILURE -> DirectProviderAggregate.FAILURE
+    next == SyncManager.ProviderOutcome.CANCELLED -> DirectProviderAggregate.CANCELLED
+    current == DirectProviderAggregate.CANCELLED -> DirectProviderAggregate.CANCELLED
+    next == SyncManager.ProviderOutcome.SUCCESS -> DirectProviderAggregate.SUCCESS
+    else -> current
+}
+
 abstract class SyncManager<T: LocalResource<*>>
 constructor(protected val context: Context, protected val account: Account, protected val settings: AccountSettings, protected val extras: Bundle, protected val authority: String, protected val syncResult: SyncResult, journalUid: String, protected val serviceType: CollectionInfo.Type, accountName: String): Closeable {
 
@@ -99,7 +114,9 @@ constructor(protected val context: Context, protected val account: Account, prot
     }
 
     @TargetApi(21)
-    fun performSync() {
+    enum class ProviderOutcome { SUCCESS, SKIPPED, FAILURE, CANCELLED }
+
+    fun performSync(): ProviderOutcome {
         syncItemsTotal = 0
         syncItemsDeleted = 0
         syncItemsChanged = 0
@@ -109,7 +126,7 @@ constructor(protected val context: Context, protected val account: Account, prot
             Logger.log.info("Sync phase: " + context.getString(syncPhase))
             if (!prepare()) {
                 Logger.log.info("No reason to synchronize, aborting")
-                return
+                return ProviderOutcome.SKIPPED
             }
 
             if (Thread.interrupted())
@@ -182,6 +199,7 @@ constructor(protected val context: Context, protected val account: Account, prot
             notifyUserOnSync()
 
             Logger.log.info("Finished sync")
+            return ProviderOutcome.SUCCESS
         } catch (e: SSLHandshakeException) {
             syncResult.stats.numIoExceptions++
 
@@ -189,23 +207,29 @@ constructor(protected val context: Context, protected val account: Account, prot
             val detailsIntent = notificationManager.detailsIntent
             detailsIntent.putExtra(KEY_ACCOUNT, account)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
+            return ProviderOutcome.FAILURE
         } catch (e: FileNotFoundException) {
             notificationManager.setThrowable(e)
             val detailsIntent = notificationManager.detailsIntent
             detailsIntent.putExtra(KEY_ACCOUNT, account)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
+            return ProviderOutcome.FAILURE
         } catch (e: IOException) {
             Logger.log.log(Level.WARNING, "I/O exception during sync, trying again later", e)
             syncResult.stats.numIoExceptions++
+            return ProviderOutcome.FAILURE
         } catch (e: TemporaryServerErrorException) {
             syncResult.stats.numIoExceptions++
             syncResult.delayUntil = Constants.DEFAULT_RETRY_DELAY
+            return ProviderOutcome.FAILURE
         } catch (e: ConnectionException) {
             syncResult.stats.numIoExceptions++
             syncResult.delayUntil = Constants.DEFAULT_RETRY_DELAY
+            return ProviderOutcome.FAILURE
         } catch (e: InterruptedException) {
             // Restart sync if interrupted
             syncResult.fullSyncRequested = true
+            return ProviderOutcome.CANCELLED
         } catch (e: Exception) {
             if (e is UnauthorizedException) {
                 syncResult.stats.numAuthExceptions++
@@ -227,14 +251,15 @@ constructor(protected val context: Context, protected val account: Account, prot
             }
 
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
+            return ProviderOutcome.FAILURE
         } catch (e: OutOfMemoryError) {
             syncResult.stats.numParseExceptions++
             notificationManager.setThrowable(e)
             val detailsIntent = notificationManager.detailsIntent
             detailsIntent.putExtra(KEY_ACCOUNT, account)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
+            return ProviderOutcome.FAILURE
         }
-
     }
 
     private fun notifyUserOnSync() {

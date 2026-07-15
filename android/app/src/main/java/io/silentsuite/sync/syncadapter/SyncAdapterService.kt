@@ -36,6 +36,26 @@ import java.lang.Math.abs
 import java.util.*
 import java.util.logging.Level
 
+internal data class SyncCompletionSnapshot(
+    val auth: Long,
+    val io: Long,
+    val parse: Long,
+    val conflict: Long,
+    val databaseError: Boolean,
+    val fullSyncRequested: Boolean,
+)
+
+internal enum class CompletedOutcome { AUTHENTICATION_FAILURE, NETWORK_FAILURE, STORAGE_FAILURE, PROVIDER_FAILURE, SUCCESS, CANCELLED }
+
+internal fun classifyCompletedOutcome(before: SyncCompletionSnapshot, after: SyncCompletionSnapshot, forceFailure: Boolean) = when {
+    after.auth > before.auth -> CompletedOutcome.AUTHENTICATION_FAILURE
+    after.io > before.io -> CompletedOutcome.NETWORK_FAILURE
+    after.databaseError && !before.databaseError -> CompletedOutcome.STORAGE_FAILURE
+    after.parse > before.parse || after.conflict > before.conflict || forceFailure -> CompletedOutcome.PROVIDER_FAILURE
+    after.fullSyncRequested -> CompletedOutcome.CANCELLED
+    else -> CompletedOutcome.SUCCESS
+}
+
 abstract class SyncAdapterService : Service() {
 
     protected abstract fun syncAdapter(): AbstractThreadedSyncAdapter
@@ -48,7 +68,11 @@ abstract class SyncAdapterService : Service() {
         private val syncErrorTitle: Int = R.string.sync_error_generic
         private val notificationManager = SyncNotification(context, "refresh-collections", Constants.NOTIFICATION_REFRESH_COLLECTIONS)
 
-        abstract fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult)
+        protected enum class Completion { SUCCESS, FAILURE, SKIPPED, DISPATCHED }
+
+        protected open val outcomeService: SyncStatusStore.Service? = null
+
+        protected abstract fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult): Completion
 
         override fun onPerformSync(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult) {
             Logger.log.log(Level.INFO, "$authority sync has been initiated.", extras.keySet().toTypedArray())
@@ -66,17 +90,26 @@ abstract class SyncAdapterService : Service() {
                 return
             }
 
+            val before = snapshot(syncResult)
             try {
-                onPerformSyncDo(account, extras, authority, provider, syncResult)
+                val completion = onPerformSyncDo(account, extras, authority, provider, syncResult)
+                when (completion) {
+                    Completion.SUCCESS -> recordCompletedOutcome(account, extras, before, syncResult)
+                    Completion.FAILURE -> recordCompletedOutcome(account, extras, before, syncResult, forceFailure = true)
+                    Completion.SKIPPED, Completion.DISPATCHED -> Unit
+                }
             } catch (e: SecurityException) {
                 // Shouldn't be needed - not sure why it doesn't fail
                 onSecurityException(account, extras, authority, syncResult)
+                persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.PERMISSION) }
             } catch (e: TemporaryServerErrorException) {
                 syncResult.stats.numIoExceptions++
                 syncResult.delayUntil = Constants.DEFAULT_RETRY_DELAY
+                persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.NETWORK) }
             } catch (e: ConnectionException) {
                 syncResult.stats.numIoExceptions++
                 syncResult.delayUntil = Constants.DEFAULT_RETRY_DELAY
+                persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.NETWORK) }
             } catch (e: Exception) {
                 if (e is ContactsStorageException || e is CalendarStorageException || e is SQLiteException) {
                     Logger.log.log(Level.SEVERE, "Couldn't prepare local journals", e)
@@ -96,6 +129,7 @@ abstract class SyncAdapterService : Service() {
                 }
 
                 notificationManager.notify(title, context.getString(syncPhase))
+                persistStatus(syncResult) { recordFailure(account, extras, failureCategory(e)) }
             } catch (e: OutOfMemoryError) {
                 val syncPhase = R.string.sync_phase_journals
                 val title = context.getString(syncErrorTitle, account.name)
@@ -103,8 +137,51 @@ abstract class SyncAdapterService : Service() {
                 val detailsIntent = notificationManager.detailsIntent
                 detailsIntent.putExtra(Constants.KEY_ACCOUNT, account)
                 notificationManager.notify(title, context.getString(syncPhase))
+                persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.UNKNOWN) }
             }
         }
+
+        protected open fun recordSuccess(account: Account, extras: Bundle): Boolean =
+            outcomeService?.let { SyncStatusStore(context).recordSuccess(account, it) } ?: true
+
+        protected open fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): Boolean =
+            outcomeService?.let { SyncStatusStore(context).recordFailure(account, it, category) } ?: true
+
+        private fun recordCompletedOutcome(account: Account, extras: Bundle, before: SyncCompletionSnapshot, result: SyncResult, forceFailure: Boolean = false) {
+            val after = snapshot(result)
+            val write = when (classifyCompletedOutcome(before, after, forceFailure)) {
+                CompletedOutcome.AUTHENTICATION_FAILURE -> { { recordFailure(account, extras, SyncStatusStore.FailureCategory.AUTHENTICATION) } }
+                CompletedOutcome.NETWORK_FAILURE -> { { recordFailure(account, extras, SyncStatusStore.FailureCategory.NETWORK) } }
+                CompletedOutcome.STORAGE_FAILURE -> { { recordFailure(account, extras, SyncStatusStore.FailureCategory.STORAGE) } }
+                CompletedOutcome.PROVIDER_FAILURE -> { { recordFailure(account, extras, SyncStatusStore.FailureCategory.PROVIDER) } }
+                CompletedOutcome.SUCCESS -> { { recordSuccess(account, extras) } }
+                CompletedOutcome.CANCELLED -> null
+            }
+            if (write != null) persistStatus(result, write)
+        }
+
+        private fun persistStatus(result: SyncResult, write: () -> Boolean) {
+            if (!write()) {
+                result.stats.numIoExceptions++
+                result.delayUntil = maxOf(result.delayUntil, Constants.DEFAULT_RETRY_DELAY)
+            }
+        }
+
+        private fun failureCategory(error: Exception) = when (error) {
+            is UnauthorizedException -> SyncStatusStore.FailureCategory.AUTHENTICATION
+            is ContactsStorageException, is CalendarStorageException, is SQLiteException -> SyncStatusStore.FailureCategory.STORAGE
+            else -> SyncStatusStore.FailureCategory.UNKNOWN
+        }
+
+        private fun snapshot(result: SyncResult) =
+            SyncCompletionSnapshot(
+                result.stats.numAuthExceptions,
+                result.stats.numIoExceptions,
+                result.stats.numParseExceptions,
+                result.stats.numConflictDetectedExceptions,
+                result.databaseError,
+                result.fullSyncRequested,
+            )
 
         override fun onSecurityException(account: Account, extras: Bundle, authority: String, syncResult: SyncResult) {
             Logger.log.log(Level.WARNING, "Security exception when opening content provider for $authority")
