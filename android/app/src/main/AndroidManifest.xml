@@ -260,6 +260,11 @@
             android:exported="false"
             />
         <activity
+            android:name=".ui.setup.PostLoginSetupActivity"
+            android:exported="false"
+            android:label="@string/post_login_setup_title"
+            android:theme="@style/AppTheme.Material3" />
+        <activity
             android:name=".ui.setup.ModeSelectionActivity"
             android:exported="false"
             />

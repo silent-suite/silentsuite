@@ -11,6 +11,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.silentsuite.sync.App
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.utils.AndroidCompat
+import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
+
+import io.silentsuite.sync.ui.setup.PostLoginSetupState
+import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
 import java.net.URI
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -28,6 +32,10 @@ class AccountActivityRecreationTest {
         val accountManager = AccountManager.get(context)
         accountManager.addAccountExplicitly(account, null, null)
         AccountSettings.setUserData(accountManager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(accountManager, account, AccountSettings.KEY_CREATION_ID, "test-generation"))
+        check(AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.COMPLETE))
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        App.postLoginBootstrapSucceeded = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
             val permissions = mutableListOf(
@@ -45,6 +53,7 @@ class AccountActivityRecreationTest {
 
         try {
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { scenario ->
+                scenario.onActivity { assertTrue(it is AccountActivity) }
                 scenario.recreate()
                 var delivered = false
                 for (attempt in 0 until 50) {
@@ -63,8 +72,35 @@ class AccountActivityRecreationTest {
                 }
             }
         } finally {
+            App.postLoginBootstrapSucceeded = previousBootstrap
             AndroidCompat.removeAccount(accountManager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }
     }
+
+    @Test
+    fun readyDoneCompletesOnlyTheExactGeneratedAccount() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val account = Account("setup-${System.nanoTime()}@example.invalid", App.accountType)
+        val manager = AccountManager.get(context)
+        check(manager.addAccountExplicitly(account, null, null))
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, "setup-generation"))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeSetupState(manager, account, PostLoginSetupState.READY))
+        PostLoginSetupViewModel.inventoryOverride={ candidate ->
+            check(candidate==account)
+            PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
+        }
+        try {
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, account)).use { scenario ->
+                scenario.onActivity { activity -> activity.findViewById<android.widget.Button>(io.silentsuite.sync.R.id.setup_done).performClick() }
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, account, true))
+            }
+        } finally {
+            PostLoginSetupViewModel.inventoryOverride=null
+            AndroidCompat.removeAccount(manager, account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
 }

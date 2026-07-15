@@ -49,8 +49,7 @@ class AccountListFragment : ListFragment(), LoaderManager.LoaderCallbacks<Array<
     override fun onItemClick(parent: AdapterView<*>, view: View, position: Int, id: Long) {
         val account = listAdapter?.getItem(position) as Account
 
-        val intent = Intent(context, AccountActivity::class.java)
-        intent.putExtra(AccountActivity.EXTRA_ACCOUNT, account)
+        val intent = AccountActivity.newIntent(requireContext(), account)
         startActivity(intent)
     }
 

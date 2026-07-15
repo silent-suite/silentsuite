@@ -56,6 +56,9 @@ class App : Application() {
         addressBookAccountType = getString(R.string.account_type_address_book)
         addressBooksAuthority = getString(R.string.address_books_authority)
 
+        // Raw, synchronous bootstrap makes pre-existing rows safe before login can create one.
+        postLoginBootstrapSucceeded = io.silentsuite.sync.ui.setup.PostLoginSetupMigration.bootstrap(this)
+
         loadLanguage()
         loadTheme()
 
@@ -173,6 +176,9 @@ class App : Application() {
     }
 
     companion object {
+        @Volatile var postLoginBootstrapSucceeded: Boolean = false
+        /** Opaque, process-memory-only discriminator for authenticator restoration. */
+        val processEpoch: String = UUID.randomUUID().toString()
         val DISTRUST_SYSTEM_CERTIFICATES = "distrustSystemCerts"
         val LOG_TO_EXTERNAL_STORAGE = "logToExternalStorage"
         val OVERRIDE_PROXY = "overrideProxy"

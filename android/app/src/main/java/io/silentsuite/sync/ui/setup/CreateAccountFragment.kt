@@ -20,7 +20,8 @@ import io.silentsuite.sync.*
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
-import io.silentsuite.sync.utils.AndroidCompat
+import io.silentsuite.sync.ui.ActiveAccountManager
+import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.utils.TaskProviderHandling
 import java.util.logging.Level
 
@@ -50,7 +51,7 @@ class CreateAccountFragment : DialogFragment() {
         }
 
         val activity = requireActivity()
-        val account = try {
+        val attempt = try {
             createAccount(config.userName, config)
         } catch (e: InvalidAccountException) {
             notifyAccountCreationFailed()
@@ -59,13 +60,29 @@ class CreateAccountFragment : DialogFragment() {
             notifyAccountCreationFailed()
             throw e
         }
-        if (account != null) {
-            (activity as? LoginActivity)?.onAccountCreated(account)
-            activity.setResult(Activity.RESULT_OK)
-            SetupSecretHolder.setPendingSession(account.name, config.etebaseSession)
-            SetupSecretHolder.clearCredentialsAndConfiguration()
-            startActivity(ModeSelectionActivity.newIntent(requireContext(), account))
-            activity.finish()
+        if (attempt is CreationAttempt.SettingsResolution) {
+            startActivity(PostLoginSetupActivity.newIntent(requireContext(), attempt.account)); notifyAccountCreationFailed(); dismissAllowingStateLoss()
+        } else if (attempt is CreationAttempt.Created || attempt is CreationAttempt.Completed) {
+            val account = when (attempt) { is CreationAttempt.Created -> attempt.account; is CreationAttempt.Completed -> attempt.account; else -> error("unreachable") }
+            if (AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_CREATION_ID) == null) {
+                notifyAccountCreationFailed()
+                return
+            }
+            val verifiedId = AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_CREATION_ID)!!
+            val kind = if (attempt is CreationAttempt.Completed) AccountCreationCompletionDispatcher.Kind.Dashboard else AccountCreationCompletionDispatcher.Kind.Setup
+            val dispatched = AccountCreationCompletionDispatcher(object : AccountCreationCompletionDispatcher.Seams {
+                override fun stageExact(name: String, type: String, id: String) =
+                    (activity as? LoginActivity)?.onAccountCreated(account, id) ?: true
+                override fun openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account)) }
+                override fun openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account)) }
+                override fun finish() { activity.setResult(Activity.RESULT_OK); SetupSecretHolder.clearCredentialsAndConfiguration(); activity.finish() }
+            }).dispatch(kind, account.name, account.type, verifiedId)
+            if (!dispatched) { notifyRetryableCollision(); dismissAllowingStateLoss() }
+        } else if (attempt == CreationAttempt.ExistsOrBusy) {
+            // A collision is retryable.  The authenticator flow remains live and therefore
+            // must not receive cancellation merely because this add attempt lost a race.
+            notifyRetryableCollision()
+            dismissAllowingStateLoss()
         } else {
             // Issue #119: addAccountExplicitly returned false (e.g. partial-state collision
             // with a previously removed account row that AccountManager hasn't fully
@@ -85,50 +102,117 @@ class CreateAccountFragment : DialogFragment() {
         // than serializing state through Android saved state or relying on newer Fragment APIs.
         parentFragmentManager.fragments.filterIsInstance<LoginCredentialsFragment>()
             .forEach { it.onSubmissionFailed() }
+        // A failure before the durable ACCOUNT_CREATED boundary cannot be reported as an
+        // Android Settings success. finish() is idempotent in the response controller.
+        (activity as? LoginActivity)?.cancelBeforeAccountCreated()
+    }
+
+    private fun notifyRetryableCollision() {
+        SetupSecretHolder.clearCredentialsAndConfiguration()
+        parentFragmentManager.fragments.filterIsInstance<LoginCredentialsFragment>()
+            .forEach { it.onSubmissionFailed() }
+        parentFragmentManager.beginTransaction()
+            .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(getString(R.string.setup_account_busy_retry)), null)
+            .commitAllowingStateLoss()
     }
 
     @Throws(InvalidAccountException::class)
-    protected fun createAccount(accountName: String, config: Configuration): Account? {
-        val account = Account(accountName, App.accountType)
-
-        // create Android account
-        Logger.log.log(Level.INFO, "Creating Android account with initial config")
-
-        val accountManager = AccountManager.get(context)
-        if (!accountManager.addAccountExplicitly(account, null, null))
-            return null
-
-        AccountSettings.setUserData(accountManager, account, config.url, config.userName)
-
-        // add entries for account to service DB
-        Logger.log.log(Level.INFO, "Writing account configuration to database")
-        try {
-            val settings = AccountSettings(requireContext(), account)
-
-            settings.etebaseSession = config.etebaseSession
-
-            // contact sync is automatically enabled by isAlwaysSyncable="true" in res/xml/sync_contacts.xml
-            settings.setSyncInterval(App.addressBooksAuthority, Constants.DEFAULT_SYNC_INTERVAL.toLong())
-
-            // calendar sync is automatically enabled by isAlwaysSyncable="true" in res/xml/sync_contacts.xml
-            settings.setSyncInterval(CalendarContract.AUTHORITY, Constants.DEFAULT_SYNC_INTERVAL.toLong())
-
-            TASK_PROVIDERS.forEach {
-                // enable task sync if OpenTasks is installed
-                // further changes will be handled by PackageChangedReceiver
-                TaskProviderHandling.updateTaskSync(requireContext(), it)
+    protected fun createAccount(accountName: String, config: Configuration): CreationAttempt {
+        synchronized(CREATION_LOCK) {
+            if (!App.postLoginBootstrapSucceeded || !PostLoginSetupMigration.isBootstrapped(requireContext())) return CreationAttempt.Failed
+            val account = Account(accountName, App.accountType)
+            val accountManager = AccountManager.get(context)
+            val registry = AccountCreationRegistry.open(requireContext())
+            val creationId = java.util.UUID.randomUUID().toString()
+            val fields = listOf(
+                AccountSettings.KEY_URI to config.url?.toString(),
+                AccountSettings.KEY_USERNAME to config.userName,
+                AccountSettings.KEY_SETTINGS_VERSION to AccountSettings.CURRENT_VERSION.toString(),
+                AccountSettings.KEY_ETEBASE_SESSION to config.etebaseSession
+            )
+            val coordinator = AccountCreationCoordinator(object : AccountCreationCoordinator.Seams {
+                override fun rowExists() = accountManager.getAccountsByType(App.accountType).contains(account)
+                override fun prepare(id: String) = registry.prepare(AccountCreationRegistry.Record(accountName, id,
+                    AccountCreationRegistry.Phase.PREPARED, System.currentTimeMillis(), App.accountType))
+                override fun add() = accountManager.addAccountExplicitly(account, null, null)
+                override fun writeAndReadBack(key: String, value: String?) =
+                    AccountSettings.writeVerified(accountManager, account, key, value)
+                override fun phase(id: String, phase: AccountCreationRegistry.Phase) = registry.updateOwned(
+                    AccountCreationRegistry.Record(accountName, id, phase, System.currentTimeMillis(), App.accountType))
+                override fun configureAndReadBack(): Boolean = runCatching {
+                    val settings = AccountSettings(requireContext(), account)
+                    settings.setSyncInterval(App.addressBooksAuthority, Constants.DEFAULT_SYNC_INTERVAL.toLong())
+                    settings.setSyncInterval(CalendarContract.AUTHORITY, Constants.DEFAULT_SYNC_INTERVAL.toLong())
+                    TASK_PROVIDERS.forEach { TaskProviderHandling.updateTaskSync(requireContext(), it, account) }
+                    val coreVerified = android.content.ContentResolver.getSyncAutomatically(account, App.addressBooksAuthority) &&
+                        android.content.ContentResolver.getSyncAutomatically(account, CalendarContract.AUTHORITY) &&
+                        settings.getSyncInterval(App.addressBooksAuthority) == Constants.DEFAULT_SYNC_INTERVAL.toLong() &&
+                        settings.getSyncInterval(CalendarContract.AUTHORITY) == Constants.DEFAULT_SYNC_INTERVAL.toLong()
+                    val wanted = TaskProviderHandling.getWantedTaskSyncProvider(requireContext())
+                    val taskVerified = TASK_PROVIDERS.all { provider ->
+                        if (provider == wanted)
+                            android.content.ContentResolver.getIsSyncable(account, provider.authority) > 0 &&
+                                settings.getSyncInterval(provider.authority) == Constants.DEFAULT_SYNC_INTERVAL.toLong()
+                        else android.content.ContentResolver.getIsSyncable(account, provider.authority) <= 0
+                    }
+                    coreVerified && taskVerified
+                }.getOrDefault(false)
+                override fun accountCreated(id: String): Boolean = (activity as? LoginActivity)
+                    ?.onAccountCreated(account, id) ?: true
+                override fun activateAndReadBack() = ActiveAccountManager.setActiveAccount(requireContext(), account)
+                override fun clear(id: String) = registry.clearOwned(App.accountType, accountName, id)
+                override fun quarantine(id: String) = PostLoginSetupMigration.persistPendingRecovery(
+                    writeState = {
+                        AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.RECOVERY_REQUIRED)
+                    },
+                    updateRegistry = {
+                        registry.updateOwned(AccountCreationRegistry.Record(accountName, id,
+                            AccountCreationRegistry.Phase.RECOVERY_REQUIRED, System.currentTimeMillis(), App.accountType))
+                    }
+                )
+            })
+            return when (val result = coordinator.create(creationId, fields)) {
+                AccountCreationCoordinator.Result.CREATED,
+                AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED -> CreationAttempt.Created(account)
+                AccountCreationCoordinator.Result.EXISTS_OR_BUSY,
+                AccountCreationCoordinator.Result.NOT_ADDED -> when (AccountCreationCallerPolicy.disposition(result)) {
+                    AccountCreationCallerPolicy.Disposition.RetryCredentials ->
+                        resumableOwnedIncomplete(account, accountManager, registry) ?: CreationAttempt.ExistsOrBusy
+                    else -> CreationAttempt.Failed
+                }
+                AccountCreationCoordinator.Result.QUARANTINED -> if (account in accountManager.getAccountsByType(account.type) && accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID) == null) CreationAttempt.SettingsResolution(account) else CreationAttempt.Failed
+                else -> CreationAttempt.Failed
             }
-
-        } catch (e: InvalidAccountException) {
-            Logger.log.log(Level.SEVERE, "Couldn't access account settings", e)
-            AndroidCompat.removeAccount(accountManager, account)
-            throw e
         }
+    }
 
-        return account
+    private fun resumableOwnedIncomplete(
+        account: Account,
+        manager: AccountManager,
+        registry: AccountCreationRegistry
+    ): CreationAttempt? {
+        if (account !in manager.getAccountsByType(account.type)) return null
+        val id = manager.getUserData(account, AccountSettings.KEY_CREATION_ID) ?: return null
+        if (!AccountCreationRegistry.owns(registry.get(account.type, account.name), id)) return null
+        val state = AccountSettings.setupState(manager, account, PostLoginSetupMigration.isBootstrapped(requireContext()))
+        // CREATING has not crossed the durable account-created boundary and can never be
+        // resumed as success. COMPLETE belongs at the exact dashboard, not setup.
+        if (state == PostLoginSetupState.COMPLETE) return CreationAttempt.Completed(account)
+        return account.takeIf { state in setOf(PostLoginSetupState.ACCOUNT_CREATED, PostLoginSetupState.COLLECTIONS,
+                PostLoginSetupState.PERMISSIONS, PostLoginSetupState.INITIAL_SYNC, PostLoginSetupState.READY) }
+            ?.let(CreationAttempt::Created)
+    }
+
+    sealed class CreationAttempt {
+        data class Created(val account: Account) : CreationAttempt()
+        data class Completed(val account: Account) : CreationAttempt()
+        data class SettingsResolution(val account: Account) : CreationAttempt()
+        object ExistsOrBusy : CreationAttempt()
+        object Failed : CreationAttempt()
     }
 
     companion object {
+        private val CREATION_LOCK = Any()
         fun newInstance(config: Configuration): CreateAccountFragment {
             SetupSecretHolder.setPendingConfiguration(config)
             return CreateAccountFragment()

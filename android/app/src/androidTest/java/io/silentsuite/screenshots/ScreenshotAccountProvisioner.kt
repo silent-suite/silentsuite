@@ -10,6 +10,8 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.ui.ActiveAccountManager
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder
 import io.silentsuite.sync.ui.setup.LoginCredentials
+import io.silentsuite.sync.ui.setup.PostLoginSetupState
+import java.util.UUID
 
 /**
  * Deterministic account setup for store screenshot instrumentation.
@@ -28,7 +30,10 @@ object ScreenshotAccountProvisioner {
         val accountManager = AccountManager.get(context)
         val existing = accountManager.getAccountsByType(App.accountType).firstOrNull { it.name == email }
         if (existing != null) {
-            ActiveAccountManager.setActiveAccount(context, existing)
+            if (accountManager.getUserData(existing, AccountSettings.KEY_CREATION_ID).isNullOrBlank())
+                check(AccountSettings.writeVerified(accountManager, existing, AccountSettings.KEY_CREATION_ID, "fixture-" + UUID.randomUUID()))
+            AccountSettings.writeSetupState(accountManager, existing, PostLoginSetupState.COMPLETE)
+            check(ActiveAccountManager.setActiveAccount(context, existing))
             return true
         }
 
@@ -43,8 +48,10 @@ object ScreenshotAccountProvisioner {
         }
 
         AccountSettings.setUserData(accountManager, account, config.url, config.userName)
+        check(AccountSettings.writeVerified(accountManager, account, AccountSettings.KEY_CREATION_ID, "fixture-" + UUID.randomUUID()))
         val settings = AccountSettings(context, account)
         settings.etebaseSession = config.etebaseSession
+        check(AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.COMPLETE))
         // Store screenshots exercise the UI and Etebase account session, not Android's
         // background sync adapters. Keep background sync disabled during instrumentation
         // so calendar/contact sync cannot crash or race the capture flow.
@@ -52,7 +59,7 @@ object ScreenshotAccountProvisioner {
         ContentResolver.setIsSyncable(account, CalendarContract.AUTHORITY, 0)
         ContentResolver.setSyncAutomatically(account, App.addressBooksAuthority, false)
         ContentResolver.setSyncAutomatically(account, CalendarContract.AUTHORITY, false)
-        ActiveAccountManager.setActiveAccount(context, account)
+        check(ActiveAccountManager.setActiveAccount(context, account))
         return true
     }
 }

@@ -7,11 +7,13 @@ on:
       - 'v*'
     paths:
       - 'android/**'
+      - 'tests/test_android_*.py'
       - '.github/workflows/build-android.yml'
   pull_request:
     branches: [dev]
     paths:
       - 'android/**'
+      - 'tests/test_android_*.py'
       - '.github/workflows/build-android.yml'
   workflow_dispatch:
 
@@ -39,6 +41,16 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+
+      - name: Set up Python for static Android contracts
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run Android static Python contracts
+        run: |
+          python -m pip install --disable-pip-version-check pytest
+          python -m pytest ../tests/test_android_*.py -q
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
@@ -187,6 +199,7 @@ jobs:
     name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }})
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
@@ -238,7 +251,7 @@ jobs:
             sudo chmod 666 /dev/kvm
           fi
 
-      - name: Run only AccountActivityRecreationTest
+      - name: Run focused launcher and setup recreation contracts
         uses: ReactiveCircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
         with:
           api-level: ${{ matrix.api-level }}
@@ -246,7 +259,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
-          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest
+          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest
 
       - name: Upload focused androidTest reports and results
         if: always()
@@ -258,6 +271,41 @@ jobs:
             android/app/build/reports/androidTests/connected/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Assert focused runtime methods executed
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          from collections import Counter
+          expected={
+            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','recreationKeepsTheExactAccountRouteAndDeliversModelStateToTheRecreatedUi'),
+            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','readyDoneCompletesOnlyTheExactGeneratedAccount'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','noNetworkDashboardShellRoutesExactAccountAfterReadyDone'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','recoveryRemovalConfirmedRoutesCleanLoginAndPreservesSibling'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionsRecoveryBlocksActionsAndLimitedSkipReachesReady'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','pendingRecoveryRemovalSurvivesRecreationAndCleansExactOwner'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','missingCreationIdShowsSettingsOnlyResolution'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','readOnlyLimitedTasksUseNormalContinueAndReachReady'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','generationMismatchShowsSettingsOnlyAcrossRecreation'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','controllerLiveResultCancellationDuplicatesAndRestoreAreExactOnce'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','obsoleteCoordinatorCancelsBeforeNormalLaunch'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','staleLoginActivityRestorationUsesObsoletePathBeforeController'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','sameProcessRotationPolicyPreservesAuthenticator'),
+            ('io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest','explicitCreatingTargetOnlyReceivesProviderConfiguration'),
+          }
+          seen=[]
+          for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
+            root=ET.parse(path).getroot()
+            for case in root.iter('testcase'):
+              pair=(case.attrib.get('classname'),case.attrib.get('name')); seen.append(pair)
+              if pair in expected and list(case): raise SystemExit(f'failed {pair}')
+          counts=Counter(seen)
+          missing=expected-set(counts)
+          if missing: raise SystemExit(f'missing {sorted(missing)}')
+          duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}
+          if duplicates: raise SystemExit(f'expected test count mismatch {duplicates}')
+          PY
 
   # ─────────────────────────────────────────────────────────────────────
   # Release builds — signed, only on version tags.

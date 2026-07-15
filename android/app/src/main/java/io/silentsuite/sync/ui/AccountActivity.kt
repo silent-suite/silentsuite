@@ -141,20 +141,36 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             return
         }
 
-        // Resolve account: from intent extra or ActiveAccountManager fallback
-        account = intent.getParcelableExtra(EXTRA_ACCOUNT)
-            ?: ActiveAccountManager.getActiveAccount(this)
-            ?: run {
+        // An explicit stale/wrong-type parcel is never allowed to fall back to another account.
+        val explicit = intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)
+        val expectedCreationId = intent.getStringExtra(EXTRA_CREATION_ID)
+        val resolved = io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+            explicit, expectedCreationId, App.accountType, accountManager)
+            ?: if (explicit == null) ActiveAccountManager.getActiveAccount(this) else null
+        if (resolved == null) {
                 // Safety net — should not happen since we checked above
                 val intent = Intent(this, LoginActivity::class.java)
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
                 finish()
-                return
-            }
+            return
+        }
+        account = resolved
+
+        // Dashboard/startup permissions are only valid after the exact row has been explicitly
+        // completed. READY is intentionally resumable and must show the setup surface instead.
+        if (!App.postLoginBootstrapSucceeded || AccountSettings.setupState(accountManager, account,
+                bootstrapped = io.silentsuite.sync.ui.setup.PostLoginSetupMigration.isBootstrapped(this)) != io.silentsuite.sync.ui.setup.PostLoginSetupState.COMPLETE) {
+            startActivity(io.silentsuite.sync.ui.setup.PostLoginSetupActivity.newIntent(this, account))
+            finish()
+            return
+        }
 
         // Save as active account
-        ActiveAccountManager.setActiveAccount(this, account)
+        if (!ActiveAccountManager.setActiveAccount(this, account)) {
+            finish()
+            return
+        }
 
         title = account.name
         settings = AccountSettings(this, account)
@@ -280,7 +296,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 NotificationUtils.markPermissionRequested(this)
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
-            NotificationPermissionFlow.Action.CONTINUE_RUNTIME_PERMISSIONS -> PermissionsActivity.requestAllPermissions(this)
+            NotificationPermissionFlow.Action.CONTINUE_RUNTIME_PERMISSIONS -> {
+                if (!AccountSettings.limitedIntegrations(AccountManager.get(this), account))
+                    PermissionsActivity.requestAllPermissions(this)
+            }
             NotificationPermissionFlow.Action.WAIT_FOR_NOTIFICATION_RESULT,
             NotificationPermissionFlow.Action.NONE -> Unit
         }
@@ -354,10 +373,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
             row.setOnClickListener {
                 if (acc.name != account.name) {
-                    ActiveAccountManager.setActiveAccount(this, acc)
+                    if (!ActiveAccountManager.setActiveAccount(this, acc)) return@setOnClickListener
                     // Recreate activity with new account
-                    val intent = Intent(this, AccountActivity::class.java)
-                    intent.putExtra(EXTRA_ACCOUNT, acc)
+                    val intent = newIntent(this, acc)
                     intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)
                     finish()
@@ -1045,12 +1063,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     companion object {
         val EXTRA_ACCOUNT = "account"
+        private const val EXTRA_CREATION_ID = "account_creation_id"
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
         private const val KEY_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
         private const val KEY_STARTUP_PERMISSION_FLOW_STARTED = "startup_permission_flow_started"
-        fun newIntent(context: Context, account: Account): Intent =
-            Intent(context, AccountActivity::class.java).putExtra(EXTRA_ACCOUNT, account)
+        fun newIntent(context: Context, account: Account): Intent = Intent(context, AccountActivity::class.java)
+            .putExtra(EXTRA_ACCOUNT, account)
+            .putExtra(EXTRA_CREATION_ID, AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID))
     }
 
 }

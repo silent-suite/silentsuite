@@ -95,8 +95,7 @@ open class CreateCollectionActivity : BaseActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (item.itemId == android.R.id.home) {
-            val intent = Intent(this, AccountActivity::class.java)
-            intent.putExtra(AccountActivity.EXTRA_ACCOUNT, account)
+            val intent = AccountActivity.newIntent(this, account)
             NavUtils.navigateUpTo(this, intent)
             return true
         }
