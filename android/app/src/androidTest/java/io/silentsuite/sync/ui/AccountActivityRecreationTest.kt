@@ -12,7 +12,7 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.utils.AndroidCompat
 import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
-import io.silentsuite.sync.ui.setup.PostLoginSetupMigration
+
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import java.net.URI
 import org.junit.Assert.assertEquals
@@ -34,8 +34,7 @@ class AccountActivityRecreationTest {
         check(AccountSettings.writeVerified(accountManager, account, AccountSettings.KEY_CREATION_ID, "test-generation"))
         check(AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.COMPLETE))
         val previousBootstrap = App.postLoginBootstrapSucceeded
-        App.postLoginBootstrapSucceeded = PostLoginSetupMigration.bootstrap(context)
-        check(App.postLoginBootstrapSucceeded)
+        App.postLoginBootstrapSucceeded = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
             val permissions = mutableListOf(

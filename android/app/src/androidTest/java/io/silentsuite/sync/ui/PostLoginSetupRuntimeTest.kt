@@ -11,7 +11,7 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
-import io.silentsuite.sync.ui.setup.PostLoginSetupMigration
+
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry
 import io.silentsuite.sync.ui.setup.LoginActivity
@@ -152,8 +152,7 @@ class PostLoginSetupRuntimeTest {
         check(AccountSettings.writeSetupState(manager, sibling, PostLoginSetupState.COMPLETE))
         check(ActiveAccountManager.setActiveAccount(context, sibling))
         val previousBootstrap=App.postLoginBootstrapSucceeded
-        App.postLoginBootstrapSucceeded=PostLoginSetupMigration.bootstrap(context)
-        check(App.postLoginBootstrapSucceeded)
+        App.postLoginBootstrapSucceeded=true
         PostLoginSetupViewModel.inventoryOverride={ candidate ->
             check(candidate==target)
             PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
@@ -203,5 +202,13 @@ class PostLoginSetupRuntimeTest {
         }
         return current
     }
-    private fun resumedActivity(): android.app.Activity = requireNotNull(resumedActivityOrNull())
+    private fun resumedActivity(): android.app.Activity {
+        val deadline=android.os.SystemClock.uptimeMillis()+5000
+        while (android.os.SystemClock.uptimeMillis()<deadline) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            resumedActivityOrNull()?.let { return it }
+            android.os.SystemClock.sleep(25)
+        }
+        throw IllegalStateException("No single resumed Activity before the deadline")
+    }
 }

@@ -18,6 +18,14 @@ class TaskProviderHandling {
         @JvmField internal var wantedProviderResolver: ((Context) -> TaskProvider.ProviderName?)? = null
         @JvmField internal var providerAuthorityResolver: ((TaskProvider.ProviderName) -> String)? = null
         @JvmField internal var calendarIntervalResolver: ((AccountSettings) -> Long?)? = null
+        private fun sameAccount(left: android.accounts.Account, right: android.accounts.Account?): Boolean {
+            if (right == null) return false
+            if (left === right) return true
+            return runCatching {
+                left.name.isNotBlank() && left.type.isNotBlank() &&
+                    left.name == right.name && left.type == right.type
+            }.getOrDefault(false)
+        }
         internal fun eligibleAccounts(accounts: Iterable<android.accounts.Account>, explicitCreatingTarget: android.accounts.Account? = null, load: (android.accounts.Account) -> PostLoginSetupState?): List<android.accounts.Account> =
             accounts.filter { account ->
                 val state = runCatching { load(account) }.getOrNull()
@@ -25,7 +33,7 @@ class TaskProviderHandling {
                     PostLoginSetupState.ACCOUNT_CREATED, PostLoginSetupState.COLLECTIONS,
                     PostLoginSetupState.PERMISSIONS, PostLoginSetupState.INITIAL_SYNC,
                     PostLoginSetupState.READY, PostLoginSetupState.COMPLETE
-                ) || (account == explicitCreatingTarget && state == PostLoginSetupState.CREATING)
+                ) || (sameAccount(account, explicitCreatingTarget) && state == PostLoginSetupState.CREATING)
             }
         fun getWantedTaskSyncProvider(context: Context): TaskProvider.ProviderName? {
             val openTasksAvailable = LocalTaskList.tasksProviderAvailable(context, TaskProvider.ProviderName.OpenTasks)
