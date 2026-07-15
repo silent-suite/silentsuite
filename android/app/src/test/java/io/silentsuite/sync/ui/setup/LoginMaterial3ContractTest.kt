@@ -32,6 +32,8 @@ class LoginMaterial3ContractTest {
         assertEquals(1, Regex("<com\\.google\\.android\\.material\\.button\\.MaterialButton").findAll(layout).count())
         assertTrue(layout.contains("android:text=\"@string/login_sign_in_and_connect\""))
         assertTrue(strings.contains("<string name=\"login_sign_in_and_connect\">Sign in and connect</string>"))
+        assertTrue(strings.contains("<string name=\"login_privacy_reassurance\">SilentSuite does not save your password. Your Android autofill service may offer to save it.</string>"))
+        assertFalse(strings.contains("<string name=\"login_privacy_reassurance\">Your password is used only to sign in and is not saved on this device.</string>"))
         assertTrue(strings.contains("<string name=\"login_forgot_password\">Forgot password?</string>"))
         assertTrue(strings.contains("<string name=\"login_toggle_advanced\">Custom server</string>"))
         assertTrue(strings.contains("<string name=\"login_signup_prompt\">Don\\'t have an account? Sign up</string>"))
