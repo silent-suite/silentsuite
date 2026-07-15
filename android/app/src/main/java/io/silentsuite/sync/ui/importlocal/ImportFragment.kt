@@ -15,7 +15,6 @@ import at.bitfire.vcard4android.BatchOperation
 import at.bitfire.vcard4android.Contact
 import at.bitfire.vcard4android.ContactsStorageException
 import ezvcard.io.CannotParseException
-import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
@@ -25,6 +24,7 @@ import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.*
 import io.silentsuite.sync.syncadapter.ContactsSyncManager
 import io.silentsuite.sync.ui.Refreshable
+import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
 import io.silentsuite.sync.ui.importlocal.ResultFragment.ImportResult
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.utils.TaskProviderHandling
@@ -41,9 +41,25 @@ class ImportFragment : DialogFragment() {
     private lateinit var enumType: CollectionInfo.Type
 
     private var inputStream: InputStream? = null
+    // Process-only: a process-restored fragment cancels instead of replaying chooser/import work.
+    private var activeProcessWork = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        val type = when (identity?.collectionType) {
+            ETEBASE_TYPE_CALENDAR -> CollectionInfo.Type.CALENDAR
+            ETEBASE_TYPE_TASKS -> CollectionInfo.Type.TASKS
+            ETEBASE_TYPE_ADDRESS_BOOK -> CollectionInfo.Type.ADDRESS_BOOK
+            else -> null
+        }
+        if (identity?.collectionUid == null || type == null || !identity.validate(requireContext())) {
+            dismissAllowingStateLoss()
+            return
+        }
+        account = identity.account
+        uid = identity.collectionUid
+        enumType = type
         isCancelable = false
         retainInstance = true
     }
@@ -60,7 +76,10 @@ class ImportFragment : DialogFragment() {
         )
 
         if (savedInstanceState == null) {
+            activeProcessWork = true
             chooseFile()
+        } else if (!activeProcessWork) {
+            progress.setOnShowListener { dismissAllowingStateLoss() }
         } else {
             progress.setOnShowListener {
                 setDialogAddEntries(progress, savedInstanceState.getInt(TAG_PROGRESS_MAX))
@@ -92,6 +111,11 @@ class ImportFragment : DialogFragment() {
     }
 
     fun chooseFile() {
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity == null || !identity.validate(requireContext())) {
+            dismissAllowingStateLoss()
+            return
+        }
         val intent = Intent()
         intent.addCategory(Intent.CATEGORY_OPENABLE)
         intent.action = Intent.ACTION_GET_CONTENT
@@ -107,6 +131,7 @@ class ImportFragment : DialogFragment() {
         try {
             startActivityForResult(chooser, REQUEST_CODE)
         } catch (e: ActivityNotFoundException) {
+            activeProcessWork = false
             val data = ImportResult()
             data.e = Exception("Failed to open file chooser.\nPlease install one.")
 
@@ -120,16 +145,23 @@ class ImportFragment : DialogFragment() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         when (requestCode) {
             REQUEST_CODE -> {
+                if (!activeProcessWork || CollectionLifecycleIdentity.from(arguments)?.validate(requireContext()) != true) {
+                    activeProcessWork = false
+                    dismissAllowingStateLoss()
+                    super.onActivityResult(requestCode, resultCode, data)
+                    return
+                }
                 if (resultCode == Activity.RESULT_OK) {
-                    if (data != null) {
+                    val uri = data?.data
+                    if (uri != null) {
                         // Get the URI of the selected file
-                        val uri = data.data!!
                         Logger.log.info("Starting import from selected file")
                         try {
                             inputStream = requireActivity().contentResolver.openInputStream(uri)
 
                             Thread(ImportEntriesLoader()).start()
                         } catch (e: Exception) {
+                            activeProcessWork = false
                             Logger.log.severe("File select error: ${e.javaClass.name}")
 
                             val importResult = ImportResult()
@@ -139,9 +171,12 @@ class ImportFragment : DialogFragment() {
 
                             dismissAllowingStateLoss()
                         }
-
+                    } else {
+                        activeProcessWork = false
+                        dismissAllowingStateLoss()
                     }
                 } else {
+                    activeProcessWork = false
                     dismissAllowingStateLoss()
                 }
             }
@@ -150,6 +185,7 @@ class ImportFragment : DialogFragment() {
     }
 
     fun loadFinished(data: ImportResult) {
+        activeProcessWork = false
         onImportResult(data)
 
         Logger.log.info("Finished import")
@@ -208,6 +244,11 @@ class ImportFragment : DialogFragment() {
 
             try {
                 val context = requireContext()
+                val identity = CollectionLifecycleIdentity.from(arguments)
+                if (identity == null || !identity.validate(context)) {
+                    closeSelectedInput()
+                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
+                }
                 val importReader = InputStreamReader(
                         inputStream ?: throw FileNotFoundException("Failed to open selected file."),
                         StandardCharsets.UTF_8
@@ -227,6 +268,8 @@ class ImportFragment : DialogFragment() {
 
                         finishParsingFile(events.size)
 
+                        if (!identity.validate(context))
+                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                         val provider = context.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
                         if (provider == null) {
                             result.e = Exception("Failed to acquire calendar content provider.")
@@ -252,6 +295,8 @@ class ImportFragment : DialogFragment() {
                             }
 
                             for (event in events) {
+                                if (!identity.validate(context))
+                                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                 try {
                                     var localEvent = localCalendar.findByUid(event.uid!!)
                                     if (localEvent != null) {
@@ -284,6 +329,8 @@ class ImportFragment : DialogFragment() {
 
                         finishParsingFile(tasks.size)
 
+                        if (!identity.validate(context))
+                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                         val providerName = TaskProviderHandling.getWantedTaskSyncProvider(context)
                         if (providerName == null) {
                             result.e = Exception("Failed to acquire tasks content provider.")
@@ -311,6 +358,8 @@ class ImportFragment : DialogFragment() {
                             }
 
                             for (task in tasks) {
+                                if (!identity.validate(context))
+                                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                 try {
                                     var localTask = localTaskList.findByUid(task.uid!!)
                                     if (localTask != null) {
@@ -347,6 +396,8 @@ class ImportFragment : DialogFragment() {
 
                         finishParsingFile(contacts.size)
 
+                        if (!identity.validate(context))
+                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                         val provider = context.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
                         if (provider == null) {
                             result.e = Exception("Failed to acquire contacts content provider.")
@@ -361,6 +412,8 @@ class ImportFragment : DialogFragment() {
                             }
 
                             for (contact in contacts.filter { contact -> !contact.group }) {
+                                if (!identity.validate(context))
+                                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                 try {
                                     var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
                                     var addedContact = false
@@ -378,8 +431,12 @@ class ImportFragment : DialogFragment() {
                                     // Apply categories
                                     val batch = BatchOperation(localAddressBook.provider!!)
                                     for (category in contact.categories) {
+                                        if (!identity.validate(context))
+                                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                         localContact.addToGroup(batch, localAddressBook.findOrCreateGroup(category))
                                     }
+                                    if (!identity.validate(context))
+                                        return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                     batch.commit()
 
                                     if (addedContact)
@@ -395,6 +452,8 @@ class ImportFragment : DialogFragment() {
                             }
 
                             for (contact in contacts.filter { contact -> contact.group }) {
+                                if (!identity.validate(context))
+                                    return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
                                 try {
                                     val memberIds = contact.members.mapNotNull { memberUid ->
                                         uidToLocalId[memberUid]
@@ -455,6 +514,14 @@ class ImportFragment : DialogFragment() {
         }
     }
 
+    private fun closeSelectedInput() {
+        try {
+            inputStream?.close()
+        } finally {
+            inputStream = null
+        }
+    }
+
     fun onImportResult(importResult: ImportResult) {
         val fragment = ResultFragment.newInstance(importResult)
         parentFragmentManager.commit(true) {
@@ -467,26 +534,10 @@ class ImportFragment : DialogFragment() {
 
         private val TAG_PROGRESS_MAX = "progressMax"
 
-        fun newInstance(account: Account, info: CollectionInfo): ImportFragment {
-            val ret = ImportFragment()
-            ret.account = account
-            ret.uid = info.uid!!
-            ret.enumType = info.enumType!!
-            return ret
+        fun newInstance(identity: CollectionLifecycleIdentity) = ImportFragment().apply {
+            requireNotNull(identity.collectionUid) { "Import requires an existing collection" }
+            arguments = identity.toBundle()
         }
 
-        fun newInstance(account: Account, cachedCollection: CachedCollection): ImportFragment {
-            val enumType = when (cachedCollection.collectionType) {
-                ETEBASE_TYPE_CALENDAR -> CollectionInfo.Type.CALENDAR
-                ETEBASE_TYPE_TASKS -> CollectionInfo.Type.TASKS
-                ETEBASE_TYPE_ADDRESS_BOOK -> CollectionInfo.Type.ADDRESS_BOOK
-                else -> throw Exception("Got unsupported collection type")
-            }
-            val ret = ImportFragment()
-            ret.account = account
-            ret.uid = cachedCollection.col.uid
-            ret.enumType = enumType
-            return ret
-        }
     }
 }

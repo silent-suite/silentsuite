@@ -31,23 +31,44 @@ class ViewCollectionFragment : Fragment() {
     private val collectionModel: CollectionViewModel by activityViewModels()
     private val itemsModel: ItemsViewModel by activityViewModels()
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity?.collectionUid == null || !identity.validate(requireContext()))
+            requireActivity().finish()
+    }
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val ret = inflater.inflate(R.layout.view_collection_fragment, container, false)
         setHasOptionsMenu(true)
 
-        if (savedInstanceState == null) {
-            collectionModel.observe(this) {
-                (activity as? BaseActivity?)?.supportActionBar?.title = it.meta.name
-                if (container != null) {
-                    initUi(inflater, ret, it)
-                }
-            }
-        }
-
         return ret
     }
 
-    private fun initUi(inflater: LayoutInflater, container: View, cachedCollection: CachedCollection) {
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        collectionModel.observe(viewLifecycleOwner) {
+            val identity = CollectionLifecycleIdentity.from(arguments)
+            if (identity == null || identity.account != accountModel.value?.account ||
+                identity.collectionUid != it.col.uid || identity.collectionType != it.collectionType) {
+                requireActivity().finish()
+                return@observe
+            }
+            (activity as? BaseActivity?)?.supportActionBar?.title = it.meta.name
+            initUi(view, it)
+        }
+        itemsModel.observe(viewLifecycleOwner) {
+            val stats = view.findViewById<TextView>(R.id.stats)
+            view.findViewById<View>(R.id.progressBar).visibility = View.GONE
+            stats.text = if (it.isEmpty()) {
+                getString(R.string.collection_recent_activity_none)
+            } else {
+                resources.getQuantityString(R.plurals.collection_recent_activity_items, it.size, it.size)
+            }
+        }
+    }
+
+    private fun initUi(container: View, cachedCollection: CachedCollection) {
         val title = container.findViewById<TextView>(R.id.display_name)
 
         val col = cachedCollection.col
@@ -87,15 +108,6 @@ class ViewCollectionFragment : Fragment() {
             owner.text = getString(R.string.collection_shared_with_us)
         }
 
-        itemsModel.observe(this) {
-            val stats = container.findViewById<TextView>(R.id.stats)
-            container.findViewById<View>(R.id.progressBar).visibility = View.GONE
-            stats.text = if (it.isEmpty()) {
-                getString(R.string.collection_recent_activity_none)
-            } else {
-                resources.getQuantityString(R.plurals.collection_recent_activity_items, it.size, it.size)
-            }
-        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
@@ -114,7 +126,7 @@ class ViewCollectionFragment : Fragment() {
             R.id.on_edit -> {
                 if (cachedCollection.col.accessLevel == CollectionAccessLevel.Admin) {
                     parentFragmentManager.commit {
-                        replace(R.id.fragment_container, EditCollectionFragment.newInstance(cachedCollection))
+                        replace(R.id.fragment_container, EditCollectionFragment.newInstance(requireIdentity(), false))
                         addToBackStack(EditCollectionFragment::class.java.name)
                     }
                 } else {
@@ -128,7 +140,7 @@ class ViewCollectionFragment : Fragment() {
             }
             R.id.on_manage_members -> {
                 parentFragmentManager.commit {
-                    replace(R.id.fragment_container, CollectionMembersFragment())
+                    replace(R.id.fragment_container, CollectionMembersFragment.newInstance(requireIdentity(), cachedCollection.col.accessLevel == CollectionAccessLevel.Admin))
                     addToBackStack(null)
                 }
             }
@@ -155,6 +167,10 @@ class ViewCollectionFragment : Fragment() {
             return
         }
 
+        if (!requireIdentity().validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
         val accountHolder = accountModel.value
         if (accountHolder == null) {
             Toast.makeText(context, R.string.loading_error_title, Toast.LENGTH_LONG).show()
@@ -162,11 +178,15 @@ class ViewCollectionFragment : Fragment() {
         }
 
         parentFragmentManager.commit {
-            add(ImportFragment.newInstance(accountHolder.account, cachedCollection), null)
+            add(ImportFragment.newInstance(requireIdentity()), null)
         }
     }
 
     private fun createExportDocument(cachedCollection: CachedCollection) {
+        if (!requireIdentity().validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = AndroidDataExporter.collectionMimeType(cachedCollection.collectionType)
@@ -182,6 +202,12 @@ class ViewCollectionFragment : Fragment() {
         val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
         if (uri == null) return
 
+        val identity = requireIdentity()
+        if (!identity.validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
+
         val cachedCollection = collectionModel.value ?: run {
             Toast.makeText(context, R.string.loading_error_title, Toast.LENGTH_LONG).show()
             return
@@ -191,14 +217,21 @@ class ViewCollectionFragment : Fragment() {
             ?.map { it.content }
             ?: emptyList()
 
+        val applicationContext = requireContext().applicationContext
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    val outputStream = requireContext().contentResolver.openOutputStream(uri)
+                val exported = withContext(Dispatchers.IO) {
+                    if (!identity.validate(applicationContext)) return@withContext false
+                    val outputStream = applicationContext.contentResolver.openOutputStream(uri)
                             ?: throw IOException("Could not open export destination")
                     outputStream.use {
                         AndroidDataExporter.writeCollectionExport(cachedCollection.collectionType, itemContents, it)
                     }
+                    true
+                }
+                if (!exported) {
+                    activity?.finish()
+                    return@launch
                 }
                 Toast.makeText(requireContext(), R.string.export_data_success, Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
@@ -211,5 +244,11 @@ class ViewCollectionFragment : Fragment() {
 
     companion object {
         private const val REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT = 6385
+
+        fun newInstance(identity: CollectionLifecycleIdentity) = ViewCollectionFragment().apply {
+            arguments = identity.toBundle()
+        }
     }
+
+    private fun requireIdentity() = requireNotNull(CollectionLifecycleIdentity.from(arguments))
 }
