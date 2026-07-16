@@ -48,4 +48,29 @@ object ActiveAccountManager {
         return prefs.edit().remove(KEY_NAME).remove(KEY_CREATION_ID).commit() &&
             prefs.getString(KEY_NAME, null) == null && prefs.getString(KEY_CREATION_ID, null) == null
     }
+
+    /** Replace only the exact active generation; a concurrently selected sibling is preserved. */
+    fun replaceIfActive(
+        context: Context,
+        expected: ExactAccountIdentity,
+        replacement: ExactAccountIdentity?
+    ): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val decision = ActiveAccountReplacementPolicy.decide(
+            prefs.getString(KEY_NAME, null), prefs.getString(KEY_CREATION_ID, null), expected, replacement)
+        if (decision is ActiveAccountReplacementDecision.Preserve) return true
+        val chosen = (decision as ActiveAccountReplacementDecision.Replace).identity
+        if (chosen != null) {
+            val account = Account(chosen.name, chosen.type)
+            val manager = AccountManager.get(context)
+            if (chosen.type != App.accountType || account !in manager.getAccountsByType(chosen.type) ||
+                manager.getUserData(account, AccountSettings.KEY_CREATION_ID) != chosen.creationId) return false
+        }
+        val edit = prefs.edit()
+        if (chosen == null) edit.remove(KEY_NAME).remove(KEY_CREATION_ID)
+        else edit.putString(KEY_NAME, chosen.name).putString(KEY_CREATION_ID, chosen.creationId)
+        if (!edit.commit()) return false
+        return prefs.getString(KEY_NAME, null) == chosen?.name &&
+            prefs.getString(KEY_CREATION_ID, null) == chosen?.creationId
+    }
 }
