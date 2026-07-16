@@ -77,7 +77,7 @@ android {
     }
 
     defaultConfig {
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner "io.silentsuite.sync.SilentSuiteTestRunner"
     }
 
     /*

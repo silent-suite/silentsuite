@@ -463,28 +463,38 @@ class AccountDashboardRuntimeTest {
             AccountActivity.exportWriterOverride = null
             AccountActivity.billingStatusOverride = null
             AccountActivity.accountRouteLauncherOverride = null
-            android.content.ContentResolver.setMasterSyncAutomatically(previousMasterSync)
             App.postLoginBootstrapSucceeded = previousBootstrap
-            removeAccountAndWait(manager, account)
+            android.content.ContentResolver.setMasterSyncAutomatically(false)
+            try {
+                removeAccountAndWait(manager, account)
+            } finally {
+                android.content.ContentResolver.setMasterSyncAutomatically(previousMasterSync)
+            }
             ActiveAccountManager.clearActiveAccount(context)
             context.getSharedPreferences("sync_status_v1", 0).edit().clear().commit()
         }
     }
 
     private fun removeAccountAndWait(manager: AccountManager, account: Account) {
-        if (account !in manager.getAccountsByType(account.type)) {
-            assertFalse("account row remained during teardown", account in manager.getAccountsByType(account.type))
-            return
+        val previousMasterSync = android.content.ContentResolver.getMasterSyncAutomatically()
+        android.content.ContentResolver.setMasterSyncAutomatically(false)
+        try {
+            if (account !in manager.getAccountsByType(account.type)) {
+                assertFalse("account row remained during teardown", account in manager.getAccountsByType(account.type))
+                return
+            }
+            val removed = CountDownLatch(1)
+            var confirmed = false
+            AndroidCompat.removeAccount(manager, account) {
+                confirmed = it
+                removed.countDown()
+            }
+            assertTrue("account removal callback timed out", removed.await(10, TimeUnit.SECONDS))
+            assertTrue("account removal was not confirmed", confirmed)
+            assertFalse("account row remained after confirmed removal", account in manager.getAccountsByType(account.type))
+        } finally {
+            android.content.ContentResolver.setMasterSyncAutomatically(previousMasterSync)
         }
-        val removed = CountDownLatch(1)
-        var confirmed = false
-        AndroidCompat.removeAccount(manager, account) {
-            confirmed = it
-            removed.countDown()
-        }
-        assertTrue("account removal callback timed out", removed.await(10, TimeUnit.SECONDS))
-        assertTrue("account removal was not confirmed", confirmed)
-        assertFalse("account row remained after confirmed removal", account in manager.getAccountsByType(account.type))
     }
 
     private fun waitForRetainedGenerationInvalidation(scenario: ActivityScenario<AccountActivity>) {

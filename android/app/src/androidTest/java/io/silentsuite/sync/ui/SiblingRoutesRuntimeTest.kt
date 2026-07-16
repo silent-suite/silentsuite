@@ -225,18 +225,22 @@ class SiblingRoutesRuntimeTest {
             ).use { scenario ->
                 scenario.recreate()
                 scenario.onActivity { it.findViewById<View>(R.id.import_file).performClick() }
+                val expectedMessage = context.getString(R.string.import_dialog_success, 3L, 2L, 1L, 0L)
                 waitUntil("import result dialog") {
                     var shown = false
                     scenario.onActivity { activity ->
-                        shown = activity.supportFragmentManager.findFragmentByTag("importResult")
-                            ?.let { fragment -> (fragment as? androidx.fragment.app.DialogFragment)?.dialog?.isShowing } == true
+                        val dialog = (activity.supportFragmentManager.findFragmentByTag("importResult")
+                            as? androidx.fragment.app.DialogFragment)?.dialog as? AlertDialog
+                        shown = dialog?.isShowing == true &&
+                            dialog.findViewById<TextView>(android.R.id.message)?.text?.toString() == expectedMessage
                     }
                     shown
                 }
-                onView(withText(context.getString(R.string.import_dialog_success, 3L, 2L, 1L, 0L))).check(matches(isDisplayed()))
                 scenario.onActivity { activity ->
                     val dialog = (activity.supportFragmentManager.findFragmentByTag("importResult")
                         as androidx.fragment.app.DialogFragment).dialog as AlertDialog
+                    assertEquals(expectedMessage,
+                        dialog.findViewById<TextView>(android.R.id.message)?.text?.toString())
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
                 }
                 waitUntil("import caller return") { scenario.state == Lifecycle.State.DESTROYED }
@@ -396,10 +400,8 @@ class SiblingRoutesRuntimeTest {
         val manager = AccountManager.get(context)
         val account = addAccount(manager, "collection-create", "collection-create-generation")
         val state = fixture()
-        runtimeFixtureOverride = { _, exact, creationId, uid, type ->
-            if (exact == account && creationId == "collection-create-generation" && uid == null &&
-                type == Constants.ETEBASE_TYPE_CALENDAR) state else null
-        }
+        runtimeFixtureOverride = exactFixture(account, "collection-create-generation", null,
+            Constants.ETEBASE_TYPE_CALENDAR) { state }
         try {
             ActivityScenario.launch<CollectionActivity>(
                 CollectionActivity.newCreateCollectionIntent(context, account, "collection-create-generation", Constants.ETEBASE_TYPE_CALENDAR)
@@ -447,10 +449,8 @@ class SiblingRoutesRuntimeTest {
         val manager = AccountManager.get(context)
         val account = addAccount(manager, "routes", "route-generation")
         val routeFixture = fixture()
-        runtimeFixtureOverride = { _, exact, creationId, uid, type ->
-            if (exact == account && creationId == "route-generation" && uid == null &&
-                type == Constants.ETEBASE_TYPE_CALENDAR) routeFixture else null
-        }
+        runtimeFixtureOverride = exactFixture(account, "route-generation", null,
+            Constants.ETEBASE_TYPE_CALENDAR) { routeFixture }
 
         try {
             val info = CollectionInfo().apply {
@@ -525,11 +525,29 @@ class SiblingRoutesRuntimeTest {
         RuntimeCollectionFixture(uid, Constants.ETEBASE_TYPE_CALENDAR, name, "AC41 description", 0xff336699.toInt(),
             com.etebase.client.CollectionAccessLevel.Admin, listOf("one", "two"), members)
 
+    private fun exactFixture(
+        account: Account,
+        creationId: String,
+        routeUid: String?,
+        routeType: String?,
+        fixture: () -> RuntimeCollectionFixture,
+    ): (Context, Account, String, String?, String?) -> RuntimeCollectionFixture? =
+        { _, actualAccount, actualCreationId, actualUid, actualType ->
+            val current = fixture()
+            assertEquals(account, actualAccount)
+            assertEquals(creationId, actualCreationId)
+            assertTrue("Unexpected collection UID $actualUid", actualUid == routeUid ||
+                (routeUid == null && actualUid == current.uid))
+            assertTrue("Unexpected collection type $actualType", actualType == routeType ||
+                (routeType == null && actualType == current.type))
+            current
+        }
+
     @Test
     fun collectionExportCompletionReturnsToExactRenderedCollection() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext; val manager = AccountManager.get(context)
         val account = addAccount(manager, "ac41-export", "ac41-export-generation"); val state = fixture(); var exported = 0; var completion = 0
-        runtimeFixtureOverride = { _, a, g, uid, _ -> if (a == account && g == "ac41-export-generation" && uid == state.uid) state else null }
+        runtimeFixtureOverride = exactFixture(account, "ac41-export-generation", state.uid, null) { state }
         ViewCollectionFragment.collectionExportDocumentLauncherOverride = { _, intent, code -> assertEquals(6385, code); assertEquals(android.content.Intent.ACTION_CREATE_DOCUMENT, intent.action); assertTrue(intent.hasCategory(android.content.Intent.CATEGORY_OPENABLE)); assertEquals("text/calendar", intent.type); assertTrue(requireNotNull(intent.getStringExtra(android.content.Intent.EXTRA_TITLE)).matches(Regex("AC41-calendar-\\d{8}\\.ics"))) }
         ViewCollectionFragment.collectionExportOverride = { _, id, type, contents, uri -> assertEquals(account, id.account); assertEquals("ac41-export-generation", id.creationId); assertEquals(state.uid, id.collectionUid); assertEquals(state.type, id.collectionType); assertEquals(state.type, type); assertEquals(listOf("one", "two"), contents); assertEquals("content://ac41/collection", uri.toString()); exported++; true }
         ViewCollectionFragment.collectionExportCompletionOverride = { id -> assertEquals(account, id.account); assertEquals("ac41-export-generation", id.creationId); assertEquals(state.uid, id.collectionUid); completion++ }
@@ -544,28 +562,28 @@ class SiblingRoutesRuntimeTest {
     @Test
     fun collectionViewRendersRecreatesAndReturnsForExactCollection() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext; val manager=AccountManager.get(context); val account=addAccount(manager,"ac41-view","ac41-view-generation"); val state=fixture()
-        runtimeFixtureOverride={ _,a,g,u,_ -> if(a==account && g=="ac41-view-generation" && u==state.uid) state else null }
+        runtimeFixtureOverride=exactFixture(account,"ac41-view-generation",state.uid,null) { state }
         try { ActivityScenario.launchActivityForResult<CollectionActivity>(CollectionActivity.newIntent(context,account,"ac41-view-generation",state.uid)).use { s -> waitUntil("view") { var ok=false;s.onActivity { ok=it.findViewById<TextView>(R.id.display_name).text.toString()==state.name && it.findViewById<TextView>(R.id.owner).visibility==View.GONE && it.findViewById<TextView>(R.id.stats).text.toString()==it.resources.getQuantityString(R.plurals.collection_recent_activity_items,2,2) };ok };s.recreate();s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment;assertEquals(account,f.arguments!!.getParcelable("collection.identity.account"));assertEquals("ac41-view-generation",f.arguments!!.getString("collection.identity.creationId"));assertEquals(state.uid,f.arguments!!.getString("collection.identity.uid"));assertEquals(state.type,f.arguments!!.getString("collection.identity.type"));assertEquals(state.description,it.findViewById<TextView>(R.id.description).text.toString());it.onBackPressedDispatcher.onBackPressed() };waitUntil("collection view return") { s.state == Lifecycle.State.DESTROYED };assertEquals(Lifecycle.State.DESTROYED,s.state);assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally { runtimeFixtureOverride=null;removeAccountAndWait(manager,account) }
     }
 
     @Test
     fun collectionCreateCompletionRendersCreatedCollectionAndPreservesReturn() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-create","ac41-create-generation");var state=fixture("created-uid","");var calls=0
-        runtimeFixtureOverride={ _,a,g,_,t -> if(a==account&&g=="ac41-create-generation"&&t==Constants.ETEBASE_TYPE_CALENDAR) state else null };collectionMutationOverride={ _,id,m -> assertEquals(account,id.account);assertEquals("ac41-create-generation",id.creationId);assertEquals(null,id.collectionUid);assertEquals(Constants.ETEBASE_TYPE_CALENDAR,id.collectionType);assertTrue(m.creating);assertEquals("created",m.name);assertEquals("created description",m.description);state=state.copy(name=m.name,description=m.description);calls++;"created-uid" }
+        runtimeFixtureOverride=exactFixture(account,"ac41-create-generation",null,Constants.ETEBASE_TYPE_CALENDAR) { state };collectionMutationOverride={ _,id,m -> assertEquals(account,id.account);assertEquals("ac41-create-generation",id.creationId);assertEquals(null,id.collectionUid);assertEquals(Constants.ETEBASE_TYPE_CALENDAR,id.collectionType);assertTrue(m.creating);assertEquals("created",m.name);assertEquals("created description",m.description);state=state.copy(name=m.name,description=m.description);calls++;"created-uid" }
         try { ActivityScenario.launchActivityForResult<CollectionActivity>(CollectionActivity.newCreateCollectionIntent(context,account,"ac41-create-generation",Constants.ETEBASE_TYPE_CALENDAR)).use { s -> waitUntil("editor") { var ok=false;s.onActivity { ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is EditCollectionFragment };ok };s.onActivity { it.findViewById<android.widget.EditText>(R.id.display_name).setText("created");it.findViewById<android.widget.EditText>(R.id.description).setText("created description");assertFalse(it.findViewById<android.widget.EditText>(R.id.display_name).isSaveEnabled);assertFalse(it.findViewById<android.widget.EditText>(R.id.description).isSaveEnabled);it.recreate() };s.onActivity { assertEquals("created description",it.findViewById<android.widget.EditText>(R.id.description).text.toString());val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as EditCollectionFragment;f.onOptionsItemSelected(MenuBuilder(it).add(0, R.id.on_save, 0, "Save")) };waitUntil("created view") { var ok=false;s.onActivity { ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is ViewCollectionFragment };ok };assertEquals(1,calls);s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment;assertEquals("created-uid",f.arguments!!.getString("collection.identity.uid"));assertEquals(Constants.ETEBASE_TYPE_CALENDAR,f.arguments!!.getString("collection.identity.type"));it.onBackPressedDispatcher.onBackPressed() };assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally { collectionMutationOverride=null;runtimeFixtureOverride=null;removeAccountAndWait(manager,account) }
     }
 
     @Test
     fun collectionEditCompletionReturnsToUpdatedCollection() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-edit","ac41-edit-generation");var state=fixture();var calls=0
-        runtimeFixtureOverride={ _,a,g,u,_ -> if(a==account&&g=="ac41-edit-generation"&&u==state.uid)state else null };collectionMutationOverride={ _,id,m -> assertEquals(account,id.account);assertEquals("ac41-edit-generation",id.creationId);assertEquals(state.uid,id.collectionUid);assertEquals(state.type,id.collectionType);assertFalse(m.creating);assertEquals("updated description",m.description);state=state.copy(name=m.name,description=m.description);calls++;state.uid }
+        runtimeFixtureOverride=exactFixture(account,"ac41-edit-generation",state.uid,null) { state };collectionMutationOverride={ _,id,m -> assertEquals(account,id.account);assertEquals("ac41-edit-generation",id.creationId);assertEquals(state.uid,id.collectionUid);assertEquals(state.type,id.collectionType);assertFalse(m.creating);assertEquals("updated description",m.description);state=state.copy(name=m.name,description=m.description);calls++;state.uid }
         try { ActivityScenario.launchActivityForResult<CollectionActivity>(CollectionActivity.newIntent(context,account,"ac41-edit-generation",state.uid)).use { s -> waitUntil("view") { var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is ViewCollectionFragment};ok };s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment;f.onOptionsItemSelected(MenuBuilder(it).add(0, R.id.on_edit, 0, "Edit")) };waitUntil("edit") { var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is EditCollectionFragment};ok };s.onActivity { it.findViewById<android.widget.EditText>(R.id.display_name).setText("updated");it.findViewById<android.widget.EditText>(R.id.description).setText("updated description");it.recreate() };s.onActivity { assertEquals("updated description",it.findViewById<android.widget.EditText>(R.id.description).text.toString());(it.supportFragmentManager.findFragmentById(R.id.fragment_container) as EditCollectionFragment).onOptionsItemSelected(MenuBuilder(it).add(0, R.id.on_save, 0, "Save")) };waitUntil("updated") { var ok=false;s.onActivity {ok=it.findViewById<TextView>(R.id.display_name).text.toString()=="updated"};ok };assertEquals(1,calls);s.onActivity {it.onBackPressedDispatcher.onBackPressed()};assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally {collectionMutationOverride=null;runtimeFixtureOverride=null;removeAccountAndWait(manager,account)}
     }
 
     @Test
     fun collectionMembersRenderRemoveAndReturnToExactCollection() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-members","ac41-members-generation");var state=fixture(members=listOf(RuntimeMember("admin",com.etebase.client.CollectionAccessLevel.Admin),RuntimeMember("writer",com.etebase.client.CollectionAccessLevel.ReadWrite)));var calls=0
-        runtimeFixtureOverride={ _,a,g,u,_ -> if(a==account&&g=="ac41-members-generation"&&u==state.uid)state else null };memberRemoveOverride={ _,id,user -> assertEquals(account,id.account);assertEquals("ac41-members-generation",id.creationId);assertEquals(state.uid,id.collectionUid);assertEquals(state.type,id.collectionType);assertEquals("writer",user);state=state.copy(members=state.members.filter {it.username!=user});calls++;true }
+        runtimeFixtureOverride=exactFixture(account,"ac41-members-generation",state.uid,null) { state };memberRemoveOverride={ _,id,user -> assertEquals(account,id.account);assertEquals("ac41-members-generation",id.creationId);assertEquals(state.uid,id.collectionUid);assertEquals(state.type,id.collectionType);assertEquals("writer",user);state=state.copy(members=state.members.filter {it.username!=user});calls++;true }
         try { ActivityScenario.launchActivityForResult<CollectionActivity>(CollectionActivity.newIntent(context,account,"ac41-members-generation",state.uid)).use { s -> waitUntil("view") {var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is ViewCollectionFragment};ok};s.onActivity { (it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment).onOptionsItemSelected(MenuBuilder(it).add(0, R.id.on_manage_members, 0, "Members")) };waitUntil("members") {var ok=false;s.onActivity {ok=it.supportFragmentManager.fragments.any {f->f is CollectionMembersFragment}};ok};waitUntil("member rows laid out") { var ok=false;s.onActivity { val list=it.supportFragmentManager.fragments.flatMap { f->f.childFragmentManager.fragments }.filterIsInstance<CollectionMembersListFragment>().first();ok=list.listAdapter!!.count==2&&list.listView.getChildAt(0)!=null&&list.listView.getChildAt(1)!=null&&it.findViewById<TextView>(R.id.display_name).text.toString()==state.name };ok };s.recreate();waitUntil("recreated member rows laid out") { var ok=false;s.onActivity { val list=it.supportFragmentManager.fragments.flatMap { f->f.childFragmentManager.fragments }.filterIsInstance<CollectionMembersListFragment>().first();ok=list.listAdapter!!.count==2&&list.listView.getChildAt(0)!=null&&list.listView.getChildAt(1)!=null };ok };s.onActivity { val list=it.supportFragmentManager.fragments.flatMap {f->f.childFragmentManager.fragments}.filterIsInstance<CollectionMembersListFragment>().first();assertTrue(list.listView.performItemClick(requireNotNull(list.listView.getChildAt(0)),0,0)) };onView(withText(android.R.string.ok)).perform(click());s.onActivity { val list=it.supportFragmentManager.fragments.flatMap {f->f.childFragmentManager.fragments}.filterIsInstance<CollectionMembersListFragment>().first();assertTrue(list.listView.performItemClick(requireNotNull(list.listView.getChildAt(1)),1,1)) };onView(withText(android.R.string.yes)).perform(click());waitUntil("removed") {calls==1};waitUntil("writer absent") {var ok=false;s.onActivity { val list=it.supportFragmentManager.fragments.flatMap {f->f.childFragmentManager.fragments}.filterIsInstance<CollectionMembersListFragment>().first();ok=list.listAdapter!!.count==1&&(list.listAdapter!!.getItem(0) as RuntimeMember).username=="admin" };ok};s.onActivity {it.onBackPressedDispatcher.onBackPressed()};waitUntil("parent collection") {var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is ViewCollectionFragment};ok};s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment;assertEquals(account,f.arguments!!.getParcelable("collection.identity.account"));assertEquals("ac41-members-generation",f.arguments!!.getString("collection.identity.creationId"));assertEquals(state.uid,f.arguments!!.getString("collection.identity.uid"));assertEquals(state.type,f.arguments!!.getString("collection.identity.type"));it.onBackPressedDispatcher.onBackPressed()};assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally {memberRemoveOverride=null;runtimeFixtureOverride=null;removeAccountAndWait(manager,account)}
     }
 
