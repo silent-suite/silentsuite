@@ -42,7 +42,6 @@ import at.bitfire.ical4android.TaskProvider.Companion.TASK_PROVIDERS
 import at.bitfire.vcard4android.ContactsStorageException
 import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.CollectionManager
-import com.etebase.client.Utils
 import com.etebase.client.exceptions.EtebaseException
 import io.silentsuite.sync.*
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK
@@ -97,6 +96,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private var swipeRefreshLayout: SwipeRefreshLayout? = null
     private var accountListExpanded = false
     private var pendingExportKind: AndroidExportKind? = null
+    private lateinit var accountCreationId: String
     private lateinit var notificationPermissionFlow: NotificationPermissionFlow
 
     // ActivityResultRegistry keeps this registration across recreation and delivers an outstanding
@@ -113,20 +113,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val adapter = list.adapter as ArrayAdapter<*>
         val info = adapter.getItem(position) as CollectionListItemInfo
 
-        startActivity(CollectionActivity.newIntent(this@AccountActivity, account, info.uid))
+        launchIfCurrent { CollectionActivity.newIntent(this@AccountActivity, account, accountCreationId, info.uid) }
     }
-
-    private val formattedFingerprint: String?
-        get() {
-            try {
-                val etebase = EtebaseLocalCache.getEtebase(this, HttpClient.sharedClient, settings)
-                val invitationManager = etebase.invitationManager
-                return Utils.prettyFingerprint(invitationManager.pubkey)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                return null
-            }
-        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -156,12 +144,21 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             return
         }
         account = resolved
+        // An explicit route has already been checked against this exact generation above. Do
+        // not re-read the mutable row here: a remove/re-add between those operations must not
+        // turn a stale route into a route for its replacement.
+        accountCreationId = (if (explicit != null) expectedCreationId else
+            accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            ?.takeIf { it.isNotBlank() } ?: run {
+                finish()
+                return
+            }
 
         // Dashboard/startup permissions are only valid after the exact row has been explicitly
         // completed. READY is intentionally resumable and must show the setup surface instead.
         if (!App.postLoginBootstrapSucceeded || AccountSettings.setupState(accountManager, account,
                 bootstrapped = io.silentsuite.sync.ui.setup.PostLoginSetupMigration.isBootstrapped(this)) != io.silentsuite.sync.ui.setup.PostLoginSetupState.COMPLETE) {
-            startActivity(io.silentsuite.sync.ui.setup.PostLoginSetupActivity.newIntent(this, account))
+            startActivity(io.silentsuite.sync.ui.setup.PostLoginSetupActivity.newIntent(this, account, accountCreationId))
             finish()
             return
         }
@@ -375,7 +372,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 if (acc.name != account.name) {
                     if (!ActiveAccountManager.setActiveAccount(this, acc)) return@setOnClickListener
                     // Recreate activity with new account
-                    val intent = newIntent(this, acc)
+                    val creationId = AccountManager.get(this).getUserData(acc, AccountSettings.KEY_CREATION_ID)
+                        ?.takeIf { it.isNotBlank() } ?: return@setOnClickListener
+                    val intent = newIntent(this, acc, creationId)
                     intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)
                     finish()
@@ -425,27 +424,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun showFingerprintDialog() {
-        val fingerprint = formattedFingerprint
-        val displayFingerprint = fingerprint ?: getString(R.string.fingerprint_unavailable)
-        val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
-        view.findViewById<View>(R.id.body).visibility = View.GONE
-        (view.findViewById<View>(R.id.fingerprint) as TextView).text = displayFingerprint
-        MaterialAlertDialogBuilder(this@AccountActivity)
-                .setIcon(R.drawable.ic_fingerprint_dark)
-                .setTitle(R.string.show_fingperprint_title)
-                .setView(view)
-                .setNeutralButton(R.string.copy_fingerprint) { _, _ ->
-                    if (fingerprint == null) {
-                        Toast.makeText(this, R.string.fingerprint_unavailable, Toast.LENGTH_SHORT).show()
-                    } else {
-                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("account fingerprint", fingerprint))
-                        Toast.makeText(this, R.string.fingerprint_copied, Toast.LENGTH_SHORT).show()
-                    }
-                }
-                .setPositiveButton(android.R.string.yes) { _, _ -> }
-                .create()
-                .show()
+        if (supportFragmentManager.findFragmentByTag(FingerprintDialogFragment.TAG) == null) {
+            FingerprintDialogFragment.newInstance(account, accountCreationId)
+                .show(supportFragmentManager, FingerprintDialogFragment.TAG)
+        }
     }
 
     fun installPackage(packagename: String) {
@@ -470,13 +452,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     override fun onMenuItemClick(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.create_calendar -> {
-                startActivity(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_CALENDAR))
+                launchIfCurrent { CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_CALENDAR) }
             }
             R.id.create_tasklist -> {
-                startActivity(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_TASKS))
+                launchIfCurrent { CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_TASKS) }
             }
             R.id.create_addressbook -> {
-                startActivity(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_ADDRESS_BOOK))
+                launchIfCurrent { CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_ADDRESS_BOOK) }
             }
             R.id.install_tasksorg ->  {
                 installPackage(tasksOrgPackage)
@@ -501,8 +483,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             R.id.nav_tasks -> scrollToSection(R.id.taskdav)
             R.id.nav_contacts -> scrollToSection(R.id.carddav)
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
-            R.id.nav_app_settings -> startActivity(AppSettingsActivity.newIntent(this, account))
-            R.id.nav_invitations -> startActivity(InvitationsActivity.newIntent(this, account))
+            R.id.nav_app_settings -> launchIfCurrent { AppSettingsActivity.newIntent(this, account, accountCreationId) }
+            R.id.nav_invitations -> launchIfCurrent { InvitationsActivity.newIntent(this, account, accountCreationId) }
             R.id.nav_show_fingerprint -> showFingerprintDialog()
             R.id.nav_export_data -> showExportDialog()
             R.id.nav_website -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webUri))
@@ -519,6 +501,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun showExportDialog() {
+        if (!hasCurrentIdentity()) {
+            finish()
+            return
+        }
         val exportKinds = AndroidExportKind.values()
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.export_data_title)
@@ -528,6 +514,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             .show()
     }
 
+    private fun hasCurrentIdentity(): Boolean = io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+        account, accountCreationId, App.accountType, AccountManager.get(this)
+    ) != null
+
+    private inline fun launchIfCurrent(intent: () -> Intent) {
+        if (!hasCurrentIdentity()) {
+            finish()
+            return
+        }
+        startActivity(intent())
+    }
+
     private fun createExportDocument(kind: AndroidExportKind) {
         pendingExportKind = kind
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -535,7 +533,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             type = kind.mimeType
             putExtra(Intent.EXTRA_TITLE, AndroidDataExporter.suggestedFileName(kind))
         }
-        startActivityForResult(intent, REQUEST_CREATE_EXPORT_DOCUMENT)
+        exportDocumentLauncherOverride?.invoke(this, intent, REQUEST_CREATE_EXPORT_DOCUMENT)
+            ?: startActivityForResult(intent, REQUEST_CREATE_EXPORT_DOCUMENT)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -547,15 +546,30 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
         if (uri == null)
             return
+        if (io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                account, accountCreationId, App.accountType, AccountManager.get(this)) == null) {
+            finish()
+            return
+        }
 
+        val applicationContext = applicationContext
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    val outputStream = contentResolver.openOutputStream(uri)
-                        ?: throw IOException("Could not open export destination")
-                    outputStream.use {
-                        AndroidDataExporter.writeExport(this@AccountActivity, account, kind, it)
-                    }
+                val exported = withContext(Dispatchers.IO) {
+                    if (io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                            account, accountCreationId, App.accountType, AccountManager.get(applicationContext)) == null)
+                        return@withContext false
+                    dashboardExportOverride?.invoke(applicationContext, account, accountCreationId, kind, uri)
+                        ?: run {
+                            val outputStream = applicationContext.contentResolver.openOutputStream(uri)
+                                ?: throw IOException("Could not open export destination")
+                            outputStream.use { AndroidDataExporter.writeExport(applicationContext, account, kind, it) }
+                            true
+                        }
+                }
+                if (!exported) {
+                    finish()
+                    return@launch
                 }
                 Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_success, Snackbar.LENGTH_LONG).show()
             } catch (e: Exception) {
@@ -1068,9 +1082,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
         private const val KEY_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
         private const val KEY_STARTUP_PERMISSION_FLOW_STARTED = "startup_permission_flow_started"
-        fun newIntent(context: Context, account: Account): Intent = Intent(context, AccountActivity::class.java)
+        /** Runtime-test seams; null always follows the real DocumentsUI/export path. */
+        @Volatile internal var exportDocumentLauncherOverride: ((AccountActivity, Intent, Int) -> Unit)? = null
+        @Volatile internal var dashboardExportOverride: ((Context, Account, String, AndroidExportKind, Uri) -> Boolean)? = null
+        fun newIntent(context: Context, account: Account, creationId: String): Intent = Intent(context, AccountActivity::class.java)
             .putExtra(EXTRA_ACCOUNT, account)
-            .putExtra(EXTRA_CREATION_ID, AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID))
+            .putExtra(EXTRA_CREATION_ID, creationId)
     }
 
 }

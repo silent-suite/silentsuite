@@ -8,57 +8,78 @@
   -->
 
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-            android:layout_height="match_parent"
-            android:layout_width="match_parent">
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:scrollbarStyle="outsideOverlay">
 
-    <LinearLayout android:orientation="vertical"
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:padding="@dimen/activity_margin">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/spacing_16"
+        android:paddingTop="@dimen/spacing_24"
+        android:paddingEnd="@dimen/spacing_16"
+        android:paddingBottom="@dimen/spacing_24">
 
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/create_collection_display_name"/>
+            android:labelFor="@id/display_name"
+            android:text="@string/create_collection_display_name"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
+
         <EditText
             android:id="@+id/display_name"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:hint="@string/create_calendar_display_name_hint"/>
+            android:layout_marginBottom="@dimen/spacing_16"
+            android:hint="@string/create_calendar_display_name_hint"
+            android:minHeight="@dimen/touch_target_min"
+            android:singleLine="true" />
 
         <TextView
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/create_collection_description"/>
+            android:labelFor="@id/description"
+            android:text="@string/create_collection_description"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
+
         <EditText
             android:id="@+id/description"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:inputType="textAutoCorrect"/>
+            android:layout_marginBottom="@dimen/spacing_16"
+            android:gravity="top|start"
+            android:inputType="textAutoCorrect|textMultiLine"
+            android:minHeight="@dimen/touch_target_min"
+            android:minLines="2" />
 
         <LinearLayout
             android:id="@+id/color_group"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:layout_marginBottom="16dp">
+            android:orientation="horizontal">
 
-            <View
+            <Button
                 android:id="@+id/color"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
-                android:layout_marginLeft="16dp"
-                android:layout_marginRight="8dp"
-                android:background="@color/orangeA700"/>
+                android:layout_width="@dimen/touch_target_min"
+                android:layout_height="@dimen/touch_target_min"
+                android:layout_marginEnd="@dimen/spacing_8"
+                android:background="@color/orangeA700"
+                android:contentDescription="@string/create_collection_choose_color"
+                android:focusable="true"
+                android:minHeight="@dimen/touch_target_min"
+                android:minWidth="@dimen/touch_target_min"
+                android:text="" />
 
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:text="@string/create_collection_color"/>
-
+                android:layout_weight="1"
+                android:text="@string/create_collection_color"
+                android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

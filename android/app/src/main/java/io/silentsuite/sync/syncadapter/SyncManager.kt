@@ -8,6 +8,7 @@
 package io.silentsuite.sync.syncadapter
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.annotation.TargetApi
 import android.content.Context
 import android.content.Intent
@@ -57,6 +58,11 @@ internal fun aggregateDirectProviderOutcome(
 abstract class SyncManager<T: LocalResource<*>>
 constructor(protected val context: Context, protected val account: Account, protected val settings: AccountSettings, protected val extras: Bundle, protected val authority: String, protected val syncResult: SyncResult, journalUid: String, protected val serviceType: CollectionInfo.Type, accountName: String): Closeable {
 
+    // A sync is bound to the account generation that existed when it was constructed. A later
+    // same-name replacement must never receive this sync's notification route.
+    private val accountCreationId = AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID)
+        ?.takeIf { it.isNotBlank() }
+
     protected val notificationManager: SyncNotification
     protected var localCollection: LocalCollection<T>? = null
 
@@ -103,7 +109,7 @@ constructor(protected val context: Context, protected val account: Account, prot
         itemMgr = colMgr.getItemManager(cachedCollection.col)
 
         // dismiss previous error notifications
-        notificationManager = SyncNotification(context, journalUid, notificationId())
+        notificationManager = SyncNotification(context, journalUid, notificationId(), account, accountCreationId)
         notificationManager.cancel()
     }
 
@@ -272,7 +278,8 @@ constructor(protected val context: Context, protected val account: Account, prot
         val notificationHelper = SyncNotification(context,
                 System.currentTimeMillis().toString(), notificationId())
         val resources = context.resources
-        val intent = CollectionActivity.newIntent(context, account, cachedCollection.col.uid)
+        val creationId = accountCreationId ?: return
+        val intent = CollectionActivity.newIntent(context, account, creationId, cachedCollection.col.uid)
         notificationHelper.notify(syncSuccessfullyTitle,
                 String.format(context.getString(R.string.sync_successfully_modified),
                         resources.getQuantityString(R.plurals.sync_successfully,

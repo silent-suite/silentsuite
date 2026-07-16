@@ -26,17 +26,17 @@ import java.net.URI
 class PostLoginSetupRuntimeTest {
     @Test fun generationMismatchShowsSettingsOnlyAcrossRecreation() {
         val c=InstrumentationRegistry.getInstrumentation().targetContext; val m=AccountManager.get(c); val a=Account("mismatch-${System.nanoTime()}@example.invalid",App.accountType); check(m.addAccountExplicitly(a,null,null)); check(AccountSettings.writeVerified(m,a,AccountSettings.KEY_CREATION_ID,"row")); check(AccountSettings.writeSetupState(m,a,PostLoginSetupState.PERMISSIONS)); val r=AccountCreationRegistry.open(c); check(r.prepare(AccountCreationRegistry.Record(a.name,"other",AccountCreationRegistry.Phase.RECOVERY_REQUIRED,System.currentTimeMillis(),a.type)))
-        try { ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(c,a)).use { s -> s.recreate(); s.onActivity { x -> val vm=androidx.lifecycle.ViewModelProvider(x)[PostLoginSetupViewModel::class.java]; org.junit.Assert.assertTrue(x.findViewById<android.widget.Button>(R.id.setup_resolve_ambiguity).isShown); org.junit.Assert.assertEquals(0,vm.inventoryInvocationCountForTest); org.junit.Assert.assertEquals(PostLoginSetupState.PERMISSIONS,AccountSettings.setupState(m,a,true)); org.junit.Assert.assertEquals("row",m.getUserData(a,AccountSettings.KEY_CREATION_ID)) } } } finally { r.clearOwned(a.type,a.name,"other"); AndroidCompat.removeAccount(m,a) }
+        try { ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(c,a,"row")).use { s -> s.recreate(); s.onActivity { x -> val vm=androidx.lifecycle.ViewModelProvider(x)[PostLoginSetupViewModel::class.java]; org.junit.Assert.assertTrue(x.findViewById<android.widget.Button>(R.id.setup_resolve_ambiguity).isShown); org.junit.Assert.assertEquals(0,vm.inventoryInvocationCountForTest); org.junit.Assert.assertEquals(PostLoginSetupState.PERMISSIONS,AccountSettings.setupState(m,a,true)); org.junit.Assert.assertEquals("row",m.getUserData(a,AccountSettings.KEY_CREATION_ID)) } } } finally { r.clearOwned(a.type,a.name,"other"); AndroidCompat.removeAccount(m,a) }
     }
     @Test fun readOnlyLimitedTasksUseNormalContinueAndReachReady() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext; val manager=AccountManager.get(context); val account=Account("readonly-${System.nanoTime()}@example.invalid",App.accountType); check(manager.addAccountExplicitly(account,null,null)); check(AccountSettings.writeVerified(manager,account,AccountSettings.KEY_CREATION_ID,"readonly-id")); check(AccountSettings.writeSetupState(manager,account,PostLoginSetupState.PERMISSIONS))
         PostLoginSetupViewModel.inventoryOverride={ candidate -> if(candidate==account) PostLoginSetupViewModel.InventoryOutcome.Limited to setOf(io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS) else PostLoginSetupViewModel.InventoryOutcome.Recovery to emptySet() }
-        try { ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account)).use { scenario -> scenario.onActivity { a -> val model=androidx.lifecycle.ViewModelProvider(a)[PostLoginSetupViewModel::class.java]; org.junit.Assert.assertEquals(0,model.inventoryInvocationCountForTest); org.junit.Assert.assertEquals(emptySet<String>(),model.qualifyingCollectionTypes); org.junit.Assert.assertTrue(io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS in model.integrationCollectionTypes); a.findViewById<android.widget.Button>(R.id.setup_continue_limited).performClick() } }; assertEquals(PostLoginSetupState.READY,AccountSettings.setupState(manager,account,true)) }
+        try { ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account,"readonly-id")).use { scenario -> scenario.onActivity { a -> val model=androidx.lifecycle.ViewModelProvider(a)[PostLoginSetupViewModel::class.java]; org.junit.Assert.assertEquals(0,model.inventoryInvocationCountForTest); org.junit.Assert.assertEquals(emptySet<String>(),model.qualifyingCollectionTypes); org.junit.Assert.assertTrue(io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS in model.integrationCollectionTypes); a.findViewById<android.widget.Button>(R.id.setup_continue_limited).performClick() } }; assertEquals(PostLoginSetupState.READY,AccountSettings.setupState(manager,account,true)) }
         finally { PostLoginSetupViewModel.inventoryOverride=null; AndroidCompat.removeAccount(manager,account) }
     }
     @Test fun missingCreationIdShowsSettingsOnlyResolution() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext; val manager=AccountManager.get(context); val account=Account("missing-${System.nanoTime()}@example.invalid",App.accountType); check(manager.addAccountExplicitly(account,null,null)); check(AccountSettings.writeSetupState(manager,account,PostLoginSetupState.PERMISSIONS))
-        try { ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account)).use { scenario -> InstrumentationRegistry.getInstrumentation().waitForIdleSync(); scenario.onActivity { a -> val model=androidx.lifecycle.ViewModelProvider(a)[PostLoginSetupViewModel::class.java]; org.junit.Assert.assertTrue(a.findViewById<android.widget.Button>(R.id.setup_resolve_ambiguity).isShown); org.junit.Assert.assertFalse(a.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).isShown); org.junit.Assert.assertFalse(a.findViewById<android.widget.Button>(R.id.setup_continue_limited).isShown); org.junit.Assert.assertFalse(a.findViewById<android.widget.Button>(R.id.setup_skip_integrations).isShown); org.junit.Assert.assertEquals(0,model.inventoryInvocationCountForTest); org.junit.Assert.assertEquals(PostLoginSetupState.PERMISSIONS,AccountSettings.setupState(manager,account,true)); org.junit.Assert.assertEquals(null,manager.getUserData(account,AccountSettings.KEY_CREATION_ID)) } } }
+        try { ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account,null)).use { scenario -> InstrumentationRegistry.getInstrumentation().waitForIdleSync(); scenario.onActivity { a -> val model=androidx.lifecycle.ViewModelProvider(a)[PostLoginSetupViewModel::class.java]; org.junit.Assert.assertTrue(a.findViewById<android.widget.Button>(R.id.setup_resolve_ambiguity).isShown); org.junit.Assert.assertFalse(a.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).isShown); org.junit.Assert.assertFalse(a.findViewById<android.widget.Button>(R.id.setup_continue_limited).isShown); org.junit.Assert.assertFalse(a.findViewById<android.widget.Button>(R.id.setup_skip_integrations).isShown); org.junit.Assert.assertEquals(0,model.inventoryInvocationCountForTest); org.junit.Assert.assertEquals(PostLoginSetupState.PERMISSIONS,AccountSettings.setupState(manager,account,true)); org.junit.Assert.assertEquals(null,manager.getUserData(account,AccountSettings.KEY_CREATION_ID)) } } }
         finally { AndroidCompat.removeAccount(manager,account) }
     }
     @Test fun pendingRecoveryRemovalSurvivesRecreationAndCleansExactOwner() {
@@ -65,7 +65,7 @@ class PostLoginSetupRuntimeTest {
             }
         }
         try {
-            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, target)).use { scenario ->
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, target, targetId)).use { scenario ->
                 scenario.onActivity { it.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).performClick() }
                 assertEquals(1, beginCount)
                 scenario.onActivity { org.junit.Assert.assertFalse(it.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).isEnabled) }
@@ -96,7 +96,7 @@ class PostLoginSetupRuntimeTest {
             PostLoginSetupViewModel.InventoryOutcome.Recovery to emptySet()
         }
         try {
-            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account)).use { scenario ->
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account,"outcome-id")).use { scenario ->
                 scenario.onActivity { a ->
                     val model=androidx.lifecycle.ViewModelProvider(a)[PostLoginSetupViewModel::class.java]
                     model.setInventoryOutcomeForTest(PostLoginSetupViewModel.InventoryOutcome.Recovery)
@@ -124,7 +124,7 @@ class PostLoginSetupRuntimeTest {
         val registry = AccountCreationRegistry.open(context)
         check(registry.prepare(AccountCreationRegistry.Record(target.name, id, AccountCreationRegistry.Phase.RECOVERY_REQUIRED, System.currentTimeMillis(), target.type)))
         try {
-            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, target)).use { scenario ->
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, target, id)).use { scenario ->
                 scenario.onActivity { activity ->
                     org.junit.Assert.assertTrue(activity.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).isShown)
                     activity.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).performClick()
@@ -164,7 +164,7 @@ class PostLoginSetupRuntimeTest {
         var scenario: ActivityScenario<AccountActivity>?=null
         try {
             // Exact incomplete launcher route must not fall back to the active sibling.
-            scenario=ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target))
+            scenario=ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target, "target-generation"))
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             val setup = resumedActivity() as PostLoginSetupActivity
             org.junit.Assert.assertTrue(setup.findViewById<android.widget.Button>(R.id.setup_done).isShown)

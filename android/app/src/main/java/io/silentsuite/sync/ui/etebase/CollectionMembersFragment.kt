@@ -60,6 +60,11 @@ class CollectionMembersFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        runtimeFixture(requireContext(), requireNotNull(CollectionLifecycleIdentity.from(arguments)))?.let { fixture ->
+            (activity as? BaseActivity?)?.supportActionBar?.setTitle(R.string.collection_members_title)
+            initFixtureUi(view, fixture)
+            return
+        }
         collectionModel.observe(viewLifecycleOwner) {
             val identity = CollectionLifecycleIdentity.from(arguments)
             if (identity == null || identity.account != model.value?.account ||
@@ -71,6 +76,16 @@ class CollectionMembersFragment : Fragment() {
             (activity as? BaseActivity?)?.supportActionBar?.setTitle(R.string.collection_members_title)
             initUi(view, it)
         }
+    }
+
+    private fun initFixtureUi(v: View, fixture: RuntimeCollectionFixture) {
+        v.findViewById<View>(R.id.color).apply {
+            visibility = if (fixture.type == Constants.ETEBASE_TYPE_ADDRESS_BOOK) View.GONE else View.VISIBLE
+            setBackgroundColor(fixture.color)
+        }
+        v.findViewById<TextView>(R.id.display_name).text = fixture.name
+        v.findViewById<TextView>(R.id.description).text = fixture.description
+        v.findViewById<View>(R.id.progressBar).visibility = View.GONE
     }
 
     private fun initUi(v: View, cachedCollection: CachedCollection) {
@@ -116,6 +131,7 @@ class CollectionMembersFragment : Fragment() {
                             if (!identity.validate(applicationContext)) return@withContext false
                             val membersManager = model.value!!.colMgr.getMemberManager(cachedCollection.col)
                             membersManager.leave()
+                            if (!identity.validate(applicationContext)) return@withContext false
                             requestSync(applicationContext, model.value!!.account)
                             true
                         }

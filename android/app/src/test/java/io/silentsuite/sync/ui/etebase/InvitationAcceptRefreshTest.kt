@@ -14,7 +14,9 @@ class InvitationAcceptRefreshTest {
 
         assertTrue(
             "accept must report completion before the UI requests sync",
-            source.contains("fun accept(accountCollectionHolder: AccountHolder, invitation: SignedInvitation, onComplete: (Result<Unit>) -> Unit = {})")
+            source.contains("fun accept(") &&
+                    source.contains("identity: InvitationLifecycleIdentity") &&
+                    source.contains("onComplete: (Result<Unit>) -> Unit = {}")
         )
         assertTrue(
             "accept must wait for invitationManager.accept(invitation)",
@@ -27,13 +29,17 @@ class InvitationAcceptRefreshTest {
         assertTrue(
             "application context and account must be captured before the async accept to survive fragment detach",
             source.contains("val applicationContext = requireContext().applicationContext") &&
-                    source.contains("invitationsModel.accept(accountHolder, invitation)") &&
+                    source.contains("invitationsModel.accept(applicationContext, identity, accountHolder, invitation)") &&
                     source.indexOf("val applicationContext = requireContext().applicationContext") <
-                    source.indexOf("invitationsModel.accept(accountHolder, invitation)")
+                    source.indexOf("invitationsModel.accept(applicationContext, identity, accountHolder, invitation)")
         )
         assertFalse(
             "sync must not be requested immediately after starting the accept coroutine",
             source.contains("invitationsModel.accept(accountHolder, invitation)\n                    requestSync")
+        )
+        assertTrue(
+            "accept and reject must revalidate the exact account generation at the IO boundary",
+            source.split("identity.validate(applicationContext)").size - 1 >= 4
         )
     }
 

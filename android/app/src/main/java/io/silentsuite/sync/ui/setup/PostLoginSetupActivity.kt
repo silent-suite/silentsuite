@@ -27,6 +27,7 @@ class PostLoginSetupActivity : BaseActivity() {
     private val model: PostLoginSetupViewModel by viewModels()
     private lateinit var account: Account
     private lateinit var accountManager: AccountManager
+    private lateinit var accountCreationId: String
     private var ambiguousOwnership = false
     private var missingCreationId = false
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,6 +50,7 @@ class PostLoginSetupActivity : BaseActivity() {
         val exact = ExactAccountRouting.validate(supplied, expectedCreationId, App.accountType, accountManager)
         val cleanupOnly = exact == null && supplied !in accountManager.getAccountsByType(App.accountType) && registryOwns
         account = exact ?: supplied.takeIf { cleanupOnly } ?: run { finish(); return }
+        accountCreationId = expectedCreationId
         // Recovery removal is an app-owned mutation only with a matching durable registry owner.
         if (!cleanupOnly && state() == PostLoginSetupState.RECOVERY_REQUIRED && !registryOwns)
             ambiguousOwnership = true
@@ -163,8 +165,11 @@ class PostLoginSetupActivity : BaseActivity() {
     private fun removeIncomplete() { if (!ambiguousOwnership) model.beginRecoveryRemoval() }
     private fun done() {
         if (state() != PostLoginSetupState.READY) return
+        if (ExactAccountRouting.validate(account, accountCreationId, App.accountType, accountManager) == null) return
         if (!AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.COMPLETE)) return
-        startActivity(AccountActivity.newIntent(this, account)); finish()
+        if (ExactAccountRouting.validate(account, accountCreationId, App.accountType, accountManager) == null) return
+        val creationId = accountCreationId
+        startActivity(AccountActivity.newIntent(this, account, creationId)); finish()
     }
     private fun render() {
         val current = state()
@@ -211,8 +216,8 @@ class PostLoginSetupActivity : BaseActivity() {
         private const val EXTRA_ACCOUNT = "post_login_setup_account"
         private const val EXTRA_CREATION_ID = "post_login_setup_creation_id"
         private const val REQUEST_CONTEXTUAL_PERMISSIONS = 7007
-        fun newIntent(context: Context, account: Account) = Intent(context, PostLoginSetupActivity::class.java)
+        fun newIntent(context: Context, account: Account, creationId: String?) = Intent(context, PostLoginSetupActivity::class.java)
             .putExtra(EXTRA_ACCOUNT, account)
-            .putExtra(EXTRA_CREATION_ID, AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID))
+            .putExtra(EXTRA_CREATION_ID, creationId)
     }
 }

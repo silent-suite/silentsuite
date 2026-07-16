@@ -18,8 +18,15 @@ class AccountSettingsActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Redirect to the consolidated App Settings screen
-        startActivity(AppSettingsActivity.newIntent(this, intent.getParcelableExtra(AppSettingsActivity.EXTRA_ACCOUNT)))
+        // A notification route may be stale or malformed. Fail closed rather than letting the
+        // AppSettings intent factory throw, and never recover a generation from the current row.
+        val account = intent.getParcelableExtra<android.accounts.Account>(AppSettingsActivity.EXTRA_ACCOUNT)
+        val creationId = intent.getStringExtra(AppSettingsActivity.EXTRA_CREATION_ID)?.takeIf { it.isNotBlank() }
+        if (account == null || creationId == null) {
+            finish()
+            return
+        }
+        startActivity(AppSettingsActivity.newIntent(this, account, creationId))
         finish()
     }
 }

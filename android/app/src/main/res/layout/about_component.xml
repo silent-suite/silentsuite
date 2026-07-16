@@ -8,63 +8,68 @@
   -->
 
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-              xmlns:tools="http://schemas.android.com/tools"
-              android:layout_width="match_parent"
-              android:layout_height="match_parent">
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:scrollbarStyle="outsideOverlay">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:layout_margin="@dimen/activity_margin">
+        android:paddingStart="@dimen/spacing_16"
+        android:paddingTop="@dimen/spacing_24"
+        android:paddingEnd="@dimen/spacing_16"
+        android:paddingBottom="@dimen/spacing_24">
 
         <TextView
             android:id="@+id/title"
-            tools:text="SilentSuite 1.0"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:textAppearance="?android:attr/textAppearanceLarge"
-            android:layout_gravity="center_horizontal"/>
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Title"
+            tools:text="SilentSuite 1.0" />
 
         <TextView
             android:id="@+id/website"
-            tools:text="https://silentsuite.io"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:layout_gravity="center_horizontal"/>
+            android:layout_marginTop="@dimen/spacing_8"
+            android:gravity="center_vertical|start"
+            android:minHeight="@dimen/touch_target_min"
+            android:textColor="?attr/colorPrimary"
+            tools:text="https://silentsuite.io" />
 
         <TextView
             android:id="@+id/copyright"
-            tools:text="© author, company"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceMedium"
-            android:layout_marginBottom="16dp"/>
+            android:layout_marginTop="@dimen/spacing_16"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body"
+            tools:text="© author, company" />
 
         <TextView
             android:id="@+id/license_info"
-            tools:text="This program comes with ABSOLUTELY NO WARRANTY. It is free software, and you are welcome to redistribute it under certain conditions."
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="32dp"/>
+            android:layout_marginTop="@dimen/spacing_16"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body"
+            tools:text="This program comes with no warranty." />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            style="@style/TextView.Heading"
+            android:layout_marginTop="@dimen/spacing_32"
             android:text="@string/about_license_terms"
-            android:layout_marginBottom="16dp"/>
+            android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
 
         <TextView
             android:id="@+id/license_text"
-            android:text="@string/please_wait"
-            tools:text="(Full license text)"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceSmall"/>
-
+            android:layout_marginTop="@dimen/spacing_16"
+            android:text="@string/please_wait"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body"
+            tools:text="(Full license text)" />
     </LinearLayout>
-
 </ScrollView>

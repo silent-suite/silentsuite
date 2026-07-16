@@ -44,7 +44,7 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
         return view
     }
 
-    private fun setListAdapterMembers(members: List<CollectionMember>) {
+    private fun setListAdapterMembers(members: List<RuntimeMember>) {
         val context = context
         if (context != null) {
             val listAdapter = MembersListAdapter(context)
@@ -58,14 +58,30 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        model.observe(this) {
-            collectionModel.observe(this) { cachedCollection ->
-                membersModel.loadMembers(it, cachedCollection)
+        val identity = CollectionLifecycleIdentity.from(parentFragment?.arguments)
+        if (identity != null) {
+            runtimeFixture(requireContext(), identity)?.let { fixture ->
+                setListAdapterMembers(fixture.members)
+                emptyTextView!!.setText(R.string.collection_members_list_empty)
+                listView.onItemClickListener = this
+                return
             }
         }
 
-        membersModel.observe(this) {
+        model.observe(viewLifecycleOwner) {
+            collectionModel.observe(viewLifecycleOwner) { cachedCollection ->
+                val identity = CollectionLifecycleIdentity.from(parentFragment?.arguments)
+                if (identity == null || !identity.validate(requireContext()) ||
+                    identity.account != it.account || identity.collectionUid != cachedCollection.col.uid ||
+                    identity.collectionType != cachedCollection.collectionType) {
+                    requireActivity().finish()
+                    return@observe
+                }
+                membersModel.loadMembers(requireContext().applicationContext, identity, it, cachedCollection)
+            }
+        }
+
+        membersModel.observe(viewLifecycleOwner) {
             setListAdapterMembers(it)
         }
 
@@ -79,7 +95,7 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
     }
 
     override fun onItemClick(parent: AdapterView<*>, view: View, position: Int, id: Long) {
-        val member = listAdapter?.getItem(position) as CollectionMember
+        val member = listAdapter?.getItem(position) as RuntimeMember
 
         if (member.accessLevel == CollectionAccessLevel.Admin) {
             MaterialAlertDialogBuilder(requireActivity())
@@ -94,13 +110,30 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
                 .setIcon(R.drawable.ic_info_dark)
                 .setTitle(R.string.collection_members_remove_title)
                 .setMessage(getString(R.string.collection_members_remove, member.username))
-                .setPositiveButton(android.R.string.yes) { dialog, which ->
-                    membersModel.removeMember(model.value!!, collectionModel.value!!, member.username)
+                .setPositiveButton(android.R.string.yes) { _, _ ->
+                    val identity = CollectionLifecycleIdentity.from(parentFragment?.arguments)
+                    if (identity == null || !identity.validate(requireContext())) {
+                        requireActivity().finish()
+                        return@setPositiveButton
+                    }
+                    if (runtimeFixture(requireContext(), identity) != null) {
+                        membersModel.removeFixtureMember(
+                            requireContext().applicationContext, identity, member.username
+                        )
+                        return@setPositiveButton
+                    }
+                    membersModel.removeMember(
+                        requireContext().applicationContext,
+                        identity,
+                        model.value!!,
+                        collectionModel.value!!,
+                        member.username
+                    )
                 }
-                .setNegativeButton(android.R.string.no) { dialog, which -> }.show()
+                .setNegativeButton(android.R.string.no) { _, _ -> }.show()
     }
 
-    internal inner class MembersListAdapter(context: Context) : ArrayAdapter<CollectionMember>(context, R.layout.collection_members_list_item) {
+    internal inner class MembersListAdapter(context: Context) : ArrayAdapter<RuntimeMember>(context, R.layout.collection_members_list_item) {
 
         override fun getView(position: Int, _v: View?, parent: ViewGroup): View {
             var v = _v
@@ -115,6 +148,16 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
             // FIXME: Also mark admins
             val readOnly = v.findViewById<View>(R.id.read_only)
             readOnly.visibility = if (member.accessLevel == CollectionAccessLevel.ReadOnly) View.VISIBLE else View.GONE
+            v.contentDescription = getString(
+                when (member.accessLevel) {
+                    CollectionAccessLevel.ReadOnly -> R.string.collection_member_accessibility_read_only
+                    CollectionAccessLevel.Admin -> R.string.collection_member_accessibility_admin
+                    else -> R.string.collection_member_accessibility
+                },
+                member.username
+            )
+            tv.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            readOnly.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
 
             return v
         }
@@ -122,39 +165,89 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
 }
 
 class CollectionMembersViewModel : ViewModel() {
-    private val members = MutableLiveData<List<CollectionMember>>()
+    private val members = MutableLiveData<List<RuntimeMember>>()
     private var asyncTask: Job? = null
 
-    fun loadMembers(accountCollectionHolder: AccountHolder, cachedCollection: CachedCollection) {
+    fun loadMembers(
+        applicationContext: Context,
+        identity: CollectionLifecycleIdentity,
+        accountCollectionHolder: AccountHolder,
+        cachedCollection: CachedCollection
+    ) {
         asyncTask = viewModelScope.launch {
             val ret = withContext(Dispatchers.IO) {
+                if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account ||
+                    identity.collectionUid != cachedCollection.col.uid || identity.collectionType != cachedCollection.collectionType)
+                    return@withContext null
                 val result = LinkedList<CollectionMember>()
                 val col = cachedCollection.col
                 val memberManager = accountCollectionHolder.colMgr.getMemberManager(col)
                 var iterator: String? = null
                 var done = false
                 while (!done) {
+                    if (!identity.validate(applicationContext)) return@withContext null
                     val chunk = memberManager.list(FetchOptions().iterator(iterator).limit(30))
+                    if (!identity.validate(applicationContext)) return@withContext null
                     iterator = chunk.stoken
                     done = chunk.isDone
 
                     result.addAll(chunk.data)
                 }
-                result
+                result.map { RuntimeMember(it.username, it.accessLevel) }
             }
-            members.value = ret
+            if (ret != null && identity.validate(applicationContext) &&
+                identity.account == accountCollectionHolder.account && identity.collectionUid == cachedCollection.col.uid &&
+                identity.collectionType == cachedCollection.collectionType)
+                members.value = ret
         }
     }
 
-    fun removeMember(accountCollectionHolder: AccountHolder, cachedCollection: CachedCollection, username: String) {
+    fun removeMember(
+        applicationContext: Context,
+        identity: CollectionLifecycleIdentity,
+        accountCollectionHolder: AccountHolder,
+        cachedCollection: CachedCollection,
+        username: String
+    ) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                val col = cachedCollection.col
-                val memberManager = accountCollectionHolder.colMgr.getMemberManager(col)
-                memberManager.remove(username)
+            val removed = withContext(Dispatchers.IO) {
+                if (!identity.validate(applicationContext) ||
+                    identity.account != accountCollectionHolder.account ||
+                    identity.collectionUid != cachedCollection.col.uid ||
+                    identity.collectionType != cachedCollection.collectionType)
+                    return@withContext false
+                val fixture = runtimeFixture(applicationContext, identity)
+                if (fixture != null) {
+                    memberRemoveOverride?.invoke(applicationContext, identity, username) == true
+                } else {
+                    val col = cachedCollection.col
+                    val memberManager = accountCollectionHolder.colMgr.getMemberManager(col)
+                    memberManager.remove(username)
+                    identity.validate(applicationContext) && identity.account == accountCollectionHolder.account &&
+                        identity.collectionUid == cachedCollection.col.uid && identity.collectionType == cachedCollection.collectionType
+                }
             }
-            val ret = members.value!!.filter { it.username != username }
-            members.value = ret
+            if (removed && identity.validate(applicationContext) &&
+                identity.account == accountCollectionHolder.account && identity.collectionUid == cachedCollection.col.uid &&
+                identity.collectionType == cachedCollection.collectionType) {
+                members.value = members.value.orEmpty().filter { it.username != username }
+            }
+        }
+    }
+
+    fun removeFixtureMember(applicationContext: Context, identity: CollectionLifecycleIdentity, username: String) {
+        viewModelScope.launch {
+            val membersAfterRemoval = withContext(Dispatchers.IO) {
+                if (!identity.validate(applicationContext)) return@withContext null
+                if (memberRemoveOverride?.invoke(applicationContext, identity, username) != true) return@withContext null
+                // The fixture may change while its operation is in flight. Re-read only
+                // after validating the exact account generation before publishing it.
+                if (!identity.validate(applicationContext)) return@withContext null
+                runtimeFixture(applicationContext, identity)?.members
+            }
+            if (membersAfterRemoval != null && identity.validate(applicationContext)) {
+                members.value = membersAfterRemoval
+            }
         }
     }
 
@@ -162,6 +255,9 @@ class CollectionMembersViewModel : ViewModel() {
         asyncTask?.cancel()
     }
 
-    fun observe(owner: LifecycleOwner, observer: (List<CollectionMember>) -> Unit) =
+    fun observe(owner: LifecycleOwner, observer: (List<RuntimeMember>) -> Unit) =
             members.observe(owner, observer)
 }
+
+@Volatile
+internal var memberRemoveOverride: ((Context, CollectionLifecycleIdentity, String) -> Boolean)? = null

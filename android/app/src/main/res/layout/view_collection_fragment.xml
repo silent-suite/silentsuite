@@ -12,49 +12,58 @@
             layout="@layout/collection_header"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_margin="@dimen/activity_margin" />
+            android:layout_marginStart="@dimen/spacing_16"
+            android:layout_marginTop="@dimen/spacing_16"
+            android:layout_marginEnd="@dimen/spacing_16" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="@dimen/activity_margin"
+            android:paddingStart="@dimen/spacing_16"
+            android:paddingEnd="@dimen/spacing_16"
             android:text="@string/change_journal_title"
-            android:textAppearance="?android:attr/textAppearanceMedium" />
+            android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
 
         <TextView
             android:id="@+id/tasks_not_showing"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="@dimen/activity_margin"
-            android:visibility="gone"
-            android:text="@string/tasks_not_showing" />
+            android:layout_marginTop="@dimen/spacing_8"
+            android:paddingStart="@dimen/spacing_16"
+            android:paddingEnd="@dimen/spacing_16"
+            android:text="@string/tasks_not_showing"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Status"
+            android:visibility="gone" />
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:padding="@dimen/activity_margin">
+            android:padding="@dimen/spacing_16">
 
             <TextView
                 android:id="@+id/stats"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="@string/collection_recent_activity_loading" />
+                android:accessibilityLiveRegion="polite"
+                android:text="@string/collection_recent_activity_loading"
+                android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
 
             <ProgressBar
                 android:id="@+id/progressBar"
                 android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:layout_gravity="right" />
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/spacing_8"
+                android:importantForAccessibility="no" />
         </LinearLayout>
 
-        <fragment android:name="io.silentsuite.sync.ui.etebase.ListEntriesFragment"
+        <fragment
             android:id="@+id/list_entries_container"
-            android:layout_weight="1"
+            android:name="io.silentsuite.sync.ui.etebase.ListEntriesFragment"
             android:layout_width="match_parent"
-            android:layout_height="0dp" />
-
+            android:layout_height="0dp"
+            android:layout_weight="1" />
     </LinearLayout>
-
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

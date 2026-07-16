@@ -38,10 +38,15 @@ class AppSettingsActivity : BaseActivity() {
 
     companion object {
         const val EXTRA_ACCOUNT = "account"
+        const val EXTRA_CREATION_ID = "account_creation_id"
 
-        fun newIntent(context: Context, account: Account?): Intent =
+        fun newIntent(context: Context, account: Account?, creationId: String? = null): Intent =
             Intent(context, AppSettingsActivity::class.java).apply {
-                account?.let { putExtra(EXTRA_ACCOUNT, it) }
+                account?.let {
+                    require(!creationId.isNullOrBlank()) { "Account settings routes require a creation ID" }
+                    putExtra(EXTRA_ACCOUNT, it)
+                    putExtra(EXTRA_CREATION_ID, creationId)
+                }
             }
     }
 
@@ -69,7 +74,23 @@ class AppSettingsActivity : BaseActivity() {
         internal lateinit var prefProxyPort: EditTextPreference
 
         private var account: Account? = null
+        private var accountCreationId: String? = null
         private var accountSettings: AccountSettings? = null
+
+        /** Re-check retained identity at each account-settings write boundary. */
+        private fun mutateExactAccount(mutation: () -> Unit): Boolean {
+            val retainedAccount = account
+            val retainedCreationId = accountCreationId
+            if (retainedAccount == null || retainedCreationId.isNullOrBlank() ||
+                io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                    retainedAccount, retainedCreationId, App.accountType, AccountManager.get(requireContext())
+                ) == null) {
+                requireActivity().finish()
+                return false
+            }
+            mutation()
+            return true
+        }
 
         private inline fun <reified T : Preference> requirePreference(key: String): T =
             findPreference<T>(key)
@@ -81,10 +102,20 @@ class AppSettingsActivity : BaseActivity() {
             // Prefer the caller's exact account. Global settings entry points have no account
             // context and intentionally fall back to the active account.
             val accountManager = AccountManager.get(requireContext())
-            val accounts = accountManager.getAccountsByType(App.accountType)
             val requestedAccount = requireActivity().intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)
-            account = requestedAccount?.takeIf { requested -> accounts.any { it == requested } }
-                ?: ActiveAccountManager.getActiveAccount(requireContext())
+            val requestedCreationId = requireActivity().intent.getStringExtra(EXTRA_CREATION_ID)
+            account = if (requestedAccount != null) {
+                requestedAccount.takeIf { requested ->
+                    requestedCreationId != null && io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                        requested, requestedCreationId, App.accountType, accountManager
+                    ) != null
+                }
+            } else {
+                ActiveAccountManager.getActiveAccount(requireContext())
+            }
+            accountCreationId = if (requestedAccount != null) requestedCreationId else account?.let {
+                accountManager.getUserData(it, AccountSettings.KEY_CREATION_ID)?.takeIf(String::isNotBlank)
+            }
             if (account != null) {
                 try {
                     accountSettings = AccountSettings(requireContext(), account!!)
@@ -104,9 +135,16 @@ class AppSettingsActivity : BaseActivity() {
 
             // --- Encryption / Change password ---
             val prefEncryptionPassword = requirePreference<Preference>("password")
-            if (account != null) {
+            if (account != null && !accountCreationId.isNullOrBlank()) {
                 prefEncryptionPassword.onPreferenceClickListener = Preference.OnPreferenceClickListener { _ ->
-                    startActivity(ChangeEncryptionPasswordActivity.newIntent(requireActivity(), account!!))
+                    val manager = AccountManager.get(requireContext())
+                    val creationId = requireNotNull(accountCreationId)
+                    if (io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                            account, creationId, App.accountType, manager) == null) {
+                        requireActivity().finish()
+                    } else {
+                        startActivity(ChangeEncryptionPasswordActivity.newIntent(requireActivity(), account!!, creationId))
+                    }
                     true
                 }
             } else {
@@ -238,10 +276,13 @@ class AppSettingsActivity : BaseActivity() {
                         prefSync.summary = getString(R.string.settings_sync_summary_periodically, prefSync.entry)
                     prefSync.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
                         val newInterval = java.lang.Long.parseLong(newValue as String)
-                        acctSettings.setSyncInterval(App.addressBooksAuthority, newInterval)
-                        acctSettings.setSyncInterval(CalendarContract.AUTHORITY, newInterval)
+                        if (!mutateExactAccount { acctSettings.setSyncInterval(App.addressBooksAuthority, newInterval) })
+                            return@OnPreferenceChangeListener false
+                        if (!mutateExactAccount { acctSettings.setSyncInterval(CalendarContract.AUTHORITY, newInterval) })
+                            return@OnPreferenceChangeListener false
                         TASK_PROVIDERS.forEach {
-                            acctSettings.setSyncInterval(it.authority, newInterval)
+                            if (!mutateExactAccount { acctSettings.setSyncInterval(it.authority, newInterval) })
+                                return@OnPreferenceChangeListener false
                         }
                         // Update the summary
                         if (newInterval == AccountSettings.SYNC_INTERVAL_MANUALLY)
@@ -264,8 +305,7 @@ class AppSettingsActivity : BaseActivity() {
             if (acctSettings != null) {
                 prefWifiOnly.isChecked = acctSettings.syncWifiOnly
                 prefWifiOnly.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, wifiOnly ->
-                    acctSettings.setSyncWiFiOnly(wifiOnly as Boolean)
-                    true
+                    mutateExactAccount { acctSettings.setSyncWiFiOnly(wifiOnly as Boolean) }
                 }
             } else {
                 prefWifiOnly.isEnabled = false
@@ -282,7 +322,9 @@ class AppSettingsActivity : BaseActivity() {
                     prefWifiOnlySSID.setSummary(R.string.settings_sync_wifi_only_ssid_off)
                 prefWifiOnlySSID.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
                     val ssid = newValue as String
-                    acctSettings.syncWifiOnlySSID = if (!TextUtils.isEmpty(ssid)) ssid else null
+                    if (!mutateExactAccount {
+                            acctSettings.syncWifiOnlySSID = if (!TextUtils.isEmpty(ssid)) ssid else null
+                        }) return@OnPreferenceChangeListener false
                     if (!TextUtils.isEmpty(ssid))
                         prefWifiOnlySSID.summary = getString(R.string.settings_sync_wifi_only_ssid_on, ssid)
                     else

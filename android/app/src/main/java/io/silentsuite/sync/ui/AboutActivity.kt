@@ -91,27 +91,29 @@ class AboutActivity : BaseActivity() {
             tv = v.findViewById<View>(R.id.license_info) as TextView
             tv.setText(info.licenseInfo)
 
-            // load and format license text
-            loadLicense(v, info.licenseTextFile)
-
             return v
         }
 
+        override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+            super.onViewCreated(view, savedInstanceState)
+            val info = components[requireArguments().getInt(KEY_POSITION)]
+            loadLicense(view, info.licenseTextFile)
+        }
+
         private fun loadLicense(v: View, fileName: String) {
-            lifecycleScope.launch {
+            val assets = requireContext().applicationContext.resources.assets
+            viewLifecycleOwner.lifecycleScope.launch {
                 val license = withContext(Dispatchers.IO) {
                     Logger.log.fine("Loading license file $fileName")
                     try {
-                        val inputStream = requireContext().resources.assets.open(fileName)
-                        val raw = inputStream.readBytes()
-                        inputStream.close()
+                        val raw = assets.open(fileName).use { it.readBytes() }
                         Html.fromHtml(String(raw)) as Spanned
                     } catch (e: IOException) {
                         Logger.log.log(Level.SEVERE, "Couldn't read license file", e)
                         null
                     }
                 }
-                if (license != null && view != null) {
+                if (license != null) {
                     val tv = v.findViewById<View>(R.id.license_text) as TextView?
                     if (tv != null) {
                         tv.autoLinkMask = Linkify.EMAIL_ADDRESSES or Linkify.WEB_URLS

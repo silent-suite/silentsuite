@@ -1,7 +1,6 @@
 package io.silentsuite.sync.ui.importlocal
 
 import android.accounts.Account
-import android.accounts.AccountManager
 import android.app.Activity
 import android.content.Context
 import android.content.DialogInterface
@@ -11,7 +10,6 @@ import android.view.*
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.fragment.app.Fragment
-import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.model.CollectionInfo
@@ -174,14 +172,12 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
         val EXTRA_COLLECTION_INFO = "collectionInfo"
         private const val EXTRA_CREATION_ID = "creationId"
 
-        fun newIntent(context: Context, account: Account, info: CollectionInfo): Intent {
+        fun newIntent(context: Context, account: Account, creationId: String, info: CollectionInfo): Intent {
+            require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
             val intent = Intent(context, ImportActivity::class.java)
             intent.putExtra(ImportActivity.EXTRA_ACCOUNT, account)
             intent.putExtra(ImportActivity.EXTRA_COLLECTION_INFO, info)
-            intent.putExtra(
-                EXTRA_CREATION_ID,
-                AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID)?.takeIf { it.isNotBlank() },
-            )
+            intent.putExtra(EXTRA_CREATION_ID, creationId)
             return intent
         }
     }

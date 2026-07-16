@@ -2,6 +2,7 @@ package io.silentsuite.sync.syncadapter
 
 import android.app.Activity
 import android.app.PendingIntent
+import android.accounts.Account
 import android.content.Context
 import android.content.Intent
 import android.database.sqlite.SQLiteException
@@ -17,12 +18,19 @@ import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.ui.AccountSettingsActivity
+import io.silentsuite.sync.ui.AppSettingsActivity
 import io.silentsuite.sync.ui.DebugInfoActivity
 import io.silentsuite.sync.ui.WebViewActivity
 import io.silentsuite.sync.utils.NotificationUtils
 import java.util.logging.Level
 
-class SyncNotification(internal val context: Context, internal val notificationTag: String, internal val notificationId: Int) {
+class SyncNotification(
+    internal val context: Context,
+    internal val notificationTag: String,
+    internal val notificationId: Int,
+    private val account: Account? = null,
+    private val accountCreationId: String? = null
+) {
 
     internal val notificationManager: NotificationManagerCompat
     lateinit var detailsIntent: Intent
@@ -60,6 +68,12 @@ class SyncNotification(internal val context: Context, internal val notificationT
 
         detailsIntent = Intent(context, NotificationHandlerActivity::class.java)
         detailsIntent.putExtra(DebugInfoActivity.KEY_THROWABLE, e)
+        // The sync owns this identity snapshot. Do not look up the account row again when the
+        // notification is tapped: a same-name row may have been removed and re-created.
+        account?.let { detailsIntent.putExtra(AppSettingsActivity.EXTRA_ACCOUNT, it) }
+        accountCreationId?.takeIf { it.isNotBlank() }?.let {
+            detailsIntent.putExtra(AppSettingsActivity.EXTRA_CREATION_ID, it)
+        }
         detailsIntent.data = Uri.parse("uri://" + javaClass.name + "/" + notificationTag)
     }
 

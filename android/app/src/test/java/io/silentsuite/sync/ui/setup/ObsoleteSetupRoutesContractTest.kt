@@ -22,7 +22,7 @@ class ObsoleteSetupRoutesContractTest {
         assertTrue(manifest.contains("android:scheme=\"silentsuite\" android:host=\"signup-complete\""))
         assertTrue(creation.contains("PostLoginSetupActivity.newIntent"))
         assertTrue(launcher.contains("PostLoginSetupActivity.newIntent"))
-        assertTrue(runtime.contains("ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, account))"))
+        assertTrue(runtime.contains("ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, account, \"setup-generation\"))"))
         assertTrue(screenshotProvisioner.contains("AccountSettings.KEY_CREATION_ID"))
         assertTrue(screenshotProvisioner.contains("PostLoginSetupState.COMPLETE"))
     }

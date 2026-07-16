@@ -3,7 +3,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
-    android:paddingLeft="?android:attr/expandableListPreferredItemPaddingLeft">
+    android:paddingStart="@dimen/spacing_40">
 
     <include layout="@layout/import_content_list_account" />
 </LinearLayout>

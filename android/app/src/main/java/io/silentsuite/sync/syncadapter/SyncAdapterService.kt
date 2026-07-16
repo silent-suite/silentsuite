@@ -9,6 +9,7 @@
 package io.silentsuite.sync.syncadapter
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.*
@@ -66,8 +67,6 @@ abstract class SyncAdapterService : Service() {
 
     abstract class SyncAdapter(context: Context) : AbstractThreadedSyncAdapter(context, false) {
         private val syncErrorTitle: Int = R.string.sync_error_generic
-        private val notificationManager = SyncNotification(context, "refresh-collections", Constants.NOTIFICATION_REFRESH_COLLECTIONS)
-
         protected enum class Completion { SUCCESS, FAILURE, SKIPPED, DISPATCHED }
 
         protected open val outcomeService: SyncStatusStore.Service? = null
@@ -76,6 +75,14 @@ abstract class SyncAdapterService : Service() {
 
         override fun onPerformSync(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult) {
             Logger.log.log(Level.INFO, "$authority sync has been initiated.", extras.keySet().toTypedArray())
+            // Capture once before sync work. The error-notification route must not inspect a
+            // potentially replaced same-name AccountManager row after an asynchronous failure.
+            val accountCreationId = AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID)
+                ?.takeIf { it.isNotBlank() }
+            val notificationManager = SyncNotification(
+                context, "refresh-collections", Constants.NOTIFICATION_REFRESH_COLLECTIONS,
+                account, accountCreationId
+            )
 
             // required for dav4android (ServiceLoader)
             Thread.currentThread().contextClassLoader = context.classLoader

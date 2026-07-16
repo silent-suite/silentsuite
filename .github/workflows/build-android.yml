@@ -259,7 +259,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
-          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest,io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest
+          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest,io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest,io.silentsuite.sync.ui.SiblingRoutesRuntimeTest
 
       - name: Upload focused androidTest reports and results
         if: always()
@@ -281,6 +281,7 @@ jobs:
           expected={
             ('io.silentsuite.sync.ui.AccountActivityRecreationTest','recreationKeepsTheExactAccountRouteAndDeliversModelStateToTheRecreatedUi'),
             ('io.silentsuite.sync.ui.AccountActivityRecreationTest','readyDoneCompletesOnlyTheExactGeneratedAccount'),
+            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','replacementGenerationCannotCompleteThePreviouslyValidatedSetupRoute'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','noNetworkDashboardShellRoutesExactAccountAfterReadyDone'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','recoveryRemovalConfirmedRoutesCleanLoginAndPreservesSibling'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionsRecoveryBlocksActionsAndLimitedSkipReachesReady'),
@@ -295,6 +296,25 @@ jobs:
             ('io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest','explicitCreatingTargetOnlyReceivesProviderConfiguration'),
             ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','contactsAttemptExtraRoundTripsAtProviderBoundary'),
             ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','persistedEvidenceIsExactAccountGenerationScopedAndContainsNoAccountName'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCompletionRecreatesAndReturnsToCallerForExactGeneration'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCancelReturnsToCallerAfterRecreation'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importRecreationAndBackCancelReturnToItsCaller'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importCompletionShowsResultAndReturnsToCallerForExactCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCopyRevalidatesGenerationBeforeWritingClipboard'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCopyCompletesAfterRecreationForItsExactGeneration'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionCreateLaunchRecreateAndBackPreserveExactRoute'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationsLaunchRecreateAndBackKeepsExactGenerationRoute'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','exactGenerationRoutesLaunchRealActivitiesAndRejectReplacement'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','aboutHelpRemainsReadableAndSelectedAcrossRecreation'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','staleSameNameGenerationRoutesFailClosedBeforeRendering'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','retainedSettingsRejectSameNameReplacementBeforeAccountMutation'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionExportCompletionReturnsToExactRenderedCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionViewRendersRecreatesAndReturnsForExactCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionCreateCompletionRendersCreatedCollectionAndPreservesReturn'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionEditCompletionReturnsToUpdatedCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionMembersRenderRemoveAndReturnToExactCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationAcceptCompletionReturnsToCallerForExactGeneration'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationRejectCompletionUpdatesListAndReturnsForExactGeneration'),
           }
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
