@@ -618,6 +618,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
     }
 
+    @VisibleForTesting
+    internal fun deliverActivityResultForTesting(requestCode: Int, resultCode: Int, data: Intent?) =
+        onActivityResult(requestCode, resultCode, data)
+
     // SyncStatusObserver (moved from AccountsActivity)
     override fun onStatusChanged(which: Int) {
         if (!exactAccountStillCurrent()) return

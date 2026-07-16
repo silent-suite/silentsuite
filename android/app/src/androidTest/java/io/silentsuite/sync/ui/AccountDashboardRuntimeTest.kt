@@ -325,7 +325,7 @@ class AccountDashboardRuntimeTest {
                         toolbar.menu.findItem(R.id.account_show_fingerprint))))
                     assertTrue(activity.onOptionsItemSelected(requireNotNull(
                         toolbar.menu.findItem(R.id.account_export_data))))
-                    activity.onActivityResult(7501, android.app.Activity.RESULT_OK, Intent().apply {
+                    activity.deliverActivityResultForTesting(7501, android.app.Activity.RESULT_OK, Intent().apply {
                         data = android.net.Uri.parse("content://stale-export")
                     })
                     val navigation = activity.findViewById<NavigationView>(R.id.nav_view)
