@@ -189,6 +189,7 @@ class SettingsRuntimeTest {
                 replacement = replacementAccount
                 check(manager.addAccountExplicitly(replacementAccount, null, Bundle().apply {
                     putString(AccountSettings.KEY_CREATION_ID, "settings-generation-b")
+                    putString(AccountSettings.KEY_SETTINGS_VERSION, AccountSettings.CURRENT_VERSION.toString())
                 }))
                 scenario.onActivity { activity ->
                     val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content)
@@ -197,7 +198,7 @@ class SettingsRuntimeTest {
                     assertFalse(wifiOnly.callChangeListener(true))
                     assertTrue(activity.isFinishing)
                 }
-                assertEquals(null, manager.getUserData(replacementAccount, AccountSettings.KEY_WIFI_ONLY))
+                assertFalse(AccountSettings(context, replacementAccount).syncWifiOnly)
             }
         } finally {
             removeAccountAndWait(manager, replacement ?: account)

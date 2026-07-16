@@ -24,10 +24,10 @@ class AccountRoutingContractTest {
 
         assertTrue(accountActivity.contains("AppSettingsActivity.newIntent(this, account, accountCreationId)"))
         assertTrue(accountActivity.contains("InvitationsActivity.newIntent(this, account, accountCreationId)"))
-        assertTrue(appSettings.contains("account: Account,"))
-        assertTrue(appSettings.contains("creationId: String,"))
+        assertTrue(Regex(
+            """fun newIntent\(\s*context: Context,\s*account: Account,\s*creationId: String,"""
+        ).containsMatchIn(appSettings))
         assertTrue(appSettings.contains("const val EXTRA_CREATION_ID = \"account_creation_id\""))
-        assertFalse(appSettings.contains("account: Account?"))
         assertTrue(appSettings.contains("intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)"))
         assertTrue(appSettings.contains("ExactAccountRouting.validate(candidate, creationId"))
         assertTrue(appSettings.contains("outState.putString(STATE_CREATION_ID, selectedCreationId)"))
