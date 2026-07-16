@@ -2,6 +2,7 @@ package io.silentsuite.sync.ui
 
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.accounts.OnAccountsUpdateListener
 import android.app.Application
 import android.content.ContentResolver
 import android.content.Context
@@ -16,6 +17,7 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.utils.AndroidCompat
+import java.util.concurrent.atomic.AtomicBoolean
 
 fun interface ExactAccountStatusCleanup {
     fun clear(identity: ExactAccountIdentity): Boolean
@@ -31,6 +33,14 @@ internal class AndroidCurrentAccountSignOut(
 ) : CurrentAccountSignOutCoordinator.Seams {
     private val manager = AccountManager.get(context)
     private val main = ExactAccountIdentity(account.type, account.name, creationId)
+    private val generationInvalidated = AtomicBoolean(false)
+    private val accountListener = OnAccountsUpdateListener { accounts ->
+        val current = accounts.firstOrNull { it.type == main.type && it.name == main.name }
+        if (current == null ||
+            manager.getUserData(current, AccountSettings.KEY_CREATION_ID) != main.creationId) {
+            generationInvalidated.set(true)
+        }
+    }
     private val statusCleanup = injectedStatusCleanup ?: run {
         val store = SyncStatusStore(context)
         // Snapshot the opaque generation key while AccountManager still owns the exact row.
@@ -38,10 +48,15 @@ internal class AndroidCurrentAccountSignOut(
         ExactAccountStatusCleanup { requested -> requested == main && store.clear(statusIdentity) }
     }
 
+    init {
+        manager.addOnAccountsUpdatedListener(accountListener, Handler(Looper.getMainLooper()), true)
+    }
+
     private fun currentRow(type: String, name: String): Account? =
         manager.getAccountsByType(type).firstOrNull { it.name == name }
 
     override fun snapshot(): CurrentAccountSignOutSnapshot? {
+        if (generationInvalidated.get()) return null
         val current = currentRow(account.type, account.name) ?: return null
         if (creationId.isBlank() ||
             manager.getUserData(current, AccountSettings.KEY_CREATION_ID) != creationId) return null
@@ -61,6 +76,10 @@ internal class AndroidCurrentAccountSignOut(
         ContentResolver.cancelSync(Account(identity.second, identity.first), null)
 
     override fun removeMain(main: ExactAccountIdentity, callback: (Boolean) -> Unit) {
+        if (generationInvalidated.get()) {
+            callback(false)
+            return
+        }
         val row = currentRow(main.type, main.name)
         if (row == null || manager.getUserData(row, AccountSettings.KEY_CREATION_ID) != main.creationId) {
             callback(false)
@@ -70,6 +89,7 @@ internal class AndroidCurrentAccountSignOut(
     }
 
     override fun mainGenerationAbsent(main: ExactAccountIdentity): Boolean {
+        if (generationInvalidated.get()) return true
         val row = currentRow(main.type, main.name)
         return row == null || manager.getUserData(row, AccountSettings.KEY_CREATION_ID) != main.creationId
     }
@@ -84,6 +104,10 @@ internal class AndroidCurrentAccountSignOut(
     }
 
     override fun clearStatus(main: ExactAccountIdentity) = runCatching { statusCleanup.clear(main) }.getOrDefault(false)
+
+    override fun close() {
+        runCatching { manager.removeOnAccountsUpdatedListener(accountListener) }
+    }
 
     override fun reconcileActive(main: ExactAccountIdentity, replacement: ExactAccountIdentity?): ActiveAccountReconciliation {
         if (!ActiveAccountManager.replaceIfActive(context, main, replacement))
@@ -141,4 +165,9 @@ class CurrentAccountSignOutViewModel(application: Application) : AndroidViewMode
     fun hasStarted() = coordinator?.state?.let { it !is CurrentAccountSignOutState.Idle } == true
 
     fun begin() = coordinator?.begin()
+
+    override fun onCleared() {
+        coordinator?.close()
+        super.onCleared()
+    }
 }

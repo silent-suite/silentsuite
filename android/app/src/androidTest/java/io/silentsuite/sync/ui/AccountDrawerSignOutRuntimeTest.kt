@@ -142,10 +142,13 @@ class AccountDrawerSignOutRuntimeTest {
 
     @Test fun adapterRefusesToRemoveSameNameReplacementGeneration() {
         val fixture = Fixture("replacement")
+        var adapter: AndroidCurrentAccountSignOut? = null
         try {
             val oldIdentity = ExactAccountIdentity(fixture.account.type, fixture.account.name, fixture.creationId)
-            val adapter = AndroidCurrentAccountSignOut(fixture.context, fixture.account, fixture.creationId)
+            val retainedAdapter = AndroidCurrentAccountSignOut(fixture.context, fixture.account, fixture.creationId)
+            adapter = retainedAdapter
             removeAccountAndWait(fixture.manager, fixture.account)
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             val replacementGeneration = "replacement-generation"
             val replacementData = Bundle().apply {
                 putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
@@ -156,17 +159,19 @@ class AccountDrawerSignOutRuntimeTest {
             assertEquals(replacementGeneration,
                 fixture.manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
 
+            assertTrue(retainedAdapter.mainGenerationAbsent(oldIdentity))
             val callbackReceived = CountDownLatch(1)
             var callback: Boolean? = null
-            adapter.removeMain(oldIdentity) {
+            retainedAdapter.removeMain(oldIdentity) {
                 callback = it
                 callbackReceived.countDown()
             }
             assertTrue("replacement refusal callback timed out", callbackReceived.await(10, TimeUnit.SECONDS))
             assertEquals(false, callback)
-            assertTrue(adapter.mainGenerationAbsent(oldIdentity))
+            assertTrue(retainedAdapter.mainGenerationAbsent(oldIdentity))
             assertTrue(fixture.account in fixture.manager.getAccountsByType(fixture.account.type))
         } finally {
+            adapter?.close()
             fixture.close()
         }
     }

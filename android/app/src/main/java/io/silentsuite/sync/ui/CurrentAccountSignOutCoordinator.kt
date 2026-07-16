@@ -37,6 +37,7 @@ class CurrentAccountSignOutCoordinator(
         fun clearStatus(main: ExactAccountIdentity): Boolean
         fun reconcileActive(main: ExactAccountIdentity, replacement: ExactAccountIdentity?): ActiveAccountReconciliation
         fun removeAndVerifyChildren(snapshot: CurrentAccountSignOutSnapshot, callback: (Boolean) -> Unit)
+        fun close() = Unit
     }
 
     var state: CurrentAccountSignOutState = CurrentAccountSignOutState.Idle
@@ -97,7 +98,10 @@ class CurrentAccountSignOutCoordinator(
         try {
             seams.removeAndVerifyChildren(captured) { success ->
                 if (state !is CurrentAccountSignOutState.CleaningUp) return@removeAndVerifyChildren
-                if (success) transition(CurrentAccountSignOutState.Complete(essentialCleanup.active)) else failCleanup()
+                if (success) {
+                    transition(CurrentAccountSignOutState.Complete(essentialCleanup.active))
+                    close()
+                } else failCleanup()
             }
         } catch (_: Exception) {
             failCleanup()
@@ -107,6 +111,7 @@ class CurrentAccountSignOutCoordinator(
     private fun failRemoval() = transition(CurrentAccountSignOutState.RemovalFailed(nextErrorId++))
     private fun failCleanup() = transition(CurrentAccountSignOutState.CleanupFailed(nextErrorId++))
     private fun transition(next: CurrentAccountSignOutState) { state = next; onStateChanged(next) }
+    fun close() { runCatching { seams.close() } }
 }
 
 object AccountSwitcherPolicy {
