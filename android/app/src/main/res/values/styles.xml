@@ -126,6 +126,53 @@
         <item name="boxStrokeWidthFocused">2dp</item>
     </style>
 
+    <style name="Widget.AppTheme.Dashboard.ServiceCard" parent="Widget.Material3.CardView.Outlined">
+        <item name="cardBackgroundColor">@color/semantic_surface</item>
+        <item name="cardCornerRadius">@dimen/shape_radius_standard</item>
+        <item name="cardElevation">@dimen/elevation_resting</item>
+        <item name="strokeColor">@color/semantic_outline</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <style name="Widget.AppTheme.Dashboard.StatusRow" parent="">
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:minHeight">72dp</item>
+        <item name="android:padding">@dimen/spacing_16</item>
+        <item name="android:importantForAccessibility">yes</item>
+    </style>
+
+    <style name="Widget.AppTheme.Dashboard.StatusIcon" parent="">
+        <item name="android:layout_width">24dp</item>
+        <item name="android:layout_height">24dp</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+
+    <style name="Widget.AppTheme.Dashboard.StatusTextGroup" parent="">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginStart">@dimen/spacing_16</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:importantForAccessibility">noHideDescendants</item>
+    </style>
+
+    <style name="Widget.AppTheme.Dashboard.CollectionCard" parent="Widget.Material3.CardView.Outlined">
+        <item name="cardBackgroundColor">@color/semantic_surface</item>
+        <item name="cardCornerRadius">@dimen/shape_radius_standard</item>
+        <item name="cardElevation">@dimen/elevation_resting</item>
+        <item name="strokeColor">@color/semantic_outline</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <style name="Widget.AppTheme.Dashboard.CollectionToolbar" parent="Widget.Material3.Toolbar.Surface">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="titleTextColor">@color/semantic_on_surface</item>
+        <item name="navigationIconTint">@color/semantic_primary</item>
+    </style>
+
     <style name="tablayout" parent="Base.Widget.Design.TabLayout">
         <item name="android:background">@color/navy700</item>
     </style>

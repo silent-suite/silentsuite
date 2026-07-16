@@ -29,7 +29,9 @@ class AccountDrawerContractTest {
         val activity = File(main, "java/io/silentsuite/sync/ui/AccountActivity.kt").readText()
         val signOut = File(main, "java/io/silentsuite/sync/ui/AndroidCurrentAccountSignOut.kt").readText()
         listOf("R.id.caldav", "R.id.carddav", "R.id.taskdav").forEach { assertTrue(it, activity.contains(it)) }
-        assertTrue(activity.contains("AppSettingsActivity.newIntent(this, account)"))
+        assertTrue(activity.contains("AppSettingsActivity.newIntent(this, account, accountCreationId)"))
+        assertTrue(activity.contains("replacement.creationId"))
+        assertTrue(activity.contains("fun newIntent(context: Context, account: Account, creationId: String)"))
         assertTrue(activity.contains("row.id = rowId"))
         assertTrue(activity.contains("accountRowViewId(identity)"))
         assertTrue(activity.indexOf("attachRetainedSignOut()") < activity.indexOf("ExactAccountRouting.validate"))

@@ -196,6 +196,9 @@ class AccountDrawerSignOutRuntimeTest {
                 val monitor = instrumentation.addMonitor(AccountActivity::class.java.name, null, false)
                 var launched: android.app.Activity? = null
                 try {
+                    // The retained ViewModel already owns its coordinator. Do not let this
+                    // target-specific factory initialize the replacement sibling Activity.
+                    CurrentAccountSignOutViewModel.seamsFactory = null
                     fake.absent = true
                     fake.callback!!(true)
                     launched = instrumentation.waitForMonitorWithTimeout(monitor, 10_000)

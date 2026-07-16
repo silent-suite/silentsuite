@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.silentsuite.sync.utils.defaultSharedPreferences
+import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import java.net.URI
 import java.net.URISyntaxException
 
@@ -38,11 +39,18 @@ class AppSettingsActivity : BaseActivity() {
 
     companion object {
         const val EXTRA_ACCOUNT = "account"
+        const val EXTRA_CREATION_ID = "account_creation_id"
 
-        fun newIntent(context: Context, account: Account?): Intent =
-            Intent(context, AppSettingsActivity::class.java).apply {
-                account?.let { putExtra(EXTRA_ACCOUNT, it) }
+        /** Global settings have no account identity and intentionally carry no account extra. */
+        fun newIntent(context: Context): Intent = Intent(context, AppSettingsActivity::class.java)
+
+        fun newIntent(context: Context, account: Account, creationId: String): Intent {
+            require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
+            return Intent(context, AppSettingsActivity::class.java).apply {
+                putExtra(EXTRA_ACCOUNT, account)
+                putExtra(EXTRA_CREATION_ID, creationId)
             }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,10 +89,16 @@ class AppSettingsActivity : BaseActivity() {
             // Prefer the caller's exact account. Global settings entry points have no account
             // context and intentionally fall back to the active account.
             val accountManager = AccountManager.get(requireContext())
-            val accounts = accountManager.getAccountsByType(App.accountType)
             val requestedAccount = requireActivity().intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)
-            account = requestedAccount?.takeIf { requested -> accounts.any { it == requested } }
-                ?: ActiveAccountManager.getActiveAccount(requireContext())
+            val requestedCreationId = requireActivity().intent.getStringExtra(EXTRA_CREATION_ID)
+            // An explicit account route is generation-bound. Never turn a stale retained route
+            // into a same-name replacement by resolving the mutable account row again.
+            account = if (requestedAccount != null) {
+                ExactAccountRouting.validate(requestedAccount, requestedCreationId,
+                    App.accountType, accountManager)
+            } else {
+                ActiveAccountManager.getActiveAccount(requireContext())
+            }
             if (account != null) {
                 try {
                     accountSettings = AccountSettings(requireContext(), account!!)
