@@ -9,6 +9,12 @@ class AccountRoutingContractTest {
     private val sourceRoot = File("src/main/java/io/silentsuite/sync")
 
     @Test
+    fun releaseDependenciesNeverResolveThroughUnboundedSnapshotRepositories() {
+        val rootBuild = File("../build.gradle").readText()
+        assertFalse(rootBuild.contains("oss.sonatype.org/content/repositories/snapshots"))
+    }
+
+    @Test
     fun settingsAndPostLoginSetupKeepTheExactAccount() {
         val accountActivity = File(sourceRoot, "ui/AccountActivity.kt").readText()
         val appSettings = File(sourceRoot, "ui/AppSettingsActivity.kt").readText()
