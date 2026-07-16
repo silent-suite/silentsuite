@@ -34,7 +34,7 @@ internal class AndroidCurrentAccountSignOut(
     private val statusCleanup = injectedStatusCleanup ?: run {
         val store = SyncStatusStore(context)
         // Snapshot the opaque generation key while AccountManager still owns the exact row.
-        val statusIdentity = store.identity(account)
+        val statusIdentity = store.identity(account, creationId)
         ExactAccountStatusCleanup { requested -> requested == main && store.clear(statusIdentity) }
     }
 

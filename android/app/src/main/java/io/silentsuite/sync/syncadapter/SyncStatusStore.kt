@@ -68,6 +68,9 @@ class SyncStatusStore internal constructor(
 
     fun identity(account: Account): MainIdentity = MainIdentity(mainAccountKey(account))
 
+    internal fun identity(account: Account, creationId: String): MainIdentity =
+        MainIdentity(hashIdentity(account.type, account.name, creationId))
+
     @Synchronized
     fun status(account: Account, service: Service): Status = synchronized(STORE_LOCK) {
         val identity = mainAccountKey(account)
