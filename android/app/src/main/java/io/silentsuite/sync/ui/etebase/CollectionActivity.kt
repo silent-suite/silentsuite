@@ -93,10 +93,12 @@ class CollectionActivity() : BaseActivity() {
     }
 
     companion object {
-        private const val EXTRA_ACCOUNT = "account"
-        private const val EXTRA_COLLECTION_UID = "collectionUid"
-        private const val EXTRA_COLLECTION_TYPE = "collectionType"
-        private const val EXTRA_CREATION_ID = "creationId"
+        // Internal so instrumentation can assert the exact production factory contract without
+        // duplicating string literals. These remain implementation details outside this module.
+        internal const val EXTRA_ACCOUNT = "account"
+        internal const val EXTRA_COLLECTION_UID = "collectionUid"
+        internal const val EXTRA_COLLECTION_TYPE = "collectionType"
+        internal const val EXTRA_CREATION_ID = "creationId"
 
         fun newIntent(context: Context, account: Account, colUid: String): Intent {
             require(colUid.isNotBlank()) { "Collection UID must be nonblank" }
