@@ -8,6 +8,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.VisibleForTesting
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -94,6 +95,8 @@ internal class AndroidCurrentAccountSignOut(
         return row == null || manager.getUserData(row, AccountSettings.KEY_CREATION_ID) != main.creationId
     }
 
+    override fun hasObservedMainGenerationInvalidation() = generationInvalidated.get()
+
     override fun clearCache(main: ExactAccountIdentity): Boolean {
         val row = currentRow(main.type, main.name)
         if (row != null) {
@@ -163,6 +166,14 @@ class CurrentAccountSignOutViewModel(application: Application) : AndroidViewMode
         exactAccount == ExactAccountIdentity(account.type, account.name, creationId)
 
     fun hasStarted() = coordinator?.state?.let { it !is CurrentAccountSignOutState.Idle } == true
+
+    fun ownsCurrentGeneration() = exactAccount?.let { identity ->
+        coordinator?.isMainGenerationPresent(identity)
+    } == true
+
+    @VisibleForTesting
+    internal fun hasObservedMainGenerationInvalidation() =
+        coordinator?.hasObservedMainGenerationInvalidation() == true
 
     fun begin() = coordinator?.begin()
 

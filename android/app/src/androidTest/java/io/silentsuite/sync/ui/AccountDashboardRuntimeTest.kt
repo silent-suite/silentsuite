@@ -4,11 +4,14 @@ import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
+import android.content.Context
 import android.os.Build
+import android.os.Bundle
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
+import com.google.android.material.navigation.NavigationView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -16,12 +19,16 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.utils.AndroidCompat
 import java.net.URI
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -86,7 +93,7 @@ class AccountDashboardRuntimeTest {
 
     @Test
     fun serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting() {
-        withDashboardAccount { _, account, scenario ->
+        withDashboardAccount { context, account, scenario ->
             scenario.onActivity { activity ->
                 val calendarModule = activity.findViewById<View>(R.id.calendar_service_module)
                 val contactsModule = activity.findViewById<View>(R.id.contacts_service_module)
@@ -149,10 +156,212 @@ class AccountDashboardRuntimeTest {
             assertFalse(create.hasExtra(CollectionActivity.EXTRA_COLLECTION_UID))
 
             assertEquals(listOf(account to generation), syncRequests)
+
+            val manager = AccountManager.get(context)
+            scenario.onActivity { activity ->
+                assertFalse(activity.hasObservedRetainedGenerationInvalidation())
+            }
+            removeAccountAndWait(manager, account)
+            waitForRetainedGenerationInvalidation(scenario)
+            val replacementGeneration = "dashboard-replacement-generation"
+            assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
+                putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
+            }))
+            val replacementRow = manager.getAccountsByType(account.type)
+                .single { it.name == account.name }
+            assertEquals(replacementGeneration,
+                manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
+            launchedCollectionIntents.clear()
+            syncRequests.clear()
+
+            scenario.onActivity { activity ->
+                val calendarList = activity.listCalDAV!!
+                val row = calendarList.adapter.getView(0, null, calendarList)
+                assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
+                activity.onMenuItemClick(requireNotNull(
+                    activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
+                ))
+                assertTrue(activity.onOptionsItemSelected(requireNotNull(
+                    activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
+                )))
+            }
+
+            assertTrue(launchedCollectionIntents.isEmpty())
+            assertTrue(syncRequests.isEmpty())
+            assertTrue(account in manager.getAccountsByType(account.type))
         }
     }
 
-    private fun withDashboardAccount(block: (android.content.Context, Account, ActivityScenario<AccountActivity>) -> Unit) {
+    @Test
+    fun retainedLoadRejectsSameNameReplacementBeforePublication() {
+        withDashboardAccount { context, account, scenario ->
+            val loaderStarted = CountDownLatch(1)
+            val releaseLoader = CountDownLatch(1)
+            val blockLoader = AtomicBoolean(false)
+            AccountActivity.AccountInfoViewModel.accountLoaderOverride = { loaderContext, exact, creationId ->
+                check(exact == account)
+                check(creationId == generation)
+                if (blockLoader.get()) {
+                    loaderStarted.countDown()
+                    check(releaseLoader.await(10, TimeUnit.SECONDS))
+                }
+                val store = SyncStatusStore(loaderContext)
+                AccountActivity.AccountInfo().apply {
+                    caldav = service(CollectionInfo.Type.CALENDAR,
+                        store.status(exact, SyncStatusStore.Service.CALENDAR))
+                }
+            }
+            try {
+                var deliveriesBefore = 0
+                scenario.onActivity { activity ->
+                    deliveriesBefore = activity.accountInfoDeliveryCount
+                    blockLoader.set(true)
+                    activity.refresh()
+                }
+                assertTrue("generation-bound load never began", loaderStarted.await(10, TimeUnit.SECONDS))
+
+                val manager = AccountManager.get(context)
+                removeAccountAndWait(manager, account)
+                waitForRetainedGenerationInvalidation(scenario)
+                assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
+                    putString(AccountSettings.KEY_CREATION_ID, "load-replacement-generation")
+                }))
+                releaseLoader.countDown()
+                assertNoAdditionalDelivery(scenario, deliveriesBefore)
+            } finally {
+                // Never leave the deterministic IO seam blocked if an assertion fails.
+                releaseLoader.countDown()
+            }
+        }
+    }
+
+    @Test
+    fun initialLoadFailurePublishesTerminalErrorAndRefreshFailureRetainsValidDashboard() {
+        val fail = AtomicBoolean(true)
+        withDashboardAccount(loaderOverride = { loaderContext, exact, creationId ->
+            check(creationId == generation)
+            if (fail.get()) throw IllegalStateException("deterministic initial failure")
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { _, _, scenario ->
+            waitForModel(scenario)
+            scenario.onActivity { activity ->
+                assertEquals("Needs attention", activity.findViewById<TextView>(R.id.dashboard_overall_status).text.toString())
+                fail.set(false)
+                activity.refresh()
+            }
+            waitForText(scenario, R.id.dashboard_overall_status) { it == "Never synced" }
+            scenario.onActivity { activity ->
+                fail.set(true)
+                activity.refresh()
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.onActivity { activity ->
+                assertEquals("Never synced", activity.findViewById<TextView>(R.id.dashboard_overall_status).text.toString())
+            }
+        }
+    }
+
+    @Test
+    fun retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes() {
+        withDashboardAccount { context, account, scenario ->
+            val fingerprints = mutableListOf<String>()
+            val routes = mutableListOf<Intent>()
+            val exportDocuments = mutableListOf<Intent>()
+            var exports = 0
+            var billingReads = 0
+            var permissionRequests = 0
+            var permissionRemediations = 0
+            var masterSyncEnables = 0
+            AccountActivity.fingerprintLoaderOverride = { _, _, creationId ->
+                fingerprints += creationId
+                "private-fingerprint"
+            }
+            AccountActivity.accountRouteLauncherOverride = { routes += Intent(it) }
+            AccountActivity.exportDocumentLauncherOverride = { exportDocuments += Intent(it) }
+            AccountActivity.exportWriterOverride = { _, _, _, _, _ -> exports += 1 }
+            AccountActivity.billingStatusOverride = { _, _, _ ->
+                billingReads += 1
+                io.silentsuite.sync.billing.BillingManager.SubscriptionStatus(
+                    "past_due", null, null, null, null)
+            }
+            AccountActivity.permissionRequestOverride = { permissionRequests += 1 }
+            AccountActivity.permissionRemediationLauncherOverride = { permissionRemediations += 1 }
+            AccountActivity.masterSyncEnableOverride = { masterSyncEnables += 1 }
+            val masterSyncWasEnabled = android.content.ContentResolver.getMasterSyncAutomatically()
+            try {
+                lateinit var renderedEnableSync: View
+                lateinit var renderedPermissionFix: View
+                scenario.onActivity { activity ->
+                    // Keep a picker result pending, then replace the generation before it
+                    // returns. The writer seam proves the result cannot read or write data.
+                    activity.beginExportForTesting(AndroidExportKind.CALENDAR)
+                    activity.renderDashboardActionForTesting(io.silentsuite.sync.ui.account.AccountDashboardAction.FIX_PERMISSIONS)
+                    renderedPermissionFix = activity.findViewById(R.id.dashboard_context_action)
+                    android.content.ContentResolver.setMasterSyncAutomatically(false)
+                    activity.onStatusChanged(0)
+                    renderedEnableSync = requireNotNull(activity.findViewById(
+                        com.google.android.material.R.id.snackbar_action))
+                }
+                assertEquals(1, exportDocuments.size)
+                exportDocuments.clear()
+                val manager = AccountManager.get(context)
+                removeAccountAndWait(manager, account)
+                waitForRetainedGenerationInvalidation(scenario)
+                assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
+                    putString(AccountSettings.KEY_CREATION_ID, "retained-surface-replacement")
+                }))
+
+                scenario.onActivity { activity ->
+                    renderedEnableSync.performClick()
+                    renderedPermissionFix.performClick()
+                    activity.continueRuntimePermissionsForTesting()
+                    val toolbar = activity.findViewById<Toolbar>(R.id.toolbar)
+                    assertTrue(activity.onOptionsItemSelected(requireNotNull(
+                        toolbar.menu.findItem(R.id.account_show_fingerprint))))
+                    assertTrue(activity.onOptionsItemSelected(requireNotNull(
+                        toolbar.menu.findItem(R.id.account_export_data))))
+                    activity.onActivityResult(7501, android.app.Activity.RESULT_OK, Intent().apply {
+                        data = android.net.Uri.parse("content://stale-export")
+                    })
+                    val navigation = activity.findViewById<NavigationView>(R.id.nav_view)
+                    activity.onNavigationItemSelected(requireNotNull(
+                        navigation.menu.findItem(R.id.nav_app_settings)))
+                    activity.onNavigationItemSelected(requireNotNull(
+                        navigation.menu.findItem(R.id.nav_invitations)))
+                    activity.reloadSubscriptionStatusForTesting()
+                }
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                assertTrue("stale Activity read a replacement fingerprint", fingerprints.isEmpty())
+                assertTrue("stale Activity launched a replacement route", routes.isEmpty())
+                assertTrue("stale Activity opened an export document", exportDocuments.isEmpty())
+                assertEquals("stale Activity wrote replacement export data", 0, exports)
+                assertEquals("stale Activity read replacement billing state", 0, billingReads)
+                assertEquals("stale Activity requested runtime permissions", 0, permissionRequests)
+                assertEquals("stale Activity launched permission remediation", 0, permissionRemediations)
+                assertEquals("stale Activity enabled global sync", 0, masterSyncEnables)
+            } finally {
+                AccountActivity.fingerprintLoaderOverride = null
+                AccountActivity.accountRouteLauncherOverride = null
+                AccountActivity.exportDocumentLauncherOverride = null
+                AccountActivity.exportWriterOverride = null
+                AccountActivity.billingStatusOverride = null
+                AccountActivity.permissionRequestOverride = null
+                AccountActivity.permissionRemediationLauncherOverride = null
+                AccountActivity.masterSyncEnableOverride = null
+                android.content.ContentResolver.setMasterSyncAutomatically(masterSyncWasEnabled)
+            }
+        }
+    }
+
+    private fun withDashboardAccount(
+        loaderOverride: ((Context, Account, String) -> AccountActivity.AccountInfo)? = null,
+        block: (android.content.Context, Account, ActivityScenario<AccountActivity>) -> Unit,
+    ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)
         val account = Account("dashboard-${System.nanoTime()}@example.invalid", App.accountType)
@@ -171,8 +380,9 @@ class AccountDashboardRuntimeTest {
         AccountActivity.syncRequestOverride = { _, exact ->
             syncRequests += exact to manager.getUserData(exact, AccountSettings.KEY_CREATION_ID)
         }
-        AccountActivity.AccountInfoViewModel.accountLoaderOverride = { loaderContext, exact ->
+        AccountActivity.AccountInfoViewModel.accountLoaderOverride = loaderOverride ?: { loaderContext, exact, creationId ->
             check(exact == account)
+            check(creationId == generation)
             val store = SyncStatusStore(loaderContext)
             AccountActivity.AccountInfo().apply {
                 caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
@@ -190,10 +400,52 @@ class AccountDashboardRuntimeTest {
             AccountActivity.collectionIntentLauncherOverride = null
             AccountActivity.syncRequestOverride = null
             AccountActivity.syncActiveOverride = null
+            AccountActivity.fingerprintLoaderOverride = null
+            AccountActivity.exportDocumentLauncherOverride = null
+            AccountActivity.exportWriterOverride = null
+            AccountActivity.billingStatusOverride = null
+            AccountActivity.accountRouteLauncherOverride = null
             App.postLoginBootstrapSucceeded = previousBootstrap
-            AndroidCompat.removeAccount(manager, account)
+            removeAccountAndWait(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
             context.getSharedPreferences("sync_status_v1", 0).edit().clear().commit()
+        }
+    }
+
+    private fun removeAccountAndWait(manager: AccountManager, account: Account) {
+        if (account !in manager.getAccountsByType(account.type)) {
+            assertFalse("account row remained during teardown", account in manager.getAccountsByType(account.type))
+            return
+        }
+        val removed = CountDownLatch(1)
+        var confirmed = false
+        AndroidCompat.removeAccount(manager, account) {
+            confirmed = it
+            removed.countDown()
+        }
+        assertTrue("account removal callback timed out", removed.await(10, TimeUnit.SECONDS))
+        assertTrue("account removal was not confirmed", confirmed)
+        assertFalse("account row remained after confirmed removal", account in manager.getAccountsByType(account.type))
+    }
+
+    private fun waitForRetainedGenerationInvalidation(scenario: ActivityScenario<AccountActivity>) {
+        repeat(100) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            var observed = false
+            scenario.onActivity { observed = it.hasObservedRetainedGenerationInvalidation() }
+            if (observed) return
+            android.os.SystemClock.sleep(50)
+        }
+        throw AssertionError("retained OnAccountsUpdateListener did not observe generation absence")
+    }
+
+    private fun assertNoAdditionalDelivery(scenario: ActivityScenario<AccountActivity>, deliveriesBefore: Int) {
+        repeat(20) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            var deliveries = deliveriesBefore
+            scenario.onActivity { deliveries = it.accountInfoDeliveryCount }
+            assertEquals("replacement generation published dashboard data", deliveriesBefore, deliveries)
+            android.os.SystemClock.sleep(25)
         }
     }
 

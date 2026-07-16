@@ -37,6 +37,8 @@ class CurrentAccountSignOutCoordinator(
         fun clearStatus(main: ExactAccountIdentity): Boolean
         fun reconcileActive(main: ExactAccountIdentity, replacement: ExactAccountIdentity?): ActiveAccountReconciliation
         fun removeAndVerifyChildren(snapshot: CurrentAccountSignOutSnapshot, callback: (Boolean) -> Unit)
+        /** Monotonic platform-listener observation; production defaults to no invalidation. */
+        fun hasObservedMainGenerationInvalidation(): Boolean = false
         fun close() = Unit
     }
 
@@ -112,6 +114,12 @@ class CurrentAccountSignOutCoordinator(
     private fun failCleanup() = transition(CurrentAccountSignOutState.CleanupFailed(nextErrorId++))
     private fun transition(next: CurrentAccountSignOutState) { state = next; onStateChanged(next) }
     fun close() { runCatching { seams.close() } }
+
+    fun isMainGenerationPresent(main: ExactAccountIdentity) =
+        !runCatching { seams.mainGenerationAbsent(main) }.getOrDefault(true)
+
+    fun hasObservedMainGenerationInvalidation() =
+        runCatching { seams.hasObservedMainGenerationInvalidation() }.getOrDefault(true)
 }
 
 object AccountSwitcherPolicy {

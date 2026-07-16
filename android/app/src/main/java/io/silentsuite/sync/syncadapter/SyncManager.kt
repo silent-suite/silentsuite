@@ -8,6 +8,7 @@
 package io.silentsuite.sync.syncadapter
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.annotation.TargetApi
 import android.content.Context
 import android.content.Intent
@@ -56,6 +57,10 @@ internal fun aggregateDirectProviderOutcome(
 
 abstract class SyncManager<T: LocalResource<*>>
 constructor(protected val context: Context, protected val account: Account, protected val settings: AccountSettings, protected val extras: Bundle, protected val authority: String, protected val syncResult: SyncResult, journalUid: String, protected val serviceType: CollectionInfo.Type, accountName: String): Closeable {
+
+    private val accountCreationId = AccountManager.get(context)
+        .getUserData(account, AccountSettings.KEY_CREATION_ID)
+        ?.takeIf { it.isNotBlank() }
 
     protected val notificationManager: SyncNotification
     protected var localCollection: LocalCollection<T>? = null
@@ -206,12 +211,14 @@ constructor(protected val context: Context, protected val account: Account, prot
             notificationManager.setThrowable(e)
             val detailsIntent = notificationManager.detailsIntent
             detailsIntent.putExtra(KEY_ACCOUNT, account)
+            detailsIntent.putExtra(io.silentsuite.sync.ui.AppSettingsActivity.EXTRA_CREATION_ID, accountCreationId)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
             return ProviderOutcome.FAILURE
         } catch (e: FileNotFoundException) {
             notificationManager.setThrowable(e)
             val detailsIntent = notificationManager.detailsIntent
             detailsIntent.putExtra(KEY_ACCOUNT, account)
+            detailsIntent.putExtra(io.silentsuite.sync.ui.AppSettingsActivity.EXTRA_CREATION_ID, accountCreationId)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
             return ProviderOutcome.FAILURE
         } catch (e: IOException) {
@@ -245,6 +252,7 @@ constructor(protected val context: Context, protected val account: Account, prot
 
             val detailsIntent = notificationManager.detailsIntent
             detailsIntent.putExtra(KEY_ACCOUNT, account)
+            detailsIntent.putExtra(io.silentsuite.sync.ui.AppSettingsActivity.EXTRA_CREATION_ID, accountCreationId)
             if (e !is UnauthorizedException) {
                 detailsIntent.putExtra(DebugInfoActivity.KEY_AUTHORITY, authority)
                 detailsIntent.putExtra(DebugInfoActivity.KEY_PHASE, syncPhase)
@@ -257,6 +265,7 @@ constructor(protected val context: Context, protected val account: Account, prot
             notificationManager.setThrowable(e)
             val detailsIntent = notificationManager.detailsIntent
             detailsIntent.putExtra(KEY_ACCOUNT, account)
+            detailsIntent.putExtra(io.silentsuite.sync.ui.AppSettingsActivity.EXTRA_CREATION_ID, accountCreationId)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
             return ProviderOutcome.FAILURE
         }
@@ -272,7 +281,8 @@ constructor(protected val context: Context, protected val account: Account, prot
         val notificationHelper = SyncNotification(context,
                 System.currentTimeMillis().toString(), notificationId())
         val resources = context.resources
-        val intent = CollectionActivity.newIntent(context, account, cachedCollection.col.uid)
+        val creationId = accountCreationId ?: return
+        val intent = CollectionActivity.newIntent(context, account, creationId, cachedCollection.col.uid)
         notificationHelper.notify(syncSuccessfullyTitle,
                 String.format(context.getString(R.string.sync_successfully_modified),
                         resources.getQuantityString(R.plurals.sync_successfully,

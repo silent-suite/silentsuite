@@ -58,4 +58,18 @@ class LatestRequestWinsTest {
         ) { displayed = it })
         assertEquals(null, displayed)
     }
+
+    @Test
+    fun `current load failure preserves the previously published value`() {
+        val coordinator = LatestRequestWins<AccountDashboardModel>()
+        var displayed: AccountDashboardModel? = null
+        val successful = AccountDashboardModel(AccountDashboardState.SUCCESS)
+        assertTrue(coordinator.publishIfLatest(coordinator.begin(), successful) { displayed = it })
+
+        // AccountInfoViewModel deliberately does not publish a synthetic empty value when the
+        // current request fails. Starting that request must therefore retain durable success.
+        coordinator.begin()
+
+        assertEquals(successful, displayed)
+    }
 }

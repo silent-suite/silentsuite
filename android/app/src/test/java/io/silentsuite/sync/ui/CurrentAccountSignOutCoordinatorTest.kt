@@ -17,6 +17,7 @@ class CurrentAccountSignOutCoordinatorTest {
         var active = true
         var reconciledActive: ExactAccountIdentity? = sibling
         var children = true
+        var listenerInvalidated = false
         var removeCalls = 0
         var closeCalls = 0
         var removeCallback: ((Boolean) -> Unit)? = null
@@ -34,6 +35,7 @@ class CurrentAccountSignOutCoordinatorTest {
         override fun removeAndVerifyChildren(snapshot: CurrentAccountSignOutSnapshot, callback: (Boolean) -> Unit) {
             events += "children"; childrenCallback = callback
         }
+        override fun hasObservedMainGenerationInvalidation() = listenerInvalidated
         override fun close() { closeCalls++ }
     }
 
@@ -137,5 +139,18 @@ class CurrentAccountSignOutCoordinatorTest {
         val c = CurrentAccountSignOutCoordinator(f); c.begin(); f.absent = true
         f.removeCallback!!(true); f.childrenCallback!!(true)
         assertEquals(CurrentAccountSignOutState.Complete(other), c.state)
+    }
+
+    @Test fun `monotonic listener invalidation is exposed independently of exact routing`() {
+        val f = Fake()
+        val c = CurrentAccountSignOutCoordinator(f)
+        assertFalse(c.hasObservedMainGenerationInvalidation())
+
+        f.listenerInvalidated = true
+        assertTrue(c.hasObservedMainGenerationInvalidation())
+        // The seam remains monotonic even if a same-name replacement makes a later direct
+        // routing read look present again.
+        f.absent = false
+        assertTrue(c.hasObservedMainGenerationInvalidation())
     }
 }

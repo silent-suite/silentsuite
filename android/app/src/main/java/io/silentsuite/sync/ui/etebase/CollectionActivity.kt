@@ -100,26 +100,24 @@ class CollectionActivity() : BaseActivity() {
         internal const val EXTRA_COLLECTION_TYPE = "collectionType"
         internal const val EXTRA_CREATION_ID = "creationId"
 
-        fun newIntent(context: Context, account: Account, colUid: String): Intent {
+        fun newIntent(context: Context, account: Account, creationId: String, colUid: String): Intent {
+            require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
             require(colUid.isNotBlank()) { "Collection UID must be nonblank" }
             val intent = Intent(context, CollectionActivity::class.java)
             intent.putExtra(EXTRA_ACCOUNT, account)
-            intent.putExtra(EXTRA_CREATION_ID, currentCreationId(context, account))
+            intent.putExtra(EXTRA_CREATION_ID, creationId)
             intent.putExtra(EXTRA_COLLECTION_UID, colUid)
             return intent
         }
 
-        fun newCreateCollectionIntent(context: Context, account: Account, colType: String): Intent {
+        fun newCreateCollectionIntent(context: Context, account: Account, creationId: String, colType: String): Intent {
+            require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
             val intent = Intent(context, CollectionActivity::class.java)
             intent.putExtra(EXTRA_ACCOUNT, account)
-            intent.putExtra(EXTRA_CREATION_ID, currentCreationId(context, account))
+            intent.putExtra(EXTRA_CREATION_ID, creationId)
             intent.putExtra(EXTRA_COLLECTION_TYPE, colType)
             return intent
         }
-
-        private fun currentCreationId(context: Context, account: Account): String? =
-            AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID)
-                ?.takeIf { it.isNotBlank() }
     }
 
     private data class CollectionRoute(

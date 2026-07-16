@@ -9,6 +9,7 @@
 package io.silentsuite.sync.ui
 
 import android.os.Bundle
+import android.accounts.Account
 
 /**
  * Legacy AccountSettingsActivity — now redirects to the consolidated AppSettingsActivity.
@@ -18,8 +19,16 @@ class AccountSettingsActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Redirect to the consolidated App Settings screen
-        startActivity(AppSettingsActivity.newIntent(this, intent.getParcelableExtra(AppSettingsActivity.EXTRA_ACCOUNT)))
+        // An explicit legacy account route must retain its already-captured generation. Never
+        // re-resolve a mutable same-name row while forwarding notification settings.
+        val account = intent.getParcelableExtra<Account>(AppSettingsActivity.EXTRA_ACCOUNT)
+        val creationId = intent.getStringExtra(AppSettingsActivity.EXTRA_CREATION_ID)
+        val settingsIntent = when {
+            account == null -> AppSettingsActivity.newIntent(this)
+            !creationId.isNullOrBlank() -> AppSettingsActivity.newIntent(this, account, creationId)
+            else -> null
+        }
+        settingsIntent?.let(::startActivity)
         finish()
     }
 }

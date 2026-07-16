@@ -9,10 +9,10 @@ import org.junit.Test
 
 class AccountDashboardStateTest {
     private fun input(
-        loaded: Boolean = true, running: Boolean = false, setup: Boolean = true,
+        loaded: Boolean = true, loadFailed: Boolean = false, running: Boolean = false, setup: Boolean = true,
         master: Boolean = true, permission: Boolean = true, provider: Boolean = true,
         collections: Boolean = true, status: SyncStatusStore.Status? = SyncStatusStore.Status(),
-    ) = AccountDashboardInput(loaded, running, setup, master, permission, provider, collections, status)
+    ) = AccountDashboardInput(loaded, running, setup, master, permission, provider, collections, status, loadFailed)
 
     private fun model(
         state: AccountDashboardState,
@@ -22,6 +22,7 @@ class AccountDashboardStateTest {
 
     @Test fun `all reducer states have deterministic truthful precedence`() {
         assertEquals(model(AccountDashboardState.LOADING), reduceAccountDashboardState(input(loaded = false, running = true)))
+        assertEquals(model(AccountDashboardState.FAILURE), reduceAccountDashboardState(input(loaded = false, loadFailed = true)))
         assertEquals(model(AccountDashboardState.SETUP_REQUIRED), reduceAccountDashboardState(input(setup = false, running = true)))
         assertEquals(model(AccountDashboardState.SETUP_REQUIRED, collectionMissing = true), reduceAccountDashboardState(input(collections = false)))
         assertEquals(model(AccountDashboardState.RUNNING), reduceAccountDashboardState(input(running = true, master = false)))

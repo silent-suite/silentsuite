@@ -134,7 +134,7 @@
         <item name="strokeWidth">1dp</item>
     </style>
 
-    <style name="Widget.AppTheme.Dashboard.StatusRow">
+    <style name="Widget.AppTheme.Dashboard.StatusRow" parent="">
         <item name="android:orientation">horizontal</item>
         <item name="android:gravity">center_vertical</item>
         <item name="android:minHeight">72dp</item>
@@ -142,13 +142,13 @@
         <item name="android:importantForAccessibility">yes</item>
     </style>
 
-    <style name="Widget.AppTheme.Dashboard.StatusIcon">
+    <style name="Widget.AppTheme.Dashboard.StatusIcon" parent="">
         <item name="android:layout_width">24dp</item>
         <item name="android:layout_height">24dp</item>
         <item name="android:importantForAccessibility">no</item>
     </style>
 
-    <style name="Widget.AppTheme.Dashboard.StatusTextGroup">
+    <style name="Widget.AppTheme.Dashboard.StatusTextGroup" parent="">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginStart">@dimen/spacing_16</item>

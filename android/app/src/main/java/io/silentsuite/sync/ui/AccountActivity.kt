@@ -76,6 +76,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.io.OutputStream
 import java.util.logging.Level
 
 class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMenu.OnMenuItemClickListener, Refreshable, NavigationView.OnNavigationItemSelectedListener, SyncStatusObserver {
@@ -83,6 +84,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private val signOutModel: CurrentAccountSignOutViewModel by viewModels()
 
     private lateinit var account: Account
+    private lateinit var accountCreationId: String
     private lateinit var settings: AccountSettings
     private var accountInfo: AccountInfo? = null
 
@@ -124,20 +126,23 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val adapter = list.adapter as ArrayAdapter<*>
         val info = adapter.getItem(position) as CollectionListItemInfo
 
-        launchCollectionIntent(CollectionActivity.newIntent(this@AccountActivity, account, info.uid))
+        launchCollectionIntent(CollectionActivity.newIntent(this@AccountActivity, account, accountCreationId, info.uid))
     }
 
-    private val formattedFingerprint: String?
-        get() {
-            try {
-                val etebase = EtebaseLocalCache.getEtebase(this, HttpClient.sharedClient, settings)
-                val invitationManager = etebase.invitationManager
-                return Utils.prettyFingerprint(invitationManager.pubkey)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                return null
-            }
+    private fun formattedFingerprint(): String? {
+        if (!exactAccountStillCurrent()) return null
+        try {
+            val fingerprint = fingerprintLoaderOverride?.invoke(this, account, accountCreationId)
+                ?: EtebaseLocalCache.getEtebase(this, HttpClient.sharedClient, settings).let { etebase ->
+                    if (!exactAccountStillCurrent()) return null
+                    Utils.prettyFingerprint(etebase.invitationManager.pubkey)
+                }
+            return fingerprint?.takeIf { exactAccountStillCurrent() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
         }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -189,10 +194,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         title = account.name
-        settings = AccountSettings(this, account)
         val creationId = accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID)
         if (creationId.isNullOrBlank()) { finish(); return }
+        if (io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                account, creationId, App.accountType, accountManager) == null) { finish(); return }
+        accountCreationId = creationId
         signOutModel.initialize(account, creationId)
+        if (!exactAccountStillCurrent()) { finish(); return }
+        settings = AccountSettings(this, account)
+        if (!exactAccountStillCurrent()) { finish(); return }
         pendingExportKind = savedInstanceState?.getString(KEY_PENDING_EXPORT_KIND)?.let { name ->
             runCatching { AndroidExportKind.valueOf(name) }.getOrNull()
         }
@@ -287,7 +297,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         // The ViewModel survives rotation, but each Activity must observe its LiveData.
         // A fresh ViewModel after process death still needs initialization even when Android
         // supplies saved instance state.
-        model.initialize(this, account)
+        model.initialize(this, account, accountCreationId)
         model.observe(this) {
             updateUi(it)
         }
@@ -315,17 +325,25 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private fun dispatchNotificationPermissionAction(action: NotificationPermissionFlow.Action) {
         when (action) {
             NotificationPermissionFlow.Action.LAUNCH_NOTIFICATION_REQUEST -> {
+                if (!exactAccountStillCurrent()) return
                 NotificationUtils.markPermissionRequested(this)
+                if (!exactAccountStillCurrent()) return
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
             NotificationPermissionFlow.Action.CONTINUE_RUNTIME_PERMISSIONS -> {
-                if (!AccountSettings.limitedIntegrations(AccountManager.get(this), account))
-                    PermissionsActivity.requestAllPermissions(this)
+                if (!exactAccountStillCurrent()) return
+                val limitedIntegrations = AccountSettings.limitedIntegrations(AccountManager.get(this), account)
+                if (!limitedIntegrations && exactAccountStillCurrent())
+                    permissionRequestOverride?.invoke(this) ?: PermissionsActivity.requestAllPermissions(this)
             }
             NotificationPermissionFlow.Action.WAIT_FOR_NOTIFICATION_RESULT,
             NotificationPermissionFlow.Action.NONE -> Unit
         }
     }
+
+    @VisibleForTesting
+    internal fun continueRuntimePermissionsForTesting() =
+        dispatchNotificationPermissionAction(NotificationPermissionFlow.Action.CONTINUE_RUNTIME_PERMISSIONS)
 
     private fun setupNavHeader(navigationView: NavigationView) {
         val headerView = navigationView.getHeaderView(0)
@@ -453,7 +471,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun showFingerprintDialog() {
-        val fingerprint = formattedFingerprint
+        if (!exactAccountStillCurrent()) return
+        val fingerprint = formattedFingerprint()
+        if (!exactAccountStillCurrent()) return
         val displayFingerprint = fingerprint ?: getString(R.string.fingerprint_unavailable)
         val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
         view.findViewById<View>(R.id.body).visibility = View.GONE
@@ -463,6 +483,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 .setTitle(R.string.show_fingperprint_title)
                 .setView(view)
                 .setNeutralButton(R.string.copy_fingerprint) { _, _ ->
+                    if (!exactAccountStillCurrent()) return@setNeutralButton
                     if (fingerprint == null) {
                         Toast.makeText(this, R.string.fingerprint_unavailable, Toast.LENGTH_SHORT).show()
                     } else {
@@ -498,13 +519,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     override fun onMenuItemClick(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.create_calendar -> {
-                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_CALENDAR))
+                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_CALENDAR))
             }
             R.id.create_tasklist -> {
-                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_TASKS))
+                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_TASKS))
             }
             R.id.create_addressbook -> {
-                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_ADDRESS_BOOK))
+                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_ADDRESS_BOOK))
             }
             R.id.install_tasksorg ->  {
                 installPackage(tasksOrgPackage)
@@ -520,8 +541,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     override fun onNavigationItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
-            R.id.nav_app_settings -> startActivity(AppSettingsActivity.newIntent(this, account))
-            R.id.nav_invitations -> startActivity(InvitationsActivity.newIntent(this, account))
+            R.id.nav_app_settings -> launchExactAccountRoute(
+                AppSettingsActivity.newIntent(this, account, accountCreationId))
+            R.id.nav_invitations -> launchExactAccountRoute(
+                InvitationsActivity.newIntent(this, account, accountCreationId))
             R.id.nav_logout -> confirmLogout()
             R.id.nav_sync_overview -> Unit
         }
@@ -532,6 +555,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun showExportDialog() {
+        if (!exactAccountStillCurrent()) return
         val exportKinds = AndroidExportKind.values()
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.export_data_title)
@@ -542,14 +566,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun createExportDocument(kind: AndroidExportKind) {
+        if (!exactAccountStillCurrent()) return
         pendingExportKind = kind
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = kind.mimeType
             putExtra(Intent.EXTRA_TITLE, AndroidDataExporter.suggestedFileName(kind))
         }
-        startActivityForResult(intent, REQUEST_CREATE_EXPORT_DOCUMENT)
+        exportDocumentLauncherOverride?.invoke(intent) ?: startActivityForResult(intent, REQUEST_CREATE_EXPORT_DOCUMENT)
     }
+
+    @VisibleForTesting
+    internal fun beginExportForTesting(kind: AndroidExportKind) = createExportDocument(kind)
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -560,20 +588,31 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
         if (uri == null)
             return
+        if (!exactAccountStillCurrent()) return
 
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
+                    // Recheck after the document picker returned and immediately before every
+                    // private-cache/content or external-write boundary.
+                    if (!exactAccountStillCurrent()) return@withContext false
                     val outputStream = contentResolver.openOutputStream(uri)
                         ?: throw IOException("Could not open export destination")
                     outputStream.use {
-                        AndroidDataExporter.writeExport(this@AccountActivity, account, kind, it)
+                        if (!exactAccountStillCurrent()) return@withContext false
+                        (exportWriterOverride ?: { context: Context, exact: Account, creationId: String,
+                            exportKind: AndroidExportKind, stream: OutputStream ->
+                            AndroidDataExporter.writeExport(context, exact, creationId, exportKind, stream)
+                        })(this@AccountActivity, account, accountCreationId, kind, it)
                     }
+                    exactAccountStillCurrent()
                 }
+                .takeIf { it && exactAccountStillCurrent() } ?: return@launch
                 Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_success, Snackbar.LENGTH_LONG).show()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Logger.log.log(Level.SEVERE, "Android data export failed", e)
+                if (!exactAccountStillCurrent()) return@launch
                 Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_failed, Snackbar.LENGTH_LONG).show()
             }
         }
@@ -581,7 +620,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     // SyncStatusObserver (moved from AccountsActivity)
     override fun onStatusChanged(which: Int) {
+        if (!exactAccountStillCurrent()) return
         runOnUiThread {
+            if (!exactAccountStillCurrent()) return@runOnUiThread
             if (syncStatusSnackbar != null) {
                 syncStatusSnackbar!!.dismiss()
                 syncStatusSnackbar = null
@@ -590,7 +631,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             if (!ContentResolver.getMasterSyncAutomatically()) {
                 syncStatusSnackbar = Snackbar.make(findViewById(R.id.coordinator), R.string.accounts_global_sync_disabled, Snackbar.LENGTH_INDEFINITE)
                         .setAction(R.string.accounts_global_sync_enable) {
-                            ContentResolver.setMasterSyncAutomatically(true)
+                            if (!exactAccountStillCurrent()) return@setAction
+                            masterSyncEnableOverride?.invoke() ?: ContentResolver.setMasterSyncAutomatically(true)
+                            if (!exactAccountStillCurrent()) return@setAction
                             model.loadAccount()
                         }
                 syncStatusSnackbar!!.show()
@@ -650,6 +693,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     /* LOADERS AND LOADED DATA */
 
     class AccountInfo {
+        internal var loadFailed: Boolean = false
         internal var carddav: ServiceInfo? = null
         internal var caldav: ServiceInfo? = null
         internal var taskdav: ServiceInfo? = null
@@ -746,6 +790,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         fun reduce(service: AccountInfo.ServiceInfo?, permission: Boolean, provider: Boolean = true) =
             reduceAccountDashboardState(AccountDashboardInput(
                 loaded = service != null,
+                loadFailed = info.loadFailed,
                 running = service?.refreshing == true,
                 setupComplete = setupComplete,
                 masterSyncEnabled = master,
@@ -858,10 +903,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 AccountDashboardAction.NONE -> Unit
                 AccountDashboardAction.SYNC_NOW, AccountDashboardAction.RETRY_SYNC -> requestSync()
                 AccountDashboardAction.ENABLE_SYNC -> {
-                    ContentResolver.setMasterSyncAutomatically(true)
+                    if (!exactAccountStillCurrent()) return@setOnClickListener
+                    masterSyncEnableOverride?.invoke() ?: ContentResolver.setMasterSyncAutomatically(true)
+                    if (!exactAccountStillCurrent()) return@setOnClickListener
                     model.loadAccount()
                 }
-                AccountDashboardAction.FIX_PERMISSIONS -> startActivity(Intent(this, PermissionsActivity::class.java))
+                AccountDashboardAction.FIX_PERMISSIONS -> {
+                    if (!exactAccountStillCurrent()) return@setOnClickListener
+                    val intent = Intent(this, PermissionsActivity::class.java)
+                    permissionRemediationLauncherOverride?.invoke(intent) ?: startActivity(intent)
+                }
                 AccountDashboardAction.INSTALL_TASK_APP -> installPackage(tasksOrgPackage)
                 AccountDashboardAction.REVIEW_SETUP -> setupTarget?.let { target ->
                     findViewById<ScrollView>(R.id.parent).smoothScrollTo(0, findViewById<View>(target).top)
@@ -869,6 +920,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         }
     }
+
+    @VisibleForTesting
+    internal fun renderDashboardActionForTesting(action: AccountDashboardAction) =
+        renderDashboardAction(action, null)
 
     private fun permissionsReady(vararg permissions: String) = permissions.all {
         ContextCompat.checkSelfPermission(this, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -882,10 +937,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private val holder = MutableLiveData<AccountActivity.AccountInfo>()
         private lateinit var context: Context
         private lateinit var account: Account
+        private lateinit var accountCreationId: String
         private var davService: AccountUpdateService.InfoBinder? = null
         private var syncStatusListener: Any? = null
         private var serviceBound = false
-        private var initializedAccount: Account? = null
+        private var initializedIdentity: ExactAccountIdentity? = null
         private val dashboardTransitionDeduper = MeaningfulDashboardTransitionDeduper()
         private val latestLoad = LatestRequestWins<AccountActivity.AccountInfo>()
         private var loadJob: Job? = null
@@ -894,13 +950,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         fun shouldAnnounce(presentation: AccountDashboardPresentation) =
             dashboardTransitionDeduper.shouldAnnounce(presentation)
 
-        fun initialize(context: Context, account: Account) {
-            if (initializedAccount == account)
+        fun initialize(context: Context, account: Account, creationId: String) {
+            require(creationId.isNotBlank()) { "Account creation ID must be nonblank" }
+            val identity = ExactAccountIdentity(account.type, account.name, creationId)
+            if (initializedIdentity == identity)
                 return
-            check(initializedAccount == null) { "AccountInfoViewModel cannot be reused for another account" }
+            check(initializedIdentity == null) { "AccountInfoViewModel cannot be reused for another exact account" }
             this.context = context.applicationContext
             this.account = account
-            initializedAccount = account
+            this.accountCreationId = creationId
+            initializedIdentity = identity
 
             syncStatusListener = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_ACTIVE, this)
 
@@ -913,14 +972,28 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val request = latestLoad.begin()
             loadJob?.cancel()
             loadJob = viewModelScope.launch {
+                var ordinaryFailure = false
                 val info = try {
-                    withContext(Dispatchers.IO) { doLoad() }
+                    withContext(Dispatchers.IO) {
+                        if (exactGenerationStillCurrent()) doLoad() else null
+                    }
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     Logger.log.log(Level.SEVERE, "AccountInfoViewModel.loadAccount failed", e)
-                    AccountActivity.AccountInfo()
+                    ordinaryFailure = true
+                    null
                 }
-                latestLoad.publishIfLatest(request, info) { holder.value = it }
+                // The IO loader validates after private reads. Validate on the publishing thread
+                // too, so a replacement between completion and delivery cannot update this UI.
+                if (info != null && !cleared && exactGenerationStillCurrent()) {
+                    latestLoad.publishIfLatest(request, info) { holder.value = it }
+                } else if (ordinaryFailure && !cleared && exactGenerationStillCurrent() && holder.value == null) {
+                    // An initial ordinary failure is terminal evidence, not perpetual loading.
+                    // Refresh failures retain the last valid dashboard instead.
+                    latestLoad.publishIfLatest(request, AccountActivity.AccountInfo().apply {
+                        loadFailed = true
+                    }) { holder.value = it }
+                }
             }
         }
 
@@ -997,35 +1070,57 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         }
 
-        private fun doLoad(): AccountActivity.AccountInfo {
-            accountLoaderOverride?.let { return it(context, account) }
+        private fun exactGenerationStillCurrent() =
+            io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                account, accountCreationId, App.accountType, AccountManager.get(context)
+            ) != null
+
+        private fun doLoad(): AccountActivity.AccountInfo? {
+            accountLoaderOverride?.let { loader ->
+                // Test loaders represent the complete private-load boundary and receive the
+                // retained generation explicitly, never a name-keyed re-read.
+                if (!exactGenerationStillCurrent()) return null
+                return loader(context, account, accountCreationId)
+                    .takeIf { exactGenerationStillCurrent() }
+            }
             val info = AccountActivity.AccountInfo()
             val settings: AccountSettings
             val etebaseLocalCache: EtebaseLocalCache
             val colMgr: CollectionManager
             try {
+                // Settings/cache/session are account-name keyed. A same-name replacement must
+                // never be allowed to supply data to this retained generation.
+                if (!exactGenerationStillCurrent()) return null
                 settings = AccountSettings(context, account)
+                if (!exactGenerationStillCurrent()) return null
                 etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
+                if (!exactGenerationStillCurrent()) return null
                 val httpClient = HttpClient.Builder(context).build().okHttpClient
                 // Issue #119: getEtebase throws IllegalStateException when userData hasn't yet
                 // propagated (first-login race) or when the persisted session is genuinely
                 // missing. Previously this propagated to viewModelScope.launch and crashed the
-                // app via the default uncaught-exception handler. Return an empty AccountInfo
-                // so the UI shows nothing rather than dying.
+                // app via the default uncaught-exception handler. Preserve any prior successful
+                // dashboard model; an ordinary current-generation failure must not synthesize an
+                // empty model over it.
+                if (!exactGenerationStillCurrent()) return null
                 val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings)
                 colMgr = etebase.collectionManager
             } catch (e: InvalidAccountException) {
-                return info
+                throw AccountLoadFailure(e)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Logger.log.log(Level.SEVERE, "AccountInfoViewModel.doLoad failed", e)
-                return info
+                throw AccountLoadFailure(e)
             }
 
+            // Revalidate immediately before status and collection reads from this session/cache.
+            if (!exactGenerationStillCurrent()) return null
             val statusStore = SyncStatusStore(context)
             info.carddav = AccountInfo.ServiceInfo()
             info.carddav!!.refreshing = ContentResolver.isSyncActive(account, App.addressBooksAuthority)
+            if (!exactGenerationStillCurrent()) return null
             info.carddav!!.status = statusStore.status(account, SyncStatusStore.Service.CONTACTS)
+            if (!exactGenerationStillCurrent()) return null
             info.carddav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.ADDRESS_BOOK)
 
             val accountManager = AccountManager.get(context)
@@ -1041,17 +1136,23 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
             info.caldav = AccountInfo.ServiceInfo()
             info.caldav!!.refreshing = ContentResolver.isSyncActive(account, CalendarContract.AUTHORITY)
+            if (!exactGenerationStillCurrent()) return null
             info.caldav!!.status = statusStore.status(account, SyncStatusStore.Service.CALENDAR)
+            if (!exactGenerationStillCurrent()) return null
             info.caldav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.CALENDAR)
 
             info.taskdav = AccountInfo.ServiceInfo()
             info.taskdav!!.refreshing = TASK_PROVIDERS.any {
                 ContentResolver.isSyncActive(account, it.authority)
             }
+            if (!exactGenerationStillCurrent()) return null
             info.taskdav!!.status = statusStore.status(account, SyncStatusStore.Service.TASKS)
+            if (!exactGenerationStillCurrent()) return null
             info.taskdav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.TASKS)
 
-            return info
+            // This runs on Dispatchers.IO immediately after the final private read and before
+            // the result can reach the publisher.
+            return info.takeIf { exactGenerationStillCurrent() }
         }
 
         fun observe(owner: LifecycleOwner, observer: (AccountActivity.AccountInfo) -> Unit) =
@@ -1064,8 +1165,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             /** Deterministic no-network instrumentation seam; production leaves this null. */
             @VisibleForTesting
             @JvmField internal var accountLoaderOverride:
-                ((Context, Account) -> AccountActivity.AccountInfo)? = null
+                ((Context, Account, String) -> AccountActivity.AccountInfo)? = null
         }
+
+        private class AccountLoadFailure(cause: Throwable) : Exception(cause)
     }
 
 
@@ -1124,15 +1227,35 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     /* USER ACTIONS */
 
     private fun launchCollectionIntent(intent: Intent) {
+        if (!exactAccountStillCurrent()) return
         collectionIntentLauncherOverride?.invoke(intent) ?: startActivity(intent)
     }
 
+    private fun launchExactAccountRoute(intent: Intent) {
+        if (!exactAccountStillCurrent()) return
+        accountRouteLauncherOverride?.invoke(intent) ?: startActivity(intent)
+    }
+
     private fun requestSync() {
+        if (!exactAccountStillCurrent()) return
         if (isSyncActive()) return        // don't stack a duplicate concurrent sync
         syncRequestOverride?.invoke(applicationContext, account)
             ?: requestSync(applicationContext, account)
         Snackbar.make(findViewById(R.id.coordinator), R.string.account_synchronizing_now, Snackbar.LENGTH_LONG).show()
     }
+
+    private fun exactAccountStillCurrent() =
+        signOutModel.ownsCurrentGeneration() &&
+        io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+            account,
+            accountCreationId,
+            App.accountType,
+            AccountManager.get(this)
+        ) != null
+
+    @VisibleForTesting
+    internal fun hasObservedRetainedGenerationInvalidation() =
+        signOutModel.hasObservedMainGenerationInvalidation()
 
     /** Pull-to-refresh handler for the account screen. */
     private fun onAccountSwipeRefresh() {
@@ -1146,10 +1269,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     /** Syncs the refresh indicator with the current sync state (called by the ACTIVE observer). */
     private fun updateSwipeRefreshState() {
+        if (!exactAccountStillCurrent()) {
+            swipeRefreshLayout?.isRefreshing = false
+            return
+        }
         swipeRefreshLayout?.isRefreshing = isSyncActive()
     }
 
     private fun isSyncActive(): Boolean {
+        if (!exactAccountStillCurrent()) return false
         syncActiveOverride?.let { return it(account) }
         val authorities = mutableListOf(App.addressBooksAuthority, CalendarContract.AUTHORITY)
         TaskProviderHandling.getWantedTaskSyncProvider(this)?.authority?.let { authorities.add(it) }
@@ -1168,17 +1296,27 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         lifecycleScope.launch {
             val status = withContext(Dispatchers.IO) {
-                BillingManager.getInstance().getSubscriptionStatus(this@AccountActivity, account)
+                if (!exactAccountStillCurrent()) return@withContext null
+                val loaded = billingStatusOverride?.invoke(this@AccountActivity, account, accountCreationId)
+                    ?: BillingManager.getInstance().getSubscriptionStatus(
+                        this@AccountActivity, account, accountCreationId)
+                loaded?.takeIf { exactAccountStillCurrent() }
             }
+            if (!exactAccountStillCurrent() || status == null) return@launch
 
             if (status.isUnknown || (!status.isPastDue && !status.isExpiredOrCancelled)) {
                 return@launch
             }
 
+            if (!exactAccountStillCurrent()) return@launch
             updateSubscriptionUi(status, planView, statusView, trialView, actionButton)
+            if (!exactAccountStillCurrent()) return@launch
             subscriptionCard.visibility = View.VISIBLE
         }
     }
+
+    @VisibleForTesting
+    internal fun reloadSubscriptionStatusForTesting() = loadSubscriptionStatus()
 
     private fun updateSubscriptionUi(
         status: BillingManager.SubscriptionStatus,
@@ -1198,7 +1336,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         statusView.setTextColor(ContextCompat.getColor(this, R.color.semantic_warning))
         actionButton.visibility = View.VISIBLE
         actionButton.setText(R.string.dashboard_open_account_settings)
-        actionButton.setOnClickListener { startActivity(AppSettingsActivity.newIntent(this, account)) }
+        actionButton.setOnClickListener {
+            launchExactAccountRoute(AppSettingsActivity.newIntent(this, account, accountCreationId))
+        }
     }
 
     companion object {
@@ -1233,6 +1373,22 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         @JvmField internal var syncRequestOverride: ((Context, Account) -> Unit)? = null
         @VisibleForTesting
         @JvmField internal var syncActiveOverride: ((Account) -> Boolean)? = null
+        @VisibleForTesting
+        @JvmField internal var fingerprintLoaderOverride: ((Context, Account, String) -> String?)? = null
+        @VisibleForTesting
+        @JvmField internal var exportDocumentLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var exportWriterOverride: ((Context, Account, String, AndroidExportKind, OutputStream) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var billingStatusOverride: ((Context, Account, String) -> BillingManager.SubscriptionStatus)? = null
+        @VisibleForTesting
+        @JvmField internal var accountRouteLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var permissionRequestOverride: ((android.app.Activity) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var permissionRemediationLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var masterSyncEnableOverride: (() -> Unit)? = null
     }
 
 }

@@ -19,6 +19,7 @@ data class AccountDashboardInput(
     val providerReady: Boolean,
     val collectionsAvailable: Boolean,
     val status: SyncStatusStore.Status?,
+    val loadFailed: Boolean = false,
 )
 
 enum class AccountDashboardLabel {
@@ -43,6 +44,7 @@ data class AccountDashboardResult(val timestamp: Long, val success: Boolean)
 
 /** Pure precedence reducer. Inactive or requested work is never treated as success evidence. */
 fun reduceAccountDashboardState(input: AccountDashboardInput): AccountDashboardModel = when {
+    input.loadFailed -> AccountDashboardModel(AccountDashboardState.FAILURE)
     !input.loaded -> AccountDashboardModel(AccountDashboardState.LOADING)
     !input.setupComplete -> AccountDashboardModel(AccountDashboardState.SETUP_REQUIRED)
     input.running -> AccountDashboardModel(AccountDashboardState.RUNNING)
