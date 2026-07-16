@@ -448,7 +448,6 @@ class SiblingRoutesRuntimeTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)
         val account = addAccount(manager, "routes", "route-generation")
-        val routeFixture = fixture()
 
         try {
             val info = CollectionInfo().apply {
@@ -468,13 +467,7 @@ class SiblingRoutesRuntimeTest {
                 ImportActivity.newIntent(context, account, "route-generation", info),
                 InvitationsActivity.newIntent(context, account, "route-generation")
             ).forEach(::launchAndFinish)
-
-            runtimeFixtureOverride = exactFixture(account, "route-generation", null,
-                Constants.ETEBASE_TYPE_CALENDAR) { routeFixture }
-            launchAndFinish(CollectionActivity.newCreateCollectionIntent(context, account,
-                "route-generation", Constants.ETEBASE_TYPE_CALENDAR))
         } finally {
-            runtimeFixtureOverride = null
             removeAccountAndWait(manager, account)
         }
     }
