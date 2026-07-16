@@ -5,6 +5,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
 import android.os.Build
+import android.os.Bundle
 import android.view.View
 import androidx.core.view.ViewCompat
 import androidx.core.view.GravityCompat
@@ -145,9 +146,15 @@ class AccountDrawerSignOutRuntimeTest {
             val oldIdentity = ExactAccountIdentity(fixture.account.type, fixture.account.name, fixture.creationId)
             val adapter = AndroidCurrentAccountSignOut(fixture.context, fixture.account, fixture.creationId)
             removeAccountAndWait(fixture.manager, fixture.account)
-            assertTrue(fixture.manager.addAccountExplicitly(fixture.account, null, null))
-            assertTrue(AccountSettings.writeVerified(
-                fixture.manager, fixture.account, AccountSettings.KEY_CREATION_ID, "replacement-generation"))
+            val replacementGeneration = "replacement-generation"
+            val replacementData = Bundle().apply {
+                putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
+            }
+            assertTrue(fixture.manager.addAccountExplicitly(fixture.account, null, replacementData))
+            val replacementRow = fixture.manager.getAccountsByType(fixture.account.type)
+                .single { it.name == fixture.account.name }
+            assertEquals(replacementGeneration,
+                fixture.manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
 
             val callbackReceived = CountDownLatch(1)
             var callback: Boolean? = null
