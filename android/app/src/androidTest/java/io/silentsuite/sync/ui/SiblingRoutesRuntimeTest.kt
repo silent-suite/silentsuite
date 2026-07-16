@@ -449,20 +449,13 @@ class SiblingRoutesRuntimeTest {
         val manager = AccountManager.get(context)
         val account = addAccount(manager, "routes", "route-generation")
         val routeFixture = fixture()
-        runtimeFixtureOverride = exactFixture(account, "route-generation", null,
-            Constants.ETEBASE_TYPE_CALENDAR) { routeFixture }
 
         try {
             val info = CollectionInfo().apply {
                 uid = "collection-uid"
                 enumType = CollectionInfo.Type.CALENDAR
             }
-            listOf(
-                ChangeEncryptionPasswordActivity.newIntent(context, account, "route-generation"),
-                ImportActivity.newIntent(context, account, "route-generation", info),
-                CollectionActivity.newCreateCollectionIntent(context, account, "route-generation", Constants.ETEBASE_TYPE_CALENDAR),
-                InvitationsActivity.newIntent(context, account, "route-generation")
-            ).forEach { route ->
+            fun launchAndFinish(route: android.content.Intent) {
                 ActivityScenario.launch<android.app.Activity>(route).use { scenario ->
                     InstrumentationRegistry.getInstrumentation().waitForIdleSync()
                     scenario.onActivity { it.finish() }
@@ -470,6 +463,16 @@ class SiblingRoutesRuntimeTest {
                     assertEquals(Lifecycle.State.DESTROYED, scenario.state)
                 }
             }
+            listOf(
+                ChangeEncryptionPasswordActivity.newIntent(context, account, "route-generation"),
+                ImportActivity.newIntent(context, account, "route-generation", info),
+                InvitationsActivity.newIntent(context, account, "route-generation")
+            ).forEach(::launchAndFinish)
+
+            runtimeFixtureOverride = exactFixture(account, "route-generation", null,
+                Constants.ETEBASE_TYPE_CALENDAR) { routeFixture }
+            launchAndFinish(CollectionActivity.newCreateCollectionIntent(context, account,
+                "route-generation", Constants.ETEBASE_TYPE_CALENDAR))
         } finally {
             runtimeFixtureOverride = null
             removeAccountAndWait(manager, account)

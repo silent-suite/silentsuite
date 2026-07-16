@@ -165,9 +165,9 @@ class AccountDashboardRuntimeTest {
             removeAccountAndWait(manager, account)
             waitForRetainedGenerationInvalidation(scenario)
             val replacementGeneration = "dashboard-replacement-generation"
-            assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
-                putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
-            }))
+            assertTrue(manager.addAccountExplicitly(account, null, null))
+            assertTrue(AccountSettings.writeVerified(manager, account,
+                AccountSettings.KEY_CREATION_ID, replacementGeneration))
             val replacementRow = manager.getAccountsByType(account.type)
                 .single { it.name == account.name }
             assertEquals(replacementGeneration,
@@ -224,9 +224,9 @@ class AccountDashboardRuntimeTest {
                 val manager = AccountManager.get(context)
                 removeAccountAndWait(manager, account)
                 waitForRetainedGenerationInvalidation(scenario)
-                assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
-                    putString(AccountSettings.KEY_CREATION_ID, "load-replacement-generation")
-                }))
+                assertTrue(manager.addAccountExplicitly(account, null, null))
+                assertTrue(AccountSettings.writeVerified(manager, account,
+                    AccountSettings.KEY_CREATION_ID, "load-replacement-generation"))
                 releaseLoader.countDown()
                 assertNoAdditionalDelivery(scenario, deliveriesBefore)
             } finally {
@@ -326,9 +326,9 @@ class AccountDashboardRuntimeTest {
                 val manager = AccountManager.get(context)
                 removeAccountAndWait(manager, account)
                 waitForRetainedGenerationInvalidation(scenario)
-                assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
-                    putString(AccountSettings.KEY_CREATION_ID, "retained-surface-replacement")
-                }))
+                assertTrue(manager.addAccountExplicitly(account, null, null))
+                assertTrue(AccountSettings.writeVerified(manager, account,
+                    AccountSettings.KEY_CREATION_ID, "retained-surface-replacement"))
 
                 scenario.onActivity { activity ->
                     renderedEnableSync.performClick()
