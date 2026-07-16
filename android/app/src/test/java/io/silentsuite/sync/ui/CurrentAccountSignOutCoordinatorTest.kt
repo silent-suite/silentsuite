@@ -18,6 +18,7 @@ class CurrentAccountSignOutCoordinatorTest {
         var reconciledActive: ExactAccountIdentity? = sibling
         var children = true
         var removeCalls = 0
+        var closeCalls = 0
         var removeCallback: ((Boolean) -> Unit)? = null
         var childrenCallback: ((Boolean) -> Unit)? = null
         override fun snapshot() = captured.also { events += "snapshot" }
@@ -33,6 +34,7 @@ class CurrentAccountSignOutCoordinatorTest {
         override fun removeAndVerifyChildren(snapshot: CurrentAccountSignOutSnapshot, callback: (Boolean) -> Unit) {
             events += "children"; childrenCallback = callback
         }
+        override fun close() { closeCalls++ }
     }
 
     @Test fun `confirmed removal follows destructive boundary order and routes deterministic sibling`() {
@@ -43,6 +45,7 @@ class CurrentAccountSignOutCoordinatorTest {
         f.absent = true; f.removeCallback!!(true); f.childrenCallback!!(true)
         assertEquals(listOf("cache", "status", "active:a@example.invalid", "children"), f.events.takeLast(4))
         assertEquals(CurrentAccountSignOutState.Complete(sibling), c.state)
+        assertEquals(1, f.closeCalls)
     }
 
     @Test fun `false callback and present row preserve every destructive seam and expose one failure`() {

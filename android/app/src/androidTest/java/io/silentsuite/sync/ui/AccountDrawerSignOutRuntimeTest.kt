@@ -5,8 +5,11 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
 import android.os.Build
+import android.os.Bundle
 import android.view.View
 import androidx.core.view.ViewCompat
+import androidx.core.view.GravityCompat
+import androidx.drawerlayout.widget.DrawerLayout
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -32,6 +35,8 @@ class AccountDrawerSignOutRuntimeTest {
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(fixture.context, account)).use { scenario ->
                 scenario.recreate()
                 scenario.onActivity { activity ->
+                    activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                        .openDrawer(GravityCompat.START, false)
                     val header = activity.findViewById<View>(R.id.nav_account_header)
                     header.performClick()
                     val add = activity.findViewById<View>(R.id.nav_add_account_row)
@@ -85,9 +90,11 @@ class AccountDrawerSignOutRuntimeTest {
         val target = Fixture("actual-target")
         val sibling = Fixture("actual-sibling")
         val child = Account("child-${System.nanoTime()}@example.invalid", App.addressBookAccountType)
-        check(target.manager.addAccountExplicitly(child, null, null))
-        target.manager.setUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_TYPE, target.account.type)
-        target.manager.setUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_NAME, target.account.name)
+        check(target.manager.addAccountExplicitly(
+            child,
+            null,
+            LocalAddressBook.initialUserData(target.account, "https://example.invalid/address-book"),
+        ))
         try {
             assertTrue(ActiveAccountManager.setActiveAccount(target.context, target.account))
             val statusStore = SyncStatusStore(target.context)
@@ -135,20 +142,36 @@ class AccountDrawerSignOutRuntimeTest {
 
     @Test fun adapterRefusesToRemoveSameNameReplacementGeneration() {
         val fixture = Fixture("replacement")
+        var adapter: AndroidCurrentAccountSignOut? = null
         try {
             val oldIdentity = ExactAccountIdentity(fixture.account.type, fixture.account.name, fixture.creationId)
-            val adapter = AndroidCurrentAccountSignOut(fixture.context, fixture.account, fixture.creationId)
+            val retainedAdapter = AndroidCurrentAccountSignOut(fixture.context, fixture.account, fixture.creationId)
+            adapter = retainedAdapter
             removeAccountAndWait(fixture.manager, fixture.account)
-            assertTrue(fixture.manager.addAccountExplicitly(fixture.account, null, null))
-            assertTrue(AccountSettings.writeVerified(
-                fixture.manager, fixture.account, AccountSettings.KEY_CREATION_ID, "replacement-generation"))
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            val replacementGeneration = "replacement-generation"
+            val replacementData = Bundle().apply {
+                putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
+            }
+            assertTrue(fixture.manager.addAccountExplicitly(fixture.account, null, replacementData))
+            val replacementRow = fixture.manager.getAccountsByType(fixture.account.type)
+                .single { it.name == fixture.account.name }
+            assertEquals(replacementGeneration,
+                fixture.manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
 
+            assertTrue(retainedAdapter.mainGenerationAbsent(oldIdentity))
+            val callbackReceived = CountDownLatch(1)
             var callback: Boolean? = null
-            adapter.removeMain(oldIdentity) { callback = it }
+            retainedAdapter.removeMain(oldIdentity) {
+                callback = it
+                callbackReceived.countDown()
+            }
+            assertTrue("replacement refusal callback timed out", callbackReceived.await(10, TimeUnit.SECONDS))
             assertEquals(false, callback)
-            assertTrue(adapter.mainGenerationAbsent(oldIdentity))
+            assertTrue(retainedAdapter.mainGenerationAbsent(oldIdentity))
             assertTrue(fixture.account in fixture.manager.getAccountsByType(fixture.account.type))
         } finally {
+            adapter?.close()
             fixture.close()
         }
     }
