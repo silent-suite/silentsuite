@@ -8,10 +8,10 @@
   -->
 
 <androidx.drawerlayout.widget.DrawerLayout
-    android:id="@+id/drawer_layout"
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/drawer_layout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fitsSystemWindows="true"
@@ -25,14 +25,12 @@
         <com.google.android.material.appbar.AppBarLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
-
-            <androidx.appcompat.widget.Toolbar
+            <com.google.android.material.appbar.MaterialToolbar
                 android:id="@+id/toolbar"
                 android:layout_width="match_parent"
                 android:layout_height="?attr/actionBarSize"
                 android:background="?attr/colorPrimary"
-                app:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"/>
-
+                app:titleTextColor="@color/white" />
         </com.google.android.material.appbar.AppBarLayout>
 
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -41,254 +39,215 @@
             android:layout_height="match_parent"
             app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
-        <ScrollView
-            android:id="@+id/parent"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent">
-
-            <LinearLayout
-                android:orientation="vertical"
+            <ScrollView
+                android:id="@+id/parent"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:padding="@dimen/activity_margin">
+                android:layout_height="match_parent"
+                android:fillViewport="true">
 
-                <androidx.cardview.widget.CardView
-                    android:id="@+id/subscription_card"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
-                    app:cardUseCompatPadding="true"
-                    app:cardCornerRadius="12dp"
-                    app:cardElevation="2dp">
+                    android:orientation="vertical"
+                    android:padding="@dimen/spacing_16">
 
-                    <LinearLayout
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/account_overview_card"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="16dp">
-
-                        <TextView
-                            android:id="@+id/subscription_plan"
+                        app:cardBackgroundColor="@color/semantic_surface"
+                        app:cardCornerRadius="@dimen/shape_radius_standard"
+                        app:cardElevation="@dimen/elevation_resting"
+                        app:strokeColor="@color/semantic_outline"
+                        app:strokeWidth="1dp">
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:textAppearance="?android:attr/textAppearanceMedium"
-                            android:textStyle="bold"
-                            tools:text="Personal Plan" />
+                            android:orientation="vertical"
+                            android:padding="@dimen/spacing_16">
+                            <TextView
+                                android:id="@+id/dashboard_account_identity"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+                                android:textColor="@color/semantic_on_surface"
+                                android:textStyle="bold"
+                                tools:text="person@example.com" />
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="@dimen/spacing_8"
+                                android:text="@string/dashboard_encrypted_sync"
+                                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                                android:textColor="@color/semantic_outline" />
+                            <LinearLayout
+                                android:id="@+id/dashboard_status_row"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="@dimen/spacing_16"
+                                android:gravity="center_vertical"
+                                android:minHeight="@dimen/touch_target_min"
+                                android:orientation="horizontal"
+                                android:importantForAccessibility="yes">
+                                <ImageView
+                                    android:id="@+id/dashboard_status_icon"
+                                    android:layout_width="24dp"
+                                    android:layout_height="24dp"
+                                    android:importantForAccessibility="no"
+                                    android:src="@drawable/ic_sync_dark" />
+                                <LinearLayout
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_marginStart="@dimen/spacing_16"
+                                    android:layout_weight="1"
+                                    android:orientation="vertical"
+                                    android:importantForAccessibility="noHideDescendants">
+                                    <TextView
+                                        android:id="@+id/dashboard_overall_status"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/dashboard_status_checking"
+                                        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                                        android:textColor="@color/semantic_on_surface" />
+                                    <TextView
+                                        android:id="@+id/dashboard_last_result"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginTop="4dp"
+                                        android:text="@string/dashboard_waiting_for_results"
+                                        android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                                        android:textColor="@color/semantic_outline" />
+                                </LinearLayout>
+                            </LinearLayout>
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/dashboard_context_action"
+                                style="@style/Widget.AppTheme.Material3.Button"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="@dimen/spacing_16"
+                                android:minHeight="@dimen/touch_target_min"
+                                android:text="@string/account_synchronize_now"
+                                android:visibility="gone" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
 
-                        <TextView
-                            android:id="@+id/subscription_status"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:textAppearance="?android:attr/textAppearanceSmall"
-                            tools:text="Active — renews Apr 13, 2026" />
-
-                        <TextView
-                            android:id="@+id/subscription_trial"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:textAppearance="?android:attr/textAppearanceSmall"
-                            android:textColor="?attr/colorAccent"
-                            android:visibility="gone"
-                            tools:text="14 days remaining in trial" />
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/subscription_action"
-                            style="@style/Widget.MaterialComponents.Button.TextButton"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="8dp"
-                            android:text="@string/subscription_manage"
-                            android:visibility="gone" />
-
-                    </LinearLayout>
-
-                </androidx.cardview.widget.CardView>
-
-                <androidx.cardview.widget.CardView
-                    android:id="@+id/carddav"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
-                    app:cardUseCompatPadding="true"
-                    app:cardCornerRadius="12dp"
-                    app:cardElevation="2dp">
-
-                    <LinearLayout
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/subscription_card"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical">
-
-                        <androidx.appcompat.widget.Toolbar
-                            android:id="@+id/carddav_menu"
+                        android:layout_marginTop="@dimen/spacing_16"
+                        android:visibility="gone"
+                        app:cardBackgroundColor="@color/semantic_surface"
+                        app:cardCornerRadius="@dimen/shape_radius_standard"
+                        app:cardElevation="@dimen/elevation_resting"
+                        app:strokeColor="@color/semantic_warning"
+                        app:strokeWidth="1dp">
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:theme="@style/toolbar_theme"
-                            style="@style/toolbar_style"
-                            app:navigationIcon="@drawable/ic_people_light"
-                            app:title="@string/settings_carddav"
-                            android:elevation="0dp" tools:ignore="UnusedAttribute"/>
+                            android:orientation="vertical"
+                            android:padding="@dimen/spacing_16">
+                            <TextView android:id="@+id/subscription_plan" android:layout_width="match_parent" android:layout_height="wrap_content" android:textAppearance="@style/TextAppearance.Material3.TitleMedium" />
+                            <TextView android:id="@+id/subscription_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" />
+                            <TextView android:id="@+id/subscription_trial" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
+                            <com.google.android.material.button.MaterialButton android:id="@+id/subscription_action" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:minHeight="@dimen/touch_target_min" android:visibility="gone" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
 
-                        <ProgressBar
-                            android:id="@+id/carddav_refreshing"
-                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:visibility="gone"
-                            android:indeterminate="true"/>
-
-                        <TextView
-                            android:id="@+id/carddav_status"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:paddingStart="16dp"
-                            android:paddingEnd="16dp"
-                            android:paddingTop="8dp"
-                            android:paddingBottom="4dp"
-                            android:text="@string/account_section_status_loading"
-                            android:textAppearance="?android:attr/textAppearanceSmall"
-                            android:textColor="?android:attr/textColorSecondary" />
-
-                        <io.silentsuite.sync.ui.widget.MaximizedListView
-                            android:id="@+id/address_books"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:choiceMode="singleChoice"/>
-
-                    </LinearLayout>
-
-                </androidx.cardview.widget.CardView>
-
-                <androidx.cardview.widget.CardView
-                    android:id="@+id/caldav"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="12dp"
-                    app:cardUseCompatPadding="true"
-                    app:cardCornerRadius="12dp"
-                    app:cardElevation="2dp">
-
-                    <LinearLayout
+                    <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical">
+                        android:layout_marginTop="@dimen/spacing_24"
+                        android:text="@string/dashboard_services_title"
+                        android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+                        android:textColor="@color/semantic_on_surface"
+                        android:textStyle="bold" />
 
-                        <androidx.appcompat.widget.Toolbar
-                            android:id="@+id/caldav_menu"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:theme="@style/toolbar_theme"
-                            style="@style/toolbar_style"
-                            app:navigationIcon="@drawable/ic_event_light"
-                            app:title="@string/settings_caldav"
-                            android:elevation="0dp" tools:ignore="UnusedAttribute"/>
-
-                        <ProgressBar
-                            android:id="@+id/caldav_refreshing"
-                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:visibility="gone"
-                            android:indeterminate="true"/>
-
-                        <TextView
-                            android:id="@+id/caldav_status"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:paddingStart="16dp"
-                            android:paddingEnd="16dp"
-                            android:paddingTop="8dp"
-                            android:paddingBottom="4dp"
-                            android:text="@string/account_section_status_loading"
-                            android:textAppearance="?android:attr/textAppearanceSmall"
-                            android:textColor="?android:attr/textColorSecondary" />
-
-                        <io.silentsuite.sync.ui.widget.MaximizedListView
-                            android:id="@+id/calendars"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:choiceMode="multipleChoice"
-                            android:descendantFocusability="beforeDescendants"/>
-
-                    </LinearLayout>
-
-                </androidx.cardview.widget.CardView>
-
-                <androidx.cardview.widget.CardView
-                    android:id="@+id/taskdav"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    app:cardUseCompatPadding="true"
-                    app:cardCornerRadius="12dp"
-                    app:cardElevation="2dp">
-
-                    <LinearLayout
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/calendar_service_module"
+                        style="@style/Widget.AppTheme.Dashboard.ServiceCard"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="vertical">
+                        android:layout_marginTop="@dimen/spacing_8">
+                        <LinearLayout android:id="@+id/caldav_status_row" style="@style/Widget.AppTheme.Dashboard.StatusRow" android:layout_width="match_parent" android:layout_height="wrap_content">
+                            <ImageView android:id="@+id/caldav_status_icon" style="@style/Widget.AppTheme.Dashboard.StatusIcon" android:src="@drawable/ic_event_light" />
+                            <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
+                                <TextView style="@style/TextAppearance.Material3.TitleMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/settings_caldav" />
+                                <TextView android:id="@+id/caldav_status" style="@style/TextAppearance.Material3.BodyMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_status_checking" />
+                                <TextView android:id="@+id/caldav_status_detail" style="@style/TextAppearance.Material3.BodySmall" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_calendar_destination" />
+                            </LinearLayout>
+                            <ProgressBar android:id="@+id/caldav_refreshing" style="?android:attr/progressBarStyleSmall" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
 
-                        <androidx.appcompat.widget.Toolbar
-                            android:id="@+id/taskdav_menu"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:theme="@style/toolbar_theme"
-                            style="@style/toolbar_style"
-                            app:navigationIcon="@drawable/ic_task_light"
-                            app:title="@string/settings_taskdav"
-                            android:elevation="0dp" tools:ignore="UnusedAttribute"/>
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/contacts_service_module"
+                        style="@style/Widget.AppTheme.Dashboard.ServiceCard"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_8">
+                        <LinearLayout android:id="@+id/carddav_status_row" style="@style/Widget.AppTheme.Dashboard.StatusRow" android:layout_width="match_parent" android:layout_height="wrap_content">
+                            <ImageView android:id="@+id/carddav_status_icon" style="@style/Widget.AppTheme.Dashboard.StatusIcon" android:src="@drawable/ic_people_light" />
+                            <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
+                                <TextView style="@style/TextAppearance.Material3.TitleMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/settings_carddav" />
+                                <TextView android:id="@+id/carddav_status" style="@style/TextAppearance.Material3.BodyMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_status_checking" />
+                                <TextView android:id="@+id/carddav_status_detail" style="@style/TextAppearance.Material3.BodySmall" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_contacts_destination" />
+                            </LinearLayout>
+                            <ProgressBar android:id="@+id/carddav_refreshing" style="?android:attr/progressBarStyleSmall" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
 
-                        <ProgressBar
-                            android:id="@+id/taskdav_refreshing"
-                            style="@style/Widget.AppCompat.ProgressBar.Horizontal"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:indeterminate="true"
-                            android:visibility="gone" />
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/tasks_service_module"
+                        style="@style/Widget.AppTheme.Dashboard.ServiceCard"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_8">
+                        <LinearLayout android:id="@+id/taskdav_status_row" style="@style/Widget.AppTheme.Dashboard.StatusRow" android:layout_width="match_parent" android:layout_height="wrap_content">
+                            <ImageView android:id="@+id/taskdav_status_icon" style="@style/Widget.AppTheme.Dashboard.StatusIcon" android:src="@drawable/ic_task_light" />
+                            <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
+                                <TextView style="@style/TextAppearance.Material3.TitleMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/settings_taskdav" />
+                                <TextView android:id="@+id/taskdav_status" style="@style/TextAppearance.Material3.BodyMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_status_checking" />
+                                <TextView android:id="@+id/taskdav_status_detail" style="@style/TextAppearance.Material3.BodySmall" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_tasks_destination" />
+                            </LinearLayout>
+                            <ProgressBar android:id="@+id/taskdav_refreshing" style="?android:attr/progressBarStyleSmall" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
 
-                        <TextView
-                            android:id="@+id/taskdav_status"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:paddingStart="16dp"
-                            android:paddingEnd="16dp"
-                            android:paddingTop="8dp"
-                            android:paddingBottom="4dp"
-                            android:text="@string/account_section_status_loading"
-                            android:textAppearance="?android:attr/textAppearanceSmall"
-                            android:textColor="?android:attr/textColorSecondary" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_24"
+                        android:text="@string/dashboard_collections_title"
+                        android:textAppearance="@style/TextAppearance.Material3.TitleLarge"
+                        android:textColor="@color/semantic_on_surface"
+                        android:textStyle="bold" />
 
-                        <TextView
-                            android:id="@+id/taskdav_opentasks_warning"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginStart="12dp"
-                            android:layout_marginEnd="12dp"
-                            android:layout_marginTop="4dp"
-                            android:layout_marginBottom="4dp"
-                            android:background="@color/infoColor"
-                            android:textAppearance="?android:attr/textAppearanceSmall"
-                            android:textColor="?android:attr/textColorPrimary"
-                            android:padding="12dp"
-                            android:text="@string/account_tasks_not_showing"
-                            android:visibility="gone" />
+                    <com.google.android.material.card.MaterialCardView android:id="@+id/caldav" style="@style/Widget.AppTheme.Dashboard.CollectionCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8">
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+                            <com.google.android.material.appbar.MaterialToolbar android:id="@+id/caldav_menu" style="@style/Widget.AppTheme.Dashboard.CollectionToolbar" app:navigationIcon="@drawable/ic_event_light" app:title="@string/settings_caldav" />
+                            <io.silentsuite.sync.ui.widget.MaximizedListView android:id="@+id/calendars" android:layout_width="match_parent" android:layout_height="wrap_content" android:choiceMode="multipleChoice" android:descendantFocusability="beforeDescendants" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
 
-                        <io.silentsuite.sync.ui.widget.MaximizedListView
-                            android:id="@+id/tasklists"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:choiceMode="multipleChoice"
-                            android:descendantFocusability="beforeDescendants"/>
+                    <com.google.android.material.card.MaterialCardView android:id="@+id/carddav" style="@style/Widget.AppTheme.Dashboard.CollectionCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8">
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+                            <com.google.android.material.appbar.MaterialToolbar android:id="@+id/carddav_menu" style="@style/Widget.AppTheme.Dashboard.CollectionToolbar" app:navigationIcon="@drawable/ic_people_light" app:title="@string/settings_carddav" />
+                            <io.silentsuite.sync.ui.widget.MaximizedListView android:id="@+id/address_books" android:layout_width="match_parent" android:layout_height="wrap_content" android:choiceMode="singleChoice" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
 
-                    </LinearLayout>
+                    <com.google.android.material.card.MaterialCardView android:id="@+id/taskdav" style="@style/Widget.AppTheme.Dashboard.CollectionCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8">
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+                            <com.google.android.material.appbar.MaterialToolbar android:id="@+id/taskdav_menu" style="@style/Widget.AppTheme.Dashboard.CollectionToolbar" app:navigationIcon="@drawable/ic_task_light" app:title="@string/settings_taskdav" />
+                            <TextView android:id="@+id/taskdav_opentasks_warning" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="@dimen/spacing_8" android:background="@color/infoColor" android:padding="@dimen/spacing_16" android:text="@string/account_tasks_not_showing" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" android:textColor="@color/semantic_on_surface" android:visibility="gone" />
+                            <io.silentsuite.sync.ui.widget.MaximizedListView android:id="@+id/tasklists" android:layout_width="match_parent" android:layout_height="wrap_content" android:choiceMode="multipleChoice" android:descendantFocusability="beforeDescendants" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
 
-                </androidx.cardview.widget.CardView>
-
-            </LinearLayout>
-        </ScrollView>
-
+                </LinearLayout>
+            </ScrollView>
         </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
-
     </androidx.coordinatorlayout.widget.CoordinatorLayout>
 
     <com.google.android.material.navigation.NavigationView
@@ -297,9 +256,8 @@
         android:layout_height="match_parent"
         android:layout_gravity="start"
         android:fitsSystemWindows="true"
-        app:itemTextColor="?android:attr/textColorPrimary"
-        app:itemIconTint="?android:attr/textColorSecondary"
         app:headerLayout="@layout/nav_header_accounts"
-        app:menu="@menu/activity_accounts_drawer"/>
-
+        app:itemIconTint="?android:attr/textColorSecondary"
+        app:itemTextColor="?android:attr/textColorPrimary"
+        app:menu="@menu/activity_accounts_drawer" />
 </androidx.drawerlayout.widget.DrawerLayout>
