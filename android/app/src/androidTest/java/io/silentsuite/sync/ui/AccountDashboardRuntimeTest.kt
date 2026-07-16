@@ -29,6 +29,7 @@ import java.net.URI
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -238,7 +239,9 @@ class AccountDashboardRuntimeTest {
     @Test
     fun initialLoadFailurePublishesTerminalErrorAndRefreshFailureRetainsValidDashboard() {
         val fail = AtomicBoolean(true)
+        val loadAttempts = AtomicInteger(0)
         withDashboardAccount(loaderOverride = { loaderContext, exact, creationId ->
+            loadAttempts.incrementAndGet()
             check(creationId == generation)
             if (fail.get()) throw IllegalStateException("deterministic initial failure")
             val store = SyncStatusStore(loaderContext)
@@ -257,14 +260,17 @@ class AccountDashboardRuntimeTest {
                 activity.refresh()
             }
             waitForDeliveryAfter(scenario, deliveriesBefore)
-            waitForText(scenario, R.id.dashboard_overall_status) { it == "Never synced" }
+            waitForText(scenario, R.id.caldav_status) { it == "Never synced" }
+            val attemptsBeforeFailure = loadAttempts.get()
             scenario.onActivity { activity ->
                 fail.set(true)
                 activity.refresh()
             }
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            waitUntil("failed dashboard refresh attempt") {
+                loadAttempts.get() > attemptsBeforeFailure
+            }
             scenario.onActivity { activity ->
-                assertEquals("Never synced", activity.findViewById<TextView>(R.id.dashboard_overall_status).text.toString())
+                assertEquals("Never synced", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
             }
         }
     }
@@ -378,6 +384,8 @@ class AccountDashboardRuntimeTest {
         check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
         check(AccountSettings.writeSetupState(manager, account, PostLoginSetupState.COMPLETE))
         grantCorePermissions(context)
+        val previousMasterSync = android.content.ContentResolver.getMasterSyncAutomatically()
+        android.content.ContentResolver.setMasterSyncAutomatically(true)
         context.getSharedPreferences("sync_status_v1", 0).edit().clear().commit()
         val previousBootstrap = App.postLoginBootstrapSucceeded
         App.postLoginBootstrapSucceeded = true
@@ -413,6 +421,7 @@ class AccountDashboardRuntimeTest {
             AccountActivity.exportWriterOverride = null
             AccountActivity.billingStatusOverride = null
             AccountActivity.accountRouteLauncherOverride = null
+            android.content.ContentResolver.setMasterSyncAutomatically(previousMasterSync)
             App.postLoginBootstrapSucceeded = previousBootstrap
             removeAccountAndWait(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
