@@ -29,6 +29,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.ActionBarDrawerToggle
+import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
@@ -543,12 +544,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     override fun onNavigationItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
-            R.id.nav_show_fingerprint -> showFingerprintDialog()
-            R.id.nav_export_data -> showExportDialog()
-            R.id.nav_website -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webUri))
-            R.id.nav_webapp -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webAppUri))
-            R.id.nav_guide -> startActivity(Intent(Intent.ACTION_VIEW, Constants.docsUri))
-            R.id.nav_add_account -> startActivity(Intent(this, LoginActivity::class.java))
             R.id.nav_app_settings -> launchExactAccountRoute(
                 AppSettingsActivity.newIntent(this, account, accountCreationId))
             R.id.nav_invitations -> launchExactAccountRoute(
