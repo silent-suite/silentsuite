@@ -15,4 +15,14 @@
           android:title="@string/account_synchronize_now"
           app:showAsAction="always"/>
 
+    <item android:id="@+id/account_show_fingerprint"
+          android:icon="@drawable/ic_fingerprint_dark"
+          android:title="@string/account_show_fingerprint"
+          app:showAsAction="never"/>
+
+    <item android:id="@+id/account_export_data"
+          android:icon="@drawable/ic_import_export_black"
+          android:title="@string/export_data_title"
+          app:showAsAction="never"/>
+
 </menu>

@@ -36,6 +36,8 @@
             android:gravity="center_vertical"
             android:layout_marginTop="8dp"
             android:background="?android:attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
             android:minHeight="48dp">
 
             <TextView
@@ -91,11 +93,13 @@
         <LinearLayout
             android:id="@+id/nav_add_account_row"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="@dimen/touch_target_min"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:paddingStart="16dp"
-            android:paddingEnd="16dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingStart="@dimen/spacing_16"
+            android:paddingEnd="@dimen/spacing_16"
             android:background="?android:attr/selectableItemBackground">
 
             <ImageView

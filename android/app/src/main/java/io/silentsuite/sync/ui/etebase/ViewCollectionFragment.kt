@@ -212,10 +212,18 @@ class ViewCollectionFragment : Fragment() {
             Toast.makeText(context, R.string.loading_error_title, Toast.LENGTH_LONG).show()
             return
         }
+        if (!identity.validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
         val itemContents = itemsModel.value
             ?.filter { !it.item.isDeleted }
             ?.map { it.content }
             ?: emptyList()
+        if (!identity.validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
 
         val applicationContext = requireContext().applicationContext
         viewLifecycleOwner.lifecycleScope.launch {
@@ -225,11 +233,17 @@ class ViewCollectionFragment : Fragment() {
                     val outputStream = applicationContext.contentResolver.openOutputStream(uri)
                             ?: throw IOException("Could not open export destination")
                     outputStream.use {
-                        AndroidDataExporter.writeCollectionExport(cachedCollection.collectionType, itemContents, it)
+                        AndroidDataExporter.writeCollectionExport(
+                            applicationContext,
+                            identity.account,
+                            identity.creationId,
+                            cachedCollection.collectionType,
+                            itemContents,
+                            it,
+                        )
                     }
-                    true
                 }
-                if (!exported) {
+                if (!exported || !identity.validate(applicationContext)) {
                     activity?.finish()
                     return@launch
                 }

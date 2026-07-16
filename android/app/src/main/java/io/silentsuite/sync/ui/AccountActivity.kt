@@ -21,17 +21,19 @@ import android.os.IBinder
 import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.text.TextUtils
+import android.text.format.DateUtils
 import android.view.*
 import android.widget.*
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.ActionBarDrawerToggle
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
 import androidx.core.view.GravityCompat
+import androidx.core.view.ViewCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.MutableLiveData
@@ -43,7 +45,6 @@ import at.bitfire.vcard4android.ContactsStorageException
 import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.CollectionManager
 import com.etebase.client.Utils
-import com.etebase.client.exceptions.EtebaseException
 import io.silentsuite.sync.*
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
@@ -57,6 +58,8 @@ import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.requestSync
+import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.ui.account.*
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.InvitationsActivity
 import io.silentsuite.sync.ui.setup.LoginActivity
@@ -71,20 +74,26 @@ import com.google.android.material.snackbar.Snackbar
 import androidx.lifecycle.viewModelScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.io.OutputStream
 import java.util.logging.Level
 
 class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMenu.OnMenuItemClickListener, Refreshable, NavigationView.OnNavigationItemSelectedListener, SyncStatusObserver {
     private val model: AccountInfoViewModel by viewModels()
+    private val signOutModel: CurrentAccountSignOutViewModel by viewModels()
 
     private lateinit var account: Account
+    private lateinit var accountCreationId: String
     private lateinit var settings: AccountSettings
     private var accountInfo: AccountInfo? = null
 
     internal val hasDeliveredAccountInfo: Boolean
         get() = accountInfo != null
+    internal var accountInfoDeliveryCount: Int = 0
+        private set
 
     internal var listCalDAV: ListView? = null
     internal var listCardDAV: ListView? = null
@@ -94,11 +103,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     internal val tasksOrgPackage = "org.tasks"
 
     private var syncStatusSnackbar: Snackbar? = null
+    private var signOutErrorSnackbar: Snackbar? = null
     private var syncStatusObserver: Any? = null
     private var syncActiveObserver: Any? = null
     private var swipeRefreshLayout: SwipeRefreshLayout? = null
     private var accountListExpanded = false
     private var pendingExportKind: AndroidExportKind? = null
+    private var signOutOnly = false
+    private var renderedSignOutErrorId = 0L
+    private var signOutCompletionHandled = false
     private lateinit var notificationPermissionFlow: NotificationPermissionFlow
 
     // ActivityResultRegistry keeps this registration across recreation and delivers an outstanding
@@ -115,20 +128,23 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val adapter = list.adapter as ArrayAdapter<*>
         val info = adapter.getItem(position) as CollectionListItemInfo
 
-        startActivity(CollectionActivity.newIntent(this@AccountActivity, account, info.uid))
+        launchCollectionIntent(CollectionActivity.newIntent(this@AccountActivity, account, accountCreationId, info.uid))
     }
 
-    private val formattedFingerprint: String?
-        get() {
-            try {
-                val etebase = EtebaseLocalCache.getEtebase(this, HttpClient.sharedClient, settings)
-                val invitationManager = etebase.invitationManager
-                return Utils.prettyFingerprint(invitationManager.pubkey)
-            } catch (e: Exception) {
-                e.printStackTrace()
-                return null
-            }
+    private fun formattedFingerprint(): String? {
+        if (!exactAccountStillCurrent()) return null
+        try {
+            val fingerprint = fingerprintLoaderOverride?.invoke(this, account, accountCreationId)
+                ?: EtebaseLocalCache.getEtebase(this, HttpClient.sharedClient, settings).let { etebase ->
+                    if (!exactAccountStillCurrent()) return null
+                    Utils.prettyFingerprint(etebase.invitationManager.pubkey)
+                }
+            return fingerprint?.takeIf { exactAccountStillCurrent() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
         }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -146,6 +162,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         // An explicit stale/wrong-type parcel is never allowed to fall back to another account.
         val explicit = intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)
         val expectedCreationId = intent.getStringExtra(EXTRA_CREATION_ID)
+        if (explicit != null && !expectedCreationId.isNullOrBlank() &&
+            signOutModel.owns(explicit, expectedCreationId) && signOutModel.hasStarted()) {
+            attachRetainedSignOut()
+            return
+        }
         val resolved = io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
             explicit, expectedCreationId, App.accountType, accountManager)
             ?: if (explicit == null) ActiveAccountManager.getActiveAccount(this) else null
@@ -175,7 +196,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         title = account.name
+        val creationId = accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID)
+        if (creationId.isNullOrBlank()) { finish(); return }
+        if (io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                account, creationId, App.accountType, accountManager) == null) { finish(); return }
+        accountCreationId = creationId
+        signOutModel.initialize(account, creationId)
+        if (!exactAccountStillCurrent()) { finish(); return }
         settings = AccountSettings(this, account)
+        if (!exactAccountStillCurrent()) { finish(); return }
         pendingExportKind = savedInstanceState?.getString(KEY_PENDING_EXPORT_KIND)?.let { name ->
             runCatching { AndroidExportKind.valueOf(name) }.getOrNull()
         }
@@ -189,6 +218,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         // TODO(Phase2): Set username in Sentry crash reporting context
 
         setContentView(R.layout.activity_account)
+        findViewById<TextView>(R.id.dashboard_account_identity).text = account.name
 
         // Setup toolbar
         val toolbar = findViewById<Toolbar>(R.id.toolbar)
@@ -215,6 +245,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         // Setup nav header with account switcher
         setupNavHeader(navigationView)
+        signOutModel.state.observe(this) { renderSignOutState(it) }
 
         // Back press closes drawer first
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -268,7 +299,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         // The ViewModel survives rotation, but each Activity must observe its LiveData.
         // A fresh ViewModel after process death still needs initialization even when Android
         // supplies saved instance state.
-        model.initialize(this, account)
+        model.initialize(this, account, accountCreationId)
         model.observe(this) {
             updateUi(it)
         }
@@ -281,6 +312,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
+        if (signOutOnly) return
         pendingExportKind?.let { outState.putString(KEY_PENDING_EXPORT_KIND, it.name) }
         outState.putBoolean(KEY_NOTIFICATION_PERMISSION_PENDING, notificationPermissionFlow.notificationRequestPending)
         outState.putBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, notificationPermissionFlow.runtimePermissionFlowStarted)
@@ -295,17 +327,25 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private fun dispatchNotificationPermissionAction(action: NotificationPermissionFlow.Action) {
         when (action) {
             NotificationPermissionFlow.Action.LAUNCH_NOTIFICATION_REQUEST -> {
+                if (!exactAccountStillCurrent()) return
                 NotificationUtils.markPermissionRequested(this)
+                if (!exactAccountStillCurrent()) return
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
             NotificationPermissionFlow.Action.CONTINUE_RUNTIME_PERMISSIONS -> {
-                if (!AccountSettings.limitedIntegrations(AccountManager.get(this), account))
-                    PermissionsActivity.requestAllPermissions(this)
+                if (!exactAccountStillCurrent()) return
+                val limitedIntegrations = AccountSettings.limitedIntegrations(AccountManager.get(this), account)
+                if (!limitedIntegrations && exactAccountStillCurrent())
+                    permissionRequestOverride?.invoke(this) ?: PermissionsActivity.requestAllPermissions(this)
             }
             NotificationPermissionFlow.Action.WAIT_FOR_NOTIFICATION_RESULT,
             NotificationPermissionFlow.Action.NONE -> Unit
         }
     }
+
+    @VisibleForTesting
+    internal fun continueRuntimePermissionsForTesting() =
+        dispatchNotificationPermissionAction(NotificationPermissionFlow.Action.CONTINUE_RUNTIME_PERMISSIONS)
 
     private fun setupNavHeader(navigationView: NavigationView) {
         val headerView = navigationView.getHeaderView(0)
@@ -321,20 +361,20 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val accountManager = AccountManager.get(this)
         val accounts = accountManager.getAccountsByType(App.accountType)
 
-        // Show dropdown arrow only for multi-account users
-        if (accounts.size > 1) {
-            dropdownArrow?.visibility = View.VISIBLE
-
-            accountHeader?.setOnClickListener {
-                accountListExpanded = !accountListExpanded
-                accountListContainer?.visibility = if (accountListExpanded) View.VISIBLE else View.GONE
-                // Rotate arrow
-                dropdownArrow?.rotation = if (accountListExpanded) 180f else 0f
-            }
-
-            // Build account list rows
-            buildAccountList(accountListContainer, accounts)
+        dropdownArrow?.visibility = if (AccountSwitcherPolicy.canExpand(accounts.size)) View.VISIBLE else View.GONE
+        accountHeader?.contentDescription = getString(R.string.account_switcher_description, account.name)
+        fun renderExpansion() {
+            accountListContainer?.visibility = if (accountListExpanded) View.VISIBLE else View.GONE
+            dropdownArrow?.rotation = if (accountListExpanded) 180f else 0f
+            accountHeader?.let { ViewCompat.setStateDescription(it, getString(if (accountListExpanded)
+                R.string.account_switcher_expanded else R.string.account_switcher_collapsed)) }
         }
+        accountHeader?.setOnClickListener {
+            accountListExpanded = !accountListExpanded
+            renderExpansion()
+        }
+        renderExpansion()
+        buildAccountList(accountListContainer, accounts)
 
         // Add account row
         addAccountRow?.setOnClickListener {
@@ -346,35 +386,34 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (container == null) return
 
         // Remove any previously added account rows (keep the divider and add-account row)
-        val addAccountRow = container.findViewById<LinearLayout>(R.id.nav_add_account_row)
-        val dividerIndex = 0  // The divider View is at index 0
         // Remove all views except the last two (divider + add account row)
         while (container.childCount > 2) {
             container.removeViewAt(0)
         }
 
-        for (acc in accounts) {
-            val row = LayoutInflater.from(this).inflate(android.R.layout.simple_list_item_1, container, false)
-            val textView = row.findViewById<TextView>(android.R.id.text1)
-            textView.text = acc.name
-            textView.textSize = 14f
-            val textColorAttr = android.R.attr.textColorPrimary
-            val typedValue = android.util.TypedValue()
-            theme.resolveAttribute(textColorAttr, typedValue, true)
-            textView.setTextColor(ContextCompat.getColor(this, typedValue.resourceId))
-            textView.setPadding(
-                resources.getDimensionPixelSize(R.dimen.activity_margin),
-                12, 16, 12
-            )
-
-            // Show checkmark for active account
-            if (acc.name == account.name) {
-                textView.setCompoundDrawablesRelativeWithIntrinsicBounds(
-                    0, 0, android.R.drawable.checkbox_on_background, 0)
+        val manager = AccountManager.get(this)
+        val ordered = accounts.mapNotNull { acc ->
+            manager.getUserData(acc, AccountSettings.KEY_CREATION_ID)?.takeIf(String::isNotBlank)?.let {
+                ExactAccountIdentity(acc.type, acc.name, it) to acc
             }
+        }.sortedWith(compareBy({ it.first.name }, { it.first.creationId }, { it.first.type }))
+        val rowIds = accountRowViewIds(ordered.map { it.first })
+        for ((identity, acc) in ordered) {
+            val row = LayoutInflater.from(this).inflate(R.layout.nav_account_row, container, false)
+            row.id = rowIds.getValue(identity)
+            val textView = row.findViewById<TextView>(R.id.nav_account_name)
+            val currentIndicator = row.findViewById<View>(R.id.nav_account_current_indicator)
+            textView.text = acc.name
+            val isCurrent = identity.type == account.type && identity.name == account.name &&
+                identity.creationId == manager.getUserData(account, AccountSettings.KEY_CREATION_ID)
+            row.isSelected = isCurrent
+            row.contentDescription = getString(R.string.account_switcher_account_description, acc.name)
+            ViewCompat.setStateDescription(row, getString(if (isCurrent)
+                R.string.account_switcher_current else R.string.account_switcher_not_current))
+            currentIndicator.visibility = if (isCurrent) View.VISIBLE else View.INVISIBLE
 
             row.setOnClickListener {
-                if (acc.name != account.name) {
+                if (!isCurrent) {
                     if (!ActiveAccountManager.setActiveAccount(this, acc)) return@setOnClickListener
                     // Recreate activity with new account
                     val intent = newIntent(this, acc)
@@ -391,6 +430,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     override fun onResume() {
         super.onResume()
+        if (signOutOnly) return
         onStatusChanged(SYNC_OBSERVER_TYPE_SETTINGS)
         syncStatusObserver = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_SETTINGS, this)
         // Drive the pull-to-refresh spinner from active sync state so it clears
@@ -412,7 +452,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        if (signOutOnly) return false
         menuInflater.inflate(R.menu.activity_account, menu)
+        val busy = signOutModel.state.value is CurrentAccountSignOutState.Removing ||
+            signOutModel.state.value is CurrentAccountSignOutState.CleaningUp
+        menu.findItem(R.id.nav_logout)?.isEnabled = !busy
         return true
     }
 
@@ -422,12 +466,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 requestSync()
                 true
             }
+            R.id.account_show_fingerprint -> { showFingerprintDialog(); true }
+            R.id.account_export_data -> { showExportDialog(); true }
             else -> super.onOptionsItemSelected(item)
         }
     }
 
     private fun showFingerprintDialog() {
-        val fingerprint = formattedFingerprint
+        if (!exactAccountStillCurrent()) return
+        val fingerprint = formattedFingerprint()
+        if (!exactAccountStillCurrent()) return
         val displayFingerprint = fingerprint ?: getString(R.string.fingerprint_unavailable)
         val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
         view.findViewById<View>(R.id.body).visibility = View.GONE
@@ -437,6 +485,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 .setTitle(R.string.show_fingperprint_title)
                 .setView(view)
                 .setNeutralButton(R.string.copy_fingerprint) { _, _ ->
+                    if (!exactAccountStillCurrent()) return@setNeutralButton
                     if (fingerprint == null) {
                         Toast.makeText(this, R.string.fingerprint_unavailable, Toast.LENGTH_SHORT).show()
                     } else {
@@ -472,13 +521,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     override fun onMenuItemClick(item: MenuItem): Boolean {
         when (item.itemId) {
             R.id.create_calendar -> {
-                startActivity(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_CALENDAR))
+                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_CALENDAR))
             }
             R.id.create_tasklist -> {
-                startActivity(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_TASKS))
+                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_TASKS))
             }
             R.id.create_addressbook -> {
-                startActivity(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, ETEBASE_TYPE_ADDRESS_BOOK))
+                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_ADDRESS_BOOK))
             }
             R.id.install_tasksorg ->  {
                 installPackage(tasksOrgPackage)
@@ -490,29 +539,22 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         return false
     }
 
-    private fun scrollToSection(sectionId: Int) {
-        val scrollView = findViewById<ScrollView>(R.id.parent) ?: return
-        val section = findViewById<View>(sectionId) ?: return
-        scrollView.post { scrollView.smoothScrollTo(0, section.top) }
-    }
-
     // NavigationView drawer item handling (moved from AccountsActivity)
     override fun onNavigationItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.nav_calendar -> scrollToSection(R.id.caldav)
-            R.id.nav_tasks -> scrollToSection(R.id.taskdav)
-            R.id.nav_contacts -> scrollToSection(R.id.carddav)
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
-            R.id.nav_app_settings -> startActivity(AppSettingsActivity.newIntent(this, account, SettingsCategory.HOME))
-            R.id.nav_invitations -> startActivity(InvitationsActivity.newIntent(this, account))
             R.id.nav_show_fingerprint -> showFingerprintDialog()
             R.id.nav_export_data -> showExportDialog()
             R.id.nav_website -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webUri))
             R.id.nav_webapp -> startActivity(Intent(Intent.ACTION_VIEW, Constants.webAppUri))
             R.id.nav_guide -> startActivity(Intent(Intent.ACTION_VIEW, Constants.docsUri))
             R.id.nav_add_account -> startActivity(Intent(this, LoginActivity::class.java))
+            R.id.nav_app_settings -> launchExactAccountRoute(
+                AppSettingsActivity.newIntent(this, account, accountCreationId))
+            R.id.nav_invitations -> launchExactAccountRoute(
+                InvitationsActivity.newIntent(this, account, accountCreationId))
             R.id.nav_logout -> confirmLogout()
-            R.id.nav_theme -> showThemeDialog()
+            R.id.nav_sync_overview -> Unit
         }
 
         val drawer = findViewById<DrawerLayout>(R.id.drawer_layout)
@@ -521,6 +563,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun showExportDialog() {
+        if (!exactAccountStillCurrent()) return
         val exportKinds = AndroidExportKind.values()
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.export_data_title)
@@ -531,14 +574,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun createExportDocument(kind: AndroidExportKind) {
+        if (!exactAccountStillCurrent()) return
         pendingExportKind = kind
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = kind.mimeType
             putExtra(Intent.EXTRA_TITLE, AndroidDataExporter.suggestedFileName(kind))
         }
-        startActivityForResult(intent, REQUEST_CREATE_EXPORT_DOCUMENT)
+        exportDocumentLauncherOverride?.invoke(intent) ?: startActivityForResult(intent, REQUEST_CREATE_EXPORT_DOCUMENT)
     }
+
+    @VisibleForTesting
+    internal fun beginExportForTesting(kind: AndroidExportKind) = createExportDocument(kind)
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -549,28 +596,45 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
         if (uri == null)
             return
+        if (!exactAccountStillCurrent()) return
 
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
+                    // Recheck after the document picker returned and immediately before every
+                    // private-cache/content or external-write boundary.
+                    if (!exactAccountStillCurrent()) return@withContext false
                     val outputStream = contentResolver.openOutputStream(uri)
                         ?: throw IOException("Could not open export destination")
                     outputStream.use {
-                        AndroidDataExporter.writeExport(this@AccountActivity, account, kind, it)
+                        if (!exactAccountStillCurrent()) return@withContext false
+                        (exportWriterOverride ?: { context: Context, exact: Account, creationId: String,
+                            exportKind: AndroidExportKind, stream: OutputStream ->
+                            AndroidDataExporter.writeExport(context, exact, creationId, exportKind, stream)
+                        })(this@AccountActivity, account, accountCreationId, kind, it)
                     }
+                    exactAccountStillCurrent()
                 }
+                .takeIf { it && exactAccountStillCurrent() } ?: return@launch
                 Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_success, Snackbar.LENGTH_LONG).show()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Logger.log.log(Level.SEVERE, "Android data export failed", e)
+                if (!exactAccountStillCurrent()) return@launch
                 Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_failed, Snackbar.LENGTH_LONG).show()
             }
         }
     }
 
+    @VisibleForTesting
+    internal fun deliverActivityResultForTesting(requestCode: Int, resultCode: Int, data: Intent?) =
+        onActivityResult(requestCode, resultCode, data)
+
     // SyncStatusObserver (moved from AccountsActivity)
     override fun onStatusChanged(which: Int) {
+        if (!exactAccountStillCurrent()) return
         runOnUiThread {
+            if (!exactAccountStillCurrent()) return@runOnUiThread
             if (syncStatusSnackbar != null) {
                 syncStatusSnackbar!!.dismiss()
                 syncStatusSnackbar = null
@@ -578,41 +642,24 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
             if (!ContentResolver.getMasterSyncAutomatically()) {
                 syncStatusSnackbar = Snackbar.make(findViewById(R.id.coordinator), R.string.accounts_global_sync_disabled, Snackbar.LENGTH_INDEFINITE)
-                        .setAction(R.string.accounts_global_sync_enable) { ContentResolver.setMasterSyncAutomatically(true) }
+                        .setAction(R.string.accounts_global_sync_enable) {
+                            if (!exactAccountStillCurrent()) return@setAction
+                            masterSyncEnableOverride?.invoke() ?: ContentResolver.setMasterSyncAutomatically(true)
+                            if (!exactAccountStillCurrent()) return@setAction
+                            model.loadAccount()
+                        }
                 syncStatusSnackbar!!.show()
             }
+            model.loadAccount()
         }
     }
 
     private fun confirmLogout() {
-        val accountManager = AccountManager.get(this)
-        val accounts = accountManager.getAccountsByType(App.accountType)
-        if (accounts.isEmpty()) {
-            Toast.makeText(this, "No account to log out", Toast.LENGTH_SHORT).show()
-            return
-        }
-
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.account_delete_confirmation_title)
             .setMessage(R.string.account_delete_confirmation_text)
             .setPositiveButton(R.string.navigation_drawer_logout) { _, _ ->
-                lifecycleScope.launch {
-                    for (acc in accounts) {
-                        try {
-                            teardownAccountState(acc)
-                        } catch (e: Exception) {
-                            if (e is kotlinx.coroutines.CancellationException) throw e
-                            Logger.log.warning("Account teardown failed: ${e.javaClass.name}")
-                        }
-                    }
-                    for (acc in accounts) {
-                        accountManager.removeAccountExplicitly(acc)
-                    }
-                    val intent = Intent(this@AccountActivity, LoginActivity::class.java)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(intent)
-                    finish()
-                }
+                signOutModel.begin()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
@@ -647,15 +694,58 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             .show()
     }
 
+    private fun attachRetainedSignOut() {
+        signOutOnly = true
+        setContentView(R.layout.activity_account)
+        signOutModel.state.observe(this) { renderSignOutState(it) }
+    }
+
+    private fun renderSignOutState(state: CurrentAccountSignOutState) {
+        invalidateOptionsMenu()
+        findViewById<NavigationView>(R.id.nav_view).menu.findItem(R.id.nav_logout)?.isEnabled =
+            state !is CurrentAccountSignOutState.Removing && state !is CurrentAccountSignOutState.CleaningUp
+        val errorId = when (state) {
+            is CurrentAccountSignOutState.RemovalFailed -> state.errorId
+            is CurrentAccountSignOutState.CleanupFailed -> state.errorId
+            else -> null
+        }
+        if (errorId != null && errorId > renderedSignOutErrorId) {
+            renderedSignOutErrorId = errorId
+            signOutErrorSnackbar?.dismiss()
+            val message = if (state is CurrentAccountSignOutState.CleanupFailed)
+                R.string.account_sign_out_cleanup_failed else R.string.account_sign_out_failed
+            signOutErrorSnackbar = Snackbar.make(findViewById(R.id.coordinator), message, Snackbar.LENGTH_INDEFINITE)
+                .setAction(R.string.retry) { signOutModel.begin() }.also { it.show() }
+        }
+        if (state is CurrentAccountSignOutState.Complete && !signOutCompletionHandled) {
+            signOutCompletionHandled = true
+            signOutErrorSnackbar?.dismiss()
+            val replacement = state.replacement
+            val intent = if (replacement == null) Intent(this, LoginActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+            } else newIntent(
+                this,
+                Account(replacement.name, replacement.type),
+                replacement.creationId,
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            finish()
+        }
+    }
+
     /* LOADERS AND LOADED DATA */
 
     class AccountInfo {
+        internal var loadFailed: Boolean = false
         internal var carddav: ServiceInfo? = null
         internal var caldav: ServiceInfo? = null
         internal var taskdav: ServiceInfo? = null
 
         class ServiceInfo {
             internal var refreshing: Boolean = false
+            internal var status: SyncStatusStore.Status? = null
 
             internal var infos: List<CollectionListItemInfo>? = null
         }
@@ -667,11 +757,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     fun updateUi(info: AccountInfo) {
         accountInfo = info
+        accountInfoDeliveryCount++
 
         if (info.carddav != null) {
             val progress = findViewById<View>(R.id.carddav_refreshing) as ProgressBar
             progress.visibility = if (info.carddav!!.refreshing) View.VISIBLE else View.GONE
-            updateSectionStatus(R.id.carddav_status, info.carddav!!.refreshing)
 
             listCardDAV = findViewById<View>(R.id.address_books) as ListView
             listCardDAV!!.isEnabled = !info.carddav!!.refreshing
@@ -686,7 +776,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (info.caldav != null) {
             val progress = findViewById<View>(R.id.caldav_refreshing) as ProgressBar
             progress.visibility = if (info.caldav!!.refreshing) View.VISIBLE else View.GONE
-            updateSectionStatus(R.id.caldav_status, info.caldav!!.refreshing)
 
             listCalDAV = findViewById<View>(R.id.calendars) as ListView
             listCalDAV!!.isEnabled = !info.caldav!!.refreshing
@@ -702,7 +791,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val progress = findViewById<View>(R.id.taskdav_refreshing) as ProgressBar
             progress.visibility = if (info.taskdav!!.refreshing) View.VISIBLE else View.GONE
             val hasTaskProvider = hasSupportedTaskProvider()
-            updateSectionStatus(R.id.taskdav_status, info.taskdav!!.refreshing, setupNeeded = !hasTaskProvider)
 
             listTaskDAV = findViewById<View>(R.id.tasklists) as ListView
             listTaskDAV!!.isEnabled = !info.taskdav!!.refreshing
@@ -716,15 +804,174 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val opentasksWarning = findViewById<View>(R.id.taskdav_opentasks_warning)
             opentasksWarning.visibility = if (hasTaskProvider) View.GONE else View.VISIBLE
         }
+        renderDashboard(info)
     }
 
-    private fun updateSectionStatus(statusViewId: Int, refreshing: Boolean, setupNeeded: Boolean = false) {
-        val status = findViewById<TextView>(statusViewId)
-        status.setText(when {
-            setupNeeded -> R.string.account_section_status_setup_needed
-            refreshing -> R.string.account_section_status_syncing
-            else -> R.string.account_section_status_synced
+    private data class DashboardServiceUi(
+        val title: Int,
+        val statusView: Int,
+        val detailView: Int,
+        val iconView: Int,
+        val rowView: Int,
+        val collectionView: Int,
+        val destination: Int,
+        val model: AccountDashboardModel,
+        val status: SyncStatusStore.Status?,
+    )
+
+    private fun renderDashboard(info: AccountInfo) {
+        val master = ContentResolver.getMasterSyncAutomatically()
+        val manager = AccountManager.get(this)
+        val setupComplete = AccountSettings.setupState(manager, account,
+            io.silentsuite.sync.ui.setup.PostLoginSetupMigration.isBootstrapped(this)) ==
+            io.silentsuite.sync.ui.setup.PostLoginSetupState.COMPLETE
+        val calendarPermissions = permissionsReady(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+        val contactsPermissions = permissionsReady(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)
+        val taskProvider = TaskProviderHandling.getWantedTaskSyncProvider(this)
+        val taskPermissions = taskProvider?.permissions?.all { permission ->
+            ContextCompat.checkSelfPermission(this, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } ?: true
+
+        fun reduce(service: AccountInfo.ServiceInfo?, permission: Boolean, provider: Boolean = true) =
+            reduceAccountDashboardState(AccountDashboardInput(
+                loaded = service != null,
+                loadFailed = info.loadFailed,
+                running = service?.refreshing == true,
+                setupComplete = setupComplete,
+                masterSyncEnabled = master,
+                permissionReady = permission,
+                providerReady = provider,
+                collectionsAvailable = service?.infos?.isNotEmpty() == true,
+                status = service?.status,
+            ))
+
+        val services = listOf(
+            DashboardServiceUi(R.string.settings_caldav, R.id.caldav_status, R.id.caldav_status_detail,
+                R.id.caldav_status_icon, R.id.caldav_status_row, R.id.caldav, R.string.dashboard_calendar_destination,
+                reduce(info.caldav, calendarPermissions), info.caldav?.status),
+            DashboardServiceUi(R.string.settings_carddav, R.id.carddav_status, R.id.carddav_status_detail,
+                R.id.carddav_status_icon, R.id.carddav_status_row, R.id.carddav, R.string.dashboard_contacts_destination,
+                reduce(info.carddav, contactsPermissions), info.carddav?.status),
+            DashboardServiceUi(R.string.settings_taskdav, R.id.taskdav_status, R.id.taskdav_status_detail,
+                R.id.taskdav_status_icon, R.id.taskdav_status_row, R.id.taskdav, R.string.dashboard_tasks_destination,
+                reduce(info.taskdav, taskPermissions, taskProvider != null), info.taskdav?.status),
+        )
+        services.forEach(::renderServiceStatus)
+
+        val latest = latestMeaningfulResult(services.map { it.status })
+        val overall = presentAccountDashboard(aggregateAccountDashboard(services.map { it.model }), latest?.timestamp)
+        val statusText = dashboardStatusText(overall)
+        val detailText = latest?.let { result ->
+            val relative = relativeTime(result.timestamp)
+            getString(if (result.success) R.string.dashboard_last_success else R.string.dashboard_last_issue, relative)
+        } ?: getString(R.string.dashboard_waiting_for_results)
+        val statusView = findViewById<TextView>(R.id.dashboard_overall_status)
+        val detailView = findViewById<TextView>(R.id.dashboard_last_result)
+        val row = findViewById<View>(R.id.dashboard_status_row)
+        val shouldAnnounce = model.shouldAnnounce(overall)
+        ViewCompat.setAccessibilityLiveRegion(row, if (shouldAnnounce)
+            ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE else ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE)
+        statusView.text = statusText
+        detailView.text = detailText
+        row.contentDescription = "$statusText. $detailText"
+        applyDashboardVisual(findViewById(R.id.dashboard_status_icon), statusView, overall)
+        renderDashboardAction(overall.action,
+            services.firstOrNull { it.model.state == AccountDashboardState.SETUP_REQUIRED }?.collectionView)
+    }
+
+    private fun renderServiceStatus(service: DashboardServiceUi) {
+        val result = latestMeaningfulResult(listOf(service.status))
+        val presentation = presentAccountDashboard(service.model, result?.timestamp)
+        val statusText = dashboardStatusText(presentation)
+        val detailText = result?.let {
+            getString(if (it.success) R.string.dashboard_last_success else R.string.dashboard_last_issue, relativeTime(it.timestamp))
+        } ?: getString(service.destination)
+        val statusView = findViewById<TextView>(service.statusView)
+        statusView.text = statusText
+        findViewById<TextView>(service.detailView).text = detailText
+        findViewById<View>(service.rowView).contentDescription =
+            "${getString(service.title)}. $statusText. $detailText"
+        applyDashboardVisual(findViewById(service.iconView), statusView, presentation)
+    }
+
+    private fun dashboardStatusText(presentation: AccountDashboardPresentation): String = when (presentation.label) {
+        AccountDashboardLabel.CHECKING -> getString(R.string.dashboard_status_checking)
+        AccountDashboardLabel.SYNCING -> getString(R.string.dashboard_status_syncing)
+        AccountDashboardLabel.NEVER_SYNCED -> getString(R.string.dashboard_status_never_synced)
+        AccountDashboardLabel.SYNCED -> getString(R.string.dashboard_status_synced,
+            presentation.lastMeaningfulAt?.let(::relativeTime) ?: getString(R.string.dashboard_recently))
+        AccountDashboardLabel.NEEDS_ATTENTION -> getString(R.string.dashboard_status_needs_attention)
+        AccountDashboardLabel.SYNC_PAUSED -> getString(R.string.dashboard_status_paused)
+        AccountDashboardLabel.PERMISSION_NEEDED -> getString(R.string.dashboard_status_permission_needed)
+        AccountDashboardLabel.TASK_APP_NEEDED -> getString(R.string.dashboard_status_task_app_needed)
+        AccountDashboardLabel.SETUP_NEEDED -> getString(R.string.dashboard_status_setup_needed)
+    }
+
+    private fun relativeTime(timestamp: Long): CharSequence = DateUtils.getRelativeTimeSpanString(
+        timestamp, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
+
+    private fun applyDashboardVisual(icon: ImageView, text: TextView, presentation: AccountDashboardPresentation) {
+        icon.setImageResource(when (presentation.icon) {
+            AccountDashboardIcon.PROGRESS, AccountDashboardIcon.SYNC -> R.drawable.ic_sync_dark
+            AccountDashboardIcon.HISTORY -> R.drawable.ic_status_history
+            AccountDashboardIcon.SUCCESS -> R.drawable.ic_status_success
+            AccountDashboardIcon.WARNING -> R.drawable.ic_error_dark
+            AccountDashboardIcon.PAUSED -> R.drawable.ic_status_paused
+            AccountDashboardIcon.PERMISSION -> R.drawable.ic_status_permission
+            AccountDashboardIcon.PROVIDER -> R.drawable.ic_status_provider
         })
+        val color = ContextCompat.getColor(this, when (presentation.tone) {
+            AccountDashboardTone.NEUTRAL -> R.color.semantic_outline
+            AccountDashboardTone.PRIMARY -> R.color.semantic_primary
+            AccountDashboardTone.SUCCESS -> R.color.semantic_success
+            AccountDashboardTone.WARNING -> R.color.semantic_warning
+            AccountDashboardTone.ERROR -> R.color.semantic_error
+        })
+        icon.setColorFilter(color)
+        text.setTextColor(color)
+    }
+
+    private fun renderDashboardAction(action: AccountDashboardAction, setupTarget: Int?) {
+        val button = findViewById<com.google.android.material.button.MaterialButton>(R.id.dashboard_context_action)
+        button.visibility = if (action == AccountDashboardAction.NONE) View.GONE else View.VISIBLE
+        button.setText(when (action) {
+            AccountDashboardAction.NONE -> R.string.account_synchronize_now
+            AccountDashboardAction.SYNC_NOW -> R.string.account_synchronize_now
+            AccountDashboardAction.RETRY_SYNC -> R.string.dashboard_retry_sync
+            AccountDashboardAction.ENABLE_SYNC -> R.string.dashboard_enable_sync
+            AccountDashboardAction.FIX_PERMISSIONS -> R.string.dashboard_fix_permissions
+            AccountDashboardAction.INSTALL_TASK_APP -> R.string.dashboard_install_task_app
+            AccountDashboardAction.REVIEW_SETUP -> R.string.dashboard_review_setup
+        })
+        button.setOnClickListener {
+            when (action) {
+                AccountDashboardAction.NONE -> Unit
+                AccountDashboardAction.SYNC_NOW, AccountDashboardAction.RETRY_SYNC -> requestSync()
+                AccountDashboardAction.ENABLE_SYNC -> {
+                    if (!exactAccountStillCurrent()) return@setOnClickListener
+                    masterSyncEnableOverride?.invoke() ?: ContentResolver.setMasterSyncAutomatically(true)
+                    if (!exactAccountStillCurrent()) return@setOnClickListener
+                    model.loadAccount()
+                }
+                AccountDashboardAction.FIX_PERMISSIONS -> {
+                    if (!exactAccountStillCurrent()) return@setOnClickListener
+                    val intent = Intent(this, PermissionsActivity::class.java)
+                    permissionRemediationLauncherOverride?.invoke(intent) ?: startActivity(intent)
+                }
+                AccountDashboardAction.INSTALL_TASK_APP -> installPackage(tasksOrgPackage)
+                AccountDashboardAction.REVIEW_SETUP -> setupTarget?.let { target ->
+                    findViewById<ScrollView>(R.id.parent).smoothScrollTo(0, findViewById<View>(target).top)
+                }
+            }
+        }
+    }
+
+    @VisibleForTesting
+    internal fun renderDashboardActionForTesting(action: AccountDashboardAction) =
+        renderDashboardAction(action, null)
+
+    private fun permissionsReady(vararg permissions: String) = permissions.all {
+        ContextCompat.checkSelfPermission(this, it) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
     private fun hasSupportedTaskProvider() =
@@ -735,34 +982,75 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private val holder = MutableLiveData<AccountActivity.AccountInfo>()
         private lateinit var context: Context
         private lateinit var account: Account
+        private lateinit var accountCreationId: String
         private var davService: AccountUpdateService.InfoBinder? = null
         private var syncStatusListener: Any? = null
         private var serviceBound = false
-        private var initializedAccount: Account? = null
+        private var initializedIdentity: ExactAccountIdentity? = null
+        private val dashboardTransitionDeduper = MeaningfulDashboardTransitionDeduper()
+        private val latestLoad = LatestRequestWins<AccountActivity.AccountInfo>()
+        private var loadJob: Job? = null
+        @Volatile private var cleared = false
 
-        fun initialize(context: Context, account: Account) {
-            if (initializedAccount == account)
+        fun shouldAnnounce(presentation: AccountDashboardPresentation) =
+            dashboardTransitionDeduper.shouldAnnounce(presentation)
+
+        fun initialize(context: Context, account: Account, creationId: String) {
+            require(creationId.isNotBlank()) { "Account creation ID must be nonblank" }
+            val identity = ExactAccountIdentity(account.type, account.name, creationId)
+            if (initializedIdentity == identity)
                 return
-            check(initializedAccount == null) { "AccountInfoViewModel cannot be reused for another account" }
+            check(initializedIdentity == null) { "AccountInfoViewModel cannot be reused for another exact account" }
             this.context = context.applicationContext
             this.account = account
-            initializedAccount = account
+            this.accountCreationId = creationId
+            initializedIdentity = identity
 
             syncStatusListener = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_ACTIVE, this)
 
             context.bindService(Intent(context, AccountUpdateService::class.java), this, Context.BIND_AUTO_CREATE)
         }
 
+        @Synchronized
         fun loadAccount() {
-            viewModelScope.launch {
-                val info = withContext(Dispatchers.IO) {
-                    doLoad()
+            if (cleared) return
+            val request = latestLoad.begin()
+            loadJob?.cancel()
+            loadJob = viewModelScope.launch {
+                var ordinaryFailure = false
+                val info = try {
+                    withContext(Dispatchers.IO) {
+                        if (exactGenerationStillCurrent()) doLoad() else null
+                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    Logger.log.log(Level.SEVERE, "AccountInfoViewModel.loadAccount failed", e)
+                    ordinaryFailure = true
+                    null
                 }
-                holder.value = info
+                // The IO loader validates after private reads. Validate on the publishing thread
+                // too, so a replacement between completion and delivery cannot update this UI.
+                if (info != null && !cleared && exactGenerationStillCurrent()) {
+                    latestLoad.publishIfLatest(request, info) { holder.value = it }
+                } else if (ordinaryFailure && !cleared && exactGenerationStillCurrent() && holder.value == null) {
+                    // An initial ordinary failure is terminal evidence, not perpetual loading.
+                    // Refresh failures retain the last valid dashboard instead.
+                    latestLoad.publishIfLatest(request, AccountActivity.AccountInfo().apply {
+                        loadFailed = true
+                    }) { holder.value = it }
+                }
             }
         }
 
         override fun onCleared() {
+            synchronized(this) {
+                cleared = true
+                // Cancellation alone is insufficient for blocking IO. Invalidate first so a
+                // completion already returning to the main dispatcher cannot publish afterward.
+                latestLoad.invalidate()
+                loadJob?.cancel()
+                loadJob = null
+            }
             davService?.removeRefreshingStatusListener(this)
             if (serviceBound) {
                 try {
@@ -827,32 +1115,57 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         }
 
-        private fun doLoad(): AccountActivity.AccountInfo {
+        private fun exactGenerationStillCurrent() =
+            io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                account, accountCreationId, App.accountType, AccountManager.get(context)
+            ) != null
+
+        private fun doLoad(): AccountActivity.AccountInfo? {
+            accountLoaderOverride?.let { loader ->
+                // Test loaders represent the complete private-load boundary and receive the
+                // retained generation explicitly, never a name-keyed re-read.
+                if (!exactGenerationStillCurrent()) return null
+                return loader(context, account, accountCreationId)
+                    .takeIf { exactGenerationStillCurrent() }
+            }
             val info = AccountActivity.AccountInfo()
             val settings: AccountSettings
             val etebaseLocalCache: EtebaseLocalCache
             val colMgr: CollectionManager
             try {
+                // Settings/cache/session are account-name keyed. A same-name replacement must
+                // never be allowed to supply data to this retained generation.
+                if (!exactGenerationStillCurrent()) return null
                 settings = AccountSettings(context, account)
+                if (!exactGenerationStillCurrent()) return null
                 etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
+                if (!exactGenerationStillCurrent()) return null
                 val httpClient = HttpClient.Builder(context).build().okHttpClient
                 // Issue #119: getEtebase throws IllegalStateException when userData hasn't yet
                 // propagated (first-login race) or when the persisted session is genuinely
                 // missing. Previously this propagated to viewModelScope.launch and crashed the
-                // app via the default uncaught-exception handler. Return an empty AccountInfo
-                // so the UI shows nothing rather than dying.
+                // app via the default uncaught-exception handler. Preserve any prior successful
+                // dashboard model; an ordinary current-generation failure must not synthesize an
+                // empty model over it.
+                if (!exactGenerationStillCurrent()) return null
                 val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings)
                 colMgr = etebase.collectionManager
             } catch (e: InvalidAccountException) {
-                return info
+                throw AccountLoadFailure(e)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 Logger.log.log(Level.SEVERE, "AccountInfoViewModel.doLoad failed", e)
-                return info
+                throw AccountLoadFailure(e)
             }
 
+            // Revalidate immediately before status and collection reads from this session/cache.
+            if (!exactGenerationStillCurrent()) return null
+            val statusStore = SyncStatusStore(context)
             info.carddav = AccountInfo.ServiceInfo()
             info.carddav!!.refreshing = ContentResolver.isSyncActive(account, App.addressBooksAuthority)
+            if (!exactGenerationStillCurrent()) return null
+            info.carddav!!.status = statusStore.status(account, SyncStatusStore.Service.CONTACTS)
+            if (!exactGenerationStillCurrent()) return null
             info.carddav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.ADDRESS_BOOK)
 
             val accountManager = AccountManager.get(context)
@@ -868,15 +1181,23 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
             info.caldav = AccountInfo.ServiceInfo()
             info.caldav!!.refreshing = ContentResolver.isSyncActive(account, CalendarContract.AUTHORITY)
+            if (!exactGenerationStillCurrent()) return null
+            info.caldav!!.status = statusStore.status(account, SyncStatusStore.Service.CALENDAR)
+            if (!exactGenerationStillCurrent()) return null
             info.caldav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.CALENDAR)
 
             info.taskdav = AccountInfo.ServiceInfo()
             info.taskdav!!.refreshing = TASK_PROVIDERS.any {
                 ContentResolver.isSyncActive(account, it.authority)
             }
+            if (!exactGenerationStillCurrent()) return null
+            info.taskdav!!.status = statusStore.status(account, SyncStatusStore.Service.TASKS)
+            if (!exactGenerationStillCurrent()) return null
             info.taskdav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.TASKS)
 
-            return info
+            // This runs on Dispatchers.IO immediately after the final private read and before
+            // the result can reach the publisher.
+            return info.takeIf { exactGenerationStillCurrent() }
         }
 
         fun observe(owner: LifecycleOwner, observer: (AccountActivity.AccountInfo) -> Unit) =
@@ -884,6 +1205,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         val value: AccountActivity.AccountInfo?
             get() = holder.value
+
+        companion object {
+            /** Deterministic no-network instrumentation seam; production leaves this null. */
+            @VisibleForTesting
+            @JvmField internal var accountLoaderOverride:
+                ((Context, Account, String) -> AccountActivity.AccountInfo)? = null
+        }
+
+        private class AccountLoadFailure(cause: Throwable) : Exception(cause)
     }
 
 
@@ -925,45 +1255,52 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val isOwner = info.isAdmin
             shared.visibility = if (isOwner) View.GONE else View.VISIBLE
 
+            val spoken = mutableListOf(if (TextUtils.isEmpty(info.displayName)) info.uid else info.displayName)
+            if (info.description.isNotBlank()) spoken += info.description
+            if (info.isReadOnly) spoken += context.getString(R.string.account_collection_read_only_indicator)
+            if (!isOwner) spoken += context.getString(R.string.account_collection_shared_indicator)
+            v.contentDescription = spoken.joinToString(". ")
+            ViewCompat.setImportantForAccessibility(v, ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES)
+            listOf(R.id.title, R.id.description, R.id.shared, R.id.read_only, R.id.color).forEach { child ->
+                ViewCompat.setImportantForAccessibility(v.findViewById(child), ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_NO)
+            }
+
             return v
         }
     }
 
     /* USER ACTIONS */
 
-    // Tear down per-account client state before the Android account is removed.
-    // Must run while AccountManager still has the user data, since AccountSettings
-    // (and the etebase session) are read from it. confirmLogout() must call this —
-    // leaving the Etebase FS cache behind causes stale stokens on re-login, which
-    // makes incremental sync miss historical items.
-    private suspend fun teardownAccountState(account: Account) = withContext(Dispatchers.IO) {
-        try {
-            EtebaseLocalCache.clearUserCache(this@AccountActivity, account.name)
-        } catch (e: Throwable) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Logger.log.warning("Cache clear failed: ${e.javaClass.name}")
-        }
-
-        try {
-            val settings = AccountSettings(this@AccountActivity, account)
-            HttpClient.Builder(this@AccountActivity).build().use { httpClient ->
-                val etebase = EtebaseLocalCache.getEtebase(this@AccountActivity, httpClient.okHttpClient, settings)
-                etebase.logout()
-            }
-        } catch (e: EtebaseException) {
-            Logger.log.warning("Server logout failed: ${e.javaClass.name}")
-        } catch (e: Throwable) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Logger.log.warning("Account teardown failed: ${e.javaClass.name}")
-        }
+    private fun launchCollectionIntent(intent: Intent) {
+        if (!exactAccountStillCurrent()) return
+        collectionIntentLauncherOverride?.invoke(intent) ?: startActivity(intent)
     }
 
+    private fun launchExactAccountRoute(intent: Intent) {
+        if (!exactAccountStillCurrent()) return
+        accountRouteLauncherOverride?.invoke(intent) ?: startActivity(intent)
+    }
 
     private fun requestSync() {
+        if (!exactAccountStillCurrent()) return
         if (isSyncActive()) return        // don't stack a duplicate concurrent sync
-        requestSync(applicationContext, account)
+        syncRequestOverride?.invoke(applicationContext, account)
+            ?: requestSync(applicationContext, account)
         Snackbar.make(findViewById(R.id.coordinator), R.string.account_synchronizing_now, Snackbar.LENGTH_LONG).show()
     }
+
+    private fun exactAccountStillCurrent() =
+        signOutModel.ownsCurrentGeneration() &&
+        io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+            account,
+            accountCreationId,
+            App.accountType,
+            AccountManager.get(this)
+        ) != null
+
+    @VisibleForTesting
+    internal fun hasObservedRetainedGenerationInvalidation() =
+        signOutModel.hasObservedMainGenerationInvalidation()
 
     /** Pull-to-refresh handler for the account screen. */
     private fun onAccountSwipeRefresh() {
@@ -977,10 +1314,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     /** Syncs the refresh indicator with the current sync state (called by the ACTIVE observer). */
     private fun updateSwipeRefreshState() {
+        if (!exactAccountStillCurrent()) {
+            swipeRefreshLayout?.isRefreshing = false
+            return
+        }
         swipeRefreshLayout?.isRefreshing = isSyncActive()
     }
 
     private fun isSyncActive(): Boolean {
+        if (!exactAccountStillCurrent()) return false
+        syncActiveOverride?.let { return it(account) }
         val authorities = mutableListOf(App.addressBooksAuthority, CalendarContract.AUTHORITY)
         TaskProviderHandling.getWantedTaskSyncProvider(this)?.authority?.let { authorities.add(it) }
         return authorities.any { ContentResolver.isSyncActive(account, it) }
@@ -993,24 +1336,32 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val trialView = findViewById<TextView>(R.id.subscription_trial)
         val actionButton = findViewById<com.google.android.material.button.MaterialButton>(R.id.subscription_action)
 
-        // Show loading state
-        planView.text = getString(R.string.subscription_loading)
-        statusView.visibility = View.GONE
+        // Unknown, healthy and routine plan state never occupies the sync overview.
+        subscriptionCard.visibility = View.GONE
 
         lifecycleScope.launch {
             val status = withContext(Dispatchers.IO) {
-                BillingManager.getInstance().getSubscriptionStatus(this@AccountActivity, account)
+                if (!exactAccountStillCurrent()) return@withContext null
+                val loaded = billingStatusOverride?.invoke(this@AccountActivity, account, accountCreationId)
+                    ?: BillingManager.getInstance().getSubscriptionStatus(
+                        this@AccountActivity, account, accountCreationId)
+                loaded?.takeIf { exactAccountStillCurrent() }
             }
+            if (!exactAccountStillCurrent() || status == null) return@launch
 
-            // Bug fix: hide subscription card entirely when status is unknown
-            if (status.isUnknown) {
-                subscriptionCard.visibility = View.GONE
+            if (status.isUnknown || (!status.isPastDue && !status.isExpiredOrCancelled)) {
                 return@launch
             }
 
+            if (!exactAccountStillCurrent()) return@launch
             updateSubscriptionUi(status, planView, statusView, trialView, actionButton)
+            if (!exactAccountStillCurrent()) return@launch
+            subscriptionCard.visibility = View.VISIBLE
         }
     }
+
+    @VisibleForTesting
+    internal fun reloadSubscriptionStatusForTesting() = loadSubscriptionStatus()
 
     private fun updateSubscriptionUi(
         status: BillingManager.SubscriptionStatus,
@@ -1019,64 +1370,77 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         trialView: TextView,
         actionButton: com.google.android.material.button.MaterialButton
     ) {
-        // Plan name
-        planView.text = status.displayPlan
-
-        // Status line
+        planView.setText(R.string.dashboard_billing_attention)
+        trialView.visibility = View.GONE
         statusView.visibility = View.VISIBLE
-        when {
-            status.isActive -> {
-                val renewalText = status.renewalDate?.let { date ->
-                    try {
-                        val parsed = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).parse(date)
-                        val formatted = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(parsed!!)
-                        getString(R.string.subscription_renews, formatted)
-                    } catch (e: Exception) {
-                        getString(R.string.subscription_status_active)
-                    }
-                } ?: getString(R.string.subscription_status_active)
-                statusView.text = renewalText
-                statusView.setTextColor(planView.currentTextColor)
-            }
-            status.isTrial -> {
-                statusView.text = getString(R.string.subscription_status_trialing)
-                statusView.setTextColor(planView.currentTextColor)
-                // Show trial days
-                status.trialDaysRemaining?.let { days ->
-                    trialView.visibility = View.VISIBLE
-                    trialView.text = getString(R.string.subscription_trial_days, days)
-                }
-            }
-            status.isPastDue -> {
-                statusView.text = getString(R.string.subscription_status_past_due)
-                statusView.setTextColor(ContextCompat.getColor(this, android.R.color.holo_orange_dark))
-            }
-            status.isExpiredOrCancelled -> {
-                statusView.text = if (status.status == "cancelled")
-                    getString(R.string.subscription_status_cancelled)
-                else
-                    getString(R.string.subscription_status_expired)
-                statusView.setTextColor(ContextCompat.getColor(this, android.R.color.holo_red_dark))
-                // Show reactivate button
-                actionButton.visibility = View.VISIBLE
-                actionButton.text = getString(R.string.subscription_reactivate)
-                actionButton.setOnClickListener {
-                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(BillingManager.BILLING_MANAGE_URL)))
-                }
-            }
+        statusView.text = when {
+            status.isPastDue -> getString(R.string.subscription_status_past_due)
+            status.status == "cancelled" -> getString(R.string.subscription_status_cancelled)
+            else -> getString(R.string.subscription_status_expired)
+        }
+        statusView.setTextColor(ContextCompat.getColor(this, R.color.semantic_warning))
+        actionButton.visibility = View.VISIBLE
+        actionButton.setText(R.string.dashboard_open_account_settings)
+        actionButton.setOnClickListener {
+            launchExactAccountRoute(AppSettingsActivity.newIntent(this, account, accountCreationId))
         }
     }
 
     companion object {
         val EXTRA_ACCOUNT = "account"
-        private const val EXTRA_CREATION_ID = "account_creation_id"
+        internal const val EXTRA_CREATION_ID = AppSettingsActivity.EXTRA_CREATION_ID
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
         private const val KEY_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
         private const val KEY_STARTUP_PERMISSION_FLOW_STARTED = "startup_permission_flow_started"
+        private const val ACCOUNT_ROW_ID_MIN = 0x02000000
+        private const val ACCOUNT_ROW_ID_MAX = 0x02ffffff
+        internal fun accountRowViewId(identity: ExactAccountIdentity) =
+            ACCOUNT_ROW_ID_MIN or (identity.hashCode() and 0x00ffffff)
+
+        internal fun accountRowViewIds(identities: List<ExactAccountIdentity>): Map<ExactAccountIdentity, Int> {
+            val used = mutableSetOf<Int>()
+            return AccountSwitcherPolicy.ordered(identities).associateWith { identity ->
+                var rowId = accountRowViewId(identity)
+                while (!used.add(rowId))
+                    rowId = if (rowId == ACCOUNT_ROW_ID_MAX) ACCOUNT_ROW_ID_MIN else rowId + 1
+                rowId
+            }
+        }
         fun newIntent(context: Context, account: Account): Intent = Intent(context, AccountActivity::class.java)
             .putExtra(EXTRA_ACCOUNT, account)
             .putExtra(EXTRA_CREATION_ID, AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID))
+
+        fun newIntent(context: Context, account: Account, creationId: String): Intent {
+            require(creationId.isNotBlank()) { "Account creation ID must be nonblank" }
+            return Intent(context, AccountActivity::class.java)
+                .putExtra(EXTRA_ACCOUNT, account)
+                .putExtra(EXTRA_CREATION_ID, creationId)
+        }
+
+        /** No-network instrumentation seams; production leaves all three null. */
+        @VisibleForTesting
+        @JvmField internal var collectionIntentLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var syncRequestOverride: ((Context, Account) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var syncActiveOverride: ((Account) -> Boolean)? = null
+        @VisibleForTesting
+        @JvmField internal var fingerprintLoaderOverride: ((Context, Account, String) -> String?)? = null
+        @VisibleForTesting
+        @JvmField internal var exportDocumentLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var exportWriterOverride: ((Context, Account, String, AndroidExportKind, OutputStream) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var billingStatusOverride: ((Context, Account, String) -> BillingManager.SubscriptionStatus)? = null
+        @VisibleForTesting
+        @JvmField internal var accountRouteLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var permissionRequestOverride: ((android.app.Activity) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var permissionRemediationLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var masterSyncEnableOverride: (() -> Unit)? = null
     }
 
 }

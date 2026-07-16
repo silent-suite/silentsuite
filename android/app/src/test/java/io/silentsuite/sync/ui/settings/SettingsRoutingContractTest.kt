@@ -43,10 +43,10 @@ class SettingsRoutingContractTest {
         assertTrue(legacy.contains("source.getStringExtra(AppSettingsActivity.EXTRA_CREATION_ID)"))
         assertTrue(sync.contains("SettingsCategory.SYNC"))
         assertTrue(sync.contains("extras.getParcelable<Account>(Constants.KEY_ACCOUNT)"))
-        assertTrue(sync.contains("fun setAccount(account: Account)"))
+        assertTrue(sync.contains("fun setAccount(account: Account, capturedCreationId: String?)"))
         assertTrue(sync.contains("AppSettingsActivity.EXTRA_CREATION_ID"))
         assertTrue(logger.contains("SettingsCategory.ADVANCED"))
-        assertTrue(drawer.contains("AppSettingsActivity.newIntent(this, account, SettingsCategory.HOME)"))
+        assertTrue(drawer.contains("AppSettingsActivity.newIntent(this, account, accountCreationId)"))
     }
 
     @Test
@@ -58,6 +58,6 @@ class SettingsRoutingContractTest {
             assertTrue(syncXml.substring(keyAt, minOf(syncXml.length, keyAt + 220)).contains("android:persistent=\"false\""))
         }
         val activity = File(sourceRoot, "ui/AppSettingsActivity.kt").readText()
-        assertTrue(activity.contains("AccountSettings(requireContext(), selectedAccount)"))
+        assertTrue(activity.contains("AccountSettings(requireContext(), account)"))
     }
 }

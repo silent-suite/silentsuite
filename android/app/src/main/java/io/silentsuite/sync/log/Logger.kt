@@ -9,6 +9,7 @@
 package io.silentsuite.sync.log
 
 import android.annotation.SuppressLint
+import android.accounts.AccountManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -19,6 +20,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import io.silentsuite.sync.App
+import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.AppSettingsActivity
@@ -50,12 +52,15 @@ object Logger : SharedPreferences.OnSharedPreferenceChangeListener {
     }
 
     /** The exact-generation Settings route attached to the file-logging notification. */
-    internal fun notificationSettingsIntent(context: Context): Intent =
-        AppSettingsActivity.newIntent(
-            context,
-            ActiveAccountManager.getActiveAccount(context),
-            SettingsCategory.ADVANCED
-        )
+    internal fun notificationSettingsIntent(context: Context): Intent {
+        val account = ActiveAccountManager.getActiveAccount(context)
+        val creationId = account?.let {
+            AccountManager.get(context).getUserData(it, AccountSettings.KEY_CREATION_ID)
+        }
+        return if (account != null && !creationId.isNullOrBlank())
+            AppSettingsActivity.newIntent(context, account, creationId, SettingsCategory.ADVANCED)
+        else AppSettingsActivity.newIntent(context, SettingsCategory.ADVANCED)
+    }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
         if (key == AppPreferences.KEY_LOG_TO_FILE || key == AppPreferences.KEY_LOG_VERBOSE) {

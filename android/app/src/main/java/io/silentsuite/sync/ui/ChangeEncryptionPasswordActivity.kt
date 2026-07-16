@@ -9,6 +9,7 @@
 package io.silentsuite.sync.ui
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
@@ -17,10 +18,12 @@ import android.view.View
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.etebase.client.Client
 import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.App
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.requestSync
+import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import com.google.android.material.textfield.TextInputLayout
 import androidx.lifecycle.lifecycleScope
@@ -31,12 +34,20 @@ import kotlinx.coroutines.withContext
 open class ChangeEncryptionPasswordActivity : BaseActivity() {
 
     protected lateinit var account: Account
+    private lateinit var creationId: String
     lateinit var progress: Dialog
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         account = requireNotNull(requireNotNull(intent.extras) { "ChangeEncryptionPasswordActivity requires intent extras" }.getParcelable(EXTRA_ACCOUNT)) { "ChangeEncryptionPasswordActivity requires EXTRA_ACCOUNT" }
+        creationId = requireNotNull(intent.getStringExtra(EXTRA_CREATION_ID)) {
+            "ChangeEncryptionPasswordActivity requires EXTRA_CREATION_ID"
+        }
+        if (ExactAccountRouting.validate(account, creationId, App.accountType, AccountManager.get(this)) == null) {
+            finish()
+            return
+        }
 
         supportActionBar!!.setDisplayHomeAsUpEnabled(true)
 
@@ -59,11 +70,13 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
     }
 
     fun changePasswordDo(old_password: String, new_password: String) {
+        if (!exactAccountStillCurrent()) return
         val settings = AccountSettings(this, account)
 
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                val changed = withContext(Dispatchers.IO) {
+                    if (!exactAccountStillCurrent()) return@withContext false
                     val httpClient = HttpClient.Builder(this@ChangeEncryptionPasswordActivity).setForeground(true).build().okHttpClient
 
                     Logger.log.info("Loging in with old password")
@@ -73,7 +86,15 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
 
                     etebase.changePassword(new_password)
 
+                    if (!exactAccountStillCurrent()) return@withContext false
                     settings.etebaseSession = etebase.save(null)
+                    true
+                }
+
+                if (!changed || !exactAccountStillCurrent()) {
+                    progress.dismiss()
+                    finish()
+                    return@launch
                 }
 
                 progress.dismiss()
@@ -84,7 +105,7 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
                             this@ChangeEncryptionPasswordActivity.finish()
                         }.show()
 
-                requestSync(applicationContext, account)
+                if (exactAccountStillCurrent()) requestSync(applicationContext, account)
             } catch (e: Exception) {
                 changePasswordError(e)
             }
@@ -133,11 +154,18 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
 
     companion object {
         internal val EXTRA_ACCOUNT = "account"
+        internal val EXTRA_CREATION_ID = AppSettingsActivity.EXTRA_CREATION_ID
 
-        fun newIntent(context: Context, account: Account): Intent {
+        fun newIntent(context: Context, account: Account, creationId: String): Intent {
+            require(creationId.isNotBlank()) { "Account creation ID must be nonblank" }
             val intent = Intent(context, ChangeEncryptionPasswordActivity::class.java)
             intent.putExtra(EXTRA_ACCOUNT, account)
+            intent.putExtra(EXTRA_CREATION_ID, creationId)
             return intent
         }
     }
+
+    private fun exactAccountStillCurrent() = ExactAccountRouting.validate(
+        account, creationId, App.accountType, AccountManager.get(this)
+    ) != null
 }

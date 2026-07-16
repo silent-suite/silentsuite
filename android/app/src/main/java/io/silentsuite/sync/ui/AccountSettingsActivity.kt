@@ -24,7 +24,7 @@ class AccountSettingsActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Redirect to the consolidated App Settings screen
+        // Redirect while preserving the generation that the legacy intent captured.
         startActivity(redirectIntent(this, intent))
         finish()
     }
@@ -47,14 +47,20 @@ class AccountSettingsActivity : BaseActivity() {
                 source.getStringExtra(AppSettingsActivity.EXTRA_CATEGORY)
             ).takeUnless { it == SettingsCategory.HOME } ?: SettingsCategory.SYNC
             return if (source.hasExtra(AppSettingsActivity.EXTRA_ACCOUNT) ||
-                source.hasExtra(AppSettingsActivity.EXTRA_CREATION_ID))
-                AppSettingsActivity.newIntent(
-                    context,
-                    source.getParcelableExtra<Account>(AppSettingsActivity.EXTRA_ACCOUNT),
-                    source.getStringExtra(AppSettingsActivity.EXTRA_CREATION_ID),
-                    category
-                )
-            else AppSettingsActivity.newIntent(context, null, category)
+                source.hasExtra(AppSettingsActivity.EXTRA_CREATION_ID)) {
+                val account = source.getParcelableExtra<Account>(AppSettingsActivity.EXTRA_ACCOUNT)
+                val creationId = source.getStringExtra(AppSettingsActivity.EXTRA_CREATION_ID)
+                if (account != null && !creationId.isNullOrBlank())
+                    AppSettingsActivity.newIntent(context, account, creationId, category)
+                else Intent(context, AppSettingsActivity::class.java).apply {
+                    // Preserve malformed explicitness so AppSettings fails closed instead of
+                    // redirecting to a mutable active account.
+                    account?.let { putExtra(AppSettingsActivity.EXTRA_ACCOUNT, it) }
+                    putExtra(AppSettingsActivity.EXTRA_CREATION_ID, creationId)
+                    putExtra(AppSettingsActivity.EXTRA_CATEGORY, category.route)
+                }
+            }
+            else AppSettingsActivity.newIntent(context, category)
         }
     }
 }

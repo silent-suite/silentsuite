@@ -44,7 +44,7 @@ class SettingsRuntimeTest {
         }
         try {
             ActivityScenario.launch<AppSettingsActivity>(
-                AppSettingsActivity.newIntent(context, second, SettingsCategory.SYNC)
+                AppSettingsActivity.newIntent(context, second, "settings-1", SettingsCategory.SYNC)
             ).use { scenario ->
                 scenario.onActivity { activity ->
                     assertEquals(second, activity.selectedAccount)
@@ -82,7 +82,7 @@ class SettingsRuntimeTest {
         }))
         val currentAccount = manager.getAccountsByType(account.type).single { it == account }
         assertEquals(oldGeneration, manager.getUserData(currentAccount, AccountSettings.KEY_CREATION_ID))
-        val directIntent = AppSettingsActivity.newIntent(context, currentAccount, SettingsCategory.SYNC)
+        val directIntent = AppSettingsActivity.newIntent(context, currentAccount, oldGeneration, SettingsCategory.SYNC)
         val notificationIntent = SyncNotification.settingsIntent(context, Bundle().apply {
             putParcelable(Constants.KEY_ACCOUNT, currentAccount)
             putString(AppSettingsActivity.EXTRA_CREATION_ID, oldGeneration)
@@ -171,6 +171,41 @@ class SettingsRuntimeTest {
     }
 
     @Test
+    fun retainedSettingsRejectSameNameReplacementBeforeAccountMutation() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = Account("settings-replacement-${System.nanoTime()}@example.invalid", App.accountType)
+        check(manager.addAccountExplicitly(account, null, null))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, "settings-generation-a"))
+        var replacement: Account? = null
+        try {
+            ActivityScenario.launch<AppSettingsActivity>(
+                AppSettingsActivity.newIntent(context, account, "settings-generation-a", SettingsCategory.SYNC)
+            ).use { scenario ->
+                scenario.onActivity { it.supportFragmentManager.executePendingTransactions() }
+                removeAccountAndWait(manager, account)
+                val replacementAccount = Account(account.name, account.type)
+                replacement = replacementAccount
+                check(manager.addAccountExplicitly(replacementAccount, null, Bundle().apply {
+                    putString(AccountSettings.KEY_CREATION_ID, "settings-generation-b")
+                }))
+                scenario.onActivity { activity ->
+                    val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content)
+                        as AppSettingsActivity.CategoryFragment
+                    val wifiOnly = fragment.findPreference<SwitchPreferenceCompat>("sync_wifi_only")!!
+                    assertFalse(wifiOnly.callChangeListener(true))
+                    assertTrue(activity.isFinishing)
+                }
+                assertEquals(null, manager.getUserData(replacementAccount, AccountSettings.KEY_WIFI_ONLY))
+            }
+        } finally {
+            removeAccountAndWait(manager, replacement ?: account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    @Test
     fun proxyPortPreferenceAcceptsBoundsAndPreservesPriorValueOnInvalidInput() {
         withEmptyPreferenceStores { _, _ ->
             val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -178,7 +213,7 @@ class SettingsRuntimeTest {
             preferences.proxyPort = 8118
 
             ActivityScenario.launch<AppSettingsActivity>(
-                AppSettingsActivity.newIntent(context, null, SettingsCategory.ADVANCED)
+                AppSettingsActivity.newIntent(context, SettingsCategory.ADVANCED)
             ).use { scenario ->
                 scenario.onActivity { activity ->
                     activity.supportFragmentManager.executePendingTransactions()

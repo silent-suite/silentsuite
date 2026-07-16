@@ -1,10 +1,14 @@
 package io.silentsuite.sync.dataexport
 
 import android.content.Context
+import android.accounts.Account
+import android.accounts.AccountManager
 import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
+import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
@@ -60,53 +64,90 @@ object AndroidDataExporter {
     }
 
     fun writeCollectionExport(
+        context: Context,
+        account: Account,
+        creationId: String,
         collectionType: String,
         itemContents: List<String>,
         outputStream: OutputStream,
-    ) {
+    ): Boolean {
+        require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
+        fun exactGenerationStillCurrent() = ExactAccountRouting.validate(
+            account, creationId, App.accountType, AccountManager.get(context)
+        ) != null
+        if (!exactGenerationStillCurrent()) return false
         val exportData = when (collectionType) {
             Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS -> calendarData(itemContents)
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> contactData(itemContents)
             else -> itemContents.filter { it.isNotBlank() }.joinToString("\r\n")
         }
+        if (!exactGenerationStillCurrent()) return false
         OutputStreamWriter(outputStream, StandardCharsets.UTF_8).use { writer ->
+            if (!exactGenerationStillCurrent()) return false
             writer.write(exportData)
         }
+        return exactGenerationStillCurrent()
     }
 
     fun writeExport(
         context: Context,
-        account: android.accounts.Account,
+        account: Account,
+        creationId: String,
         kind: AndroidExportKind,
         outputStream: OutputStream,
     ) {
+        require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
+        fun exactGenerationStillCurrent() = ExactAccountRouting.validate(
+            account, creationId, App.accountType, AccountManager.get(context)
+        ) != null
+        if (!exactGenerationStillCurrent()) return
         val settings = AccountSettings(context, account)
+        if (!exactGenerationStillCurrent()) return
         val cache = EtebaseLocalCache.getInstance(context, account.name)
+        if (!exactGenerationStillCurrent()) return
         val etebase = EtebaseLocalCache.getEtebase(context, HttpClient.sharedClient, settings)
+        if (!exactGenerationStillCurrent()) return
         val collectionManager = etebase.collectionManager
 
+        if (!exactGenerationStillCurrent()) return
         val exportData = synchronized(cache) {
+            if (!exactGenerationStillCurrent()) return@synchronized null
             when (kind) {
-                AndroidExportKind.CALENDAR -> calendarData(cache, collectionManager, Constants.ETEBASE_TYPE_CALENDAR)
-                AndroidExportKind.TASKS -> calendarData(cache, collectionManager, Constants.ETEBASE_TYPE_TASKS)
-                AndroidExportKind.CONTACTS -> contactData(cache, collectionManager)
-                AndroidExportKind.EVERYTHING -> ExportData(
-                    calendar = calendarData(cache, collectionManager, Constants.ETEBASE_TYPE_CALENDAR),
-                    tasks = calendarData(cache, collectionManager, Constants.ETEBASE_TYPE_TASKS),
-                    contacts = contactData(cache, collectionManager)
-                )
+                AndroidExportKind.CALENDAR -> calendarData(cache, collectionManager,
+                    Constants.ETEBASE_TYPE_CALENDAR, ::exactGenerationStillCurrent)
+                AndroidExportKind.TASKS -> calendarData(cache, collectionManager,
+                    Constants.ETEBASE_TYPE_TASKS, ::exactGenerationStillCurrent)
+                AndroidExportKind.CONTACTS -> contactData(cache, collectionManager, ::exactGenerationStillCurrent)
+                AndroidExportKind.EVERYTHING -> {
+                    val calendar = calendarData(cache, collectionManager,
+                        Constants.ETEBASE_TYPE_CALENDAR, ::exactGenerationStillCurrent)
+                        ?: return@synchronized null
+                    val tasks = calendarData(cache, collectionManager,
+                        Constants.ETEBASE_TYPE_TASKS, ::exactGenerationStillCurrent)
+                        ?: return@synchronized null
+                    val contacts = contactData(cache, collectionManager, ::exactGenerationStillCurrent)
+                        ?: return@synchronized null
+                    ExportData(calendar, tasks, contacts)
+                }
             }
         }
+        if (exportData == null || !exactGenerationStillCurrent()) return
 
         if (kind == AndroidExportKind.EVERYTHING) {
             val zipData = exportData as ExportData
+            if (!exactGenerationStillCurrent()) return
             ZipOutputStream(outputStream).use { zip ->
+                if (!exactGenerationStillCurrent()) return
                 zip.writestr("calendar.ics", zipData.calendar)
+                if (!exactGenerationStillCurrent()) return
                 zip.writestr("tasks.ics", zipData.tasks)
+                if (!exactGenerationStillCurrent()) return
                 zip.writestr("contacts.vcf", zipData.contacts)
             }
         } else {
+            if (!exactGenerationStillCurrent()) return
             OutputStreamWriter(outputStream, StandardCharsets.UTF_8).use { writer ->
+                if (!exactGenerationStillCurrent()) return
                 writer.write(exportData as String)
             }
         }
@@ -124,13 +165,23 @@ object AndroidDataExporter {
         }
     }
 
-    private fun calendarData(cache: EtebaseLocalCache, collectionManager: com.etebase.client.CollectionManager, type: String): String {
-        val contents = cache.collectionList(collectionManager)
-            .filter { it.collectionType == type }
-            .flatMap { collection ->
-                val itemManager = collectionManager.getItemManager(collection.col)
-                cache.itemList(itemManager, collection.col.uid).map { it.content }
-            }
+    private fun calendarData(
+        cache: EtebaseLocalCache,
+        collectionManager: com.etebase.client.CollectionManager,
+        type: String,
+        exactGenerationStillCurrent: () -> Boolean,
+    ): String? {
+        if (!exactGenerationStillCurrent()) return null
+        val collections = cache.collectionList(collectionManager)
+        if (!exactGenerationStillCurrent()) return null
+        val contents = mutableListOf<String>()
+        for (collection in collections.filter { it.collectionType == type }) {
+            if (!exactGenerationStillCurrent()) return null
+            val itemManager = collectionManager.getItemManager(collection.col)
+            if (!exactGenerationStillCurrent()) return null
+            contents += cache.itemList(itemManager, collection.col.uid).map { it.content }
+            if (!exactGenerationStillCurrent()) return null
+        }
         return calendarData(contents)
     }
 
@@ -152,13 +203,22 @@ object AndroidDataExporter {
         }
     }
 
-    private fun contactData(cache: EtebaseLocalCache, collectionManager: com.etebase.client.CollectionManager): String {
-        val contents = cache.collectionList(collectionManager)
-            .filter { it.collectionType == Constants.ETEBASE_TYPE_ADDRESS_BOOK }
-            .flatMap { collection ->
-                val itemManager = collectionManager.getItemManager(collection.col)
-                cache.itemList(itemManager, collection.col.uid).map { it.content.trim() }
-            }
+    private fun contactData(
+        cache: EtebaseLocalCache,
+        collectionManager: com.etebase.client.CollectionManager,
+        exactGenerationStillCurrent: () -> Boolean,
+    ): String? {
+        if (!exactGenerationStillCurrent()) return null
+        val collections = cache.collectionList(collectionManager)
+        if (!exactGenerationStillCurrent()) return null
+        val contents = mutableListOf<String>()
+        for (collection in collections.filter { it.collectionType == Constants.ETEBASE_TYPE_ADDRESS_BOOK }) {
+            if (!exactGenerationStillCurrent()) return null
+            val itemManager = collectionManager.getItemManager(collection.col)
+            if (!exactGenerationStillCurrent()) return null
+            contents += cache.itemList(itemManager, collection.col.uid).map { it.content.trim() }
+            if (!exactGenerationStillCurrent()) return null
+        }
         return contactData(contents)
     }
 

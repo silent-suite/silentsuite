@@ -3,7 +3,6 @@ package io.silentsuite.sync.syncadapter
 import android.app.Activity
 import android.app.PendingIntent
 import android.accounts.Account
-import android.accounts.AccountManager
 import android.content.Context
 import android.content.Intent
 import android.database.sqlite.SQLiteException
@@ -66,13 +65,10 @@ class SyncNotification(internal val context: Context, internal val notificationT
         detailsIntent.data = Uri.parse("uri://" + javaClass.name + "/" + notificationTag)
     }
 
-    /** Captures the generation when the notification is created, not when an old one is tapped. */
-    fun setAccount(account: Account) {
+    /** Uses the generation captured when the sync began; never rereads a mutable account row. */
+    fun setAccount(account: Account, capturedCreationId: String?) {
         detailsIntent.putExtra(Constants.KEY_ACCOUNT, account)
-        detailsIntent.putExtra(
-            AppSettingsActivity.EXTRA_CREATION_ID,
-            AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID)
-        )
+        detailsIntent.putExtra(AppSettingsActivity.EXTRA_CREATION_ID, capturedCreationId)
     }
 
     fun notify(title: String, state: String) {
@@ -155,12 +151,17 @@ class SyncNotification(internal val context: Context, internal val notificationT
     }
 
     companion object {
-        internal fun settingsIntent(context: Context, extras: Bundle): Intent =
-            AppSettingsActivity.newIntent(
-                context,
-                extras.getParcelable<Account>(Constants.KEY_ACCOUNT),
-                extras.getString(AppSettingsActivity.EXTRA_CREATION_ID),
-                SettingsCategory.SYNC
-            )
+        internal fun settingsIntent(context: Context, extras: Bundle): Intent {
+            val account = extras.getParcelable<Account>(Constants.KEY_ACCOUNT)
+            val creationId = extras.getString(AppSettingsActivity.EXTRA_CREATION_ID)
+            if (account != null && !creationId.isNullOrBlank())
+                return AppSettingsActivity.newIntent(context, account, creationId, SettingsCategory.SYNC)
+            return Intent(context, AppSettingsActivity::class.java).apply {
+                // Notification routes are explicit even when malformed, and must fail closed.
+                account?.let { putExtra(AppSettingsActivity.EXTRA_ACCOUNT, it) }
+                putExtra(AppSettingsActivity.EXTRA_CREATION_ID, creationId)
+                putExtra(AppSettingsActivity.EXTRA_CATEGORY, SettingsCategory.SYNC.route)
+            }
+        }
     }
 }

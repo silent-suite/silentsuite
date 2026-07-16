@@ -51,35 +51,31 @@ class AppSettingsActivity : BaseActivity() {
 
     companion object {
         const val EXTRA_ACCOUNT = "account"
-        const val EXTRA_CREATION_ID = "settings_account_creation_id"
+        const val EXTRA_CREATION_ID = "account_creation_id"
         const val EXTRA_CATEGORY = "settings_category"
         private const val STATE_ACCOUNT = "state_account"
         private const val STATE_CREATION_ID = "state_creation_id"
         private const val STATE_EXPLICIT_ACCOUNT = "state_explicit_account"
         private const val STATE_CATEGORY = "state_category"
 
+        /** Global settings have no account identity and intentionally carry no account extra. */
+        fun newIntent(context: Context): Intent = Intent(context, AppSettingsActivity::class.java)
+
+        internal fun newIntent(context: Context, category: SettingsCategory): Intent =
+            newIntent(context).putExtra(EXTRA_CATEGORY, category.route)
+
         fun newIntent(
             context: Context,
-            account: Account?,
+            account: Account,
+            creationId: String,
             category: SettingsCategory = SettingsCategory.HOME
-        ): Intent = if (account == null)
-            Intent(context, AppSettingsActivity::class.java).putExtra(EXTRA_CATEGORY, category.route)
-        else newIntent(
-            context, account,
-            AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID),
-            category)
-
-        internal fun newIntent(
-            context: Context,
-            account: Account?,
-            creationId: String?,
-            category: SettingsCategory = SettingsCategory.HOME
-        ): Intent = Intent(context, AppSettingsActivity::class.java).apply {
-            account?.let { putExtra(EXTRA_ACCOUNT, it) }
-            // Presence records an explicit route even when a malformed legacy caller supplied
-            // a null account or generation; AppSettingsActivity must not fall back in that case.
+        ): Intent {
+            require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
+            return Intent(context, AppSettingsActivity::class.java).apply {
+            putExtra(EXTRA_ACCOUNT, account)
             putExtra(EXTRA_CREATION_ID, creationId)
             putExtra(EXTRA_CATEGORY, category.route)
+            }
         }
     }
 
@@ -137,6 +133,13 @@ class AppSettingsActivity : BaseActivity() {
         return AccountRoute(exact, if (exact != null) creationId else null, false)
     }
 
+    internal fun exactSelectedAccount(): Account? {
+        val exact = ExactAccountRouting.validate(selectedAccount, selectedCreationId, App.accountType,
+            AccountManager.get(this))
+        if (selectedAccount != null && exact == null) finish()
+        return exact
+    }
+
     internal fun showCategory(category: SettingsCategory, addToBackStack: Boolean = true) {
         currentCategory = category
         val fragment = if (category == SettingsCategory.HOME) HomeFragment() else CategoryFragment.newInstance(category)
@@ -164,7 +167,7 @@ class AppSettingsActivity : BaseActivity() {
             preferenceManager.sharedPreferencesName = AppPreferences.PREFERENCES_NAME
             setPreferencesFromResource(R.xml.settings_home, rootKey)
             val activity = requireActivity() as AppSettingsActivity
-            activity.selectedAccount?.let { account ->
+            activity.exactSelectedAccount()?.let { account ->
                 findPreference<Preference>("settings_category_account")?.summary = account.name
             }
             val routes = mapOf(
@@ -188,8 +191,6 @@ class AppSettingsActivity : BaseActivity() {
         val category: SettingsCategory
             get() = SettingsCategory.fromRoute(requireArguments().getString(ARG_CATEGORY))
         private val host: AppSettingsActivity get() = requireActivity() as AppSettingsActivity
-        private val selectedAccount: Account get() = host.selectedAccount
-            ?: throw IllegalStateException("An account is required for ${category.route} settings")
         private lateinit var appPreferences: AppPreferences
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -220,20 +221,33 @@ class AppSettingsActivity : BaseActivity() {
         private inline fun <reified T : Preference> requirePreference(key: String): T =
             findPreference<T>(key) ?: error("Required preference '$key' is missing from ${category.route}")
 
-        private fun accountSettings(): AccountSettings? = try {
-            AccountSettings(requireContext(), selectedAccount)
-        } catch (_: InvalidAccountException) {
-            null
+        private fun exactSelectedAccount(): Account? = host.exactSelectedAccount()
+
+        private fun accountSettings(): AccountSettings? {
+            val account = exactSelectedAccount() ?: return null
+            return try {
+                AccountSettings(requireContext(), account)
+            } catch (_: InvalidAccountException) {
+                null
+            }
+        }
+
+        /** Revalidates the retained generation immediately before each account-scoped write. */
+        private fun mutateExactAccount(mutation: (AccountSettings) -> Unit): Boolean {
+            val settings = accountSettings() ?: return false
+            mutation(settings)
+            return true
         }
 
         private fun setupAccount() {
-            val account = host.selectedAccount
+            val account = exactSelectedAccount()
             requirePreference<Preference>("account_identity").summary =
                 account?.name ?: getString(R.string.settings_account_not_available)
             requirePreference<Preference>("manage_account").apply {
                 isEnabled = account != null
                 setOnPreferenceClickListener {
-                    startActivity(AccountActivity.newIntent(requireContext(), account!!))
+                    val exact = exactSelectedAccount() ?: return@setOnPreferenceClickListener false
+                    startActivity(AccountActivity.newIntent(requireContext(), exact, host.selectedCreationId!!))
                     true
                 }
             }
@@ -251,9 +265,14 @@ class AppSettingsActivity : BaseActivity() {
                     updateIntervalSummary(interval, current)
                     interval.setOnPreferenceChangeListener { _, newValue ->
                         val seconds = (newValue as String).toLong()
-                        settings.setSyncInterval(App.addressBooksAuthority, seconds)
-                        settings.setSyncInterval(CalendarContract.AUTHORITY, seconds)
-                        TASK_PROVIDERS.forEach { settings.setSyncInterval(it.authority, seconds) }
+                        if (!mutateExactAccount { it.setSyncInterval(App.addressBooksAuthority, seconds) })
+                            return@setOnPreferenceChangeListener false
+                        if (!mutateExactAccount { it.setSyncInterval(CalendarContract.AUTHORITY, seconds) })
+                            return@setOnPreferenceChangeListener false
+                        TASK_PROVIDERS.forEach { provider ->
+                            if (!mutateExactAccount { it.setSyncInterval(provider.authority, seconds) })
+                                return@setOnPreferenceChangeListener false
+                        }
                         updateIntervalSummary(interval, seconds)
                         true
                     }
@@ -268,8 +287,7 @@ class AppSettingsActivity : BaseActivity() {
                 if (settings != null) {
                     isChecked = settings.syncWifiOnly
                     setOnPreferenceChangeListener { _, value ->
-                        settings.setSyncWiFiOnly(value as Boolean)
-                        true
+                        mutateExactAccount { it.setSyncWiFiOnly(value as Boolean) }
                     }
                 }
             }
@@ -280,7 +298,8 @@ class AppSettingsActivity : BaseActivity() {
                     updateSsidSummary(this, settings.syncWifiOnlySSID)
                     setOnPreferenceChangeListener { _, value ->
                         val ssid = (value as String).takeUnless { TextUtils.isEmpty(it) }
-                        settings.syncWifiOnlySSID = ssid
+                        if (!mutateExactAccount { it.syncWifiOnlySSID = ssid })
+                            return@setOnPreferenceChangeListener false
                         updateSsidSummary(this, ssid)
                         true
                     }
@@ -355,10 +374,12 @@ class AppSettingsActivity : BaseActivity() {
 
         private fun setupPrivacySecurity() {
             requirePreference<Preference>("password").apply {
-                isEnabled = host.selectedAccount != null
+                isEnabled = exactSelectedAccount() != null
                 if (!isEnabled) setSummary(R.string.settings_sync_summary_not_available)
                 setOnPreferenceClickListener {
-                    startActivity(ChangeEncryptionPasswordActivity.newIntent(requireContext(), selectedAccount))
+                    val exact = exactSelectedAccount() ?: return@setOnPreferenceClickListener false
+                    startActivity(ChangeEncryptionPasswordActivity.newIntent(
+                        requireContext(), exact, host.selectedCreationId!!))
                     true
                 }
             }

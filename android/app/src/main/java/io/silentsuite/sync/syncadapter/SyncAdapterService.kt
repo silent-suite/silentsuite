@@ -9,6 +9,7 @@
 package io.silentsuite.sync.syncadapter
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.*
@@ -30,6 +31,7 @@ import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.ui.DebugInfoActivity
+import io.silentsuite.sync.ui.AppSettingsActivity
 import io.silentsuite.sync.ui.PermissionsActivity
 import io.silentsuite.sync.utils.NotificationUtils
 import java.lang.Math.abs
@@ -76,6 +78,11 @@ abstract class SyncAdapterService : Service() {
 
         override fun onPerformSync(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult) {
             Logger.log.log(Level.INFO, "$authority sync has been initiated.", extras.keySet().toTypedArray())
+            // Capture once for any notification route emitted by this sync; never look up a
+            // possibly replaced account row while handling the notification later.
+            val accountCreationId = AccountManager.get(context)
+                .getUserData(account, AccountSettings.KEY_CREATION_ID)
+                ?.takeIf { it.isNotBlank() }
 
             // required for dav4android (ServiceLoader)
             Thread.currentThread().contextClassLoader = context.classLoader
@@ -122,7 +129,7 @@ abstract class SyncAdapterService : Service() {
                 notificationManager.setThrowable(e)
 
                 val detailsIntent = notificationManager.detailsIntent
-                notificationManager.setAccount(account)
+                notificationManager.setAccount(account, accountCreationId)
                 if (e !is UnauthorizedException) {
                     detailsIntent.putExtra(DebugInfoActivity.KEY_AUTHORITY, authority)
                     detailsIntent.putExtra(DebugInfoActivity.KEY_PHASE, syncPhase)
@@ -134,7 +141,7 @@ abstract class SyncAdapterService : Service() {
                 val syncPhase = R.string.sync_phase_journals
                 val title = context.getString(syncErrorTitle, account.name)
                 notificationManager.setThrowable(e)
-                notificationManager.setAccount(account)
+                notificationManager.setAccount(account, accountCreationId)
                 notificationManager.notify(title, context.getString(syncPhase))
                 persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.UNKNOWN) }
             }
