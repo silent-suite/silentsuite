@@ -29,9 +29,9 @@ class InvitationAcceptRefreshTest {
         assertTrue(
             "application context and account must be captured before the async accept to survive fragment detach",
             source.contains("val applicationContext = requireContext().applicationContext") &&
-                    source.contains("invitationsModel.accept(applicationContext, identity, accountHolder, invitation)") &&
+                    source.contains("invitationsModel.accept(applicationContext, identity, accountHolder, invitation.realInvitation()!!)") &&
                     source.indexOf("val applicationContext = requireContext().applicationContext") <
-                    source.indexOf("invitationsModel.accept(applicationContext, identity, accountHolder, invitation)")
+                    source.indexOf("invitationsModel.accept(applicationContext, identity, accountHolder, invitation.realInvitation()!!)")
         )
         assertFalse(
             "sync must not be requested immediately after starting the accept coroutine",

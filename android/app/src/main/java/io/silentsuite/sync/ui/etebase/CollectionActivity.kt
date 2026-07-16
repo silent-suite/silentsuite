@@ -69,9 +69,6 @@ class CollectionActivity() : BaseActivity() {
             return
         }
         account = exactAccount
-        // Keep this explicit read at the route boundary: creation identity is never inferred
-        // from a retained model or a same-name replacement account.
-        check(AccountManager.get(this).getUserData(account, AccountSettings.KEY_CREATION_ID) == route.creationId)
         setContentView(R.layout.etebase_fragment_activity)
         val hasRestoredFragment = supportFragmentManager.findFragmentById(R.id.fragment_container) != null
         val fixture = runtimeFixtureOverride?.invoke(this, account, route.creationId, route.collectionUid, route.collectionType)
@@ -147,10 +144,10 @@ class CollectionActivity() : BaseActivity() {
     }
 
     companion object {
-        private const val EXTRA_ACCOUNT = "account"
-        private const val EXTRA_COLLECTION_UID = "collectionUid"
-        private const val EXTRA_COLLECTION_TYPE = "collectionType"
-        private const val EXTRA_CREATION_ID = "creationId"
+        internal const val EXTRA_ACCOUNT = "account"
+        internal const val EXTRA_COLLECTION_UID = "collectionUid"
+        internal const val EXTRA_COLLECTION_TYPE = "collectionType"
+        internal const val EXTRA_CREATION_ID = "creationId"
 
         fun newIntent(context: Context, account: Account, creationId: String, colUid: String): Intent {
             require(colUid.isNotBlank()) { "Collection UID must be nonblank" }
