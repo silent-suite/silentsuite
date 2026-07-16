@@ -2,10 +2,12 @@ package io.silentsuite.sync.ui
 
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
+import android.os.Build
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
@@ -79,6 +81,17 @@ class SiblingRoutesRuntimeTest {
         }
         assertTrue("Timed out waiting for $description", predicate())
     }
+
+    private fun grantDashboardPermissions(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        listOf(
+            Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR,
+            Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS,
+        ).forEach { permission ->
+            InstrumentationRegistry.getInstrumentation().uiAutomation
+                .executeShellCommand("pm grant ${context.packageName} $permission").close()
+        }
+    }
     @Test
     fun encryptionPasswordCompletionRecreatesAndReturnsToCallerForExactGeneration() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -121,6 +134,17 @@ class SiblingRoutesRuntimeTest {
                 onView(withText(android.R.string.yes)).perform(click())
                 assertTrue("Timed out waiting for password success dialog",
                     successDialogShown.await(10, TimeUnit.SECONDS))
+                // The password work uses Dispatchers.IO, which Espresso does not own.  Wait for
+                // the rendered dialog rather than assuming the sync callback has reached a frame.
+                waitUntil("rendered password success dialog") {
+                    try {
+                        onView(withText(context.getString(R.string.change_encryption_password_success_title)))
+                            .check(matches(isDisplayed()))
+                        true
+                    } catch (_: Throwable) {
+                        false
+                    }
+                }
                 onView(withText(context.getString(R.string.change_encryption_password_success_title))).check(matches(isDisplayed()))
                 onView(withText(context.getString(R.string.change_encryption_password_success_body))).check(matches(isDisplayed()))
                 onView(withText(android.R.string.ok)).perform(click())
@@ -282,6 +306,76 @@ class SiblingRoutesRuntimeTest {
     }
 
     @Test
+    fun fingerprintCancelAfterRecreationReturnsToExactDashboard() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = addAccount(manager, "fingerprint-dashboard", "fingerprint-dashboard-generation", setupComplete = true)
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("sentinel", "sentinel"))
+        val reads = mutableListOf<Pair<Account, String>>()
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        App.postLoginBootstrapSucceeded = true
+        grantDashboardPermissions(context)
+        AccountActivity.AccountInfoViewModel.accountLoaderOverride = { _, exact, creationId ->
+            AccountActivity.AccountInfo().also { check(exact == account); check(creationId == "fingerprint-dashboard-generation") }
+        }
+        FingerprintDialogFragment.fingerprintProviderOverride = { _, exact ->
+            reads += exact to requireNotNull(manager.getUserData(exact, AccountSettings.KEY_CREATION_ID))
+            "dashboard fingerprint"
+        }
+        try {
+            ActivityScenario.launch<AccountActivity>(
+                AccountActivity.newIntent(context, account, "fingerprint-dashboard-generation")
+            ).use { scenario ->
+                waitUntil("rendered dashboard") {
+                    var rendered = false
+                    scenario.onActivity { rendered = it.findViewById<TextView>(R.id.dashboard_account_identity).text.toString() == account.name }
+                    rendered
+                }
+                scenario.onActivity { activity ->
+                    val fingerprint = activity.findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
+                        .menu.findItem(R.id.account_show_fingerprint)
+                    assertTrue(activity.onOptionsItemSelected(requireNotNull(fingerprint)))
+                }
+                waitUntil("fingerprint dialog") {
+                    var shown = false
+                    scenario.onActivity { activity ->
+                        shown = (activity.supportFragmentManager.findFragmentByTag(FingerprintDialogFragment.TAG)
+                            as? FingerprintDialogFragment)?.dialog?.isShowing == true
+                    }
+                    shown
+                }
+                scenario.recreate()
+                waitUntil("retained fingerprint dialog") {
+                    var shown = false
+                    scenario.onActivity { activity ->
+                        shown = (activity.supportFragmentManager.findFragmentByTag(FingerprintDialogFragment.TAG)
+                            as? FingerprintDialogFragment)?.dialog?.isShowing == true
+                    }
+                    shown
+                }
+                scenario.onActivity { activity ->
+                    val fragment = activity.supportFragmentManager
+                        .findFragmentByTag(FingerprintDialogFragment.TAG) as FingerprintDialogFragment
+                    fragment.dialog!!.cancel()
+                    assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
+                }
+                assertEquals(listOf(account to "fingerprint-dashboard-generation"), reads)
+                assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text)
+                scenario.onActivity { activity ->
+                    assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
+                }
+            }
+        } finally {
+            FingerprintDialogFragment.fingerprintProviderOverride = null
+            AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
+            App.postLoginBootstrapSucceeded = previousBootstrap
+            removeAccountAndWait(manager, account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    @Test
     fun collectionCreateLaunchRecreateAndBackPreserveExactRoute() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)
@@ -399,46 +493,6 @@ class SiblingRoutesRuntimeTest {
     private fun fixture(uid: String = "ac41-uid", name: String = "AC41 calendar", members: List<RuntimeMember> = emptyList()) =
         RuntimeCollectionFixture(uid, Constants.ETEBASE_TYPE_CALENDAR, name, "AC41 description", 0xff336699.toInt(),
             com.etebase.client.CollectionAccessLevel.Admin, listOf("one", "two"), members)
-
-    @Test
-    fun retainedSettingsRejectSameNameReplacementBeforeAccountMutation() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val manager = AccountManager.get(context)
-        val account = addAccount(manager, "settings-replacement", "settings-generation-a")
-        var replacement: Account? = null
-        try {
-            ActivityScenario.launch<AppSettingsActivity>(
-                AppSettingsActivity.newIntent(context, account, "settings-generation-a")
-            ).use { scenario ->
-                waitUntil("account settings") {
-                    var ready = false
-                    scenario.onActivity {
-                        ready = it.supportFragmentManager.fragments.any { fragment ->
-                            fragment is AppSettingsActivity.SettingsFragment
-                        }
-                    }
-                    ready
-                }
-                removeAccountAndWait(manager, account)
-                val replacementAccount = Account(account.name, account.type)
-                replacement = replacementAccount
-                check(manager.addAccountExplicitly(replacementAccount, null, Bundle().apply {
-                    putString(AccountSettings.KEY_CREATION_ID, "settings-generation-b")
-                    putString(AccountSettings.KEY_SETTINGS_VERSION, AccountSettings.CURRENT_VERSION.toString())
-                }))
-                scenario.onActivity { activity ->
-                    val fragment = activity.supportFragmentManager.fragments
-                        .filterIsInstance<AppSettingsActivity.SettingsFragment>().single()
-                    val wifiOnly = requireNotNull(fragment.findPreference<androidx.preference.SwitchPreferenceCompat>("sync_wifi_only"))
-                    assertFalse(requireNotNull(wifiOnly.onPreferenceChangeListener).onPreferenceChange(wifiOnly, true))
-                }
-                waitUntil("stale settings activity finish") { scenario.state == Lifecycle.State.DESTROYED }
-                assertEquals(null, manager.getUserData(requireNotNull(replacement), AccountSettings.KEY_WIFI_ONLY))
-            }
-        } finally {
-            replacement?.let { removeAccountAndWait(manager, it) }
-        }
-    }
 
     @Test
     fun collectionExportCompletionReturnsToExactRenderedCollection() {

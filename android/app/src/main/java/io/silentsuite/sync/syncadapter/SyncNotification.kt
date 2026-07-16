@@ -17,20 +17,14 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
-import io.silentsuite.sync.ui.AccountSettingsActivity
 import io.silentsuite.sync.ui.AppSettingsActivity
 import io.silentsuite.sync.ui.DebugInfoActivity
 import io.silentsuite.sync.ui.WebViewActivity
 import io.silentsuite.sync.utils.NotificationUtils
+import io.silentsuite.sync.ui.settings.SettingsCategory
 import java.util.logging.Level
 
-class SyncNotification(
-    internal val context: Context,
-    internal val notificationTag: String,
-    internal val notificationId: Int,
-    private val account: Account? = null,
-    private val accountCreationId: String? = null
-) {
+class SyncNotification(internal val context: Context, internal val notificationTag: String, internal val notificationId: Int) {
 
     internal val notificationManager: NotificationManagerCompat
     lateinit var detailsIntent: Intent
@@ -68,13 +62,13 @@ class SyncNotification(
 
         detailsIntent = Intent(context, NotificationHandlerActivity::class.java)
         detailsIntent.putExtra(DebugInfoActivity.KEY_THROWABLE, e)
-        // The sync owns this identity snapshot. Do not look up the account row again when the
-        // notification is tapped: a same-name row may have been removed and re-created.
-        account?.let { detailsIntent.putExtra(AppSettingsActivity.EXTRA_ACCOUNT, it) }
-        accountCreationId?.takeIf { it.isNotBlank() }?.let {
-            detailsIntent.putExtra(AppSettingsActivity.EXTRA_CREATION_ID, it)
-        }
         detailsIntent.data = Uri.parse("uri://" + javaClass.name + "/" + notificationTag)
+    }
+
+    /** Uses the generation captured when the sync began; never rereads a mutable account row. */
+    fun setAccount(account: Account, capturedCreationId: String?) {
+        detailsIntent.putExtra(Constants.KEY_ACCOUNT, account)
+        detailsIntent.putExtra(AppSettingsActivity.EXTRA_CREATION_ID, capturedCreationId)
     }
 
     fun notify(title: String, state: String) {
@@ -138,20 +132,36 @@ class SyncNotification(
 
             val detailsIntent: Intent
             if (e is UnauthorizedException || e is PermissionDeniedException) {
-                detailsIntent = Intent(this, AccountSettingsActivity::class.java)
+                detailsIntent = settingsIntent(this, extras)
             } else if (e is AccountSettings.AccountMigrationException) {
                 WebViewActivity.openUrl(this, Constants.faqUri.buildUpon().encodedFragment("account-migration-error").build())
                 return
             } else {
                 detailsIntent = DebugInfoActivity.newIntent(this, this::class.toString())
             }
-            detailsIntent.putExtras(extras)
+            if (detailsIntent.component?.className != AppSettingsActivity::class.java.name)
+                detailsIntent.putExtras(extras)
             startActivity(detailsIntent)
         }
 
         public override fun onStop() {
             super.onStop()
             finish()
+        }
+    }
+
+    companion object {
+        internal fun settingsIntent(context: Context, extras: Bundle): Intent {
+            val account = extras.getParcelable<Account>(Constants.KEY_ACCOUNT)
+            val creationId = extras.getString(AppSettingsActivity.EXTRA_CREATION_ID)
+            if (account != null && !creationId.isNullOrBlank())
+                return AppSettingsActivity.newIntent(context, account, creationId, SettingsCategory.SYNC)
+            return Intent(context, AppSettingsActivity::class.java).apply {
+                // Notification routes are explicit even when malformed, and must fail closed.
+                account?.let { putExtra(AppSettingsActivity.EXTRA_ACCOUNT, it) }
+                putExtra(AppSettingsActivity.EXTRA_CREATION_ID, creationId)
+                putExtra(AppSettingsActivity.EXTRA_CATEGORY, SettingsCategory.SYNC.route)
+            }
         }
     }
 }

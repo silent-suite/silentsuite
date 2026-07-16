@@ -25,6 +25,7 @@ import at.bitfire.ical4android.CalendarStorageException
 import at.bitfire.ical4android.TaskProvider.Companion.TASK_PROVIDERS
 import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.utils.HintManager
@@ -45,7 +46,6 @@ class App : Application() {
     @SuppressLint("HardwareIds")
     override fun onCreate() {
         super.onCreate()
-        reinitLogger()
         StrictMode.enableDefaults()
         initPrefVersion()
 
@@ -55,6 +55,10 @@ class App : Application() {
         accountType = getString(R.string.account_type)
         addressBookAccountType = getString(R.string.account_type_address_book)
         addressBooksAuthority = getString(R.string.address_books_authority)
+
+        // Account-aware logging and all other process consumers share the migrated typed store.
+        AppPreferences(this)
+        reinitLogger()
 
         // Raw, synchronous bootstrap makes pre-existing rows safe before login can create one.
         postLoginBootstrapSucceeded = io.silentsuite.sync.ui.setup.PostLoginSetupMigration.bootstrap(this)
@@ -84,15 +88,12 @@ class App : Application() {
     }
 
     private fun loadTheme() {
-        val prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
-        val mode = prefs.getInt("theme_mode", androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
-        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(mode)
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(AppPreferences(this).themeMode)
     }
 
     private fun loadLanguage() {
-        val prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
-        val lang = prefs.getString(App.FORCE_LANGUAGE, null)
-        if (lang != null && lang != DEFAULT_LANGUAGE) {
+        val lang = AppPreferences(this).forcedLanguage
+        if (lang != DEFAULT_LANGUAGE) {
             LanguageUtils.setLanguage(this, lang)
         }
     }
@@ -179,19 +180,18 @@ class App : Application() {
         @Volatile var postLoginBootstrapSucceeded: Boolean = false
         /** Opaque, process-memory-only discriminator for authenticator restoration. */
         val processEpoch: String = UUID.randomUUID().toString()
-        val DISTRUST_SYSTEM_CERTIFICATES = "distrustSystemCerts"
-        val LOG_TO_EXTERNAL_STORAGE = "logToExternalStorage"
-        val OVERRIDE_PROXY = "overrideProxy"
-        val OVERRIDE_PROXY_HOST = "overrideProxyHost"
-        val OVERRIDE_PROXY_PORT = "overrideProxyPort"
-        val PREFER_TASKSORG = "preferTasksOrg"
-        val FORCE_LANGUAGE = "forceLanguage"
-        val CHANGE_NOTIFICATION = "show_change_notification"
-
-        val OVERRIDE_PROXY_HOST_DEFAULT = "localhost"
-        val OVERRIDE_PROXY_PORT_DEFAULT = 8118
-
-        val DEFAULT_LANGUAGE = "default"
+        // Source-compatible legacy key names. AppPreferences is the only runtime owner.
+        @Deprecated("Use AppPreferences") const val DISTRUST_SYSTEM_CERTIFICATES = "distrustSystemCerts"
+        @Deprecated("Use AppPreferences") const val LOG_TO_EXTERNAL_STORAGE = "logToExternalStorage"
+        @Deprecated("Use AppPreferences") const val OVERRIDE_PROXY = "overrideProxy"
+        @Deprecated("Use AppPreferences") const val OVERRIDE_PROXY_HOST = "overrideProxyHost"
+        @Deprecated("Use AppPreferences") const val OVERRIDE_PROXY_PORT = "overrideProxyPort"
+        @Deprecated("Use AppPreferences") const val PREFER_TASKSORG = "preferTasksOrg"
+        @Deprecated("Use AppPreferences") const val FORCE_LANGUAGE = "forceLanguage"
+        @Deprecated("Use AppPreferences") const val CHANGE_NOTIFICATION = "show_change_notification"
+        @Deprecated("Use AppPreferences") const val OVERRIDE_PROXY_HOST_DEFAULT = AppPreferences.DEFAULT_PROXY_HOST
+        @Deprecated("Use AppPreferences") const val OVERRIDE_PROXY_PORT_DEFAULT = AppPreferences.DEFAULT_PROXY_PORT
+        const val DEFAULT_LANGUAGE = AppPreferences.DEFAULT_LANGUAGE
         var sDefaultLocacle = Locale.getDefault()
 
         var appName: String = "SilentSuite"

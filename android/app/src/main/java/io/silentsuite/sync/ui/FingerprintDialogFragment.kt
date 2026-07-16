@@ -22,6 +22,21 @@ import io.silentsuite.sync.ui.setup.ExactAccountRouting
 
 /** Recreation-safe, exact-generation fingerprint surface. The public fingerprint is not secret. */
 class FingerprintDialogFragment : DialogFragment() {
+    private var fingerprintResolved = false
+    private var resolvedFingerprint: String? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        fingerprintResolved = savedInstanceState?.getBoolean(STATE_RESOLVED, false) ?: false
+        resolvedFingerprint = savedInstanceState?.getString(STATE_FINGERPRINT)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_RESOLVED, fingerprintResolved)
+        outState.putString(STATE_FINGERPRINT, resolvedFingerprint)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val account = arguments?.getParcelable<Account>(ARG_ACCOUNT)
         val creationId = arguments?.getString(ARG_CREATION_ID)?.takeIf { it.isNotBlank() }
@@ -40,7 +55,7 @@ class FingerprintDialogFragment : DialogFragment() {
                 .create()
         }
 
-        val fingerprint = runCatching {
+        val fingerprint = if (fingerprintResolved) resolvedFingerprint else runCatching {
             val context = requireContext()
             val value = fingerprintProviderOverride?.invoke(context, exactAccount) ?: run {
                 val settings = AccountSettings(context, exactAccount)
@@ -55,7 +70,10 @@ class FingerprintDialogFragment : DialogFragment() {
                     AccountManager.get(context)
                 ) == exactAccount
             }
-        }.getOrNull()
+        }.getOrNull().also {
+            fingerprintResolved = true
+            resolvedFingerprint = it
+        }
         val displayFingerprint = fingerprint ?: getString(R.string.fingerprint_unavailable)
         val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
         view.findViewById<View>(R.id.body).visibility = View.GONE
@@ -93,6 +111,8 @@ class FingerprintDialogFragment : DialogFragment() {
         const val TAG = "fingerprint"
         private const val ARG_ACCOUNT = "fingerprint.account"
         private const val ARG_CREATION_ID = "fingerprint.creationId"
+        private const val STATE_RESOLVED = "fingerprint.resolved"
+        private const val STATE_FINGERPRINT = "fingerprint.value"
 
         /** Credential-free runtime seam; production always leaves this null. */
         internal var fingerprintProviderOverride: ((Context, Account) -> String)? = null

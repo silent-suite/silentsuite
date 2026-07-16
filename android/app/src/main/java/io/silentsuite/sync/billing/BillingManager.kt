@@ -11,6 +11,7 @@
 package io.silentsuite.sync.billing
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -19,9 +20,11 @@ import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import io.silentsuite.sync.Constants
+import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.utils.NotificationUtils
+import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -149,39 +152,68 @@ class BillingManager private constructor() {
      * Checks in-memory cache first, then persistent cache, then fetches from API.
      */
     fun getSubscriptionStatus(context: Context, account: Account): SubscriptionStatus {
+        return getSubscriptionStatus(context, account) { true } ?: SubscriptionStatus.unreachable()
+    }
+
+    /**
+     * Generation-bound dashboard entry point. Billing cache keys are account names, so every
+     * cache/network/persistence boundary is checked against the captured account generation.
+     */
+    fun getSubscriptionStatus(context: Context, account: Account, creationId: String): SubscriptionStatus? {
+        val exact = {
+            ExactAccountRouting.validate(account, creationId, App.accountType,
+                AccountManager.get(context)) != null
+        }
+        return getSubscriptionStatus(context, account, exact)
+    }
+
+    private fun getSubscriptionStatus(
+        context: Context,
+        account: Account,
+        exactGenerationStillCurrent: () -> Boolean
+    ): SubscriptionStatus? {
+        if (!exactGenerationStillCurrent()) return null
         // 1. Check in-memory cache
         val cached = cache[account.name]
         val now = System.currentTimeMillis()
 
         if (cached != null && (now - cached.fetchedAt) < CACHE_TTL_MS) {
             Logger.log.fine("Using in-memory cached subscription status: ${cached.status}")
-            return cached
+            return cached.takeIf { exactGenerationStillCurrent() }
         }
 
         // 2. Fetch fresh from API
+        if (!exactGenerationStillCurrent()) return null
         val fresh = fetchSubscriptionStatus(context, account)
+        if (!exactGenerationStillCurrent()) return null
         cache[account.name] = fresh
 
         // 3. Persist to SharedPreferences if it's a real result (not unreachable)
         if (!fresh.isUnknown) {
+            if (!exactGenerationStillCurrent()) return null
             persistStatus(context, account.name, fresh)
+            if (!exactGenerationStillCurrent()) return null
         } else {
             // API unreachable — check persistent cache for degraded mode
+            if (!exactGenerationStillCurrent()) return null
             val persisted = loadPersistedStatus(context, account.name)
             if (persisted != null) {
+                if (!exactGenerationStillCurrent()) return null
                 val lastSuccessfulFetch = getLastSuccessfulFetch(context, account.name)
+                if (!exactGenerationStillCurrent()) return null
                 if (lastSuccessfulFetch > 0 && (now - lastSuccessfulFetch) > DEGRADED_MODE_THRESHOLD_MS) {
                     Logger.log.warning("Billing API unreachable for >24h, using last known status: ${persisted.status}")
                     showDegradedModeWarning(context)
                 }
                 // Use persisted status (but with current timestamp for cache purposes)
                 val withUpdatedTime = persisted.copy(fetchedAt = now)
+                if (!exactGenerationStillCurrent()) return null
                 cache[account.name] = withUpdatedTime
-                return withUpdatedTime
+                return withUpdatedTime.takeIf { exactGenerationStillCurrent() }
             }
         }
 
-        return fresh
+        return fresh.takeIf { exactGenerationStillCurrent() }
     }
 
     /**

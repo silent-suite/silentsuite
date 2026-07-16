@@ -31,6 +31,7 @@ import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.ui.DebugInfoActivity
+import io.silentsuite.sync.ui.AppSettingsActivity
 import io.silentsuite.sync.ui.PermissionsActivity
 import io.silentsuite.sync.utils.NotificationUtils
 import java.lang.Math.abs
@@ -67,6 +68,8 @@ abstract class SyncAdapterService : Service() {
 
     abstract class SyncAdapter(context: Context) : AbstractThreadedSyncAdapter(context, false) {
         private val syncErrorTitle: Int = R.string.sync_error_generic
+        private val notificationManager = SyncNotification(context, "refresh-collections", Constants.NOTIFICATION_REFRESH_COLLECTIONS)
+
         protected enum class Completion { SUCCESS, FAILURE, SKIPPED, DISPATCHED }
 
         protected open val outcomeService: SyncStatusStore.Service? = null
@@ -75,14 +78,11 @@ abstract class SyncAdapterService : Service() {
 
         override fun onPerformSync(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult) {
             Logger.log.log(Level.INFO, "$authority sync has been initiated.", extras.keySet().toTypedArray())
-            // Capture once before sync work. The error-notification route must not inspect a
-            // potentially replaced same-name AccountManager row after an asynchronous failure.
-            val accountCreationId = AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID)
+            // Capture once for any notification route emitted by this sync; never look up a
+            // possibly replaced account row while handling the notification later.
+            val accountCreationId = AccountManager.get(context)
+                .getUserData(account, AccountSettings.KEY_CREATION_ID)
                 ?.takeIf { it.isNotBlank() }
-            val notificationManager = SyncNotification(
-                context, "refresh-collections", Constants.NOTIFICATION_REFRESH_COLLECTIONS,
-                account, accountCreationId
-            )
 
             // required for dav4android (ServiceLoader)
             Thread.currentThread().contextClassLoader = context.classLoader
@@ -129,7 +129,7 @@ abstract class SyncAdapterService : Service() {
                 notificationManager.setThrowable(e)
 
                 val detailsIntent = notificationManager.detailsIntent
-                detailsIntent.putExtra(Constants.KEY_ACCOUNT, account)
+                notificationManager.setAccount(account, accountCreationId)
                 if (e !is UnauthorizedException) {
                     detailsIntent.putExtra(DebugInfoActivity.KEY_AUTHORITY, authority)
                     detailsIntent.putExtra(DebugInfoActivity.KEY_PHASE, syncPhase)
@@ -141,8 +141,7 @@ abstract class SyncAdapterService : Service() {
                 val syncPhase = R.string.sync_phase_journals
                 val title = context.getString(syncErrorTitle, account.name)
                 notificationManager.setThrowable(e)
-                val detailsIntent = notificationManager.detailsIntent
-                detailsIntent.putExtra(Constants.KEY_ACCOUNT, account)
+                notificationManager.setAccount(account, accountCreationId)
                 notificationManager.notify(title, context.getString(syncPhase))
                 persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.UNKNOWN) }
             }

@@ -13,6 +13,7 @@ import android.os.Build
 import android.security.KeyChain
 import at.bitfire.cert4android.CustomCertManager
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.ui.settings.AppPreferences
 import okhttp3.*
 import okhttp3.internal.tls.OkHostnameVerifier
 import okhttp3.logging.HttpLoggingInterceptor
@@ -86,13 +87,13 @@ class HttpClient private constructor(
             }
 
             context?.let {
-                val prefs = context.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+                val prefs = AppPreferences(context)
 
                 try {
-                    if (prefs.getBoolean(App.OVERRIDE_PROXY, false)) {
+                    if (prefs.overrideProxy) {
                         val address = InetSocketAddress(
-                                prefs.getString(App.OVERRIDE_PROXY_HOST, App.OVERRIDE_PROXY_HOST_DEFAULT)!!,
-                                prefs.getInt(App.OVERRIDE_PROXY_PORT, App.OVERRIDE_PROXY_PORT_DEFAULT)
+                                prefs.proxyHost,
+                                prefs.proxyPort
                         )
 
                         val proxy = Proxy(Proxy.Type.HTTP, address)
@@ -105,7 +106,7 @@ class HttpClient private constructor(
 
                 //if (BuildConfig.customCerts)
                     customCertManager(CustomCertManager(context, true,
-                            !(prefs.getBoolean(App.DISTRUST_SYSTEM_CERTIFICATES, false)), true))
+                            !prefs.distrustSystemCertificates, true))
             }
 
             // Legacy auth token removed — Etebase handles its own authentication

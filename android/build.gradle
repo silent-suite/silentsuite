@@ -64,9 +64,6 @@ buildscript {
 allprojects {
     repositories {
         mavenCentral()
-        maven {
-            url 'https://oss.sonatype.org/content/repositories/snapshots'
-        }
         maven { url 'https://jitpack.io' }
         google()
     }
@@ -185,10 +182,24 @@ tasks.register('verifySlice4DependencyCohort') {
         }
 
         def logger = file('app/src/main/java/io/silentsuite/sync/log/Logger.kt').text
+        def appPreferences = file('app/src/main/java/io/silentsuite/sync/ui/settings/AppPreferences.kt').text
         def preferences = file('app/src/main/java/io/silentsuite/sync/utils/AsyncUtils.kt').text
+        ['import io.silentsuite.sync.ui.settings.AppPreferences',
+         'AppPreferences(context).sharedPreferences',
+         'AppPreferences.KEY_LOG_TO_FILE',
+         'AppPreferences.KEY_LOG_VERBOSE'].each { contract ->
+            if (!logger.contains(contract))
+                throw new GradleException("Typed Logger preferences continuity contract missing: $contract")
+        }
+        if (logger.contains('PreferenceManager'))
+            throw new GradleException('Logger must use AppPreferences, not PreferenceManager')
+        ['const val KEY_LOG_TO_FILE', 'const val KEY_LOG_VERBOSE'].each { contract ->
+            if (!appPreferences.contains(contract))
+                throw new GradleException("Typed AppPreferences logging contract missing: $contract")
+        }
         ['import androidx.preference.PreferenceManager', 'PreferenceManager.getDefaultSharedPreferences('].each { contract ->
-            if (!logger.contains(contract) || !preferences.contains(contract))
-                throw new GradleException("Default SharedPreferences continuity contract missing: $contract")
+            if (!preferences.contains(contract))
+                throw new GradleException("Legacy default SharedPreferences extension contract missing: $contract")
         }
     }
 }

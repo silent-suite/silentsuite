@@ -285,8 +285,16 @@ class ViewCollectionFragment : Fragment() {
                         ?: run {
                             val outputStream = applicationContext.contentResolver.openOutputStream(uri)
                                     ?: throw IOException("Could not open export destination")
-                            outputStream.use { AndroidDataExporter.writeCollectionExport(collectionType, itemContents, it) }
-                            true
+                            outputStream.use {
+                                AndroidDataExporter.writeCollectionExport(
+                                    applicationContext,
+                                    identity.account,
+                                    identity.creationId,
+                                    collectionType,
+                                    itemContents,
+                                    it,
+                                )
+                            }
                         }
                     completed && identity.validate(applicationContext)
                 }
