@@ -129,8 +129,7 @@ abstract class SyncAdapterService : Service() {
                 notificationManager.setThrowable(e)
 
                 val detailsIntent = notificationManager.detailsIntent
-                detailsIntent.putExtra(Constants.KEY_ACCOUNT, account)
-                detailsIntent.putExtra(AppSettingsActivity.EXTRA_CREATION_ID, accountCreationId)
+                notificationManager.setAccount(account, accountCreationId)
                 if (e !is UnauthorizedException) {
                     detailsIntent.putExtra(DebugInfoActivity.KEY_AUTHORITY, authority)
                     detailsIntent.putExtra(DebugInfoActivity.KEY_PHASE, syncPhase)
@@ -142,9 +141,7 @@ abstract class SyncAdapterService : Service() {
                 val syncPhase = R.string.sync_phase_journals
                 val title = context.getString(syncErrorTitle, account.name)
                 notificationManager.setThrowable(e)
-                val detailsIntent = notificationManager.detailsIntent
-                detailsIntent.putExtra(Constants.KEY_ACCOUNT, account)
-                detailsIntent.putExtra(AppSettingsActivity.EXTRA_CREATION_ID, accountCreationId)
+                notificationManager.setAccount(account, accountCreationId)
                 notificationManager.notify(title, context.getString(syncPhase))
                 persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.UNKNOWN) }
             }

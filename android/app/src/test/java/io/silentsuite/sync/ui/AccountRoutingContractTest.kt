@@ -24,15 +24,17 @@ class AccountRoutingContractTest {
 
         assertTrue(accountActivity.contains("AppSettingsActivity.newIntent(this, account, accountCreationId)"))
         assertTrue(accountActivity.contains("InvitationsActivity.newIntent(this, account, accountCreationId)"))
-        assertTrue(appSettings.contains("fun newIntent(context: Context, account: Account, creationId: String)"))
-        assertTrue(appSettings.contains("fun newIntent(context: Context): Intent"))
-        assertFalse(appSettings.contains("fun newIntent(context: Context, account: Account?)"))
+        assertTrue(Regex(
+            """fun newIntent\(\s*context: Context,\s*account: Account,\s*creationId: String,"""
+        ).containsMatchIn(appSettings))
+        assertTrue(appSettings.contains("const val EXTRA_CREATION_ID = \"account_creation_id\""))
         assertTrue(appSettings.contains("intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)"))
-        assertTrue(appSettings.contains("ExactAccountRouting.validate(requestedAccount, requestedCreationId"))
+        assertTrue(appSettings.contains("ExactAccountRouting.validate(candidate, creationId"))
+        assertTrue(appSettings.contains("outState.putString(STATE_CREATION_ID, selectedCreationId)"))
         assertFalse(appSettings.contains("account = accounts[0]"))
-        assertTrue(legacySettings.contains("intent.getStringExtra(AppSettingsActivity.EXTRA_CREATION_ID)"))
-        assertTrue(legacySettings.contains("!creationId.isNullOrBlank()"))
-        assertTrue(legacySettings.contains("AppSettingsActivity.newIntent(this, account, creationId)"))
+        assertTrue(legacySettings.contains("SettingsCategory.SYNC"))
+        assertTrue(legacySettings.contains("AppSettingsActivity.newIntent("))
+        assertTrue(legacySettings.contains("AppSettingsActivity.EXTRA_CREATION_ID"))
         assertTrue(notification.contains("detailsIntent.putExtras(extras)"))
         assertTrue(setup.contains("AccountActivity.newIntent(this, account)"))
     }
@@ -75,7 +77,7 @@ class AccountRoutingContractTest {
         assertTrue(exporter.contains("ExactAccountRouting.validate("))
         assertTrue(exporter.contains("exactGenerationStillCurrent: () -> Boolean"))
         assertTrue(exporter.contains("fun writeCollectionExport("))
-        assertTrue(syncManager.contains("AppSettingsActivity.EXTRA_CREATION_ID, accountCreationId"))
-        assertTrue(syncAdapter.contains("AppSettingsActivity.EXTRA_CREATION_ID, accountCreationId"))
+        assertTrue(syncManager.contains("setAccount(account, accountCreationId)"))
+        assertTrue(syncAdapter.contains("setAccount(account, accountCreationId)"))
     }
 }

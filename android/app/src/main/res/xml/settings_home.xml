@@ -6,8 +6,6 @@
   ~ which accompanies this distribution, and is available at
   ~ http://www.gnu.org/licenses/gpl.html
   -->
-
-<!-- Compatibility alias for callers/resources that still refer to settings_app. -->
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
     <Preference android:key="settings_category_account" android:title="@string/settings_category_account" android:summary="@string/settings_category_account_summary" android:persistent="false" />
     <Preference android:key="settings_category_sync" android:title="@string/settings_category_sync" android:summary="@string/settings_category_sync_summary" android:persistent="false" />

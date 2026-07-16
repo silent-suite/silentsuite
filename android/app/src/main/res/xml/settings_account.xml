@@ -8,44 +8,6 @@
   -->
 
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
-    <PreferenceCategory android:title="@string/settings_manage_account">
-
-        <Preference
-            android:key="manage_account"
-            android:title="@string/settings_account_dashboard"
-            android:persistent="false"
-            android:summary="@string/settings_manage_account_summary" />
-
-    </PreferenceCategory>
-
-    <PreferenceCategory android:title="@string/settings_sync">
-        <Preference
-            android:key="password"
-            android:title="@string/settings_encryption_password"
-            android:summary="@string/settings_encryption_password_summary"
-            />
-
-        <ListPreference
-            android:key="sync_interval"
-            android:persistent="false"
-            android:title="@string/settings_sync_interval"
-            android:entries="@array/settings_sync_interval_names"
-            android:entryValues="@array/settings_sync_interval_seconds" />
-
-        <SwitchPreferenceCompat
-            android:key="sync_wifi_only"
-            android:persistent="false"
-            android:title="@string/settings_sync_wifi_only"
-            android:summaryOn="@string/settings_sync_wifi_only_on"
-            android:summaryOff="@string/settings_sync_wifi_only_off"
-            />
-
-        <EditTextPreference
-            android:key="sync_wifi_only_ssid"
-            android:dependency="sync_wifi_only"
-            android:persistent="false"
-            android:title="@string/settings_sync_wifi_only_ssid"
-            android:dialogMessage="@string/settings_sync_wifi_only_ssid_message"/>
-
-    </PreferenceCategory>
+    <Preference android:key="account_identity" android:title="@string/settings_account_current" android:selectable="false" android:persistent="false" />
+    <Preference android:key="manage_account" android:title="@string/settings_account_dashboard" android:summary="@string/settings_account_dashboard_summary" android:persistent="false" />
 </PreferenceScreen>

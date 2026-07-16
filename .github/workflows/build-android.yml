@@ -259,7 +259,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
-          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest,io.silentsuite.sync.ui.AccountDashboardRuntimeTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest,io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest
+          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest,io.silentsuite.sync.ui.AccountDashboardRuntimeTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest,io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest,io.silentsuite.sync.ui.SettingsRuntimeTest
 
       - name: Upload focused androidTest reports and results
         if: always()
@@ -305,6 +305,14 @@ jobs:
             ('io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest','explicitCreatingTargetOnlyReceivesProviderConfiguration'),
             ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','contactsAttemptExtraRoundTripsAtProviderBoundary'),
             ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','persistedEvidenceIsExactAccountGenerationScopedAndContainsNoAccountName'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','exactAccountSyncSettingAndCategorySurviveRecreationWithoutChangingSibling'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','staleNotificationAndLegacyRoutesRejectReaddedSameNameAcrossProcessStyleRelaunch'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','loggerNotificationRouteKeepsAdvancedExactGenerationAcrossRecreationAndRejectsReplacement'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','retainedSettingsRejectSameNameReplacementBeforeAccountMutation'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','proxyPortPreferenceAcceptsBoundsAndPreservesPriorValueOnInvalidInput'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','twoStoreMigrationRerunsAfterDefaultAliasCommitFailure'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationRerunsAfterCanonicalStoreCommitFailureWithoutTouchingAliases'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationMarkerFailureRerunsAndMarkerIsAlwaysLast'),
           }
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):

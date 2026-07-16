@@ -9,6 +9,7 @@ import androidx.activity.viewModels
 import androidx.fragment.app.commit
 import io.silentsuite.sync.R
 import io.silentsuite.sync.App
+import io.silentsuite.sync.ui.AppSettingsActivity
 import io.silentsuite.sync.ui.BaseActivity
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
 
@@ -42,7 +43,7 @@ class InvitationsActivity : BaseActivity() {
 
     companion object {
         private val EXTRA_ACCOUNT = "account"
-        private const val EXTRA_CREATION_ID = "account_creation_id"
+        private const val EXTRA_CREATION_ID = AppSettingsActivity.EXTRA_CREATION_ID
 
         fun newIntent(context: Context, account: Account, creationId: String): Intent {
             require(creationId.isNotBlank()) { "Creation ID must be nonblank" }

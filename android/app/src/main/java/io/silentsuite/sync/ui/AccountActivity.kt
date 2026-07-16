@@ -29,6 +29,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.ActionBarDrawerToggle
+import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
@@ -63,6 +64,8 @@ import io.silentsuite.sync.ui.account.*
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.InvitationsActivity
 import io.silentsuite.sync.ui.setup.LoginActivity
+import io.silentsuite.sync.ui.settings.SettingsCategory
+import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.utils.TaskProviderHandling
 import io.silentsuite.sync.utils.NotificationUtils
 import io.silentsuite.sync.utils.packageInstalled
@@ -654,6 +657,35 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 signOutModel.begin()
             }
             .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showThemeDialog() {
+        val themes = arrayOf(
+            getString(R.string.settings_theme_light),
+            getString(R.string.settings_theme_dark),
+            getString(R.string.settings_theme_system)
+        )
+        val prefs = AppPreferences(this)
+        val currentMode = prefs.themeMode
+        val checkedItem = when (currentMode) {
+            AppCompatDelegate.MODE_NIGHT_NO -> 0
+            AppCompatDelegate.MODE_NIGHT_YES -> 1
+            else -> 2
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.navigation_drawer_theme)
+            .setSingleChoiceItems(themes, checkedItem) { dialog, which ->
+                val mode = when (which) {
+                    0 -> AppCompatDelegate.MODE_NIGHT_NO
+                    1 -> AppCompatDelegate.MODE_NIGHT_YES
+                    else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                }
+                prefs.themeMode = mode
+                AppCompatDelegate.setDefaultNightMode(mode)
+                dialog.dismiss()
+            }
             .show()
     }
 
@@ -1351,7 +1383,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     companion object {
         val EXTRA_ACCOUNT = "account"
-        internal const val EXTRA_CREATION_ID = "account_creation_id"
+        internal const val EXTRA_CREATION_ID = AppSettingsActivity.EXTRA_CREATION_ID
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
         private const val KEY_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
