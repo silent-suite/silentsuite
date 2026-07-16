@@ -686,7 +686,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val replacement = state.replacement
             val intent = if (replacement == null) Intent(this, LoginActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
-            } else newIntent(this, Account(replacement.name, replacement.type)).apply {
+            } else newIntent(
+                this,
+                Account(replacement.name, replacement.type),
+                replacement.creationId,
+            ).apply {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
@@ -1369,6 +1373,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         fun newIntent(context: Context, account: Account): Intent = Intent(context, AccountActivity::class.java)
             .putExtra(EXTRA_ACCOUNT, account)
             .putExtra(EXTRA_CREATION_ID, AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID))
+
+        fun newIntent(context: Context, account: Account, creationId: String): Intent {
+            require(creationId.isNotBlank()) { "Account creation ID must be nonblank" }
+            return Intent(context, AccountActivity::class.java)
+                .putExtra(EXTRA_ACCOUNT, account)
+                .putExtra(EXTRA_CREATION_ID, creationId)
+        }
 
         /** No-network instrumentation seams; production leaves all three null. */
         @VisibleForTesting

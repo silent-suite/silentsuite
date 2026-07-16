@@ -249,11 +249,14 @@ class AccountDashboardRuntimeTest {
             }
         }) { _, _, scenario ->
             waitForModel(scenario)
+            var deliveriesBefore = 0
             scenario.onActivity { activity ->
                 assertEquals("Needs attention", activity.findViewById<TextView>(R.id.dashboard_overall_status).text.toString())
                 fail.set(false)
+                deliveriesBefore = activity.accountInfoDeliveryCount
                 activity.refresh()
             }
+            waitForDeliveryAfter(scenario, deliveriesBefore)
             waitForText(scenario, R.id.dashboard_overall_status) { it == "Never synced" }
             scenario.onActivity { activity ->
                 fail.set(true)
@@ -304,8 +307,13 @@ class AccountDashboardRuntimeTest {
                     renderedPermissionFix = activity.findViewById(R.id.dashboard_context_action)
                     android.content.ContentResolver.setMasterSyncAutomatically(false)
                     activity.onStatusChanged(0)
-                    renderedEnableSync = requireNotNull(activity.findViewById(
-                        com.google.android.material.R.id.snackbar_action))
+                }
+                waitUntil("global sync Snackbar action") {
+                    var action: View? = null
+                    scenario.onActivity { activity ->
+                        action = activity.findViewById(com.google.android.material.R.id.snackbar_action)
+                    }
+                    action?.also { renderedEnableSync = it } != null
                 }
                 assertEquals(1, exportDocuments.size)
                 exportDocuments.clear()
@@ -474,7 +482,7 @@ class AccountDashboardRuntimeTest {
     }
 
     private fun waitForDeliveryAfter(scenario: ActivityScenario<AccountActivity>, previous: Int) {
-        repeat(50) {
+        repeat(200) {
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var count = previous
             scenario.onActivity { count = it.accountInfoDeliveryCount }
@@ -484,8 +492,18 @@ class AccountDashboardRuntimeTest {
         throw AssertionError("Dashboard model was not delivered again")
     }
 
+    private fun waitUntil(description: String, timeoutMillis: Long = 10_000, predicate: () -> Boolean) {
+        val deadline = android.os.SystemClock.uptimeMillis() + timeoutMillis
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            if (predicate()) return
+            android.os.SystemClock.sleep(50)
+        }
+        throw AssertionError("Timed out waiting for $description")
+    }
+
     private fun waitForText(scenario: ActivityScenario<AccountActivity>, viewId: Int, predicate: (String) -> Boolean) {
-        repeat(50) {
+        repeat(200) {
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var text = ""
             scenario.onActivity { text = it.findViewById<TextView>(viewId).text.toString() }
