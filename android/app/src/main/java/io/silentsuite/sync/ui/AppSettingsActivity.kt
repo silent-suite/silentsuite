@@ -397,8 +397,11 @@ class AppSettingsActivity : BaseActivity() {
                 text = appPreferences.proxyPort.toString()
                 summary = appPreferences.proxyPort.toString()
                 setOnPreferenceChangeListener { _, value ->
-                    val port = (value as String).toIntOrNull()?.takeIf { it in 1..65535 }
-                        ?: AppPreferences.DEFAULT_PROXY_PORT
+                    val port = ProxySettingsValidation.parsePort(value as String)
+                    if (port == null) {
+                        Snackbar.make(requireView(), R.string.settings_invalid_proxy_port, Snackbar.LENGTH_LONG).show()
+                        return@setOnPreferenceChangeListener false
+                    }
                     appPreferences.proxyPort = port
                     text = port.toString()
                     summary = port.toString()

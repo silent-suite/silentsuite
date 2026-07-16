@@ -298,6 +298,7 @@ jobs:
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','exactAccountSyncSettingAndCategorySurviveRecreationWithoutChangingSibling'),
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','staleNotificationAndLegacyRoutesRejectReaddedSameNameAcrossProcessStyleRelaunch'),
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','loggerNotificationRouteKeepsAdvancedExactGenerationAcrossRecreationAndRejectsReplacement'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','proxyPortPreferenceAcceptsBoundsAndPreservesPriorValueOnInvalidInput'),
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','twoStoreMigrationRerunsAfterDefaultAliasCommitFailure'),
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationRerunsAfterCanonicalStoreCommitFailureWithoutTouchingAliases'),
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationMarkerFailureRerunsAndMarkerIsAlwaysLast'),

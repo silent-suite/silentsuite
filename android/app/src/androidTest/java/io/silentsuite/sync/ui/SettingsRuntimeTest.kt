@@ -65,8 +65,8 @@ class SettingsRuntimeTest {
                 }
             }
         } finally {
-            AndroidCompat.removeAccount(manager, first)
-            AndroidCompat.removeAccount(manager, second)
+            removeAccountAndWait(manager, first)
+            removeAccountAndWait(manager, second)
             ActiveAccountManager.clearActiveAccount(context)
         }
     }
@@ -115,7 +115,7 @@ class SettingsRuntimeTest {
                 }
             }
         } finally {
-            AndroidCompat.removeAccount(manager, account)
+            removeAccountAndWait(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }
     }
@@ -165,8 +165,38 @@ class SettingsRuntimeTest {
                 }
             }
         } finally {
-            AndroidCompat.removeAccount(manager, account)
+            removeAccountAndWait(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    @Test
+    fun proxyPortPreferenceAcceptsBoundsAndPreservesPriorValueOnInvalidInput() {
+        withEmptyPreferenceStores { _, _ ->
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val preferences = AppPreferences(context)
+            preferences.proxyPort = 8118
+
+            ActivityScenario.launch<AppSettingsActivity>(
+                AppSettingsActivity.newIntent(context, null, SettingsCategory.ADVANCED)
+            ).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.supportFragmentManager.executePendingTransactions()
+                    val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content)
+                        as AppSettingsActivity.CategoryFragment
+                    val portPreference = fragment.findPreference<androidx.preference.EditTextPreference>("proxy_port")!!
+
+                    assertTrue(portPreference.callChangeListener("1"))
+                    assertEquals(1, preferences.proxyPort)
+                    assertTrue(portPreference.callChangeListener("65535"))
+                    assertEquals(65535, preferences.proxyPort)
+                    listOf("0", "65536", "-1", "", "not-a-port").forEach { invalid ->
+                        assertFalse("Expected invalid proxy port: $invalid", portPreference.callChangeListener(invalid))
+                        assertEquals(65535, preferences.proxyPort)
+                        assertEquals("65535", portPreference.text)
+                    }
+                }
+            }
         }
     }
 

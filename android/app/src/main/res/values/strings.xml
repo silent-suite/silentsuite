@@ -561,4 +561,5 @@
     <string name="settings_privacy_local_title">Local settings</string>
     <string name="settings_privacy_local_summary">Global preferences stay on this device. Sync schedule, Wi-Fi restrictions, setup state, and session data remain scoped to the selected Android account.</string>
     <string name="settings_invalid_proxy_host">Enter a valid proxy host</string>
+    <string name="settings_invalid_proxy_port">Enter a proxy port from 1 to 65535</string>
 </resources>

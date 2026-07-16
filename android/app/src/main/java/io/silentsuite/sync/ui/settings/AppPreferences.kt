@@ -26,6 +26,8 @@ internal object ProxySettingsValidation {
     } catch (_: java.net.URISyntaxException) {
         false
     }
+
+    fun parsePort(value: String): Int? = value.toIntOrNull()?.takeIf { it in 1..65535 }
 }
 
 /** Typed owner of global app preferences. Account-scoped values never belong here. */

@@ -97,4 +97,13 @@ class AppPreferencesTest {
             assertFalse("Expected invalid proxy host: $it", ProxySettingsValidation.isValidHost(it))
         }
     }
+
+    @Test
+    fun proxyPortValidationAcceptsInclusiveBoundsAndRejectsInvalidInput() {
+        assertEquals(1, ProxySettingsValidation.parsePort("1"))
+        assertEquals(65535, ProxySettingsValidation.parsePort("65535"))
+        listOf("0", "65536", "-1", "", "not-a-port").forEach {
+            assertEquals("Expected invalid proxy port: $it", null, ProxySettingsValidation.parsePort(it))
+        }
+    }
 }
