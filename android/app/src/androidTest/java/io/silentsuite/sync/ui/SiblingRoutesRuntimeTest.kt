@@ -17,6 +17,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.assertion.ViewAssertions.matches
@@ -426,6 +427,7 @@ class SiblingRoutesRuntimeTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)
         val account = addAccount(manager, "invitations", "invitations-generation")
+        invitationsOverride = { emptyList() }
         try {
             ActivityScenario.launch<InvitationsActivity>(
                 InvitationsActivity.newIntent(context, account, "invitations-generation")
@@ -439,6 +441,7 @@ class SiblingRoutesRuntimeTest {
                 assertEquals(Lifecycle.State.DESTROYED, scenario.state)
             }
         } finally {
+            invitationsOverride = null
             removeAccountAndWait(manager, account)
         }
     }
@@ -464,8 +467,7 @@ class SiblingRoutesRuntimeTest {
             }
             listOf(
                 ChangeEncryptionPasswordActivity.newIntent(context, account, "route-generation"),
-                ImportActivity.newIntent(context, account, "route-generation", info),
-                InvitationsActivity.newIntent(context, account, "route-generation")
+                ImportActivity.newIntent(context, account, "route-generation", info)
             ).forEach(::launchAndFinish)
         } finally {
             removeAccountAndWait(manager, account)
@@ -587,13 +589,13 @@ class SiblingRoutesRuntimeTest {
     fun invitationAcceptCompletionReturnsToCallerForExactGeneration() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-accept","ac41-accept-generation");val row=RuntimeInvitation("invite-a","alice",com.etebase.client.CollectionAccessLevel.ReadWrite,"AA:BB");var calls=0
         invitationsOverride={ listOf(row) };invitationActionOverride={ _,id,key,action -> assertEquals(account,id.account);assertEquals("ac41-accept-generation",id.creationId);assertEquals("invite-a",key);assertEquals(RuntimeInvitationAction.ACCEPT,action);calls++;Result.success(Unit) }
-        try { ActivityScenario.launchActivityForResult<InvitationsActivity>(InvitationsActivity.newIntent(context,account,"ac41-accept-generation")).use { s -> s.recreate();waitUntil("invitation row laid out") {var ok=false;s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? InvitationsListFragment;ok=f?.listAdapter?.count==1&&f.listView.getChildAt(0)!=null };ok};s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals("ac41-accept-generation",f.arguments!!.getString("invitation.identity.creationId"));assertEquals("Invitation from alice",(f.listAdapter!!.getItem(0) as InvitationRow).let { row -> context.getString(R.string.invitations_from,row.runtime.fromUsername) });f.onItemClick(f.listView,requireNotNull(f.listView.getChildAt(0)),0,0) };onView(withText("AA:BB")).check(matches(isDisplayed()));onView(withText(R.string.invitations_accept)).perform(click());waitUntil("accept return") {s.state==Lifecycle.State.DESTROYED};assertEquals(1,calls);assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally { invitationActionOverride=null;invitationsOverride=null;removeAccountAndWait(manager,account) }
+        try { ActivityScenario.launchActivityForResult<InvitationsActivity>(InvitationsActivity.newIntent(context,account,"ac41-accept-generation")).use { s -> s.recreate();waitUntil("invitation row laid out") {var ok=false;s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? InvitationsListFragment;ok=f?.listAdapter?.count==1&&f.listView.getChildAt(0)!=null };ok};s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals("ac41-accept-generation",f.arguments!!.getString("invitation.identity.creationId"));assertEquals("Invitation from alice",(f.listAdapter!!.getItem(0) as InvitationRow).let { row -> context.getString(R.string.invitations_from,row.runtime.fromUsername) });f.onItemClick(f.listView,requireNotNull(f.listView.getChildAt(0)),0,0) };onView(withText("AA:BB")).inRoot(isDialog()).check(matches(isDisplayed()));onView(withText(R.string.invitations_accept)).inRoot(isDialog()).perform(click());waitUntil("accept return") {s.state==Lifecycle.State.DESTROYED};assertEquals(1,calls);assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally { invitationActionOverride=null;invitationsOverride=null;removeAccountAndWait(manager,account) }
     }
 
     @Test
     fun invitationRejectCompletionUpdatesListAndReturnsForExactGeneration() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-reject","ac41-reject-generation");var rows=listOf(RuntimeInvitation("invite-r","bob",com.etebase.client.CollectionAccessLevel.ReadOnly,"CC:DD"));var calls=0
         invitationsOverride={rows};invitationActionOverride={ _,id,key,action -> assertEquals(account,id.account);assertEquals("ac41-reject-generation",id.creationId);assertEquals("invite-r",key);assertEquals(RuntimeInvitationAction.REJECT,action);rows=emptyList();calls++;Result.success(Unit) }
-        try { ActivityScenario.launchActivityForResult<InvitationsActivity>(InvitationsActivity.newIntent(context,account,"ac41-reject-generation")).use { s -> s.recreate();waitUntil("invitation row laid out") {var ok=false;s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? InvitationsListFragment;ok=f?.listAdapter?.count==1&&f.listView.getChildAt(0)!=null };ok};s.onActivity {val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals("ac41-reject-generation",f.arguments!!.getString("invitation.identity.creationId"));f.onItemClick(f.listView,requireNotNull(f.listView.getChildAt(0)),0,0)};onView(withText("CC:DD")).check(matches(isDisplayed()));onView(withText(R.string.invitations_reject)).perform(click());waitUntil("rejected") {calls==1};s.onActivity {val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals(0,f.listAdapter!!.count);assertEquals(Lifecycle.State.RESUMED,it.lifecycle.currentState);it.onBackPressedDispatcher.onBackPressed()};waitUntil("reject return") {s.state==Lifecycle.State.DESTROYED};assertEquals(Lifecycle.State.DESTROYED,s.state);assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode)}} finally {invitationActionOverride=null;invitationsOverride=null;removeAccountAndWait(manager,account)}
+        try { ActivityScenario.launchActivityForResult<InvitationsActivity>(InvitationsActivity.newIntent(context,account,"ac41-reject-generation")).use { s -> s.recreate();waitUntil("invitation row laid out") {var ok=false;s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? InvitationsListFragment;ok=f?.listAdapter?.count==1&&f.listView.getChildAt(0)!=null };ok};s.onActivity {val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals("ac41-reject-generation",f.arguments!!.getString("invitation.identity.creationId"));f.onItemClick(f.listView,requireNotNull(f.listView.getChildAt(0)),0,0)};onView(withText("CC:DD")).inRoot(isDialog()).check(matches(isDisplayed()));onView(withText(R.string.invitations_reject)).inRoot(isDialog()).perform(click());waitUntil("rejected") {calls==1};s.onActivity {val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals(0,f.listAdapter!!.count);assertEquals(Lifecycle.State.RESUMED,it.lifecycle.currentState);it.onBackPressedDispatcher.onBackPressed()};waitUntil("reject return") {s.state==Lifecycle.State.DESTROYED};assertEquals(Lifecycle.State.DESTROYED,s.state);assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode)}} finally {invitationActionOverride=null;invitationsOverride=null;removeAccountAndWait(manager,account)}
     }
 }
