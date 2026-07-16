@@ -255,7 +255,7 @@ class CollectionMembersViewModel : ViewModel() {
         asyncTask?.cancel()
     }
 
-    fun observe(owner: LifecycleOwner, observer: (List<RuntimeMember>) -> Unit) =
+    internal fun observe(owner: LifecycleOwner, observer: (List<RuntimeMember>) -> Unit) =
             members.observe(owner, observer)
 }
 

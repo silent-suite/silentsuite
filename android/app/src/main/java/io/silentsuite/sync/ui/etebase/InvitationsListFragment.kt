@@ -235,7 +235,14 @@ class InvitationsViewModel : ViewModel() {
                     done = chunk.isDone
                     result.addAll(chunk.data)
                 }
-                result.map { InvitationRow(RuntimeInvitation(it.uid, it.fromUsername, it.accessLevel, Utils.prettyFingerprint(it.fromPubkey)), it) }
+                result.map {
+                    InvitationRow(RuntimeInvitation(
+                        it.uid,
+                        it.fromUsername ?: applicationContext.getString(R.string.invitations_sender_unknown),
+                        it.accessLevel,
+                        Utils.prettyFingerprint(it.fromPubkey),
+                    ), it)
+                }
             }
             if (ret != null && identity.validate(applicationContext) && identity.account == accountCollectionHolder.account)
                 invitations.value = ret
@@ -294,6 +301,6 @@ class InvitationsViewModel : ViewModel() {
         asyncTask?.cancel()
     }
 
-    fun observe(owner: LifecycleOwner, observer: (List<InvitationRow>) -> Unit) =
+    internal fun observe(owner: LifecycleOwner, observer: (List<InvitationRow>) -> Unit) =
             invitations.observe(owner, observer)
 }

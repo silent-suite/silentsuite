@@ -245,6 +245,7 @@
     <!-- Invitations -->
     <string name="invitations_title">Invitations</string>
     <string name="invitations_from">Invitation from %1$s</string>
+    <string name="invitations_sender_unknown">Unknown sender</string>
     <string name="invitations_accessibility">Invitation from %1$s</string>
     <string name="invitations_accessibility_read_only">Read-only invitation from %1$s</string>
     <string name="invitations_loading">Loading invitations...</string>

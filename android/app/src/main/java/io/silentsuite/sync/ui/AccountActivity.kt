@@ -180,12 +180,23 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             return
         }
         account = resolved
+        val creationId = (if (explicit != null)
+            expectedCreationId
+        else
+            accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            ?.takeIf { it.isNotBlank() }
+        if (creationId == null || io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                account, creationId, App.accountType, accountManager) == null) {
+            finish()
+            return
+        }
+        accountCreationId = creationId
 
         // Dashboard/startup permissions are only valid after the exact row has been explicitly
         // completed. READY is intentionally resumable and must show the setup surface instead.
         if (!App.postLoginBootstrapSucceeded || AccountSettings.setupState(accountManager, account,
                 bootstrapped = io.silentsuite.sync.ui.setup.PostLoginSetupMigration.isBootstrapped(this)) != io.silentsuite.sync.ui.setup.PostLoginSetupState.COMPLETE) {
-            startActivity(io.silentsuite.sync.ui.setup.PostLoginSetupActivity.newIntent(this, account))
+            startActivity(io.silentsuite.sync.ui.setup.PostLoginSetupActivity.newIntent(this, account, creationId))
             finish()
             return
         }
@@ -197,11 +208,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         title = account.name
-        val creationId = accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID)
-        if (creationId.isNullOrBlank()) { finish(); return }
-        if (io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
-                account, creationId, App.accountType, accountManager) == null) { finish(); return }
-        accountCreationId = creationId
         signOutModel.initialize(account, creationId)
         if (!exactAccountStillCurrent()) { finish(); return }
         settings = AccountSettings(this, account)
