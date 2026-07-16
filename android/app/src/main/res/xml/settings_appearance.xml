@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <ListPreference android:key="theme_mode" android:title="@string/app_settings_theme" android:entries="@array/theme_mode_names" android:entryValues="@array/theme_mode_values" android:persistent="false" />
+    <Preference android:key="reset_hints" android:title="@string/app_settings_reset_hints" android:summary="@string/app_settings_reset_hints_summary" android:persistent="false" />
+</PreferenceScreen>

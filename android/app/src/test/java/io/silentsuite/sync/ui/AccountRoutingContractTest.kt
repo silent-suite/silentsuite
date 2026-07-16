@@ -15,11 +15,17 @@ class AccountRoutingContractTest {
         val legacySettings = File(sourceRoot, "ui/AccountSettingsActivity.kt").readText()
         val setup = File(sourceRoot, "ui/setup/PostLoginSetupActivity.kt").readText()
 
-        assertTrue(accountActivity.contains("AppSettingsActivity.newIntent(this, account)"))
-        assertTrue(appSettings.contains("fun newIntent(context: Context, account: Account?)"))
+        assertTrue(accountActivity.contains("AppSettingsActivity.newIntent(this, account, SettingsCategory.HOME)"))
+        assertTrue(appSettings.contains("fun newIntent("))
+        assertTrue(appSettings.contains("account: Account?"))
         assertTrue(appSettings.contains("intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)"))
+        assertTrue(appSettings.contains("EXTRA_CREATION_ID"))
+        assertTrue(appSettings.contains("ExactAccountRouting.validate(candidate, creationId"))
+        assertTrue(appSettings.contains("outState.putString(STATE_CREATION_ID, selectedCreationId)"))
         assertFalse(appSettings.contains("account = accounts[0]"))
-        assertTrue(legacySettings.contains("AppSettingsActivity.newIntent(this, intent.getParcelableExtra"))
+        assertTrue(legacySettings.contains("SettingsCategory.SYNC"))
+        assertTrue(legacySettings.contains("AppSettingsActivity.newIntent("))
+        assertTrue(legacySettings.contains("AppSettingsActivity.EXTRA_CREATION_ID"))
         assertTrue(setup.contains("AccountActivity.newIntent(this, account)"))
     }
 

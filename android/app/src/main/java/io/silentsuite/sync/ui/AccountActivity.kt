@@ -60,6 +60,8 @@ import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.InvitationsActivity
 import io.silentsuite.sync.ui.setup.LoginActivity
+import io.silentsuite.sync.ui.settings.SettingsCategory
+import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.utils.TaskProviderHandling
 import io.silentsuite.sync.utils.NotificationUtils
 import io.silentsuite.sync.utils.packageInstalled
@@ -501,7 +503,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             R.id.nav_tasks -> scrollToSection(R.id.taskdav)
             R.id.nav_contacts -> scrollToSection(R.id.carddav)
             R.id.nav_about -> startActivity(Intent(this, AboutActivity::class.java))
-            R.id.nav_app_settings -> startActivity(AppSettingsActivity.newIntent(this, account))
+            R.id.nav_app_settings -> startActivity(AppSettingsActivity.newIntent(this, account, SettingsCategory.HOME))
             R.id.nav_invitations -> startActivity(InvitationsActivity.newIntent(this, account))
             R.id.nav_show_fingerprint -> showFingerprintDialog()
             R.id.nav_export_data -> showExportDialog()
@@ -617,9 +619,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     private fun showThemeDialog() {
-        val themes = arrayOf("Light", "Dark", "System default")
-        val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
-        val currentMode = prefs.getInt("theme_mode", AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM)
+        val themes = arrayOf(
+            getString(R.string.settings_theme_light),
+            getString(R.string.settings_theme_dark),
+            getString(R.string.settings_theme_system)
+        )
+        val prefs = AppPreferences(this)
+        val currentMode = prefs.themeMode
         val checkedItem = when (currentMode) {
             AppCompatDelegate.MODE_NIGHT_NO -> 0
             AppCompatDelegate.MODE_NIGHT_YES -> 1
@@ -634,7 +640,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     1 -> AppCompatDelegate.MODE_NIGHT_YES
                     else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
                 }
-                prefs.edit().putInt("theme_mode", mode).apply()
+                prefs.themeMode = mode
                 AppCompatDelegate.setDefaultNightMode(mode)
                 dialog.dismiss()
             }

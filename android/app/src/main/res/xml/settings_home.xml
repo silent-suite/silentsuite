@@ -1,13 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  ~ Copyright © 2013 – 2016 Ricki Hirner (bitfire web engineering).
-  ~ All rights reserved. This program and the accompanying materials
-  ~ are made available under the terms of the GNU Public License v3.0
-  ~ which accompanies this distribution, and is available at
-  ~ http://www.gnu.org/licenses/gpl.html
-  -->
-
-<!-- Compatibility alias for callers/resources that still refer to settings_app. -->
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
     <Preference android:key="settings_category_account" android:title="@string/settings_category_account" android:summary="@string/settings_category_account_summary" android:persistent="false" />
     <Preference android:key="settings_category_sync" android:title="@string/settings_category_sync" android:summary="@string/settings_category_sync_summary" android:persistent="false" />

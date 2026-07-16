@@ -2,6 +2,8 @@ package io.silentsuite.sync.syncadapter
 
 import android.app.Activity
 import android.app.PendingIntent
+import android.accounts.Account
+import android.accounts.AccountManager
 import android.content.Context
 import android.content.Intent
 import android.database.sqlite.SQLiteException
@@ -16,10 +18,11 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
-import io.silentsuite.sync.ui.AccountSettingsActivity
+import io.silentsuite.sync.ui.AppSettingsActivity
 import io.silentsuite.sync.ui.DebugInfoActivity
 import io.silentsuite.sync.ui.WebViewActivity
 import io.silentsuite.sync.utils.NotificationUtils
+import io.silentsuite.sync.ui.settings.SettingsCategory
 import java.util.logging.Level
 
 class SyncNotification(internal val context: Context, internal val notificationTag: String, internal val notificationId: Int) {
@@ -61,6 +64,15 @@ class SyncNotification(internal val context: Context, internal val notificationT
         detailsIntent = Intent(context, NotificationHandlerActivity::class.java)
         detailsIntent.putExtra(DebugInfoActivity.KEY_THROWABLE, e)
         detailsIntent.data = Uri.parse("uri://" + javaClass.name + "/" + notificationTag)
+    }
+
+    /** Captures the generation when the notification is created, not when an old one is tapped. */
+    fun setAccount(account: Account) {
+        detailsIntent.putExtra(Constants.KEY_ACCOUNT, account)
+        detailsIntent.putExtra(
+            AppSettingsActivity.EXTRA_CREATION_ID,
+            AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID)
+        )
     }
 
     fun notify(title: String, state: String) {
@@ -124,14 +136,15 @@ class SyncNotification(internal val context: Context, internal val notificationT
 
             val detailsIntent: Intent
             if (e is UnauthorizedException || e is PermissionDeniedException) {
-                detailsIntent = Intent(this, AccountSettingsActivity::class.java)
+                detailsIntent = settingsIntent(this, extras)
             } else if (e is AccountSettings.AccountMigrationException) {
                 WebViewActivity.openUrl(this, Constants.faqUri.buildUpon().encodedFragment("account-migration-error").build())
                 return
             } else {
                 detailsIntent = DebugInfoActivity.newIntent(this, this::class.toString())
             }
-            detailsIntent.putExtras(extras)
+            if (detailsIntent.component?.className != AppSettingsActivity::class.java.name)
+                detailsIntent.putExtras(extras)
             startActivity(detailsIntent)
         }
 
@@ -139,5 +152,15 @@ class SyncNotification(internal val context: Context, internal val notificationT
             super.onStop()
             finish()
         }
+    }
+
+    companion object {
+        internal fun settingsIntent(context: Context, extras: Bundle): Intent =
+            AppSettingsActivity.newIntent(
+                context,
+                extras.getParcelable<Account>(Constants.KEY_ACCOUNT),
+                extras.getString(AppSettingsActivity.EXTRA_CREATION_ID),
+                SettingsCategory.SYNC
+            )
     }
 }

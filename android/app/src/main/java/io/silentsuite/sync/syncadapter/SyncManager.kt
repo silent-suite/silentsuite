@@ -22,7 +22,6 @@ import com.etebase.client.exceptions.HttpException
 import com.etebase.client.exceptions.TemporaryServerErrorException
 import com.etebase.client.exceptions.UnauthorizedException
 import io.silentsuite.sync.*
-import io.silentsuite.sync.Constants.KEY_ACCOUNT
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.*
 import io.silentsuite.sync.HttpClient
@@ -31,7 +30,7 @@ import io.silentsuite.sync.resource.*
 import io.silentsuite.sync.ui.AccountsActivity
 import io.silentsuite.sync.ui.DebugInfoActivity
 import io.silentsuite.sync.ui.etebase.CollectionActivity
-import io.silentsuite.sync.utils.defaultSharedPreferences
+import io.silentsuite.sync.ui.settings.AppPreferences
 import java.io.Closeable
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -204,14 +203,12 @@ constructor(protected val context: Context, protected val account: Account, prot
             syncResult.stats.numIoExceptions++
 
             notificationManager.setThrowable(e)
-            val detailsIntent = notificationManager.detailsIntent
-            detailsIntent.putExtra(KEY_ACCOUNT, account)
+            notificationManager.setAccount(account)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
             return ProviderOutcome.FAILURE
         } catch (e: FileNotFoundException) {
             notificationManager.setThrowable(e)
-            val detailsIntent = notificationManager.detailsIntent
-            detailsIntent.putExtra(KEY_ACCOUNT, account)
+            notificationManager.setAccount(account)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
             return ProviderOutcome.FAILURE
         } catch (e: IOException) {
@@ -244,7 +241,7 @@ constructor(protected val context: Context, protected val account: Account, prot
             notificationManager.setThrowable(e)
 
             val detailsIntent = notificationManager.detailsIntent
-            detailsIntent.putExtra(KEY_ACCOUNT, account)
+            notificationManager.setAccount(account)
             if (e !is UnauthorizedException) {
                 detailsIntent.putExtra(DebugInfoActivity.KEY_AUTHORITY, authority)
                 detailsIntent.putExtra(DebugInfoActivity.KEY_PHASE, syncPhase)
@@ -255,15 +252,14 @@ constructor(protected val context: Context, protected val account: Account, prot
         } catch (e: OutOfMemoryError) {
             syncResult.stats.numParseExceptions++
             notificationManager.setThrowable(e)
-            val detailsIntent = notificationManager.detailsIntent
-            detailsIntent.putExtra(KEY_ACCOUNT, account)
+            notificationManager.setAccount(account)
             notificationManager.notify(syncErrorTitle, context.getString(syncPhase))
             return ProviderOutcome.FAILURE
         }
     }
 
     private fun notifyUserOnSync() {
-        val changeNotification = context.defaultSharedPreferences.getBoolean(App.CHANGE_NOTIFICATION, true)
+        val changeNotification = AppPreferences(context).showChangeNotification
 
         if (!changeNotification || (syncItemsTotal == 0)) {
             return

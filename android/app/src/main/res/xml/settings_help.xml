@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <Preference android:key="settings_category_advanced" android:title="@string/settings_category_advanced" android:summary="@string/settings_category_advanced_summary" android:persistent="false" />
+</PreferenceScreen>

@@ -504,10 +504,13 @@
     <string name="subscription_reactivate">Reactivate</string>
     <string name="subscription_loading">Loading subscription status…</string>
     <!-- Theme mode arrays -->
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_system">System default</string>
     <string-array name="theme_mode_names">
-        <item>Light</item>
-        <item>Dark</item>
-        <item>System default</item>
+        <item>@string/settings_theme_light</item>
+        <item>@string/settings_theme_dark</item>
+        <item>@string/settings_theme_system</item>
     </string-array>
     <string-array name="theme_mode_values" translatable="false">
         <item>1</item>
@@ -536,4 +539,26 @@
     <string name="setup_account_busy_retry">An account with these details is still being created or already exists. Please try again.</string>
     <string name="post_login_setup_retry_inventory">Retry collection recovery</string>
     <string name="post_login_setup_resolve_ambiguity">Resolve account in Android Settings</string>
+
+    <!-- Account-aware Settings category hub -->
+    <string name="settings_category_account">Account</string>
+    <string name="settings_category_account_summary">Account identity and account dashboard</string>
+    <string name="settings_category_sync">Sync</string>
+    <string name="settings_category_sync_summary">Schedule, network restrictions, and task provider</string>
+    <string name="settings_category_notifications">Notifications</string>
+    <string name="settings_category_notifications_summary">Android notification channels and change alerts</string>
+    <string name="settings_category_appearance">Appearance</string>
+    <string name="settings_category_appearance_summary">Theme and interface hints</string>
+    <string name="settings_category_privacy_security">Privacy and security</string>
+    <string name="settings_category_privacy_security_summary">Encryption and local privacy protections</string>
+    <string name="settings_category_help">Help and troubleshooting</string>
+    <string name="settings_category_help_summary">Advanced connection, certificate, language, and diagnostic options</string>
+    <string name="settings_category_advanced">Advanced</string>
+    <string name="settings_category_advanced_summary">Proxy, certificates, language, logging, and debug information</string>
+    <string name="settings_account_current">Current account</string>
+    <string name="settings_account_not_available">No account selected</string>
+    <string name="settings_account_dashboard_summary">Open this account’s encrypted-sync overview</string>
+    <string name="settings_privacy_local_title">Local settings</string>
+    <string name="settings_privacy_local_summary">Global preferences stay on this device. Sync schedule, Wi-Fi restrictions, setup state, and session data remain scoped to the selected Android account.</string>
+    <string name="settings_invalid_proxy_host">Enter a valid proxy host</string>
 </resources>

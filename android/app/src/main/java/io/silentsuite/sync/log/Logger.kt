@@ -14,7 +14,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Process
-import androidx.preference.PreferenceManager
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -23,6 +22,9 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.AppSettingsActivity
+import io.silentsuite.sync.ui.ActiveAccountManager
+import io.silentsuite.sync.ui.settings.AppPreferences
+import io.silentsuite.sync.ui.settings.SettingsCategory
 import io.silentsuite.sync.utils.NotificationUtils
 import org.apache.commons.lang3.time.DateFormatUtils
 import java.io.File
@@ -33,8 +35,6 @@ import java.util.logging.Level
 @SuppressLint("StaticFieldLeak")    // we'll only keep an app context
 object Logger : SharedPreferences.OnSharedPreferenceChangeListener {
 
-    private const val LOG_TO_FILE = "log_to_file"
-    private const val LOG_VERBOSE = "log_verbose"
 
     val log = java.util.logging.Logger.getLogger("silentsuite")!!
 
@@ -43,22 +43,30 @@ object Logger : SharedPreferences.OnSharedPreferenceChangeListener {
 
     fun initialize(someContext: Context) {
         context = someContext.applicationContext
-        preferences = PreferenceManager.getDefaultSharedPreferences(context)
+        preferences = AppPreferences(context).sharedPreferences
         preferences.registerOnSharedPreferenceChangeListener(this)
 
         reinitialize()
     }
 
+    /** The exact-generation Settings route attached to the file-logging notification. */
+    internal fun notificationSettingsIntent(context: Context): Intent =
+        AppSettingsActivity.newIntent(
+            context,
+            ActiveAccountManager.getActiveAccount(context),
+            SettingsCategory.ADVANCED
+        )
+
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences?, key: String?) {
-        if (key == LOG_TO_FILE || key == LOG_VERBOSE) {
+        if (key == AppPreferences.KEY_LOG_TO_FILE || key == AppPreferences.KEY_LOG_VERBOSE) {
             log.info("Logging settings changed; re-initializing logger")
             reinitialize()
         }
     }
 
     private fun reinitialize() {
-        val logToFile = preferences.getBoolean(LOG_TO_FILE, false)
-        val logVerbose = preferences.getBoolean(LOG_VERBOSE, false) || Log.isLoggable(Logger.log.name, Log.DEBUG)
+        val logToFile = preferences.getBoolean(AppPreferences.KEY_LOG_TO_FILE, false)
+        val logVerbose = preferences.getBoolean(AppPreferences.KEY_LOG_VERBOSE, false) || Log.isLoggable(Logger.log.name, Log.DEBUG)
 
         log.info("Verbose logging: $logVerbose; to file: $logToFile")
 
@@ -88,7 +96,7 @@ object Logger : SharedPreferences.OnSharedPreferenceChangeListener {
                 fileHandler.formatter = PlainTextFormatter.DEFAULT
                 rootLogger.addHandler(fileHandler)
 
-                val prefIntent = Intent(context, AppSettingsActivity::class.java)
+                val prefIntent = notificationSettingsIntent(context)
                 prefIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
                 builder .setContentText(logDir.path)

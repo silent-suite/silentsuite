@@ -8,7 +8,13 @@
 
 package io.silentsuite.sync.ui
 
+import android.accounts.Account
+import android.accounts.AccountManager
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.ui.settings.SettingsCategory
 
 /**
  * Legacy AccountSettingsActivity — now redirects to the consolidated AppSettingsActivity.
@@ -19,7 +25,36 @@ class AccountSettingsActivity : BaseActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Redirect to the consolidated App Settings screen
-        startActivity(AppSettingsActivity.newIntent(this, intent.getParcelableExtra(AppSettingsActivity.EXTRA_ACCOUNT)))
+        startActivity(redirectIntent(this, intent))
         finish()
+    }
+
+    companion object {
+        fun newIntent(
+            context: Context,
+            account: Account,
+            category: SettingsCategory = SettingsCategory.SYNC
+        ): Intent = Intent(context, AccountSettingsActivity::class.java)
+            .putExtra(AppSettingsActivity.EXTRA_ACCOUNT, account)
+            .putExtra(
+                AppSettingsActivity.EXTRA_CREATION_ID,
+                AccountManager.get(context).getUserData(account, AccountSettings.KEY_CREATION_ID)
+            )
+            .putExtra(AppSettingsActivity.EXTRA_CATEGORY, category.route)
+
+        internal fun redirectIntent(context: Context, source: Intent): Intent {
+            val category = SettingsCategory.fromRoute(
+                source.getStringExtra(AppSettingsActivity.EXTRA_CATEGORY)
+            ).takeUnless { it == SettingsCategory.HOME } ?: SettingsCategory.SYNC
+            return if (source.hasExtra(AppSettingsActivity.EXTRA_ACCOUNT) ||
+                source.hasExtra(AppSettingsActivity.EXTRA_CREATION_ID))
+                AppSettingsActivity.newIntent(
+                    context,
+                    source.getParcelableExtra<Account>(AppSettingsActivity.EXTRA_ACCOUNT),
+                    source.getStringExtra(AppSettingsActivity.EXTRA_CREATION_ID),
+                    category
+                )
+            else AppSettingsActivity.newIntent(context, null, category)
+        }
     }
 }

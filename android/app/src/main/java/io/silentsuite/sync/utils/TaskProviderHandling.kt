@@ -10,7 +10,7 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalTaskList
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
-import io.silentsuite.sync.utils.defaultSharedPreferences
+import io.silentsuite.sync.ui.settings.AppPreferences
 
 class TaskProviderHandling {
     companion object {
@@ -46,7 +46,7 @@ class TaskProviderHandling {
             val tasksOrgAvailable = LocalTaskList.tasksProviderAvailable(context, TaskProvider.ProviderName.TasksOrg)
 
             if (openTasksAvailable && tasksOrgAvailable) {
-                if (context.defaultSharedPreferences.getBoolean(App.PREFER_TASKSORG, false))
+                if (AppPreferences(context).preferTasksOrg)
                     return TaskProvider.ProviderName.TasksOrg
                 else
                     return TaskProvider.ProviderName.OpenTasks
