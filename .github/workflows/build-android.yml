@@ -301,6 +301,7 @@ jobs:
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','readOnlyLimitedTasksUseNormalContinueAndReachReady'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','generationMismatchShowsSettingsOnlyAcrossRecreation'),
             ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','controllerLiveResultCancellationDuplicatesAndRestoreAreExactOnce'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','cleanInstallBootstrapPublishesMarkerAfterReconciliation'),
             ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling'),
             ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','obsoleteCoordinatorCancelsBeforeNormalLaunch'),
             ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','staleLoginActivityRestorationUsesObsoletePathBeforeController'),

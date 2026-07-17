@@ -135,12 +135,14 @@ class LoginLifecycleContractTest {
     }
 
     @Test
-    fun focusedRuntimeExpectedSetIncludesRecoverableAuthenticatorCreationFailure() {
+    fun focusedRuntimeExpectedSetIncludesAuthenticatorLifecycleContracts() {
         val workflow = File("../../.github/workflows/build-android.yml").readText()
         val expectedSet = workflow.substringAfter("          expected={")
             .substringBefore("          }\n          seen=[]")
         val expectedTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling')"
+        val bootstrapTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','cleanInstallBootstrapPublishesMarkerAfterReconciliation')"
 
         assertTrue(expectedSet.contains(expectedTuple))
+        assertTrue(expectedSet.contains(bootstrapTuple))
     }
 }
