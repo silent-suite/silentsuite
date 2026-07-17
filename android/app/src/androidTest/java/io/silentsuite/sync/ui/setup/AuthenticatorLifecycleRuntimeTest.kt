@@ -25,8 +25,11 @@ class AuthenticatorLifecycleRuntimeTest {
         val delivery = Fake()
         LoginActivity.controllerFactory = { _, _ -> AuthenticatorResponseController(delivery, null) }
         try {
-            ActivityScenario.launch<LoginActivity>(Intent()).use { scenario ->
-                val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            val targetContext = instrumentation.targetContext
+            val loginIntent = Intent(targetContext, LoginActivity::class.java)
+            assertEquals(targetContext.packageName, loginIntent.component?.packageName)
+            ActivityScenario.launch<LoginActivity>(loginIntent).use { scenario ->
                 instrumentation.waitForIdleSync()
                 scenario.onActivity { activity ->
                     activity.supportFragmentManager.beginTransaction()
