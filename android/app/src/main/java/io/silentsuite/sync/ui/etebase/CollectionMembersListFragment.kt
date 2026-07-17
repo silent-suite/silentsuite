@@ -64,6 +64,9 @@ class CollectionMembersListFragment : ListFragment(), AdapterView.OnItemClickLis
                 setListAdapterMembers(fixture.members)
                 emptyTextView!!.setText(R.string.collection_members_list_empty)
                 listView.onItemClickListener = this
+                membersModel.observe(viewLifecycleOwner) { members ->
+                    setListAdapterMembers(members)
+                }
                 return
             }
         }
