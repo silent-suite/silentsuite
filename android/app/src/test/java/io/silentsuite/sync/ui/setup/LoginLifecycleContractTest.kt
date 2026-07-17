@@ -54,6 +54,35 @@ class LoginLifecycleContractTest {
         assertFalse(retryPresentation.contains("cancelBeforeAccountCreated"))
     }
 
+    @Test
+    fun interruptedCoordinatorResultsUseTheTotalDurableEvidenceRouter() {
+        val source = File(sourceRoot, "CreateAccountFragment.kt").readText()
+        val coordinatorResultRouting = source.substringAfter("return when (val result = coordinator.create(creationId, fields))")
+            .substringBefore("    /**\n     * Routes all interrupted")
+        val unexpectedRecovery = source.substringAfter("private fun recoverFromUnexpectedFailure")
+            .substringBefore("private fun creationAttemptFromDurableEvidence")
+        val durableRouter = source.substringAfter("private fun creationAttemptFromDurableEvidence")
+            .substringBefore("    sealed class CreationAttempt")
+
+        val sharedDurableBranch = Regex(
+            "AccountCreationCoordinator\\.Result\\.EXISTS_OR_BUSY,\\s*" +
+                "AccountCreationCoordinator\\.Result\\.NOT_ADDED,\\s*" +
+                "AccountCreationCoordinator\\.Result\\.QUARANTINED,\\s*" +
+                "AccountCreationCoordinator\\.Result\\.QUARANTINE_FAILED\\s*->\\s*" +
+                "creationAttemptFromDurableEvidence\\(account, accountManager, registry\\)"
+        )
+        assertTrue(sharedDurableBranch.containsMatchIn(coordinatorResultRouting))
+        assertFalse(coordinatorResultRouting.contains("resumableOwnedIncomplete"))
+        assertTrue(unexpectedRecovery.contains("rowObserved = account in manager.getAccountsByType"))
+        assertTrue(unexpectedRecovery.contains("if (rowObserved) CreationAttempt.SettingsResolution(account) else CreationAttempt.RetryCredentials"))
+        assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.outcome"))
+        assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.Recovery -> CreationAttempt.Recovery"))
+        assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.Created -> CreationAttempt.Created"))
+        assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.Completed -> CreationAttempt.Completed"))
+        assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.SettingsResolution -> CreationAttempt.SettingsResolution"))
+        assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.RetryCredentials -> CreationAttempt.RetryCredentials"))
+    }
+
     @Test fun loginFailureDialogsPersistOnlyResourceIdentifiers() {
         listOf("DetectConfigurationFragment.kt", "LoginCredentialsChangeFragment.kt").forEach { name ->
             val source = File(sourceRoot, name).readText()

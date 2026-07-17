@@ -194,33 +194,51 @@ class CreateAccountFragment : DialogFragment() {
                 AccountCreationCoordinator.Result.CREATED,
                 AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED -> CreationAttempt.Created(account)
                 AccountCreationCoordinator.Result.EXISTS_OR_BUSY,
-                AccountCreationCoordinator.Result.NOT_ADDED -> when (AccountCreationCallerPolicy.disposition(result)) {
-                    AccountCreationCallerPolicy.Disposition.RetryCredentials ->
-                        resumableOwnedIncomplete(account, accountManager, registry) ?: CreationAttempt.RetryCredentials
-                    else -> CreationAttempt.Failed
-                }
-                AccountCreationCoordinator.Result.QUARANTINED -> ownedRecovery(account, accountManager, registry)
-                    ?: settingsResolution(account, accountManager)
-                AccountCreationCoordinator.Result.QUARANTINE_FAILED -> settingsResolution(account, accountManager)
-                    ?: CreationAttempt.RetryCredentials
+                AccountCreationCoordinator.Result.NOT_ADDED,
+                AccountCreationCoordinator.Result.QUARANTINED,
+                AccountCreationCoordinator.Result.QUARANTINE_FAILED ->
+                    creationAttemptFromDurableEvidence(account, accountManager, registry)
             }
         }
     }
 
-    /** Broad-catch seam: route only from current durable row and registry ownership evidence. */
+    /**
+     * Routes all interrupted-creation outcomes from the current durable row and generation
+     * evidence. This total router deliberately fails closed once it has observed a row.
+     */
     private fun recoverFromUnexpectedFailure(accountName: String): CreationAttempt {
         val account = Account(accountName, App.accountType)
         val manager = AccountManager.get(requireContext())
-        val rowPresent = try {
-            account in manager.getAccountsByType(account.type)
-        } catch (e: Exception) {
-            return CreationAttempt.RetryCredentials
-        }
-        if (!rowPresent) return CreationAttempt.RetryCredentials
+        var rowObserved = false
         return try {
-            val id = manager.getUserData(account, AccountSettings.KEY_CREATION_ID)
-            val registryOwns = id != null && AccountCreationRegistry.owns(
-                AccountCreationRegistry.open(requireContext()).get(account.type, account.name), id)
+            rowObserved = account in manager.getAccountsByType(account.type)
+            if (!rowObserved)
+                CreationAttempt.RetryCredentials
+            else
+                creationAttemptFromDurableEvidence(
+                    account,
+                    manager,
+                    AccountCreationRegistry.open(requireContext())
+                )
+        } catch (e: Exception) {
+            // Once a row has been observed, incomplete registry/state inspection cannot safely
+            // downgrade the outcome to credential retry or adopt that row as this generation.
+            if (rowObserved) CreationAttempt.SettingsResolution(account) else CreationAttempt.RetryCredentials
+        }
+    }
+
+    private fun creationAttemptFromDurableEvidence(
+        account: Account,
+        manager: AccountManager,
+        registry: AccountCreationRegistry
+    ): CreationAttempt {
+        var rowObserved = false
+        return try {
+            val rowPresent = account in manager.getAccountsByType(account.type)
+            rowObserved = rowPresent
+            val id = if (rowPresent) manager.getUserData(account, AccountSettings.KEY_CREATION_ID) else null
+            val registryOwns = rowPresent && id != null && AccountCreationRegistry.owns(
+                registry.get(account.type, account.name), id)
             when (DurableCreationAttemptPolicy.outcome(DurableCreationAttemptPolicy.Evidence(
                 rowPresent, id, registryOwns,
                 if (registryOwns) AccountSettings.setupState(manager, account, PostLoginSetupMigration.isBootstrapped(requireContext())) else null
@@ -233,37 +251,8 @@ class CreateAccountFragment : DialogFragment() {
             }
         } catch (e: Exception) {
             // The row was observed. An incomplete inspection must never turn it into retry.
-            CreationAttempt.SettingsResolution(account)
+            if (rowObserved) CreationAttempt.SettingsResolution(account) else CreationAttempt.RetryCredentials
         }
-    }
-
-    private fun ownedRecovery(account: Account, manager: AccountManager, registry: AccountCreationRegistry): CreationAttempt.Recovery? {
-        if (account !in manager.getAccountsByType(account.type)) return null
-        val id = manager.getUserData(account, AccountSettings.KEY_CREATION_ID) ?: return null
-        if (!AccountCreationRegistry.owns(registry.get(account.type, account.name), id)) return null
-        val state = AccountSettings.setupState(manager, account, PostLoginSetupMigration.isBootstrapped(requireContext()))
-        return if (state == PostLoginSetupState.RECOVERY_REQUIRED || state == PostLoginSetupState.CREATING)
-            CreationAttempt.Recovery(account, id) else null
-    }
-
-    private fun settingsResolution(account: Account, manager: AccountManager): CreationAttempt.SettingsResolution? =
-        account.takeIf { it in manager.getAccountsByType(it.type) }?.let(CreationAttempt::SettingsResolution)
-
-    private fun resumableOwnedIncomplete(
-        account: Account,
-        manager: AccountManager,
-        registry: AccountCreationRegistry
-    ): CreationAttempt? {
-        if (account !in manager.getAccountsByType(account.type)) return null
-        val id = manager.getUserData(account, AccountSettings.KEY_CREATION_ID) ?: return null
-        if (!AccountCreationRegistry.owns(registry.get(account.type, account.name), id)) return null
-        val state = AccountSettings.setupState(manager, account, PostLoginSetupMigration.isBootstrapped(requireContext()))
-        // CREATING has not crossed the durable account-created boundary and can never be
-        // resumed as success. COMPLETE belongs at the exact dashboard, not setup.
-        if (state == PostLoginSetupState.COMPLETE) return CreationAttempt.Completed(account)
-        return account.takeIf { state in setOf(PostLoginSetupState.ACCOUNT_CREATED, PostLoginSetupState.COLLECTIONS,
-                PostLoginSetupState.PERMISSIONS, PostLoginSetupState.INITIAL_SYNC, PostLoginSetupState.READY) }
-            ?.let(CreationAttempt::Created)
     }
 
     sealed class CreationAttempt {
