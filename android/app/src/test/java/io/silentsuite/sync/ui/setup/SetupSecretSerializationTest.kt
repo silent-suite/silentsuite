@@ -19,7 +19,7 @@ class SetupSecretSerializationTest {
 
     @Test
     fun setupFlowDoesNotSerializeSetupSecretsThroughAndroidState() {
-        val source = sourceRoot
+        val source = File(sourceRoot, "io/silentsuite/sync/ui/setup")
             .walkTopDown()
             .filter { it.isFile && it.extension == "kt" }
             .joinToString("\n") { it.readText() }

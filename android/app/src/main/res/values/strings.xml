@@ -198,6 +198,7 @@
     <string name="show_fingperprint_title">Your Encryption Fingerprint</string>
     <string name="copy_fingerprint">Copy fingerprint</string>
     <string name="fingerprint_copied">Fingerprint copied</string>
+    <string name="fingerprint_clipboard_label">Account fingerprint</string>
     <string name="fingerprint_unavailable">Fingerprint unavailable</string>
 
     <!-- ViewCollection -->
@@ -209,6 +210,7 @@
     <string name="collection_shared_with_us">Shared with us</string>
     <string name="collection_recent_activity_loading">Loading recent activity...</string>
     <string name="collection_recent_activity_none">No recent activity yet</string>
+    <string name="collection_activity_accessibility">%1$s. %2$s. %3$s</string>
     <string name="not_allowed_title">Not Allowed</string>
     <string name="edit_owner_only">Only the owner of this collection (%s) is allowed to edit it.</string>
     <string name="edit_owner_only_anon">Only the owner of this collection is allowed to edit it.</string>
@@ -222,6 +224,10 @@
     <string name="collection_members_list_empty">No members</string>
     <string name="collection_members_add">Invite user</string>
     <string name="collection_members_add_read_only">Read only</string>
+    <string name="collection_member_read_only">Read-only access</string>
+    <string name="collection_member_accessibility">%1$s, member</string>
+    <string name="collection_member_accessibility_read_only">%1$s, read-only member</string>
+    <string name="collection_member_accessibility_admin">%1$s, administrator</string>
     <string name="collection_members_add_error">Error adding member</string>
     <string name="collection_members_adding">Inviting user</string>
     <string name="collection_members_add_success">Invitation sent. User will be added once the invitation has been accepted.</string>
@@ -238,6 +244,10 @@
 
     <!-- Invitations -->
     <string name="invitations_title">Invitations</string>
+    <string name="invitations_from">Invitation from %1$s</string>
+    <string name="invitations_sender_unknown">Unknown sender</string>
+    <string name="invitations_accessibility">Invitation from %1$s</string>
+    <string name="invitations_accessibility_read_only">Read-only invitation from %1$s</string>
     <string name="invitations_loading">Loading invitations...</string>
     <string name="invitations_list_empty">No invitations</string>
     <string name="invitations_accept_reject_dialog">Would you like to accept or reject the invitation?</string>
@@ -273,6 +283,10 @@
 
     <!-- PermissionsActivity -->
     <string name="permissions_title">SilentSuite permissions</string>
+    <string name="permissions_intro">Grant only the Android access needed to place encrypted sync data in your calendar, contacts, and task apps. You can return here later.</string>
+    <string name="permissions_action_needed">Permission needed</string>
+    <string name="permissions_requirements_changed">Permissions still needed: %1$s</string>
+    <string name="list_separator">, </string>
     <string name="permissions_calendar">Calendar permissions</string>
     <string name="permissions_calendar_details">To synchronize calendar events with your local calendars, SilentSuite needs to access your calendars.</string>
     <string name="permissions_calendar_request">Request calendar permissions</string>
@@ -415,6 +429,7 @@
     <string name="install_opentasks">Install OpenTasks</string>
     <string name="edit_collection">Edit collection</string>
     <string name="create_collection_color">Set the collection\'s color</string>
+    <string name="create_collection_choose_color">Choose collection color</string>
     <string name="create_collection_creating">Creating collection</string>
     <string name="create_collection_display_name">Display name (title) of this collection:</string>
     <string name="create_collection_display_name_required">Title is required</string>

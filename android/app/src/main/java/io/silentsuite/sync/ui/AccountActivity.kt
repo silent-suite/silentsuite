@@ -180,12 +180,23 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             return
         }
         account = resolved
+        val creationId = (if (explicit != null)
+            expectedCreationId
+        else
+            accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            ?.takeIf { it.isNotBlank() }
+        if (creationId == null || io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
+                account, creationId, App.accountType, accountManager) == null) {
+            finish()
+            return
+        }
+        accountCreationId = creationId
 
         // Dashboard/startup permissions are only valid after the exact row has been explicitly
         // completed. READY is intentionally resumable and must show the setup surface instead.
         if (!App.postLoginBootstrapSucceeded || AccountSettings.setupState(accountManager, account,
                 bootstrapped = io.silentsuite.sync.ui.setup.PostLoginSetupMigration.isBootstrapped(this)) != io.silentsuite.sync.ui.setup.PostLoginSetupState.COMPLETE) {
-            startActivity(io.silentsuite.sync.ui.setup.PostLoginSetupActivity.newIntent(this, account))
+            startActivity(io.silentsuite.sync.ui.setup.PostLoginSetupActivity.newIntent(this, account, creationId))
             finish()
             return
         }
@@ -197,11 +208,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         title = account.name
-        val creationId = accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID)
-        if (creationId.isNullOrBlank()) { finish(); return }
-        if (io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
-                account, creationId, App.accountType, accountManager) == null) { finish(); return }
-        accountCreationId = creationId
         signOutModel.initialize(account, creationId)
         if (!exactAccountStillCurrent()) { finish(); return }
         settings = AccountSettings(this, account)
@@ -475,29 +481,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     private fun showFingerprintDialog() {
         if (!exactAccountStillCurrent()) return
-        val fingerprint = formattedFingerprint()
-        if (!exactAccountStillCurrent()) return
-        val displayFingerprint = fingerprint ?: getString(R.string.fingerprint_unavailable)
-        val view = layoutInflater.inflate(R.layout.fingerprint_alertdialog, null)
-        view.findViewById<View>(R.id.body).visibility = View.GONE
-        (view.findViewById<View>(R.id.fingerprint) as TextView).text = displayFingerprint
-        MaterialAlertDialogBuilder(this@AccountActivity)
-                .setIcon(R.drawable.ic_fingerprint_dark)
-                .setTitle(R.string.show_fingperprint_title)
-                .setView(view)
-                .setNeutralButton(R.string.copy_fingerprint) { _, _ ->
-                    if (!exactAccountStillCurrent()) return@setNeutralButton
-                    if (fingerprint == null) {
-                        Toast.makeText(this, R.string.fingerprint_unavailable, Toast.LENGTH_SHORT).show()
-                    } else {
-                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("account fingerprint", fingerprint))
-                        Toast.makeText(this, R.string.fingerprint_copied, Toast.LENGTH_SHORT).show()
-                    }
-                }
-                .setPositiveButton(android.R.string.yes) { _, _ -> }
-                .create()
-                .show()
+        if (supportFragmentManager.findFragmentByTag(FingerprintDialogFragment.TAG) == null) {
+            FingerprintDialogFragment.newInstance(account, accountCreationId)
+                .show(supportFragmentManager, FingerprintDialogFragment.TAG)
+        }
     }
 
     fun installPackage(packagename: String) {

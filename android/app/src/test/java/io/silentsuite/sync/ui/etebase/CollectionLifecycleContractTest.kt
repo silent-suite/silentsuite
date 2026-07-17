@@ -17,8 +17,8 @@ class CollectionLifecycleContractTest {
         val edit = File(etebase, "EditCollectionFragment.kt").readText()
 
         val initialization = activity.substringAfter("setContentView(R.layout.etebase_fragment_activity)")
-            .substringBefore("supportActionBar?.setDisplayHomeAsUpEnabled")
-        assertTrue(initialization.contains("model.loadAccount(this, account)"))
+            .substringBefore("companion object")
+        assertTrue(initialization.contains("model.loadAccount(this, account, route.creationId)"))
         assertTrue(initialization.contains("findFragmentById(R.id.fragment_container)"))
         assertTrue(initialization.contains("!hasRestoredFragment"))
         listOf(view, members, edit).forEach { source ->

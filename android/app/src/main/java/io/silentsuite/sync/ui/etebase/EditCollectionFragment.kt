@@ -61,6 +61,10 @@ class EditCollectionFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        runtimeFixture(requireContext(), requireNotNull(CollectionLifecycleIdentity.from(arguments)))?.let {
+            initFixtureUi(view, it)
+            return
+        }
         collectionModel.observe(viewLifecycleOwner) { collection ->
             val identity = CollectionLifecycleIdentity.from(arguments)
             if (identity == null || identity.account != model.value?.account || identity.collectionType != collection.collectionType ||
@@ -71,6 +75,22 @@ class EditCollectionFragment : Fragment() {
             updateTitle()
             initUi(view)
         }
+    }
+
+    private fun initFixtureUi(v: View, fixture: RuntimeCollectionFixture) {
+        (activity as? BaseActivity?)?.supportActionBar?.setTitle(if (isCreating) R.string.create_calendar else R.string.edit_collection)
+        val title = v.findViewById<EditText>(R.id.display_name)
+        val desc = v.findViewById<EditText>(R.id.description)
+        title.isSaveEnabled = false
+        desc.isSaveEnabled = false
+        draft.initialize(fixture.name, fixture.description, fixture.color)
+        title.setText(draft.name)
+        desc.setText(draft.description)
+        title.addTextChangedListener(DraftWatcher { draft.name = it })
+        desc.addTextChangedListener(DraftWatcher { draft.description = it })
+        val color = v.findViewById<View>(R.id.color)
+        if (fixture.type == Constants.ETEBASE_TYPE_ADDRESS_BOOK) v.findViewById<View>(R.id.color_group).visibility = View.GONE
+        else color.setBackgroundColor(draft.color)
     }
 
     fun updateTitle() {
@@ -204,7 +224,8 @@ class EditCollectionFragment : Fragment() {
                     meta.mtime = System.currentTimeMillis()
                     col.meta = meta
                     col.delete()
-                    uploadCollection(col)
+                    if (!uploadCollection(identity, applicationContext, col)) return@withContext false
+                    if (!identity.validate(applicationContext)) return@withContext false
                     requestSync(applicationContext, model.value!!.account)
                     true
                 }
@@ -235,6 +256,10 @@ class EditCollectionFragment : Fragment() {
             return
         }
         if (loadingModel.isLoading) return
+        if (runtimeFixture(requireContext(), identity) != null) {
+            saveFixtureCollection(identity)
+            return
+        }
         var ok = true
 
         val meta = cachedCollection.meta
@@ -271,7 +296,8 @@ class EditCollectionFragment : Fragment() {
                         if (!identity.validate(applicationContext)) return@withContext null
                         val col = cachedCollection.col
                         col.meta = meta
-                        uploadCollection(col)
+                        if (!uploadCollection(identity, applicationContext, col)) return@withContext null
+                        if (!identity.validate(applicationContext)) return@withContext null
                         requestSync(applicationContext, model.value!!.account)
                         col.uid
                     }
@@ -279,10 +305,10 @@ class EditCollectionFragment : Fragment() {
                         activity?.finish()
                         return@launch
                     }
-                    collectionModel.loadCollection(model.value!!, colUid)
+                    collectionModel.loadCollection(applicationContext, identity.account, identity.creationId, model.value!!, colUid)
                     if (isCreating) {
                         // Load the items since we just created it
-                        itemsModel.loadItems(model.value!!, cachedCollection)
+                        itemsModel.loadItems(applicationContext, identity.account, identity.creationId, colUid, model.value!!, cachedCollection)
                         parentFragmentManager.commit {
                             val identity = CollectionLifecycleIdentity.existing(
                                 model.value!!.account,
@@ -311,14 +337,51 @@ class EditCollectionFragment : Fragment() {
         }
     }
 
-    private fun uploadCollection(col: Collection) {
+    private fun saveFixtureCollection(identity: CollectionLifecycleIdentity) {
+        val view = requireView()
+        val name = view.findViewById<EditText>(R.id.display_name).text.toString()
+        if (name.isEmpty()) {
+            view.findViewById<EditText>(R.id.display_name).error = getString(R.string.create_collection_display_name_required)
+            return
+        }
+        val description = StringUtils.trimToNull(view.findViewById<EditText>(R.id.description).text.toString())
+        val color = view.findViewById<View>(R.id.color).let { (it.background as? ColorDrawable)?.color ?: draft.color }
+        loadingModel.setLoading(true)
+        val applicationContext = requireContext().applicationContext
+        lifecycleScope.launch {
+            try {
+                val uid = withContext(Dispatchers.IO) {
+                    if (!identity.validate(applicationContext)) null else collectionMutationOverride?.invoke(
+                        applicationContext, identity, RuntimeCollectionMutation(name, description, color, isCreating))
+                }
+                if (uid == null || !identity.validate(applicationContext)) { activity?.finish(); return@launch }
+                val destination = CollectionLifecycleIdentity.existing(identity.account, identity.creationId, uid, identity.collectionType)
+                if (isCreating) parentFragmentManager.commit {
+                    replace(R.id.fragment_container, ViewCollectionFragment.newInstance(destination))
+                } else parentFragmentManager.popBackStack()
+            } finally {
+                loadingModel.setLoading(false)
+            }
+        }
+    }
+
+    /** Revalidate immediately before the remote upload and local-cache mutation. */
+    private fun uploadCollection(
+        identity: CollectionLifecycleIdentity,
+        applicationContext: android.content.Context,
+        col: Collection
+    ): Boolean {
+        if (!identity.validate(applicationContext)) return false
         val accountHolder = model.value!!
+        if (identity.account != accountHolder.account) return false
         val etebaseLocalCache = accountHolder.etebaseLocalCache
         val colMgr = accountHolder.colMgr
         colMgr.upload(col)
+        if (!identity.validate(applicationContext)) return false
         synchronized(etebaseLocalCache) {
             etebaseLocalCache.collectionSet(colMgr, col)
         }
+        return true
     }
 
     companion object {

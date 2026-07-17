@@ -212,7 +212,7 @@
             android:name=".ui.AboutActivity"
             android:exported="false"
             android:label="@string/app_name"
-            android:theme="@style/AppTheme.NoActionBar"
+            android:theme="@style/AppTheme.Material3.NoActionBar"
             android:parentActivityName=".ui.AccountActivity"/>
 
         <activity
@@ -229,6 +229,7 @@
         <activity android:name=".ui.PermissionsActivity"
             android:exported="false"
                   android:label="@string/permissions_title"
+                  android:theme="@style/AppTheme.Material3"
                   android:parentActivityName=".ui.AccountActivity"/>
 
         <activity
@@ -258,6 +259,7 @@
         <activity
             android:name=".ui.etebase.CollectionActivity"
             android:exported="false"
+            android:theme="@style/AppTheme.Material3"
             />
         <activity
             android:name=".ui.setup.PostLoginSetupActivity"
@@ -267,6 +269,7 @@
         <activity
             android:name=".ui.etebase.InvitationsActivity"
             android:exported="false"
+            android:theme="@style/AppTheme.Material3"
             />
         <!-- TODO(Phase2): MigrateV2Activity removed - legacy v1→v2 migration no longer needed -->
         <activity
@@ -284,6 +287,7 @@
         <activity
             android:name=".ui.importlocal.ImportActivity"
             android:exported="false"
+            android:theme="@style/AppTheme.Material3"
             />
         <activity
             android:name=".ui.AccountSettingsActivity"
@@ -292,14 +296,17 @@
         <activity
             android:name=".ui.ChangeEncryptionPasswordActivity"
             android:exported="false"
+            android:theme="@style/AppTheme.Material3"
             />
         <activity
             android:name=".ui.CreateCollectionActivity"
             android:exported="false"
+            android:theme="@style/AppTheme.Material3"
             />
         <activity
             android:name=".ui.EditCollectionActivity"
             android:exported="false"
+            android:theme="@style/AppTheme.Material3"
             />
 
         <activity

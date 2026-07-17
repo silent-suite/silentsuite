@@ -165,9 +165,9 @@ class AccountDashboardRuntimeTest {
             removeAccountAndWait(manager, account)
             waitForRetainedGenerationInvalidation(scenario)
             val replacementGeneration = "dashboard-replacement-generation"
-            assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
-                putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
-            }))
+            assertTrue(manager.addAccountExplicitly(account, null, null))
+            assertTrue(AccountSettings.writeVerified(manager, account,
+                AccountSettings.KEY_CREATION_ID, replacementGeneration))
             val replacementRow = manager.getAccountsByType(account.type)
                 .single { it.name == account.name }
             assertEquals(replacementGeneration,
@@ -224,9 +224,9 @@ class AccountDashboardRuntimeTest {
                 val manager = AccountManager.get(context)
                 removeAccountAndWait(manager, account)
                 waitForRetainedGenerationInvalidation(scenario)
-                assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
-                    putString(AccountSettings.KEY_CREATION_ID, "load-replacement-generation")
-                }))
+                assertTrue(manager.addAccountExplicitly(account, null, null))
+                assertTrue(AccountSettings.writeVerified(manager, account,
+                    AccountSettings.KEY_CREATION_ID, "load-replacement-generation"))
                 releaseLoader.countDown()
                 assertNoAdditionalDelivery(scenario, deliveriesBefore)
             } finally {
@@ -326,9 +326,9 @@ class AccountDashboardRuntimeTest {
                 val manager = AccountManager.get(context)
                 removeAccountAndWait(manager, account)
                 waitForRetainedGenerationInvalidation(scenario)
-                assertTrue(manager.addAccountExplicitly(account, null, Bundle().apply {
-                    putString(AccountSettings.KEY_CREATION_ID, "retained-surface-replacement")
-                }))
+                assertTrue(manager.addAccountExplicitly(account, null, null))
+                assertTrue(AccountSettings.writeVerified(manager, account,
+                    AccountSettings.KEY_CREATION_ID, "retained-surface-replacement"))
 
                 scenario.onActivity { activity ->
                     renderedEnableSync.performClick()
@@ -368,6 +368,48 @@ class AccountDashboardRuntimeTest {
                 AccountActivity.permissionRemediationLauncherOverride = null
                 AccountActivity.masterSyncEnableOverride = null
                 android.content.ContentResolver.setMasterSyncAutomatically(masterSyncWasEnabled)
+            }
+        }
+    }
+
+    @Test
+    fun dashboardExportCompletionPreservesExactDashboardAfterRecreation() {
+        withDashboardAccount { context, account, scenario ->
+            val launched = mutableListOf<Intent>()
+            val writes = mutableListOf<Pair<Account, String>>()
+            AccountActivity.exportDocumentLauncherOverride = { launched += Intent(it) }
+            AccountActivity.exportWriterOverride = { _, exact, creationId, _, _ ->
+                writes += exact to creationId
+            }
+            try {
+                scenario.onActivity { it.beginExportForTesting(AndroidExportKind.CALENDAR) }
+                assertEquals(1, launched.size)
+                assertEquals(Intent.ACTION_CREATE_DOCUMENT, launched.single().action)
+                scenario.recreate()
+                waitForModel(scenario)
+                scenario.onActivity { activity ->
+                    assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
+                    activity.deliverActivityResultForTesting(7501, android.app.Activity.RESULT_OK, Intent().apply {
+                        data = android.net.Uri.fromFile(java.io.File(context.cacheDir, "dashboard-export.json"))
+                    })
+                }
+                waitUntil("exact dashboard export completion") { writes.size == 1 }
+                waitUntil("rendered dashboard export success") {
+                    var rendered = false
+                    scenario.onActivity { activity ->
+                        rendered = activity.findViewById<TextView>(com.google.android.material.R.id.snackbar_text)
+                            ?.text?.toString() == activity.getString(R.string.export_data_success)
+                    }
+                    rendered
+                }
+                assertEquals(listOf(account to generation), writes)
+                scenario.onActivity { activity ->
+                    assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
+                    assertTrue(activity.hasDeliveredAccountInfo)
+                }
+            } finally {
+                AccountActivity.exportDocumentLauncherOverride = null
+                AccountActivity.exportWriterOverride = null
             }
         }
     }
@@ -421,28 +463,38 @@ class AccountDashboardRuntimeTest {
             AccountActivity.exportWriterOverride = null
             AccountActivity.billingStatusOverride = null
             AccountActivity.accountRouteLauncherOverride = null
-            android.content.ContentResolver.setMasterSyncAutomatically(previousMasterSync)
             App.postLoginBootstrapSucceeded = previousBootstrap
-            removeAccountAndWait(manager, account)
+            android.content.ContentResolver.setMasterSyncAutomatically(false)
+            try {
+                removeAccountAndWait(manager, account)
+            } finally {
+                android.content.ContentResolver.setMasterSyncAutomatically(previousMasterSync)
+            }
             ActiveAccountManager.clearActiveAccount(context)
             context.getSharedPreferences("sync_status_v1", 0).edit().clear().commit()
         }
     }
 
     private fun removeAccountAndWait(manager: AccountManager, account: Account) {
-        if (account !in manager.getAccountsByType(account.type)) {
-            assertFalse("account row remained during teardown", account in manager.getAccountsByType(account.type))
-            return
+        val previousMasterSync = android.content.ContentResolver.getMasterSyncAutomatically()
+        android.content.ContentResolver.setMasterSyncAutomatically(false)
+        try {
+            if (account !in manager.getAccountsByType(account.type)) {
+                assertFalse("account row remained during teardown", account in manager.getAccountsByType(account.type))
+                return
+            }
+            val removed = CountDownLatch(1)
+            var confirmed = false
+            AndroidCompat.removeAccount(manager, account) {
+                confirmed = it
+                removed.countDown()
+            }
+            assertTrue("account removal callback timed out", removed.await(10, TimeUnit.SECONDS))
+            assertTrue("account removal was not confirmed", confirmed)
+            assertFalse("account row remained after confirmed removal", account in manager.getAccountsByType(account.type))
+        } finally {
+            android.content.ContentResolver.setMasterSyncAutomatically(previousMasterSync)
         }
-        val removed = CountDownLatch(1)
-        var confirmed = false
-        AndroidCompat.removeAccount(manager, account) {
-            confirmed = it
-            removed.countDown()
-        }
-        assertTrue("account removal callback timed out", removed.await(10, TimeUnit.SECONDS))
-        assertTrue("account removal was not confirmed", confirmed)
-        assertFalse("account row remained after confirmed removal", account in manager.getAccountsByType(account.type))
     }
 
     private fun waitForRetainedGenerationInvalidation(scenario: ActivityScenario<AccountActivity>) {

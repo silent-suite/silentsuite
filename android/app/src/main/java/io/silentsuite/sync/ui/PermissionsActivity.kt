@@ -24,6 +24,8 @@ import io.silentsuite.sync.resource.LocalTaskList
 
 class PermissionsActivity : BaseActivity() {
 
+    private var lastAnnouncedRequirements: Set<Int>? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_permissions)
@@ -35,30 +37,41 @@ class PermissionsActivity : BaseActivity() {
     }
 
     protected fun refresh() {
+        val requirements = linkedSetOf<Int>()
         val noCalendarPermissions = ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED || ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED
         findViewById<View>(R.id.calendar_permissions).visibility = if (noCalendarPermissions) View.VISIBLE else View.GONE
+        if (noCalendarPermissions) requirements += R.string.permissions_calendar
 
         val noContactsPermissions = ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED || ActivityCompat.checkSelfPermission(this, Manifest.permission.WRITE_CONTACTS) != PackageManager.PERMISSION_GRANTED
         findViewById<View>(R.id.contacts_permissions).visibility = if (noContactsPermissions) View.VISIBLE else View.GONE
+        if (noContactsPermissions) requirements += R.string.permissions_contacts
 
-        val needOpenTaskPermissions = setupPermissions(ProviderName.OpenTasks, R.id.opentasks_permissions)
-        val needTasksOrgPermissions = setupPermissions(ProviderName.TasksOrg, R.id.tasksorg_permissions)
+        setupPermissions(ProviderName.OpenTasks, R.id.opentasks_permissions, R.string.permissions_opentasks)?.let(requirements::add)
+        setupPermissions(ProviderName.TasksOrg, R.id.tasksorg_permissions, R.string.permissions_tasks_org)?.let(requirements::add)
 
-        if (!noCalendarPermissions && !noContactsPermissions && !(needOpenTaskPermissions || needTasksOrgPermissions)) {
-            val nm = NotificationManagerCompat.from(this)
-            nm.cancel(Constants.NOTIFICATION_PERMISSIONS)
+        val previous = lastAnnouncedRequirements
+        if (previous != null && requirements != lastAnnouncedRequirements && requirements.isNotEmpty()) {
+            val names = requirements.joinToString(getString(R.string.list_separator)) { getString(it) }
+            findViewById<View>(R.id.permissions_scroll).announceForAccessibility(
+                getString(R.string.permissions_requirements_changed, names)
+            )
+        }
+        lastAnnouncedRequirements = requirements
 
+        if (requirements.isEmpty()) {
+            NotificationManagerCompat.from(this).cancel(Constants.NOTIFICATION_PERMISSIONS)
             finish()
         }
     }
 
-    private fun setupPermissions(provider: ProviderName, @IdRes id: Int): Boolean {
+    private fun setupPermissions(provider: ProviderName, @IdRes id: Int, titleRes: Int): Int? {
         val providerAvailable = LocalTaskList.tasksProviderAvailable(this, provider)
         val hasPermissions = providerAvailable && provider.permissions.all {
             ActivityCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
-        findViewById<View>(id).visibility = if (hasPermissions) View.GONE else View.VISIBLE
-        return providerAvailable && !hasPermissions
+        val needsPermission = providerAvailable && !hasPermissions
+        findViewById<View>(id).visibility = if (needsPermission) View.VISIBLE else View.GONE
+        return titleRes.takeIf { needsPermission }
     }
 
     fun requestCalendarPermissions(v: View) {
@@ -86,7 +99,19 @@ class PermissionsActivity : BaseActivity() {
         private val REQUEST_CODE_ASK_MULTIPLE_PERMISSIONS = 124
 
         fun requestAllPermissions(activity: Activity) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR, Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS) + TASK_PROVIDERS.flatMap { it.permissions.toList() }, REQUEST_CODE_ASK_MULTIPLE_PERMISSIONS)
+            val taskPermissions = TASK_PROVIDERS
+                .filter { LocalTaskList.tasksProviderAvailable(activity, it) }
+                .flatMap { it.permissions.toList() }
+            ActivityCompat.requestPermissions(
+                activity,
+                arrayOf(
+                    Manifest.permission.READ_CALENDAR,
+                    Manifest.permission.WRITE_CALENDAR,
+                    Manifest.permission.READ_CONTACTS,
+                    Manifest.permission.WRITE_CONTACTS
+                ) + taskPermissions,
+                REQUEST_CODE_ASK_MULTIPLE_PERMISSIONS
+            )
         }
     }
 }

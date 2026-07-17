@@ -52,7 +52,7 @@ class AccountActivityRecreationTest {
         }
 
         try {
-            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { scenario ->
+            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account, "test-generation")).use { scenario ->
                 scenario.onActivity { assertTrue(it is AccountActivity) }
                 scenario.recreate()
                 var delivered = false
@@ -92,12 +92,33 @@ class AccountActivityRecreationTest {
             PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
         }
         try {
-            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, account)).use { scenario ->
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, account, "setup-generation")).use { scenario ->
                 scenario.onActivity { activity -> activity.findViewById<android.widget.Button>(io.silentsuite.sync.R.id.setup_done).performClick() }
                 assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, account, true))
             }
         } finally {
             PostLoginSetupViewModel.inventoryOverride=null
+            AndroidCompat.removeAccount(manager, account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    @Test
+    fun replacementGenerationCannotCompleteThePreviouslyValidatedSetupRoute() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val account = Account("setup-replaced-${System.nanoTime()}@example.invalid", App.accountType)
+        val manager = AccountManager.get(context)
+        check(manager.addAccountExplicitly(account, null, null))
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, "generation-a"))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeSetupState(manager, account, PostLoginSetupState.READY))
+        try {
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, account, "generation-a")).use { scenario ->
+                check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, "generation-b"))
+                scenario.onActivity { it.findViewById<android.widget.Button>(io.silentsuite.sync.R.id.setup_done).performClick() }
+                assertEquals(PostLoginSetupState.READY, AccountSettings.setupState(manager, account, true))
+            }
+        } finally {
             AndroidCompat.removeAccount(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }

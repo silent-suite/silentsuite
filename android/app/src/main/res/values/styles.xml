@@ -120,6 +120,19 @@
         <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
     </style>
 
+    <style name="Widget.AppTheme.Material3.Card" parent="Widget.Material3.CardView.Filled">
+        <item name="cardBackgroundColor">@color/semantic_surface</item>
+        <item name="cardCornerRadius">@dimen/shape_radius_standard</item>
+        <item name="cardElevation">@dimen/elevation_resting</item>
+        <item name="strokeColor">@color/semantic_outline</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <style name="TextAppearance.AppTheme.Material3.Status" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textColor">@color/semantic_error</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
     <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.FilledBox">
         <item name="boxStrokeColor">@color/semantic_outline</item>
         <item name="boxStrokeErrorColor">@color/semantic_error</item>

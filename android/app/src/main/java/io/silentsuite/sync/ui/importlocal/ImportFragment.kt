@@ -116,6 +116,16 @@ class ImportFragment : DialogFragment() {
             dismissAllowingStateLoss()
             return
         }
+        importCompletionOverride?.let { completion ->
+            // The override is deliberately process-only.  Production continues through the
+            // picker and provider path; runtime tests only replace the external picker work.
+            activeProcessWork = true
+            requireActivity().window.decorView.post {
+                if (CollectionLifecycleIdentity.from(arguments)?.validate(requireContext()) == true)
+                    loadFinished(completion(identity))
+            }
+            return
+        }
         val intent = Intent()
         intent.addCategory(Intent.CATEGORY_OPENABLE)
         intent.action = Intent.ACTION_GET_CONTENT
@@ -533,6 +543,10 @@ class ImportFragment : DialogFragment() {
         private val REQUEST_CODE = 6384 // onActivityResult request
 
         private val TAG_PROGRESS_MAX = "progressMax"
+
+        /** Runtime-test seam; null always uses the real document-picker/import path. */
+        @Volatile internal var importCompletionOverride:
+            ((CollectionLifecycleIdentity) -> ImportResult)? = null
 
         fun newInstance(identity: CollectionLifecycleIdentity) = ImportFragment().apply {
             requireNotNull(identity.collectionUid) { "Import requires an existing collection" }

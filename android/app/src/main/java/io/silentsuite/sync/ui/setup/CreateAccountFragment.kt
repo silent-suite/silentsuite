@@ -61,7 +61,7 @@ class CreateAccountFragment : DialogFragment() {
             throw e
         }
         if (attempt is CreationAttempt.SettingsResolution) {
-            startActivity(PostLoginSetupActivity.newIntent(requireContext(), attempt.account)); notifyAccountCreationFailed(); dismissAllowingStateLoss()
+            startActivity(PostLoginSetupActivity.newIntent(requireContext(), attempt.account, null)); notifyAccountCreationFailed(); dismissAllowingStateLoss()
         } else if (attempt is CreationAttempt.Created || attempt is CreationAttempt.Completed) {
             val account = when (attempt) { is CreationAttempt.Created -> attempt.account; is CreationAttempt.Completed -> attempt.account; else -> error("unreachable") }
             if (AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_CREATION_ID) == null) {
@@ -73,8 +73,8 @@ class CreateAccountFragment : DialogFragment() {
             val dispatched = AccountCreationCompletionDispatcher(object : AccountCreationCompletionDispatcher.Seams {
                 override fun stageExact(name: String, type: String, id: String) =
                     (activity as? LoginActivity)?.onAccountCreated(account, id) ?: true
-                override fun openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account)) }
-                override fun openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account)) }
+                override fun openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, verifiedId)) }
+                override fun openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account, verifiedId)) }
                 override fun finish() { activity.setResult(Activity.RESULT_OK); SetupSecretHolder.clearCredentialsAndConfiguration(); activity.finish() }
             }).dispatch(kind, account.name, account.type, verifiedId)
             if (!dispatched) { notifyRetryableCollision(); dismissAllowingStateLoss() }

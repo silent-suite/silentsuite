@@ -9,50 +9,35 @@
         layout="@layout/collection_header"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="@dimen/activity_margin" />
+        android:layout_marginStart="@dimen/spacing_16"
+        android:layout_marginTop="@dimen/spacing_16"
+        android:layout_marginEnd="@dimen/spacing_16" />
 
-    <LinearLayout
-        android:layout_width="match_parent"
+    <ProgressBar
+        android:id="@+id/progressBar"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="@dimen/activity_margin">
+        android:layout_gravity="center_horizontal"
+        android:layout_margin="@dimen/spacing_8"
+        android:importantForAccessibility="no" />
 
-        <ProgressBar
-            android:id="@+id/progressBar"
-            android:layout_width="wrap_content"
-            android:layout_height="match_parent"
-            android:layout_gravity="right" />
-    </LinearLayout>
-
-    <LinearLayout
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/add_member"
+        style="@style/Widget.AppTheme.Material3.Button"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_margin="@dimen/activity_margin"
-        android:orientation="horizontal">
+        android:layout_marginStart="@dimen/spacing_16"
+        android:layout_marginEnd="@dimen/spacing_16"
+        android:layout_marginBottom="@dimen/spacing_8"
+        android:minHeight="@dimen/touch_target_min"
+        android:text="@string/collection_members_add"
+        app:icon="@drawable/ic_account_add_dark"
+        app:iconGravity="textStart" />
 
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_weight="1"
-            android:text="@string/collection_members_add"
-            android:textAppearance="?android:attr/textAppearanceMedium" />
-
-        <ImageView
-            android:id="@+id/icon"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_gravity="center"
-            android:src="@drawable/ic_account_add_dark" 
-            app:tint="?attr/colorControlNormal" />
-
-    </LinearLayout>
-
-    <fragment android:name="io.silentsuite.sync.ui.etebase.CollectionMembersListFragment"
+    <fragment
         android:id="@+id/list_entries_container"
-        android:layout_weight="1"
+        android:name="io.silentsuite.sync.ui.etebase.CollectionMembersListFragment"
         android:layout_width="match_parent"
-        android:layout_height="0dp" />
-
+        android:layout_height="0dp"
+        android:layout_weight="1" />
 </LinearLayout>

@@ -26,6 +26,7 @@ import androidx.fragment.app.ListFragment
 import androidx.loader.app.LoaderManager
 import androidx.loader.content.AsyncTaskLoader
 import androidx.loader.content.Loader
+import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 
@@ -49,7 +50,9 @@ class AccountListFragment : ListFragment(), LoaderManager.LoaderCallbacks<Array<
     override fun onItemClick(parent: AdapterView<*>, view: View, position: Int, id: Long) {
         val account = listAdapter?.getItem(position) as Account
 
-        val intent = AccountActivity.newIntent(requireContext(), account)
+        val creationId = AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_CREATION_ID)
+            ?.takeIf { it.isNotBlank() } ?: return
+        val intent = AccountActivity.newIntent(requireContext(), account, creationId)
         startActivity(intent)
     }
 
