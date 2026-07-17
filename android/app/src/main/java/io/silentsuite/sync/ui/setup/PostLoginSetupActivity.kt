@@ -37,7 +37,9 @@ class PostLoginSetupActivity : BaseActivity() {
         val expectedCreationId = intent.getStringExtra(EXTRA_CREATION_ID)
         if (supplied == null || supplied.type != App.accountType) { finish(); return }
         if (expectedCreationId.isNullOrBlank()) {
-            if (supplied in accountManager.getAccountsByType(App.accountType) && accountManager.getUserData(supplied, AccountSettings.KEY_CREATION_ID) == null) {
+            // A caller without exact generation evidence is resolution-only even when a
+            // same-name row has a generation; it must never adopt or mutate that row.
+            if (supplied in accountManager.getAccountsByType(App.accountType)) {
                 account=supplied; missingCreationId=true; ambiguousOwnership=true; setContentView(R.layout.activity_post_login_setup)
                 findViewById<Button>(R.id.setup_resolve_ambiguity).setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_SYNC_SETTINGS)) }
                 render(); return

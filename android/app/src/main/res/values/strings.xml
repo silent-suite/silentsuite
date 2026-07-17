@@ -336,6 +336,9 @@
     <string name="login_forgot_password">Forgot password?</string>
 
     <string name="login_wrong_username_or_password">Couldn\'t authenticate (probably wrong email or password).\nHave you registered?</string>
+    <string name="login_connection_error">Couldn\'t connect. Check your connection and try again.</string>
+    <string name="login_error_generic">Sign-in couldn\'t be completed. Please try again.</string>
+    <string name="login_account_creation_failed_retry">Account setup couldn\'t be completed. Please try signing in again.</string>
     <string name="login_view_logs">View logs</string>
 
     <string name="setting_up_encryption">Setting up your account</string>

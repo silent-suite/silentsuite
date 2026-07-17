@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.content.Intent
 import androidx.test.core.app.ActivityScenario
 import io.silentsuite.sync.App
+import io.silentsuite.sync.R
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -14,6 +15,48 @@ import org.junit.runner.RunWith
 /** Runtime policy coverage; dead binder delivery is intentionally not claimed. */
 @RunWith(AndroidJUnit4::class)
 class AuthenticatorLifecycleRuntimeTest {
+    @Test fun recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling() {
+        class Fake : AuthenticatorResponseController.Delivery {
+            var continued = 0; var errors = 0
+            override fun continued() { continued++ }
+            override fun result(result: Bundle) = Unit
+            override fun error(code: Int, message: String) { errors++ }
+        }
+        val delivery = Fake()
+        LoginActivity.controllerFactory = { _, _ -> AuthenticatorResponseController(delivery, null) }
+        try {
+            ActivityScenario.launch<LoginActivity>(Intent()).use { scenario ->
+                val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { activity ->
+                    activity.supportFragmentManager.beginTransaction()
+                        .replace(android.R.id.content, CreateAccountFragment())
+                        .addToBackStack("credentials")
+                        .commit()
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { activity ->
+                    org.junit.Assert.assertFalse(activity.isFinishing)
+                    org.junit.Assert.assertTrue(activity.findViewById<android.view.View>(R.id.user_name).isShown)
+                    org.junit.Assert.assertTrue(activity.findViewById<android.view.View>(R.id.url_password).isShown)
+                    org.junit.Assert.assertTrue(activity.findViewById<android.view.View>(R.id.login).isShown)
+                    (activity.supportFragmentManager.findFragmentByTag("account_creation_retry_error") as? androidx.fragment.app.DialogFragment)
+                        ?.dismissAllowingStateLoss()
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { activity ->
+                    val credentials = activity.supportFragmentManager
+                        .findFragmentById(android.R.id.content) as LoginCredentialsFragment
+                    val guard = LoginCredentialsFragment::class.java.getDeclaredField("submissionInProgress")
+                    guard.isAccessible = true
+                    org.junit.Assert.assertFalse(guard.getBoolean(credentials))
+                    org.junit.Assert.assertFalse(activity.isFinishing)
+                    org.junit.Assert.assertEquals(1, delivery.continued)
+                    org.junit.Assert.assertEquals(0, delivery.errors)
+                }
+            }
+        } finally { LoginActivity.controllerFactory = null }
+    }
     @Test fun staleLoginActivityRestorationUsesObsoletePathBeforeController() {
         var cancel=0; var clear=0; var launch=0; var controllers=0
         val stale=Bundle().apply { putBoolean(LoginActivity.KEY_WAS_AUTHENTICATOR,true); putString("authenticator_process_epoch","stale"); putString(AuthenticatorResponseController.KEY_ACCOUNT_NAME,"staged") }

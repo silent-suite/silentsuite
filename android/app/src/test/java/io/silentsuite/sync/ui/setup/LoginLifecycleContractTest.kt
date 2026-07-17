@@ -43,13 +43,42 @@ class LoginLifecycleContractTest {
         assertTrue(createAccountSource.contains("fragments.filterIsInstance<LoginCredentialsFragment>()"))
         assertTrue(createAccountSource.contains(".forEach { it.onSubmissionFailed() }"))
         val missingConfiguration = createAccountSource.substringAfter("if (config == null)").substringBefore("val activity")
-        val invalidAccount = createAccountSource.substringAfter("catch (e: InvalidAccountException)").substringBefore("if (account != null)")
-        val unexpectedAccountFailure = createAccountSource.substringAfter("catch (e: Exception)").substringBefore("if (account != null)")
-        val rejectedAccount = createAccountSource.substringAfter("addAccountExplicitly returned false").substringBefore("}\n    }")
-        assertTrue(missingConfiguration.contains("notifyAccountCreationFailed()"))
-        assertTrue(invalidAccount.contains("notifyAccountCreationFailed()"))
-        assertTrue(unexpectedAccountFailure.contains("notifyAccountCreationFailed()"))
-        assertTrue(rejectedAccount.contains("notifyAccountCreationFailed()"))
+        val unexpectedAccountFailure = createAccountSource.substringAfter("catch (e: Exception)").substringBefore("if (attempt is CreationAttempt.SettingsResolution)")
+        val retryPresentation = createAccountSource.substringAfter("private fun notifyRecoverableFailure").substringBefore("private fun notifyAccountCreationFailed")
+        assertTrue(missingConfiguration.contains("notifyRecoverableFailure"))
+        assertTrue(unexpectedAccountFailure.contains("recoverFromUnexpectedFailure"))
+        assertFalse(unexpectedAccountFailure.contains("throw e"))
+        assertTrue(retryPresentation.contains("popBackStackImmediate()"))
+        assertTrue(retryPresentation.contains("onSubmissionFailed()"))
+        assertTrue(retryPresentation.contains("RETRY_ERROR_TAG"))
+        assertFalse(retryPresentation.contains("cancelBeforeAccountCreated"))
+    }
+
+    @Test fun loginFailureDialogsPersistOnlyResourceIdentifiers() {
+        listOf("DetectConfigurationFragment.kt", "LoginCredentialsChangeFragment.kt").forEach { name ->
+            val source = File(sourceRoot, name).readText()
+            assertFalse(source.contains("localizedMessage"))
+            assertFalse(source.contains("KEY_LOGS"))
+            assertTrue(source.contains("putInt(KEY_MESSAGE_RES"))
+        }
+    }
+
+    @Test fun configurationDetectionRethrowsCoroutineCancellation() {
+        listOf("DetectConfigurationFragment.kt", "LoginCredentialsChangeFragment.kt").forEach { name ->
+            val source = File(sourceRoot, name).readText()
+            assertTrue(source.contains("import kotlinx.coroutines.CancellationException"))
+            assertTrue(source.contains("if (e is CancellationException) throw e"))
+        }
+    }
+
+    @Test fun changedCredentialsFailureCanOpenLogsWithoutPassingRawPayload() {
+        val source = File(sourceRoot, "LoginCredentialsChangeFragment.kt").readText()
+        val dialog = source.substringAfter("class NothingDetectedFragment").substringBefore("companion object")
+
+        assertTrue(dialog.contains("setNeutralButton(R.string.login_view_logs)"))
+        assertTrue(dialog.contains("DebugInfoActivity.newIntent"))
+        assertFalse(dialog.contains("KEY_LOGS"))
+        assertFalse(dialog.contains("putExtra"))
     }
 
     @Test
@@ -74,5 +103,15 @@ class LoginLifecycleContractTest {
         ).forEach { command -> assertTrue(job.contains(command)) }
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))
         assertFalse(job.contains("secrets."))
+    }
+
+    @Test
+    fun focusedRuntimeExpectedSetIncludesRecoverableAuthenticatorCreationFailure() {
+        val workflow = File("../../.github/workflows/build-android.yml").readText()
+        val expectedSet = workflow.substringAfter("          expected={")
+            .substringBefore("          }\n          seen=[]")
+        val expectedTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling')"
+
+        assertTrue(expectedSet.contains(expectedTuple))
     }
 }

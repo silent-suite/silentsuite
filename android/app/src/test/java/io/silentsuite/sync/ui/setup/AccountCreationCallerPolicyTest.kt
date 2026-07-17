@@ -12,8 +12,16 @@ class AccountCreationCallerPolicyTest {
         assertEquals(AccountCreationCallerPolicy.Disposition.RetryCredentials,
             AccountCreationCallerPolicy.disposition(AccountCreationCoordinator.Result.NOT_ADDED))
     }
-    @Test fun `failed durable quarantine cancels authenticator`() {
-        assertEquals(AccountCreationCallerPolicy.Disposition.CancelAuthenticator,
+    @Test fun `failed durable quarantine is settings resolution not credentials retry`() {
+        assertEquals(AccountCreationCallerPolicy.Disposition.ResolveInSettings,
             AccountCreationCallerPolicy.disposition(AccountCreationCoordinator.Result.QUARANTINE_FAILED))
+    }
+    @Test fun `outcome matrix preserves exact recovery and only retries pre row outcomes`() {
+        assertEquals(AccountCreationCallerPolicy.Disposition.ContinueToSetup,
+            AccountCreationCallerPolicy.disposition(AccountCreationCoordinator.Result.CREATED))
+        assertEquals(AccountCreationCallerPolicy.Disposition.ContinueToSetup,
+            AccountCreationCallerPolicy.disposition(AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED))
+        assertEquals(AccountCreationCallerPolicy.Disposition.ResolveInSettings,
+            AccountCreationCallerPolicy.disposition(AccountCreationCoordinator.Result.QUARANTINED))
     }
 }
