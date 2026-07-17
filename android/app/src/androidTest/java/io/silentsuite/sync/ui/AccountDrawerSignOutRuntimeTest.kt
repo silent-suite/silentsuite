@@ -6,6 +6,7 @@ import android.accounts.AccountManager
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import androidx.core.view.ViewCompat
 import androidx.core.view.GravityCompat
@@ -29,6 +30,16 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AccountDrawerSignOutRuntimeTest {
+    private fun waitUntil(description: String, timeoutMillis: Long = 10_000, predicate: () -> Boolean) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMillis
+        while (SystemClock.uptimeMillis() < deadline) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            if (predicate()) return
+            SystemClock.sleep(25)
+        }
+        assertTrue("Timed out waiting for $description", predicate())
+    }
+
     @Test fun oneAccountSwitcherExposesAddRowAndCurrentSemanticsAfterRecreation() {
         val fixture = Fixture("switcher")
         fixture.use { account ->
@@ -159,7 +170,9 @@ class AccountDrawerSignOutRuntimeTest {
             assertEquals(replacementGeneration,
                 fixture.manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
 
-            assertTrue(retainedAdapter.mainGenerationAbsent(oldIdentity))
+            waitUntil("replacement generation visibility") {
+                retainedAdapter.mainGenerationAbsent(oldIdentity)
+            }
             val callbackReceived = CountDownLatch(1)
             var callback: Boolean? = null
             retainedAdapter.removeMain(oldIdentity) {
@@ -168,7 +181,9 @@ class AccountDrawerSignOutRuntimeTest {
             }
             assertTrue("replacement refusal callback timed out", callbackReceived.await(10, TimeUnit.SECONDS))
             assertEquals(false, callback)
-            assertTrue(retainedAdapter.mainGenerationAbsent(oldIdentity))
+            waitUntil("replacement generation visibility") {
+                retainedAdapter.mainGenerationAbsent(oldIdentity)
+            }
             assertTrue(fixture.account in fixture.manager.getAccountsByType(fixture.account.type))
         } finally {
             adapter?.close()
