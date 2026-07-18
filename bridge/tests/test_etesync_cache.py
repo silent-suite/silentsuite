@@ -1,6 +1,7 @@
 """Per-account Etebase session coordination regressions."""
 
 import threading
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -176,3 +177,26 @@ def test_forget_user_does_not_wait_for_wedged_exclusive_session(monkeypatch):
     finally:
         release.set()
         holder.join(1)
+
+
+def test_forget_user_invalidates_live_session_epoch():
+    cache = etesync_cache.EteSyncCache("/tmp/creds", "/tmp/cache")
+    cache.creds = MagicMock()
+    cache.creds.get_etebase.return_value = "stored-session"
+    cache.creds.get_server_url.return_value = "https://server.example"
+    old_session = MagicMock(stored_session="stored-session")
+    replacement_session = MagicMock(stored_session="stored-session")
+
+    with patch.object(
+        etesync_cache,
+        "Etebase",
+        side_effect=[old_session, replacement_session],
+    ):
+        assert cache.etesync_for_user("same@example.com")[0] is old_session
+        assert old_session._session_is_current() is True
+
+        cache.forget_user("same@example.com")
+
+        assert old_session._session_is_current() is False
+        assert cache.etesync_for_user("same@example.com")[0] is replacement_session
+        assert replacement_session._session_is_current() is True

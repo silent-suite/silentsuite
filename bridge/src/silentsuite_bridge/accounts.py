@@ -106,6 +106,14 @@ def store_authenticated_account(
     with _account_lock:
         creds = credentials or Credentials()
         existed = normalized in creds.list_users()
+        if existed:
+            existing_server = creds.get_server_url(normalized)
+            if existing_server and existing_server.rstrip("/") != server_url.rstrip("/"):
+                raise ValueError(
+                    "An existing account cannot be moved to a different server"
+                )
+            stop_sync_thread(normalized)
+            forget_etesync_user(normalized)
         salt_hex, password_hash = _password_hash(password)
         creds.set_etebase(normalized, stored_session, server_url)
         creds.set_password_salt(normalized, salt_hex)

@@ -430,6 +430,10 @@ class StorageException(Exception):
     pass
 
 
+class SessionSuperseded(StorageException):
+    pass
+
+
 class DoesNotExist(StorageException):
     pass
 
@@ -440,6 +444,11 @@ class Etebase:
     Handles authentication, sync, and CRUD operations for
     collections and items.
     """
+
+    def _assert_session_current(self):
+        checker = getattr(self, "_session_is_current", None)
+        if checker is not None and not checker():
+            raise SessionSuperseded("Account session was replaced")
 
     def __init__(self, username, stored_session, remote_url=None, *, read_only=False):
         if remote_url is None:
@@ -658,6 +667,7 @@ class Etebase:
             while not done:
                 fetch_options = FetchOptions().stoken(stoken)
                 col_list = col_mgr.list(config.COL_TYPES, fetch_options)
+                self._assert_session_current()
 
                 for col in col_list.data:
                     collection = models.CollectionEntity.get_or_none(
@@ -735,6 +745,7 @@ class Etebase:
                 if collection.deleted:
                     col.delete()
                 col_mgr.upload(col, None)
+                self._assert_session_current()
 
                 (
                     models.CollectionEntity.update(dirty=False, new=False)
@@ -953,6 +964,7 @@ class Etebase:
             while not done:
                 fetch_options = FetchOptions().stoken(stoken)
                 item_list = item_mgr.list(fetch_options)
+                self._assert_session_current()
                 items_data = list(item_list.data)
 
                 logger.info(
@@ -1004,6 +1016,7 @@ class Etebase:
                 chunk_items = list(map(lambda x: item_mgr.cache_load(x.eb_item), chunk))
                 logger.info("PUSH collection: uploading batch of %d items", len(chunk_items))
                 item_mgr.batch(chunk_items, None, None)
+                self._assert_session_current()
                 logger.info("PUSH collection: batch upload succeeded")
                 for original, item in zip(original_rows, chunk_items):
                     item_id, original_envelope, original_dirty, original_new = original

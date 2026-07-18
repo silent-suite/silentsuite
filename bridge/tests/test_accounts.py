@@ -3,6 +3,8 @@
 import threading
 from contextlib import contextmanager
 
+import pytest
+
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
@@ -57,22 +59,46 @@ def test_store_authenticated_account_adds_second_account(tmp_path, monkeypatch):
 
 def test_store_authenticated_account_reauth_updates_one_account(tmp_path, monkeypatch):
     _configure_creds(tmp_path, monkeypatch)
+    stopped = []
+    forgotten = []
+    monkeypatch.setattr(accounts, "stop_sync_thread", stopped.append)
+    monkeypatch.setattr(accounts, "forget_etesync_user", forgotten.append)
 
     accounts.store_authenticated_account(
-        "alice@example.com", PASSWORD, "old-session", "https://old.test",
+        "alice@example.com", PASSWORD, "old-session", "https://server.test",
     )
     old_hash = Credentials().get_password_hash("alice@example.com")
 
     result = accounts.store_authenticated_account(
-        " alice@example.com ", "new password", "new-session", "https://new.test",
+        " alice@example.com ", "new password", "new-session", "https://server.test/",
     )
 
     creds = Credentials()
     assert result.existed is True
     assert creds.list_users() == ["alice@example.com"]
     assert creds.get_etebase("alice@example.com") == "new-session"
-    assert creds.get_server_url("alice@example.com") == "https://new.test"
+    assert creds.get_server_url("alice@example.com") == "https://server.test/"
     assert creds.get_password_hash("alice@example.com") != old_hash
+    assert stopped == ["alice@example.com"]
+    assert forgotten == ["alice@example.com"]
+
+
+def test_reauth_rejects_server_change_without_touching_existing_account(
+    tmp_path, monkeypatch,
+):
+    _configure_creds(tmp_path, monkeypatch)
+    accounts.store_authenticated_account(
+        "alice@example.com", PASSWORD, "old-session", "https://old.test",
+    )
+
+    with pytest.raises(ValueError, match="different server"):
+        accounts.store_authenticated_account(
+            "alice@example.com", "new password", "new-session", "https://new.test",
+        )
+
+    creds = Credentials()
+    assert creds.get_etebase("alice@example.com") == "old-session"
+    assert creds.get_server_url("alice@example.com") == "https://old.test"
 
 
 def test_logout_one_of_two_preserves_other_credentials_and_cache(

@@ -147,15 +147,26 @@ class SyncThread(threading.Thread):
         """Request a clean shutdown and wake any interval wait."""
         self._stop_sync.set()
         with self._generation_condition:
-            generation = self._requested_generation
-            if generation is not None and generation != self._active_generation:
-                self._generation_statuses[generation].update({
-                    "state": "failed",
-                    "completed_at": time.time(),
-                    "error_code": "SyncStopped",
-                })
-                self._requested_generation = None
-                self._generation_condition.notify_all()
+            stopped_at = time.time()
+            generations = {
+                generation
+                for generation in (
+                    self._active_generation,
+                    self._requested_generation,
+                )
+                if generation is not None
+            }
+            for generation in generations:
+                status = self._generation_statuses[generation]
+                if status["state"] in {"pending", "running"}:
+                    status.update({
+                        "state": "failed",
+                        "completed_at": stopped_at,
+                        "error_code": "SyncStopped",
+                    })
+            self._requested_generation = None
+            self._done_syncing.set()
+            self._generation_condition.notify_all()
         self._force_sync.set()
 
     def request_sync(self):
@@ -274,17 +285,15 @@ class SyncThread(threading.Thread):
         with self._generation_condition:
             status = self._generation_statuses[generation]
             deadline = status.get("deadline")
-            if (
-                status["state"] != "timed_out"
-                and deadline is not None
-                and completed_at >= deadline
-            ):
+            if status["state"] in {"succeeded", "failed", "timed_out"}:
+                pass
+            elif deadline is not None and completed_at >= deadline:
                 status.update({
                     "state": "timed_out",
                     "completed_at": deadline,
                     "error_code": "SyncTimeout",
                 })
-            elif status["state"] != "timed_out":
+            else:
                 status.update({
                     "state": state,
                     "completed_at": completed_at,
@@ -375,13 +384,18 @@ class SyncThread(threading.Thread):
                             )
                             log_sync_event("sync", "Synced account")
             except Exception as e:
-                error_code = e.__class__.__name__
-                logger.warning(
-                    "Sync failed for configured account (%s)",
-                    error_code,
-                )
-                update_status("error", error=error_code, account=self.user)
-                log_sync_event("error", "Sync failed")
+                if self._stop_sync.is_set():
+                    state = "failed"
+                    error_code = "SyncStopped"
+                    logger.info("Stopped account sync discarded its late result")
+                else:
+                    error_code = e.__class__.__name__
+                    logger.warning(
+                        "Sync failed for configured account (%s)",
+                        error_code,
+                    )
+                    update_status("error", error=error_code, account=self.user)
+                    log_sync_event("error", "Sync failed")
             finally:
                 completed_at = time.time()
                 if self.sync_started_at is not None:

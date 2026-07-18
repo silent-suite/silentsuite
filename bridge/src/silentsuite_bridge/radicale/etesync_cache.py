@@ -28,6 +28,7 @@ class EteSyncCache:
 
     def __init__(self, creds_path, db_path):
         self._etesync_cache = {}
+        self._session_epochs = {}
         self._cache_lock = threading.RLock()
         self.creds = None
         self.creds_path = os.path.expanduser(creds_path)
@@ -57,12 +58,23 @@ class EteSyncCache:
                 )
 
             etesync = Etebase(user, stored_session, remote_url)
+            self._bind_epoch(user, etesync)
             self._etesync_cache[user] = etesync
             return etesync, True
 
     def forget_user(self, user):
         with self._cache_lock:
+            self._session_epochs[user] = self._session_epochs.get(user, 0) + 1
             self._etesync_cache.pop(user, None)
+
+    def _bind_epoch(self, user, etesync):
+        epoch = self._session_epochs.get(user, 0)
+
+        def is_current():
+            with self._cache_lock:
+                return self._session_epochs.get(user, 0) == epoch
+
+        etesync._session_is_current = is_current
 
     def fresh_for_user(self, user, *, read_only=True):
         """Restore an independent session for bounded local-cache work."""
@@ -78,12 +90,15 @@ class EteSyncCache:
                 "Configured account not found in credentials file. "
                 "Please authenticate via the browser first."
             )
-        return Etebase(
+        etesync = Etebase(
             user,
             stored_session,
             remote_url,
             read_only=read_only,
-        ), True
+        )
+        with self._cache_lock:
+            self._bind_epoch(user, etesync)
+        return etesync, True
 
 
 _etesync_cache = EteSyncCache(

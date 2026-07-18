@@ -489,6 +489,24 @@ def test_stop_terminalizes_queued_successor():
     assert status["error_code"] == "SyncStopped"
 
 
+def test_stop_terminalizes_active_generation_without_native_return():
+    thread = SyncThread("account@example.com")
+    generation = thread.force_sync()
+    thread._begin_generation()
+
+    thread.stop()
+
+    assert thread.wait_for_generation(generation, timeout=0.01)
+    status = thread.generation_status(generation)
+    assert status["state"] == "failed"
+    assert status["error_code"] == "SyncStopped"
+
+    thread._complete_generation(generation, "succeeded", time.time())
+    status = thread.generation_status(generation)
+    assert status["state"] == "failed"
+    assert status["error_code"] == "SyncStopped"
+
+
 @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
 @patch("silentsuite_bridge.radicale.storage.update_status")
 @patch("silentsuite_bridge.radicale.storage.log_sync_event")
