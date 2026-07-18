@@ -11,6 +11,7 @@ Original: https://github.com/etesync/etesync-dav
 import hashlib
 import logging
 import os
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -328,6 +329,16 @@ def dav_collection_state_hash(cache_col):
     return digest.hexdigest()
 
 
+def is_safe_dav_href(href):
+    """Return whether href is one conservative, ASCII-safe DAV path segment."""
+    return bool(href) and re.fullmatch(r"[A-Za-z0-9._-]+", href) is not None
+
+
+def opaque_dav_href(identity, suffix):
+    """Derive a stable opaque href without exposing a remote or legacy identity."""
+    return hashlib.sha256(str(identity).encode("utf-8")).hexdigest() + suffix
+
+
 def record_dav_change(cache_col, href, *, etag=None, deleted=False):
     """Atomically advance a collection revision and record its latest href change."""
     with db.database_proxy.atomic():
@@ -495,6 +506,22 @@ class Etebase:
                         reason="legacy_duplicate",
                     )
                     unresolved += 1
+            suffix = ".vcf" if col.collection_type == "etebase.vcard" else ".ics"
+            replaced_href = False
+            for cache_item in cache_col.items:
+                href_mapper = models.HrefMapper.get_or_none(
+                    models.HrefMapper.content == cache_item
+                )
+                if href_mapper is None or is_safe_dav_href(href_mapper.href):
+                    continue
+                identity = cache_item.remote_uid or cache_item.uid
+                href_mapper.href = opaque_dav_href(identity, suffix)
+                href_mapper.save(only=[models.HrefMapper.href])
+                replaced_href = True
+            if replaced_href:
+                models.DavSyncToken.delete().where(
+                    models.DavSyncToken.collection == cache_col
+                ).execute()
         return unresolved
 
     def _quarantine_legacy_cache_item(self, cache_col, cache_item, *, reason):

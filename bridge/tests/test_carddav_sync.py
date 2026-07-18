@@ -6,6 +6,7 @@ import pytest
 import vobject
 
 from silentsuite_bridge import config
+from silentsuite_bridge import local_cache as local_cache_module
 from silentsuite_bridge.local_cache import record_dav_change
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
@@ -56,6 +57,20 @@ def _carddav_collection(mem_db, user):
     storage = MagicMock()
     storage.etesync.get.return_value = cached_collection
     return Collection(storage, "/test@example.com/contacts")
+
+
+def test_sync_sanitizes_existing_unsafe_href_before_issuing_token(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    mapper = HrefMapper.get()
+    mapper.href = "legacy/contact.vcf"
+    mapper.save()
+
+    _token, hrefs = collection.sync(None)
+
+    assert list(hrefs) == [
+        local_cache_module.opaque_dav_href("contact-1", ".vcf")
+    ]
+    assert "/" not in HrefMapper.get().href
 
 
 def test_initial_carddav_sync_returns_opaque_token_and_current_href(mem_db, user):

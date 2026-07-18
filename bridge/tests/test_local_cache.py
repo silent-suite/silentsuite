@@ -962,6 +962,45 @@ def test_backfill_remote_uids_uses_cached_envelopes_without_remote_io(mem_db, us
     item_mgr.cache_load.assert_called_once_with(b"item-cache")
 
 
+def test_backfill_replaces_unsafe_legacy_href_and_invalidates_tokens(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    cache_item = ItemEntity.create(
+        collection=cache_col,
+        uid="legacy/contact",
+        eb_item=b"item-cache",
+    )
+    mapper = HrefMapper.create(content=cache_item, href="legacy/contact.vcf")
+    models.DavSyncToken.create(
+        collection=cache_col,
+        token="old-token",
+        revision=0,
+        created_at=1,
+    )
+    remote_item = MagicMock(uid="remote-item-1")
+    item_mgr = MagicMock()
+    item_mgr.cache_load.return_value = remote_item
+    col = MagicMock(collection_type="etebase.vcard")
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = col
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    assert etebase._backfill_remote_uids() == 0
+
+    mapper = HrefMapper.get_by_id(mapper.content_id)
+    assert mapper.href == local_cache_module.opaque_dav_href("remote-item-1", ".vcf")
+    assert "/" not in mapper.href
+    assert models.DavSyncToken.select().count() == 0
+
+
 def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
     cache_col = CollectionEntity.create(
         local_user=user,

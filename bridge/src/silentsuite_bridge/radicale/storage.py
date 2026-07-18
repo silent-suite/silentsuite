@@ -28,7 +28,13 @@ from radicale.storage import (
 )
 
 from .. import config
-from ..local_cache import dav_collection_state_hash, db, record_dav_change
+from ..local_cache import (
+    dav_collection_state_hash,
+    db,
+    is_safe_dav_href,
+    opaque_dav_href,
+    record_dav_change,
+)
 from ..local_cache.models import (
     CollectionEntity,
     DavChange,
@@ -564,6 +570,7 @@ class Collection(BaseCollection):
 
     def sync(self, old_token=None):
         token_prefix = "http://radicale.org/ns/sync/"
+        self._sanitize_href_mappings()
         self.collection.cache_col = CollectionEntity.get_by_id(
             self.collection.cache_col.id
         )
@@ -635,6 +642,22 @@ class Collection(BaseCollection):
         changed_hrefs = sorted({change.href for change in changed_revisions})
         return token, changed_hrefs
 
+    def _sanitize_href_mappings(self):
+        cache_col = self.collection.cache_col
+        replaced = False
+        for cache_item in cache_col.items:
+            mapper = HrefMapper.get_or_none(HrefMapper.content == cache_item)
+            if mapper is None or is_safe_dav_href(mapper.href):
+                continue
+            identity = cache_item.remote_uid or cache_item.uid
+            mapper.href = opaque_dav_href(identity, self.content_suffix)
+            mapper.save(only=[HrefMapper.href])
+            replaced = True
+        if replaced:
+            DavSyncToken.delete().where(
+                DavSyncToken.collection == cache_col
+            ).execute()
+
     def _prune_sync_history(self):
         cache_col = self.collection.cache_col
         retained_tokens = (
@@ -704,6 +727,9 @@ class Collection(BaseCollection):
             href_mapper, _ = HrefMapper.get_or_create(
                 content=item.cache_item, defaults={"href": href}
             )
+            if not is_safe_dav_href(href_mapper.href):
+                href_mapper.href = href
+                href_mapper.save(only=[HrefMapper.href])
             yield href_mapper.href
 
     def get_multi(self, hrefs):
