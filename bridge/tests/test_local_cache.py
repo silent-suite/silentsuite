@@ -1095,6 +1095,69 @@ def test_unknown_tombstone_cannot_rebind_identity_bound_contact(mem_db, user):
     assert DavChange.select().count() == 0
 
 
+def test_colliding_live_remote_item_is_quarantined_without_blocking_pull(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    bound = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-name",
+        remote_uid="remote-original",
+        eb_item=b"original-cache",
+    )
+    HrefMapper.create(content=bound, href="contact-name.vcf")
+    live_collision = MagicMock(
+        uid="remote-unrelated",
+        meta={"name": "contact-name"},
+        deleted=False,
+        etag="live-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"collision-cache"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(
+        cache_col,
+        MagicMock(collection_type="etebase.vcard"),
+        item_mgr,
+        live_collision,
+    ) is False
+
+    refreshed = ItemEntity.get_by_id(bound.id)
+    assert refreshed.remote_uid == "remote-original"
+    assert refreshed.deleted is False
+    unresolved = models.DavUnresolvedItem.get(collection=cache_col)
+    assert unresolved.remote_uid == "remote-unrelated"
+    assert unresolved.deleted is False
+    assert ItemEntity.select().where(ItemEntity.collection == cache_col).count() == 1
+
+
+def test_full_sync_reports_durable_unresolved_conflicts(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    models.DavUnresolvedItem.create(
+        collection=cache_col,
+        remote_uid="remote-unresolved",
+        eb_item=b"unresolved-cache",
+        deleted=False,
+    )
+    etebase = Etebase.__new__(Etebase)
+    etebase.user = user
+    etebase.sync_collection_list = MagicMock()
+    etebase.list = MagicMock(return_value=[])
+
+    with pytest.raises(
+        local_cache_module.DavUnresolvedItemsError,
+        match="synchronization is incomplete",
+    ):
+        etebase.sync()
+
+
 def test_metadata_fallback_only_claims_legacy_identityless_row(mem_db, user):
     cache_col = CollectionEntity.create(
         local_user=user,
