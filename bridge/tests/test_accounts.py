@@ -155,7 +155,7 @@ def test_deferred_cache_cleanup_retries_after_maintenance_becomes_available(monk
 
     @contextmanager
     def available_maintenance(user, timeout=0):
-        assert timeout is None
+        assert timeout == 1
         yield True
 
     monkeypatch.setattr(accounts, "account_maintenance", available_maintenance)

@@ -195,6 +195,37 @@ class TestClearCachedUser:
         assert results == [True, True]
         assert max_active == 1
 
+    def test_clear_cached_user_rolls_back_partial_deletion(self, mem_db, monkeypatch):
+        self._seed_user("alice@example.com")
+        original_execute_sql = mem_db.execute_sql
+
+        def fail_item_delete(sql, *args, **kwargs):
+            if sql.startswith('DELETE FROM "itementity"'):
+                raise RuntimeError("injected deletion failure")
+            return original_execute_sql(sql, *args, **kwargs)
+
+        monkeypatch.setattr(mem_db, "execute_sql", fail_item_delete)
+        with pytest.raises(RuntimeError, match="injected deletion failure"):
+            clear_cached_user("alice@example.com")
+
+        assert User.get_or_none(User.username == "alice@example.com") is not None
+        assert CollectionEntity.select().count() == 1
+        assert ItemEntity.select().count() == 1
+        assert HrefMapper.select().count() == 1
+
+    def test_startup_reconciliation_clears_only_unconfigured_cache_users(self, mem_db):
+        self._seed_user("kept@example.com")
+        self._seed_user("orphaned@example.com")
+
+        with patch.object(mem_db, "close", return_value=False):
+            cleared = local_cache_module.clear_unconfigured_cached_users(
+                ["kept@example.com"]
+            )
+
+            assert cleared == 1
+            assert User.get_or_none(User.username == "kept@example.com") is not None
+            assert User.get_or_none(User.username == "orphaned@example.com") is None
+
 
 # ---------------------------------------------------------------------------
 # Collection wrapper
@@ -539,12 +570,11 @@ class TestSyncLogic:
         from silentsuite_bridge.local_cache import Etebase
 
         source = inspect.getsource(Etebase.push_collection_list)
-        # The method MUST clear new flag alongside dirty
-        assert "collection.new = False" in source, (
-            "push_collection_list must clear the new flag to prevent "
-            "re-uploading already-pushed collections"
+        # The compare-and-swap must clear both flags only if the row is unchanged.
+        assert "new=False" in source and "dirty=False" in source, (
+            "push_collection_list must atomically clear both flags after upload"
         )
-        assert "collection.dirty = False" in source
+        assert "CollectionEntity.update(dirty=False, new=False)" in source
 
     @patch("silentsuite_bridge.local_cache.Account")
     @patch("silentsuite_bridge.local_cache.Client")
@@ -687,15 +717,28 @@ class TestSyncLogic:
                 uid="private-push-collection-uid",
                 eb_col=b"\x00" * 8,
             )
-            ItemEntity.create(
+            cache_item = ItemEntity.create(
                 collection=col,
                 uid="private-push-item-uid",
                 eb_item=b"\x00" * 8,
                 dirty=True,
             )
 
-            with caplog.at_level(logging.INFO, logger="silentsuite-bridge.cache"):
-                etebase.push_collection("private-push-collection-uid")
+            def concurrent_local_write(*_args):
+                (
+                    ItemEntity.update(eb_item=b"newer-local-write", dirty=True)
+                    .where(ItemEntity.id == cache_item.id)
+                    .execute()
+                )
+
+            mock_item_mgr.batch.side_effect = concurrent_local_write
+            with patch.object(mem_db, "close", return_value=False):
+                with caplog.at_level(logging.INFO, logger="silentsuite-bridge.cache"):
+                    etebase.push_collection("private-push-collection-uid")
+
+                persisted = ItemEntity.get_by_id(cache_item.id)
+            assert persisted.eb_item == b"newer-local-write"
+            assert persisted.dirty is True
 
         logs = caplog.text
         assert "1 dirty/new items" in logs

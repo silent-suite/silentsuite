@@ -34,6 +34,7 @@ _bridge_status = {
     "error": None,
     "collections": {"calendars": 0, "contacts": 0, "tasks": 0},
     "collections_by_account": {},
+    "account_states": {},
     "collections_scope": "all configured accounts",
 }
 _bridge_status_lock = threading.RLock()
@@ -367,8 +368,8 @@ def _handle_account_login(environ):
         )
         log_sync_event("error", "Account sign-in succeeded, but sync did not start automatically")
 
-    log_sync_event("info", f"Account added or re-authenticated: {result.username}")
-    logger.info("Account added or re-authenticated: %s", result.username)
+    log_sync_event("info", "Account added or re-authenticated")
+    logger.info("Account added or re-authenticated")
     return _json_response(200, {
         "ok": True,
         "username": result.username,
@@ -390,12 +391,37 @@ def log_sync_event(event_type, message):
 def update_status(state, error=None, collections=None, account=None, scope=None):
     """Update the bridge status."""
     with _bridge_status_lock:
-        _bridge_status["state"] = state
-        if state == "connected":
-            _bridge_status["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            _bridge_status["error"] = None
-        if error:
-            _bridge_status["error"] = str(error)
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        if account:
+            account_states = _bridge_status.setdefault("account_states", {})
+            account_state = account_states.setdefault(account, {})
+            account_state["state"] = state
+            account_state["error"] = str(error) if error else None
+            if state == "connected":
+                account_state["last_sync"] = now
+            states = list(account_states.values())
+            failed = [entry for entry in states if entry["state"] == "error"]
+            if failed:
+                _bridge_status["state"] = "error"
+                _bridge_status["error"] = (
+                    "One or more configured accounts failed to sync"
+                )
+            elif states and all(entry["state"] == "connected" for entry in states):
+                _bridge_status["state"] = "connected"
+                _bridge_status["error"] = None
+                _bridge_status["last_sync"] = max(
+                    entry.get("last_sync", now) for entry in states
+                )
+            else:
+                _bridge_status["state"] = "syncing"
+                _bridge_status["error"] = None
+        else:
+            _bridge_status["state"] = state
+            if state == "connected":
+                _bridge_status["last_sync"] = now
+                _bridge_status["error"] = None
+            if error:
+                _bridge_status["error"] = str(error)
         if collections:
             if account:
                 _bridge_status.setdefault("collections_by_account", {})[account] = collections
@@ -415,6 +441,21 @@ def forget_account_status(account):
     with _bridge_status_lock:
         account_collections = _bridge_status.setdefault("collections_by_account", {})
         account_collections.pop(account, None)
+        account_states = _bridge_status.setdefault("account_states", {})
+        account_states.pop(account, None)
+        states = list(account_states.values())
+        if any(entry["state"] == "error" for entry in states):
+            _bridge_status["state"] = "error"
+            _bridge_status["error"] = "One or more configured accounts failed to sync"
+        elif states and all(entry["state"] == "connected" for entry in states):
+            _bridge_status["state"] = "connected"
+            _bridge_status["error"] = None
+        elif states:
+            _bridge_status["state"] = "syncing"
+            _bridge_status["error"] = None
+        else:
+            _bridge_status["state"] = "disconnected"
+            _bridge_status["error"] = None
         _bridge_status["collections"] = _aggregate_collections(account_collections.values())
 
 

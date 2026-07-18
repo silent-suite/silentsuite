@@ -211,6 +211,29 @@ def clear_cached_user(username, db_path=None):
         return _clear_cached_user_locked(username, db_path)
 
 
+def clear_unconfigured_cached_users(configured_users, db_path=None):
+    """Clear orphaned account caches left by an interrupted deferred removal."""
+    configured = {(user or "").strip() for user in configured_users}
+    with _cache_database_init_lock:
+        database, initialized_here = _init_cache_database(db_path)
+        if database.is_closed():
+            with _private_umask():
+                database.connect(reuse_if_open=True)
+        try:
+            _ensure_cache_tables(database)
+            orphaned = [
+                user.username
+                for user in models.User.select(models.User.username)
+                if user.username not in configured
+            ]
+        finally:
+            if initialized_here and not database.is_closed():
+                database.close()
+        for username in orphaned:
+            _clear_cached_user_locked(username, db_path)
+        return len(orphaned)
+
+
 def _clear_cached_user_locked(username, db_path=None):
     """Delete one user's cached rows without needing a live Etebase session.
 
@@ -228,35 +251,36 @@ def _clear_cached_user_locked(username, db_path=None):
 
     try:
         _ensure_cache_tables(database)
-        user = models.User.get_or_none(models.User.username == normalized)
-        if user is None:
-            return False
+        with database.atomic():
+            user = models.User.get_or_none(models.User.username == normalized)
+            if user is None:
+                return False
 
-        collection_ids = [
-            col.id
-            for col in models.CollectionEntity.select(models.CollectionEntity.id).where(
-                models.CollectionEntity.local_user == user
-            )
-        ]
-        if collection_ids:
-            item_ids = [
-                item.id
-                for item in models.ItemEntity.select(models.ItemEntity.id).where(
-                    models.ItemEntity.collection.in_(collection_ids)
-                )
+            collection_ids = [
+                col.id
+                for col in models.CollectionEntity.select(
+                    models.CollectionEntity.id
+                ).where(models.CollectionEntity.local_user == user)
             ]
-            if item_ids:
-                models.HrefMapper.delete().where(
-                    models.HrefMapper.content.in_(item_ids)
+            if collection_ids:
+                item_ids = [
+                    item.id
+                    for item in models.ItemEntity.select(models.ItemEntity.id).where(
+                        models.ItemEntity.collection.in_(collection_ids)
+                    )
+                ]
+                if item_ids:
+                    models.HrefMapper.delete().where(
+                        models.HrefMapper.content.in_(item_ids)
+                    ).execute()
+                models.ItemEntity.delete().where(
+                    models.ItemEntity.collection.in_(collection_ids)
                 ).execute()
-            models.ItemEntity.delete().where(
-                models.ItemEntity.collection.in_(collection_ids)
-            ).execute()
-            models.CollectionEntity.delete().where(
-                models.CollectionEntity.id.in_(collection_ids)
-            ).execute()
-        user.delete_instance()
-        return True
+                models.CollectionEntity.delete().where(
+                    models.CollectionEntity.id.in_(collection_ids)
+                ).execute()
+            user.delete_instance()
+            return True
     finally:
         if initialized_here and not database.is_closed():
             database.close()
@@ -697,15 +721,25 @@ class Etebase:
             changed = list(self._collection_list_dirty_get())
 
             for collection in changed:
+                original_envelope = collection.eb_col
+                original_dirty = collection.dirty
+                original_new = collection.new
                 col = col_mgr.cache_load(collection.eb_col)
 
                 if collection.deleted:
                     col.delete()
                 col_mgr.upload(col, None)
 
-                collection.dirty = False
-                collection.new = False
-                collection.save()
+                (
+                    models.CollectionEntity.update(dirty=False, new=False)
+                    .where(
+                        (models.CollectionEntity.id == collection.id)
+                        & (models.CollectionEntity.eb_col == original_envelope)
+                        & (models.CollectionEntity.dirty == original_dirty)
+                        & (models.CollectionEntity.new == original_new)
+                    )
+                    .execute()
+                )
 
     def sync_collection(self, uid):
         """Sync a single collection (push then pull)."""
@@ -947,15 +981,31 @@ class Etebase:
                 return
 
             for chunk in batch(changed, CHUNK_PUSH):
+                original_rows = [
+                    (item.id, item.eb_item, item.dirty, item.new)
+                    for item in chunk
+                ]
                 chunk_items = list(map(lambda x: item_mgr.cache_load(x.eb_item), chunk))
                 logger.info("PUSH collection: uploading batch of %d items", len(chunk_items))
                 item_mgr.batch(chunk_items, None, None)
                 logger.info("PUSH collection: batch upload succeeded")
-                for cache_item, item in zip(chunk, chunk_items):
-                    cache_item.eb_item = item_mgr.cache_save(item)
-                    cache_item.dirty = False
-                    cache_item.new = False
-                    cache_item.save()
+                for original, item in zip(original_rows, chunk_items):
+                    item_id, original_envelope, original_dirty, original_new = original
+                    uploaded_envelope = item_mgr.cache_save(item)
+                    (
+                        models.ItemEntity.update(
+                            eb_item=uploaded_envelope,
+                            dirty=False,
+                            new=False,
+                        )
+                        .where(
+                            (models.ItemEntity.id == item_id)
+                            & (models.ItemEntity.eb_item == original_envelope)
+                            & (models.ItemEntity.dirty == original_dirty)
+                            & (models.ItemEntity.new == original_new)
+                        )
+                        .execute()
+                    )
 
     # --- CRUD operations ---
 

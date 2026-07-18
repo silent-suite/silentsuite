@@ -324,21 +324,25 @@ class TestStartSyncThread:
 
     @patch("silentsuite_bridge.radicale.storage.forget_etesync_user")
     @patch("silentsuite_bridge.radicale.storage.SyncThread")
-    def test_refresh_sync_thread_wakes_existing_thread(self, MockThread, mock_forget):
+    def test_refresh_sync_thread_replaces_existing_worker(self, MockThread, mock_forget):
         from silentsuite_bridge.radicale import storage
 
         original = storage._sync_threads.copy()
         try:
             existing = MagicMock()
             existing.is_alive.return_value = True
+            existing._stop_sync = threading.Event()
+            existing.stop.side_effect = existing._stop_sync.set
+            replacement = MagicMock()
+            MockThread.return_value = replacement
             storage._sync_threads["alive@test.com"] = existing
 
             result = refresh_sync_thread("alive@test.com")
 
-            assert result is existing
+            assert result is replacement
+            existing.stop.assert_called_once()
             mock_forget.assert_called_once_with("alive@test.com")
-            existing.force_sync.assert_called_once()
-            MockThread.assert_not_called()
+            replacement.start.assert_called_once()
         finally:
             storage._sync_threads = original
 
@@ -494,6 +498,41 @@ def test_late_native_success_does_not_publish_connected(
     mock_etesync = MagicMock()
     mock_etesync.sync.side_effect = lambda: time.sleep(0.05)
     mock_etesync.list.return_value = []
+    mock_etesync_ctx.return_value.__enter__ = MagicMock(
+        return_value=(mock_etesync, False)
+    )
+    mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+    thread = SyncThread("account@example.com", daemon=True)
+    thread.interval = 300
+    generation = thread.force_sync(deadline=time.time() + 0.01)
+
+    thread.start()
+    try:
+        assert thread.wait_for_generation(generation, timeout=1)
+    finally:
+        thread.stop()
+        thread.join(1)
+
+    assert thread.generation_status(generation)["state"] == "timed_out"
+    assert thread.last_sync is None
+    assert not any(
+        call.args and call.args[0] == "connected"
+        for call in mock_status.call_args_list
+    )
+    assert not any(
+        call.args == ("sync", "Synced account")
+        for call in mock_log.call_args_list
+    )
+
+
+@patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+@patch("silentsuite_bridge.radicale.storage.update_status")
+@patch("silentsuite_bridge.radicale.storage.log_sync_event")
+def test_deadline_crossed_during_collection_listing_does_not_publish_success(
+    mock_log, mock_status, mock_etesync_ctx,
+):
+    mock_etesync = MagicMock()
+    mock_etesync.list.side_effect = lambda: (time.sleep(0.05) or [])
     mock_etesync_ctx.return_value.__enter__ = MagicMock(
         return_value=(mock_etesync, False)
     )

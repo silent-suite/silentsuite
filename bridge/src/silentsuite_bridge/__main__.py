@@ -177,12 +177,16 @@ def start_tray():
 
 def _start_sync_threads():
     """Start a SyncThread for each configured user at boot."""
+    from .local_cache import clear_unconfigured_cached_users
     from .radicale.creds import Credentials
     from .radicale.storage import start_sync_thread
+    from .web import update_status
 
     creds = Credentials()
     users = creds.list_users()
+    clear_unconfigured_cached_users(users)
     for user in users:
+        update_status("syncing", account=user)
         start_sync_thread(user)
 
 

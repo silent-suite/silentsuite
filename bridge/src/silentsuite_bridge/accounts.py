@@ -36,7 +36,7 @@ def _schedule_deferred_cache_cleanup(username):
                     if _account_epochs.get(username, 0) != epoch:
                         return
                 try:
-                    with account_maintenance(username, timeout=None) as available:
+                    with account_maintenance(username, timeout=1) as available:
                         if not available:
                             time.sleep(1)
                             continue

@@ -170,6 +170,20 @@ def test_update_status_aggregates_background_sync_counts(tmp_path, monkeypatch):
     assert "3 calendars, 3 contacts, 1 tasks" in html
 
 
+def test_successful_account_does_not_clear_another_account_failure():
+    _reset_status()
+
+    update_status("error", error="SyncFailure", account="failed@example.com")
+    update_status(
+        "connected",
+        collections={"calendars": 1, "contacts": 0, "tasks": 0},
+        account="healthy@example.com",
+    )
+
+    assert _bridge_status["state"] == "error"
+    assert _bridge_status["error"] == "One or more configured accounts failed to sync"
+
+
 def test_render_dashboard_uses_https_urls_when_ssl_enabled(tmp_path, monkeypatch):
     """AC 11: with SSL enabled, account DAV URLs use https://."""
     _reset_status()

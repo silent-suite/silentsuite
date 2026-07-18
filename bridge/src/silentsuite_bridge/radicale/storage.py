@@ -353,19 +353,34 @@ class SyncThread(threading.Thread):
                                     collections["tasks"] += 1
                         except Exception:
                             pass
-                        update_status(
-                            "connected",
-                            collections=collections,
-                            account=self.user,
-                        )
-                        log_sync_event("sync", "Synced account")
+                        with self._generation_condition:
+                            status = self._generation_status_snapshot(
+                                self._generation_statuses[generation]
+                            )
+                        if self._stop_sync.is_set():
+                            state = "failed"
+                            error_code = "SyncStopped"
+                        elif status["state"] == "timed_out":
+                            state = "timed_out"
+                            error_code = "SyncTimeout"
+                            update_status(
+                                "error", error="SyncTimeout", account=self.user
+                            )
+                            log_sync_event("error", "Sync timed out")
+                        else:
+                            update_status(
+                                "connected",
+                                collections=collections,
+                                account=self.user,
+                            )
+                            log_sync_event("sync", "Synced account")
             except Exception as e:
                 error_code = e.__class__.__name__
                 logger.warning(
                     "Sync failed for configured account (%s)",
                     error_code,
                 )
-                update_status("error", error=error_code)
+                update_status("error", error=error_code, account=self.user)
                 log_sync_event("error", "Sync failed")
             finally:
                 completed_at = time.time()
@@ -409,16 +424,14 @@ def start_sync_thread(user):
 
 
 def refresh_sync_thread(user):
-    """Start or wake one user's SyncThread after credentials changed."""
+    """Replace one user's worker after credentials changed."""
     with _sync_threads_lock:
         existing = _sync_threads.get(user)
-        had_live_thread = existing is not None and existing.is_alive()
+    if existing is not None and existing.is_alive():
+        existing.stop()
 
     forget_etesync_user(user)
-    thread = start_sync_thread(user)
-    if had_live_thread and thread.is_alive():
-        thread.force_sync()
-    return thread
+    return start_sync_thread(user)
 
 
 def get_sync_thread(user):
