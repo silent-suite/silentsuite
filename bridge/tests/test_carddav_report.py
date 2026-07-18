@@ -1,5 +1,5 @@
 """Protocol-level CardDAV sync REPORT regressions."""
-
+import logging
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock
 
@@ -145,3 +145,28 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
     )
     assert private_token not in caplog.text
     assert "private-client-token" not in caplog.text
+
+    caplog.clear()
+    caplog.set_level(logging.DEBUG, logger="radicale")
+    private_payload = b"<private-report-payload"
+    private_collection = "private-collection-identifier"
+    status, _headers, _body = _request(
+        app,
+        f"/{USERNAME}/{private_collection}/",
+        method="REPORT",
+        body=private_payload,
+        depth="1",
+        auth=_basic_auth(),
+    )
+    assert status == "400 Bad Request"
+    report_records = [
+        record
+        for record in caplog.records
+        if str(record.pathname).replace("\\", "/").endswith(
+            ("/radicale/app/base.py", "/radicale/app/report.py")
+        )
+    ]
+    report_log = "\n".join(record.getMessage() for record in report_records)
+    assert private_payload.decode() not in report_log
+    assert private_collection not in report_log
+    assert all(record.exc_info is None for record in report_records)

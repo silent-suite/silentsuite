@@ -154,12 +154,14 @@ def _migrate_cache_schema(database):
 
 def _activate_dav_revision_ledger():
     """Invalidate pre-ledger tokens once so all retained tokens are provable."""
-    _, created = models.SchemaMigration.get_or_create(
-        name="dav-revision-ledger-v2",
-        defaults={"applied_at": get_millis()},
-    )
-    if created:
-        models.DavSyncToken.delete().execute()
+    database = models.SchemaMigration._meta.database
+    with database.atomic():
+        _, created = models.SchemaMigration.get_or_create(
+            name="dav-revision-ledger-v2",
+            defaults={"applied_at": get_millis()},
+        )
+        if created:
+            models.DavSyncToken.delete().execute()
 
 
 def clear_cached_user(username, db_path=None):

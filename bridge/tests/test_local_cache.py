@@ -9,6 +9,7 @@ import peewee as pw
 import pytest
 import vobject
 
+import silentsuite_bridge.local_cache as local_cache_module
 from silentsuite_bridge.local_cache import Collection, Etebase, Item, clear_cached_user, db, models
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
@@ -876,6 +877,44 @@ def test_v1_cache_is_migrated_additively_without_bumping_legacy_version(tmp_path
         for column in etebase._database.get_columns("davunresolveditem")
     }
     assert {"reason", "local_item_id"} <= unresolved_columns
+
+
+def test_revision_ledger_activation_rolls_back_marker_when_token_deletion_fails(
+    mem_db, user, monkeypatch
+):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    models.DavSyncToken.create(
+        collection=cache_col,
+        revision=0,
+        token="private-legacy-token",
+        created_at=1,
+    )
+    original_execute_sql = mem_db.execute_sql
+
+    def fail_token_deletion(sql, *args, **kwargs):
+        if "DELETE FROM" in sql and "davsynctoken" in sql:
+            raise RuntimeError("injected migration failure")
+        return original_execute_sql(sql, *args, **kwargs)
+
+    monkeypatch.setattr(mem_db, "execute_sql", fail_token_deletion)
+    with pytest.raises(RuntimeError, match="injected migration failure"):
+        local_cache_module._activate_dav_revision_ledger()
+
+    assert models.SchemaMigration.get_or_none(
+        models.SchemaMigration.name == "dav-revision-ledger-v2"
+    ) is None
+    assert models.DavSyncToken.select().count() == 1
+
+    monkeypatch.setattr(mem_db, "execute_sql", original_execute_sql)
+    local_cache_module._activate_dav_revision_ledger()
+    assert models.SchemaMigration.get(
+        models.SchemaMigration.name == "dav-revision-ledger-v2"
+    )
+    assert models.DavSyncToken.select().count() == 0
 
 
 def test_backfill_remote_uids_uses_cached_envelopes_without_remote_io(mem_db, user):
