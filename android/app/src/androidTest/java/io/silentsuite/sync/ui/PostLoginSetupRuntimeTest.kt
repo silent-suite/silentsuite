@@ -2,6 +2,8 @@ package io.silentsuite.sync.ui
 
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.content.ContentResolver
+import android.os.Bundle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -11,12 +13,14 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
+import io.silentsuite.sync.ui.setup.PostLoginSyncConfigurator
 
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry
 import io.silentsuite.sync.ui.setup.LoginActivity
 import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
 import io.silentsuite.sync.utils.AndroidCompat
+import at.bitfire.ical4android.TaskProvider
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,6 +28,50 @@ import java.net.URI
 
 @RunWith(AndroidJUnit4::class)
 class PostLoginSetupRuntimeTest {
+    @Test fun accountCreatedSyncConfigurationEnablesCoreAuthoritiesWithoutRecovery() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext; val manager=AccountManager.get(context)
+        val account=Account("sync-${System.nanoTime()}@example.invalid",App.accountType); val id="sync-generation"
+        val registry=AccountCreationRegistry.open(context)
+        check(manager.addAccountExplicitly(account,null,null)); seedAccountCreated(manager, registry, account, id)
+        val authorities=listOf(App.addressBooksAuthority, android.provider.CalendarContract.AUTHORITY)+TaskProvider.TASK_PROVIDERS.map { it.authority }
+        try {
+            authorities.forEach { authority -> ContentResolver.removePeriodicSync(account,authority,Bundle()); ContentResolver.setSyncAutomatically(account,authority,false); ContentResolver.setIsSyncable(account,authority,0) }
+            org.junit.Assert.assertTrue(PostLoginSyncConfigurator.configure(context,account))
+            listOf(App.addressBooksAuthority,android.provider.CalendarContract.AUTHORITY).forEach { authority ->
+                org.junit.Assert.assertTrue(ContentResolver.getIsSyncable(account,authority)>0)
+                org.junit.Assert.assertTrue(ContentResolver.getSyncAutomatically(account,authority))
+            }
+            assertEquals(PostLoginSetupState.ACCOUNT_CREATED,AccountSettings.setupState(manager,account,true))
+        } finally { authorities.forEach { authority -> ContentResolver.removePeriodicSync(account,authority,Bundle()); ContentResolver.setSyncAutomatically(account,authority,false); ContentResolver.setIsSyncable(account,authority,0) }; registry.clearOwned(account.type,account.name,id); AndroidCompat.removeAccount(manager,account) }
+    }
+    @Test fun accountCreatedSyncFailureKeepsExactRowAndOffersContinueRetry() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext; val manager=AccountManager.get(context)
+        val account=Account("sync-failure-${System.nanoTime()}@example.invalid",App.accountType); val id="sync-failure-generation"
+        val registry=AccountCreationRegistry.open(context)
+        check(manager.addAccountExplicitly(account,null,null)); seedAccountCreated(manager, registry, account, id)
+        PostLoginSyncConfigurator.configureOverride={ _, _ -> false }
+        try {
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account,id)).use { scenario -> scenario.onActivity { activity ->
+                activity.findViewById<android.widget.Button>(R.id.setup_continue_limited).performClick()
+                assertEquals(PostLoginSetupState.ACCOUNT_CREATED,AccountSettings.setupState(manager,account,true))
+                assertEquals(id,manager.getUserData(account,AccountSettings.KEY_CREATION_ID))
+                assertEquals("fake-session",manager.getUserData(account,AccountSettings.KEY_ETEBASE_SESSION))
+                org.junit.Assert.assertTrue(activity.findViewById<android.widget.TextView>(R.id.setup_status).text.contains(activity.getString(R.string.post_login_setup_sync_retry)))
+                org.junit.Assert.assertFalse(activity.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).isShown)
+            } }
+        } finally { PostLoginSyncConfigurator.configureOverride=null; registry.clearOwned(account.type,account.name,id); AndroidCompat.removeAccount(manager,account) }
+    }
+
+    private fun seedAccountCreated(manager: AccountManager, registry: AccountCreationRegistry, account: Account, id: String) {
+        check(AccountSettings.writeVerified(manager,account,AccountSettings.KEY_CREATION_ID,id))
+        check(AccountSettings.writeVerified(manager,account,AccountSettings.KEY_URI,"https://example.invalid/"))
+        check(AccountSettings.writeVerified(manager,account,AccountSettings.KEY_USERNAME,"test-user"))
+        check(AccountSettings.writeVerified(manager,account,AccountSettings.KEY_SETTINGS_VERSION,AccountSettings.CURRENT_VERSION.toString()))
+        check(AccountSettings.writeVerified(manager,account,AccountSettings.KEY_ETEBASE_SESSION,"fake-session"))
+        check(AccountSettings.writeSetupState(manager,account,PostLoginSetupState.ACCOUNT_CREATED))
+        check(registry.prepare(AccountCreationRegistry.Record(account.name,id,AccountCreationRegistry.Phase.CREATING,System.currentTimeMillis(),account.type)))
+    }
+
     @Test fun generationMismatchShowsSettingsOnlyAcrossRecreation() {
         val c=InstrumentationRegistry.getInstrumentation().targetContext; val m=AccountManager.get(c); val a=Account("mismatch-${System.nanoTime()}@example.invalid",App.accountType); check(m.addAccountExplicitly(a,null,null)); check(AccountSettings.writeVerified(m,a,AccountSettings.KEY_CREATION_ID,"row")); check(AccountSettings.writeSetupState(m,a,PostLoginSetupState.PERMISSIONS)); val r=AccountCreationRegistry.open(c); check(r.prepare(AccountCreationRegistry.Record(a.name,"other",AccountCreationRegistry.Phase.RECOVERY_REQUIRED,System.currentTimeMillis(),a.type)))
         try { ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(c,a,"row")).use { s -> s.recreate(); s.onActivity { x -> val vm=androidx.lifecycle.ViewModelProvider(x)[PostLoginSetupViewModel::class.java]; org.junit.Assert.assertTrue(x.findViewById<android.widget.Button>(R.id.setup_resolve_ambiguity).isShown); org.junit.Assert.assertEquals(0,vm.inventoryInvocationCountForTest); org.junit.Assert.assertEquals(PostLoginSetupState.PERMISSIONS,AccountSettings.setupState(m,a,true)); org.junit.Assert.assertEquals("row",m.getUserData(a,AccountSettings.KEY_CREATION_ID)) } } } finally { r.clearOwned(a.type,a.name,"other"); AndroidCompat.removeAccount(m,a) }
