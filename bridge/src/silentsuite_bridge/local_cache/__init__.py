@@ -77,11 +77,50 @@ def _init_cache_database(db_path=None):
 def _ensure_cache_tables(database):
     with _private_umask():
         database.create_tables(
-            [models.Config, models.User, models.CollectionEntity, models.ItemEntity, models.HrefMapper],
+            [
+                models.Config,
+                models.User,
+                models.CollectionEntity,
+                models.ItemEntity,
+                models.HrefMapper,
+            ],
+            safe=True,
+        )
+        _migrate_cache_schema(database)
+        database.create_tables(
+            [models.DavChange, models.DavSyncToken, models.DavUnresolvedItem, models.SchemaMigration],
             safe=True,
         )
         models.Config.get_or_create(defaults={"db_version": 1})
+        models.SchemaMigration.get_or_create(
+            name="dav-revision-v1",
+            defaults={"applied_at": get_millis()},
+        )
     _restrict_cache_database_files(getattr(database, "database", None))
+
+
+def _migrate_cache_schema(database):
+    """Add DAV revision columns without changing the legacy db_version value."""
+    tables = set(database.get_tables())
+    if "collectionentity" not in tables or "itementity" not in tables:
+        return
+
+    collection_columns = {column.name for column in database.get_columns("collectionentity")}
+    item_columns = {column.name for column in database.get_columns("itementity")}
+    if "dav_revision" not in collection_columns:
+        database.execute_sql(
+            "ALTER TABLE collectionentity "
+            "ADD COLUMN dav_revision INTEGER NOT NULL DEFAULT 0"
+        )
+    if "remote_uid" not in item_columns:
+        database.execute_sql(
+            "ALTER TABLE itementity ADD COLUMN remote_uid VARCHAR(255)"
+        )
+    database.execute_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS "
+        "itementity_collection_remote_uid "
+        "ON itementity (collection_id, remote_uid)"
+    )
 
 
 def clear_cached_user(username, db_path=None):
@@ -169,6 +208,42 @@ def get_millis():
     return int(round(time.time() * 1000))
 
 
+def record_dav_change(cache_col, href, *, etag=None, deleted=False):
+    """Atomically advance a collection revision and record its latest href change."""
+    with db.database_proxy.atomic():
+        (
+            models.CollectionEntity.update(
+                dav_revision=models.CollectionEntity.dav_revision + 1
+            )
+            .where(models.CollectionEntity.id == cache_col.id)
+            .execute()
+        )
+        revision = models.CollectionEntity.get_by_id(cache_col.id).dav_revision
+        (
+            models.DavChange.insert(
+                collection=cache_col,
+                href=href,
+                revision=revision,
+                etag=etag,
+                deleted=deleted,
+            )
+            .on_conflict(
+                conflict_target=[
+                    models.DavChange.collection,
+                    models.DavChange.href,
+                ],
+                update={
+                    models.DavChange.revision: revision,
+                    models.DavChange.etag: etag,
+                    models.DavChange.deleted: deleted,
+                },
+            )
+            .execute()
+        )
+        cache_col.dav_revision = revision
+        return revision
+
+
 class StorageException(Exception):
     pass
 
@@ -207,6 +282,13 @@ class Etebase:
             with db.database_proxy:
                 self._init_db_tables(database)
                 self.user, created = models.User.get_or_create(username=self.username)
+                if hasattr(self, "etebase"):
+                    unresolved = self._backfill_remote_uids()
+                    if unresolved:
+                        logger.warning(
+                            "Remote identity backfill left %d cached items unresolved",
+                            unresolved,
+                        )
         _restrict_cache_database_files(getattr(database, "database", None))
 
     def _init_db(self, db_path):
@@ -227,14 +309,47 @@ class Etebase:
 
     def _init_db_tables(self, database, additional_tables=None):
         database.create_tables(
-            [models.Config, models.User, models.CollectionEntity, models.ItemEntity, models.HrefMapper],
+            [
+                models.Config,
+                models.User,
+                models.CollectionEntity,
+                models.ItemEntity,
+                models.HrefMapper,
+            ],
+            safe=True,
+        )
+        _migrate_cache_schema(database)
+        database.create_tables(
+            [models.DavChange, models.DavSyncToken, models.DavUnresolvedItem, models.SchemaMigration],
             safe=True,
         )
         if additional_tables:
             database.create_tables(additional_tables, safe=True)
 
         models.Config.get_or_create(defaults={"db_version": 1})
+        models.SchemaMigration.get_or_create(
+            name="dav-revision-v1",
+            defaults={"applied_at": get_millis()},
+        )
         _restrict_cache_database_files(getattr(database, "database", None))
+
+    def _backfill_remote_uids(self):
+        """Recover stable Etebase item identities from cached envelopes only."""
+        unresolved = 0
+        col_mgr = self.etebase.get_collection_manager()
+        for cache_col in self.user.collections:
+            col = col_mgr.cache_load(cache_col.eb_col)
+            item_mgr = col_mgr.get_item_manager(col)
+            items = cache_col.items.where(models.ItemEntity.remote_uid.is_null(True))
+            for cache_item in items:
+                try:
+                    remote_item = item_mgr.cache_load(cache_item.eb_item)
+                    cache_item.remote_uid = remote_item.uid
+                    cache_item.save(only=[models.ItemEntity.remote_uid])
+                except Exception:
+                    cache_item.remote_uid = None
+                    unresolved += 1
+        return unresolved
 
     def sync(self):
         """Full bidirectional sync: push local changes, pull remote changes."""
@@ -327,6 +442,110 @@ class Etebase:
         self.push_collection(uid)
         self.pull_collection(uid)
 
+    def _quarantine_unresolved_item(self, cache_col, item_mgr, item):
+        cached_envelope = item_mgr.cache_save(item)
+        (
+            models.DavUnresolvedItem.insert(
+                collection=cache_col,
+                remote_uid=item.uid,
+                eb_item=cached_envelope,
+                deleted=item.deleted,
+                attempts=0,
+            )
+            .on_conflict(
+                conflict_target=[
+                    models.DavUnresolvedItem.collection,
+                    models.DavUnresolvedItem.remote_uid,
+                ],
+                update={
+                    models.DavUnresolvedItem.eb_item: cached_envelope,
+                    models.DavUnresolvedItem.deleted: item.deleted,
+                    models.DavUnresolvedItem.attempts:
+                        models.DavUnresolvedItem.attempts + 1,
+                },
+            )
+            .execute()
+        )
+
+    def _apply_pulled_item(
+        self,
+        cache_col,
+        col,
+        item_mgr,
+        item,
+        *,
+        quarantine=True,
+    ):
+        meta = dict(item.meta)
+        with db.database_proxy.atomic():
+            cache_item = models.ItemEntity.get_or_none(
+                (models.ItemEntity.collection == cache_col)
+                & (models.ItemEntity.remote_uid == item.uid)
+            )
+            if cache_item is None and meta.get("name"):
+                cache_item = models.ItemEntity.get_or_none(
+                    collection=cache_col,
+                    uid=meta["name"],
+                )
+            if cache_item is None and item.deleted and not meta.get("name"):
+                if quarantine:
+                    self._quarantine_unresolved_item(cache_col, item_mgr, item)
+                return False
+            if cache_item is None:
+                cache_item = models.ItemEntity(
+                    collection=cache_col,
+                    uid=meta.get("name") or item.uid,
+                )
+
+            cache_item.remote_uid = item.uid
+            cache_item.eb_item = item_mgr.cache_save(item)
+            cache_item.deleted = item.deleted
+            cache_item.save()
+
+            href_mapper = models.HrefMapper.get_or_none(
+                models.HrefMapper.content == cache_item
+            )
+            if href_mapper is None and not item.deleted:
+                suffix = (
+                    ".vcf"
+                    if col.collection_type == "etebase.vcard"
+                    else ".ics"
+                )
+                href_mapper = models.HrefMapper.create(
+                    content=cache_item,
+                    href=f"{cache_item.uid}{suffix}",
+                )
+            if href_mapper is not None:
+                record_dav_change(
+                    cache_col,
+                    href_mapper.href,
+                    etag=item.etag,
+                    deleted=item.deleted,
+                )
+            models.DavUnresolvedItem.delete().where(
+                (models.DavUnresolvedItem.collection == cache_col)
+                & (models.DavUnresolvedItem.remote_uid == item.uid)
+            ).execute()
+            return True
+
+    def _retry_unresolved_items(self, cache_col, col, item_mgr):
+        unresolved_items = list(
+            models.DavUnresolvedItem.select().where(
+                models.DavUnresolvedItem.collection == cache_col
+            )
+        )
+        for unresolved in unresolved_items:
+            item = item_mgr.cache_load(unresolved.eb_item)
+            if not self._apply_pulled_item(
+                cache_col,
+                col,
+                item_mgr,
+                item,
+                quarantine=False,
+            ):
+                unresolved.attempts += 1
+                unresolved.save(only=[models.DavUnresolvedItem.attempts])
+
     def pull_collection(self, uid):
         with db.database_proxy:
             col_mgr = self.etebase.get_collection_manager()
@@ -334,6 +553,7 @@ class Etebase:
 
             col = col_mgr.cache_load(cache_col.eb_col)
             item_mgr = col_mgr.get_item_manager(col)
+            self._retry_unresolved_items(cache_col, col, item_mgr)
             stoken = cache_col.local_stoken
             done = False
 
@@ -353,33 +573,7 @@ class Etebase:
                 )
 
                 for item in items_data:
-                    meta = item.meta
-                    logger.debug(
-                        "PULL %s: item uid=%s meta=%s deleted=%s",
-                        uid[:8], item.uid[:16], dict(meta), item.deleted,
-                    )
-                    if "name" not in meta:
-                        logger.debug(
-                            "PULL %s: item %s has no 'name' in meta — using item.uid as fallback",
-                            uid[:8], item.uid[:16],
-                        )
-                        meta["name"] = item.uid
-
-                    item_uid = meta["name"]
-                    cache_item = models.ItemEntity.get_or_none(
-                        collection=cache_col, uid=item_uid
-                    )
-                    if cache_item is None:
-                        cache_item = models.ItemEntity(
-                            collection=cache_col,
-                            uid=item_uid,
-                        )
-                        logger.debug("PULL %s: NEW item %s", uid[:8], item_uid)
-                    else:
-                        logger.debug("PULL %s: UPDATE item %s", uid[:8], item_uid)
-                    cache_item.eb_item = item_mgr.cache_save(item)
-                    cache_item.deleted = item.deleted
-                    cache_item.save()
+                    self._apply_pulled_item(cache_col, col, item_mgr, item)
 
                 done = item_list.done
                 stoken = item_list.stoken
@@ -505,7 +699,9 @@ class Collection:
             item_meta = {"name": uid, "mtime": get_millis()}
             item = item_mgr.create(item_meta, vobject_item.serialize().encode())
             cache_item = models.ItemEntity(
-                collection=self.cache_col, uid=uid
+                collection=self.cache_col,
+                uid=uid,
+                remote_uid=item.uid,
             )
             cache_item.eb_item = item_mgr.cache_save(item)
             cache_item.deleted = item.deleted

@@ -9,6 +9,7 @@ Original: https://github.com/etesync/etesync-dav
 """
 
 import email.utils
+import hashlib
 import logging
 import posixpath
 import re
@@ -26,7 +27,8 @@ from radicale.storage import (
 )
 
 from .. import config
-from ..local_cache.models import HrefMapper, ItemEntity
+from ..local_cache import record_dav_change
+from ..local_cache.models import DavChange, DavSyncToken, HrefMapper, ItemEntity
 from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
@@ -363,11 +365,88 @@ class Collection(BaseCollection):
 
     def sync(self, old_token=None):
         token_prefix = "http://radicale.org/ns/sync/"
-        token = None
-        if old_token is not None and old_token.startswith(token_prefix):
-            old_token = old_token[len(token_prefix):]
+        revision = self.collection.cache_col.dav_revision
+        token_value = hashlib.sha256(
+            f"{self.collection.cache_col.uid}:{revision}".encode()
+        ).hexdigest()
+        DavSyncToken.get_or_create(
+            collection=self.collection.cache_col,
+            token=token_value,
+            defaults={"revision": revision, "created_at": int(time.time())},
+        )
+        self._prune_sync_history()
+        token = token_prefix + token_value
 
-        return token, self._list()
+        if old_token is None:
+            return token, self._list()
+        if not old_token.startswith(token_prefix):
+            raise ValueError("invalid sync token")
+        if old_token == token:
+            return token, []
+
+        old_token_value = old_token[len(token_prefix):]
+        token_row = DavSyncToken.get_or_none(
+            (DavSyncToken.collection == self.collection.cache_col)
+            & (DavSyncToken.token == old_token_value)
+        )
+        if token_row is None or token_row.revision > revision:
+            raise ValueError("unknown sync token")
+        changed_hrefs = (
+            DavChange.select(DavChange.href)
+            .where(
+                (DavChange.collection == self.collection.cache_col)
+                & (DavChange.revision > token_row.revision)
+            )
+            .order_by(DavChange.href)
+        )
+        return token, [change.href for change in changed_hrefs]
+
+    def _prune_sync_history(self):
+        cache_col = self.collection.cache_col
+        retained_tokens = (
+            DavSyncToken.select(DavSyncToken.id, DavSyncToken.revision)
+            .where(DavSyncToken.collection == cache_col)
+            .order_by(DavSyncToken.revision.desc(), DavSyncToken.id.desc())
+        )
+        expired_ids = [
+            row.id
+            for row in retained_tokens.offset(config.DAV_SYNC_TOKEN_RETENTION)
+        ]
+        if expired_ids:
+            DavSyncToken.delete().where(DavSyncToken.id.in_(expired_ids)).execute()
+
+        oldest_token = (
+            DavSyncToken.select(DavSyncToken.revision)
+            .where(DavSyncToken.collection == cache_col)
+            .order_by(DavSyncToken.revision)
+            .first()
+        )
+        if oldest_token is not None:
+            DavChange.delete().where(
+                (DavChange.collection == cache_col)
+                & (DavChange.revision <= oldest_token.revision)
+            ).execute()
+
+        change_count = DavChange.select().where(
+            DavChange.collection == cache_col
+        ).count()
+        if change_count > config.DAV_CHANGE_RETENTION:
+            cutoff = (
+                DavChange.select(DavChange.revision)
+                .where(DavChange.collection == cache_col)
+                .order_by(DavChange.revision.desc())
+                .offset(config.DAV_CHANGE_RETENTION - 1)
+                .first()
+            )
+            if cutoff is not None:
+                DavChange.delete().where(
+                    (DavChange.collection == cache_col)
+                    & (DavChange.revision < cutoff.revision)
+                ).execute()
+                DavSyncToken.delete().where(
+                    (DavSyncToken.collection == cache_col)
+                    & (DavSyncToken.revision < cutoff.revision)
+                ).execute()
 
     def _list(self):
         """List collection items by their CalDAV/CardDAV hrefs."""
@@ -487,6 +566,12 @@ class Collection(BaseCollection):
             href_mapper.save(force_insert=True)
             log_sync_event("sync", f"Created item {href}")
 
+        record_dav_change(
+            self.collection.cache_col,
+            href,
+            etag=etesync_item.etag,
+            deleted=False,
+        )
         return self._get(href)
 
     def delete(self, href=None):
@@ -503,7 +588,14 @@ class Collection(BaseCollection):
         if item is None:
             raise ComponentNotFoundError(href)
 
+        etag = item.etesync_item.etag
         item.etesync_item.delete()
+        record_dav_change(
+            self.collection.cache_col,
+            href,
+            etag=etag,
+            deleted=True,
+        )
         log_sync_event("sync", f"Deleted item {href}")
 
     def get_meta(self, key=None):

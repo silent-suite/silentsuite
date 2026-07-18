@@ -30,7 +30,17 @@ def mem_db():
     database = pw.SqliteDatabase(":memory:", pragmas={"foreign_keys": 1})
     db.database_proxy.initialize(database)
     database.create_tables(
-        [models.Config, models.User, models.CollectionEntity, models.ItemEntity, models.HrefMapper],
+        [
+            models.Config,
+            models.User,
+            models.CollectionEntity,
+            models.ItemEntity,
+            models.HrefMapper,
+            models.DavChange,
+            models.DavSyncToken,
+            models.DavUnresolvedItem,
+            models.SchemaMigration,
+        ],
         safe=True,
     )
     models.Config.get_or_create(defaults={"db_version": 1})
