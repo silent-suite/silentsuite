@@ -80,7 +80,12 @@ class EteSyncCache:
                 "Configured account not found in credentials file. "
                 "Please authenticate via the browser first."
             )
-        return Etebase(user, stored_session, remote_url), True
+        return Etebase(
+            user,
+            stored_session,
+            remote_url,
+            read_only=True,
+        ), True
 
 
 _etesync_cache = EteSyncCache(
@@ -90,6 +95,9 @@ _etesync_cache = EteSyncCache(
 
 _user_locks = {}
 _user_locks_guard = threading.Lock()
+_reader_condition = threading.Condition(_user_locks_guard)
+_active_readers = {}
+_users_closing = set()
 
 
 def _lock_for_user(user):
@@ -101,8 +109,21 @@ def _lock_for_user(user):
 def etesync_for_user(user, *, exclusive=True, timeout=None):
     """Get an Etebase session for a user (thread-safe, cached)."""
     if not exclusive:
-        yield _etesync_cache.fresh_for_user(user)
-        return
+        with _reader_condition:
+            if user in _users_closing:
+                raise EteSyncBusyError("Account session is closing")
+            _active_readers[user] = _active_readers.get(user, 0) + 1
+        try:
+            yield _etesync_cache.fresh_for_user(user)
+            return
+        finally:
+            with _reader_condition:
+                remaining = _active_readers.get(user, 1) - 1
+                if remaining:
+                    _active_readers[user] = remaining
+                else:
+                    _active_readers.pop(user, None)
+                _reader_condition.notify_all()
     lock = _lock_for_user(user)
     acquired = lock.acquire() if timeout is None else lock.acquire(timeout=timeout)
     if not acquired:
@@ -115,6 +136,25 @@ def etesync_for_user(user, *, exclusive=True, timeout=None):
 
 
 def forget_etesync_user(user):
-    """Evict one user's restored Etebase session from the runtime cache."""
-    with _lock_for_user(user):
-        _etesync_cache.forget_user(user)
+    """Evict one user's restored session without waiting on a wedged sync."""
+    _etesync_cache.forget_user(user)
+
+
+@contextmanager
+def account_maintenance(user, *, timeout=0):
+    """Enter bounded exclusive maintenance only when no readers are active."""
+    lock = _lock_for_user(user)
+    acquired = lock.acquire(timeout=timeout)
+    if not acquired:
+        yield False
+        return
+    try:
+        with _reader_condition:
+            _users_closing.add(user)
+            available = _active_readers.get(user, 0) == 0
+        yield available
+    finally:
+        with _reader_condition:
+            _users_closing.discard(user)
+            _reader_condition.notify_all()
+        lock.release()

@@ -37,6 +37,7 @@ _DAV_SESSION_LOCK_TIMEOUT = 2.0
 # --- Sync Thread ---
 
 SYNC_MINIMUM = config.SYNC_MINIMUM
+_GENERATION_STATUS_RETENTION = 100
 
 # Global registry of sync threads keyed by username
 _sync_threads = {}
@@ -67,11 +68,17 @@ class SyncThread(threading.Thread):
         self.sync_started_at = None
         self.last_sync_duration = None
 
-    def force_sync(self):
+    def force_sync(self, *, deadline=None):
         with self._generation_condition:
             if self._active_generation is not None:
+                status = self._generation_statuses[self._active_generation]
+                if deadline is not None and status.get("deadline") is None:
+                    status["deadline"] = deadline
                 return self._active_generation
             if self._requested_generation is not None:
+                status = self._generation_statuses[self._requested_generation]
+                if deadline is not None and status.get("deadline") is None:
+                    status["deadline"] = deadline
                 return self._requested_generation
             self._next_generation += 1
             generation = self._next_generation
@@ -82,6 +89,7 @@ class SyncThread(threading.Thread):
                 "started_at": None,
                 "completed_at": None,
                 "error_code": None,
+                "deadline": deadline,
             }
             self._force_sync.set()
             self._done_syncing.clear()
@@ -117,6 +125,17 @@ class SyncThread(threading.Thread):
     def generation_status(self, generation):
         with self._generation_condition:
             status = self._generation_statuses.get(generation)
+            if (
+                status is not None
+                and status["state"] in {"pending", "running"}
+                and status.get("deadline") is not None
+                and time.time() >= status["deadline"]
+            ):
+                status.update({
+                    "state": "timed_out",
+                    "completed_at": status["deadline"],
+                    "error_code": "SyncTimeout",
+                })
             return dict(status) if status is not None else None
 
     def wait_for_generation(self, generation, timeout=None):
@@ -126,7 +145,7 @@ class SyncThread(threading.Thread):
                 status = self._generation_statuses.get(generation)
                 if status is None:
                     return False
-                if status["state"] in {"succeeded", "failed"}:
+                if status["state"] in {"succeeded", "failed", "timed_out"}:
                     return True
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
@@ -145,6 +164,7 @@ class SyncThread(threading.Thread):
                     "started_at": None,
                     "completed_at": None,
                     "error_code": None,
+                    "deadline": None,
                 }
             self._requested_generation = None
             self._active_generation = generation
@@ -158,14 +178,26 @@ class SyncThread(threading.Thread):
 
     def _complete_generation(self, generation, state, completed_at, error_code=None):
         with self._generation_condition:
-            self._generation_statuses[generation].update({
-                "state": state,
-                "completed_at": completed_at,
-                "error_code": error_code,
-            })
-            self._active_generation = None
+            status = self._generation_statuses[generation]
+            if status["state"] != "timed_out":
+                status.update({
+                    "state": state,
+                    "completed_at": completed_at,
+                    "error_code": error_code,
+                })
+            if self._requested_generation == generation:
+                self._requested_generation = None
+            if self._active_generation == generation:
+                self._active_generation = None
             self._done_syncing.set()
             self._generation_condition.notify_all()
+            terminal = [
+                key
+                for key, value in self._generation_statuses.items()
+                if value["state"] in {"succeeded", "failed", "timed_out"}
+            ]
+            for expired in terminal[:-_GENERATION_STATUS_RETENTION]:
+                del self._generation_statuses[expired]
 
     def run(self):
         while not self._stop_sync.is_set():
@@ -880,24 +912,13 @@ class Storage(BaseStorage):
             self.etesync = etesync
             try:
                 yield
-
-                if mode == "w":
-                    logger.info("acquire_lock(w): post-write — pushing inline")
-                    try:
-                        etesync.push_collection_list()
-                        for col in etesync.list():
-                            if etesync.collection_is_dirty(col.uid):
-                                logger.info("acquire_lock: pushing dirty collection")
-                                etesync.push_collection(col.uid)
-                        logger.info("acquire_lock(w): inline push done")
-                    except Exception as exc:
-                        logger.warning(
-                            "acquire_lock(w): inline push failed (%s)",
-                            exc.__class__.__name__,
-                        )
             finally:
                 self.etesync = None
                 self.user = None
+
+        if mode == "w":
+            logger.info("acquire_lock(w): queued background push")
+            sync_thread.force_sync()
 
     @contextmanager
     def _acquire_read_backend(self):

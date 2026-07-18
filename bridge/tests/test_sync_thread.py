@@ -369,3 +369,24 @@ class TestStartSyncThread:
             MockThread.assert_not_called()
         finally:
             storage._sync_threads = original
+
+
+def test_generation_timeout_is_shared_and_terminal():
+    thread = SyncThread("account@example.com")
+    generation = thread.force_sync(deadline=time.time() - 1)
+
+    assert thread.generation_status(generation)["state"] == "timed_out"
+
+    thread._complete_generation(generation, "succeeded", time.time())
+    assert thread.generation_status(generation)["state"] == "timed_out"
+    assert thread.force_sync(deadline=time.time() + 30) != generation
+
+
+def test_terminal_generation_history_is_bounded():
+    thread = SyncThread("account@example.com")
+    for _ in range(105):
+        generation = thread.force_sync()
+        thread._begin_generation()
+        thread._complete_generation(generation, "succeeded", time.time())
+
+    assert len(thread._generation_statuses) == 100

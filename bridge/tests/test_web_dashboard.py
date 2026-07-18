@@ -400,6 +400,7 @@ def test_dashboard_post_requires_csrf_token():
 
 def test_dashboard_sync_post_returns_request_id_without_waiting(monkeypatch):
     web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: ["account@example.com"])
     thread = MagicMock()
     thread.is_alive.return_value = True
     thread.force_sync.return_value = 7
@@ -426,7 +427,8 @@ def test_dashboard_sync_post_returns_request_id_without_waiting(monkeypatch):
     assert payload["ok"] is True
     assert payload["state"] == "pending"
     assert payload["request_id"]
-    thread.force_sync.assert_called_once_with()
+    thread.force_sync.assert_called_once()
+    assert thread.force_sync.call_args.kwargs["deadline"] == payload["deadline"]
     thread.wait_for_sync.assert_not_called()
 
 
@@ -454,6 +456,7 @@ def test_dashboard_sync_post_fails_when_no_live_worker(monkeypatch):
 
 def test_dashboard_sync_request_reports_generation_completion(monkeypatch):
     web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: ["account@example.com"])
     thread = MagicMock()
     thread.is_alive.return_value = True
     thread.force_sync.return_value = 7
@@ -495,6 +498,63 @@ def test_dashboard_sync_request_reports_generation_completion(monkeypatch):
         "timed_out": 0,
     }
     assert "account@example.com" not in body.decode()
+
+
+def test_dashboard_sync_waits_for_all_configured_accounts(monkeypatch):
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(
+        accounts,
+        "list_accounts",
+        lambda: ["live@example.com", "missing@example.com"],
+    )
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.force_sync.return_value = 4
+    thread.generation_status.return_value = {
+        "generation": 4,
+        "state": "running",
+        "started_at": 100.0,
+        "completed_at": None,
+        "error_code": None,
+    }
+    monkeypatch.setattr(storage, "_sync_threads", {"live@example.com": thread})
+    web = Web.__new__(Web)
+
+    _, _, first_body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+    first = json.loads(first_body)
+    assert first["state"] == "running"
+    assert first["accounts"]["failed"] == 1
+
+    _, _, duplicate_body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+    assert json.loads(duplicate_body)["request_id"] == first["request_id"]
+
+    thread.generation_status.return_value = {
+        "generation": 4,
+        "state": "succeeded",
+        "started_at": 100.0,
+        "completed_at": 101.0,
+        "error_code": None,
+    }
+    _, _, final_body = web.get(
+        _get_environ(),
+        "",
+        f"/.web/api/sync/{first['request_id']}",
+        None,
+    )
+    final = json.loads(final_body)
+    assert final["state"] == "partial_failure"
+    assert final["accounts"]["succeeded"] == 1
+    assert final["accounts"]["failed"] == 1
 
 
 def test_dashboard_sync_post_rejects_wrong_csrf_token():

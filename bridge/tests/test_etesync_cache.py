@@ -141,3 +141,38 @@ def test_exclusive_session_wait_has_a_bounded_timeout(monkeypatch):
     finally:
         release.set()
         holder.join(1)
+
+
+def test_forget_user_does_not_wait_for_wedged_exclusive_session(monkeypatch):
+    monkeypatch.setattr(
+        etesync_cache._etesync_cache,
+        "etesync_for_user",
+        lambda user: (object(), False),
+    )
+    forgotten = threading.Event()
+    monkeypatch.setattr(
+        etesync_cache._etesync_cache,
+        "forget_user",
+        lambda user: forgotten.set(),
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_session():
+        with etesync_cache.etesync_for_user("same@example.com"):
+            entered.set()
+            release.wait(2)
+
+    holder = threading.Thread(target=hold_session)
+    holder.start()
+    assert entered.wait(1)
+    try:
+        etesync_cache.forget_etesync_user("same@example.com")
+        assert forgotten.wait(0.1)
+        with etesync_cache.account_maintenance(
+            "same@example.com", timeout=0
+        ) as available:
+            assert available is False
+    finally:
+        release.set()
+        holder.join(1)

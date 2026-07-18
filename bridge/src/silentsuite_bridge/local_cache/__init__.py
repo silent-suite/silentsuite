@@ -184,7 +184,7 @@ class Etebase:
     collections and items.
     """
 
-    def __init__(self, username, stored_session, remote_url=None):
+    def __init__(self, username, stored_session, remote_url=None, *, read_only=False):
         if remote_url is None:
             remote_url = config.ETEBASE_SERVER_URL
 
@@ -194,7 +194,15 @@ class Etebase:
         self.etebase = Account.restore(client, stored_session, None)
         self.username = username
 
-        self._init_db(db_path)
+        if read_only:
+            database = getattr(db.database_proxy, "obj", None)
+            if database is None:
+                raise RuntimeError("Local cache is not initialized")
+            self._database = database
+            with db.database_proxy:
+                self.user = models.User.get(username=self.username)
+        else:
+            self._init_db(db_path)
 
     def reinit(self):
         self._set_db(self._database)

@@ -299,14 +299,10 @@ class TestBackendDiscoveryForcesSync:
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
-    def test_acquire_lock_write_pushes_inline_after_yield(self, mock_start, mock_etesync_ctx):
-        """Write mode: pull via force_sync on entry, then push INLINE on
-        exit — not a second force_sync. The SyncThread can't acquire the
-        etesync lock while we hold it (storage.py:665-677), so push runs
-        directly here. The previous version of this test asserted
-        force_sync.call_count == 2 against an older "request another sync"
-        contract; it had been red since the inline-push refactor.
-        """
+    def test_acquire_lock_write_queues_push_after_releasing_session(
+        self, mock_start, mock_etesync_ctx
+    ):
+        """Write requests never perform an unbounded upstream push inline."""
         mock_thread = MagicMock()
         mock_thread.wait_for_sync.return_value = True
         mock_start.return_value = mock_thread
@@ -329,10 +325,9 @@ class TestBackendDiscoveryForcesSync:
         with storage.acquire_lock("w", user="test@example.com"):
             pass
 
-        # Pre-yield: one force_sync() to pull the latest server state.
-        assert mock_thread.force_sync.call_count == 1
-        # Post-yield: inline push of the collection list (write mode only).
-        mock_etesync.push_collection_list.assert_called_once()
+        assert mock_thread.force_sync.call_count == 2
+        mock_etesync.push_collection_list.assert_not_called()
+        mock_etesync.push_collection.assert_not_called()
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")

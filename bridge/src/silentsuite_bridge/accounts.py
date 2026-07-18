@@ -10,9 +10,8 @@ from dataclasses import dataclass
 from . import config
 from .local_cache import clear_cached_user
 from .radicale.creds import Credentials
-from .radicale.etesync_cache import forget_etesync_user
+from .radicale.etesync_cache import account_maintenance, forget_etesync_user
 from .radicale.storage import stop_sync_thread
-
 
 _account_lock = threading.RLock()
 
@@ -113,7 +112,8 @@ def remove_account(
     """Remove local credentials plus that account's local decrypted cache."""
     normalized = _normalize_username(username)
     logout_result = logout_account(normalized, credentials=credentials)
-    cache_cleared = clear_cached_user(normalized)
+    with account_maintenance(normalized, timeout=0) as available:
+        cache_cleared = clear_cached_user(normalized) if available else False
 
     return AccountOperationResult(
         username=normalized,
