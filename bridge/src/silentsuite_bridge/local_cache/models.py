@@ -91,6 +91,7 @@ class DavRevision(db.BaseModel):
     revision = pw.IntegerField(null=False)
     etag = pw.CharField(null=True, default=None)
     deleted = pw.BooleanField(null=False, default=False)
+    previous_state_hash = pw.CharField(null=True, default=None)
     state_hash = pw.CharField(null=True, default=None)
 
     class Meta:

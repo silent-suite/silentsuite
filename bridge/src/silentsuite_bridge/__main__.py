@@ -542,10 +542,7 @@ def run_server():
     logger.info("CalDAV/CardDAV scheme: %s", config.dav_scheme())
     logger.info("CalDAV/CardDAV host(s): %s", config.SERVER_HOSTS)
 
-    # Run initial sync so dashboard shows correct status immediately
-    _initial_status_check()
-
-    # Start periodic SyncThread for all configured users
+    # Start account workers without blocking DAV/dashboard startup on provider I/O.
     _start_sync_threads()
 
     # Start system tray (non-blocking)
