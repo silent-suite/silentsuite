@@ -62,10 +62,13 @@ def _carddav_collection(mem_db, user):
     return Collection(storage, "/test@example.com/contacts")
 
 
-def test_sync_sanitizes_existing_unsafe_href_before_issuing_token(mem_db, user):
+@pytest.mark.parametrize("unsafe_href", ["legacy/contact.vcf", ".", ".."])
+def test_sync_sanitizes_existing_unsafe_href_before_issuing_token(
+    mem_db, user, unsafe_href
+):
     collection = _carddav_collection(mem_db, user)
     mapper = HrefMapper.get()
-    mapper.href = "legacy/contact.vcf"
+    mapper.href = unsafe_href
     mapper.save()
 
     _token, hrefs = collection.sync(None)
@@ -73,7 +76,7 @@ def test_sync_sanitizes_existing_unsafe_href_before_issuing_token(mem_db, user):
     assert list(hrefs) == [
         local_cache_module.opaque_dav_href("contact-1", ".vcf")
     ]
-    assert "/" not in HrefMapper.get().href
+    assert local_cache_module.is_safe_dav_href(HrefMapper.get().href)
 
 
 def test_concurrent_initial_reports_are_serialized(mem_db, user, monkeypatch):
