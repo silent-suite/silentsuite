@@ -716,6 +716,7 @@ def test_remote_tombstone_without_name_reuses_remote_identity_and_original_href(
             models.ItemEntity,
             models.HrefMapper,
             models.DavChange,
+            models.DavRevision,
             models.DavSyncToken,
             models.DavUnresolvedItem,
             models.SchemaMigration,
@@ -866,7 +867,15 @@ def test_v1_cache_is_migrated_additively_without_bumping_legacy_version(tmp_path
     assert migrated_item.remote_uid is None
     assert HrefMapper.get_by_id(migrated_item.id).href == "contact-1.vcf"
     assert models.Config.get().db_version == 1
-    assert models.SchemaMigration.get().name == "dav-revision-v1"
+    assert {
+        migration.name for migration in models.SchemaMigration.select()
+    } == {"dav-revision-v1", "dav-revision-ledger-v2"}
+    assert "davrevision" in etebase._database.get_tables()
+    unresolved_columns = {
+        column.name
+        for column in etebase._database.get_columns("davunresolveditem")
+    }
+    assert {"reason", "local_item_id"} <= unresolved_columns
 
 
 def test_backfill_remote_uids_uses_cached_envelopes_without_remote_io(mem_db, user):
@@ -920,8 +929,10 @@ def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
     remote_item = MagicMock(uid="remote-item-1")
     item_mgr = MagicMock()
     item_mgr.cache_load.return_value = remote_item
+    item_mgr.cache_save.return_value = b"duplicate-retry-cache"
     col_mgr = MagicMock()
-    col_mgr.cache_load.return_value = MagicMock()
+    col = MagicMock()
+    col_mgr.cache_load.return_value = col
     col_mgr.get_item_manager.return_value = item_mgr
     account = MagicMock()
     account.get_collection_manager.return_value = col_mgr
@@ -940,6 +951,14 @@ def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
     change = DavChange.get(collection=cache_col)
     assert change.href == "contact-duplicate.vcf"
     assert change.deleted is True
+
+    etebase._retry_unresolved_items(cache_col, col, item_mgr)
+
+    assert ItemEntity.get_by_id(first.id).eb_item == b"item-cache-1"
+    quarantine = models.DavUnresolvedItem.get(collection=cache_col)
+    assert quarantine.reason == "legacy_duplicate"
+    assert quarantine.local_item_id == duplicate.id
+    assert quarantine.attempts == 1
 
 
 def test_backfill_quarantines_malformed_legacy_envelope(mem_db, user):
@@ -1083,6 +1102,7 @@ def test_unmatched_identityless_tombstone_is_quarantined_without_duplicate(tmp_p
             models.ItemEntity,
             models.HrefMapper,
             models.DavChange,
+            models.DavRevision,
             models.DavSyncToken,
             models.DavUnresolvedItem,
             models.SchemaMigration,
@@ -1166,6 +1186,7 @@ def test_corrupt_quarantine_row_does_not_block_fresh_collection_sync(tmp_path):
             models.ItemEntity,
             models.HrefMapper,
             models.DavChange,
+            models.DavRevision,
             models.DavSyncToken,
             models.DavUnresolvedItem,
             models.SchemaMigration,

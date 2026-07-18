@@ -90,7 +90,13 @@ def _ensure_cache_tables(database):
         )
         _migrate_cache_schema(database)
         database.create_tables(
-            [models.DavChange, models.DavSyncToken, models.DavUnresolvedItem, models.SchemaMigration],
+            [
+                models.DavChange,
+                models.DavRevision,
+                models.DavSyncToken,
+                models.DavUnresolvedItem,
+                models.SchemaMigration,
+            ],
             safe=True,
         )
         models.Config.get_or_create(defaults={"db_version": 1})
@@ -98,6 +104,7 @@ def _ensure_cache_tables(database):
             name="dav-revision-v1",
             defaults={"applied_at": get_millis()},
         )
+        _activate_dav_revision_ledger()
     _restrict_cache_database_files(getattr(database, "database", None))
 
 
@@ -129,6 +136,30 @@ def _migrate_cache_schema(database):
             "davsynctoken_collection_revision "
             "ON davsynctoken (collection_id, revision)"
         )
+    if "davunresolveditem" in tables:
+        unresolved_columns = {
+            column.name for column in database.get_columns("davunresolveditem")
+        }
+        if "reason" not in unresolved_columns:
+            database.execute_sql(
+                "ALTER TABLE davunresolveditem "
+                "ADD COLUMN reason VARCHAR(255) NOT NULL "
+                "DEFAULT 'remote_unresolved'"
+            )
+        if "local_item_id" not in unresolved_columns:
+            database.execute_sql(
+                "ALTER TABLE davunresolveditem ADD COLUMN local_item_id INTEGER"
+            )
+
+
+def _activate_dav_revision_ledger():
+    """Invalidate pre-ledger tokens once so all retained tokens are provable."""
+    _, created = models.SchemaMigration.get_or_create(
+        name="dav-revision-ledger-v2",
+        defaults={"applied_at": get_millis()},
+    )
+    if created:
+        models.DavSyncToken.delete().execute()
 
 
 def clear_cached_user(username, db_path=None):
@@ -248,6 +279,13 @@ def record_dav_change(cache_col, href, *, etag=None, deleted=False):
             )
             .execute()
         )
+        models.DavRevision.create(
+            collection=cache_col,
+            href=href,
+            revision=revision,
+            etag=etag,
+            deleted=deleted,
+        )
         cache_col.dav_revision = revision
         return revision
 
@@ -328,7 +366,13 @@ class Etebase:
         )
         _migrate_cache_schema(database)
         database.create_tables(
-            [models.DavChange, models.DavSyncToken, models.DavUnresolvedItem, models.SchemaMigration],
+            [
+                models.DavChange,
+                models.DavRevision,
+                models.DavSyncToken,
+                models.DavUnresolvedItem,
+                models.SchemaMigration,
+            ],
             safe=True,
         )
         if additional_tables:
@@ -339,6 +383,7 @@ class Etebase:
             name="dav-revision-v1",
             defaults={"applied_at": get_millis()},
         )
+        _activate_dav_revision_ledger()
         _restrict_cache_database_files(getattr(database, "database", None))
 
     def _backfill_remote_uids(self):
@@ -353,18 +398,26 @@ class Etebase:
                 try:
                     remote_item = item_mgr.cache_load(cache_item.eb_item)
                 except Exception:
-                    self._quarantine_legacy_cache_item(cache_col, cache_item)
+                    self._quarantine_legacy_cache_item(
+                        cache_col,
+                        cache_item,
+                        reason="legacy_corrupt",
+                    )
                     unresolved += 1
                     continue
                 try:
                     cache_item.remote_uid = remote_item.uid
                     cache_item.save(only=[models.ItemEntity.remote_uid])
                 except pw.IntegrityError:
-                    self._quarantine_legacy_cache_item(cache_col, cache_item)
+                    self._quarantine_legacy_cache_item(
+                        cache_col,
+                        cache_item,
+                        reason="legacy_duplicate",
+                    )
                     unresolved += 1
         return unresolved
 
-    def _quarantine_legacy_cache_item(self, cache_col, cache_item):
+    def _quarantine_legacy_cache_item(self, cache_col, cache_item, *, reason):
         """Hide a legacy row while preserving its envelope for local retry."""
         quarantine_uid = "legacy-cache:" + hashlib.sha256(
             cache_item.eb_item
@@ -377,6 +430,8 @@ class Etebase:
                     eb_item=cache_item.eb_item,
                     deleted=cache_item.deleted,
                     attempts=0,
+                    reason=reason,
+                    local_item=cache_item,
                 )
                 .on_conflict(
                     conflict_target=[
@@ -385,6 +440,8 @@ class Etebase:
                     ],
                     update={
                         models.DavUnresolvedItem.eb_item: cache_item.eb_item,
+                        models.DavUnresolvedItem.reason: reason,
+                        models.DavUnresolvedItem.local_item: cache_item,
                         models.DavUnresolvedItem.attempts:
                             models.DavUnresolvedItem.attempts + 1,
                     },
@@ -595,6 +652,10 @@ class Etebase:
             )
         )
         for unresolved in unresolved_items:
+            if unresolved.reason == "legacy_duplicate":
+                unresolved.attempts += 1
+                unresolved.save(only=[models.DavUnresolvedItem.attempts])
+                continue
             try:
                 item = item_mgr.cache_load(unresolved.eb_item)
             except Exception as exc:
@@ -604,6 +665,42 @@ class Etebase:
                     "Deferred unresolved DAV item after cache-load failure (%s)",
                     exc.__class__.__name__,
                 )
+                continue
+            if unresolved.local_item_id is not None:
+                local_item = models.ItemEntity.get_or_none(
+                    models.ItemEntity.id == unresolved.local_item_id
+                )
+                conflict = models.ItemEntity.get_or_none(
+                    (models.ItemEntity.collection == cache_col)
+                    & (models.ItemEntity.remote_uid == item.uid)
+                    & (models.ItemEntity.id != unresolved.local_item_id)
+                )
+                if local_item is None or conflict is not None:
+                    unresolved.reason = "legacy_duplicate"
+                    unresolved.attempts += 1
+                    unresolved.save(
+                        only=[
+                            models.DavUnresolvedItem.reason,
+                            models.DavUnresolvedItem.attempts,
+                        ]
+                    )
+                    continue
+                with db.database_proxy.atomic():
+                    local_item.remote_uid = item.uid
+                    local_item.eb_item = item_mgr.cache_save(item)
+                    local_item.deleted = item.deleted
+                    local_item.save()
+                    href_mapper = models.HrefMapper.get_or_none(
+                        models.HrefMapper.content == local_item
+                    )
+                    if href_mapper is not None:
+                        record_dav_change(
+                            cache_col,
+                            href_mapper.href,
+                            etag=getattr(item, "etag", None),
+                            deleted=item.deleted,
+                        )
+                    unresolved.delete_instance()
                 continue
             applied = self._apply_pulled_item(
                 cache_col,

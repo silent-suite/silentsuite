@@ -29,6 +29,7 @@ SYNC_REPORT = b"""<?xml version="1.0" encoding="utf-8"?>
 def test_sync_collection_report_emits_literal_404_for_remote_deletion(
     tmp_path,
     monkeypatch,
+    caplog,
 ):
     app = _application(tmp_path, monkeypatch)
     database = SqliteExtDatabase(
@@ -44,6 +45,7 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
             models.ItemEntity,
             models.HrefMapper,
             models.DavChange,
+            models.DavRevision,
             models.DavSyncToken,
             models.DavUnresolvedItem,
             models.SchemaMigration,
@@ -131,3 +133,15 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
         if response.findtext(f"{DAV}href", "").endswith("/contact-1.vcf")
     )
     assert deleted_response.findtext(f"{DAV}status") == "HTTP/1.1 404 Not Found"
+
+    private_token = "http://radicale.org/ns/sync/private-client-token"
+    _request(
+        app,
+        f"/{USERNAME}/contacts/",
+        method="REPORT",
+        body=SYNC_REPORT.replace(b"{token}", private_token.encode()),
+        depth="1",
+        auth=_basic_auth(),
+    )
+    assert private_token not in caplog.text
+    assert "private-client-token" not in caplog.text

@@ -171,7 +171,7 @@ def start_tray():
         tray.run_detached()
         return tray
     except Exception as e:
-        logger.warning("Failed to start system tray: %s", e)
+        logger.warning("Failed to start system tray (%s)", e.__class__.__name__)
         return None
 
 
@@ -225,9 +225,13 @@ def _initial_status_check():
                     collections["tasks"],
                 )
         except Exception as e:
-            logger.warning("Initial status check failed for a configured account: %s", e)
-            errors.append(str(e))
-            log_sync_event("error", f"Initial sync failed for an account: {e}")
+            error_code = e.__class__.__name__
+            logger.warning(
+                "Initial status check failed for a configured account (%s)",
+                error_code,
+            )
+            errors.append(error_code)
+            log_sync_event("error", "Initial sync failed for a configured account")
 
     if synced:
         update_status(

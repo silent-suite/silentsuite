@@ -9,7 +9,7 @@ from silentsuite_bridge import config
 from silentsuite_bridge.local_cache import record_dav_change
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
-    DavChange,
+    DavRevision,
     DavSyncToken,
     HrefMapper,
     ItemEntity,
@@ -73,12 +73,9 @@ def test_carddav_sync_returns_changed_href_since_retained_token(mem_db, user):
     collection = _carddav_collection(mem_db, user)
     old_token, _ = collection.sync(None)
     cache_col = collection.collection.cache_col
-    cache_col.dav_revision = 1
-    cache_col.save()
-    DavChange.create(
-        collection=cache_col,
-        href="contact-1.vcf",
-        revision=1,
+    record_dav_change(
+        cache_col,
+        "contact-1.vcf",
         etag="etag-2",
         deleted=False,
     )
@@ -135,12 +132,9 @@ def test_expired_carddav_token_requires_safe_full_resync(mem_db, user, monkeypat
 
     previous_token = expired_token
     for revision in (1, 2):
-        cache_col.dav_revision = revision
-        cache_col.save()
-        DavChange.create(
-            collection=cache_col,
-            href=f"changed-{revision}.vcf",
-            revision=revision,
+        record_dav_change(
+            cache_col,
+            f"changed-{revision}.vcf",
             deleted=False,
         )
         previous_token, _ = collection.sync(previous_token)
@@ -249,6 +243,20 @@ def test_current_token_from_lost_history_is_rejected(mem_db, user):
     collection = _carddav_collection(mem_db, user)
     token, _ = collection.sync(None)
     DavSyncToken.delete().execute()
+
+    with pytest.raises(ValueError, match="unknown sync token"):
+        collection.sync(token)
+
+
+def test_token_is_rejected_when_revision_ledger_is_incomplete(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    token, _ = collection.sync(None)
+    record_dav_change(
+        collection.collection.cache_col,
+        "contact-1.vcf",
+        etag="etag-2",
+    )
+    DavRevision.delete().execute()
 
     with pytest.raises(ValueError, match="unknown sync token"):
         collection.sync(token)

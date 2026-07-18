@@ -32,6 +32,7 @@ from ..local_cache import db, record_dav_change
 from ..local_cache.models import (
     CollectionEntity,
     DavChange,
+    DavRevision,
     DavSyncToken,
     HrefMapper,
     ItemEntity,
@@ -409,16 +410,20 @@ class Collection(BaseCollection):
             raise ValueError("unknown sync token")
         if old_token == token:
             return token, []
-        changed_hrefs = (
-            DavChange.select(DavChange.href)
+        changed_revisions = (
+            DavRevision.select(DavRevision.href)
             .where(
-                (DavChange.collection == self.collection.cache_col)
-                & (DavChange.revision > token_row.revision)
-                & (DavChange.revision <= revision)
+                (DavRevision.collection == self.collection.cache_col)
+                & (DavRevision.revision > token_row.revision)
+                & (DavRevision.revision <= revision)
             )
-            .order_by(DavChange.href)
+            .order_by(DavRevision.revision)
         )
-        return token, [change.href for change in changed_hrefs]
+        expected_revisions = revision - token_row.revision
+        if changed_revisions.count() != expected_revisions:
+            raise ValueError("unknown sync token")
+        changed_hrefs = sorted({change.href for change in changed_revisions})
+        return token, changed_hrefs
 
     def _prune_sync_history(self):
         cache_col = self.collection.cache_col
@@ -445,15 +450,19 @@ class Collection(BaseCollection):
                 (DavChange.collection == cache_col)
                 & (DavChange.revision <= oldest_token.revision)
             ).execute()
+            DavRevision.delete().where(
+                (DavRevision.collection == cache_col)
+                & (DavRevision.revision <= oldest_token.revision)
+            ).execute()
 
-        change_count = DavChange.select().where(
-            DavChange.collection == cache_col
+        revision_count = DavRevision.select().where(
+            DavRevision.collection == cache_col
         ).count()
-        if change_count > config.DAV_CHANGE_RETENTION:
+        if revision_count > config.DAV_CHANGE_RETENTION:
             cutoff = (
-                DavChange.select(DavChange.revision)
-                .where(DavChange.collection == cache_col)
-                .order_by(DavChange.revision.desc())
+                DavRevision.select(DavRevision.revision)
+                .where(DavRevision.collection == cache_col)
+                .order_by(DavRevision.revision.desc())
                 .offset(config.DAV_CHANGE_RETENTION - 1)
                 .first()
             )
@@ -461,6 +470,10 @@ class Collection(BaseCollection):
                 DavChange.delete().where(
                     (DavChange.collection == cache_col)
                     & (DavChange.revision < cutoff.revision)
+                ).execute()
+                DavRevision.delete().where(
+                    (DavRevision.collection == cache_col)
+                    & (DavRevision.revision < cutoff.revision)
                 ).execute()
                 DavSyncToken.delete().where(
                     (DavSyncToken.collection == cache_col)

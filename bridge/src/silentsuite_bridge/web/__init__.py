@@ -180,10 +180,13 @@ def _handle_account_login(environ):
 
         result = authenticate_and_store_account(email, password, server_url)
     except AuthenticationError as exc:
-        logger.warning("Dashboard account sign-in failed: %s", exc)
+        logger.warning(
+            "Dashboard account sign-in failed (%s)",
+            exc.__class__.__name__,
+        )
         return _json_response(401, {"error": str(exc)})
-    except ValueError as exc:
-        return _json_response(400, {"error": str(exc)})
+    except ValueError:
+        return _json_response(400, {"error": "Invalid account settings"})
     except Exception:
         logger.warning("Dashboard account sign-in failed")
         return _json_response(500, {"error": "Account sign-in failed"})
@@ -192,10 +195,13 @@ def _handle_account_login(environ):
     message = "Account added or re-authenticated. The bridge will start syncing it now."
     try:
         refresh_sync_thread(result.username)
-    except Exception:
+    except Exception as exc:
         sync_started = False
         message = "Account added, but sync could not start automatically. Restart the bridge if sync does not begin."
-        logger.exception("Dashboard account sync refresh failed after sign-in")
+        logger.warning(
+            "Dashboard account sync refresh failed after sign-in (%s)",
+            exc.__class__.__name__,
+        )
         log_sync_event("error", "Account sign-in succeeded, but sync did not start automatically")
 
     log_sync_event("info", f"Account added or re-authenticated: {result.username}")
@@ -268,8 +274,11 @@ def _account_fingerprint(creds, username):
 
         account = Account.restore(Client("silentsuite-bridge", server_url), stored_session, None)
         return pretty_fingerprint(account.get_invitation_manager().pubkey)
-    except Exception:
-        logger.warning("Failed to compute bridge account fingerprint", exc_info=True)
+    except Exception as exc:
+        logger.warning(
+            "Failed to compute bridge account fingerprint (%s)",
+            exc.__class__.__name__,
+        )
         return None
 
 

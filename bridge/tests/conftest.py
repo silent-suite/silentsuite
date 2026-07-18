@@ -37,6 +37,7 @@ def mem_db():
             models.ItemEntity,
             models.HrefMapper,
             models.DavChange,
+            models.DavRevision,
             models.DavSyncToken,
             models.DavUnresolvedItem,
             models.SchemaMigration,

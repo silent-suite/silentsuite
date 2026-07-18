@@ -81,6 +81,21 @@ class DavChange(db.BaseModel):
         indexes = ((("collection", "href"), True),)
 
 
+class DavRevision(db.BaseModel):
+    """Append-only DAV mutation ledger used to prove sync history completeness."""
+
+    collection = pw.ForeignKeyField(
+        CollectionEntity, backref="dav_revisions", on_delete="CASCADE"
+    )
+    href = pw.CharField(null=False)
+    revision = pw.IntegerField(null=False)
+    etag = pw.CharField(null=True, default=None)
+    deleted = pw.BooleanField(null=False, default=False)
+
+    class Meta:
+        indexes = ((("collection", "revision"), True),)
+
+
 class DavSyncToken(db.BaseModel):
     """Opaque collection-scoped DAV token mapped to a local revision."""
 
@@ -108,6 +123,14 @@ class DavUnresolvedItem(db.BaseModel):
     eb_item = pw.BlobField()
     deleted = pw.BooleanField(null=False, default=False)
     attempts = pw.IntegerField(null=False, default=0)
+    reason = pw.CharField(null=False, default="remote_unresolved")
+    local_item = pw.ForeignKeyField(
+        ItemEntity,
+        null=True,
+        default=None,
+        backref="dav_quarantine",
+        on_delete="SET NULL",
+    )
 
     class Meta:
         indexes = ((("collection", "remote_uid"), True),)
