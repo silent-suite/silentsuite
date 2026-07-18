@@ -676,7 +676,12 @@ class Collection(BaseCollection):
                 for stale_mapper in stale_mappers:
                     stale_item = stale_mapper.content
                     stale_mapper.delete_instance()
-                    stale_item.delete_instance()
+                    tombstone_identity = stale_item.remote_uid or stale_item.eb_item.hex()
+                    stale_item.uid = (
+                        "dav-tombstone:"
+                        + hashlib.sha256(str(tombstone_identity).encode()).hexdigest()
+                    )
+                    stale_item.save(only=[ItemEntity.uid])
                 etesync_item = self.collection.create(vobject_item)
                 etesync_item.save()
                 href_mapper = HrefMapper(
