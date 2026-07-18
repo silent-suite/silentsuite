@@ -521,6 +521,50 @@ def test_late_native_success_does_not_publish_connected(
     )
 
 
+@patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+@patch("silentsuite_bridge.radicale.storage.update_status")
+@patch("silentsuite_bridge.radicale.storage.log_sync_event")
+def test_native_success_after_stop_does_not_restore_removed_account_status(
+    mock_log, mock_status, mock_etesync_ctx,
+):
+    started = threading.Event()
+    release = threading.Event()
+    mock_etesync = MagicMock()
+
+    def sync():
+        started.set()
+        assert release.wait(1)
+
+    mock_etesync.sync.side_effect = sync
+    mock_etesync_ctx.return_value.__enter__ = MagicMock(
+        return_value=(mock_etesync, False)
+    )
+    mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+    thread = SyncThread("account@example.com", daemon=True)
+    thread.interval = 300
+    generation = thread.force_sync()
+    thread.start()
+    assert started.wait(1)
+
+    thread.stop()
+    release.set()
+    thread.join(1)
+
+    status = thread.generation_status(generation)
+    assert status["state"] == "failed"
+    assert status["error_code"] == "SyncStopped"
+    assert thread.last_sync is None
+    mock_etesync.list.assert_not_called()
+    assert not any(
+        call.args and call.args[0] == "connected"
+        for call in mock_status.call_args_list
+    )
+    assert not any(
+        call.args == ("sync", "Synced account")
+        for call in mock_log.call_args_list
+    )
+
+
 def test_terminal_generation_history_is_bounded():
     thread = SyncThread("account@example.com")
     for _ in range(105):

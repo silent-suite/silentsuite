@@ -327,7 +327,11 @@ class SyncThread(threading.Thread):
                         status = self._generation_status_snapshot(
                             self._generation_statuses[generation]
                         )
-                    if status["state"] == "timed_out":
+                    if self._stop_sync.is_set():
+                        state = "failed"
+                        error_code = "SyncStopped"
+                        logger.info("Sync returned after account worker stopped")
+                    elif status["state"] == "timed_out":
                         state = "timed_out"
                         error_code = "SyncTimeout"
                         logger.warning("Sync returned after its generation deadline")
@@ -336,20 +340,18 @@ class SyncThread(threading.Thread):
                     else:
                         state = "succeeded"
                         logger.debug("Sync completed for configured account")
-
-                    # Update dashboard status with collection counts
-                    collections = {"calendars": 0, "contacts": 0, "tasks": 0}
-                    try:
-                        for col in etesync.list():
-                            if col.col_type == "etebase.vevent":
-                                collections["calendars"] += 1
-                            elif col.col_type == "etebase.vcard":
-                                collections["contacts"] += 1
-                            elif col.col_type == "etebase.vtodo":
-                                collections["tasks"] += 1
-                    except Exception:
-                        pass
                     if state == "succeeded":
+                        collections = {"calendars": 0, "contacts": 0, "tasks": 0}
+                        try:
+                            for col in etesync.list():
+                                if col.col_type == "etebase.vevent":
+                                    collections["calendars"] += 1
+                                elif col.col_type == "etebase.vcard":
+                                    collections["contacts"] += 1
+                                elif col.col_type == "etebase.vtodo":
+                                    collections["tasks"] += 1
+                        except Exception:
+                            pass
                         update_status(
                             "connected",
                             collections=collections,
