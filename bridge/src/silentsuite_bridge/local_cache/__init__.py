@@ -22,6 +22,7 @@ from .. import config
 from . import db, models
 
 logger = logging.getLogger("silentsuite-bridge.cache")
+DAV_UNRESOLVED_RETRY_LIMIT = 8
 
 
 class DavUnresolvedItemsError(RuntimeError):
@@ -135,11 +136,26 @@ def _migrate_cache_schema(database):
         "ON itementity (collection_id, remote_uid)"
     )
     if "davsynctoken" in tables:
+        token_columns = {
+            column.name for column in database.get_columns("davsynctoken")
+        }
+        if "state_hash" not in token_columns:
+            database.execute_sql(
+                "ALTER TABLE davsynctoken ADD COLUMN state_hash VARCHAR(255)"
+            )
         database.execute_sql(
             "CREATE UNIQUE INDEX IF NOT EXISTS "
             "davsynctoken_collection_revision "
             "ON davsynctoken (collection_id, revision)"
         )
+    if "davrevision" in tables:
+        revision_columns = {
+            column.name for column in database.get_columns("davrevision")
+        }
+        if "state_hash" not in revision_columns:
+            database.execute_sql(
+                "ALTER TABLE davrevision ADD COLUMN state_hash VARCHAR(255)"
+            )
     if "davunresolveditem" in tables:
         unresolved_columns = {
             column.name for column in database.get_columns("davunresolveditem")
@@ -253,6 +269,50 @@ def get_millis():
     return int(round(time.time() * 1000))
 
 
+def dav_collection_state_hash(cache_col):
+    """Hash DAV-relevant encrypted cache state without exposing its contents."""
+    digest = hashlib.sha256()
+
+    def add(value):
+        if value is None:
+            payload = b"<null>"
+        elif isinstance(value, bytes):
+            payload = value
+        else:
+            payload = str(value).encode("utf-8")
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+
+    current_col = models.CollectionEntity.get_by_id(cache_col.id)
+    for value in (
+        current_col.eb_col,
+        current_col.new,
+        current_col.dirty,
+        current_col.deleted,
+        current_col.dav_revision,
+    ):
+        add(value)
+    items = (
+        models.ItemEntity.select()
+        .where(models.ItemEntity.collection == current_col)
+        .order_by(models.ItemEntity.id)
+    )
+    for item in items:
+        href = models.HrefMapper.get_or_none(models.HrefMapper.content == item)
+        for value in (
+            item.id,
+            item.uid,
+            item.remote_uid,
+            item.eb_item,
+            item.new,
+            item.dirty,
+            item.deleted,
+            href.href if href is not None else None,
+        ):
+            add(value)
+    return digest.hexdigest()
+
+
 def record_dav_change(cache_col, href, *, etag=None, deleted=False):
     """Atomically advance a collection revision and record its latest href change."""
     with db.database_proxy.atomic():
@@ -291,6 +351,7 @@ def record_dav_change(cache_col, href, *, etag=None, deleted=False):
             revision=revision,
             etag=etag,
             deleted=deleted,
+            state_hash=dav_collection_state_hash(cache_col),
         )
         cache_col.dav_revision = revision
         return revision
@@ -481,7 +542,10 @@ class Etebase:
         unresolved = (
             models.DavUnresolvedItem.select()
             .join(models.CollectionEntity)
-            .where(models.CollectionEntity.local_user == self.user)
+            .where(
+                (models.CollectionEntity.local_user == self.user)
+                & (models.CollectionEntity.deleted == False)  # noqa: E712
+            )
             .exists()
         )
         if unresolved:
@@ -515,6 +579,10 @@ class Etebase:
                     collection.stoken = col.stoken
                     collection.deleted = col.deleted
                     collection.save()
+                    if collection.deleted:
+                        models.DavUnresolvedItem.delete().where(
+                            models.DavUnresolvedItem.collection == collection
+                        ).execute()
 
                 for col_uid in col_list.removed_memberships:
                     try:
@@ -523,6 +591,9 @@ class Etebase:
                         )
                         collection.deleted = True
                         collection.save()
+                        models.DavUnresolvedItem.delete().where(
+                            models.DavUnresolvedItem.collection == collection
+                        ).execute()
                         # Cascade-delete orphaned ItemEntity and HrefMapper rows
                         for item in collection.items:
                             models.HrefMapper.delete().where(
@@ -680,8 +751,8 @@ class Etebase:
         )
         for unresolved in unresolved_items:
             if unresolved.reason == "legacy_duplicate":
-                unresolved.attempts += 1
-                unresolved.save(only=[models.DavUnresolvedItem.attempts])
+                continue
+            if unresolved.attempts >= DAV_UNRESOLVED_RETRY_LIMIT:
                 continue
             try:
                 item = item_mgr.cache_load(unresolved.eb_item)

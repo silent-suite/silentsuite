@@ -115,6 +115,11 @@ def test_removed_membership_tombstones_only_exact_collection(tmp_path):
     )
     models.HrefMapper.create(content=keep_item, href="keep-contact.vcf")
     models.HrefMapper.create(content=retired_item, href="retired-contact.vcf")
+    models.DavUnresolvedItem.create(
+        collection=retired,
+        remote_uid="remote-retired",
+        eb_item=b"unresolved-item",
+    )
     page = MagicMock(
         data=[],
         removed_memberships=["contacts-retired"],
@@ -132,3 +137,6 @@ def test_removed_membership_tombstones_only_exact_collection(tmp_path):
     assert models.HrefMapper.get_by_id(keep_item.id).href == "keep-contact.vcf"
     assert models.CollectionEntity.get_by_id(retired.id).deleted is True
     assert models.ItemEntity.get_or_none(models.ItemEntity.id == retired_item.id) is None
+    assert models.DavUnresolvedItem.select().where(
+        models.DavUnresolvedItem.collection == retired
+    ).count() == 0

@@ -86,6 +86,21 @@ def test_carddav_sync_returns_changed_href_since_retained_token(mem_db, user):
     assert list(hrefs) == ["contact-1.vcf"]
 
 
+def test_unledgered_cache_mutation_invalidates_retained_token(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    old_token, _ = collection.sync(None)
+    cache_item = ItemEntity.get(uid="contact-1")
+
+    cache_item.eb_item = b"downgrade-era-mutation"
+    cache_item.save(only=[ItemEntity.eb_item])
+
+    with pytest.raises(ValueError, match="unknown sync token"):
+        collection.sync(old_token)
+    replacement_token, hrefs = collection.sync(None)
+    assert replacement_token != old_token
+    assert list(hrefs) == ["contact-1.vcf"]
+
+
 def test_carddav_sync_returns_no_hrefs_for_current_token(mem_db, user):
     collection = _carddav_collection(mem_db, user)
     current_token, _ = collection.sync(None)

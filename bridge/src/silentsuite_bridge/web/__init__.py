@@ -1153,12 +1153,27 @@ class Web(BaseWeb):
         if path == "/.web/api/sync":
             if not _has_valid_csrf(environ):
                 return _csrf_error()
-            from ..radicale.storage import _sync_threads
+            from ..radicale.storage import _sync_threads, _sync_threads_lock
 
-            for thread in _sync_threads.values():
+            with _sync_threads_lock:
+                threads = list(_sync_threads.values())
+            completed = bool(threads)
+            for thread in threads:
                 if thread.is_alive():
                     thread.force_sync()
-                    thread.wait_for_sync(30)
+                    try:
+                        completed = thread.wait_for_sync(30) and completed
+                    except Exception:
+                        completed = False
+                else:
+                    completed = False
+            if not completed:
+                log_sync_event("error", "Manual sync did not complete")
+                return (
+                    503,
+                    {"Content-Type": "application/json"},
+                    json.dumps({"ok": False, "status": "incomplete"}).encode(),
+                )
             log_sync_event("info", "Manual sync triggered from dashboard")
             return (
                 200,

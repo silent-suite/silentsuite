@@ -91,6 +91,7 @@ class DavRevision(db.BaseModel):
     revision = pw.IntegerField(null=False)
     etag = pw.CharField(null=True, default=None)
     deleted = pw.BooleanField(null=False, default=False)
+    state_hash = pw.CharField(null=True, default=None)
 
     class Meta:
         indexes = ((("collection", "revision"), True),)
@@ -105,6 +106,7 @@ class DavSyncToken(db.BaseModel):
     token = pw.CharField(null=False)
     revision = pw.IntegerField(null=False)
     created_at = pw.IntegerField(null=False)
+    state_hash = pw.CharField(null=True, default=None)
 
     class Meta:
         indexes = (

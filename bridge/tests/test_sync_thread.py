@@ -59,14 +59,14 @@ class TestSyncThread:
         result = t.wait_for_sync(timeout=0.05)
         assert result is False
 
-    def test_wait_for_sync_re_raises_exception(self):
+    def test_wait_for_sync_re_raises_exception_for_every_waiter(self):
         t = SyncThread("user@test.com")
         t._exception = RuntimeError("sync failed")
         t._done_syncing.set()
-        with pytest.raises(RuntimeError, match="sync failed"):
-            t.wait_for_sync(timeout=1)
-        # Exception is cleared after raising
-        assert t._exception is None
+        for _ in range(2):
+            with pytest.raises(RuntimeError, match="sync failed"):
+                t.wait_for_sync(timeout=1)
+        assert isinstance(t._exception, RuntimeError)
 
     def test_set_interval(self):
         t = SyncThread("user@test.com")

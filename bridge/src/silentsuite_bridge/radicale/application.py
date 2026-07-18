@@ -12,7 +12,7 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
         template = str(record.msg)
         normalized_path = str(record.pathname).replace("\\", "/")
         if (
-            "/radicale/" in normalized_path
+            "/radicale/app/" in normalized_path
             and "/silentsuite_bridge/" not in normalized_path
         ):
             record.msg = (

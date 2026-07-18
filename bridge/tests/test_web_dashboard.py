@@ -2,6 +2,7 @@
 
 import io
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from radicale.app import Application
@@ -418,7 +419,11 @@ def test_dashboard_post_requires_csrf_token():
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
 
 
-def test_dashboard_sync_post_accepts_valid_csrf_token():
+def test_dashboard_sync_post_accepts_valid_csrf_token(monkeypatch):
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.wait_for_sync.return_value = True
+    monkeypatch.setattr(storage, "_sync_threads", {"account": thread})
     web = Web.__new__(Web)
 
     status, headers, body = web.post(
@@ -431,6 +436,25 @@ def test_dashboard_sync_post_accepts_valid_csrf_token():
     assert status == 200
     assert headers["Content-Type"] == "application/json"
     assert json.loads(body) == {"ok": True}
+
+
+def test_dashboard_sync_post_reports_incomplete_worker(monkeypatch):
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.wait_for_sync.return_value = False
+    monkeypatch.setattr(storage, "_sync_threads", {"account": thread})
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+
+    assert status == 503
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(body) == {"ok": False, "status": "incomplete"}
 
 
 def test_dashboard_sync_post_rejects_wrong_csrf_token():
