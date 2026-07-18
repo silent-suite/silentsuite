@@ -6,12 +6,14 @@ import pytest
 import vobject
 
 from silentsuite_bridge import config
+from silentsuite_bridge.local_cache import record_dav_change
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
     DavChange,
     HrefMapper,
     ItemEntity,
 )
+from silentsuite_bridge.radicale import storage as storage_module
 from silentsuite_bridge.radicale.storage import Collection
 
 
@@ -143,3 +145,99 @@ def test_expired_carddav_token_requires_safe_full_resync(mem_db, user, monkeypat
 
     with pytest.raises(ValueError, match="unknown sync token"):
         collection.sync(expired_token)
+
+
+def test_empty_carddav_token_requests_safe_full_sync(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+
+    token, hrefs = collection.sync("")
+
+    assert token.startswith("http://radicale.org/ns/sync/")
+    assert list(hrefs) == ["contact-1.vcf"]
+
+
+def test_carddav_sync_refreshes_revision_from_sibling_database_instance(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    old_token, _ = collection.sync(None)
+    sibling = CollectionEntity.get_by_id(collection.collection.cache_col.id)
+    record_dav_change(
+        sibling,
+        "contact-1.vcf",
+        etag="etag-2",
+        deleted=False,
+    )
+
+    new_token, hrefs = collection.sync(old_token)
+
+    assert new_token != old_token
+    assert list(hrefs) == ["contact-1.vcf"]
+
+
+def test_local_update_rolls_back_when_dav_change_recording_fails(
+    mem_db, user, monkeypatch
+):
+    collection = _carddav_collection(mem_db, user)
+    cache_item = ItemEntity.get(uid="contact-1")
+    etesync_item = collection.collection.list.return_value[0]
+
+    def persist_local_update():
+        cache_item.dirty = True
+        cache_item.eb_item = b"updated-envelope"
+        cache_item.save()
+
+    etesync_item.save.side_effect = persist_local_update
+    monkeypatch.setattr(
+        storage_module,
+        "record_dav_change",
+        MagicMock(side_effect=RuntimeError("change write failed")),
+    )
+    replacement = MagicMock()
+    replacement.vobject_item = vobject.readOne(
+        "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:contact-1\r\n"
+        "FN:Updated Contact\r\nEND:VCARD"
+    )
+
+    with pytest.raises(RuntimeError, match="change write failed"):
+        collection.upload("contact-1.vcf", replacement)
+
+    persisted = ItemEntity.get_by_id(cache_item.id)
+    assert persisted.dirty is False
+    assert persisted.eb_item == b"encrypted-item"
+
+
+def test_local_delete_rolls_back_when_dav_change_recording_fails(
+    mem_db, user, monkeypatch
+):
+    collection = _carddav_collection(mem_db, user)
+    cache_item = ItemEntity.get(uid="contact-1")
+    monkeypatch.setattr(
+        storage_module,
+        "record_dav_change",
+        MagicMock(side_effect=RuntimeError("change write failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="change write failed"):
+        collection.delete("contact-1.vcf")
+
+    assert ItemEntity.get_by_id(cache_item.id).deleted is False
+
+
+def test_local_item_events_do_not_log_raw_hrefs(mem_db, user, monkeypatch):
+    collection = _carddav_collection(mem_db, user)
+    events = []
+    monkeypatch.setattr(
+        storage_module,
+        "log_sync_event",
+        lambda level, message: events.append((level, message)),
+    )
+    replacement = MagicMock()
+    replacement.vobject_item = vobject.readOne(
+        "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:contact-1\r\n"
+        "FN:Updated Contact\r\nEND:VCARD"
+    )
+
+    collection.upload("contact-1.vcf", replacement)
+    collection.delete("contact-1.vcf")
+
+    assert events
+    assert "contact-1.vcf" not in " ".join(message for _, message in events)

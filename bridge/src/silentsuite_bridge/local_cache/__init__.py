@@ -535,7 +535,16 @@ class Etebase:
             )
         )
         for unresolved in unresolved_items:
-            item = item_mgr.cache_load(unresolved.eb_item)
+            try:
+                item = item_mgr.cache_load(unresolved.eb_item)
+            except Exception as exc:
+                unresolved.attempts += 1
+                unresolved.save(only=[models.DavUnresolvedItem.attempts])
+                logger.warning(
+                    "Deferred unresolved DAV item after cache-load failure (%s)",
+                    exc.__class__.__name__,
+                )
+                continue
             if not self._apply_pulled_item(
                 cache_col,
                 col,
@@ -565,11 +574,6 @@ class Etebase:
                 logger.info(
                     "PULL collection: fetched %d items",
                     len(items_data),
-                )
-                logger.debug(
-                    "PULL %s: fetched %d items (stoken=%s)",
-                    uid[:8], len(items_data),
-                    str(stoken)[:16] if stoken else "None",
                 )
 
                 for item in items_data:
@@ -604,7 +608,6 @@ class Etebase:
 
             changed = list(self._collection_dirty_get(cache_col))
             logger.info("PUSH collection: %d dirty/new items to push", len(changed))
-            logger.debug("PUSH %s: %d dirty/new items to push", uid[:8], len(changed))
 
             if not changed:
                 return
@@ -612,16 +615,13 @@ class Etebase:
             for chunk in batch(changed, CHUNK_PUSH):
                 chunk_items = list(map(lambda x: item_mgr.cache_load(x.eb_item), chunk))
                 logger.info("PUSH collection: uploading batch of %d items", len(chunk_items))
-                logger.debug("PUSH %s: uploading batch of %d items", uid[:8], len(chunk_items))
                 item_mgr.batch(chunk_items, None, None)
                 logger.info("PUSH collection: batch upload succeeded")
-                logger.debug("PUSH %s: batch upload SUCCESS", uid[:8])
                 for cache_item, item in zip(chunk, chunk_items):
                     cache_item.eb_item = item_mgr.cache_save(item)
                     cache_item.dirty = False
                     cache_item.new = False
                     cache_item.save()
-                    logger.debug("PUSH %s: cleared dirty/new for %s", uid[:8], cache_item.uid)
 
     # --- CRUD operations ---
 

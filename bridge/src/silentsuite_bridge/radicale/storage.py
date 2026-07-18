@@ -27,8 +27,14 @@ from radicale.storage import (
 )
 
 from .. import config
-from ..local_cache import record_dav_change
-from ..local_cache.models import DavChange, DavSyncToken, HrefMapper, ItemEntity
+from ..local_cache import db, record_dav_change
+from ..local_cache.models import (
+    CollectionEntity,
+    DavChange,
+    DavSyncToken,
+    HrefMapper,
+    ItemEntity,
+)
 from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
@@ -365,6 +371,9 @@ class Collection(BaseCollection):
 
     def sync(self, old_token=None):
         token_prefix = "http://radicale.org/ns/sync/"
+        self.collection.cache_col = CollectionEntity.get_by_id(
+            self.collection.cache_col.id
+        )
         revision = self.collection.cache_col.dav_revision
         token_value = hashlib.sha256(
             f"{self.collection.cache_col.uid}:{revision}".encode()
@@ -377,7 +386,7 @@ class Collection(BaseCollection):
         self._prune_sync_history()
         token = token_prefix + token_value
 
-        if old_token is None:
+        if not old_token:
             return token, self._list()
         if not old_token.startswith(token_prefix):
             raise ValueError("invalid sync token")
@@ -551,27 +560,29 @@ class Collection(BaseCollection):
 
         vobject_item = item.vobject_item
 
-        existing = self._get(href)
-        if existing is not None:
-            etesync_item = existing.etesync_item
-            etesync_item.content = vobject_item.serialize()
-            etesync_item.save()
-            log_sync_event("sync", f"Updated item {href}")
-        else:
-            etesync_item = self.collection.create(vobject_item)
-            etesync_item.save()
-            href_mapper = HrefMapper(
-                content=etesync_item.cache_item, href=href
-            )
-            href_mapper.save(force_insert=True)
-            log_sync_event("sync", f"Created item {href}")
+        with db.database_proxy.atomic():
+            existing = self._get(href)
+            if existing is not None:
+                etesync_item = existing.etesync_item
+                etesync_item.content = vobject_item.serialize()
+                etesync_item.save()
+                event = "Updated item"
+            else:
+                etesync_item = self.collection.create(vobject_item)
+                etesync_item.save()
+                href_mapper = HrefMapper(
+                    content=etesync_item.cache_item, href=href
+                )
+                href_mapper.save(force_insert=True)
+                event = "Created item"
 
-        record_dav_change(
-            self.collection.cache_col,
-            href,
-            etag=etesync_item.etag,
-            deleted=False,
-        )
+            record_dav_change(
+                self.collection.cache_col,
+                href,
+                etag=etesync_item.etag,
+                deleted=False,
+            )
+        log_sync_event("sync", event)
         return self._get(href)
 
     def delete(self, href=None):
@@ -581,22 +592,23 @@ class Collection(BaseCollection):
 
         if href is None:
             self.collection.delete()
-            log_sync_event("sync", f"Deleted collection {self._path}")
+            log_sync_event("sync", "Deleted collection")
             return
 
         item = self._get(href)
         if item is None:
             raise ComponentNotFoundError(href)
 
-        etag = item.etesync_item.etag
-        item.etesync_item.delete()
-        record_dav_change(
-            self.collection.cache_col,
-            href,
-            etag=etag,
-            deleted=True,
-        )
-        log_sync_event("sync", f"Deleted item {href}")
+        with db.database_proxy.atomic():
+            etag = item.etesync_item.etag
+            item.etesync_item.delete()
+            record_dav_change(
+                self.collection.cache_col,
+                href,
+                etag=etag,
+                deleted=True,
+            )
+        log_sync_event("sync", "Deleted item")
 
     def get_meta(self, key=None):
         if self.is_fake:

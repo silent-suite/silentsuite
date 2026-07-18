@@ -980,3 +980,61 @@ def test_unmatched_identityless_tombstone_is_quarantined_without_duplicate(tmp_p
         & (DavChange.href == "contact-recovered.vcf")
     )
     assert recovered_change.deleted is True
+
+
+def test_corrupt_quarantine_row_does_not_block_fresh_collection_sync(tmp_path):
+    database = pw.SqliteDatabase(
+        str(tmp_path / "corrupt-quarantine.sqlite"),
+        pragmas={"foreign_keys": 1},
+    )
+    db.database_proxy.initialize(database)
+    database.create_tables(
+        [
+            models.Config,
+            models.User,
+            models.CollectionEntity,
+            models.ItemEntity,
+            models.HrefMapper,
+            models.DavChange,
+            models.DavSyncToken,
+            models.DavUnresolvedItem,
+            models.SchemaMigration,
+        ]
+    )
+    models.Config.create(db_version=1)
+    user = User.create(username="corrupt-quarantine@example.com")
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    unresolved = models.DavUnresolvedItem.create(
+        collection=cache_col,
+        remote_uid="remote-corrupt",
+        eb_item=b"corrupt-envelope",
+        deleted=True,
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_load.side_effect = ValueError("private corrupt envelope details")
+    item_mgr.list.return_value = MagicMock(
+        data=[],
+        done=True,
+        stoken="after-corrupt-quarantine",
+    )
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = MagicMock(collection_type="etebase.vcard")
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    etebase.pull_collection(cache_col.uid)
+
+    unresolved = models.DavUnresolvedItem.get_by_id(unresolved.id)
+    assert unresolved.attempts == 1
+    assert CollectionEntity.get_by_id(cache_col.id).local_stoken == (
+        "after-corrupt-quarantine"
+    )
+    item_mgr.list.assert_called_once()
