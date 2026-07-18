@@ -60,6 +60,7 @@ def _has_valid_csrf(environ):
 
 
 def _sync_request_status(request_id):
+    poll_token = object()
     with _sync_requests_lock:
         request = _sync_requests.get(request_id)
         if request is None:
@@ -69,6 +70,7 @@ def _sync_request_status(request_id):
         targets = list(request["targets"])
         requested_at = request["requested_at"]
         deadline = request["deadline"]
+        request.setdefault("pollers", {})[poll_token] = time.monotonic()
 
     counts = {
         "total": len(targets),
@@ -115,6 +117,7 @@ def _sync_request_status(request_id):
     with _sync_requests_lock:
         request = _sync_requests.get(request_id)
         if request is not None:
+            request.get("pollers", {}).pop(poll_token, None)
             if request.get("terminal_result") is not None:
                 return dict(request["terminal_result"])
             if not active:
@@ -124,12 +127,19 @@ def _sync_request_status(request_id):
 
 
 def _prune_sync_requests(now):
+    monotonic_now = time.monotonic()
+    for request in _sync_requests.values():
+        request["pollers"] = {
+            token: started_at
+            for token, started_at in request.get("pollers", {}).items()
+            if monotonic_now - started_at < 60
+        }
     for request_id in list(_sync_requests):
         _sync_request_status(request_id)
     terminal = [
         (request_id, request)
         for request_id, request in _sync_requests.items()
-        if request.get("terminal_at") is not None
+        if request.get("terminal_at") is not None and not request.get("pollers")
     ]
     for request_id, request in terminal:
         if now - request["terminal_at"] >= _sync_request_terminal_ttl:
@@ -138,7 +148,7 @@ def _prune_sync_requests(now):
         (
             (request_id, request)
             for request_id, request in _sync_requests.items()
-            if request.get("terminal_at") is not None
+            if request.get("terminal_at") is not None and not request.get("pollers")
         ),
         key=lambda entry: entry[1]["terminal_at"],
     )

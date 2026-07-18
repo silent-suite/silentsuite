@@ -623,7 +623,7 @@ def test_abandoned_completed_request_survives_generation_history_pruning():
     assert result["accounts"]["succeeded"] == 1
 
 
-def test_concurrent_poll_cannot_regress_published_terminal_result():
+def test_concurrent_poll_cannot_regress_or_evict_published_terminal_result(monkeypatch):
     web_module._sync_requests.clear()
     thread = MagicMock()
     thread.is_alive.return_value = True
@@ -658,10 +658,14 @@ def test_concurrent_poll_cannot_regress_published_terminal_result():
     def publish_terminal_during_poll(_generation):
         web_module._sync_requests[request_id]["terminal_result"] = terminal
         web_module._sync_requests[request_id]["terminal_at"] = 2.0
+        monkeypatch.setattr(web_module, "_sync_request_retention", 0)
+        web_module._prune_sync_requests(3.0)
         return {"state": "pending"}
 
     thread.generation_status.side_effect = publish_terminal_during_poll
 
+    assert web_module._sync_request_status(request_id) == terminal
+    assert request_id in web_module._sync_requests
     assert web_module._sync_request_status(request_id) == terminal
 
 

@@ -65,18 +65,23 @@ class TestSyncThread:
 
     def test_wait_for_sync_times_out(self):
         t = SyncThread("user@test.com")
-        t._done_syncing.clear()
+        t.force_sync()
         result = t.wait_for_sync(timeout=0.05)
         assert result is False
 
-    def test_wait_for_sync_re_raises_exception_for_every_waiter(self):
+    def test_wait_for_sync_reports_generation_failure_for_every_waiter(self):
         t = SyncThread("user@test.com")
-        t._exception = RuntimeError("sync failed")
-        t._done_syncing.set()
+        generation = t.force_sync()
+        t._begin_generation()
+        t._complete_generation(
+            generation,
+            "failed",
+            time.time(),
+            error_code="ConnectionError",
+        )
         for _ in range(2):
-            with pytest.raises(RuntimeError, match="sync failed"):
+            with pytest.raises(RuntimeError, match="ConnectionError"):
                 t.wait_for_sync(timeout=1)
-        assert isinstance(t._exception, RuntimeError)
 
     def test_set_interval(self):
         t = SyncThread("user@test.com")
@@ -170,9 +175,9 @@ class TestSyncThreadRun:
         try:
             time.sleep(0.15)
 
-            # Error should be stored and re-raised on wait
+            # Failure is retained on the requested generation for every waiter.
             t.force_sync()
-            with pytest.raises(ConnectionError, match="network down"):
+            with pytest.raises(RuntimeError, match="ConnectionError"):
                 t.wait_for_sync(timeout=2)
             assert "network down" not in str(mock_log.call_args_list)
             assert "network down" not in str(mock_status.call_args_list)
@@ -417,6 +422,61 @@ def test_force_sync_after_active_generation_queues_successor():
 
     assert successor > generation
     assert thread._requested_generation == successor
+    assert thread._force_sync.is_set()
+
+    thread._complete_generation(generation, "succeeded", time.time())
+
+    assert not thread._done_syncing.is_set()
+    assert thread.wait_for_sync(timeout=0.01) is False
+
+
+def test_stop_terminalizes_queued_successor():
+    thread = SyncThread("account@example.com")
+    generation = thread.force_sync()
+    thread._begin_generation()
+    successor = thread.force_sync(after_generation=generation)
+
+    thread.stop()
+
+    status = thread.generation_status(successor)
+    assert status["state"] == "failed"
+    assert status["error_code"] == "SyncStopped"
+
+
+@patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+@patch("silentsuite_bridge.radicale.storage.update_status")
+@patch("silentsuite_bridge.radicale.storage.log_sync_event")
+def test_late_native_success_does_not_publish_connected(
+    mock_log, mock_status, mock_etesync_ctx,
+):
+    mock_etesync = MagicMock()
+    mock_etesync.sync.side_effect = lambda: time.sleep(0.05)
+    mock_etesync.list.return_value = []
+    mock_etesync_ctx.return_value.__enter__ = MagicMock(
+        return_value=(mock_etesync, False)
+    )
+    mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+    thread = SyncThread("account@example.com", daemon=True)
+    thread.interval = 300
+    generation = thread.force_sync(deadline=time.time() + 0.01)
+
+    thread.start()
+    try:
+        assert thread.wait_for_generation(generation, timeout=1)
+    finally:
+        thread.stop()
+        thread.join(1)
+
+    assert thread.generation_status(generation)["state"] == "timed_out"
+    assert thread.last_sync is None
+    assert not any(
+        call.args and call.args[0] == "connected"
+        for call in mock_status.call_args_list
+    )
+    assert not any(
+        call.args == ("sync", "Synced account")
+        for call in mock_log.call_args_list
+    )
 
 
 def test_terminal_generation_history_is_bounded():

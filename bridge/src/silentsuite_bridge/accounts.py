@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import threading
 from dataclasses import dataclass
@@ -14,6 +15,32 @@ from .radicale.etesync_cache import account_maintenance, forget_etesync_user
 from .radicale.storage import stop_sync_thread
 
 _account_lock = threading.RLock()
+_pending_cache_cleanups = set()
+logger = logging.getLogger("silentsuite-bridge.accounts")
+
+
+def _schedule_deferred_cache_cleanup(username):
+    with _account_lock:
+        if username in _pending_cache_cleanups:
+            return
+        _pending_cache_cleanups.add(username)
+
+    def cleanup():
+        try:
+            with account_maintenance(username, timeout=None) as available:
+                if available:
+                    clear_cached_user(username)
+        except Exception as exc:
+            logger.warning("Deferred cache cleanup failed (%s)", exc.__class__.__name__)
+        finally:
+            with _account_lock:
+                _pending_cache_cleanups.discard(username)
+
+    threading.Thread(
+        target=cleanup,
+        name="silentsuite-cache-cleanup",
+        daemon=True,
+    ).start()
 
 
 @dataclass(frozen=True)
@@ -120,10 +147,11 @@ def remove_account(
         else:
             cache_cleared = False
             cache_cleanup = "deferred"
+            _schedule_deferred_cache_cleanup(normalized)
 
     return AccountOperationResult(
         username=normalized,
-        existed=logout_result.existed or cache_cleared,
+        existed=logout_result.existed or cache_cleared or cache_cleanup == "deferred",
         sync_stopped=logout_result.sync_stopped,
         cache_cleared=cache_cleared,
         cache_cleanup=cache_cleanup,

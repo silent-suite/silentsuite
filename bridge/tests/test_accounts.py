@@ -1,5 +1,6 @@
 """Tests for bridge account-management helpers."""
 
+import threading
 from contextlib import contextmanager
 
 from silentsuite_bridge import accounts, config
@@ -147,6 +148,52 @@ def test_remove_account_reports_deferred_cache_cleanup(tmp_path, monkeypatch, me
     assert result.cache_cleanup == "deferred"
     assert Credentials().list_users() == []
     assert User.get_or_none(User.username == "alice@example.com") is not None
+
+
+def test_deferred_cache_cleanup_retries_after_maintenance_becomes_available(monkeypatch):
+    cleaned = threading.Event()
+
+    @contextmanager
+    def available_maintenance(user, timeout=0):
+        assert timeout is None
+        yield True
+
+    monkeypatch.setattr(accounts, "account_maintenance", available_maintenance)
+    monkeypatch.setattr(
+        accounts,
+        "clear_cached_user",
+        lambda user: cleaned.set() or True,
+    )
+    accounts._pending_cache_cleanups.clear()
+
+    accounts._schedule_deferred_cache_cleanup("alice@example.com")
+
+    assert cleaned.wait(1)
+
+
+def test_repeated_remove_truthfully_reports_deferred_cleanup(monkeypatch):
+    monkeypatch.setattr(accounts, "stop_sync_thread", lambda user: False)
+    monkeypatch.setattr(accounts, "forget_etesync_user", lambda user: None)
+    monkeypatch.setattr(accounts, "_schedule_deferred_cache_cleanup", lambda user: None)
+
+    @contextmanager
+    def unavailable_maintenance(user, timeout=0):
+        yield False
+
+    monkeypatch.setattr(accounts, "account_maintenance", unavailable_maintenance)
+    credentials = Credentials.__new__(Credentials)
+    credentials._creds = {}
+    credentials.list_users = lambda: []
+    credentials.delete = lambda user: None
+    credentials.save = lambda: None
+
+    result = accounts.remove_account(
+        "missing@example.com",
+        credentials=credentials,
+    )
+
+    assert result.existed is True
+    assert result.cache_cleanup == "deferred"
 
 
 def test_remove_missing_account_is_noop(tmp_path, monkeypatch, mem_db):

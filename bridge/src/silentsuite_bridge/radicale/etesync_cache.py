@@ -9,6 +9,7 @@ Forked and adapted from etesync-dav (AGPL-3.0).
 import logging
 import os
 import threading
+import time
 from contextlib import contextmanager
 
 from .. import config
@@ -141,13 +142,22 @@ def forget_etesync_user(user):
 def account_maintenance(user, *, timeout=0):
     """Enter bounded exclusive maintenance only when no readers are active."""
     lock = _lock_for_user(user)
-    acquired = lock.acquire(timeout=timeout)
+    started_at = time.monotonic()
+    acquired = lock.acquire() if timeout is None else lock.acquire(timeout=timeout)
     if not acquired:
         yield False
         return
     try:
         with _reader_condition:
             _users_closing.add(user)
+            while _active_readers.get(user, 0):
+                if timeout is None:
+                    _reader_condition.wait()
+                    continue
+                remaining = timeout - (time.monotonic() - started_at)
+                if remaining <= 0:
+                    break
+                _reader_condition.wait(remaining)
             available = _active_readers.get(user, 0) == 0
         yield available
     finally:

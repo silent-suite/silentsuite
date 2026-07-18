@@ -70,7 +70,6 @@ class SyncThread(threading.Thread):
         self._generation_statuses = {}
         self.user = user
         self.last_sync = None
-        self._exception = None
         self.interval = config.SYNC_INTERVAL
         # Progress tracking — etebase-py doesn't expose per-item hooks, so we
         # can only report "a sync is in flight" plus the last sync's duration.
@@ -120,6 +119,16 @@ class SyncThread(threading.Thread):
     def stop(self):
         """Request a clean shutdown and wake any interval wait."""
         self._stop_sync.set()
+        with self._generation_condition:
+            generation = self._requested_generation
+            if generation is not None and generation != self._active_generation:
+                self._generation_statuses[generation].update({
+                    "state": "failed",
+                    "completed_at": time.time(),
+                    "error_code": "SyncStopped",
+                })
+                self._requested_generation = None
+                self._generation_condition.notify_all()
         self._force_sync.set()
 
     def request_sync(self):
@@ -137,11 +146,20 @@ class SyncThread(threading.Thread):
         self._force_sync.set()
 
     def wait_for_sync(self, timeout=None):
-        ret = self._done_syncing.wait(timeout)
-        e = self._exception
-        if e is not None:
-            raise e
-        return ret
+        with self._generation_condition:
+            generation = (
+                self._requested_generation
+                or self._active_generation
+                or (self._next_generation if self._next_generation else None)
+            )
+        if generation is None:
+            return True
+        if not self.wait_for_generation(generation, timeout):
+            return False
+        status = self.generation_status(generation)
+        if status["state"] == "failed":
+            raise RuntimeError(status["error_code"] or "SyncFailure")
+        return status["state"] == "succeeded"
 
     def generation_status(self, generation):
         with self._generation_condition:
@@ -187,6 +205,7 @@ class SyncThread(threading.Thread):
 
     def _begin_generation(self):
         with self._generation_condition:
+            self._force_sync.clear()
             generation = self._requested_generation
             if generation is None:
                 self._next_generation += 1
@@ -235,7 +254,10 @@ class SyncThread(threading.Thread):
                 self._requested_generation = None
             if self._active_generation == generation:
                 self._active_generation = None
-            self._done_syncing.set()
+            if self._requested_generation is None:
+                self._done_syncing.set()
+            else:
+                self._done_syncing.clear()
             self._generation_condition.notify_all()
             terminal = [
                 key
@@ -248,7 +270,6 @@ class SyncThread(threading.Thread):
     def run(self):
         while not self._stop_sync.is_set():
             generation, started_at = self._begin_generation()
-            self._force_sync.clear()
             state = "failed"
             error_code = None
             try:
@@ -263,8 +284,19 @@ class SyncThread(threading.Thread):
                     completed_at = time.time()
                     self.last_sync_duration = completed_at - self.sync_started_at
                     self.is_syncing = False
-                    state = "succeeded"
-                    logger.debug("Sync completed for configured account")
+                    with self._generation_condition:
+                        status = self._generation_status_snapshot(
+                            self._generation_statuses[generation]
+                        )
+                    if status["state"] == "timed_out":
+                        state = "timed_out"
+                        error_code = "SyncTimeout"
+                        logger.warning("Sync returned after its generation deadline")
+                        update_status("error", error="SyncTimeout", account=self.user)
+                        log_sync_event("error", "Sync timed out")
+                    else:
+                        state = "succeeded"
+                        logger.debug("Sync completed for configured account")
 
                     # Update dashboard status with collection counts
                     collections = {"calendars": 0, "contacts": 0, "tasks": 0}
@@ -278,19 +310,19 @@ class SyncThread(threading.Thread):
                                 collections["tasks"] += 1
                     except Exception:
                         pass
-                    update_status(
-                        "connected",
-                        collections=collections,
-                        account=self.user,
-                    )
-                    log_sync_event("sync", "Synced account")
+                    if state == "succeeded":
+                        update_status(
+                            "connected",
+                            collections=collections,
+                            account=self.user,
+                        )
+                        log_sync_event("sync", "Synced account")
             except Exception as e:
                 error_code = e.__class__.__name__
                 logger.warning(
                     "Sync failed for configured account (%s)",
                     error_code,
                 )
-                self._exception = e
                 update_status("error", error=error_code)
                 log_sync_event("error", "Sync failed")
             finally:
