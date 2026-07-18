@@ -3,6 +3,7 @@
 import logging
 import sys
 import threading
+from contextlib import contextmanager
 from importlib.metadata import version
 from unittest.mock import MagicMock
 
@@ -11,6 +12,37 @@ import pytest
 from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import config
 from silentsuite_bridge.radicale.application import Application as BridgeApplication
+
+
+def test_initial_status_check_reports_partial_account_failure(monkeypatch):
+    from silentsuite_bridge.radicale import creds, etesync_cache
+    from silentsuite_bridge import web
+
+    credentials = MagicMock()
+    credentials.list_users.return_value = ["good@example.com", "bad@example.com"]
+    monkeypatch.setattr(creds, "Credentials", lambda: credentials)
+
+    @contextmanager
+    def account_session(user):
+        if user == "bad@example.com":
+            raise RuntimeError("failed")
+        etesync = MagicMock()
+        etesync.list.return_value = []
+        yield etesync, False
+
+    monkeypatch.setattr(etesync_cache, "etesync_for_user", account_session)
+    update_status = MagicMock()
+    monkeypatch.setattr(web, "update_status", update_status)
+    monkeypatch.setattr(web, "log_sync_event", MagicMock())
+
+    bridge_main._initial_status_check()
+
+    assert any(
+        call.args == ("error",)
+        and call.kwargs.get("scope") == "all configured accounts"
+        and "1 account" in call.kwargs.get("error", "")
+        for call in update_status.call_args_list
+    )
 
 
 def test_radicale_runtime_is_pinned_to_the_server_adapter_contract():

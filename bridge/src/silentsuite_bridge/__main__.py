@@ -233,17 +233,23 @@ def _initial_status_check():
             errors.append(error_code)
             log_sync_event("error", "Initial sync failed for a configured account")
 
-    if synced:
+    if synced and not errors:
         update_status(
             "connected",
             collections=totals,
             scope="all configured accounts",
         )
-        if errors:
-            log_sync_event(
-                "error",
-                f"Initial sync skipped {len(errors)} account(s)",
-            )
+    elif synced and errors:
+        update_status(
+            "error",
+            error=f"Initial sync failed for {len(errors)} account(s)",
+            collections=totals,
+            scope="all configured accounts",
+        )
+        log_sync_event(
+            "error",
+            f"Initial sync skipped {len(errors)} account(s)",
+        )
     elif errors:
         update_status("error", error=f"Initial status check failed for {len(errors)} account(s)")
     else:

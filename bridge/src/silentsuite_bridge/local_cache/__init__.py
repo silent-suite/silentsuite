@@ -316,7 +316,11 @@ def dav_collection_state_hash(cache_col):
 
 def is_safe_dav_href(href):
     """Return whether href is one conservative, ASCII-safe DAV path segment."""
-    return bool(href) and re.fullmatch(r"[A-Za-z0-9._-]+", href) is not None
+    return (
+        bool(href)
+        and href not in {".", ".."}
+        and re.fullmatch(r"[A-Za-z0-9._-]+", href) is not None
+    )
 
 
 def opaque_dav_href(identity, suffix):
