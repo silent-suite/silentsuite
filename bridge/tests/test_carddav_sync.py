@@ -62,7 +62,9 @@ def _carddav_collection(mem_db, user):
     return Collection(storage, "/test@example.com/contacts")
 
 
-@pytest.mark.parametrize("unsafe_href", ["legacy/contact.vcf", ".", ".."])
+@pytest.mark.parametrize(
+    "unsafe_href", ["legacy/contact.vcf", ".", "..", "a" * 256 + ".vcf"]
+)
 def test_sync_sanitizes_existing_unsafe_href_before_issuing_token(
     mem_db, user, unsafe_href
 ):
@@ -121,6 +123,7 @@ def test_carddav_sync_returns_changed_href_since_retained_token(mem_db, user):
     record_dav_change(
         cache_col,
         "contact-1.vcf",
+        previous_state_hash=local_cache_module.dav_collection_state_hash(cache_col),
         etag="etag-2",
         deleted=False,
     )
@@ -144,6 +147,27 @@ def test_unledgered_cache_mutation_invalidates_retained_token(mem_db, user):
     replacement_token, hrefs = collection.sync(None)
     assert replacement_token != old_token
     assert list(hrefs) == ["contact-1.vcf"]
+
+
+def test_later_ledger_change_cannot_hide_prior_unledgered_mutation(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    old_token, _ = collection.sync(None)
+    cache_col = collection.collection.cache_col
+    cache_item = ItemEntity.get(uid="contact-1")
+
+    cache_item.eb_item = b"downgrade-era-mutation"
+    cache_item.save(only=[ItemEntity.eb_item])
+    post_downgrade_hash = local_cache_module.dav_collection_state_hash(cache_col)
+    record_dav_change(
+        cache_col,
+        "later-ledger-change.vcf",
+        previous_state_hash=post_downgrade_hash,
+        etag="etag-later",
+    )
+
+    with pytest.raises(ValueError, match="unknown sync token"):
+        collection.sync(old_token)
+    assert DavSyncToken.select().count() == 0
 
 
 def test_carddav_sync_returns_no_hrefs_for_current_token(mem_db, user):
@@ -195,6 +219,7 @@ def test_expired_carddav_token_requires_safe_full_resync(mem_db, user, monkeypat
         record_dav_change(
             cache_col,
             f"changed-{revision}.vcf",
+            previous_state_hash=local_cache_module.dav_collection_state_hash(cache_col),
             deleted=False,
         )
         previous_token, _ = collection.sync(previous_token)
@@ -219,6 +244,7 @@ def test_carddav_sync_refreshes_revision_from_sibling_database_instance(mem_db, 
     record_dav_change(
         sibling,
         "contact-1.vcf",
+        previous_state_hash=local_cache_module.dav_collection_state_hash(sibling),
         etag="etag-2",
         deleted=False,
     )
@@ -314,6 +340,9 @@ def test_token_is_rejected_when_revision_ledger_is_incomplete(mem_db, user):
     record_dav_change(
         collection.collection.cache_col,
         "contact-1.vcf",
+        previous_state_hash=local_cache_module.dav_collection_state_hash(
+            collection.collection.cache_col
+        ),
         etag="etag-2",
     )
     DavRevision.delete().execute()
@@ -328,13 +357,23 @@ def test_carddav_report_is_bounded_by_returned_token_revision(
     collection = _carddav_collection(mem_db, user)
     old_token, _ = collection.sync(None)
     cache_col = collection.collection.cache_col
-    record_dav_change(cache_col, "contact-1.vcf", etag="etag-2")
+    record_dav_change(
+        cache_col,
+        "contact-1.vcf",
+        previous_state_hash=local_cache_module.dav_collection_state_hash(cache_col),
+        etag="etag-2",
+    )
 
     original_prune = collection._prune_sync_history
 
     def concurrent_change_after_snapshot():
         original_prune()
-        record_dav_change(cache_col, "contact-2.vcf", etag="etag-3")
+        record_dav_change(
+            cache_col,
+            "contact-2.vcf",
+            previous_state_hash=local_cache_module.dav_collection_state_hash(cache_col),
+            etag="etag-3",
+        )
 
     monkeypatch.setattr(
         collection,

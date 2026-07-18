@@ -870,7 +870,7 @@ def test_v1_cache_is_migrated_additively_without_bumping_legacy_version(tmp_path
     assert models.Config.get().db_version == 1
     assert {
         migration.name for migration in models.SchemaMigration.select()
-    } == {"dav-revision-v1", "dav-revision-ledger-v2"}
+    } == {"dav-revision-v1", "dav-revision-chain-v3"}
     assert "davrevision" in etebase._database.get_tables()
     unresolved_columns = {
         column.name
@@ -905,14 +905,14 @@ def test_revision_ledger_activation_rolls_back_marker_when_token_deletion_fails(
         local_cache_module._activate_dav_revision_ledger()
 
     assert models.SchemaMigration.get_or_none(
-        models.SchemaMigration.name == "dav-revision-ledger-v2"
+        models.SchemaMigration.name == "dav-revision-chain-v3"
     ) is None
     assert models.DavSyncToken.select().count() == 1
 
     monkeypatch.setattr(mem_db, "execute_sql", original_execute_sql)
     local_cache_module._activate_dav_revision_ledger()
     assert models.SchemaMigration.get(
-        models.SchemaMigration.name == "dav-revision-ledger-v2"
+        models.SchemaMigration.name == "dav-revision-chain-v3"
     )
     assert models.DavSyncToken.select().count() == 0
 

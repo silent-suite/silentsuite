@@ -157,6 +157,11 @@ def _migrate_cache_schema(database):
             database.execute_sql(
                 "ALTER TABLE davrevision ADD COLUMN state_hash VARCHAR(255)"
             )
+        if "previous_state_hash" not in revision_columns:
+            database.execute_sql(
+                "ALTER TABLE davrevision "
+                "ADD COLUMN previous_state_hash VARCHAR(255)"
+            )
     if "davunresolveditem" in tables:
         unresolved_columns = {
             column.name for column in database.get_columns("davunresolveditem")
@@ -178,7 +183,7 @@ def _activate_dav_revision_ledger():
     database = models.SchemaMigration._meta.database
     with database.atomic():
         _, created = models.SchemaMigration.get_or_create(
-            name="dav-revision-ledger-v2",
+            name="dav-revision-chain-v3",
             defaults={"applied_at": get_millis()},
         )
         if created:
@@ -319,6 +324,7 @@ def is_safe_dav_href(href):
     return (
         bool(href)
         and href not in {".", ".."}
+        and len(href) <= 255
         and re.fullmatch(r"[A-Za-z0-9._-]+", href) is not None
     )
 
@@ -328,7 +334,9 @@ def opaque_dav_href(identity, suffix):
     return hashlib.sha256(str(identity).encode("utf-8")).hexdigest() + suffix
 
 
-def record_dav_change(cache_col, href, *, etag=None, deleted=False):
+def record_dav_change(
+    cache_col, href, *, previous_state_hash, etag=None, deleted=False
+):
     """Atomically advance a collection revision and record its latest href change."""
     with db.database_proxy.atomic():
         (
@@ -366,6 +374,7 @@ def record_dav_change(cache_col, href, *, etag=None, deleted=False):
             revision=revision,
             etag=etag,
             deleted=deleted,
+            previous_state_hash=previous_state_hash,
             state_hash=dav_collection_state_hash(cache_col),
         )
         cache_col.dav_revision = revision
@@ -526,8 +535,9 @@ class Etebase:
     def _quarantine_legacy_cache_item(self, cache_col, cache_item, *, reason):
         """Hide a legacy row while preserving its envelope for local retry."""
         quarantine_uid = "legacy-cache:" + hashlib.sha256(
-            cache_item.eb_item
+            str(cache_item.id).encode("ascii") + b":" + cache_item.eb_item
         ).hexdigest()
+        previous_state_hash = dav_collection_state_hash(cache_col)
         with db.database_proxy.atomic():
             (
                 models.DavUnresolvedItem.insert(
@@ -569,6 +579,7 @@ class Etebase:
                 record_dav_change(
                     cache_col,
                     href_mapper.href,
+                    previous_state_hash=previous_state_hash,
                     deleted=True,
                 )
 
@@ -717,6 +728,7 @@ class Etebase:
         quarantine=True,
     ):
         meta = dict(item.meta)
+        previous_state_hash = dav_collection_state_hash(cache_col)
         with db.database_proxy.atomic():
             cache_item = models.ItemEntity.get_or_none(
                 (models.ItemEntity.collection == cache_col)
@@ -773,12 +785,16 @@ class Etebase:
                 record_dav_change(
                     cache_col,
                     href_mapper.href,
+                    previous_state_hash=previous_state_hash,
                     etag=item.etag,
                     deleted=item.deleted,
                 )
             models.DavUnresolvedItem.delete().where(
                 (models.DavUnresolvedItem.collection == cache_col)
-                & (models.DavUnresolvedItem.remote_uid == item.uid)
+                & (
+                    (models.DavUnresolvedItem.remote_uid == item.uid)
+                    | (models.DavUnresolvedItem.local_item == cache_item)
+                )
             ).execute()
             return True
 
@@ -822,6 +838,7 @@ class Etebase:
                         ]
                     )
                     continue
+                previous_state_hash = dav_collection_state_hash(cache_col)
                 with db.database_proxy.atomic():
                     local_item.remote_uid = item.uid
                     local_item.eb_item = item_mgr.cache_save(item)
@@ -834,6 +851,7 @@ class Etebase:
                         record_dav_change(
                             cache_col,
                             href_mapper.href,
+                            previous_state_hash=previous_state_hash,
                             etag=getattr(item, "etag", None),
                             deleted=item.deleted,
                         )

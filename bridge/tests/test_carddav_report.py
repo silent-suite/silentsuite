@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from playhouse.sqlite_ext import SqliteExtDatabase
 
 from silentsuite_bridge import config
+from silentsuite_bridge import local_cache as local_cache_module
 from silentsuite_bridge.local_cache import db, models, record_dav_change
 from silentsuite_bridge.radicale import application as bridge_application
 from silentsuite_bridge.radicale import storage as bridge_storage
@@ -97,6 +98,7 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
     old_token, initial_hrefs = direct_collection.sync(None)
     assert list(initial_hrefs) == ["contact-1.vcf"]
 
+    previous_state_hash = local_cache_module.dav_collection_state_hash(cache_col)
     cache_item.deleted = True
     cache_item.save()
     cached_collection.get.return_value = None
@@ -104,6 +106,7 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
     record_dav_change(
         cache_col,
         "contact-1.vcf",
+        previous_state_hash=previous_state_hash,
         etag="etag-1",
         deleted=True,
     )

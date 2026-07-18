@@ -57,11 +57,12 @@ SYNC_MINIMUM = config.SYNC_MINIMUM
 _sync_threads = {}
 _sync_threads_lock = threading.Lock()
 _dav_token_locks = {}
-_dav_token_locks_lock = threading.Lock()
+_dav_token_locks_guard = threading.Lock()
+_INVALID_SYNC_HISTORY = object()
 
 
 def _dav_token_lock(collection_id):
-    with _dav_token_locks_lock:
+    with _dav_token_locks_guard:
         return _dav_token_locks.setdefault(collection_id, threading.Lock())
 
 
@@ -400,7 +401,10 @@ class Collection(BaseCollection):
         collection_id = self.collection.cache_col.id
         with _dav_token_lock(collection_id):
             with db.database_proxy.atomic("IMMEDIATE"):
-                return self._sync_locked(old_token)
+                result = self._sync_locked(old_token)
+            if result is _INVALID_SYNC_HISTORY:
+                raise ValueError("unknown sync token")
+            return result
 
     def _sync_locked(self, old_token=None):
         token_prefix = "http://radicale.org/ns/sync/"
@@ -461,8 +465,8 @@ class Collection(BaseCollection):
             raise ValueError("unknown sync token")
         if old_token == token:
             return token, []
-        changed_revisions = (
-            DavRevision.select(DavRevision.href)
+        changed_revisions = list(
+            DavRevision.select()
             .where(
                 (DavRevision.collection == self.collection.cache_col)
                 & (DavRevision.revision > token_row.revision)
@@ -471,8 +475,24 @@ class Collection(BaseCollection):
             .order_by(DavRevision.revision)
         )
         expected_revisions = revision - token_row.revision
-        if changed_revisions.count() != expected_revisions:
+        if len(changed_revisions) != expected_revisions:
             raise ValueError("unknown sync token")
+        proven_state_hash = token_row.state_hash
+        for change in changed_revisions:
+            if (
+                proven_state_hash is None
+                or change.previous_state_hash != proven_state_hash
+            ):
+                DavSyncToken.delete().where(
+                    DavSyncToken.collection == self.collection.cache_col
+                ).execute()
+                return _INVALID_SYNC_HISTORY
+            proven_state_hash = change.state_hash
+        if proven_state_hash != state_hash:
+            DavSyncToken.delete().where(
+                DavSyncToken.collection == self.collection.cache_col
+            ).execute()
+            return _INVALID_SYNC_HISTORY
         changed_hrefs = sorted({change.href for change in changed_revisions})
         return token, changed_hrefs
 
@@ -652,8 +672,11 @@ class Collection(BaseCollection):
         """
         if self.is_fake:
             return
+        if not is_safe_dav_href(href):
+            raise ValueError("invalid DAV href")
 
         vobject_item = item.vobject_item
+        previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
 
         with db.database_proxy.atomic():
             existing = self._get(href)
@@ -679,7 +702,9 @@ class Collection(BaseCollection):
                     tombstone_identity = stale_item.remote_uid or stale_item.eb_item.hex()
                     stale_item.uid = (
                         "dav-tombstone:"
-                        + hashlib.sha256(str(tombstone_identity).encode()).hexdigest()
+                        + hashlib.sha256(
+                            f"{stale_item.id}:{tombstone_identity}".encode()
+                        ).hexdigest()
                     )
                     stale_item.save(only=[ItemEntity.uid])
                 etesync_item = self.collection.create(vobject_item)
@@ -693,6 +718,7 @@ class Collection(BaseCollection):
             record_dav_change(
                 self.collection.cache_col,
                 href,
+                previous_state_hash=previous_state_hash,
                 etag=etesync_item.etag,
                 deleted=False,
             )
@@ -713,12 +739,14 @@ class Collection(BaseCollection):
         if item is None:
             raise ComponentNotFoundError(href)
 
+        previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
         with db.database_proxy.atomic():
             etag = item.etesync_item.etag
             item.etesync_item.delete()
             record_dav_change(
                 self.collection.cache_col,
                 href,
+                previous_state_hash=previous_state_hash,
                 etag=etag,
                 deleted=True,
             )
