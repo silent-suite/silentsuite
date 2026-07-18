@@ -37,6 +37,10 @@ _bridge_status = {
     "collections_scope": "all configured accounts",
 }
 _bridge_status_lock = threading.RLock()
+_sync_requests = {}
+_sync_requests_lock = threading.RLock()
+_sync_request_timeout = 30
+_sync_request_retention = 100
 # Process-local token protects localhost dashboard POSTs from cross-site form/script submissions.
 _dashboard_csrf_token = secrets.token_urlsafe(32)
 
@@ -52,6 +56,81 @@ def _json_response(status, payload):
 def _has_valid_csrf(environ):
     token = environ.get("HTTP_X_SILENTSUITE_CSRF", "")
     return bool(token) and hmac.compare_digest(token, _dashboard_csrf_token)
+
+
+def _sync_request_status(request_id):
+    with _sync_requests_lock:
+        request = _sync_requests.get(request_id)
+        if request is None:
+            return None
+        targets = list(request["targets"])
+        requested_at = request["requested_at"]
+        deadline = request["deadline"]
+
+    counts = {
+        "total": len(targets),
+        "pending": 0,
+        "running": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "timed_out": 0,
+    }
+    now = time.time()
+    for thread, generation in targets:
+        status = thread.generation_status(generation)
+        state = status["state"] if status is not None else "pending"
+        if state in {"pending", "running"} and now >= deadline:
+            state = "timed_out"
+        elif state in {"pending", "running"} and not thread.is_alive():
+            state = "failed"
+        counts[state] += 1
+
+    if counts["failed"]:
+        state = "failed"
+    elif counts["timed_out"]:
+        state = "timed_out"
+    elif counts["running"]:
+        state = "running"
+    elif counts["pending"]:
+        state = "pending"
+    else:
+        state = "succeeded"
+    return {
+        "request_id": request_id,
+        "state": state,
+        "requested_at": requested_at,
+        "deadline": deadline,
+        "accounts": counts,
+    }
+
+
+def _create_sync_request():
+    from ..radicale import storage as storage_module
+
+    with storage_module._sync_threads_lock:
+        threads = list(storage_module._sync_threads.values())
+    targets = []
+    for thread in threads:
+        if thread.is_alive():
+            targets.append((thread, thread.force_sync()))
+    if not targets:
+        return None
+
+    requested_at = time.time()
+    request_id = secrets.token_urlsafe(18)
+    with _sync_requests_lock:
+        _sync_requests[request_id] = {
+            "requested_at": requested_at,
+            "deadline": requested_at + _sync_request_timeout,
+            "targets": targets,
+        }
+        expired = sorted(
+            _sync_requests,
+            key=lambda key: _sync_requests[key]["requested_at"],
+        )[:-_sync_request_retention]
+        for expired_id in expired:
+            del _sync_requests[expired_id]
+    return _sync_request_status(request_id)
 
 
 # Localhost Host allowlist for defense-in-depth against DNS-rebinding and
@@ -734,15 +813,46 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     if (copyBtn) copyBtn.disabled = false;
                 }
             }
+            function pollSyncRequest(requestId, btn) {
+                fetch('/.web/api/sync/' + encodeURIComponent(requestId))
+                    .then(function(r) {
+                        if (!r.ok) throw new Error('Sync status request failed');
+                        return r.json();
+                    })
+                    .then(function(data) {
+                        if (data.state === 'succeeded') {
+                            btn.textContent = 'Synced';
+                            setTimeout(function() { location.reload(); }, 750);
+                        } else if (data.state === 'failed' || data.state === 'timed_out') {
+                            btn.textContent = data.state === 'timed_out' ? 'Timed out' : 'Sync failed';
+                            btn.disabled = false;
+                        } else {
+                            btn.textContent = data.state === 'running' ? 'Syncing...' : 'Queued...';
+                            setTimeout(function() { pollSyncRequest(requestId, btn); }, 750);
+                        }
+                    })
+                    .catch(function() {
+                        btn.textContent = 'Error';
+                        btn.disabled = false;
+                    });
+            }
             function triggerSync() {
                 var btn = document.getElementById('syncNowBtn');
-                btn.textContent = 'Syncing...';
+                btn.textContent = 'Requesting...';
                 btn.disabled = true;
                 fetch('/.web/api/sync', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
-                    .then(function(r) { return r.json(); })
-                    .then(function() { btn.textContent = 'Done!'; setTimeout(function() { location.reload(); }, 1000); })
-                    .catch(function() { btn.textContent = 'Error'; })
-                    .finally(function() { setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Now'; }, 3000); });
+                    .then(function(r) {
+                        if (!r.ok) throw new Error('Sync request failed');
+                        return r.json();
+                    })
+                    .then(function(data) {
+                        if (!data.request_id) throw new Error('Missing sync request ID');
+                        pollSyncRequest(data.request_id, btn);
+                    })
+                    .catch(function() {
+                        btn.textContent = 'Error';
+                        btn.disabled = false;
+                    });
             }
             function updateInterval() {
                 var val = document.getElementById('syncInterval').value;
@@ -1043,6 +1153,13 @@ class Web(BaseWeb):
                 json.dumps(data).encode(),
             )
 
+        if path.startswith("/.web/api/sync/"):
+            request_id = path.removeprefix("/.web/api/sync/")
+            data = _sync_request_status(request_id)
+            if data is None:
+                return _json_response(404, {"error": "Sync request not found"})
+            return _json_response(200, data)
+
         # Live sync progress — polled by the dashboard while a sync is running.
         if path == "/.web/api/progress":
             from ..radicale.storage import _sync_threads
@@ -1143,18 +1260,14 @@ class Web(BaseWeb):
         if path == "/.web/api/sync":
             if not _has_valid_csrf(environ):
                 return _csrf_error()
-            from ..radicale.storage import _sync_threads
-
-            for thread in _sync_threads.values():
-                if thread.is_alive():
-                    thread.force_sync()
-                    thread.wait_for_sync(30)
+            request = _create_sync_request()
+            if request is None:
+                return _json_response(503, {
+                    "ok": False,
+                    "error": "No sync workers available",
+                })
             log_sync_event("info", "Manual sync triggered from dashboard")
-            return (
-                200,
-                {"Content-Type": "application/json"},
-                json.dumps({"ok": True}).encode(),
-            )
+            return _json_response(202, {"ok": True, **request})
 
         # Inline dashboard account login/setup
         if path == "/.web/api/accounts/login":

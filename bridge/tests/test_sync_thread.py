@@ -29,6 +29,16 @@ class TestSyncThread:
         t.force_sync()
         assert not t._done_syncing.is_set()
 
+    def test_repeated_force_sync_requests_join_one_generation(self):
+        t = SyncThread("user@test.com")
+
+        first_generation = t.force_sync()
+        second_generation = t.force_sync()
+
+        assert first_generation == 1
+        assert second_generation == first_generation
+        assert t.generation_status(first_generation)["state"] == "pending"
+
     def test_request_sync_skips_when_recent(self):
         t = SyncThread("user@test.com")
         t.last_sync = time.time()  # just synced
@@ -164,6 +174,63 @@ class TestSyncThreadRun:
             t.force_sync()
             with pytest.raises(ConnectionError, match="network down"):
                 t.wait_for_sync(timeout=2)
+        finally:
+            t.stop()
+            t.join(1)
+
+
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.update_status")
+    @patch("silentsuite_bridge.radicale.storage.log_sync_event")
+    def test_requested_generation_reports_success_after_completion(
+        self, mock_log, mock_status, mock_etesync_ctx
+    ):
+        mock_etesync = MagicMock()
+        mock_etesync.list.return_value = []
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(mock_etesync, False)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+        t = SyncThread("user@test.com", daemon=True)
+        t.interval = 300
+        generation = t.force_sync()
+
+        t.start()
+        try:
+            assert t.wait_for_generation(generation, timeout=2) is True
+            status = t.generation_status(generation)
+            assert status["state"] == "succeeded"
+            assert status["completed_at"] is not None
+            assert t.last_sync == status["completed_at"]
+        finally:
+            t.stop()
+            t.join(1)
+
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.update_status")
+    @patch("silentsuite_bridge.radicale.storage.log_sync_event")
+    def test_failed_generation_is_sanitized_and_does_not_advance_last_sync(
+        self, mock_log, mock_status, mock_etesync_ctx
+    ):
+        mock_etesync = MagicMock()
+        mock_etesync.sync.side_effect = ConnectionError("private endpoint details")
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(mock_etesync, False)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+        t = SyncThread("user@test.com", daemon=True)
+        t.interval = 300
+        generation = t.force_sync()
+
+        t.start()
+        try:
+            assert t.wait_for_generation(generation, timeout=2) is True
+            status = t.generation_status(generation)
+            assert status["state"] == "failed"
+            assert status["error_code"] == "ConnectionError"
+            assert "private endpoint details" not in str(status)
+            assert t.last_sync is None
+            assert "private endpoint details" not in str(mock_log.call_args_list)
         finally:
             t.stop()
             t.join(1)

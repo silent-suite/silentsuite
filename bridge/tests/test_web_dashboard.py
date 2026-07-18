@@ -2,6 +2,7 @@
 
 import io
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from radicale.app import Application
@@ -244,6 +245,18 @@ def test_add_account_button_bound_via_add_event_listener(tmp_path, monkeypatch):
     assert "window.SILENTSUITE_DASHBOARD_CSRF = {{CSRF_TOKEN}}" not in html
 
 
+def test_dashboard_sync_script_checks_status_and_polls_request(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+
+    html = _render_dashboard()
+
+    assert "if (!r.ok)" in html
+    assert "data.request_id" in html
+    assert "encodeURIComponent(requestId)" in html
+    assert "data.state === 'succeeded'" in html
+    assert "data.state === 'failed' || data.state === 'timed_out'" in html
+
+
 def test_forget_account_status_removes_one_accounts_counts():
     _reset_status()
     update_status(
@@ -385,7 +398,19 @@ def test_dashboard_post_requires_csrf_token():
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
 
 
-def test_dashboard_sync_post_accepts_valid_csrf_token():
+def test_dashboard_sync_post_returns_request_id_without_waiting(monkeypatch):
+    web_module._sync_requests.clear()
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.force_sync.return_value = 7
+    thread.generation_status.return_value = {
+        "generation": 7,
+        "state": "pending",
+        "started_at": None,
+        "completed_at": None,
+        "error_code": None,
+    }
+    monkeypatch.setattr(storage, "_sync_threads", {"account@example.com": thread})
     web = Web.__new__(Web)
 
     status, headers, body = web.post(
@@ -395,9 +420,81 @@ def test_dashboard_sync_post_accepts_valid_csrf_token():
         None,
     )
 
+    assert status == 202
+    assert headers["Content-Type"] == "application/json"
+    payload = json.loads(body)
+    assert payload["ok"] is True
+    assert payload["state"] == "pending"
+    assert payload["request_id"]
+    thread.force_sync.assert_called_once_with()
+    thread.wait_for_sync.assert_not_called()
+
+
+def test_dashboard_sync_post_fails_when_no_live_worker(monkeypatch):
+    web_module._sync_requests.clear()
+    thread = MagicMock()
+    thread.is_alive.return_value = False
+    monkeypatch.setattr(storage, "_sync_threads", {"account@example.com": thread})
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+
+    assert status == 503
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(body) == {
+        "ok": False,
+        "error": "No sync workers available",
+    }
+
+
+def test_dashboard_sync_request_reports_generation_completion(monkeypatch):
+    web_module._sync_requests.clear()
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.force_sync.return_value = 7
+    thread.generation_status.return_value = {
+        "generation": 7,
+        "state": "succeeded",
+        "started_at": 100.0,
+        "completed_at": 101.0,
+        "error_code": None,
+    }
+    monkeypatch.setattr(storage, "_sync_threads", {"account@example.com": thread})
+    web = Web.__new__(Web)
+    _, _, post_body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+    request_id = json.loads(post_body)["request_id"]
+
+    status, headers, body = web.get(
+        _get_environ(),
+        "",
+        f"/.web/api/sync/{request_id}",
+        None,
+    )
+
     assert status == 200
     assert headers["Content-Type"] == "application/json"
-    assert json.loads(body) == {"ok": True}
+    payload = json.loads(body)
+    assert payload["request_id"] == request_id
+    assert payload["state"] == "succeeded"
+    assert payload["accounts"] == {
+        "total": 1,
+        "pending": 0,
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "timed_out": 0,
+    }
+    assert "account@example.com" not in body.decode()
 
 
 def test_dashboard_sync_post_rejects_wrong_csrf_token():

@@ -34,20 +34,19 @@ class Rights(OwnerOnlyRights):
 
         collection_uid = parts[1]
         try:
-            with etesync_for_user(user) as (etesync, _):
+            with etesync_for_user(user, exclusive=False) as (etesync, _):
                 collection = etesync.get(collection_uid)
         except Exception as exc:
             # Missing collections include legitimate creates. Preserve the base
             # owner-only answer and let storage/server code decide.
             logger.debug(
-                "Could not resolve collection permissions for %s: %s",
-                collection_uid[:8],
+                "Could not resolve collection permissions (%s)",
                 exc.__class__.__name__,
             )
             return permissions
 
         if getattr(collection, "read_only", False):
-            logger.debug("Granting read-only DAV access to shared collection %s", collection_uid[:8])
+            logger.debug("Granting read-only DAV access to shared collection")
             return permissions.replace("w", "")
 
         return permissions

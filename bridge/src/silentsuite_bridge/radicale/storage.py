@@ -31,6 +31,7 @@ from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
 logger = logging.getLogger("silentsuite-bridge.storage")
+_DAV_SESSION_LOCK_TIMEOUT = 2.0
 
 
 # --- Sync Thread ---
@@ -51,6 +52,11 @@ class SyncThread(threading.Thread):
         self._stop_sync = threading.Event()
         self._done_syncing = threading.Event()
         self._done_syncing.set()
+        self._generation_condition = threading.Condition()
+        self._next_generation = 0
+        self._requested_generation = None
+        self._active_generation = None
+        self._generation_statuses = {}
         self.user = user
         self.last_sync = None
         self._exception = None
@@ -62,8 +68,24 @@ class SyncThread(threading.Thread):
         self.last_sync_duration = None
 
     def force_sync(self):
-        self._force_sync.set()
-        self._done_syncing.clear()
+        with self._generation_condition:
+            if self._active_generation is not None:
+                return self._active_generation
+            if self._requested_generation is not None:
+                return self._requested_generation
+            self._next_generation += 1
+            generation = self._next_generation
+            self._requested_generation = generation
+            self._generation_statuses[generation] = {
+                "generation": generation,
+                "state": "pending",
+                "started_at": None,
+                "completed_at": None,
+                "error_code": None,
+            }
+            self._force_sync.set()
+            self._done_syncing.clear()
+            return generation
 
     def stop(self):
         """Request a clean shutdown and wake any interval wait."""
@@ -92,21 +114,78 @@ class SyncThread(threading.Thread):
             raise e
         return ret
 
+    def generation_status(self, generation):
+        with self._generation_condition:
+            status = self._generation_statuses.get(generation)
+            return dict(status) if status is not None else None
+
+    def wait_for_generation(self, generation, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._generation_condition:
+            while True:
+                status = self._generation_statuses.get(generation)
+                if status is None:
+                    return False
+                if status["state"] in {"succeeded", "failed"}:
+                    return True
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    return False
+                self._generation_condition.wait(remaining)
+
+    def _begin_generation(self):
+        with self._generation_condition:
+            generation = self._requested_generation
+            if generation is None:
+                self._next_generation += 1
+                generation = self._next_generation
+                self._generation_statuses[generation] = {
+                    "generation": generation,
+                    "state": "pending",
+                    "started_at": None,
+                    "completed_at": None,
+                    "error_code": None,
+                }
+            self._requested_generation = None
+            self._active_generation = generation
+            started_at = time.time()
+            self._generation_statuses[generation].update({
+                "state": "running",
+                "started_at": started_at,
+            })
+            self._done_syncing.clear()
+            return generation, started_at
+
+    def _complete_generation(self, generation, state, completed_at, error_code=None):
+        with self._generation_condition:
+            self._generation_statuses[generation].update({
+                "state": state,
+                "completed_at": completed_at,
+                "error_code": error_code,
+            })
+            self._active_generation = None
+            self._done_syncing.set()
+            self._generation_condition.notify_all()
+
     def run(self):
         while not self._stop_sync.is_set():
+            generation, started_at = self._begin_generation()
+            self._force_sync.clear()
+            state = "failed"
+            error_code = None
             try:
                 if self._stop_sync.is_set():
                     break
                 with etesync_for_user(self.user) as (etesync, _):
                     if self._stop_sync.is_set():
                         break
-                    self.last_sync = time.time()
-                    self._done_syncing.clear()
                     self.is_syncing = True
-                    self.sync_started_at = self.last_sync
+                    self.sync_started_at = started_at
                     etesync.sync()
-                    self.last_sync_duration = time.time() - self.sync_started_at
+                    completed_at = time.time()
+                    self.last_sync_duration = completed_at - self.sync_started_at
                     self.is_syncing = False
+                    state = "succeeded"
                     logger.debug("Sync completed for configured account")
 
                     # Update dashboard status with collection counts
@@ -128,18 +207,30 @@ class SyncThread(threading.Thread):
                     )
                     log_sync_event("sync", "Synced account")
             except Exception as e:
-                logger.exception("Sync error for configured account: %s", e)
+                error_code = e.__class__.__name__
+                logger.warning(
+                    "Sync failed for configured account (%s)",
+                    error_code,
+                )
                 self._exception = e
-                update_status("error", error=str(e))
-                log_sync_event("error", f"Sync failed: {e}")
+                update_status("error", error=error_code)
+                log_sync_event("error", "Sync failed")
             finally:
+                completed_at = time.time()
+                if self.sync_started_at is not None:
+                    self.last_sync_duration = completed_at - self.sync_started_at
+                if state == "succeeded":
+                    self.last_sync = completed_at
                 self.is_syncing = False
-                was_re_requested = self._force_sync.is_set()
-                self._force_sync.clear()
-                self._done_syncing.set()
+                self._complete_generation(
+                    generation,
+                    state,
+                    completed_at,
+                    error_code,
+                )
 
-            if was_re_requested:
-                continue  # immediately loop back to sync without waiting
+            if self._stop_sync.is_set():
+                break
             self._force_sync.wait(self.interval)
 
 
@@ -558,12 +649,24 @@ class PrincipalDiscoveryCollection(Collection):
 class Storage(BaseStorage):
     """Radicale storage that serves Etebase data via local cache."""
 
-    _etesync_user_lock = None
+    @property
+    def user(self):
+        return getattr(self._request_context, "user", None)
+
+    @user.setter
+    def user(self, value):
+        self._request_context.user = value
+
+    @property
+    def etesync(self):
+        return getattr(self._request_context, "etesync", None)
+
+    @etesync.setter
+    def etesync(self, value):
+        self._request_context.etesync = value
 
     def __init__(self, configuration):
-        self.user = None
-        self.etesync = None
-        self._etesync_user_lock = threading.RLock()
+        self._request_context = threading.local()
         super().__init__(configuration)
 
     def verify(self):
@@ -742,68 +845,69 @@ class Storage(BaseStorage):
 
     @contextmanager
     def acquire_lock(self, mode, user=""):
-        """Acquire storage lock and sync with Etebase server."""
+        """Acquire request-local storage context and sync when required."""
         if not user:
             yield
             return
 
         if mode == "r":
-            with self._etesync_user_lock:
-                self.user = user
-                try:
-                    yield
-                finally:
-                    self.user = None
+            self.user = user
+            try:
+                yield
+            finally:
+                self.etesync = None
+                self.user = None
             return
 
         sync_thread = start_sync_thread(user)
         logger.info("acquire_lock(%s): pre-yield sync", mode)
         sync_thread.force_sync()
         try:
-            sync_thread.wait_for_sync(20)
-        except Exception as e:
+            if not sync_thread.wait_for_sync(20):
+                logger.warning(
+                    "Sync timed out for configured account; continuing with local cache"
+                )
+        except Exception as exc:
             logger.warning(
-                "Sync failed for configured account, continuing with local cache: %s", e
+                "Sync failed for configured account; continuing with local cache (%s)",
+                exc.__class__.__name__,
             )
 
-        with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
+        with etesync_for_user(
+            user, timeout=_DAV_SESSION_LOCK_TIMEOUT
+        ) as (etesync, _):
             self.user = user
             self.etesync = etesync
+            try:
+                yield
 
-            yield
-
-            if mode == "w":
-                # Push dirty items inline — the SyncThread can't acquire
-                # _get_etesync_lock while we hold it, so push here directly.
-                logger.info("acquire_lock(w): post-write — pushing inline")
-                try:
-                    etesync.push_collection_list()
-                    for col in etesync.list():
-                        if etesync.collection_is_dirty(col.uid):
-                            logger.info("acquire_lock: pushing dirty collection")
-                            etesync.push_collection(col.uid)
-                    logger.info("acquire_lock(w): inline push done")
-                except Exception as e:
-                    logger.warning("acquire_lock(w): inline push FAILED: %s", e)
-
-            self.etesync = None
-            self.user = None
+                if mode == "w":
+                    logger.info("acquire_lock(w): post-write — pushing inline")
+                    try:
+                        etesync.push_collection_list()
+                        for col in etesync.list():
+                            if etesync.collection_is_dirty(col.uid):
+                                logger.info("acquire_lock: pushing dirty collection")
+                                etesync.push_collection(col.uid)
+                        logger.info("acquire_lock(w): inline push done")
+                    except Exception as exc:
+                        logger.warning(
+                            "acquire_lock(w): inline push failed (%s)",
+                            exc.__class__.__name__,
+                        )
+            finally:
+                self.etesync = None
+                self.user = None
 
     @contextmanager
     def _acquire_read_backend(self):
-        """Initialize sync/cache lazily after static discovery paths are handled."""
+        """Open an independent local-cache reader without waiting on remote sync."""
         user = self.user
         sync_thread = start_sync_thread(user)
-        logger.info("acquire_lock(r): pre-yield sync")
+        logger.info("acquire_lock(r): requesting background sync")
         sync_thread.force_sync()
-        try:
-            sync_thread.wait_for_sync(20)
-        except Exception as e:
-            logger.warning(
-                "Sync failed for configured account, continuing with local cache: %s", e
-            )
 
-        with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
+        with etesync_for_user(user, exclusive=False) as (etesync, _):
             self.etesync = etesync
             try:
                 yield
