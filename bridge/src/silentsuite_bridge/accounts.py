@@ -6,6 +6,7 @@ import hashlib
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass
 
 from . import config
@@ -16,25 +17,42 @@ from .radicale.storage import stop_sync_thread
 
 _account_lock = threading.RLock()
 _pending_cache_cleanups = set()
+_account_epochs = {}
 logger = logging.getLogger("silentsuite-bridge.accounts")
 
 
 def _schedule_deferred_cache_cleanup(username):
     with _account_lock:
-        if username in _pending_cache_cleanups:
+        epoch = _account_epochs.get(username, 0)
+        cleanup_key = (username, epoch)
+        if cleanup_key in _pending_cache_cleanups:
             return
-        _pending_cache_cleanups.add(username)
+        _pending_cache_cleanups.add(cleanup_key)
 
     def cleanup():
         try:
-            with account_maintenance(username, timeout=None) as available:
-                if available:
-                    clear_cached_user(username)
-        except Exception as exc:
-            logger.warning("Deferred cache cleanup failed (%s)", exc.__class__.__name__)
+            while True:
+                with _account_lock:
+                    if _account_epochs.get(username, 0) != epoch:
+                        return
+                try:
+                    with account_maintenance(username, timeout=None) as available:
+                        if not available:
+                            continue
+                        with _account_lock:
+                            if _account_epochs.get(username, 0) != epoch:
+                                return
+                            clear_cached_user(username)
+                            return
+                except Exception as exc:
+                    logger.warning(
+                        "Deferred cache cleanup failed (%s); retrying",
+                        exc.__class__.__name__,
+                    )
+                    time.sleep(1)
         finally:
             with _account_lock:
-                _pending_cache_cleanups.discard(username)
+                _pending_cache_cleanups.discard(cleanup_key)
 
     threading.Thread(
         target=cleanup,
@@ -92,6 +110,7 @@ def store_authenticated_account(
         creds.set_password_salt(normalized, salt_hex)
         creds.set_password_hash(normalized, password_hash)
         creds.save()
+        _account_epochs[normalized] = _account_epochs.get(normalized, 0) + 1
 
     return AccountOperationResult(username=normalized, existed=existed)
 
@@ -139,15 +158,17 @@ def remove_account(
 ) -> AccountOperationResult:
     """Remove local credentials plus that account's local decrypted cache."""
     normalized = _normalize_username(username)
-    logout_result = logout_account(normalized, credentials=credentials)
-    with account_maintenance(normalized, timeout=0) as available:
-        if available:
-            cache_cleared = clear_cached_user(normalized)
-            cache_cleanup = "cleared" if cache_cleared else "not_found"
-        else:
-            cache_cleared = False
-            cache_cleanup = "deferred"
-            _schedule_deferred_cache_cleanup(normalized)
+    with _account_lock:
+        logout_result = logout_account(normalized, credentials=credentials)
+        _account_epochs[normalized] = _account_epochs.get(normalized, 0) + 1
+        with account_maintenance(normalized, timeout=0) as available:
+            if available:
+                cache_cleared = clear_cached_user(normalized)
+                cache_cleanup = "cleared" if cache_cleared else "not_found"
+            else:
+                cache_cleared = False
+                cache_cleanup = "deferred"
+                _schedule_deferred_cache_cleanup(normalized)
 
     return AccountOperationResult(
         username=normalized,

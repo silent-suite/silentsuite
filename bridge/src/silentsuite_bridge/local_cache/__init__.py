@@ -201,6 +201,12 @@ def _activate_dav_revision_ledger():
 
 
 def clear_cached_user(username, db_path=None):
+    """Delete one user's cache while serializing proxy setup and migrations."""
+    with _cache_database_init_lock:
+        return _clear_cached_user_locked(username, db_path)
+
+
+def _clear_cached_user_locked(username, db_path=None):
     """Delete one user's cached rows without needing a live Etebase session.
 
     Returns True when a cache user row existed and was deleted. Missing users are

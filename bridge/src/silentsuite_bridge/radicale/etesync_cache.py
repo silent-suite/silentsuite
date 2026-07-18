@@ -64,8 +64,8 @@ class EteSyncCache:
         with self._cache_lock:
             self._etesync_cache.pop(user, None)
 
-    def fresh_for_user(self, user):
-        """Restore an independent session for local-cache reads."""
+    def fresh_for_user(self, user, *, read_only=True):
+        """Restore an independent session for bounded local-cache work."""
         with self._cache_lock:
             if self.creds:
                 self.creds.load()
@@ -82,7 +82,7 @@ class EteSyncCache:
             user,
             stored_session,
             remote_url,
-            read_only=True,
+            read_only=read_only,
         ), True
 
 
@@ -104,7 +104,7 @@ def _lock_for_user(user):
 
 
 @contextmanager
-def etesync_for_user(user, *, exclusive=True, timeout=None):
+def etesync_for_user(user, *, exclusive=True, timeout=None, read_only=True):
     """Get an Etebase session for a user (thread-safe, cached)."""
     if not exclusive:
         with _reader_condition:
@@ -112,7 +112,12 @@ def etesync_for_user(user, *, exclusive=True, timeout=None):
                 raise EteSyncBusyError("Account session is closing")
             _active_readers[user] = _active_readers.get(user, 0) + 1
         try:
-            yield _etesync_cache.fresh_for_user(user)
+            session = (
+                _etesync_cache.fresh_for_user(user)
+                if read_only
+                else _etesync_cache.fresh_for_user(user, read_only=False)
+            )
+            yield session
             return
         finally:
             with _reader_condition:

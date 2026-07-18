@@ -92,6 +92,19 @@ class SyncThread(threading.Thread):
 
     def force_sync(self, *, deadline=None, after_generation=None):
         with self._generation_condition:
+            if self._stop_sync.is_set():
+                self._next_generation += 1
+                generation = self._next_generation
+                self._generation_statuses[generation] = {
+                    "generation": generation,
+                    "state": "failed",
+                    "started_at": None,
+                    "completed_at": time.time(),
+                    "error_code": "SyncStopped",
+                    "deadline": deadline,
+                }
+                self._generation_condition.notify_all()
+                return generation
             if (
                 self._active_generation is not None
                 and (
@@ -377,7 +390,13 @@ def start_sync_thread(user):
     """
     with _sync_threads_lock:
         thread = _sync_threads.get(user)
-        if thread is not None and thread.is_alive():
+        stop_event = getattr(thread, "_stop_sync", None)
+        is_stopping = stop_event is not None and stop_event.is_set() is True
+        if (
+            thread is not None
+            and thread.is_alive()
+            and not is_stopping
+        ):
             return thread
         thread = SyncThread(user, daemon=True)
         _sync_threads[user] = thread
@@ -1188,9 +1207,12 @@ class Storage(BaseStorage):
                 exc.__class__.__name__,
             )
 
-        with etesync_for_user(
-            user, timeout=_DAV_SESSION_LOCK_TIMEOUT
-        ) as (etesync, _):
+        session_options = (
+            {"exclusive": False, "read_only": False}
+            if mode == "w"
+            else {"timeout": _DAV_SESSION_LOCK_TIMEOUT}
+        )
+        with etesync_for_user(user, **session_options) as (etesync, _):
             self.user = user
             self.etesync = etesync
             try:

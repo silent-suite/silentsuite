@@ -171,6 +171,60 @@ def test_deferred_cache_cleanup_retries_after_maintenance_becomes_available(monk
     assert cleaned.wait(1)
 
 
+def test_deferred_cleanup_is_cancelled_by_same_account_reauthentication(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    cleared = threading.Event()
+    username = "alice@example.com"
+
+    @contextmanager
+    def blocked_maintenance(user, timeout=0):
+        entered.set()
+        assert release.wait(1)
+        yield True
+
+    monkeypatch.setattr(accounts, "account_maintenance", blocked_maintenance)
+    monkeypatch.setattr(accounts, "clear_cached_user", lambda user: cleared.set())
+    accounts._pending_cache_cleanups.clear()
+    accounts._account_epochs[username] = 1
+    accounts._schedule_deferred_cache_cleanup(username)
+    assert entered.wait(1)
+
+    with accounts._account_lock:
+        accounts._account_epochs[username] = 2
+    release.set()
+
+    assert not cleared.wait(0.1)
+
+
+def test_deferred_cleanup_retries_transient_failure(monkeypatch):
+    cleaned = threading.Event()
+    attempts = 0
+
+    @contextmanager
+    def available_maintenance(user, timeout=0):
+        yield True
+
+    def flaky_clear(user):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient")
+        cleaned.set()
+        return True
+
+    monkeypatch.setattr(accounts, "account_maintenance", available_maintenance)
+    monkeypatch.setattr(accounts, "clear_cached_user", flaky_clear)
+    monkeypatch.setattr(accounts.time, "sleep", lambda seconds: None)
+    accounts._pending_cache_cleanups.clear()
+    accounts._account_epochs["retry@example.com"] = 1
+
+    accounts._schedule_deferred_cache_cleanup("retry@example.com")
+
+    assert cleaned.wait(1)
+    assert attempts == 2
+
+
 def test_repeated_remove_truthfully_reports_deferred_cleanup(monkeypatch):
     monkeypatch.setattr(accounts, "stop_sync_thread", lambda user: False)
     monkeypatch.setattr(accounts, "forget_etesync_user", lambda user: None)

@@ -319,6 +319,29 @@ class TestBackendDiscoveryForcesSync:
         mock_etesync_ctx.assert_called_with("test@example.com", exclusive=False)
         mock_thread.wait_for_sync.assert_not_called()
 
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
+    def test_write_lock_uses_independent_local_writer(self, mock_start, mock_etesync_ctx):
+        mock_thread = MagicMock()
+        mock_thread.force_sync.side_effect = [1, 2]
+        mock_thread.wait_for_sync.return_value = False
+        mock_start.return_value = mock_thread
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(MagicMock(), True)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+        from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
+
+        storage = Storage(Configuration(DEFAULT_CONFIG_SCHEMA))
+        with storage.acquire_lock("w", user="test@example.com"):
+            pass
+
+        mock_etesync_ctx.assert_called_once_with(
+            "test@example.com", exclusive=False, read_only=False
+        )
+        mock_thread.force_sync.assert_any_call(after_generation=1)
+
     def test_read_context_is_request_local_across_accounts(self):
         from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
 

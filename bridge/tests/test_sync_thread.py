@@ -280,6 +280,27 @@ class TestStartSyncThread:
         finally:
             storage._sync_threads = original
 
+    @patch("silentsuite_bridge.radicale.storage.SyncThread")
+    def test_replaces_alive_worker_that_is_already_stopping(self, MockThread):
+        from silentsuite_bridge.radicale import storage
+
+        original = storage._sync_threads.copy()
+        try:
+            existing = MagicMock()
+            existing.is_alive.return_value = True
+            existing._stop_sync = threading.Event()
+            existing._stop_sync.set()
+            replacement = MagicMock()
+            MockThread.return_value = replacement
+            storage._sync_threads["stopping@test.com"] = existing
+
+            result = start_sync_thread("stopping@test.com")
+
+            assert result is replacement
+            replacement.start.assert_called_once()
+        finally:
+            storage._sync_threads = original
+
     @patch("silentsuite_bridge.radicale.storage.forget_etesync_user")
     @patch("silentsuite_bridge.radicale.storage.SyncThread")
     def test_refresh_sync_thread_starts_new_thread(self, MockThread, mock_forget):
@@ -409,6 +430,18 @@ def test_generation_wait_wakes_at_generation_deadline_without_worker():
 
     assert thread.wait_for_generation(generation, timeout=None) is True
     assert thread.generation_status(generation)["state"] == "timed_out"
+
+
+def test_stopped_worker_rejects_new_generation_terminally():
+    thread = SyncThread("account@example.com")
+    thread.stop()
+
+    generation = thread.force_sync()
+
+    assert thread.wait_for_generation(generation, timeout=0) is True
+    status = thread.generation_status(generation)
+    assert status["state"] == "failed"
+    assert status["error_code"] == "SyncStopped"
 
 
 def test_begin_does_not_revive_timed_out_pending_generation():

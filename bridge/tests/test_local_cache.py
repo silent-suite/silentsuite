@@ -3,6 +3,9 @@
 import logging
 import os
 import stat
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch, PropertyMock
 
 import peewee as pw
@@ -169,6 +172,28 @@ class TestClearCachedUser:
 
         assert clear_cached_user("ghost@example.com") is False
         assert User.get_or_none(User.username == "bob@example.com") is not None
+
+    def test_clear_cached_user_serializes_proxy_initialization(self, monkeypatch):
+        active = 0
+        max_active = 0
+        state_lock = threading.Lock()
+
+        def clear(_username, _db_path=None):
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.02)
+            with state_lock:
+                active -= 1
+            return True
+
+        monkeypatch.setattr(local_cache_module, "_clear_cached_user_locked", clear)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(clear_cached_user, ["alice", "bob"]))
+
+        assert results == [True, True]
+        assert max_active == 1
 
 
 # ---------------------------------------------------------------------------
