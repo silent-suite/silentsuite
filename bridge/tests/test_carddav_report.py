@@ -159,14 +159,6 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
         auth=_basic_auth(),
     )
     assert status == "400 Bad Request"
-    report_records = [
-        record
-        for record in caplog.records
-        if str(record.pathname).replace("\\", "/").endswith(
-            ("/radicale/app/base.py", "/radicale/app/report.py")
-        )
-    ]
-    report_log = "\n".join(record.getMessage() for record in report_records)
-    assert private_payload.decode() not in report_log
-    assert private_collection not in report_log
-    assert all(record.exc_info is None for record in report_records)
+    assert private_payload.decode() not in caplog.text
+    assert private_collection not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)

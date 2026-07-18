@@ -24,6 +24,10 @@ from . import db, models
 logger = logging.getLogger("silentsuite-bridge.cache")
 
 
+class DavUnresolvedItemsError(RuntimeError):
+    """A sync applied safe changes but retained unresolved DAV conflicts."""
+
+
 @contextmanager
 def _private_umask():
     old_umask = os.umask(0o077)
@@ -482,6 +486,15 @@ class Etebase:
         self.sync_collection_list()
         for collection in self.list():
             self.sync_collection(collection.uid)
+        unresolved = (
+            models.DavUnresolvedItem.select()
+            .join(models.CollectionEntity)
+            .where(models.CollectionEntity.local_user == self.user)
+            .exists()
+        )
+        if unresolved:
+            logger.warning("Sync completed with unresolved DAV conflicts")
+            raise DavUnresolvedItemsError("DAV synchronization is incomplete")
         logger.info("=== Full sync cycle complete ===")
 
     def sync_collection_list(self):
@@ -613,6 +626,18 @@ class Etebase:
                     & (models.ItemEntity.uid == meta["name"])
                     & (models.ItemEntity.remote_uid.is_null(True))
                 )
+                if cache_item is None:
+                    identity_bound_collision = models.ItemEntity.get_or_none(
+                        (models.ItemEntity.collection == cache_col)
+                        & (models.ItemEntity.uid == meta["name"])
+                        & (models.ItemEntity.remote_uid.is_null(False))
+                    )
+                    if identity_bound_collision is not None:
+                        if quarantine:
+                            self._quarantine_unresolved_item(
+                                cache_col, item_mgr, item
+                            )
+                        return False
             if cache_item is None and item.deleted:
                 if quarantine:
                     self._quarantine_unresolved_item(cache_col, item_mgr, item)

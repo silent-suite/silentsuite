@@ -11,11 +11,14 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
     def filter(self, record):
         template = str(record.msg)
         normalized_path = str(record.pathname).replace("\\", "/")
-        if normalized_path.endswith("/radicale/app/report.py"):
+        if (
+            "/radicale/" in normalized_path
+            and "/silentsuite_bridge/" not in normalized_path
+        ):
             record.msg = (
-                "DAV REPORT request was rejected"
+                "Radicale request was rejected"
                 if record.levelno >= logging.WARNING
-                else "DAV REPORT diagnostic suppressed"
+                else "Radicale diagnostic suppressed"
             )
             record.args = ()
             record.exc_info = None
