@@ -210,6 +210,53 @@ class TestFavoriteCardDavRoundTrip:
         assert "X-SILENTSUITE-FAVORITE:1" in created.serialize()
         assert HrefMapper.get_by_id(new_cache_item.id).href == "new-name.vcf"
 
+    def test_recreate_at_tombstone_href_replaces_stale_mapping(self, mem_db, user):
+        collection, cached_collection, _ = self._collection(
+            mem_db,
+            user,
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fav-1\r\nFN:Existing\r\nEND:VCARD",
+        )
+        tombstone = ItemEntity.create(
+            collection=cached_collection.cache_col,
+            uid="restored-contact",
+            eb_item=b"deleted-cache",
+            deleted=True,
+        )
+        HrefMapper.create(content=tombstone, href="restored.vcf")
+        new_item = MagicMock()
+        new_item.content = (
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:restored-contact\r\n"
+            "FN:Restored\r\nEND:VCARD"
+        )
+        new_item.etag = "etag-restored"
+        new_item.meta = {"mtime": 1700000000000}
+
+        def create(_vobject_item):
+            new_item.cache_item = ItemEntity.create(
+                collection=cached_collection.cache_col,
+                uid="restored-contact",
+                eb_item=b"restored-cache",
+            )
+            return new_item
+
+        cached_collection.create.side_effect = create
+        original_get = cached_collection.get.side_effect
+        cached_collection.get.side_effect = (
+            lambda uid: new_item if uid == "restored-contact" else original_get(uid)
+        )
+        incoming = MagicMock(vobject_item=vobject.readOne(new_item.content))
+
+        restored = collection.upload("restored.vcf", incoming)
+
+        assert restored.href == "restored.vcf"
+        restored_cache = ItemEntity.get(
+            (ItemEntity.collection == cached_collection.cache_col)
+            & (ItemEntity.uid == "restored-contact")
+        )
+        assert restored_cache.deleted is False
+        assert HrefMapper.get_by_id(restored_cache.id).href == "restored.vcf"
+        assert HrefMapper.select().where(HrefMapper.href == "restored.vcf").count() == 1
+
 
 # ---------------------------------------------------------------------------
 # acquire_lock — sync is forced on every client request

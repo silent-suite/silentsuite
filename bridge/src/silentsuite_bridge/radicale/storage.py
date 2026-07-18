@@ -58,6 +58,13 @@ _GENERATION_STATUS_RETENTION = 100
 # Global registry of sync threads keyed by username
 _sync_threads = {}
 _sync_threads_lock = threading.Lock()
+_dav_token_locks = {}
+_dav_token_locks_lock = threading.Lock()
+
+
+def _dav_token_lock(collection_id):
+    with _dav_token_locks_lock:
+        return _dav_token_locks.setdefault(collection_id, threading.Lock())
 
 
 class SyncThread(threading.Thread):
@@ -202,11 +209,24 @@ class SyncThread(threading.Thread):
                 status = self._generation_statuses.get(generation)
                 if status is None:
                     return False
+                self._generation_status_snapshot(status)
                 if status["state"] in {"succeeded", "failed", "timed_out"}:
                     return True
-                remaining = None if deadline is None else deadline - time.monotonic()
-                if remaining is not None and remaining <= 0:
+                caller_remaining = (
+                    None if deadline is None else deadline - time.monotonic()
+                )
+                if caller_remaining is not None and caller_remaining <= 0:
                     return False
+                remaining = caller_remaining
+                if status.get("deadline") is not None:
+                    wall_remaining = status["deadline"] - time.time()
+                    if wall_remaining <= 0:
+                        continue
+                    remaining = (
+                        wall_remaining
+                        if remaining is None
+                        else min(remaining, wall_remaining)
+                    )
                 self._generation_condition.wait(remaining)
 
     def _begin_generation(self):
@@ -569,6 +589,12 @@ class Collection(BaseCollection):
         return ""
 
     def sync(self, old_token=None):
+        collection_id = self.collection.cache_col.id
+        with _dav_token_lock(collection_id):
+            with db.database_proxy.atomic("IMMEDIATE"):
+                return self._sync_locked(old_token)
+
+    def _sync_locked(self, old_token=None):
         token_prefix = "http://radicale.org/ns/sync/"
         self._sanitize_href_mappings()
         self.collection.cache_col = CollectionEntity.get_by_id(
@@ -749,20 +775,20 @@ class Collection(BaseCollection):
         if self.is_fake:
             return
 
-        try:
-            href_mapper = (
-                HrefMapper
-                .select(HrefMapper, ItemEntity)
-                .join(ItemEntity)
-                .where(
-                    (HrefMapper.href == href)
-                    & (ItemEntity.collection == self.collection.cache_col)
-                )
-                .get()
+        href_mapper = (
+            HrefMapper
+            .select(HrefMapper, ItemEntity)
+            .join(ItemEntity)
+            .where(
+                (HrefMapper.href == href)
+                & (ItemEntity.collection == self.collection.cache_col)
+                & (ItemEntity.deleted == False)  # noqa: E712
             )
-            uid = href_mapper.content.uid
-        except HrefMapper.DoesNotExist:
+            .first()
+        )
+        if href_mapper is None:
             return None
+        uid = href_mapper.content.uid
 
         etesync_item = self.collection.get(uid)
         if etesync_item is None:
@@ -829,6 +855,20 @@ class Collection(BaseCollection):
                 etesync_item.save()
                 event = "Updated item"
             else:
+                stale_mappers = list(
+                    HrefMapper
+                    .select(HrefMapper, ItemEntity)
+                    .join(ItemEntity)
+                    .where(
+                        (HrefMapper.href == href)
+                        & (ItemEntity.collection == self.collection.cache_col)
+                        & (ItemEntity.deleted == True)  # noqa: E712
+                    )
+                )
+                for stale_mapper in stale_mappers:
+                    stale_item = stale_mapper.content
+                    stale_mapper.delete_instance()
+                    stale_item.delete_instance()
                 etesync_item = self.collection.create(vobject_item)
                 etesync_item.save()
                 href_mapper = HrefMapper(

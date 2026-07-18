@@ -157,6 +157,7 @@ class TestSyncThreadRun:
             t.stop()
             t.join(1)
 
+
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.update_status")
     @patch("silentsuite_bridge.radicale.storage.log_sync_event")
@@ -400,6 +401,14 @@ def test_completion_after_deadline_is_timeout_without_prior_poll():
     status = thread.generation_status(generation)
     assert status["state"] == "timed_out"
     assert status["completed_at"] == deadline
+
+
+def test_generation_wait_wakes_at_generation_deadline_without_worker():
+    thread = SyncThread("account@example.com")
+    generation = thread.force_sync(deadline=time.time() + 0.02)
+
+    assert thread.wait_for_generation(generation, timeout=None) is True
+    assert thread.generation_status(generation)["state"] == "timed_out"
 
 
 def test_begin_does_not_revive_timed_out_pending_generation():

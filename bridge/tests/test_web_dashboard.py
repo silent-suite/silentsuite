@@ -124,6 +124,7 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert "2 calendars, 1 contacts, 0 tasks" in html
     assert "window.SILENTSUITE_DASHBOARD_CSRF" in html
     assert "X-SilentSuite-CSRF" in html
+
     assert "Add / Re-authenticate Account" in html
     assert "Add or re-authenticate an account" in html
     assert 'class="login-panel hidden"' in html

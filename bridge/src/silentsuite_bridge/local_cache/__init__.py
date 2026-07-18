@@ -486,6 +486,14 @@ class Etebase:
             item_mgr = col_mgr.get_item_manager(col)
             items = cache_col.items.where(models.ItemEntity.remote_uid.is_null(True))
             for cache_item in items:
+                existing_quarantine = models.DavUnresolvedItem.get_or_none(
+                    (models.DavUnresolvedItem.local_item == cache_item)
+                    & models.DavUnresolvedItem.reason.in_(
+                        ("legacy_corrupt", "legacy_duplicate")
+                    )
+                )
+                if existing_quarantine is not None:
+                    continue
                 try:
                     remote_item = item_mgr.cache_load(cache_item.eb_item)
                 except Exception:

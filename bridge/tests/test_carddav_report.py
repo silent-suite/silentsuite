@@ -180,3 +180,24 @@ def test_radicale_filter_preserves_bounded_server_diagnostics():
 
     assert record.msg == "Server worker failed (%s)"
     assert record.args == ("RuntimeError",)
+
+
+def test_radicale_filter_redacts_server_request_exception():
+    private_value = "private-contact-href.vcf"
+    error = RuntimeError(private_value)
+    record = logging.LogRecord(
+        name="radicale.server",
+        level=logging.ERROR,
+        pathname="/site-packages/radicale/server.py",
+        lineno=1,
+        msg="An exception occurred during request: %s",
+        args=(error,),
+        exc_info=(RuntimeError, error, None),
+    )
+
+    bridge_application._DavDiagnosticRedactionFilter().filter(record)
+
+    assert record.msg == "Radicale server request failed"
+    assert record.args == ()
+    assert record.exc_info is None
+    assert private_value not in record.getMessage()
