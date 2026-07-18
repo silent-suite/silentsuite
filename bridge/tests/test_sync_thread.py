@@ -385,6 +385,18 @@ def test_generation_timeout_is_shared_and_terminal():
     assert thread.force_sync(deadline=time.time() + 30) != generation
 
 
+def test_completion_after_deadline_is_timeout_without_prior_poll():
+    thread = SyncThread("account@example.com")
+    deadline = time.time() + 1
+    generation = thread.force_sync(deadline=deadline)
+
+    thread._complete_generation(generation, "succeeded", deadline + 1)
+
+    status = thread.generation_status(generation)
+    assert status["state"] == "timed_out"
+    assert status["completed_at"] == deadline
+
+
 def test_terminal_generation_history_is_bounded():
     thread = SyncThread("account@example.com")
     for _ in range(105):

@@ -43,24 +43,21 @@ class EteSyncCache:
                         etesync.stored_session == self.creds.get_etebase(user)
                     ):
                         return etesync, False
-                    else:
-                        del self._etesync_cache[user]
+                    del self._etesync_cache[user]
             else:
                 self.creds = Credentials(self.creds_path)
 
             remote_url = self.creds.get_server_url(user)
             stored_session = self.creds.get_etebase(user)
-        if stored_session is None:
-            raise Exception(
-                "Configured account not found in credentials file. "
-                "Please authenticate via the browser first."
-            )
+            if stored_session is None:
+                raise Exception(
+                    "Configured account not found in credentials file. "
+                    "Please authenticate via the browser first."
+                )
 
-        etesync = Etebase(user, stored_session, remote_url)
-        with self._cache_lock:
+            etesync = Etebase(user, stored_session, remote_url)
             self._etesync_cache[user] = etesync
-
-        return etesync, True
+            return etesync, True
 
     def forget_user(self, user):
         with self._cache_lock:

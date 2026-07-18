@@ -11,6 +11,7 @@ Original: https://github.com/etesync/etesync-dav
 import hashlib
 import logging
 import os
+import threading
 import time
 from contextlib import contextmanager
 
@@ -22,6 +23,7 @@ from .. import config
 from . import db, models
 
 logger = logging.getLogger("silentsuite-bridge.cache")
+_cache_database_init_lock = threading.RLock()
 
 
 class DavUnresolvedItemsError(RuntimeError):
@@ -56,16 +58,29 @@ def _restrict_cache_database_files(path):
 def _init_cache_database(db_path=None):
     """Initialize the cache DB proxy only when it is not already initialized.
 
-    When tests or the running bridge have already initialized the proxy, keep
-    using that database even if a db_path was supplied.
+    Reuse the initialized database only when it targets the requested cache path.
     """
+    path = db_path or config.DATABASE_FILE
     database = getattr(db.database_proxy, "obj", None)
     if database is not None:
-        return database, False
+        if db_path is None:
+            return database, False
+        current_path = getattr(database, "database", None)
+        normalized_current = (
+            current_path
+            if current_path == ":memory:"
+            else os.path.abspath(os.path.expanduser(str(current_path)))
+        )
+        normalized_requested = (
+            path
+            if path == ":memory:"
+            else os.path.abspath(os.path.expanduser(str(path)))
+        )
+        if normalized_current == normalized_requested:
+            return database, False
 
     from playhouse.sqlite_ext import SqliteExtDatabase
 
-    path = db_path or config.DATABASE_FILE
     _ensure_private_cache_dir(path)
 
     with _private_umask():
@@ -352,20 +367,10 @@ class Etebase:
         _restrict_cache_database_files(getattr(database, "database", None))
 
     def _init_db(self, db_path):
-        from playhouse.sqlite_ext import SqliteExtDatabase
-
         _ensure_private_cache_dir(db_path)
-
-        with _private_umask():
-            database = SqliteExtDatabase(
-                db_path,
-                pragmas={
-                    "journal_mode": "wal",
-                    "foreign_keys": 1,
-                },
-            )
-
-        self._set_db(database)
+        with _cache_database_init_lock:
+            database, _ = _init_cache_database(db_path)
+            self._set_db(database)
 
     def _init_db_tables(self, database, additional_tables=None):
         database.create_tables(

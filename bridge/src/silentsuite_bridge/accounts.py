@@ -24,6 +24,7 @@ class AccountOperationResult:
     existed: bool
     sync_stopped: bool = True
     cache_cleared: bool = False
+    cache_cleanup: str = "not_requested"
 
 
 def _normalize_username(username: str) -> str:
@@ -113,11 +114,17 @@ def remove_account(
     normalized = _normalize_username(username)
     logout_result = logout_account(normalized, credentials=credentials)
     with account_maintenance(normalized, timeout=0) as available:
-        cache_cleared = clear_cached_user(normalized) if available else False
+        if available:
+            cache_cleared = clear_cached_user(normalized)
+            cache_cleanup = "cleared" if cache_cleared else "not_found"
+        else:
+            cache_cleared = False
+            cache_cleanup = "deferred"
 
     return AccountOperationResult(
         username=normalized,
         existed=logout_result.existed or cache_cleared,
         sync_stopped=logout_result.sync_stopped,
         cache_cleared=cache_cleared,
+        cache_cleanup=cache_cleanup,
     )

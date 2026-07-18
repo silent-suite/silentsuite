@@ -135,18 +135,30 @@ class SyncThread(threading.Thread):
     def generation_status(self, generation):
         with self._generation_condition:
             status = self._generation_statuses.get(generation)
-            if (
-                status is not None
-                and status["state"] in {"pending", "running"}
-                and status.get("deadline") is not None
-                and time.time() >= status["deadline"]
-            ):
-                status.update({
-                    "state": "timed_out",
-                    "completed_at": status["deadline"],
-                    "error_code": "SyncTimeout",
-                })
-            return dict(status) if status is not None else None
+            return self._generation_status_snapshot(status)
+
+    def generation_handle(self, generation):
+        """Return a stable in-process handle retained by dashboard requests."""
+        with self._generation_condition:
+            return self._generation_statuses.get(generation)
+
+    def generation_status_for_handle(self, status):
+        with self._generation_condition:
+            return self._generation_status_snapshot(status)
+
+    def _generation_status_snapshot(self, status):
+        if (
+            status is not None
+            and status["state"] in {"pending", "running"}
+            and status.get("deadline") is not None
+            and time.time() >= status["deadline"]
+        ):
+            status.update({
+                "state": "timed_out",
+                "completed_at": status["deadline"],
+                "error_code": "SyncTimeout",
+            })
+        return dict(status) if status is not None else None
 
     def wait_for_generation(self, generation, timeout=None):
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -189,7 +201,18 @@ class SyncThread(threading.Thread):
     def _complete_generation(self, generation, state, completed_at, error_code=None):
         with self._generation_condition:
             status = self._generation_statuses[generation]
-            if status["state"] != "timed_out":
+            deadline = status.get("deadline")
+            if (
+                status["state"] != "timed_out"
+                and deadline is not None
+                and completed_at >= deadline
+            ):
+                status.update({
+                    "state": "timed_out",
+                    "completed_at": deadline,
+                    "error_code": "SyncTimeout",
+                })
+            elif status["state"] != "timed_out":
                 status.update({
                     "state": state,
                     "completed_at": completed_at,
@@ -966,10 +989,10 @@ class Storage(BaseStorage):
             # Use last path component as display name fallback
             meta["name"] = attributes[-1]
 
-        # Create the collection via Etebase
+        # Create and cache locally. The background generation queued by the
+        # write lock performs the potentially unbounded upstream upload.
         col_mgr = self.etesync.etebase.get_collection_manager()
         col = col_mgr.create(col_type, meta, b"")
-        col_mgr.upload(col)
 
         # Cache it locally
         from ..local_cache import db, models
@@ -981,7 +1004,7 @@ class Storage(BaseStorage):
             cache_col.eb_col = col_mgr.cache_save(col)
             cache_col.stoken = col.stoken or ""
             cache_col.local_stoken = col.stoken or ""
-            cache_col.new = False
+            cache_col.new = True
             cache_col.dirty = False
             cache_col.save()
 

@@ -543,7 +543,8 @@ class TestCreateCollection:
         mock_col_mgr.create.assert_called_once()
         call_args = mock_col_mgr.create.call_args
         assert call_args[0][0] == "etebase.vevent"
-        mock_col_mgr.upload.assert_called_once()
+        mock_col_mgr.upload.assert_not_called()
+        assert mock_thread.force_sync.call_count == 2
 
     @patch("silentsuite_bridge.radicale.storage.log_sync_event")
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")

@@ -703,6 +703,21 @@ def test_cache_database_files_are_owner_only(tmp_path):
             assert stat.S_IMODE(os.stat(sidecar).st_mode) == 0o600
 
 
+def test_same_cache_path_reuses_one_database_proxy_object(tmp_path):
+    db_path = tmp_path / "shared.sqlite"
+    first = Etebase.__new__(Etebase)
+    first.username = "first@example.com"
+    first._init_db(str(db_path))
+    first_database = first._database
+
+    second = Etebase.__new__(Etebase)
+    second.username = "second@example.com"
+    second._init_db(str(db_path))
+
+    assert second._database is first_database
+    assert db.database_proxy.obj is first_database
+
+
 def test_remote_tombstone_without_name_reuses_remote_identity_and_original_href(tmp_path):
     database = pw.SqliteDatabase(
         str(tmp_path / "remote-delete.sqlite"),

@@ -590,6 +590,39 @@ def test_dashboard_sync_waits_for_all_configured_accounts(monkeypatch):
     assert final["accounts"]["failed"] == 1
 
 
+def test_abandoned_completed_request_survives_generation_history_pruning():
+    web_module._sync_requests.clear()
+    thread = storage.SyncThread("account@example.com")
+    generation = thread.force_sync(deadline=1000.0)
+    handle = thread.generation_handle(generation)
+    request_id = "request-id"
+    web_module._sync_requests[request_id] = {
+        "requested_at": 900.0,
+        "deadline": 1000.0,
+        "targets": [{
+            "thread": thread,
+            "generation": generation,
+            "status_handle": handle,
+        }],
+        "signature": ((id(thread), generation),),
+        "terminal_result": None,
+        "terminal_at": None,
+    }
+    thread._complete_generation(generation, "succeeded", 950.0)
+
+    for _ in range(105):
+        later_generation = thread.force_sync()
+        thread._begin_generation()
+        thread._complete_generation(later_generation, "succeeded", 951.0)
+    assert thread.generation_status(generation) is None
+
+    web_module._prune_sync_requests(1001.0)
+
+    result = web_module._sync_requests[request_id]["terminal_result"]
+    assert result["state"] == "succeeded"
+    assert result["accounts"]["succeeded"] == 1
+
+
 def test_dashboard_sync_post_rejects_wrong_csrf_token():
     web = Web.__new__(Web)
 

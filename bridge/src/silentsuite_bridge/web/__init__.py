@@ -82,7 +82,12 @@ def _sync_request_status(request_id):
         if target["thread"] is None:
             state = "failed"
         else:
-            status = target["thread"].generation_status(target["generation"])
+            if target.get("status_handle") is not None:
+                status = target["thread"].generation_status_for_handle(
+                    target["status_handle"]
+                )
+            else:
+                status = target["thread"].generation_status(target["generation"])
             state = status["state"] if status is not None else "failed"
             if state in {"pending", "running"} and not target["thread"].is_alive():
                 state = "failed"
@@ -117,6 +122,8 @@ def _sync_request_status(request_id):
 
 
 def _prune_sync_requests(now):
+    for request_id in list(_sync_requests):
+        _sync_request_status(request_id)
     terminal = [
         (request_id, request)
         for request_id, request in _sync_requests.items()
@@ -152,11 +159,21 @@ def _create_sync_request():
         thread = threads.get(account)
         if thread is not None and thread.is_alive():
             generation = thread.force_sync(deadline=deadline)
+            status_handle = (
+                thread.generation_handle(generation)
+                if isinstance(thread, storage_module.SyncThread)
+                else None
+            )
             live_targets += 1
         else:
             thread = None
             generation = None
-        targets.append({"thread": thread, "generation": generation})
+            status_handle = None
+        targets.append({
+            "thread": thread,
+            "generation": generation,
+            "status_handle": status_handle,
+        })
     if not live_targets:
         return None
 
@@ -242,12 +259,18 @@ def _account_mutation_response(action, result):
         })
 
     if result.existed:
-        if result.cache_cleared:
+        if result.cache_cleanup == "deferred":
+            message = (
+                f"Removed {result.username}. Credentials were deleted, but local "
+                "cache cleanup is deferred until the active sync exits."
+            )
+            log_message = "Removed account; cache cleanup deferred"
+        elif result.cache_cleared:
             message = f"Removed {result.username}. Local bridge cache for this account was deleted."
-            log_message = f"Removed account and cleared cache: {result.username}"
+            log_message = "Removed account and cleared cache"
         else:
             message = f"Removed {result.username}. No local bridge cache rows were found for this account."
-            log_message = f"Removed account with no cache rows: {result.username}"
+            log_message = "Removed account with no cache rows"
         log_sync_event("info", log_message)
     else:
         message = f"No configured account found for {result.username}; nothing changed."
@@ -258,6 +281,7 @@ def _account_mutation_response(action, result):
         "existed": result.existed,
         "syncStopped": result.sync_stopped,
         "cacheCleared": result.cache_cleared,
+        "cacheCleanup": result.cache_cleanup,
         "message": message,
     })
 

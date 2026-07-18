@@ -702,7 +702,15 @@ def main():
 
         result = remove_account(sys.argv[idx + 1])
         if result.existed:
-            print(f"Removed {result.username}. Credentials and local cache were deleted.")
+            if result.cache_cleanup == "deferred":
+                print(
+                    f"Removed {result.username}. Credentials were deleted; local cache "
+                    "cleanup is deferred until the active sync exits."
+                )
+            elif result.cache_cleared:
+                print(f"Removed {result.username}. Credentials and local cache were deleted.")
+            else:
+                print(f"Removed {result.username}. Credentials were deleted; no cache rows were found.")
             if not result.sync_stopped:
                 print("Warning: sync thread is still shutting down; no duplicate will be started.")
         else:

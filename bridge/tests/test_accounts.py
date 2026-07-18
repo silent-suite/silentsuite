@@ -1,5 +1,7 @@
 """Tests for bridge account-management helpers."""
 
+from contextlib import contextmanager
+
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
@@ -9,7 +11,6 @@ from silentsuite_bridge.local_cache.models import (
 )
 from silentsuite_bridge.radicale.auth import Auth
 from silentsuite_bridge.radicale.creds import Credentials
-
 
 PASSWORD = "correct horse battery staple"
 
@@ -121,6 +122,31 @@ def test_remove_account_deletes_only_that_users_cache(tmp_path, monkeypatch, mem
     assert User.get_or_none(User.username == "alice@example.com") is None
     assert User.get_or_none(User.username == "bob@example.com") is not None
     assert Auth(_radicale_config_stub()).login("bob@example.com", PASSWORD) == "bob@example.com"
+
+
+def test_remove_account_reports_deferred_cache_cleanup(tmp_path, monkeypatch, mem_db):
+    _configure_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(accounts, "stop_sync_thread", lambda user: False)
+    monkeypatch.setattr(accounts, "forget_etesync_user", lambda user: None)
+
+    @contextmanager
+    def unavailable_maintenance(user, timeout=0):
+        yield False
+
+    monkeypatch.setattr(accounts, "account_maintenance", unavailable_maintenance)
+    accounts.store_authenticated_account(
+        "alice@example.com", PASSWORD, "alice-session", "https://server.test",
+    )
+    _seed_cache("alice@example.com")
+
+    result = accounts.remove_account("alice@example.com")
+
+    assert result.existed is True
+    assert result.sync_stopped is False
+    assert result.cache_cleared is False
+    assert result.cache_cleanup == "deferred"
+    assert Credentials().list_users() == []
+    assert User.get_or_none(User.username == "alice@example.com") is not None
 
 
 def test_remove_missing_account_is_noop(tmp_path, monkeypatch, mem_db):
