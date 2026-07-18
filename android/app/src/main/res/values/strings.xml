@@ -590,6 +590,7 @@
     <string name="post_login_setup_recovery">This incomplete account needs recovery before setup can continue. Remove it here only if you want to start over.</string>
     <string name="post_login_setup_removal_pending">Removing the incomplete account…</string>
     <string name="post_login_setup_removal_failed">The incomplete account could not be removed. You can retry.</string>
+    <string name="post_login_setup_sync_retry">Android sync setup could not be completed. Check Android sync settings and try Continue setup again.</string>
     <string name="setup_account_busy_retry">An account with these details is still being created or already exists. Please try again.</string>
     <string name="post_login_setup_retry_inventory">Retry collection recovery</string>
     <string name="post_login_setup_resolve_ambiguity">Resolve account in Android Settings</string>

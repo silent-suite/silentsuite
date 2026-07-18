@@ -13,16 +13,13 @@ import android.accounts.AccountManager
 import android.app.Activity
 import android.app.Dialog
 import android.os.Bundle
-import android.provider.CalendarContract
 import androidx.fragment.app.DialogFragment
-import at.bitfire.ical4android.TaskProvider.Companion.TASK_PROVIDERS
 import io.silentsuite.sync.*
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
 import io.silentsuite.sync.ui.ActiveAccountManager
 import io.silentsuite.sync.ui.AccountActivity
-import io.silentsuite.sync.utils.TaskProviderHandling
 import java.util.logging.Level
 
 class CreateAccountFragment : DialogFragment() {
@@ -158,26 +155,6 @@ class CreateAccountFragment : DialogFragment() {
                     AccountSettings.writeVerified(accountManager, account, key, value)
                 override fun phase(id: String, phase: AccountCreationRegistry.Phase) = registry.updateOwned(
                     AccountCreationRegistry.Record(accountName, id, phase, System.currentTimeMillis(), App.accountType))
-                override fun configureAndReadBack(): Boolean = runCatching {
-                    val settings = AccountSettings(requireContext(), account)
-                    settings.setSyncInterval(App.addressBooksAuthority, Constants.DEFAULT_SYNC_INTERVAL.toLong())
-                    settings.setSyncInterval(CalendarContract.AUTHORITY, Constants.DEFAULT_SYNC_INTERVAL.toLong())
-                    TASK_PROVIDERS.forEach { TaskProviderHandling.updateTaskSync(requireContext(), it, account) }
-                    val coreVerified = android.content.ContentResolver.getSyncAutomatically(account, App.addressBooksAuthority) &&
-                        android.content.ContentResolver.getSyncAutomatically(account, CalendarContract.AUTHORITY) &&
-                        settings.getSyncInterval(App.addressBooksAuthority) == Constants.DEFAULT_SYNC_INTERVAL.toLong() &&
-                        settings.getSyncInterval(CalendarContract.AUTHORITY) == Constants.DEFAULT_SYNC_INTERVAL.toLong()
-                    val wanted = TaskProviderHandling.getWantedTaskSyncProvider(requireContext())
-                    val taskVerified = TASK_PROVIDERS.all { provider ->
-                        if (provider == wanted)
-                            android.content.ContentResolver.getIsSyncable(account, provider.authority) > 0 &&
-                                settings.getSyncInterval(provider.authority) == Constants.DEFAULT_SYNC_INTERVAL.toLong()
-                        else android.content.ContentResolver.getIsSyncable(account, provider.authority) <= 0
-                    }
-                    coreVerified && taskVerified
-                }.getOrDefault(false)
-                override fun accountCreated(id: String): Boolean = (activity as? LoginActivity)
-                    ?.onAccountCreated(account, id) ?: true
                 override fun activateAndReadBack() = ActiveAccountManager.setActiveAccount(requireContext(), account)
                 override fun clear(id: String) = registry.clearOwned(App.accountType, accountName, id)
                 override fun quarantine(id: String) = PostLoginSetupMigration.persistPendingRecovery(

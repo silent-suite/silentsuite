@@ -144,5 +144,7 @@ class LoginLifecycleContractTest {
 
         assertTrue(expectedSet.contains(expectedTuple))
         assertTrue(expectedSet.contains(bootstrapTuple))
+        assertTrue(expectedSet.contains("('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncConfigurationEnablesCoreAuthoritiesWithoutRecovery')"))
+        assertTrue(expectedSet.contains("('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncFailureKeepsExactRowAndOffersContinueRetry')"))
     }
 }
