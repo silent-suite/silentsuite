@@ -1012,7 +1012,7 @@ def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
     quarantine = models.DavUnresolvedItem.get(collection=cache_col)
     assert quarantine.reason == "legacy_duplicate"
     assert quarantine.local_item_id == duplicate.id
-    assert quarantine.attempts == 1
+    assert quarantine.attempts == 0
 
 
 def test_backfill_quarantines_malformed_legacy_envelope(mem_db, user):
@@ -1046,6 +1046,15 @@ def test_backfill_quarantines_malformed_legacy_envelope(mem_db, user):
     change = DavChange.get(collection=cache_col)
     assert change.href == "malformed-contact.vcf"
     assert change.deleted is True
+
+    quarantine.attempts = 8
+    quarantine.save(only=[models.DavUnresolvedItem.attempts])
+    item_mgr.cache_load.reset_mock()
+    etebase._retry_unresolved_items(cache_col, col_mgr.cache_load.return_value, item_mgr)
+    etebase._retry_unresolved_items(cache_col, col_mgr.cache_load.return_value, item_mgr)
+
+    assert models.DavUnresolvedItem.get_by_id(quarantine.id).attempts == 8
+    item_mgr.cache_load.assert_not_called()
 
 
 def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):

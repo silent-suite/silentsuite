@@ -28,7 +28,7 @@ from radicale.storage import (
 )
 
 from .. import config
-from ..local_cache import db, record_dav_change
+from ..local_cache import dav_collection_state_hash, db, record_dav_change
 from ..local_cache.models import (
     CollectionEntity,
     DavChange,
@@ -139,7 +139,6 @@ class SyncThread(threading.Thread):
     def wait_for_sync(self, timeout=None):
         ret = self._done_syncing.wait(timeout)
         e = self._exception
-        self._exception = None
         if e is not None:
             raise e
         return ret
@@ -542,14 +541,37 @@ class Collection(BaseCollection):
             (DavSyncToken.collection == self.collection.cache_col)
             & (DavSyncToken.created_at < token_cutoff)
         ).execute()
-        current_token_row, _ = DavSyncToken.get_or_create(
-            collection=self.collection.cache_col,
-            revision=revision,
-            defaults={
-                "token": secrets.token_urlsafe(24),
-                "created_at": int(time.time()),
-            },
+        state_hash = dav_collection_state_hash(self.collection.cache_col)
+        current_token_row = DavSyncToken.get_or_none(
+            (DavSyncToken.collection == self.collection.cache_col)
+            & (DavSyncToken.revision == revision)
         )
+        if current_token_row is not None:
+            state_is_proven = current_token_row.state_hash == state_hash
+        elif revision:
+            current_revision_row = DavRevision.get_or_none(
+                (DavRevision.collection == self.collection.cache_col)
+                & (DavRevision.revision == revision)
+            )
+            state_is_proven = (
+                current_revision_row is not None
+                and current_revision_row.state_hash == state_hash
+            )
+        else:
+            state_is_proven = True
+        if not state_is_proven:
+            DavSyncToken.delete().where(
+                DavSyncToken.collection == self.collection.cache_col
+            ).execute()
+            current_token_row = None
+        if current_token_row is None:
+            current_token_row = DavSyncToken.create(
+                collection=self.collection.cache_col,
+                revision=revision,
+                token=secrets.token_urlsafe(24),
+                created_at=int(time.time()),
+                state_hash=state_hash,
+            )
         self._prune_sync_history()
         token = token_prefix + current_token_row.token
 

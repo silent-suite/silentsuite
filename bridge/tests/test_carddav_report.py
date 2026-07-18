@@ -7,6 +7,7 @@ from playhouse.sqlite_ext import SqliteExtDatabase
 
 from silentsuite_bridge import config
 from silentsuite_bridge.local_cache import db, models, record_dav_change
+from silentsuite_bridge.radicale import application as bridge_application
 from silentsuite_bridge.radicale import storage as bridge_storage
 from silentsuite_bridge.radicale.storage import Collection
 from tests.test_macos_dav_discovery import (
@@ -162,3 +163,20 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
     assert private_payload.decode() not in caplog.text
     assert private_collection not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_radicale_filter_preserves_bounded_server_diagnostics():
+    record = logging.LogRecord(
+        name="radicale",
+        level=logging.ERROR,
+        pathname="/site-packages/radicale/server.py",
+        lineno=1,
+        msg="Server worker failed (%s)",
+        args=("RuntimeError",),
+        exc_info=None,
+    )
+
+    bridge_application._DavDiagnosticRedactionFilter().filter(record)
+
+    assert record.msg == "Server worker failed (%s)"
+    assert record.args == ("RuntimeError",)
