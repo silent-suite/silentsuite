@@ -92,7 +92,10 @@ class DavSyncToken(db.BaseModel):
     created_at = pw.IntegerField(null=False)
 
     class Meta:
-        indexes = ((("collection", "token"), True),)
+        indexes = (
+            (("collection", "token"), True),
+            (("collection", "revision"), True),
+        )
 
 
 class DavUnresolvedItem(db.BaseModel):

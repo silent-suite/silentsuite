@@ -899,6 +899,70 @@ def test_backfill_remote_uids_uses_cached_envelopes_without_remote_io(mem_db, us
     item_mgr.cache_load.assert_called_once_with(b"item-cache")
 
 
+def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    first = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-1",
+        eb_item=b"item-cache-1",
+    )
+    duplicate = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-duplicate",
+        eb_item=b"item-cache-2",
+    )
+    HrefMapper.create(content=first, href="contact-1.vcf")
+    HrefMapper.create(content=duplicate, href="contact-duplicate.vcf")
+    remote_item = MagicMock(uid="remote-item-1")
+    item_mgr = MagicMock()
+    item_mgr.cache_load.return_value = remote_item
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = MagicMock()
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    unresolved = etebase._backfill_remote_uids()
+
+    assert unresolved == 1
+    assert ItemEntity.get_by_id(first.id).deleted is False
+    assert ItemEntity.get_by_id(duplicate.id).deleted is True
+    assert list(cache_col.items.where(ItemEntity.deleted == False)) == [first]  # noqa: E712
+
+
+def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    col = MagicMock(collection_type="etebase.vcard")
+    item = MagicMock(
+        uid="remote-item-unsafe",
+        meta={"name": "urn:uuid:contact/with/slashes"},
+        deleted=False,
+        etag="etag-unsafe",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"item-cache"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(cache_col, col, item_mgr, item) is True
+
+    cache_item = ItemEntity.get(remote_uid="remote-item-unsafe")
+    mapper = HrefMapper.get(content=cache_item)
+    assert cache_item.uid == "urn:uuid:contact/with/slashes"
+    assert mapper.href.endswith(".vcf")
+    assert "/" not in mapper.href
+
+
 def test_unmatched_identityless_tombstone_is_quarantined_without_duplicate(tmp_path):
     database = pw.SqliteDatabase(
         str(tmp_path / "unresolved-delete.sqlite"),

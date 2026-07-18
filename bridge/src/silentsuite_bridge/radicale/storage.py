@@ -9,10 +9,10 @@ Original: https://github.com/etesync/etesync-dav
 """
 
 import email.utils
-import hashlib
 import logging
 import posixpath
 import re
+import secrets
 import threading
 import time
 from contextlib import contextmanager
@@ -136,10 +136,14 @@ class SyncThread(threading.Thread):
                     )
                     log_sync_event("sync", "Synced account")
             except Exception as e:
-                logger.exception("Sync error for configured account: %s", e)
+                error_code = e.__class__.__name__
+                logger.warning(
+                    "Sync failed for configured account (%s)",
+                    error_code,
+                )
                 self._exception = e
-                update_status("error", error=str(e))
-                log_sync_event("error", f"Sync failed: {e}")
+                update_status("error", error=error_code)
+                log_sync_event("error", "Sync failed")
             finally:
                 self.is_syncing = False
                 was_re_requested = self._force_sync.is_set()
@@ -375,24 +379,21 @@ class Collection(BaseCollection):
             self.collection.cache_col.id
         )
         revision = self.collection.cache_col.dav_revision
-        token_value = hashlib.sha256(
-            f"{self.collection.cache_col.uid}:{revision}".encode()
-        ).hexdigest()
-        DavSyncToken.get_or_create(
+        current_token_row, _ = DavSyncToken.get_or_create(
             collection=self.collection.cache_col,
-            token=token_value,
-            defaults={"revision": revision, "created_at": int(time.time())},
+            revision=revision,
+            defaults={
+                "token": secrets.token_urlsafe(24),
+                "created_at": int(time.time()),
+            },
         )
         self._prune_sync_history()
-        token = token_prefix + token_value
+        token = token_prefix + current_token_row.token
 
         if not old_token:
             return token, self._list()
         if not old_token.startswith(token_prefix):
             raise ValueError("invalid sync token")
-        if old_token == token:
-            return token, []
-
         old_token_value = old_token[len(token_prefix):]
         token_row = DavSyncToken.get_or_none(
             (DavSyncToken.collection == self.collection.cache_col)
@@ -400,6 +401,8 @@ class Collection(BaseCollection):
         )
         if token_row is None or token_row.revision > revision:
             raise ValueError("unknown sync token")
+        if old_token == token:
+            return token, []
         changed_hrefs = (
             DavChange.select(DavChange.href)
             .where(
@@ -535,9 +538,7 @@ class Collection(BaseCollection):
                 item.add("fn").value = str(item.n)
 
         except Exception as e:
-            raise RuntimeError(
-                "Failed to parse item %r in %r" % (href, self.path)
-            ) from e
+            raise RuntimeError("Failed to parse DAV item") from e
 
         mtime_ms = etesync_item.meta.get("mtime", 0)
         last_modified = email.utils.formatdate(mtime_ms / 1000, usegmt=True)
@@ -706,10 +707,7 @@ class Storage(BaseStorage):
             return
 
         if not self._path_belongs_to_user(path):
-            logger.warning(
-                "Rejecting DAV path %s authenticated as configured account",
-                path,
-            )
+            logger.warning("Rejecting DAV path for configured account")
             return
 
         if len(attributes) == 3:
@@ -771,8 +769,7 @@ class Storage(BaseStorage):
         attributes = _get_attributes_from_path(href)
         if not self._path_belongs_to_user(href):
             logger.warning(
-                "Rejecting collection create for path %s authenticated as configured account",
-                href,
+                "Rejecting collection create path for configured account"
             )
             raise ComponentNotFoundError(href)
 
@@ -867,7 +864,8 @@ class Storage(BaseStorage):
             sync_thread.wait_for_sync(20)
         except Exception as e:
             logger.warning(
-                "Sync failed for configured account, continuing with local cache: %s", e
+                "Sync failed for configured account; continuing with local cache (%s)",
+                e.__class__.__name__,
             )
 
         with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
@@ -888,7 +886,10 @@ class Storage(BaseStorage):
                             etesync.push_collection(col.uid)
                     logger.info("acquire_lock(w): inline push done")
                 except Exception as e:
-                    logger.warning("acquire_lock(w): inline push FAILED: %s", e)
+                    logger.warning(
+                        "acquire_lock(w): inline push failed (%s)",
+                        e.__class__.__name__,
+                    )
 
             self.etesync = None
             self.user = None
@@ -904,7 +905,8 @@ class Storage(BaseStorage):
             sync_thread.wait_for_sync(20)
         except Exception as e:
             logger.warning(
-                "Sync failed for configured account, continuing with local cache: %s", e
+                "Sync failed for configured account; continuing with local cache (%s)",
+                e.__class__.__name__,
             )
 
         with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):

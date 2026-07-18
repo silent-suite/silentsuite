@@ -8,6 +8,7 @@ Forked and adapted from etesync-dav (AGPL-3.0).
 Original: https://github.com/etesync/etesync-dav
 """
 
+import hashlib
 import logging
 import os
 import time
@@ -121,6 +122,12 @@ def _migrate_cache_schema(database):
         "itementity_collection_remote_uid "
         "ON itementity (collection_id, remote_uid)"
     )
+    if "davsynctoken" in tables:
+        database.execute_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "davsynctoken_collection_revision "
+            "ON davsynctoken (collection_id, revision)"
+        )
 
 
 def clear_cached_user(username, db_path=None):
@@ -348,6 +355,13 @@ class Etebase:
                     cache_item.save(only=[models.ItemEntity.remote_uid])
                 except Exception:
                     cache_item.remote_uid = None
+                    cache_item.deleted = True
+                    cache_item.save(
+                        only=[
+                            models.ItemEntity.remote_uid,
+                            models.ItemEntity.deleted,
+                        ]
+                    )
                     unresolved += 1
         return unresolved
 
@@ -511,9 +525,10 @@ class Etebase:
                     if col.collection_type == "etebase.vcard"
                     else ".ics"
                 )
+                href_stem = hashlib.sha256(item.uid.encode()).hexdigest()
                 href_mapper = models.HrefMapper.create(
                     content=cache_item,
-                    href=f"{cache_item.uid}{suffix}",
+                    href=f"{href_stem}{suffix}",
                 )
             if href_mapper is not None:
                 record_dav_change(

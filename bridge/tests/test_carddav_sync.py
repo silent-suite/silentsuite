@@ -10,6 +10,7 @@ from silentsuite_bridge.local_cache import record_dav_change
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
     DavChange,
+    DavSyncToken,
     HrefMapper,
     ItemEntity,
 )
@@ -241,3 +242,25 @@ def test_local_item_events_do_not_log_raw_hrefs(mem_db, user, monkeypatch):
 
     assert events
     assert "contact-1.vcf" not in " ".join(message for _, message in events)
+
+
+def test_current_token_from_lost_history_is_rejected(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    token, _ = collection.sync(None)
+    DavSyncToken.delete().execute()
+
+    with pytest.raises(ValueError, match="unknown sync token"):
+        collection.sync(token)
+
+
+def test_parse_failure_does_not_expose_href_or_collection_path(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    collection.collection.list.return_value[0].content = "not a vcard"
+
+    with pytest.raises(RuntimeError) as exc_info:
+        collection._get("contact-1.vcf")
+
+    message = str(exc_info.value)
+    assert "contact-1.vcf" not in message
+    assert "contacts" not in message
+    assert "not a vcard" not in message
