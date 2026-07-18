@@ -1,6 +1,7 @@
 """Static production-wiring contracts for Android post-login bootstrap."""
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +17,9 @@ def test_production_bootstrap_separates_row_classification_from_marker_publicati
     assert "interface RowStore" in source
     assert "interface Store : RowStore" in source
     assert "internal fun classifyRows(store: RowStore" in source
-    assert "classifyRows(object : RowStore" in production
+    assert "val classified = classifyRows(object : RowStore" in production
+    assert production.count("classifyRows(object : RowStore") == 1
+    assert re.search(r"\bbootstrap\s*\(", production) is None
     assert "override fun marker() = 0" not in production
     assert "override fun writeMarker" not in production
     assert "classifyRows = { classified }" in production
