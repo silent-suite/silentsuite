@@ -748,7 +748,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 btn.textContent = 'Syncing...';
                 btn.disabled = true;
                 fetch('/.web/api/sync', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
-                    .then(function(r) { return r.json(); })
+                    .then(function(r) {
+                        return r.json().then(function(data) {
+                            if (!r.ok || !data.ok) throw new Error('Sync failed');
+                            return data;
+                        });
+                    })
                     .then(function() { btn.textContent = 'Done!'; setTimeout(function() { location.reload(); }, 1000); })
                     .catch(function() { btn.textContent = 'Error'; })
                     .finally(function() { setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Now'; }, 3000); });

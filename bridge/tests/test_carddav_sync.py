@@ -1,5 +1,8 @@
 """CardDAV sync-token and deletion convergence regressions."""
 
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -71,6 +74,30 @@ def test_sync_sanitizes_existing_unsafe_href_before_issuing_token(mem_db, user):
         local_cache_module.opaque_dav_href("contact-1", ".vcf")
     ]
     assert "/" not in HrefMapper.get().href
+
+
+def test_concurrent_initial_reports_are_serialized(mem_db, user, monkeypatch):
+    collection = _carddav_collection(mem_db, user)
+    active = 0
+    max_active = 0
+    state_lock = threading.Lock()
+
+    def sync_locked(_old_token):
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.02)
+        with state_lock:
+            active -= 1
+        return "token", []
+
+    monkeypatch.setattr(collection, "_sync_locked", sync_locked)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        tokens = list(executor.map(lambda _: collection.sync(None)[0], range(2)))
+
+    assert tokens == ["token", "token"]
+    assert max_active == 1
 
 
 def test_initial_carddav_sync_returns_opaque_token_and_current_href(mem_db, user):

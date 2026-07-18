@@ -11,7 +11,12 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
     def filter(self, record):
         template = str(record.msg)
         normalized_path = str(record.pathname).replace("\\", "/")
-        if (
+        if "/radicale/server.py" in normalized_path and record.exc_info is not None:
+            record.msg = "Radicale server request failed"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        elif (
             "/radicale/app/" in normalized_path
             and "/silentsuite_bridge/" not in normalized_path
         ):
@@ -39,7 +44,8 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
         return True
 
 
-logging.getLogger("radicale").addFilter(_DavDiagnosticRedactionFilter())
+for _logger_name in ("radicale", "radicale.app", "radicale.server"):
+    logging.getLogger(_logger_name).addFilter(_DavDiagnosticRedactionFilter())
 
 
 def canonical_principal_alias_path(path: str, user: str) -> str:

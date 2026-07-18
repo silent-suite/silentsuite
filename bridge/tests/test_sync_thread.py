@@ -145,6 +145,52 @@ class TestSyncThreadRun:
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.update_status")
     @patch("silentsuite_bridge.radicale.storage.log_sync_event")
+    def test_force_during_active_sync_waits_for_successor(
+        self, mock_log, mock_status, mock_etesync_ctx
+    ):
+        first_started = threading.Event()
+        release_first = threading.Event()
+        successor_started = threading.Event()
+        release_successor = threading.Event()
+        call_count = 0
+
+        def sync():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                first_started.set()
+                assert release_first.wait(1)
+            else:
+                successor_started.set()
+                assert release_successor.wait(1)
+
+        mock_etesync = MagicMock()
+        mock_etesync.sync.side_effect = sync
+        mock_etesync.list.return_value = []
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(mock_etesync, False)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+        thread = SyncThread("user@test.com", daemon=True)
+        thread.interval = 300
+        thread.start()
+        try:
+            assert first_started.wait(1)
+            thread.force_sync()
+            release_first.set()
+            assert successor_started.wait(1)
+            assert thread.wait_for_sync(0.01) is False
+            release_successor.set()
+            assert thread.wait_for_sync(1) is True
+        finally:
+            release_first.set()
+            release_successor.set()
+            thread.stop()
+            thread.join(1)
+
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.update_status")
+    @patch("silentsuite_bridge.radicale.storage.log_sync_event")
     def test_sync_error_captured(self, mock_log, mock_status, mock_etesync_ctx):
         mock_etesync = MagicMock()
         mock_etesync.sync.side_effect = ConnectionError("network down")

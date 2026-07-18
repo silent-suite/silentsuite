@@ -1029,6 +1029,13 @@ def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
     change = DavChange.get(collection=cache_col)
     assert change.href == "contact-duplicate.vcf"
     assert change.deleted is True
+    revision_count = models.DavRevision.select().count()
+    item_mgr.cache_load.reset_mock()
+
+    assert etebase._backfill_remote_uids() == 0
+    assert models.DavUnresolvedItem.get_by_id(quarantine.id).attempts == 0
+    assert models.DavRevision.select().count() == revision_count
+    item_mgr.cache_load.assert_not_called()
 
     etebase._retry_unresolved_items(cache_col, col, item_mgr)
 
