@@ -5,12 +5,14 @@ import os
 import stat
 from unittest.mock import MagicMock, patch, PropertyMock
 
+import peewee as pw
 import pytest
 import vobject
 
 from silentsuite_bridge.local_cache import Collection, Etebase, Item, clear_cached_user, db, models
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
+    DavChange,
     ItemEntity,
     HrefMapper,
     User,
@@ -320,6 +322,24 @@ class TestCollectionWrapper:
         )
         col = Collection(mgr, cache_col)
         assert col.get("nonexistent") is None
+
+    def test_create_records_remote_uid(self, mem_db, user, mock_item_mgr):
+        mock_col = _make_mock_collection("col-1", "etebase.vcard")
+        mock_col_mgr = MagicMock()
+        mock_col_mgr.cache_load.return_value = mock_col
+        mock_col_mgr.get_item_manager.return_value = mock_item_mgr
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid="col-1",
+            eb_col=b"\x00" * 8,
+        )
+        remote_item = _make_mock_item("remote-created-1", SAMPLE_VCARD)
+        mock_item_mgr.create.return_value = remote_item
+        col = Collection(mock_col_mgr, cache_col)
+
+        created = col.create(vobject.readOne(SAMPLE_VCARD))
+
+        assert created.cache_item.remote_uid == "remote-created-1"
 
 
 # ---------------------------------------------------------------------------
@@ -680,3 +700,532 @@ def test_cache_database_files_are_owner_only(tmp_path):
         sidecar = f"{db_path}{suffix}"
         if os.path.exists(sidecar):
             assert stat.S_IMODE(os.stat(sidecar).st_mode) == 0o600
+
+
+def test_remote_tombstone_without_name_reuses_remote_identity_and_original_href(tmp_path):
+    database = pw.SqliteDatabase(
+        str(tmp_path / "remote-delete.sqlite"),
+        pragmas={"foreign_keys": 1},
+    )
+    db.database_proxy.initialize(database)
+    database.create_tables(
+        [
+            models.Config,
+            models.User,
+            models.CollectionEntity,
+            models.ItemEntity,
+            models.HrefMapper,
+            models.DavChange,
+            models.DavRevision,
+            models.DavSyncToken,
+            models.DavUnresolvedItem,
+            models.SchemaMigration,
+        ]
+    )
+    models.Config.create(db_version=1)
+
+    mock_account = MagicMock()
+    mock_col_mgr = MagicMock()
+    mock_item_mgr = MagicMock()
+    mock_account.get_collection_manager.return_value = mock_col_mgr
+    mock_col_mgr.get_item_manager.return_value = mock_item_mgr
+
+    user_obj = User.create(username="remote-delete@example.com")
+    cache_col = CollectionEntity.create(
+        local_user=user_obj,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    original = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-1",
+        remote_uid="remote-item-1",
+        eb_item=b"original-cache",
+    )
+    HrefMapper.create(content=original, href="contact-1.vcf")
+
+    remote_collection = MagicMock(collection_type="etebase.vcard")
+    mock_col_mgr.cache_load.return_value = remote_collection
+    tombstone = MagicMock(
+        uid="remote-item-1",
+        meta={},
+        deleted=True,
+        etag="deleted-etag",
+    )
+    mock_item_mgr.cache_save.return_value = b"tombstone-cache"
+    mock_item_mgr.list.return_value = MagicMock(
+        data=[tombstone],
+        done=True,
+        stoken="after-delete",
+    )
+
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = mock_account
+    etebase.username = user_obj.username
+    etebase._database = database
+    etebase.stored_session = "fake"
+    etebase.user = user_obj
+
+    etebase.pull_collection(cache_col.uid)
+
+    rows = list(ItemEntity.select().where(ItemEntity.collection == cache_col))
+    assert len(rows) == 1
+    assert rows[0].id == original.id
+    assert rows[0].deleted is True
+    assert rows[0].remote_uid == "remote-item-1"
+    assert HrefMapper.get_by_id(original.id).href == "contact-1.vcf"
+    change = DavChange.get(
+        (DavChange.collection == cache_col)
+        & (DavChange.href == "contact-1.vcf")
+    )
+    assert change.deleted is True
+    assert change.revision == 1
+    assert CollectionEntity.get_by_id(cache_col.id).dav_revision == 1
+
+
+def test_v1_cache_is_migrated_additively_without_bumping_legacy_version(tmp_path):
+    cache_path = tmp_path / "legacy-v1.sqlite"
+    legacy_db = pw.SqliteDatabase(str(cache_path), pragmas={"foreign_keys": 1})
+
+    class LegacyBase(pw.Model):
+        class Meta:
+            database = legacy_db
+
+    class LegacyConfig(LegacyBase):
+        db_version = pw.IntegerField()
+
+        class Meta:
+            table_name = "config"
+
+    class LegacyUser(LegacyBase):
+        username = pw.CharField(unique=True)
+        stoken = pw.CharField(null=True)
+
+        class Meta:
+            table_name = "user"
+
+    class LegacyCollection(LegacyBase):
+        local_user = pw.ForeignKeyField(LegacyUser, on_delete="CASCADE")
+        uid = pw.CharField()
+        eb_col = pw.BlobField()
+        new = pw.BooleanField(default=False)
+        dirty = pw.BooleanField(default=False)
+        deleted = pw.BooleanField(default=False)
+        stoken = pw.CharField(null=True)
+        local_stoken = pw.CharField(null=True)
+
+        class Meta:
+            table_name = "collectionentity"
+
+    class LegacyItem(LegacyBase):
+        collection = pw.ForeignKeyField(LegacyCollection, on_delete="CASCADE")
+        uid = pw.CharField()
+        eb_item = pw.BlobField()
+        new = pw.BooleanField(default=False)
+        dirty = pw.BooleanField(default=False)
+        deleted = pw.BooleanField(default=False)
+
+        class Meta:
+            table_name = "itementity"
+
+    class LegacyHref(LegacyBase):
+        content = pw.ForeignKeyField(
+            LegacyItem,
+            primary_key=True,
+            on_delete="CASCADE",
+        )
+        href = pw.CharField()
+
+        class Meta:
+            table_name = "hrefmapper"
+
+    legacy_db.create_tables(
+        [LegacyConfig, LegacyUser, LegacyCollection, LegacyItem, LegacyHref]
+    )
+    LegacyConfig.create(db_version=1)
+    legacy_user = LegacyUser.create(username="legacy@example.com")
+    legacy_collection = LegacyCollection.create(
+        local_user=legacy_user,
+        uid="contacts",
+        eb_col=b"legacy-collection",
+    )
+    legacy_item = LegacyItem.create(
+        collection=legacy_collection,
+        uid="contact-1",
+        eb_item=b"legacy-item",
+    )
+    LegacyHref.create(content=legacy_item, href="contact-1.vcf")
+    legacy_db.close()
+
+    etebase = Etebase.__new__(Etebase)
+    etebase.username = "legacy@example.com"
+    etebase._init_db(str(cache_path))
+
+    migrated_collection = CollectionEntity.get(uid="contacts")
+    migrated_item = ItemEntity.get(uid="contact-1")
+    assert migrated_collection.dav_revision == 0
+    assert migrated_item.remote_uid is None
+    assert HrefMapper.get_by_id(migrated_item.id).href == "contact-1.vcf"
+    assert models.Config.get().db_version == 1
+    assert {
+        migration.name for migration in models.SchemaMigration.select()
+    } == {"dav-revision-v1", "dav-revision-ledger-v2"}
+    assert "davrevision" in etebase._database.get_tables()
+    unresolved_columns = {
+        column.name
+        for column in etebase._database.get_columns("davunresolveditem")
+    }
+    assert {"reason", "local_item_id"} <= unresolved_columns
+
+
+def test_backfill_remote_uids_uses_cached_envelopes_without_remote_io(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    cache_item = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-1",
+        eb_item=b"item-cache",
+    )
+    remote_item = MagicMock(uid="remote-item-1")
+    item_mgr = MagicMock()
+    item_mgr.cache_load.return_value = remote_item
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = MagicMock()
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    unresolved = etebase._backfill_remote_uids()
+
+    assert unresolved == 0
+    assert ItemEntity.get_by_id(cache_item.id).remote_uid == "remote-item-1"
+    item_mgr.cache_load.assert_called_once_with(b"item-cache")
+
+
+def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    first = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-1",
+        eb_item=b"item-cache-1",
+    )
+    duplicate = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-duplicate",
+        eb_item=b"item-cache-2",
+    )
+    HrefMapper.create(content=first, href="contact-1.vcf")
+    HrefMapper.create(content=duplicate, href="contact-duplicate.vcf")
+    remote_item = MagicMock(uid="remote-item-1")
+    item_mgr = MagicMock()
+    item_mgr.cache_load.return_value = remote_item
+    item_mgr.cache_save.return_value = b"duplicate-retry-cache"
+    col_mgr = MagicMock()
+    col = MagicMock()
+    col_mgr.cache_load.return_value = col
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    unresolved = etebase._backfill_remote_uids()
+
+    assert unresolved == 1
+    assert ItemEntity.get_by_id(first.id).deleted is False
+    assert ItemEntity.get_by_id(duplicate.id).deleted is True
+    assert list(cache_col.items.where(ItemEntity.deleted == False)) == [first]  # noqa: E712
+    quarantine = models.DavUnresolvedItem.get(collection=cache_col)
+    assert quarantine.eb_item == b"item-cache-2"
+    change = DavChange.get(collection=cache_col)
+    assert change.href == "contact-duplicate.vcf"
+    assert change.deleted is True
+
+    etebase._retry_unresolved_items(cache_col, col, item_mgr)
+
+    assert ItemEntity.get_by_id(first.id).eb_item == b"item-cache-1"
+    quarantine = models.DavUnresolvedItem.get(collection=cache_col)
+    assert quarantine.reason == "legacy_duplicate"
+    assert quarantine.local_item_id == duplicate.id
+    assert quarantine.attempts == 1
+
+
+def test_backfill_quarantines_malformed_legacy_envelope(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    malformed = ItemEntity.create(
+        collection=cache_col,
+        uid="malformed-contact",
+        eb_item=b"malformed-cache",
+    )
+    HrefMapper.create(content=malformed, href="malformed-contact.vcf")
+    item_mgr = MagicMock()
+    item_mgr.cache_load.side_effect = ValueError("private parser details")
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = MagicMock()
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    assert etebase._backfill_remote_uids() == 1
+
+    assert ItemEntity.get_by_id(malformed.id).deleted is True
+    quarantine = models.DavUnresolvedItem.get(collection=cache_col)
+    assert quarantine.eb_item == b"malformed-cache"
+    change = DavChange.get(collection=cache_col)
+    assert change.href == "malformed-contact.vcf"
+    assert change.deleted is True
+
+
+def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    col = MagicMock(collection_type="etebase.vcard")
+    item = MagicMock(
+        uid="remote-item-unsafe",
+        meta={"name": "urn:uuid:contact/with/slashes"},
+        deleted=False,
+        etag="etag-unsafe",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"item-cache"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(cache_col, col, item_mgr, item) is True
+
+    cache_item = ItemEntity.get(remote_uid="remote-item-unsafe")
+    mapper = HrefMapper.get(content=cache_item)
+    assert cache_item.uid == "urn:uuid:contact/with/slashes"
+    assert mapper.href.endswith(".vcf")
+    assert "/" not in mapper.href
+
+
+def test_unknown_tombstone_cannot_rebind_identity_bound_contact(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    bound = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-name",
+        remote_uid="remote-original",
+        eb_item=b"original-cache",
+    )
+    HrefMapper.create(content=bound, href="contact-name.vcf")
+    col = MagicMock(collection_type="etebase.vcard")
+    tombstone = MagicMock(
+        uid="remote-unrelated",
+        meta={"name": "contact-name"},
+        deleted=True,
+        etag="deleted-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"tombstone-cache"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(
+        cache_col, col, item_mgr, tombstone
+    ) is False
+
+    refreshed = ItemEntity.get_by_id(bound.id)
+    assert refreshed.remote_uid == "remote-original"
+    assert refreshed.deleted is False
+    unresolved = models.DavUnresolvedItem.get(collection=cache_col)
+    assert unresolved.remote_uid == "remote-unrelated"
+    assert DavChange.select().count() == 0
+
+
+def test_metadata_fallback_only_claims_legacy_identityless_row(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    legacy = ItemEntity.create(
+        collection=cache_col,
+        uid="legacy-contact",
+        remote_uid=None,
+        eb_item=b"legacy-cache",
+    )
+    HrefMapper.create(content=legacy, href="legacy-contact.vcf")
+    col = MagicMock(collection_type="etebase.vcard")
+    tombstone = MagicMock(
+        uid="remote-legacy",
+        meta={"name": "legacy-contact"},
+        deleted=True,
+        etag="deleted-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"tombstone-cache"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(cache_col, col, item_mgr, tombstone)
+
+    refreshed = ItemEntity.get_by_id(legacy.id)
+    assert refreshed.remote_uid == "remote-legacy"
+    assert refreshed.deleted is True
+    assert DavChange.get(collection=cache_col).href == "legacy-contact.vcf"
+
+
+def test_unmatched_identityless_tombstone_is_quarantined_without_duplicate(tmp_path):
+    database = pw.SqliteDatabase(
+        str(tmp_path / "unresolved-delete.sqlite"),
+        pragmas={"foreign_keys": 1},
+    )
+    db.database_proxy.initialize(database)
+    database.create_tables(
+        [
+            models.Config,
+            models.User,
+            models.CollectionEntity,
+            models.ItemEntity,
+            models.HrefMapper,
+            models.DavChange,
+            models.DavRevision,
+            models.DavSyncToken,
+            models.DavUnresolvedItem,
+            models.SchemaMigration,
+        ]
+    )
+    models.Config.create(db_version=1)
+    user_obj = User.create(username="unresolved@example.com")
+    cache_col = CollectionEntity.create(
+        local_user=user_obj,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    tombstone = MagicMock(
+        uid="remote-missing-1",
+        meta={},
+        deleted=True,
+        etag="deleted-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"quarantined-envelope"
+    item_mgr.list.return_value = MagicMock(
+        data=[tombstone],
+        done=True,
+        stoken="after-unresolved",
+    )
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = MagicMock(collection_type="etebase.vcard")
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user_obj
+
+    etebase.pull_collection(cache_col.uid)
+
+    assert ItemEntity.select().count() == 0
+    unresolved = models.DavUnresolvedItem.get(collection=cache_col)
+    assert unresolved.remote_uid == "remote-missing-1"
+    assert unresolved.deleted is True
+    assert unresolved.eb_item == b"quarantined-envelope"
+    assert CollectionEntity.get_by_id(cache_col.id).local_stoken == "after-unresolved"
+    assert DavChange.select().count() == 0
+
+    recovered = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-recovered",
+        remote_uid="remote-missing-1",
+        eb_item=b"original-envelope",
+    )
+    HrefMapper.create(content=recovered, href="contact-recovered.vcf")
+    item_mgr.cache_load.return_value = tombstone
+    item_mgr.list.return_value = MagicMock(
+        data=[],
+        done=True,
+        stoken="after-retry",
+    )
+
+    etebase.pull_collection(cache_col.uid)
+
+    assert ItemEntity.get_by_id(recovered.id).deleted is True
+    assert models.DavUnresolvedItem.select().count() == 0
+    recovered_change = DavChange.get(
+        (DavChange.collection == cache_col)
+        & (DavChange.href == "contact-recovered.vcf")
+    )
+    assert recovered_change.deleted is True
+
+
+def test_corrupt_quarantine_row_does_not_block_fresh_collection_sync(tmp_path):
+    database = pw.SqliteDatabase(
+        str(tmp_path / "corrupt-quarantine.sqlite"),
+        pragmas={"foreign_keys": 1},
+    )
+    db.database_proxy.initialize(database)
+    database.create_tables(
+        [
+            models.Config,
+            models.User,
+            models.CollectionEntity,
+            models.ItemEntity,
+            models.HrefMapper,
+            models.DavChange,
+            models.DavRevision,
+            models.DavSyncToken,
+            models.DavUnresolvedItem,
+            models.SchemaMigration,
+        ]
+    )
+    models.Config.create(db_version=1)
+    user = User.create(username="corrupt-quarantine@example.com")
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    unresolved = models.DavUnresolvedItem.create(
+        collection=cache_col,
+        remote_uid="remote-corrupt",
+        eb_item=b"corrupt-envelope",
+        deleted=True,
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_load.side_effect = ValueError("private corrupt envelope details")
+    item_mgr.list.return_value = MagicMock(
+        data=[],
+        done=True,
+        stoken="after-corrupt-quarantine",
+    )
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = MagicMock(collection_type="etebase.vcard")
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    etebase.pull_collection(cache_col.uid)
+
+    unresolved = models.DavUnresolvedItem.get_by_id(unresolved.id)
+    assert unresolved.attempts == 1
+    assert CollectionEntity.get_by_id(cache_col.id).local_stoken == (
+        "after-corrupt-quarantine"
+    )
+    item_mgr.list.assert_called_once()

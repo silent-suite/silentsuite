@@ -174,6 +174,9 @@ class TestSyncThreadRun:
             t.force_sync()
             with pytest.raises(ConnectionError, match="network down"):
                 t.wait_for_sync(timeout=2)
+            assert "network down" not in str(mock_log.call_args_list)
+            assert "network down" not in str(mock_status.call_args_list)
+            assert mock_status.call_args.kwargs["error"] == "ConnectionError"
         finally:
             t.stop()
             t.join(1)

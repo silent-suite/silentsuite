@@ -13,6 +13,7 @@ from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.accounts import AccountOperationResult
 from silentsuite_bridge.auth_browser import AuthenticatedAccount, AuthenticationError
+from silentsuite_bridge.local_cache.models import CollectionEntity, ItemEntity
 from silentsuite_bridge.radicale import storage
 from silentsuite_bridge.radicale.creds import Credentials
 from silentsuite_bridge.web import (
@@ -300,6 +301,38 @@ def test_dump_api_requires_csrf_when_enabled(monkeypatch):
     assert status == 403
     assert headers["Content-Type"] == "application/json"
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
+
+
+def test_dump_api_redacts_identifiers_and_remote_tokens(mem_db, user, monkeypatch):
+    monkeypatch.setattr(config, "DASHBOARD_DUMP_ENABLED", True)
+    collection = CollectionEntity.create(
+        local_user=user,
+        uid="private-address-book",
+        stoken="private-remote-stoken",
+        local_stoken="private-local-stoken",
+        eb_col=b"collection-cache",
+    )
+    ItemEntity.create(
+        collection=collection,
+        uid="private-contact-uid",
+        eb_item=b"item-cache",
+        dirty=True,
+    )
+    environ = _get_environ()
+    environ["HTTP_X_SILENTSUITE_CSRF"] = _dashboard_csrf_token
+    web = Web.__new__(Web)
+
+    status, _, body = web.get(environ, "", "/.web/api/dump", None)
+
+    assert status == 200
+    text = body.decode()
+    assert "private-address-book" not in text
+    assert "private-contact-uid" not in text
+    assert "private-remote-stoken" not in text
+    assert "private-local-stoken" not in text
+    assert '"uid"' not in text
+    assert '"stoken"' not in text
+    assert '"local_stoken"' not in text
 
 
 def test_root_route_serves_dashboard(tmp_path, monkeypatch):
