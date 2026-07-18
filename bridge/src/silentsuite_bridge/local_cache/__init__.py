@@ -15,6 +15,7 @@ import time
 from contextlib import contextmanager
 
 import msgpack
+import peewee as pw
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
 
 from .. import config
@@ -351,19 +352,62 @@ class Etebase:
             for cache_item in items:
                 try:
                     remote_item = item_mgr.cache_load(cache_item.eb_item)
+                except Exception:
+                    self._quarantine_legacy_cache_item(cache_col, cache_item)
+                    unresolved += 1
+                    continue
+                try:
                     cache_item.remote_uid = remote_item.uid
                     cache_item.save(only=[models.ItemEntity.remote_uid])
-                except Exception:
-                    cache_item.remote_uid = None
-                    cache_item.deleted = True
-                    cache_item.save(
-                        only=[
-                            models.ItemEntity.remote_uid,
-                            models.ItemEntity.deleted,
-                        ]
-                    )
+                except pw.IntegrityError:
+                    self._quarantine_legacy_cache_item(cache_col, cache_item)
                     unresolved += 1
         return unresolved
+
+    def _quarantine_legacy_cache_item(self, cache_col, cache_item):
+        """Hide a legacy row while preserving its envelope for local retry."""
+        quarantine_uid = "legacy-cache:" + hashlib.sha256(
+            cache_item.eb_item
+        ).hexdigest()
+        with db.database_proxy.atomic():
+            (
+                models.DavUnresolvedItem.insert(
+                    collection=cache_col,
+                    remote_uid=quarantine_uid,
+                    eb_item=cache_item.eb_item,
+                    deleted=cache_item.deleted,
+                    attempts=0,
+                )
+                .on_conflict(
+                    conflict_target=[
+                        models.DavUnresolvedItem.collection,
+                        models.DavUnresolvedItem.remote_uid,
+                    ],
+                    update={
+                        models.DavUnresolvedItem.eb_item: cache_item.eb_item,
+                        models.DavUnresolvedItem.attempts:
+                            models.DavUnresolvedItem.attempts + 1,
+                    },
+                )
+                .execute()
+            )
+            cache_item.remote_uid = None
+            cache_item.deleted = True
+            cache_item.save(
+                only=[
+                    models.ItemEntity.remote_uid,
+                    models.ItemEntity.deleted,
+                ]
+            )
+            href_mapper = models.HrefMapper.get_or_none(
+                models.HrefMapper.content == cache_item
+            )
+            if href_mapper is not None:
+                record_dav_change(
+                    cache_col,
+                    href_mapper.href,
+                    deleted=True,
+                )
 
     def sync(self):
         """Full bidirectional sync: push local changes, pull remote changes."""
@@ -561,15 +605,18 @@ class Etebase:
                     exc.__class__.__name__,
                 )
                 continue
-            if not self._apply_pulled_item(
+            applied = self._apply_pulled_item(
                 cache_col,
                 col,
                 item_mgr,
                 item,
                 quarantine=False,
-            ):
+            )
+            if not applied:
                 unresolved.attempts += 1
                 unresolved.save(only=[models.DavUnresolvedItem.attempts])
+            else:
+                unresolved.delete_instance()
 
     def pull_collection(self, uid):
         with db.database_proxy:

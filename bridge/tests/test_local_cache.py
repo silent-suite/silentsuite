@@ -935,6 +935,44 @@ def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
     assert ItemEntity.get_by_id(first.id).deleted is False
     assert ItemEntity.get_by_id(duplicate.id).deleted is True
     assert list(cache_col.items.where(ItemEntity.deleted == False)) == [first]  # noqa: E712
+    quarantine = models.DavUnresolvedItem.get(collection=cache_col)
+    assert quarantine.eb_item == b"item-cache-2"
+    change = DavChange.get(collection=cache_col)
+    assert change.href == "contact-duplicate.vcf"
+    assert change.deleted is True
+
+
+def test_backfill_quarantines_malformed_legacy_envelope(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    malformed = ItemEntity.create(
+        collection=cache_col,
+        uid="malformed-contact",
+        eb_item=b"malformed-cache",
+    )
+    HrefMapper.create(content=malformed, href="malformed-contact.vcf")
+    item_mgr = MagicMock()
+    item_mgr.cache_load.side_effect = ValueError("private parser details")
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = MagicMock()
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    assert etebase._backfill_remote_uids() == 1
+
+    assert ItemEntity.get_by_id(malformed.id).deleted is True
+    quarantine = models.DavUnresolvedItem.get(collection=cache_col)
+    assert quarantine.eb_item == b"malformed-cache"
+    change = DavChange.get(collection=cache_col)
+    assert change.href == "malformed-contact.vcf"
+    assert change.deleted is True
 
 
 def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):

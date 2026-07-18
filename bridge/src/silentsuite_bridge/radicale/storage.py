@@ -9,6 +9,7 @@ Original: https://github.com/etesync/etesync-dav
 """
 
 import email.utils
+import hashlib
 import logging
 import posixpath
 import re
@@ -472,7 +473,11 @@ class Collection(BaseCollection):
             return
 
         for item in self.collection.list():
-            href = item.item.uid + self.content_suffix
+            remote_identity = item.cache_item.remote_uid or str(item.item.uid)
+            href = (
+                hashlib.sha256(remote_identity.encode()).hexdigest()
+                + self.content_suffix
+            )
             href_mapper, _ = HrefMapper.get_or_create(
                 content=item.cache_item, defaults={"href": href}
             )
@@ -543,8 +548,8 @@ class Collection(BaseCollection):
             if item.name == "VCARD" and not hasattr(item, "fn"):
                 item.add("fn").value = str(item.n)
 
-        except Exception as e:
-            raise RuntimeError("Failed to parse DAV item") from e
+        except Exception:
+            raise RuntimeError("Failed to parse DAV item") from None
 
         mtime_ms = etesync_item.meta.get("mtime", 0)
         last_modified = email.utils.formatdate(mtime_ms / 1000, usegmt=True)

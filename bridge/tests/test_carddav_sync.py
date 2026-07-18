@@ -302,3 +302,18 @@ def test_parse_failure_does_not_expose_href_or_collection_path(mem_db, user):
     assert "contact-1.vcf" not in message
     assert "contacts" not in message
     assert "not a vcard" not in message
+    assert exc_info.value.__cause__ is None
+
+
+def test_missing_href_mapping_uses_safe_opaque_single_segment(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    item = collection.collection.list.return_value[0]
+    item.item.uid = "urn:uuid:unsafe/uid"
+    HrefMapper.delete().execute()
+
+    hrefs = list(collection._list())
+
+    assert len(hrefs) == 1
+    assert hrefs[0].endswith(".vcf")
+    assert "/" not in hrefs[0]
+    assert "urn:uuid" not in hrefs[0]
