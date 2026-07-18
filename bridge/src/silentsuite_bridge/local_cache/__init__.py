@@ -663,6 +663,10 @@ class Etebase:
                     collection = models.CollectionEntity.get_or_none(
                         local_user=self.user, uid=col.uid
                     )
+                    if collection is not None and (
+                        collection.dirty or collection.new
+                    ):
+                        continue
                     if collection is None:
                         collection = models.CollectionEntity(
                             local_user=self.user,
@@ -682,6 +686,8 @@ class Etebase:
                         collection = models.CollectionEntity.get(
                             local_user=self.user, uid=col_uid
                         )
+                        if collection.dirty or collection.new:
+                            continue
                         collection.deleted = True
                         collection.save()
                         models.DavUnresolvedItem.delete().where(
@@ -814,6 +820,16 @@ class Etebase:
                     collection=cache_col,
                     uid=meta.get("name") or item.uid,
                 )
+
+            if cache_item.id is not None and (cache_item.dirty or cache_item.new):
+                if cache_item.remote_uid is None:
+                    cache_item.remote_uid = item.uid
+                    cache_item.save(only=[models.ItemEntity.remote_uid])
+                models.DavUnresolvedItem.delete().where(
+                    (models.DavUnresolvedItem.collection == cache_col)
+                    & (models.DavUnresolvedItem.local_item == cache_item)
+                ).execute()
+                return True
 
             cache_item.remote_uid = item.uid
             cache_item.eb_item = item_mgr.cache_save(item)

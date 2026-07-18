@@ -1197,6 +1197,44 @@ def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):
     assert "/" not in mapper.href
 
 
+def test_remote_pull_cannot_overwrite_newer_dirty_local_item(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    cache_item = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-name",
+        remote_uid="remote-contact",
+        eb_item=b"newer-local-write",
+        dirty=True,
+    )
+    HrefMapper.create(content=cache_item, href="contact.vcf")
+    remote_item = MagicMock(
+        uid="remote-contact",
+        meta={"name": "contact-name"},
+        deleted=False,
+        etag="stale-remote-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"stale-remote-envelope"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(
+        cache_col,
+        MagicMock(collection_type="etebase.vcard"),
+        item_mgr,
+        remote_item,
+    ) is True
+
+    persisted = ItemEntity.get_by_id(cache_item.id)
+    assert persisted.eb_item == b"newer-local-write"
+    assert persisted.dirty is True
+    assert cache_col.dav_revision == 0
+    item_mgr.cache_save.assert_not_called()
+
+
 def test_unknown_tombstone_cannot_rebind_identity_bound_contact(mem_db, user):
     cache_col = CollectionEntity.create(
         local_user=user,
