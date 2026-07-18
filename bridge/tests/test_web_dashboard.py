@@ -623,6 +623,48 @@ def test_abandoned_completed_request_survives_generation_history_pruning():
     assert result["accounts"]["succeeded"] == 1
 
 
+def test_concurrent_poll_cannot_regress_published_terminal_result():
+    web_module._sync_requests.clear()
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    request_id = "request-id"
+    terminal = {
+        "request_id": request_id,
+        "state": "succeeded",
+        "requested_at": 1.0,
+        "deadline": 31.0,
+        "accounts": {
+            "total": 1,
+            "pending": 0,
+            "running": 0,
+            "succeeded": 1,
+            "failed": 0,
+            "timed_out": 0,
+        },
+    }
+    web_module._sync_requests[request_id] = {
+        "requested_at": 1.0,
+        "deadline": 31.0,
+        "targets": [{
+            "thread": thread,
+            "generation": 1,
+            "status_handle": None,
+        }],
+        "signature": ((id(thread), 1),),
+        "terminal_result": None,
+        "terminal_at": None,
+    }
+
+    def publish_terminal_during_poll(_generation):
+        web_module._sync_requests[request_id]["terminal_result"] = terminal
+        web_module._sync_requests[request_id]["terminal_at"] = 2.0
+        return {"state": "pending"}
+
+    thread.generation_status.side_effect = publish_terminal_during_poll
+
+    assert web_module._sync_request_status(request_id) == terminal
+
+
 def test_dashboard_sync_post_rejects_wrong_csrf_token():
     web = Web.__new__(Web)
 

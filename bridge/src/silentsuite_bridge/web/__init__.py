@@ -112,10 +112,12 @@ def _sync_request_status(request_id):
         "deadline": deadline,
         "accounts": counts,
     }
-    if not active:
-        with _sync_requests_lock:
-            request = _sync_requests.get(request_id)
-            if request is not None and request.get("terminal_result") is None:
+    with _sync_requests_lock:
+        request = _sync_requests.get(request_id)
+        if request is not None:
+            if request.get("terminal_result") is not None:
+                return dict(request["terminal_result"])
+            if not active:
                 request["terminal_result"] = dict(result)
                 request["terminal_at"] = time.time()
     return result

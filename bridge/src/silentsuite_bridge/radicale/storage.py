@@ -78,14 +78,26 @@ class SyncThread(threading.Thread):
         self.sync_started_at = None
         self.last_sync_duration = None
 
-    def force_sync(self, *, deadline=None):
+    def force_sync(self, *, deadline=None, after_generation=None):
         with self._generation_condition:
-            if self._active_generation is not None:
+            if (
+                self._active_generation is not None
+                and (
+                    after_generation is None
+                    or self._active_generation > after_generation
+                )
+            ):
                 status = self._generation_statuses[self._active_generation]
                 if deadline is not None and status.get("deadline") is None:
                     status["deadline"] = deadline
                 return self._active_generation
-            if self._requested_generation is not None:
+            if (
+                self._requested_generation is not None
+                and (
+                    after_generation is None
+                    or self._requested_generation > after_generation
+                )
+            ):
                 status = self._generation_statuses[self._requested_generation]
                 if deadline is not None and status.get("deadline") is None:
                     status["deadline"] = deadline
@@ -191,10 +203,12 @@ class SyncThread(threading.Thread):
             self._requested_generation = None
             self._active_generation = generation
             started_at = time.time()
-            self._generation_statuses[generation].update({
-                "state": "running",
-                "started_at": started_at,
-            })
+            status = self._generation_statuses[generation]
+            if status["state"] != "timed_out":
+                status.update({
+                    "state": "running",
+                    "started_at": started_at,
+                })
             self._done_syncing.clear()
             return generation, started_at
 
@@ -1037,7 +1051,7 @@ class Storage(BaseStorage):
 
         sync_thread = start_sync_thread(user)
         logger.info("acquire_lock(%s): pre-yield sync", mode)
-        sync_thread.force_sync()
+        initial_generation = sync_thread.force_sync()
         try:
             if not sync_thread.wait_for_sync(20):
                 logger.warning(
@@ -1062,7 +1076,7 @@ class Storage(BaseStorage):
 
         if mode == "w":
             logger.info("acquire_lock(w): queued background push")
-            sync_thread.force_sync()
+            sync_thread.force_sync(after_generation=initial_generation)
 
     @contextmanager
     def _acquire_read_backend(self):

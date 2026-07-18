@@ -397,6 +397,28 @@ def test_completion_after_deadline_is_timeout_without_prior_poll():
     assert status["completed_at"] == deadline
 
 
+def test_begin_does_not_revive_timed_out_pending_generation():
+    thread = SyncThread("account@example.com")
+    generation = thread.force_sync(deadline=time.time() - 1)
+    assert thread.generation_status(generation)["state"] == "timed_out"
+
+    begun_generation, _ = thread._begin_generation()
+
+    assert begun_generation == generation
+    assert thread.generation_status(generation)["state"] == "timed_out"
+
+
+def test_force_sync_after_active_generation_queues_successor():
+    thread = SyncThread("account@example.com")
+    generation = thread.force_sync()
+    thread._begin_generation()
+
+    successor = thread.force_sync(after_generation=generation)
+
+    assert successor > generation
+    assert thread._requested_generation == successor
+
+
 def test_terminal_generation_history_is_bounded():
     thread = SyncThread("account@example.com")
     for _ in range(105):
