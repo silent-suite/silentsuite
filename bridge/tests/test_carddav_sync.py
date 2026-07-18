@@ -65,6 +65,7 @@ def test_initial_carddav_sync_returns_opaque_token_and_current_href(mem_db, user
 
     assert token.startswith("http://radicale.org/ns/sync/")
     assert "remote-stoken" not in token
+    assert "remote-stoken" not in collection.etag
     assert list(hrefs) == ["contact-1.vcf"]
 
 
@@ -248,6 +249,43 @@ def test_current_token_from_lost_history_is_rejected(mem_db, user):
     collection = _carddav_collection(mem_db, user)
     token, _ = collection.sync(None)
     DavSyncToken.delete().execute()
+
+    with pytest.raises(ValueError, match="unknown sync token"):
+        collection.sync(token)
+
+
+def test_carddav_report_is_bounded_by_returned_token_revision(
+    mem_db, user, monkeypatch
+):
+    collection = _carddav_collection(mem_db, user)
+    old_token, _ = collection.sync(None)
+    cache_col = collection.collection.cache_col
+    record_dav_change(cache_col, "contact-1.vcf", etag="etag-2")
+
+    original_prune = collection._prune_sync_history
+
+    def concurrent_change_after_snapshot():
+        original_prune()
+        record_dav_change(cache_col, "contact-2.vcf", etag="etag-3")
+
+    monkeypatch.setattr(
+        collection,
+        "_prune_sync_history",
+        concurrent_change_after_snapshot,
+    )
+    token_at_revision_one, hrefs = collection.sync(old_token)
+
+    assert list(hrefs) == ["contact-1.vcf"]
+    monkeypatch.setattr(collection, "_prune_sync_history", original_prune)
+    _, next_hrefs = collection.sync(token_at_revision_one)
+    assert list(next_hrefs) == ["contact-2.vcf"]
+
+
+def test_carddav_token_expires_by_age(mem_db, user, monkeypatch):
+    monkeypatch.setattr(config, "DAV_SYNC_TOKEN_MAX_AGE", 60, raising=False)
+    collection = _carddav_collection(mem_db, user)
+    token, _ = collection.sync(None)
+    DavSyncToken.update(created_at=0).execute()
 
     with pytest.raises(ValueError, match="unknown sync token"):
         collection.sync(token)

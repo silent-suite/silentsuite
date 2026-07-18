@@ -1090,23 +1090,24 @@ class Web(BaseWeb):
                 with db.database_proxy:
                     result = {"collections": []}
                     for col in models.CollectionEntity.select():
-                        items = []
-                        for item in col.items:
-                            items.append({
-                                "uid": item.uid,
-                                "dirty": item.dirty,
-                                "new": item.new,
-                                "deleted": item.deleted,
-                            })
+                        items = col.items
                         result["collections"].append({
-                            "uid": col.uid,
-                            "stoken": col.stoken[:20] if col.stoken else None,
-                            "local_stoken": col.local_stoken[:20] if col.local_stoken else None,
                             "dirty": col.dirty,
                             "new": col.new,
                             "deleted": col.deleted,
-                            "item_count": len(items),
-                            "items": items,
+                            "dav_revision": col.dav_revision,
+                            "item_count": items.count(),
+                            "item_states": {
+                                "dirty": items.where(
+                                    models.ItemEntity.dirty
+                                ).count(),
+                                "new": items.where(
+                                    models.ItemEntity.new
+                                ).count(),
+                                "deleted": items.where(
+                                    models.ItemEntity.deleted
+                                ).count(),
+                            },
                         })
                 return (
                     200,

@@ -498,10 +498,11 @@ class Etebase:
             )
             if cache_item is None and meta.get("name"):
                 cache_item = models.ItemEntity.get_or_none(
-                    collection=cache_col,
-                    uid=meta["name"],
+                    (models.ItemEntity.collection == cache_col)
+                    & (models.ItemEntity.uid == meta["name"])
+                    & (models.ItemEntity.remote_uid.is_null(True))
                 )
-            if cache_item is None and item.deleted and not meta.get("name"):
+            if cache_item is None and item.deleted:
                 if quarantine:
                     self._quarantine_unresolved_item(cache_col, item_mgr, item)
                 return False

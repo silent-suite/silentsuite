@@ -963,6 +963,74 @@ def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):
     assert "/" not in mapper.href
 
 
+def test_unknown_tombstone_cannot_rebind_identity_bound_contact(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    bound = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-name",
+        remote_uid="remote-original",
+        eb_item=b"original-cache",
+    )
+    HrefMapper.create(content=bound, href="contact-name.vcf")
+    col = MagicMock(collection_type="etebase.vcard")
+    tombstone = MagicMock(
+        uid="remote-unrelated",
+        meta={"name": "contact-name"},
+        deleted=True,
+        etag="deleted-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"tombstone-cache"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(
+        cache_col, col, item_mgr, tombstone
+    ) is False
+
+    refreshed = ItemEntity.get_by_id(bound.id)
+    assert refreshed.remote_uid == "remote-original"
+    assert refreshed.deleted is False
+    unresolved = models.DavUnresolvedItem.get(collection=cache_col)
+    assert unresolved.remote_uid == "remote-unrelated"
+    assert DavChange.select().count() == 0
+
+
+def test_metadata_fallback_only_claims_legacy_identityless_row(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    legacy = ItemEntity.create(
+        collection=cache_col,
+        uid="legacy-contact",
+        remote_uid=None,
+        eb_item=b"legacy-cache",
+    )
+    HrefMapper.create(content=legacy, href="legacy-contact.vcf")
+    col = MagicMock(collection_type="etebase.vcard")
+    tombstone = MagicMock(
+        uid="remote-legacy",
+        meta={"name": "legacy-contact"},
+        deleted=True,
+        etag="deleted-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"tombstone-cache"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(cache_col, col, item_mgr, tombstone)
+
+    refreshed = ItemEntity.get_by_id(legacy.id)
+    assert refreshed.remote_uid == "remote-legacy"
+    assert refreshed.deleted is True
+    assert DavChange.get(collection=cache_col).href == "legacy-contact.vcf"
+
+
 def test_unmatched_identityless_tombstone_is_quarantined_without_duplicate(tmp_path):
     database = pw.SqliteDatabase(
         str(tmp_path / "unresolved-delete.sqlite"),

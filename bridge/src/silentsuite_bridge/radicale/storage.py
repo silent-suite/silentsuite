@@ -360,7 +360,7 @@ class Collection(BaseCollection):
     def etag(self):
         if self.is_fake:
             return
-        return '"{}"'.format(self.collection.stoken)
+        return f'"dav-{self.collection.cache_col.dav_revision}"'
 
     @property
     def tag(self) -> str:
@@ -379,6 +379,11 @@ class Collection(BaseCollection):
             self.collection.cache_col.id
         )
         revision = self.collection.cache_col.dav_revision
+        token_cutoff = int(time.time()) - config.DAV_SYNC_TOKEN_MAX_AGE
+        DavSyncToken.delete().where(
+            (DavSyncToken.collection == self.collection.cache_col)
+            & (DavSyncToken.created_at < token_cutoff)
+        ).execute()
         current_token_row, _ = DavSyncToken.get_or_create(
             collection=self.collection.cache_col,
             revision=revision,
@@ -408,6 +413,7 @@ class Collection(BaseCollection):
             .where(
                 (DavChange.collection == self.collection.cache_col)
                 & (DavChange.revision > token_row.revision)
+                & (DavChange.revision <= revision)
             )
             .order_by(DavChange.href)
         )
