@@ -254,6 +254,10 @@ class TestFavoriteCardDavRoundTrip:
             & (ItemEntity.uid == "restored-contact")
         )
         assert restored_cache.deleted is False
+        preserved_tombstone = ItemEntity.get_by_id(tombstone.id)
+        assert preserved_tombstone.deleted is True
+        assert preserved_tombstone.uid.startswith("dav-tombstone:")
+        assert HrefMapper.get_or_none(HrefMapper.content == preserved_tombstone) is None
         assert HrefMapper.get_by_id(restored_cache.id).href == "restored.vcf"
         assert HrefMapper.select().where(HrefMapper.href == "restored.vcf").count() == 1
 
