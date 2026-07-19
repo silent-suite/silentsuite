@@ -366,23 +366,23 @@ class SyncThread(threading.Thread):
                             status = self._generation_status_snapshot(
                                 self._generation_statuses[generation]
                             )
-                        if self._stop_sync.is_set():
-                            state = "failed"
-                            error_code = "SyncStopped"
-                        elif status["state"] == "timed_out":
-                            state = "timed_out"
-                            error_code = "SyncTimeout"
-                            update_status(
-                                "error", error="SyncTimeout", account=self.user
-                            )
-                            log_sync_event("error", "Sync timed out")
-                        else:
-                            update_status(
-                                "connected",
-                                collections=collections,
-                                account=self.user,
-                            )
-                            log_sync_event("sync", "Synced account")
+                            if self._stop_sync.is_set():
+                                state = "failed"
+                                error_code = "SyncStopped"
+                            elif status["state"] == "timed_out":
+                                state = "timed_out"
+                                error_code = "SyncTimeout"
+                                update_status(
+                                    "error", error="SyncTimeout", account=self.user
+                                )
+                                log_sync_event("error", "Sync timed out")
+                            else:
+                                update_status(
+                                    "connected",
+                                    collections=collections,
+                                    account=self.user,
+                                )
+                                log_sync_event("sync", "Synced account")
             except Exception as e:
                 if self._stop_sync.is_set():
                     state = "failed"
@@ -445,6 +445,7 @@ def refresh_sync_thread(user):
         existing.stop()
 
     forget_etesync_user(user)
+    update_status("syncing", account=user)
     return start_sync_thread(user)
 
 

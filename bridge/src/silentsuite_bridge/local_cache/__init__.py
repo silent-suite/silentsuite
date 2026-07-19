@@ -740,6 +740,7 @@ class Etebase:
                 original_envelope = collection.eb_col
                 original_dirty = collection.dirty
                 original_new = collection.new
+                original_deleted = collection.deleted
                 col = col_mgr.cache_load(collection.eb_col)
 
                 if collection.deleted:
@@ -754,6 +755,7 @@ class Etebase:
                         & (models.CollectionEntity.eb_col == original_envelope)
                         & (models.CollectionEntity.dirty == original_dirty)
                         & (models.CollectionEntity.new == original_new)
+                        & (models.CollectionEntity.deleted == original_deleted)
                     )
                     .execute()
                 )
