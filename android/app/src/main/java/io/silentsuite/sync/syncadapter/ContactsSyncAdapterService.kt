@@ -24,6 +24,31 @@ internal data class ContactsChildTarget(val mainAccount: Account, val attemptId:
 internal fun contactsChildTarget(mainAccount: Account?, attemptId: String?): ContactsChildTarget? =
     if (mainAccount == null || attemptId.isNullOrBlank()) null else ContactsChildTarget(mainAccount, attemptId)
 
+/** The parent and child adapters share this correlation-only lifecycle boundary. */
+internal fun attachContactsChildrenAtAdapterBoundary(
+    store: SyncStatusStore,
+    parent: Account,
+    attemptId: String,
+    children: Set<Account>,
+    startedAt: Long,
+): SyncStatusStore.ContactsStart = store.attachContactsChildren(parent, attemptId, children, startedAt)
+
+/** Preserve stale-vs-storage semantics through the real child-adapter completion boundary. */
+internal fun recordContactsChildAtAdapterBoundary(
+    store: SyncStatusStore,
+    target: ContactsChildTarget,
+    child: Account,
+    result: SyncStatusStore.ChildResult,
+    category: SyncStatusStore.FailureCategory = SyncStatusStore.FailureCategory.PROVIDER,
+    timestamp: Long = System.currentTimeMillis(),
+): SyncStatusStore.MutationResult = when (
+    store.recordContactsChild(target.mainAccount, target.attemptId, child, result, category, timestamp)
+) {
+    SyncStatusStore.ChildWrite.RECORDED -> SyncStatusStore.MutationResult.RECORDED
+    SyncStatusStore.ChildWrite.REJECTED -> SyncStatusStore.MutationResult.REJECTED
+    SyncStatusStore.ChildWrite.STORAGE_FAILURE -> SyncStatusStore.MutationResult.STORAGE_FAILURE
+}
+
 internal fun putContactsAttempt(extras: Bundle, attemptId: String) {
     extras.putString(SyncStatusStore.EXTRA_CONTACTS_ATTEMPT, attemptId)
 }
@@ -75,22 +100,26 @@ class ContactsSyncAdapterService : SyncAdapterService() {
             }
         }
 
-        override fun recordSuccess(account: Account, extras: Bundle): Boolean =
+        override fun recordSuccess(account: Account, extras: Bundle): SyncStatusStore.MutationResult =
             recordChild(account, extras, SyncStatusStore.ChildResult.SUCCESS)
 
-        override fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): Boolean =
+        override fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): SyncStatusStore.MutationResult =
             recordChild(account, extras, SyncStatusStore.ChildResult.FAILURE, category)
+
+        // A skipped child has no terminal outcome. Recording the generation-local skip lets the
+        // final child close the parent lifecycle without inventing a success or failure.
+        override fun finishWithoutOutcome(account: Account, extras: Bundle): SyncStatusStore.MutationResult =
+            recordChild(account, extras, SyncStatusStore.ChildResult.SKIPPED)
 
         private fun recordChild(
             child: Account,
             extras: Bundle,
             result: SyncStatusStore.ChildResult,
             category: SyncStatusStore.FailureCategory = SyncStatusStore.FailureCategory.PROVIDER,
-        ): Boolean {
+        ): SyncStatusStore.MutationResult {
             val main = runCatching { LocalAddressBook(context, child, null).mainAccount }.getOrNull()
-            val target = contactsChildTarget(main, contactsAttempt(extras)) ?: return false
-            return SyncStatusStore(context).recordContactsChild(target.mainAccount, target.attemptId, child, result, category) !=
-                SyncStatusStore.ChildWrite.STORAGE_FAILURE
+            val target = contactsChildTarget(main, contactsAttempt(extras)) ?: return SyncStatusStore.MutationResult.REJECTED
+            return recordContactsChildAtAdapterBoundary(SyncStatusStore(context), target, child, result, category)
         }
     }
 

@@ -51,13 +51,16 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
             contactsProvider.release()
 
             val childAccounts = LocalAddressBook.find(context, null, account).map { it.androidAccount }.toSet()
-            val attemptId = when (val start = SyncStatusStore(context).beginContacts(account, childAccounts)) {
-                is SyncStatusStore.ContactsStart.Started -> start.attemptId
-                SyncStatusStore.ContactsStart.SetupRequired -> return Completion.DISPATCHED
-                SyncStatusStore.ContactsStart.StorageFailure -> {
-                    syncResult.stats.numIoExceptions++
-                    syncResult.delayUntil = maxOf(syncResult.delayUntil, Constants.DEFAULT_RETRY_DELAY)
-                    return Completion.DISPATCHED
+            val attemptId = contactsAttempt(extras)
+            if (attemptId == null) {
+                syncResult.stats.numIoExceptions++
+                syncResult.delayUntil = maxOf(syncResult.delayUntil, Constants.DEFAULT_RETRY_DELAY)
+            } else {
+                when (attachContactsChildrenAtAdapterBoundary(SyncStatusStore(context),
+                    account, attemptId, childAccounts, System.currentTimeMillis())) {
+                    is SyncStatusStore.ContactsStart.Started,
+                    SyncStatusStore.ContactsStart.SetupRequired -> Unit
+                    SyncStatusStore.ContactsStart.StorageFailure -> signalPersistenceRetry(syncResult)
                 }
             }
             for (addressBookAccount in childAccounts) {
@@ -66,7 +69,7 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
                 syncExtras.putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_SETTINGS, true)
                 syncExtras.putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)
                 syncExtras.putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)     // run immediately (don't queue)
-                putContactsAttempt(syncExtras, attemptId)
+                attemptId?.let { putContactsAttempt(syncExtras, it) }
                 ContentResolver.requestSync(addressBookAccount, ContactsContract.AUTHORITY, syncExtras)
             }
 
@@ -74,9 +77,10 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
             return Completion.DISPATCHED
         }
 
-        override fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): Boolean {
+        override fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): SyncStatusStore.MutationResult {
             val safeCategory = if (category == SyncStatusStore.FailureCategory.PERMISSION) category else SyncStatusStore.FailureCategory.PARENT_REFRESH
-            return SyncStatusStore(context).failContactsParent(account, safeCategory)
+            val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return SyncStatusStore(context).failContactsParentResult(account, attemptId, safeCategory)
         }
 
         private fun updateLocalAddressBooks(provider: ContentProviderClient, account: Account, settings: AccountSettings) {

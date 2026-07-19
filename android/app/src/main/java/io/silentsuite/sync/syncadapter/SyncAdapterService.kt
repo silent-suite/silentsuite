@@ -58,6 +58,40 @@ internal fun classifyCompletedOutcome(before: SyncCompletionSnapshot, after: Syn
     else -> CompletedOutcome.SUCCESS
 }
 
+/** Shared adapter close boundary: skip/cancel must only clear lifecycle evidence. */
+internal fun finishWithoutOutcomeAtAdapterBoundary(
+    store: SyncStatusStore,
+    account: Account,
+    service: SyncStatusStore.Service,
+    attemptId: String,
+): Boolean = store.finishWithoutOutcome(account, service, attemptId)
+
+internal fun finishWithoutOutcomeResultAtAdapterBoundary(
+    store: SyncStatusStore,
+    account: Account,
+    service: SyncStatusStore.Service,
+    attemptId: String,
+): SyncStatusStore.MutationResult = store.finishWithoutOutcomeResult(account, service, attemptId)
+
+/** Production completion orchestration: stale closes are ignored; persistence failures retry. */
+internal fun persistCompletedOutcomeAtAdapterBoundary(
+    outcome: CompletedOutcome,
+    recordFailure: (SyncStatusStore.FailureCategory) -> SyncStatusStore.MutationResult,
+    recordSuccess: () -> SyncStatusStore.MutationResult,
+    finishWithoutOutcome: () -> SyncStatusStore.MutationResult,
+    signalPersistenceRetry: () -> Unit,
+) {
+    val mutation = when (outcome) {
+        CompletedOutcome.AUTHENTICATION_FAILURE -> recordFailure(SyncStatusStore.FailureCategory.AUTHENTICATION)
+        CompletedOutcome.NETWORK_FAILURE -> recordFailure(SyncStatusStore.FailureCategory.NETWORK)
+        CompletedOutcome.STORAGE_FAILURE -> recordFailure(SyncStatusStore.FailureCategory.STORAGE)
+        CompletedOutcome.PROVIDER_FAILURE -> recordFailure(SyncStatusStore.FailureCategory.PROVIDER)
+        CompletedOutcome.SUCCESS -> recordSuccess()
+        CompletedOutcome.CANCELLED -> finishWithoutOutcome()
+    }
+    if (mutation == SyncStatusStore.MutationResult.STORAGE_FAILURE) signalPersistenceRetry()
+}
+
 abstract class SyncAdapterService : Service() {
 
     protected abstract fun syncAdapter(): AbstractThreadedSyncAdapter
@@ -89,11 +123,26 @@ abstract class SyncAdapterService : Service() {
 
             notificationManager.cancel()
 
+            val service = outcomeService
+            val attemptId = service?.let { UUID.randomUUID().toString() }
+            val admission = service?.let { outcomeService -> attemptId?.let { id ->
+                SyncStatusStore(context).beginAttemptResult(account, outcomeService, id, System.currentTimeMillis(), syncRequestId(extras))
+            } }
+            // Preserve correlation after a failed persistence admission: a real direct sync can
+            // still repair request/terminal evidence at its completion boundary.
+            if (admission != SyncStatusStore.MutationResult.REJECTED && attemptId != null) putSyncAttempt(extras, attemptId)
+            if (admission != SyncStatusStore.MutationResult.REJECTED && service == SyncStatusStore.Service.CONTACTS && attemptId != null)
+                putContactsAttempt(extras, attemptId)
+
             // Check subscription status before allowing sync.
             // Blocks sync when subscription is cancelled/expired (read-only mode).
             // Allows sync when billing API is unreachable (optimistic for dev/self-hosted).
             if (!BillingManager.getInstance().isSyncAllowed(context, account)) {
                 Logger.log.info("Sync skipped: subscription inactive")
+                if (admission == SyncStatusStore.MutationResult.RECORDED && attemptId != null && service != null)
+                    persistStatus(syncResult) { finishWithoutOutcomeResultAtAdapterBoundary(SyncStatusStore(context), account, service, attemptId) }
+                else if (admission == SyncStatusStore.MutationResult.STORAGE_FAILURE)
+                    signalPersistenceRetry(syncResult)
                 return
             }
 
@@ -103,7 +152,8 @@ abstract class SyncAdapterService : Service() {
                 when (completion) {
                     Completion.SUCCESS -> recordCompletedOutcome(account, extras, before, syncResult)
                     Completion.FAILURE -> recordCompletedOutcome(account, extras, before, syncResult, forceFailure = true)
-                    Completion.SKIPPED, Completion.DISPATCHED -> Unit
+                    Completion.SKIPPED -> persistStatus(syncResult) { finishWithoutOutcome(account, extras) }
+                    Completion.DISPATCHED -> Unit
                 }
             } catch (e: SecurityException) {
                 // Shouldn't be needed - not sure why it doesn't fail
@@ -147,30 +197,44 @@ abstract class SyncAdapterService : Service() {
             }
         }
 
-        protected open fun recordSuccess(account: Account, extras: Bundle): Boolean =
-            outcomeService?.let { SyncStatusStore(context).recordSuccess(account, it) } ?: true
+        protected open fun recordSuccess(account: Account, extras: Bundle): SyncStatusStore.MutationResult {
+            val service = outcomeService ?: return SyncStatusStore.MutationResult.RECORDED
+            val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return SyncStatusStore(context).recordSuccessResult(account, service, attemptId, syncRequestId(extras), System.currentTimeMillis())
+        }
 
-        protected open fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): Boolean =
-            outcomeService?.let { SyncStatusStore(context).recordFailure(account, it, category) } ?: true
+        protected open fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): SyncStatusStore.MutationResult {
+            val service = outcomeService ?: return SyncStatusStore.MutationResult.RECORDED
+            val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return SyncStatusStore(context).recordFailureResult(account, service, attemptId, syncRequestId(extras), category, System.currentTimeMillis())
+        }
+
+        protected open fun finishWithoutOutcome(account: Account, extras: Bundle): SyncStatusStore.MutationResult =
+            outcomeService?.let { service -> syncAttempt(extras)?.let {
+                finishWithoutOutcomeResultAtAdapterBoundary(SyncStatusStore(context), account, service, it)
+            } }
+                ?: SyncStatusStore.MutationResult.REJECTED
 
         private fun recordCompletedOutcome(account: Account, extras: Bundle, before: SyncCompletionSnapshot, result: SyncResult, forceFailure: Boolean = false) {
             val after = snapshot(result)
-            val write = when (classifyCompletedOutcome(before, after, forceFailure)) {
-                CompletedOutcome.AUTHENTICATION_FAILURE -> { { recordFailure(account, extras, SyncStatusStore.FailureCategory.AUTHENTICATION) } }
-                CompletedOutcome.NETWORK_FAILURE -> { { recordFailure(account, extras, SyncStatusStore.FailureCategory.NETWORK) } }
-                CompletedOutcome.STORAGE_FAILURE -> { { recordFailure(account, extras, SyncStatusStore.FailureCategory.STORAGE) } }
-                CompletedOutcome.PROVIDER_FAILURE -> { { recordFailure(account, extras, SyncStatusStore.FailureCategory.PROVIDER) } }
-                CompletedOutcome.SUCCESS -> { { recordSuccess(account, extras) } }
-                CompletedOutcome.CANCELLED -> null
-            }
-            if (write != null) persistStatus(result, write)
+            persistCompletedOutcomeAtAdapterBoundary(
+                classifyCompletedOutcome(before, after, forceFailure),
+                { recordFailure(account, extras, it) },
+                { recordSuccess(account, extras) },
+                { finishWithoutOutcome(account, extras) },
+                { signalPersistenceRetry(result) },
+            )
         }
 
-        private fun persistStatus(result: SyncResult, write: () -> Boolean) {
-            if (!write()) {
+        private fun persistStatus(result: SyncResult, write: () -> SyncStatusStore.MutationResult) {
+            if (write() == SyncStatusStore.MutationResult.STORAGE_FAILURE) {
+                signalPersistenceRetry(result)
+            }
+        }
+
+        protected fun signalPersistenceRetry(result: SyncResult) {
                 result.stats.numIoExceptions++
                 result.delayUntil = maxOf(result.delayUntil, Constants.DEFAULT_RETRY_DELAY)
-            }
         }
 
         private fun failureCategory(error: Exception) = when (error) {
@@ -295,3 +359,6 @@ abstract class SyncAdapterService : Service() {
         var collectionLastFetchMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
     }
 }
+
+internal fun putSyncAttempt(extras: Bundle, attemptId: String) = extras.putString(SyncStatusStore.EXTRA_SYNC_ATTEMPT, attemptId)
+internal fun syncAttempt(extras: Bundle): String? = extras.getString(SyncStatusStore.EXTRA_SYNC_ATTEMPT)?.takeIf { it.isNotBlank() }

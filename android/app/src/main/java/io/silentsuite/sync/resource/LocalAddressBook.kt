@@ -20,6 +20,7 @@ import android.provider.ContactsContract.Groups
 import android.provider.ContactsContract.RawContacts
 import at.bitfire.vcard4android.*
 import com.etebase.client.CollectionAccessLevel
+import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.R
@@ -202,9 +203,19 @@ class LocalAddressBook(
         val accountManager = AccountManager.get(context)
         val main = mainAccount
         val child = account
+        // The platform callback may run after a same-name main account has been replaced.
+        // Preserve the old generation for evidence and never schedule fallback work for its replacement.
+        val statusStore = SyncStatusStore(context)
+        val mainIdentity = statusStore.identity(main)
+        val mainCreationId = accountManager.getUserData(main, AccountSettings.KEY_CREATION_ID)?.takeIf { it.isNotBlank() }
+        val mainGenerationStillCurrent = {
+            mainCreationId != null && accountManager.getAccountsByType(main.type).any { candidate ->
+                candidate == main && accountManager.getUserData(candidate, AccountSettings.KEY_CREATION_ID) == mainCreationId
+            }
+        }
         val recordConfirmedRemoval = {
-            val recorded = runCatching { SyncStatusStore(context).recordContactsChildRemoved(main, child) }.getOrDefault(false)
-            if (!recorded) {
+            val recorded = runCatching { statusStore.recordContactsChildRemoved(mainIdentity, child) }.getOrDefault(false)
+            if (!recorded && mainGenerationStillCurrent()) {
                 val extras = Bundle().apply {
                     putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)
                     putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
