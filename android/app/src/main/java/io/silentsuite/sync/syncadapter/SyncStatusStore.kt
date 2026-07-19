@@ -230,34 +230,42 @@ class SyncStatusStore internal constructor(
         require(childAccounts.all { isSha256Id(childAccountKey(it)) })
         if (beginAttemptResult(identity, Service.CONTACTS, attemptId, startedAt, requestId) != MutationResult.RECORDED)
             return@synchronized ContactsStart.StorageFailure
-        attachContactsChildren(identity, attemptId, childAccounts, startedAt)
+        attachContactsChildren(identity, attemptId, childAccounts, startedAt, requestId)
     }
 
     /** Attaches immutable child evidence to the parent attempt admitted before any early return. */
     @Synchronized
-    fun attachContactsChildren(account: Account, attemptId: String, childAccounts: Set<Account>, startedAt: Long): ContactsStart = synchronized(STORE_LOCK) {
-        attachContactsChildren(mainAccountKey(account), attemptId, childAccounts, startedAt)
+    fun attachContactsChildren(account: Account, attemptId: String, childAccounts: Set<Account>, startedAt: Long,
+        requestId: String? = null): ContactsStart = synchronized(STORE_LOCK) {
+        attachContactsChildren(mainAccountKey(account), attemptId, childAccounts, startedAt, requestId)
     }
 
-    private fun attachContactsChildren(identity: String, attemptId: String, childAccounts: Set<Account>, startedAt: Long): ContactsStart {
+    private fun attachContactsChildren(identity: String, attemptId: String, childAccounts: Set<Account>, startedAt: Long,
+        requestId: String?): ContactsStart {
         require(isSafeOpaqueId(attemptId))
+        require(requestId == null || isSafeOpaqueId(requestId))
         val current = readOrLegacy(identity, Service.CONTACTS)
         val expected = childAccounts.mapTo(sortedSetOf()) { childAccountKey(it) }
         require(expected.all(::isSha256Id))
         val repairingFailedAdmission = current.attemptId == null &&
-            hasLifecycleFault(identity, Service.CONTACTS)
+            hasLifecycleFault(identity, Service.CONTACTS) &&
+            (requestId == null || current.requestId == null || current.requestId == requestId)
         if (current.attemptId != attemptId && !repairingFailedAdmission) return ContactsStart.StorageFailure
         // The real parent sync is allowed to run after its initial lifecycle commit fails. Admit
         // that same correlated generation here, where its complete immutable child set is known.
         // A current/newer attempt is never replaced, and a successful newer lifecycle write has
         // already cleared the fault sentinel, so stale generations remain rejected.
+        val repairedRequest = requestId?.takeIf { current.requestId == null }
         val admitted = if (repairingFailedAdmission) current.copy(
+            requestId = current.requestId ?: repairedRequest,
+            requestedAt = current.requestedAt ?: repairedRequest?.let { startedAt },
             attemptId = attemptId,
             attemptStartedAt = startedAt,
+            attemptRequestId = requestId?.takeIf { current.requestId == it || repairedRequest != null },
             contacts = ContactsGeneration(expected),
         ) else current.copy(contacts = ContactsGeneration(expected))
         if (expected.isEmpty()) {
-            return if (recordTerminal(identity, Service.CONTACTS, attemptId, null,
+            return if (recordTerminal(identity, Service.CONTACTS, attemptId, requestId,
                     TerminalResult.FAILURE, FailureCategory.SETUP_REQUIRED, startedAt) == MutationResult.RECORDED)
                 ContactsStart.SetupRequired else ContactsStart.StorageFailure
         }
@@ -268,13 +276,14 @@ class SyncStatusStore internal constructor(
 
     @Synchronized
     fun failContactsParent(account: Account, attemptId: String, category: FailureCategory = FailureCategory.PARENT_REFRESH): Boolean = synchronized(STORE_LOCK) {
-        return@synchronized failContactsParentResult(account, attemptId, category) == MutationResult.RECORDED
+        return@synchronized failContactsParentResult(account, attemptId, null, category) == MutationResult.RECORDED
     }
 
     @Synchronized
-    fun failContactsParentResult(account: Account, attemptId: String, category: FailureCategory = FailureCategory.PARENT_REFRESH): MutationResult = synchronized(STORE_LOCK) {
+    fun failContactsParentResult(account: Account, attemptId: String, requestId: String? = null,
+        category: FailureCategory = FailureCategory.PARENT_REFRESH): MutationResult = synchronized(STORE_LOCK) {
         val identity = mainAccountKey(account)
-        recordTerminal(identity, Service.CONTACTS, attemptId, null, TerminalResult.FAILURE, category, System.currentTimeMillis())
+        recordTerminal(identity, Service.CONTACTS, attemptId, requestId, TerminalResult.FAILURE, category, System.currentTimeMillis())
     }
 
     @Synchronized
@@ -310,7 +319,7 @@ class SyncStatusStore internal constructor(
         else if (failure == null)
             recordTerminal(identity, Service.CONTACTS, attemptId, null, TerminalResult.SUCCESS, null, timestamp) == MutationResult.RECORDED
         else recordTerminal(identity, Service.CONTACTS, attemptId, null, TerminalResult.FAILURE, failure, timestamp) == MutationResult.RECORDED
-        if (written) ChildWrite.RECORDED else ChildWrite.STORAGE_FAILURE
+        return if (written) ChildWrite.RECORDED else ChildWrite.STORAGE_FAILURE
     }
 
     @Synchronized
@@ -343,7 +352,7 @@ class SyncStatusStore internal constructor(
             requestId = current.requestId?.takeUnless { current.attemptRequestId != null },
             requestedAt = current.requestedAt?.takeUnless { current.attemptRequestId != null },
             attemptId = null, attemptStartedAt = null, attemptRequestId = null, contacts = ContactsGeneration())
-        commitLifecycleResult(mapOf(v2RecordKey(identity, service) to encodeV2(next)), setOf(v2FaultKey(identity, service)))
+        return commitLifecycleResult(mapOf(v2RecordKey(identity, service) to encodeV2(next)), setOf(v2FaultKey(identity, service)))
     }
 
     @Synchronized
@@ -438,8 +447,9 @@ class SyncStatusStore internal constructor(
         }
         // A request-only lifecycle is the stale work being terminalized. Preserve a request only
         // when a separate, uncorrelated attempt produced this terminal outcome.
-        val retainUnrelatedRequest = current.requestId != null && current.attemptId != null &&
-            current.attemptRequestId == null
+        val retainUnrelatedRequest = current.requestId != null &&
+            ((current.attemptId != null && current.attemptRequestId == null) ||
+                (repairingFailedAdmission && repairRequestId == null))
         val terminal = current.copy(revision = nextRevision(current.revision), outcome = outcome, terminalAt = at,
             terminalResult = result, requestId = current.requestId.takeIf { retainUnrelatedRequest },
             requestedAt = current.requestedAt.takeIf { retainUnrelatedRequest }, attemptId = null, attemptStartedAt = null,

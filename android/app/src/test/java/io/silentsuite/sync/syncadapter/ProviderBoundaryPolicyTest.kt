@@ -154,6 +154,42 @@ class ProviderBoundaryPolicyTest {
         assertFalse(terminal.latestGenerationIncomplete)
     }
 
+    @Test fun `provider attachment repair terminalizes its correlated request`() {
+        val main = Account("main", "main-type")
+        val child = Account("child", "child-type")
+        val storage = MemoryStorage()
+        val store = boundaryStore(storage, main, child)
+
+        assertTrue(store.recordRequested(main, setOf(SyncStatusStore.Service.CONTACTS), "provider-request", 10))
+        storage.failNext = true
+        assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE,
+            store.beginAttemptResult(main, SyncStatusStore.Service.CONTACTS, "provider-attempt", 11, "provider-request"))
+        assertEquals(SyncStatusStore.ContactsStart.Started("provider-attempt"),
+            attachContactsChildrenAtAdapterBoundary(store, main, "provider-attempt", setOf(child), 12, "provider-request"))
+        assertEquals("provider-request", store.status(main, SyncStatusStore.Service.CONTACTS).attemptRequestId)
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            recordContactsChildAtAdapterBoundary(store, contactsChildTarget(main, "provider-attempt")!!,
+                child, SyncStatusStore.ChildResult.SUCCESS, timestamp = 13))
+        assertEquals(null, store.status(main, SyncStatusStore.Service.CONTACTS).activeRequestId)
+    }
+
+    @Test fun `failed admission pre attachment parent failure clears its matching request`() {
+        val main = Account("main", "main-type")
+        val storage = MemoryStorage()
+        val store = boundaryStore(storage, main)
+
+        assertTrue(store.recordRequested(main, setOf(SyncStatusStore.Service.CONTACTS), "parent-request", 10))
+        storage.failNext = true
+        assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE,
+            store.beginAttemptResult(main, SyncStatusStore.Service.CONTACTS, "parent-attempt", 11, "parent-request"))
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            store.failContactsParentResult(main, "parent-attempt", "parent-request"))
+        val terminal = store.status(main, SyncStatusStore.Service.CONTACTS)
+        assertEquals(SyncStatusStore.FailureCategory.PARENT_REFRESH, terminal.lastFailureCategory)
+        assertEquals(null, terminal.activeAttemptId)
+        assertEquals(null, terminal.activeRequestId)
+    }
+
     @Test fun `failed contacts admission repair cannot replace a newer generation`() {
         val main = Account("main", "main-type")
         val child = Account("child", "child-type")

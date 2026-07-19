@@ -31,7 +31,8 @@ internal fun attachContactsChildrenAtAdapterBoundary(
     attemptId: String,
     children: Set<Account>,
     startedAt: Long,
-): SyncStatusStore.ContactsStart = store.attachContactsChildren(parent, attemptId, children, startedAt)
+    requestId: String? = null,
+): SyncStatusStore.ContactsStart = store.attachContactsChildren(parent, attemptId, children, startedAt, requestId)
 
 /** Preserve stale-vs-storage semantics through the real child-adapter completion boundary. */
 internal fun recordContactsChildAtAdapterBoundary(

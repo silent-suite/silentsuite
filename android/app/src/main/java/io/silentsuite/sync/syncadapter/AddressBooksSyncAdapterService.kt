@@ -57,7 +57,7 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
                 syncResult.delayUntil = maxOf(syncResult.delayUntil, Constants.DEFAULT_RETRY_DELAY)
             } else {
                 when (attachContactsChildrenAtAdapterBoundary(SyncStatusStore(context),
-                    account, attemptId, childAccounts, System.currentTimeMillis())) {
+                    account, attemptId, childAccounts, System.currentTimeMillis(), syncRequestId(extras))) {
                     is SyncStatusStore.ContactsStart.Started,
                     SyncStatusStore.ContactsStart.SetupRequired -> Unit
                     SyncStatusStore.ContactsStart.StorageFailure -> signalPersistenceRetry(syncResult)
@@ -80,7 +80,7 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
         override fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): SyncStatusStore.MutationResult {
             val safeCategory = if (category == SyncStatusStore.FailureCategory.PERMISSION) category else SyncStatusStore.FailureCategory.PARENT_REFRESH
             val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
-            return SyncStatusStore(context).failContactsParentResult(account, attemptId, safeCategory)
+            return SyncStatusStore(context).failContactsParentResult(account, attemptId, syncRequestId(extras), safeCategory)
         }
 
         private fun updateLocalAddressBooks(provider: ContentProviderClient, account: Account, settings: AccountSettings) {

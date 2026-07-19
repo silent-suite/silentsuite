@@ -68,7 +68,7 @@ def test_attempt_admission_is_correlation_bound_for_every_adapter_outcome():
     assert "CompletedOutcome.CANCELLED -> finishWithoutOutcome()" in source
     assert "mutation == SyncStatusStore.MutationResult.STORAGE_FAILURE" in source
     assert "val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED" in address_books
-    assert "failContactsParentResult(account, attemptId" in address_books
+    assert "failContactsParentResult(account, attemptId, syncRequestId(extras), safeCategory)" in address_books
     assert "ChildResult.SKIPPED" in (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/ContactsSyncAdapterService.kt").read_text(encoding="utf-8")
 
 
@@ -227,6 +227,20 @@ def test_reducer_honors_explicit_terminal_results_and_secondary_issues():
     assert source.index("AccountDashboardState.SETUP_REQUIRED") < source.index("FailureCategory.AUTHENTICATION")
 
 
+def test_compile_sensitive_lifecycle_results_and_nullable_status_are_explicit():
+    store = STORE.read_text(encoding="utf-8")
+    reducer = REDUCER.read_text(encoding="utf-8")
+
+    child_writer = store.split("private fun recordContactsChild(", 1)[1].split("@Synchronized", 1)[0]
+    finish_writer = store.split("private fun finishWithoutOutcomeResult(", 1)[1].split("@Synchronized", 1)[0]
+    assert "return if (written) ChildWrite.RECORDED else ChildWrite.STORAGE_FAILURE" in child_writer
+    assert "return commitLifecycleResult(" in finish_writer
+    for category in ("AUTHENTICATION", "PERMISSION", "CONFIGURATION"):
+        assert ("status != null && latestIsFailure(status) && status.lastFailureCategory == "
+                f"SyncStatusStore.FailureCategory.{category}") in reducer
+    assert "status!!" not in reducer
+
+
 def test_frozen_baseline_reader_and_matrix_regressions_are_present():
     frozen = FROZEN_V1.read_text(encoding="utf-8")
     tests = (ROOT / "android/app/src/test/java/io/silentsuite/sync/syncadapter/SyncStatusStoreTest.kt").read_text(encoding="utf-8")
@@ -351,3 +365,20 @@ def test_review4_mutation_rebase_pending_copy_and_due_maintenance_contracts():
         assert text in strings
     assert "freshContactsGenerationFinishesBeforeChildDispatchOrCompletion" in runtime
     assert "contacts terminal paths preserve frozen v1 terminal evidence" in provider
+
+
+def test_contacts_failed_admission_attachment_preserves_request_correlation_contract():
+    store = STORE.read_text(encoding="utf-8")
+    boundary = (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/ContactsSyncAdapterService.kt").read_text(encoding="utf-8")
+    parent = (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/AddressBooksSyncAdapterService.kt").read_text(encoding="utf-8")
+    store_tests = (ROOT / "android/app/src/test/java/io/silentsuite/sync/syncadapter/SyncStatusStoreTest.kt").read_text(encoding="utf-8")
+    provider_tests = (ROOT / "android/app/src/test/java/io/silentsuite/sync/syncadapter/ProviderBoundaryPolicyTest.kt").read_text(encoding="utf-8")
+
+    assert "attemptRequestId = requestId?.takeIf { current.requestId == it || repairedRequest != null }" in store
+    assert "store.attachContactsChildren(parent, attemptId, children, startedAt, requestId)" in boundary
+    assert "System.currentTimeMillis(), syncRequestId(extras)" in parent
+    assert "contacts attachment repair restores matching request correlation only" in store_tests
+    assert 'store.attachContactsChildren(first, "direct-attempt", setOf(child), 22, null)' in store_tests
+    assert "provider attachment repair terminalizes its correlated request" in provider_tests
+    assert "failed contacts admission repair cannot replace a newer generation" in provider_tests
+    assert "failed admission pre attachment parent failure clears its matching request" in provider_tests

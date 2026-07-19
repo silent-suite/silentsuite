@@ -196,6 +196,31 @@ class SyncStatusStoreTest {
         assertFalse(repaired.structuralStorageFailure)
     }
 
+    @Test fun `contacts attachment repair restores matching request correlation only`() {
+        val child = child("correlated-child")
+        assertTrue(store.recordRequested(first, setOf(SyncStatusStore.Service.CONTACTS), "contacts-request", 10))
+        storage.failNext = true
+        assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE,
+            store.beginAttemptResult(first, SyncStatusStore.Service.CONTACTS, "contacts-attempt", 11, "contacts-request"))
+        assertEquals(SyncStatusStore.ContactsStart.Started("contacts-attempt"),
+            store.attachContactsChildren(first, "contacts-attempt", setOf(child), 12, "contacts-request"))
+        assertEquals("contacts-request", store.status(first, SyncStatusStore.Service.CONTACTS).attemptRequestId)
+        assertEquals(SyncStatusStore.ChildWrite.RECORDED,
+            store.recordContactsChild(first, "contacts-attempt", child, SyncStatusStore.ChildResult.SUCCESS, timestamp = 13))
+        assertEquals(null, store.status(first, SyncStatusStore.Service.CONTACTS).activeRequestId)
+
+        assertTrue(store.recordRequested(first, setOf(SyncStatusStore.Service.CONTACTS), "unrelated-request", 20))
+        storage.failNext = true
+        assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE,
+            store.beginAttemptResult(first, SyncStatusStore.Service.CONTACTS, "direct-attempt", 21, null))
+        assertEquals(SyncStatusStore.ContactsStart.Started("direct-attempt"),
+            store.attachContactsChildren(first, "direct-attempt", setOf(child), 22, null))
+        assertEquals(null, store.status(first, SyncStatusStore.Service.CONTACTS).attemptRequestId)
+        assertEquals(SyncStatusStore.ChildWrite.RECORDED,
+            store.recordContactsChild(first, "direct-attempt", child, SyncStatusStore.ChildResult.SUCCESS, timestamp = 23))
+        assertEquals("unrelated-request", store.status(first, SyncStatusStore.Service.CONTACTS).activeRequestId)
+    }
+
     @Test fun `malformed v2 fails closed while v1 history stays exact and clear removes both namespaces`() {
         assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 5))
         val v2 = storage.values.keys.single { it.startsWith("status_v2.") }
