@@ -11,7 +11,7 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
     def filter(self, record):
         template = str(record.msg)
         normalized_path = str(record.pathname).replace("\\", "/")
-        if "/radicale/server.py" in normalized_path and record.exc_info is not None:
+        if "/radicale/server.py" in normalized_path:
             record.msg = "Radicale server request failed"
             record.args = ()
             record.exc_info = None

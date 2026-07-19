@@ -168,7 +168,7 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
     assert all(record.exc_info is None for record in caplog.records)
 
 
-def test_radicale_filter_preserves_bounded_server_diagnostics():
+def test_radicale_filter_redacts_exception_free_server_diagnostics():
     record = logging.LogRecord(
         name="radicale",
         level=logging.ERROR,
@@ -181,8 +181,8 @@ def test_radicale_filter_preserves_bounded_server_diagnostics():
 
     bridge_application._DavDiagnosticRedactionFilter().filter(record)
 
-    assert record.msg == "Server worker failed (%s)"
-    assert record.args == ("RuntimeError",)
+    assert record.msg == "Radicale server request failed"
+    assert record.args == ()
 
 
 def test_radicale_filter_redacts_server_request_exception():

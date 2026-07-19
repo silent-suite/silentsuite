@@ -658,6 +658,7 @@ class Collection(BaseCollection):
             (DavSyncToken.collection == self.collection.cache_col)
             & (DavSyncToken.created_at < token_cutoff)
         ).execute()
+        initial_hrefs = list(self._list()) if not old_token else None
         state_hash = dav_collection_state_hash(self.collection.cache_col)
         current_token_row = DavSyncToken.get_or_none(
             (DavSyncToken.collection == self.collection.cache_col)
@@ -680,6 +681,8 @@ class Collection(BaseCollection):
             DavSyncToken.delete().where(
                 DavSyncToken.collection == self.collection.cache_col
             ).execute()
+            if old_token:
+                return _INVALID_SYNC_HISTORY
             current_token_row = None
         if current_token_row is None:
             current_token_row = DavSyncToken.create(
@@ -693,7 +696,7 @@ class Collection(BaseCollection):
         token = token_prefix + current_token_row.token
 
         if not old_token:
-            return token, self._list()
+            return token, initial_hrefs
         if not old_token.startswith(token_prefix):
             raise ValueError("invalid sync token")
         old_token_value = old_token[len(token_prefix):]

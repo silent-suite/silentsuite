@@ -144,6 +144,7 @@ def test_unledgered_cache_mutation_invalidates_retained_token(mem_db, user):
 
     with pytest.raises(ValueError, match="unknown sync token"):
         collection.sync(old_token)
+    assert DavSyncToken.select().count() == 0
     replacement_token, hrefs = collection.sync(None)
     assert replacement_token != old_token
     assert list(hrefs) == ["contact-1.vcf"]
@@ -168,6 +169,22 @@ def test_later_ledger_change_cannot_hide_prior_unledgered_mutation(mem_db, user)
     with pytest.raises(ValueError, match="unknown sync token"):
         collection.sync(old_token)
     assert DavSyncToken.select().count() == 0
+
+
+def test_initial_sync_token_hash_includes_inventory_href_repairs(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    HrefMapper.delete().execute()
+
+    token, hrefs = collection.sync(None)
+
+    hrefs = list(hrefs)
+    assert len(hrefs) == 1
+    assert hrefs[0].endswith(".vcf")
+    assert "/" not in hrefs[0]
+    token_row = DavSyncToken.get(token=token.rsplit("/", 1)[-1])
+    assert token_row.state_hash == local_cache_module.dav_collection_state_hash(
+        collection.collection.cache_col
+    )
 
 
 def test_carddav_sync_returns_no_hrefs_for_current_token(mem_db, user):
