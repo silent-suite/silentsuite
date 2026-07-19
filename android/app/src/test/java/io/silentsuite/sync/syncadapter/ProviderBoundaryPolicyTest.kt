@@ -277,7 +277,7 @@ class ProviderBoundaryPolicyTest {
                 recordContactsChildAtAdapterBoundary(store, contactsChildTarget(main, attempt)!!, child,
                 result, category ?: SyncStatusStore.FailureCategory.PROVIDER, index.toLong() + 1))
             val shadow = storage.values.entries.single { it.key.startsWith("status.") && it.key.endsWith(".CONTACTS") }
-            val frozen = FrozenBaselineV1StatusReader { storage.values[it] }.status(shadow.key, contacts = true)
+            val frozen = FrozenBaselineV1StatusReader(storage::get).status(shadow.key, contacts = true)
             assertEquals(store.status(main, SyncStatusStore.Service.CONTACTS).lastSuccessAt, frozen.successAt)
             assertEquals(store.status(main, SyncStatusStore.Service.CONTACTS).lastFailureCategory?.name, frozen.failureCategory)
         }

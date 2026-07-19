@@ -55,7 +55,7 @@ class SyncStatusStoreTest {
         storage.values.keys.filter { it.startsWith("status") }.forEach { storage.values["fault.$it"] = "1|20|STORAGE" }
         assertTrue(store.recordFailure(first, SyncStatusStore.Service.CALENDAR, SyncStatusStore.FailureCategory.INTERRUPTED, 30))
         assertFalse(storage.values.keys.any { it.startsWith("fault.") && it.endsWith(".CALENDAR") })
-        val shadow = storage.values.entries.single { it.key.startsWith("status.") && it.endsWith(".CALENDAR") }.value
+        val shadow = storage.values.entries.single { it.key.startsWith("status.") && it.key.endsWith(".CALENDAR") }.value
         assertTrue(shadow.endsWith("|UNKNOWN"))
     }
 
@@ -88,7 +88,7 @@ class SyncStatusStoreTest {
     }
 
     @Test fun `old request and attempt never expire while either platform authority fact remains`() {
-        data class Lifecycle(val name: String, val begin: (SyncStatusStore) -> Unit)
+        data class Lifecycle(val name: String, val begin: (SyncStatusStore) -> Boolean)
         val lifecycles = listOf(
             Lifecycle("request") { it.recordRequested(first, setOf(SyncStatusStore.Service.CALENDAR), "old-request", 1) },
             Lifecycle("attempt") { it.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "old-attempt", 1, null) },
