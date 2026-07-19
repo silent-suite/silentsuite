@@ -665,9 +665,23 @@ class TestSyncLogic:
                 local_stoken="same-token",
             )
 
-            etebase.pull_collection("pull-test-col")
+            def concurrent_collection_change(*_args):
+                (
+                    CollectionEntity.update(dav_revision=7, dirty=True)
+                    .where(CollectionEntity.id == col.id)
+                    .execute()
+                )
+                return mock_item_list
 
-            # Key assertion: item_mgr.list() MUST be called even when stokens match
+            mock_item_mgr.list.side_effect = concurrent_collection_change
+            with patch.object(mem_db, "close", return_value=False):
+                etebase.pull_collection("pull-test-col")
+
+                # The stoken update must not save stale copies of unrelated fields.
+                persisted = CollectionEntity.get_by_id(col.id)
+            assert persisted.local_stoken == "same-token"
+            assert persisted.dav_revision == 7
+            assert persisted.dirty is True
             mock_item_mgr.list.assert_called_once()
 
     @patch("silentsuite_bridge.local_cache.Account")

@@ -200,3 +200,40 @@ def test_forget_user_invalidates_live_session_epoch():
         assert old_session._session_is_current() is False
         assert cache.etesync_for_user("same@example.com")[0] is replacement_session
         assert replacement_session._session_is_current() is True
+
+
+def test_fresh_session_construction_is_atomic_with_epoch_binding():
+    cache = etesync_cache.EteSyncCache("/tmp/creds", "/tmp/cache")
+    cache.creds = MagicMock()
+    cache.creds.get_etebase.return_value = "stored-session"
+    cache.creds.get_server_url.return_value = "https://server.example"
+    constructing = threading.Event()
+    release = threading.Event()
+    forgotten = threading.Event()
+    session = MagicMock(stored_session="stored-session")
+
+    def construct(*_args, **_kwargs):
+        constructing.set()
+        assert release.wait(1)
+        return session
+
+    with patch.object(etesync_cache, "Etebase", side_effect=construct):
+        opener = threading.Thread(
+            target=lambda: cache.fresh_for_user("same@example.com")
+        )
+        invalidator = threading.Thread(
+            target=lambda: (
+                cache.forget_user("same@example.com"),
+                forgotten.set(),
+            )
+        )
+        opener.start()
+        assert constructing.wait(1)
+        invalidator.start()
+        assert not forgotten.wait(0.05)
+        release.set()
+        opener.join(1)
+        invalidator.join(1)
+
+    assert forgotten.is_set()
+    assert session._session_is_current() is False

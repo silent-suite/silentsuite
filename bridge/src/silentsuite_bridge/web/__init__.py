@@ -117,13 +117,26 @@ def _sync_request_status(request_id):
     }
     with _sync_requests_lock:
         request = _sync_requests.get(request_id)
-        if request is not None:
-            request.get("pollers", {}).pop(poll_token, None)
-            if request.get("terminal_result") is not None:
-                return dict(request["terminal_result"])
-            if not active:
-                request["terminal_result"] = dict(result)
-                request["terminal_at"] = time.time()
+        if request is None:
+            request = {
+                "requested_at": requested_at,
+                "deadline": deadline,
+                "targets": targets,
+                "signature": tuple(
+                    (id(target["thread"]), target["generation"])
+                    for target in targets
+                ),
+                "terminal_result": None,
+                "terminal_at": None,
+                "pollers": {},
+            }
+            _sync_requests[request_id] = request
+        request.get("pollers", {}).pop(poll_token, None)
+        if request.get("terminal_result") is not None:
+            return dict(request["terminal_result"])
+        if not active:
+            request["terminal_result"] = dict(result)
+            request["terminal_at"] = time.time()
     return result
 
 

@@ -746,6 +746,13 @@ class Etebase:
                         )
                         if collection.dirty or collection.new:
                             continue
+                        has_pending_items = collection.items.where(
+                            models.ItemEntity.dirty | models.ItemEntity.new
+                        ).exists()
+                        if has_pending_items:
+                            collection.dirty = True
+                            collection.save(only=[models.CollectionEntity.dirty])
+                            continue
                         collection.deleted = True
                         collection.save()
                         models.DavUnresolvedItem.delete().where(
@@ -1036,8 +1043,11 @@ class Etebase:
                 done = item_list.done
                 stoken = item_list.stoken
 
-                cache_col.local_stoken = stoken
-                cache_col.save()
+                (
+                    models.CollectionEntity.update(local_stoken=stoken)
+                    .where(models.CollectionEntity.id == cache_col.id)
+                    .execute()
+                )
 
     def _collection_dirty_get(self, collection):
         with db.database_proxy:

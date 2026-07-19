@@ -9,6 +9,9 @@ import urllib.request
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from silentsuite_bridge import auth_browser
 from silentsuite_bridge.auth_browser import AUTH_PAGE_HTML, AuthCallbackHandler, browser_login
 
 
@@ -213,3 +216,28 @@ def test_browser_login_completion_prints_https_bridge_urls(capsys):
     output = capsys.readouterr().out
     assert "Dashboard will be available at: https://127.0.0.1:37358/" in output
     assert "CalDAV/CardDAV URL for your apps: https://127.0.0.1:37358/alice@example.com/" in output
+
+
+def test_rejected_server_replacement_does_not_change_process_default(monkeypatch):
+    monkeypatch.setattr(
+        auth_browser.config,
+        "ETEBASE_SERVER_URL",
+        "https://existing-server.test",
+    )
+    account = MagicMock()
+    account.save.return_value = "replacement-session"
+    monkeypatch.setattr(auth_browser.Account, "login", lambda *_args: account)
+    monkeypatch.setattr(
+        auth_browser,
+        "store_authenticated_account",
+        MagicMock(side_effect=ValueError("different server")),
+    )
+
+    with pytest.raises(ValueError, match="different server"):
+        auth_browser.authenticate_and_store_account(
+            "account@example.com",
+            "password",
+            "https://rejected-server.test",
+        )
+
+    assert auth_browser.config.ETEBASE_SERVER_URL == "https://existing-server.test"

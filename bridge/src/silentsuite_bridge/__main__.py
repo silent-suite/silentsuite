@@ -187,6 +187,7 @@ def _start_sync_threads():
     clear_unconfigured_cached_users(users)
     for user in users:
         update_status("syncing", account=user)
+    for user in users:
         start_sync_thread(user)
 
 

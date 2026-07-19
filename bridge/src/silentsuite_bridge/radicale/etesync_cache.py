@@ -85,20 +85,19 @@ class EteSyncCache:
                 self.creds = Credentials(self.creds_path)
             remote_url = self.creds.get_server_url(user)
             stored_session = self.creds.get_etebase(user)
-        if stored_session is None:
-            raise Exception(
-                "Configured account not found in credentials file. "
-                "Please authenticate via the browser first."
+            if stored_session is None:
+                raise Exception(
+                    "Configured account not found in credentials file. "
+                    "Please authenticate via the browser first."
+                )
+            etesync = Etebase(
+                user,
+                stored_session,
+                remote_url,
+                read_only=read_only,
             )
-        etesync = Etebase(
-            user,
-            stored_session,
-            remote_url,
-            read_only=read_only,
-        )
-        with self._cache_lock:
             self._bind_epoch(user, etesync)
-        return etesync, True
+            return etesync, True
 
 
 _etesync_cache = EteSyncCache(

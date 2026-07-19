@@ -140,3 +140,37 @@ def test_removed_membership_tombstones_only_exact_collection(tmp_path):
     assert models.DavUnresolvedItem.select().where(
         models.DavUnresolvedItem.collection == retired
     ).count() == 0
+
+
+def test_removed_membership_preserves_pending_item_and_marks_collection_dirty(tmp_path):
+    database = _database(tmp_path / "pending-removed-membership.sqlite")
+    user = models.User.create(username="books@example.test", stoken="before")
+    collection = models.CollectionEntity.create(
+        local_user=user,
+        uid="contacts-pending",
+        eb_col=b"collection-cache",
+    )
+    pending_item = models.ItemEntity.create(
+        collection=collection,
+        uid="pending-contact",
+        eb_item=b"pending-item",
+        dirty=True,
+        deleted=True,
+    )
+    models.HrefMapper.create(content=pending_item, href="pending-contact.vcf")
+    manager = MagicMock()
+    manager.list.return_value = MagicMock(
+        data=[],
+        removed_memberships=["contacts-pending"],
+        done=True,
+        stoken="after-removal",
+    )
+    service = _service(database, user, manager)
+
+    service.sync_collection_list()
+
+    persisted_collection = models.CollectionEntity.get_by_id(collection.id)
+    assert persisted_collection.deleted is False
+    assert persisted_collection.dirty is True
+    assert models.ItemEntity.get_by_id(pending_item.id).dirty is True
+    assert models.HrefMapper.get_by_id(pending_item.id).href == "pending-contact.vcf"

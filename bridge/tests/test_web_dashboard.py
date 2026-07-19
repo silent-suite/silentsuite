@@ -684,6 +684,36 @@ def test_concurrent_poll_cannot_regress_or_evict_published_terminal_result(monke
     assert web_module._sync_request_status(request_id) == terminal
 
 
+def test_expired_poll_lease_reinserts_terminal_result():
+    web_module._sync_requests.clear()
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    request_id = "expired-lease-request"
+    web_module._sync_requests[request_id] = {
+        "requested_at": 1.0,
+        "deadline": 31.0,
+        "targets": [{
+            "thread": thread,
+            "generation": 1,
+            "status_handle": None,
+        }],
+        "signature": ((id(thread), 1),),
+        "terminal_result": None,
+        "terminal_at": None,
+    }
+
+    def expire_during_poll(_generation):
+        web_module._sync_requests.pop(request_id, None)
+        return {"state": "succeeded"}
+
+    thread.generation_status.side_effect = expire_during_poll
+
+    result = web_module._sync_request_status(request_id)
+    assert result["state"] == "succeeded"
+    assert request_id in web_module._sync_requests
+    assert web_module._sync_request_status(request_id)["state"] == "succeeded"
+
+
 def test_dashboard_sync_post_rejects_wrong_csrf_token():
     web = Web.__new__(Web)
 

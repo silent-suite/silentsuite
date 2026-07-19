@@ -622,6 +622,75 @@ def test_native_success_after_stop_does_not_restore_removed_account_status(
     )
 
 
+@patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+@patch("silentsuite_bridge.radicale.storage.update_status")
+@patch("silentsuite_bridge.radicale.storage.log_sync_event")
+def test_connected_publication_observes_terminal_success(
+    mock_log, mock_status, mock_etesync_ctx,
+):
+    mock_etesync = MagicMock()
+    mock_etesync.list.return_value = []
+    mock_etesync_ctx.return_value.__enter__ = MagicMock(
+        return_value=(mock_etesync, False)
+    )
+    mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+    thread = SyncThread("account@example.com", daemon=True)
+    thread.interval = 300
+    generation = thread.force_sync()
+    published_states = []
+
+    def capture_status(state, **_kwargs):
+        if state == "connected":
+            published_states.append(thread.generation_status(generation)["state"])
+
+    mock_status.side_effect = capture_status
+    thread.start()
+    try:
+        assert thread.wait_for_generation(generation, timeout=1)
+    finally:
+        thread.stop()
+        thread.join(1)
+
+    assert published_states == ["succeeded"]
+    assert thread.last_sync is not None
+    mock_log.assert_any_call("sync", "Synced account")
+
+
+@patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+@patch("silentsuite_bridge.radicale.storage.update_status")
+@patch("silentsuite_bridge.radicale.storage.log_sync_event")
+def test_collection_enumeration_failure_is_not_success(
+    mock_log, mock_status, mock_etesync_ctx,
+):
+    mock_etesync = MagicMock()
+    mock_etesync.list.side_effect = RuntimeError("private enumeration payload")
+    mock_etesync_ctx.return_value.__enter__ = MagicMock(
+        return_value=(mock_etesync, False)
+    )
+    mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+    thread = SyncThread("account@example.com", daemon=True)
+    thread.interval = 300
+    generation = thread.force_sync()
+
+    thread.start()
+    try:
+        assert thread.wait_for_generation(generation, timeout=1)
+    finally:
+        thread.stop()
+        thread.join(1)
+
+    assert thread.generation_status(generation)["state"] == "failed"
+    assert thread.last_sync is None
+    assert not any(
+        call.args and call.args[0] == "connected"
+        for call in mock_status.call_args_list
+    )
+    assert not any(
+        call.args == ("sync", "Synced account")
+        for call in mock_log.call_args_list
+    )
+
+
 def test_terminal_generation_history_is_bounded():
     thread = SyncThread("account@example.com")
     for _ in range(105):
