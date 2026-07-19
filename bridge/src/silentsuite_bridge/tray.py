@@ -209,7 +209,7 @@ class BridgeTray:
                 email = browser_login(running_bridge=True)
                 if email:
                     refresh_sync_thread(email)
-                    logger.info("Account added or re-authenticated from tray: %s", email)
+                    logger.info("Account added or re-authenticated from tray")
             except Exception as e:
                 logger.error(
                     "Failed to complete re-authentication (%s)",

@@ -75,10 +75,32 @@ def test_sync_sanitizes_existing_unsafe_href_before_issuing_token(
 
     _token, hrefs = collection.sync(None)
 
-    assert list(hrefs) == [
-        local_cache_module.opaque_dav_href("contact-1", ".vcf")
-    ]
+    hrefs = list(hrefs)
+    assert len(hrefs) == 1
+    assert local_cache_module.is_safe_dav_href(hrefs[0])
+    assert hrefs[0].endswith(".vcf")
     assert local_cache_module.is_safe_dav_href(HrefMapper.get().href)
+
+
+def test_sync_repairs_duplicate_collection_hrefs_before_inventory(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    cache_col = collection.collection.cache_col
+    second_cache_item = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-2",
+        remote_uid="remote-contact-2",
+        eb_item=b"encrypted-item-2",
+    )
+    HrefMapper.create(content=second_cache_item, href="contact-1.vcf")
+    second_item = MagicMock(cache_item=second_cache_item, uid="contact-2")
+    collection.collection.list.return_value.append(second_item)
+
+    _token, hrefs = collection.sync(None)
+
+    hrefs = list(hrefs)
+    assert len(hrefs) == 2
+    assert len(set(hrefs)) == 2
+    assert all(local_cache_module.is_safe_dav_href(href) for href in hrefs)
 
 
 def test_concurrent_initial_reports_are_serialized(mem_db, user, monkeypatch):

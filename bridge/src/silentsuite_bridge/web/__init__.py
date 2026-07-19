@@ -102,10 +102,10 @@ def _account_mutation_response(action, result):
     if action == "logout":
         if result.existed:
             message = f"Logged out {result.username}. Local bridge cache was kept."
-            log_sync_event("info", f"Logged out account: {result.username}")
+            log_sync_event("info", "Logged out configured account")
         else:
             message = f"No configured account found for {result.username}; nothing changed."
-            log_sync_event("info", f"Logout requested for unknown account: {result.username}")
+            log_sync_event("info", "Logout requested for unknown account")
         return _json_response(200, {
             "ok": True,
             "username": result.username,
@@ -117,14 +117,14 @@ def _account_mutation_response(action, result):
     if result.existed:
         if result.cache_cleared:
             message = f"Removed {result.username}. Local bridge cache for this account was deleted."
-            log_message = f"Removed account and cleared cache: {result.username}"
+            log_message = "Removed account and cleared cache"
         else:
             message = f"Removed {result.username}. No local bridge cache rows were found for this account."
-            log_message = f"Removed account with no cache rows: {result.username}"
+            log_message = "Removed account with no cache rows"
         log_sync_event("info", log_message)
     else:
         message = f"No configured account found for {result.username}; nothing changed."
-        log_sync_event("info", f"Remove requested for unknown account: {result.username}")
+        log_sync_event("info", "Remove requested for unknown account")
     return _json_response(200, {
         "ok": True,
         "username": result.username,
@@ -204,8 +204,8 @@ def _handle_account_login(environ):
         )
         log_sync_event("error", "Account sign-in succeeded, but sync did not start automatically")
 
-    log_sync_event("info", f"Account added or re-authenticated: {result.username}")
-    logger.info("Account added or re-authenticated: %s", result.username)
+    log_sync_event("info", "Account added or re-authenticated")
+    logger.info("Account added or re-authenticated")
     return _json_response(200, {
         "ok": True,
         "username": result.username,
