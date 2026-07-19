@@ -379,6 +379,54 @@ def opaque_dav_href(identity, suffix):
     return hashlib.sha256(str(identity).encode("utf-8")).hexdigest() + suffix
 
 
+_dav_href_allocation_lock = threading.RLock()
+
+
+def ensure_dav_href(cache_item, preferred_href, suffix, *, strict=False):
+    """Return one collection-unique href, including retained tombstones."""
+    with _dav_href_allocation_lock:
+        mapper = models.HrefMapper.get_or_none(
+            models.HrefMapper.content == cache_item
+        )
+        candidate = mapper.href if mapper is not None else preferred_href
+        if not is_safe_dav_href(candidate):
+            if strict:
+                raise ValueError("invalid DAV href")
+            candidate = opaque_dav_href(
+                f"{cache_item.collection_id}:{cache_item.remote_uid or cache_item.uid}",
+                suffix,
+            )
+
+        def has_conflict(href):
+            return (
+                models.HrefMapper.select()
+                .join(models.ItemEntity)
+                .where(
+                    (models.HrefMapper.href == href)
+                    & (models.ItemEntity.collection == cache_item.collection_id)
+                    & (models.HrefMapper.content != cache_item.id)
+                )
+                .exists()
+            )
+
+        if strict and has_conflict(candidate):
+            raise ValueError("DAV href already exists")
+        counter = 0
+        while has_conflict(candidate):
+            counter += 1
+            candidate = opaque_dav_href(
+                f"{cache_item.collection_id}:{cache_item.remote_uid or cache_item.uid}:{counter}",
+                suffix,
+            )
+
+        if mapper is None:
+            mapper = models.HrefMapper.create(content=cache_item, href=candidate)
+        elif mapper.href != candidate:
+            mapper.href = candidate
+            mapper.save(only=[models.HrefMapper.href])
+        return mapper
+
+
 def record_dav_change(
     cache_col, href, *, previous_state_hash, etag=None, deleted=False
 ):
@@ -859,9 +907,17 @@ class Etebase:
                     else ".ics"
                 )
                 href_stem = hashlib.sha256(item.uid.encode()).hexdigest()
-                href_mapper = models.HrefMapper.create(
-                    content=cache_item,
-                    href=f"{href_stem}{suffix}",
+                href_mapper = ensure_dav_href(
+                    cache_item, f"{href_stem}{suffix}", suffix
+                )
+            elif href_mapper is not None:
+                suffix = (
+                    ".vcf"
+                    if col.collection_type == "etebase.vcard"
+                    else ".ics"
+                )
+                href_mapper = ensure_dav_href(
+                    cache_item, href_mapper.href, suffix
                 )
             if href_mapper is not None:
                 record_dav_change(

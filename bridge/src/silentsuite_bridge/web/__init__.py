@@ -259,10 +259,10 @@ def _account_mutation_response(action, result):
     if action == "logout":
         if result.existed:
             message = f"Logged out {result.username}. Local bridge cache was kept."
-            log_sync_event("info", f"Logged out account: {result.username}")
+            log_sync_event("info", "Logged out configured account")
         else:
             message = f"No configured account found for {result.username}; nothing changed."
-            log_sync_event("info", f"Logout requested for unknown account: {result.username}")
+            log_sync_event("info", "Logout requested for unknown account")
         return _json_response(200, {
             "ok": True,
             "username": result.username,
@@ -287,7 +287,7 @@ def _account_mutation_response(action, result):
         log_sync_event("info", log_message)
     else:
         message = f"No configured account found for {result.username}; nothing changed."
-        log_sync_event("info", f"Remove requested for unknown account: {result.username}")
+        log_sync_event("info", "Remove requested for unknown account")
     return _json_response(200, {
         "ok": True,
         "username": result.username,

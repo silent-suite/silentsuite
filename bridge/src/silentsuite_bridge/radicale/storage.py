@@ -31,6 +31,7 @@ from .. import config
 from ..local_cache import (
     dav_collection_state_hash,
     db,
+    ensure_dav_href,
     is_safe_dav_href,
     opaque_dav_href,
     record_dav_change,
@@ -745,12 +746,16 @@ class Collection(BaseCollection):
         replaced = False
         for cache_item in cache_col.items:
             mapper = HrefMapper.get_or_none(HrefMapper.content == cache_item)
-            if mapper is None or is_safe_dav_href(mapper.href):
+            if mapper is None:
                 continue
+            old_href = mapper.href
             identity = cache_item.remote_uid or cache_item.uid
-            mapper.href = opaque_dav_href(identity, self.content_suffix)
-            mapper.save(only=[HrefMapper.href])
-            replaced = True
+            preferred = old_href or opaque_dav_href(identity, self.content_suffix)
+            mapper = ensure_dav_href(
+                cache_item, preferred, self.content_suffix
+            )
+            if mapper.href != old_href:
+                replaced = True
         if replaced:
             DavSyncToken.delete().where(
                 DavSyncToken.collection == cache_col
@@ -822,12 +827,9 @@ class Collection(BaseCollection):
                 hashlib.sha256(remote_identity.encode()).hexdigest()
                 + self.content_suffix
             )
-            href_mapper, _ = HrefMapper.get_or_create(
-                content=item.cache_item, defaults={"href": href}
+            href_mapper = ensure_dav_href(
+                item.cache_item, href, self.content_suffix
             )
-            if not is_safe_dav_href(href_mapper.href):
-                href_mapper.href = href
-                href_mapper.save(only=[HrefMapper.href])
             yield href_mapper.href
 
     def get_multi(self, hrefs):
@@ -918,6 +920,7 @@ class Collection(BaseCollection):
             return
         if not is_safe_dav_href(href):
             raise ValueError("invalid DAV href")
+        self._sanitize_href_mappings()
 
         vobject_item = item.vobject_item
         previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
@@ -953,10 +956,12 @@ class Collection(BaseCollection):
                     stale_item.save(only=[ItemEntity.uid])
                 etesync_item = self.collection.create(vobject_item)
                 etesync_item.save()
-                href_mapper = HrefMapper(
-                    content=etesync_item.cache_item, href=href
+                ensure_dav_href(
+                    etesync_item.cache_item,
+                    href,
+                    self.content_suffix,
+                    strict=True,
                 )
-                href_mapper.save(force_insert=True)
                 event = "Created item"
 
             record_dav_change(
