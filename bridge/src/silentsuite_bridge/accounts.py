@@ -164,6 +164,7 @@ def logout_account(
     )
 
 
+@credentials_locked
 def remove_account(
     username: str,
     *,

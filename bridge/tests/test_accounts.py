@@ -331,3 +331,66 @@ def test_remove_last_account_leaves_no_configured_users(tmp_path, monkeypatch, m
 
     assert Credentials().list_users() == []
     assert User.get_or_none(User.username == "alice@example.com") is None
+
+
+def test_remove_and_reauthentication_share_one_lock_order(tmp_path, monkeypatch):
+    _configure_creds(tmp_path, monkeypatch)
+    seeded = Credentials()
+    seeded.set_etebase("race@example.com", "old-session", "https://example.test")
+    seeded.set_password_salt("race@example.com", "00")
+    seeded.set_password_hash("race@example.com", "11")
+    seeded.save()
+
+    store_has_credentials_lock = threading.Event()
+    remove_reached_logout = threading.Event()
+    original_normalize = accounts._normalize_username
+    original_logout = accounts.logout_account
+
+    def normalize_with_store_pause(username):
+        if threading.current_thread().name == "store-account":
+            store_has_credentials_lock.set()
+            remove_reached_logout.wait(0.25)
+        return original_normalize(username)
+
+    def logout_probe(*args, **kwargs):
+        remove_reached_logout.set()
+        return original_logout(*args, **kwargs)
+
+    @contextmanager
+    def maintenance_available(*_args, **_kwargs):
+        yield True
+
+    monkeypatch.setattr(accounts, "_normalize_username", normalize_with_store_pause)
+    monkeypatch.setattr(accounts, "logout_account", logout_probe)
+    monkeypatch.setattr(accounts, "_password_hash", lambda _password: ("22", "33"))
+    monkeypatch.setattr(accounts, "stop_sync_thread", lambda _username: True)
+    monkeypatch.setattr(accounts, "forget_etesync_user", lambda _username: None)
+    monkeypatch.setattr(accounts, "clear_cached_user", lambda _username: False)
+    monkeypatch.setattr(accounts, "account_maintenance", maintenance_available)
+
+    store_thread = threading.Thread(
+        name="store-account",
+        daemon=True,
+        target=accounts.store_authenticated_account,
+        args=(
+            "race@example.com",
+            "new-password",
+            "new-session",
+            "https://example.test",
+        ),
+    )
+    remove_thread = threading.Thread(
+        name="remove-account",
+        daemon=True,
+        target=accounts.remove_account,
+        args=("race@example.com",),
+    )
+
+    store_thread.start()
+    assert store_has_credentials_lock.wait(1)
+    remove_thread.start()
+    store_thread.join(2)
+    remove_thread.join(2)
+
+    assert not store_thread.is_alive()
+    assert not remove_thread.is_alive()
