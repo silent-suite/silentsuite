@@ -986,6 +986,54 @@ def test_backfill_replaces_unsafe_legacy_href_and_invalidates_tokens(mem_db, use
     assert models.DavSyncToken.select().count() == 0
 
 
+def test_backfill_unsafe_href_avoids_retained_tombstone_collision(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    tombstone = ItemEntity.create(
+        collection=cache_col,
+        uid="retained-tombstone",
+        remote_uid="retained-remote",
+        eb_item=b"tombstone-cache",
+        deleted=True,
+        dirty=True,
+    )
+    preferred_href = local_cache_module.opaque_dav_href("remote-item-1", ".vcf")
+    HrefMapper.create(content=tombstone, href=preferred_href)
+    legacy = ItemEntity.create(
+        collection=cache_col,
+        uid="legacy/contact",
+        eb_item=b"legacy-cache",
+    )
+    HrefMapper.create(content=legacy, href="legacy/contact.vcf")
+    item_mgr = MagicMock()
+    item_mgr.cache_load.return_value = MagicMock(uid="remote-item-1")
+    col_mgr = MagicMock()
+    col_mgr.cache_load.return_value = MagicMock(
+        collection_type="etebase.vcard"
+    )
+    col_mgr.get_item_manager.return_value = item_mgr
+    account = MagicMock()
+    account.get_collection_manager.return_value = col_mgr
+    etebase = Etebase.__new__(Etebase)
+    etebase.etebase = account
+    etebase.user = user
+
+    assert etebase._backfill_remote_uids() == 0
+
+    hrefs = {
+        mapper.href
+        for mapper in HrefMapper.select().join(ItemEntity).where(
+            ItemEntity.collection == cache_col
+        )
+    }
+    assert len(hrefs) == 2
+    assert preferred_href in hrefs
+    assert all(local_cache_module.is_safe_dav_href(href) for href in hrefs)
+
+
 def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
     cache_col = CollectionEntity.create(
         local_user=user,

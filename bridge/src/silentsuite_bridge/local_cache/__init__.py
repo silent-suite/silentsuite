@@ -338,13 +338,19 @@ def opaque_dav_href(identity, suffix):
 _dav_href_allocation_lock = threading.RLock()
 
 
-def ensure_dav_href(cache_item, preferred_href, suffix, *, strict=False):
+def ensure_dav_href(
+    cache_item, preferred_href, suffix, *, strict=False, replace_existing=False
+):
     """Return one collection-unique href, including retained tombstones."""
     with _dav_href_allocation_lock:
         mapper = models.HrefMapper.get_or_none(
             models.HrefMapper.content == cache_item
         )
-        candidate = mapper.href if mapper is not None else preferred_href
+        candidate = (
+            mapper.href
+            if mapper is not None and not replace_existing
+            else preferred_href
+        )
         if not is_safe_dav_href(candidate):
             if strict:
                 raise ValueError("invalid DAV href")
@@ -572,8 +578,12 @@ class Etebase:
                 if href_mapper is None or is_safe_dav_href(href_mapper.href):
                     continue
                 identity = cache_item.remote_uid or cache_item.uid
-                href_mapper.href = opaque_dav_href(identity, suffix)
-                href_mapper.save(only=[models.HrefMapper.href])
+                ensure_dav_href(
+                    cache_item,
+                    opaque_dav_href(identity, suffix),
+                    suffix,
+                    replace_existing=True,
+                )
                 replaced_href = True
             if replaced_href:
                 models.DavSyncToken.delete().where(
