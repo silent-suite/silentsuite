@@ -1,6 +1,8 @@
 """Static contracts for the privacy-bounded Android sync lifecycle store."""
 
 from pathlib import Path
+import json
+import re
 import xml.etree.ElementTree as ET
 
 
@@ -91,13 +93,62 @@ def test_contacts_child_cleanup_snapshots_identity_and_signals_retry_on_every_fa
     assert "recordContactsChild(identity.storageKey, attempt" in store
     assert "persistStatus(syncResult) { finishWithoutOutcome(account, extras) }" in adapter
     assert "finishWithoutOutcomeAtAdapterBoundary" in adapter
-    assert "val mainIdentity = statusStore.identity(main)" in address_book
-    assert "recordContactsChildRemoved(mainIdentity, child)" in address_book
+    assert "USER_DATA_MAIN_ACCOUNT_IDENTITY" in address_book
+    assert "USER_DATA_MAIN_ACCOUNT_CREATION_ID" not in address_book
+    assert "val capturedIdentity = statusStore.identityFromStorageKey(" in address_book
+    assert "if (capturedIdentity != null)" in address_book
+    assert "recordContactsChildRemoved(capturedIdentity, child)" in address_book
     assert "mainGenerationStillCurrent" in address_book
+    assert "statusStore.identity(candidate) == capturedIdentity" in address_book
+    assert "recordContactsChildRemoved(statusStore.identity(main)" not in address_book
     child_boundary = contacts.split("internal fun recordContactsChildAtAdapterBoundary", 1)[1].split("internal fun putContactsAttempt", 1)[0]
     assert "SyncStatusStore.MutationResult" in child_boundary
     assert "ChildWrite.REJECTED -> SyncStatusStore.MutationResult.REJECTED" in child_boundary
     assert "ChildWrite.STORAGE_FAILURE -> SyncStatusStore.MutationResult.STORAGE_FAILURE" in child_boundary
+
+
+def test_address_book_child_persists_only_hashed_parent_generation_on_creation_and_reassignment():
+    source = (ROOT / "android/app/src/main/java/io/silentsuite/sync/resource/LocalAddressBook.kt").read_text(encoding="utf-8")
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDrawerSignOutRuntimeTest.kt").read_text(encoding="utf-8")
+
+    assert "fun initialUserData(mainAccount: Account, mainIdentity: SyncStatusStore.MainIdentity, url: String)" in source
+    assert "require(SyncStatusStore.identityFromStorageKey(storageKey) != null)" in source
+    assert "bundle.putString(USER_DATA_MAIN_ACCOUNT_IDENTITY, storageKey)" in source
+    assert "USER_DATA_MAIN_ACCOUNT_CREATION_ID" not in source
+    assert "bundle.putString(USER_DATA_MAIN_ACCOUNT_IDENTITY, mainCreationId)" not in source
+    assert "getUserData(mainAccount, AccountSettings.KEY_CREATION_ID)" in source
+    assert "?.takeIf { it.isNotBlank() }" in source
+    assert "setUserData(account, USER_DATA_MAIN_ACCOUNT_IDENTITY, mainIdentity.storageKey)" in source
+    assert "setUserData(account, USER_DATA_MAIN_ACCOUNT_IDENTITY, creationId)" not in source
+    assert "LocalAddressBook.initialUserData(target.account, SyncStatusStore(target.context).identity(target.account)," in runtime
+
+
+def test_address_book_child_identity_missing_or_malformed_fails_closed_and_replacement_cannot_fallback():
+    store = STORE.read_text(encoding="utf-8")
+    source = (ROOT / "android/app/src/main/java/io/silentsuite/sync/resource/LocalAddressBook.kt").read_text(encoding="utf-8")
+
+    assert "identityFromStorageKey(storageKey: String?): MainIdentity?" in store
+    assert "storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)" in store
+    assert "val capturedIdentity = statusStore.identityFromStorageKey(" in source
+    removal = source.split("val recordConfirmedRemoval =", 1)[1].split('@Suppress("DEPRECATION")', 1)[0]
+    assert "if (capturedIdentity != null)" in removal
+    assert "recordContactsChildRemoved" not in removal.split("if (capturedIdentity != null)", 1)[0]
+    assert "ContentResolver.requestSync" not in removal.split("if (capturedIdentity != null)", 1)[0]
+    assert "statusStore.identity(candidate) == capturedIdentity" in removal
+
+
+def test_node_security_floor_matches_manifest_docs_and_sharp_lock_requirement():
+    manifest = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    lock = (ROOT / "pnpm-lock.yaml").read_text(encoding="utf-8")
+    docs = [
+        ROOT / "docs/contributing/dev-setup.md",
+        ROOT / "apps/docs/contributing/dev-setup.md",
+    ]
+
+    assert manifest["engines"]["node"] == ">=20.9.0"
+    assert all("| **Node.js** | 20.9+ |" in path.read_text(encoding="utf-8") for path in docs)
+    sharp = re.search(r"sharp@0\.35\.0:.*?engines: \{node: '([^']+)'\}", lock, re.DOTALL)
+    assert sharp and sharp.group(1) == ">=20.9.0"
 
 
 def test_compile_and_contacts_evidence_failures_do_not_block_real_children():

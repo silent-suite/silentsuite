@@ -99,6 +99,8 @@ class SyncStatusStore internal constructor(
 
     fun identity(account: Account) = MainIdentity(mainAccountKey(account))
     internal fun identity(account: Account, creationId: String) = MainIdentity(hashIdentity(account.type, account.name, creationId))
+    internal fun identityFromStorageKey(storageKey: String?): MainIdentity? =
+        storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)
 
     @Synchronized
     fun status(account: Account, service: Service): Status = synchronized(STORE_LOCK) {

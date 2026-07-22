@@ -104,7 +104,7 @@ class AccountDrawerSignOutRuntimeTest {
         check(target.manager.addAccountExplicitly(
             child,
             null,
-            LocalAddressBook.initialUserData(target.account, "https://example.invalid/address-book"),
+            LocalAddressBook.initialUserData(target.account, SyncStatusStore(target.context).identity(target.account), "https://example.invalid/address-book"),
         ))
         try {
             assertTrue(ActiveAccountManager.setActiveAccount(target.context, target.account))
