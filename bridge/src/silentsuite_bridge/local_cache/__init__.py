@@ -698,8 +698,17 @@ class Etebase:
                         collection = models.CollectionEntity.get(
                             local_user=self.user, uid=col_uid
                         )
+                        if collection.dirty or collection.new:
+                            continue
+                        has_pending_items = collection.items.where(
+                            models.ItemEntity.dirty | models.ItemEntity.new
+                        ).exists()
+                        if has_pending_items:
+                            collection.dirty = True
+                            collection.save(only=[models.CollectionEntity.dirty])
+                            continue
                         collection.deleted = True
-                        collection.save()
+                        collection.save(only=[models.CollectionEntity.deleted])
                         models.DavUnresolvedItem.delete().where(
                             models.DavUnresolvedItem.collection == collection
                         ).execute()
