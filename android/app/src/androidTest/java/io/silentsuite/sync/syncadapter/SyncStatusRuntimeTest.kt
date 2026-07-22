@@ -122,6 +122,18 @@ class SyncStatusRuntimeTest {
         assertEquals("opaque-attempt", contactsAttempt(extras))
     }
 
+    @Test fun requestAndParentChildCorrelationExtrasRoundTripAtAndroidBoundary() {
+        val requestExtras = Bundle()
+        putSyncRequestId(requestExtras, "opaque-request")
+        assertEquals("opaque-request", syncRequestId(requestExtras))
+
+        val attemptExtras = Bundle()
+        putSyncAttempt(attemptExtras, "parent-attempt")
+        putContactsAttempt(attemptExtras, requireNotNull(syncAttempt(attemptExtras)))
+        assertEquals("parent-attempt", contactsAttempt(attemptExtras))
+        assertEquals("parent-attempt", syncAttempt(attemptExtras))
+    }
+
     @Test fun persistedEvidenceIsExactAccountGenerationScopedAndContainsNoAccountName() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)

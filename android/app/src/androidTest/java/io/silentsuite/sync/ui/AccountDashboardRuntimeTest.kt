@@ -136,6 +136,7 @@ class AccountDashboardRuntimeTest {
                 waitForText(scenario, R.id.dashboard_overall_status) {
                     it == context.getString(R.string.dashboard_status_syncing)
                 }
+                waitForText(scenario, R.id.carddav_status) { it == context.getString(label) }
                 scenario.onActivity { activity ->
                     assertEquals(context.getString(R.string.dashboard_status_syncing),
                         activity.findViewById<TextView>(R.id.caldav_status).text.toString())
@@ -149,7 +150,7 @@ class AccountDashboardRuntimeTest {
         AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
             io.silentsuite.sync.ui.account.SyncLifecycleWindows(interruptionAfterMillis = 1_000)
         try {
-            withDashboardAccount(useAccountLoaderOverride = false, beforeLaunch = { context, account ->
+            withDashboardAccount(beforeLaunch = { context, account ->
                 val store = SyncStatusStore(context)
                 val now = System.currentTimeMillis()
                 assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.CALENDAR), "future-request", now + 10_000))
@@ -203,7 +204,7 @@ class AccountDashboardRuntimeTest {
             scenario.onActivity { it.refresh() }
             waitForText(scenario, R.id.caldav_status) { it == "Up to date" }
             scenario.onActivity { activity ->
-                assertTrue(activity.findViewById<TextView>(R.id.caldav_status).text.toString().startsWith("Synced"))
+                assertEquals("Up to date", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
                 assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
                     ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
             }
@@ -555,7 +556,6 @@ class AccountDashboardRuntimeTest {
 
     private fun withDashboardAccount(
         loaderOverride: ((Context, Account, String) -> AccountActivity.AccountInfo)? = null,
-        useAccountLoaderOverride: Boolean = true,
         beforeLaunch: ((Context, Account) -> Unit)? = null,
         block: (android.content.Context, Account, ActivityScenario<AccountActivity>) -> Unit,
     ) {
@@ -589,8 +589,7 @@ class AccountDashboardRuntimeTest {
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
             }
         }
-        AccountActivity.AccountInfoViewModel.accountLoaderOverride = if (useAccountLoaderOverride)
-            loaderOverride ?: defaultLoader else null
+        AccountActivity.AccountInfoViewModel.accountLoaderOverride = loaderOverride ?: defaultLoader
         beforeLaunch?.invoke(context, account)
         try {
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { scenario ->

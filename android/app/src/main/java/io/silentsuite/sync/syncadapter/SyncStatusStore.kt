@@ -122,6 +122,7 @@ class SyncStatusStore internal constructor(
             V2Read.Absent -> statusOf(v1, service, legacyIncomplete = service == Service.CONTACTS && readLegacyContactsIncomplete(v1Key))
                 .copy(structuralStorageFailure = v1Malformed)
             V2Read.Malformed -> statusOf(v1, service).copy(
+                lastFailureCategory = FailureCategory.STORAGE,
                 activeRequestId = null,
                 requestedAt = null,
                 activeAttemptId = null,
@@ -408,8 +409,10 @@ class SyncStatusStore internal constructor(
         // into an interruption using stale wall-clock evidence.
         if (hasLifecycleFault(identity.storageKey, service)) return MutationResult.REJECTED
         val lifecycleAt = current.attemptStartedAt ?: current.requestedAt ?: return MutationResult.RECORDED
+        // These are successful observations that require no write. REJECTED is reserved for stale
+        // correlation or unsafe evidence; boolean callers therefore keep their success semantics.
         if (platformActive || platformPending || age(now, lifecycleAt) < interruptionAfterMillis)
-            return MutationResult.REJECTED
+            return MutationResult.RECORDED
         return recordTerminal(identity.storageKey, service, current.attemptId, null, TerminalResult.FAILURE, FailureCategory.INTERRUPTED, now,
             requireAttempt = current.attemptId != null)
     }

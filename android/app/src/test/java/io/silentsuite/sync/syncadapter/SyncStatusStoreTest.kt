@@ -51,7 +51,7 @@ class SyncStatusStoreTest {
         assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 10))
         assertTrue(storage.values.keys.any { it.startsWith("status_v2.") })
         assertTrue(storage.values.keys.any { it.startsWith("status.") })
-        assertFalse(storage.values.toString().contains(first.name))
+        assertFalse(storage.values.toString().contains("first@example.invalid"))
         storage.values.keys.filter { it.startsWith("status") }.forEach { storage.values["fault.$it"] = "1|20|STORAGE" }
         assertTrue(store.recordFailure(first, SyncStatusStore.Service.CALENDAR, SyncStatusStore.FailureCategory.INTERRUPTED, 30))
         assertFalse(storage.values.keys.any { it.startsWith("fault.") && it.endsWith(".CALENDAR") })
@@ -127,6 +127,8 @@ class SyncStatusStoreTest {
         assertEquals(SyncStatusStore.MutationResult.REJECTED,
             store.recordSuccessResult(first, SyncStatusStore.Service.CALENDAR, "stale", null, 11))
         assertEquals("current", store.status(first, SyncStatusStore.Service.CALENDAR).activeAttemptId)
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            store.finishWithoutOutcomeResult(first, SyncStatusStore.Service.CALENDAR, "current"))
 
         storage.failNext = true
         assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE,
@@ -316,7 +318,8 @@ class SyncStatusStoreTest {
         assertEquals(0L, mutated.lastFailureAt)
         assertEquals(0L, mutated.lastTerminalAt)
         assertEquals(SyncStatusStore.TerminalResult.FAILURE, mutated.lastTerminalResult)
-        assertEquals("1|0|1|NETWORK", storage.values["status.first-generation.CALENDAR"])
+        // V1 is a terminal-only rollback shadow; v2 retains the exact epoch-zero history above.
+        assertEquals("1||1|NETWORK", storage.values["status.first-generation.CALENDAR"])
     }
 
     @Test fun `frozen shadows order interruption success failure backward and saturation`() {

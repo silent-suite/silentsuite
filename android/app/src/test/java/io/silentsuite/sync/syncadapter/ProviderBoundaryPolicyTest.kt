@@ -57,20 +57,6 @@ class ProviderBoundaryPolicyTest {
         assertEquals(null, contactsChildTarget(null, "attempt"))
     }
 
-    @Test fun `request correlation extras round trip without becoming identity`() {
-        val extras = android.os.Bundle()
-        putSyncRequestId(extras, "opaque-request")
-        assertEquals("opaque-request", syncRequestId(extras))
-    }
-
-    @Test fun `contacts parent and child extras retain the same admitted attempt`() {
-        val extras = android.os.Bundle()
-        putSyncAttempt(extras, "parent-attempt")
-        putContactsAttempt(extras, syncAttempt(extras)!!)
-        assertEquals("parent-attempt", contactsAttempt(extras))
-        assertEquals("parent-attempt", syncAttempt(extras))
-    }
-
     @Test fun `cancelled completion is classified before any fabricated terminal`() {
         val before = SyncCompletionSnapshot(0, 0, 0, 0, false, false)
         assertEquals(CompletedOutcome.CANCELLED,
@@ -111,9 +97,8 @@ class ProviderBoundaryPolicyTest {
         assertTrue(store.beginAttempt(main, SyncStatusStore.Service.CONTACTS, "parent-success", 9, null))
         assertEquals(SyncStatusStore.ContactsStart.Started("parent-success"),
             attachContactsChildrenAtAdapterBoundary(store, main, "parent-success", setOf(child), 10))
-        val successExtras = android.os.Bundle().also { putContactsAttempt(it, "parent-success") }
         assertEquals(SyncStatusStore.MutationResult.RECORDED, recordContactsChildAtAdapterBoundary(store,
-            requireNotNull(contactsChildTarget(main, contactsAttempt(successExtras))), child,
+            requireNotNull(contactsChildTarget(main, "parent-success")), child,
             SyncStatusStore.ChildResult.SUCCESS, timestamp = 11))
         assertEquals(11L, store.status(main, SyncStatusStore.Service.CONTACTS).lastSuccessAt)
         assertFalse(store.status(main, SyncStatusStore.Service.CONTACTS).latestGenerationIncomplete)
@@ -121,9 +106,8 @@ class ProviderBoundaryPolicyTest {
         assertTrue(store.beginAttempt(main, SyncStatusStore.Service.CONTACTS, "parent-failure", 19, null))
         assertEquals(SyncStatusStore.ContactsStart.Started("parent-failure"),
             attachContactsChildrenAtAdapterBoundary(store, main, "parent-failure", setOf(child), 20))
-        val failureExtras = android.os.Bundle().also { putContactsAttempt(it, "parent-failure") }
         assertEquals(SyncStatusStore.MutationResult.RECORDED, recordContactsChildAtAdapterBoundary(store,
-            requireNotNull(contactsChildTarget(main, contactsAttempt(failureExtras))), child,
+            requireNotNull(contactsChildTarget(main, "parent-failure")), child,
             SyncStatusStore.ChildResult.FAILURE, SyncStatusStore.FailureCategory.PROVIDER, 21))
         assertEquals(SyncStatusStore.FailureCategory.PROVIDER,
             store.status(main, SyncStatusStore.Service.CONTACTS).lastFailureCategory)
@@ -301,8 +285,9 @@ class ProviderBoundaryPolicyTest {
     private fun boundaryStore(storage: MemoryStorage, main: Account, vararg children: Account) = SyncStatusStore(storage,
         mainAccountKey = { "main-generation" },
         childAccountKey = { account ->
-            require(account in children)
-            val marker = children.indexOf(account).toString(16)
+            val childIndex = children.indexOfFirst { it === account }
+            require(childIndex >= 0)
+            val marker = childIndex.toString(16)
             marker.repeat(64)
         },
     )

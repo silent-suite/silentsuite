@@ -11,6 +11,7 @@ ADAPTER = ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/Sync
 ADDRESS_BOOKS = ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/AddressBooksSyncAdapterService.kt"
 ACTIVITY = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/AccountActivity.kt"
 REDUCER = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/account/AccountDashboardState.kt"
+WINDOWS = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/account/SyncLifecycleWindows.kt"
 WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 FROZEN_V1 = ROOT / "android/app/src/test/java/io/silentsuite/sync/syncadapter/FrozenBaselineV1StatusReader.kt"
 
@@ -42,6 +43,14 @@ def test_v2_lifecycle_contract_uses_separate_keys_and_frozen_v1_shadows():
     assert "ChildResult.SKIPPED" in source
     assert "readLegacyContacts" in source
     assert "contacts.hasEvidence" in source
+
+
+def test_product_interruption_window_is_owned_without_android_initialization():
+    source = WINDOWS.read_text(encoding="utf-8")
+
+    assert "const val DEFAULT_INTERRUPTION_AFTER_MILLIS = 30L * 60L * 1000L" in source
+    assert "io.silentsuite.sync.Constants" not in source
+    assert "android." not in source
 
 
 def test_request_evidence_precedes_platform_dispatch_without_sensitive_logging():
@@ -308,10 +317,10 @@ def test_no_event_runtime_boundary_uses_viewmodel_maintenance_not_direct_expiry(
     method = method.split("private val generation", 1)[0]
 
     assert "beforeLaunch" in method
-    assert "useAccountLoaderOverride = false" in method
     assert ".refresh()" not in method
     assert "rebaseFutureLifecycle" not in method
     assert "expireStale" not in method
+    assert ACTIVITY.read_text(encoding="utf-8").index("maintainLifecycle()") < ACTIVITY.read_text(encoding="utf-8").index("accountLoaderOverride?.let")
 
 
 def test_runtime_ledgers_cover_review3_lifecycle_and_provider_evidence():
@@ -336,6 +345,16 @@ def test_runtime_ledgers_cover_review3_lifecycle_and_provider_evidence():
     assert "contacts parent child skip cancel and failed cleanup" in provider
     assert "old request and attempt never expire" in store_tests
     assert "platformActive, platformPending" in store_tests
+
+
+def test_android_bundle_correlation_evidence_runs_only_on_android_runtime():
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/syncadapter/SyncStatusRuntimeTest.kt").read_text(encoding="utf-8")
+    jvm = (ROOT / "android/app/src/test/java/io/silentsuite/sync/syncadapter/ProviderBoundaryPolicyTest.kt").read_text(encoding="utf-8")
+
+    assert "requestAndParentChildCorrelationExtrasRoundTripAtAndroidBoundary" in runtime
+    assert "putSyncRequestId(requestExtras" in runtime
+    assert "putSyncAttempt(attemptExtras" in runtime
+    assert "Bundle()" not in jvm
 
 
 def test_review4_mutation_rebase_pending_copy_and_due_maintenance_contracts():
