@@ -146,8 +146,8 @@ class SyncThread(threading.Thread):
 
     def stop(self):
         """Request a clean shutdown and wake any interval wait."""
-        self._stop_sync.set()
         with self._generation_condition:
+            self._stop_sync.set()
             stopped_at = time.time()
             generations = {
                 generation
@@ -288,6 +288,12 @@ class SyncThread(threading.Thread):
             deadline = status.get("deadline")
             if status["state"] in {"succeeded", "failed", "timed_out"}:
                 pass
+            elif self._stop_sync.is_set():
+                status.update({
+                    "state": "failed",
+                    "completed_at": completed_at,
+                    "error_code": "SyncStopped",
+                })
             elif deadline is not None and completed_at >= deadline:
                 status.update({
                     "state": "timed_out",

@@ -416,6 +416,19 @@ def test_generation_timeout_is_shared_and_terminal():
     assert thread.force_sync(deadline=time.time() + 30) != generation
 
 
+def test_stopped_generation_cannot_commit_success_after_final_check():
+    thread = SyncThread("user@test.com")
+    generation = thread.force_sync()
+    thread._begin_generation()
+    thread._stop_sync.set()
+
+    thread._complete_generation(generation, "succeeded", time.time())
+
+    status = thread.generation_status(generation)
+    assert status["state"] == "failed"
+    assert status["error_code"] == "SyncStopped"
+
+
 def test_completion_after_deadline_is_timeout_without_prior_poll():
     thread = SyncThread("account@example.com")
     deadline = time.time() + 1
