@@ -27,10 +27,12 @@ import hashlib
 import hmac as hmac_mod
 import os
 import secrets as secrets_mod
+import threading
 from unittest.mock import MagicMock
 
 import pytest
 
+from silentsuite_bridge import accounts as accounts_module
 from silentsuite_bridge import config
 from silentsuite_bridge.accounts import store_authenticated_account
 from silentsuite_bridge.radicale import auth as auth_module
@@ -349,3 +351,44 @@ def test_password_rotation_during_legacy_upgrade_is_not_overwritten(
     assert auth.login(USERNAME, PASSWORD) == ""
     persisted = Credentials(filename=creds_file)
     assert persisted.get_etebase(USERNAME) == "replacement-session"
+
+
+def test_password_rotation_cannot_commit_after_final_check_before_auth_returns(
+    creds_file, monkeypatch,
+):
+    _seed_pbkdf2_user(creds_file)
+    auth = Auth(_radicale_config_stub())
+    monkeypatch.setattr(
+        accounts_module,
+        "_password_hash",
+        lambda _password: ("00", "11"),
+    )
+    original_compare = hmac_mod.compare_digest
+    rotation_started = threading.Event()
+    rotation_completed = threading.Event()
+    rotation_thread = None
+
+    def compare_while_rotation_waits(left, right):
+        nonlocal rotation_thread
+
+        def rotate():
+            rotation_started.set()
+            store_authenticated_account(
+                USERNAME,
+                "replacement-password",
+                "replacement-session",
+                "https://test.silentsuite.io",
+            )
+            rotation_completed.set()
+
+        rotation_thread = threading.Thread(target=rotate)
+        rotation_thread.start()
+        assert rotation_started.wait(1)
+        assert not rotation_completed.wait(0.05)
+        return original_compare(left, right)
+
+    monkeypatch.setattr(auth_module.hmac, "compare_digest", compare_while_rotation_waits)
+
+    assert auth.login(USERNAME, PASSWORD) == USERNAME
+    rotation_thread.join(2)
+    assert rotation_completed.is_set()

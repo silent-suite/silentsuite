@@ -1220,12 +1220,24 @@ class Collection:
     def update_meta(self, update_info):
         if update_info is None:
             raise RuntimeError("update_info can't be None.")
-        meta = self.meta
-        meta.update(update_info)
-        self.col.meta = meta
-        self.cache_col.eb_col = self.col_mgr.cache_save(self.col)
-        self.cache_col.dirty = True
-        self.cache_col.save()
+        with db.database_proxy.atomic("IMMEDIATE"):
+            current_cache = models.CollectionEntity.get_by_id(self.cache_col.id)
+            if current_cache.deleted:
+                raise RuntimeError("collection is unavailable")
+            current_col = self.col_mgr.cache_load(current_cache.eb_col)
+            meta = dict(current_col.meta)
+            meta.update(update_info)
+            current_col.meta = meta
+            current_cache.eb_col = self.col_mgr.cache_save(current_col)
+            current_cache.dirty = True
+            current_cache.save(
+                only=[
+                    models.CollectionEntity.eb_col,
+                    models.CollectionEntity.dirty,
+                ]
+            )
+            self.cache_col = current_cache
+            self.col = current_col
 
     def create(self, vobject_item):
         with db.database_proxy:
@@ -1261,10 +1273,17 @@ class Collection:
 
     def delete(self):
         """Mark this collection as deleted and dirty so push_collection_list() will handle it."""
-        with db.database_proxy:
-            self.cache_col.deleted = True
-            self.cache_col.dirty = True
-            self.cache_col.save()
+        with db.database_proxy.atomic("IMMEDIATE"):
+            current_cache = models.CollectionEntity.get_by_id(self.cache_col.id)
+            current_cache.deleted = True
+            current_cache.dirty = True
+            current_cache.save(
+                only=[
+                    models.CollectionEntity.deleted,
+                    models.CollectionEntity.dirty,
+                ]
+            )
+            self.cache_col = current_cache
 
     def list(self):
         with db.database_proxy:

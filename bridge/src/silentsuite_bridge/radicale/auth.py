@@ -12,7 +12,7 @@ import os
 
 from radicale.auth import BaseAuth
 
-from .creds import Credentials
+from .creds import Credentials, credentials_locked
 
 logger = logging.getLogger("silentsuite-bridge.auth")
 
@@ -24,6 +24,7 @@ class Auth(BaseAuth):
         super().__init__(configuration)
         self._creds = Credentials()
 
+    @credentials_locked
     def login(self, login, password):
         """Validate login credentials against stored password hash.
 

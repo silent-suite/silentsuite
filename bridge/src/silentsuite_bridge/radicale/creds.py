@@ -10,10 +10,22 @@ import json
 import logging
 import os
 import tempfile
+import threading
+from functools import wraps
 
 from .. import config
 
 logger = logging.getLogger("silentsuite-bridge.creds")
+CREDENTIALS_LOCK = threading.RLock()
+
+
+def credentials_locked(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        with CREDENTIALS_LOCK:
+            return function(*args, **kwargs)
+
+    return locked
 
 
 class Credentials:

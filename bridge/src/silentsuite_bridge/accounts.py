@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from . import config
 from .local_cache import clear_cached_user
-from .radicale.creds import Credentials
+from .radicale.creds import Credentials, credentials_locked
 from .radicale.etesync_cache import account_maintenance, forget_etesync_user
 from .radicale.storage import stop_sync_thread
 
@@ -88,6 +88,7 @@ def _password_hash(password: str) -> tuple[str, str]:
     return salt.hex(), password_hash
 
 
+@credentials_locked
 def store_authenticated_account(
     username: str,
     password: str,
@@ -133,6 +134,7 @@ def list_accounts(*, credentials: Credentials | None = None) -> list[str]:
         return creds.list_users()
 
 
+@credentials_locked
 def logout_account(
     username: str,
     *,

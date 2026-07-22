@@ -342,6 +342,50 @@ class TestCollectionWrapper:
         assert refreshed.eb_col == b"saved"
         assert refreshed.dirty is True
 
+    def test_stale_meta_update_cannot_restore_removed_collection(self, mem_db, user):
+        stale_remote = _make_mock_collection(
+            "col-1", "etebase.vevent", meta={"name": "Old"}
+        )
+        mgr = self._simple_col_mgr(stale_remote)
+        cache_col = CollectionEntity.create(
+            local_user=user, uid="col-1", eb_col=b"old-envelope"
+        )
+        col = Collection(mgr, cache_col)
+        (
+            CollectionEntity.update(deleted=True, eb_col=b"removed-envelope")
+            .where(CollectionEntity.id == cache_col.id)
+            .execute()
+        )
+
+        with pytest.raises(RuntimeError, match="collection is unavailable"):
+            col.update_meta({"name": "Stale Update"})
+
+        refreshed = CollectionEntity.get_by_id(cache_col.id)
+        assert refreshed.deleted is True
+        assert refreshed.eb_col == b"removed-envelope"
+
+    def test_stale_collection_delete_preserves_current_remote_envelope(
+        self, mem_db, user,
+    ):
+        stale_remote = _make_mock_collection("col-1", "etebase.vevent")
+        mgr = self._simple_col_mgr(stale_remote)
+        cache_col = CollectionEntity.create(
+            local_user=user, uid="col-1", eb_col=b"old-envelope"
+        )
+        col = Collection(mgr, cache_col)
+        (
+            CollectionEntity.update(eb_col=b"current-envelope")
+            .where(CollectionEntity.id == cache_col.id)
+            .execute()
+        )
+
+        col.delete()
+
+        refreshed = CollectionEntity.get_by_id(cache_col.id)
+        assert refreshed.deleted is True
+        assert refreshed.dirty is True
+        assert refreshed.eb_col == b"current-envelope"
+
     def test_list_items(self, mem_db, user, mock_item_mgr):
         mock_col = _make_mock_collection("col-1", "etebase.vevent")
         mgr = MagicMock()
