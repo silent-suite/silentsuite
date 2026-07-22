@@ -19,6 +19,9 @@
     "turbo": "^2.4.0"
   },
   "packageManager": "pnpm@10.6.5",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
@@ -30,7 +33,7 @@
       "serialize-javascript": "^7.0.3",
       "flatted": "^3.4.2",
       "picomatch": "^4.0.4",
-      "fast-uri": "^3.1.2",
+      "fast-uri": "^3.1.4",
       "@babel/plugin-transform-modules-systemjs": "^7.29.4",
       "ws": "^7.5.11",
       "lodash": "^4.18.0",
@@ -38,6 +41,6 @@
     }
   },
   "dependencies": {
-    "sharp": "^0.34.5"
+    "sharp": "^0.35.0"
   }
 }
