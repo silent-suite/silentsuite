@@ -36,6 +36,11 @@ class PostLoginSetupMigrationTest {
         override fun recordRecovery(row: PostLoginSetupMigration.Row) = !failRecovery.also { if (!failRecovery) { recoveryWrites++; recoveredId=row.creationId } }
         override fun writeMarker(version: Int) = !failMarker.also { if (!failMarker) this.version = version }
     }
+    @Test fun `empty row classification does not publish a marker`() {
+        val store = MemoryStore(emptyList())
+        assertEquals(true, PostLoginSetupMigration.classifyRows(store) { _, _ -> true })
+        assertEquals(0, store.marker())
+    }
     @Test fun `creation id readback failure withholds marker`() {
         val store=MemoryStore(listOf(PostLoginSetupMigration.Row("t\\u0000a",PostLoginSetupMigration.LegacyRow("2","a",null,"session",false),null,null))).apply { failCreationId=true }
         assertEquals(false,PostLoginSetupMigration.bootstrap(store){_,_->true}); assertEquals(0,store.marker())

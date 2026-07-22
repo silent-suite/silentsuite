@@ -27,12 +27,16 @@ object PostLoginSetupMigration {
     )
     data class Row(val key: String, val legacy: LegacyRow, val state: String?, val creationId: String?)
 
-    /** Injectable raw store: JVM tests can exercise failure/restart ordering without AccountManager. */
-    interface Store {
-        fun marker(): Int
+    /** Injectable raw row store: JVM tests can exercise classification without marker publication. */
+    interface RowStore {
         fun rows(): List<Row>
         fun write(row: Row, key: String, value: String?): Boolean
         fun recordRecovery(row: Row): Boolean
+    }
+
+    /** Injectable full store: JVM tests can exercise failure/restart ordering without AccountManager. */
+    interface Store : RowStore {
+        fun marker(): Int
         fun writeMarker(version: Int): Boolean
     }
 
@@ -65,8 +69,7 @@ object PostLoginSetupMigration {
     }
 
     /** Returns false unless every row is durably classified (or durably recovery-recorded). */
-    fun bootstrap(store: Store, sessionParses: (String, String?) -> Boolean = ::locallyParseSession): Boolean {
-        if (store.marker() == MIGRATION_VERSION) return true
+    internal fun classifyRows(store: RowStore, sessionParses: (String, String?) -> Boolean = ::locallyParseSession): Boolean {
         for (row in store.rows()) {
             var working = row
             // addAccountExplicitly may have returned true just before a process death. Without
@@ -101,6 +104,13 @@ object PostLoginSetupMigration {
             if (!store.write(working, AccountSettings.KEY_POST_LOGIN_SETUP_STATE, state.name) && !store.recordRecovery(working))
                 return false
         }
+        return true
+    }
+
+    /** Runs row classification and then publishes its durable full-bootstrap marker. */
+    fun bootstrap(store: Store, sessionParses: (String, String?) -> Boolean = ::locallyParseSession): Boolean {
+        if (store.marker() == MIGRATION_VERSION) return true
+        if (!classifyRows(store, sessionParses)) return false
         return store.writeMarker(MIGRATION_VERSION) && store.marker() == MIGRATION_VERSION
     }
 
@@ -111,10 +121,8 @@ object PostLoginSetupMigration {
         // as legacy and mutate them.
         if (registry.records() == null) return false
         val prefs = context.getSharedPreferences("post_login_setup_migration", Context.MODE_PRIVATE)
-        val migrated = bootstrap(object : Store {
+        val classified = classifyRows(object : RowStore {
             private val accounts get() = manager.getAccountsByType(App.accountType)
-            // Raw classification intentionally cannot publish the global admission marker.
-            override fun marker() = 0
             override fun rows() = accounts.map { account ->
                 Row("${account.type}\u0000${account.name}", LegacyRow(
                     manager.getUserData(account, AccountSettings.KEY_SETTINGS_VERSION),
@@ -136,10 +144,9 @@ object PostLoginSetupMigration {
                 else registry.prepare(AccountCreationRegistry.Record(account.name, row.creationId ?: return false,
                     AccountCreationRegistry.Phase.RECOVERY_REQUIRED, System.currentTimeMillis(), account.type))
             }
-            override fun writeMarker(version: Int) = version == MIGRATION_VERSION
         })
         return PostLoginBootstrapCoordinator.run(
-            classifyRows = { migrated },
+            classifyRows = { classified },
             reconcilePending = { reconcilePendingCreationRows(context, manager, registry) },
             commitMarker = { prefs.edit().putInt("version", MIGRATION_VERSION).commit() && prefs.getInt("version", 0) == MIGRATION_VERSION }
         )
