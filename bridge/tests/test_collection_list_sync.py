@@ -142,8 +142,18 @@ def test_removed_membership_tombstones_only_exact_collection(tmp_path):
     ).count() == 0
 
 
-def test_removed_membership_preserves_pending_item_and_marks_collection_dirty(tmp_path):
+def test_removed_membership_preserves_pending_item_and_marks_collection_dirty(
+    tmp_path, monkeypatch,
+):
     database = _database(tmp_path / "pending-removed-membership.sqlite")
+    lock_types = []
+    original_atomic = database.atomic
+
+    def tracked_atomic(*args, **kwargs):
+        lock_types.append(args[0] if args else kwargs.get("lock_type"))
+        return original_atomic(*args, **kwargs)
+
+    monkeypatch.setattr(database, "atomic", tracked_atomic)
     user = models.User.create(username="books@example.test", stoken="before")
     collection = models.CollectionEntity.create(
         local_user=user,
@@ -174,3 +184,4 @@ def test_removed_membership_preserves_pending_item_and_marks_collection_dirty(tm
     assert persisted_collection.dirty is True
     assert models.ItemEntity.get_by_id(pending_item.id).dirty is True
     assert models.HrefMapper.get_by_id(pending_item.id).href == "pending-contact.vcf"
+    assert "IMMEDIATE" in lock_types

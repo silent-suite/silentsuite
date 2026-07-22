@@ -83,6 +83,32 @@ def test_store_authenticated_account_reauth_updates_one_account(tmp_path, monkey
     assert forgotten == ["alice@example.com"]
 
 
+def test_reauth_hashes_replacement_before_invalidating_old_session(tmp_path, monkeypatch):
+    _configure_creds(tmp_path, monkeypatch)
+    accounts.store_authenticated_account(
+        "alice@example.com", PASSWORD, "old-session", "https://server.test",
+    )
+    invalidated = []
+    monkeypatch.setattr(accounts, "stop_sync_thread", lambda _user: True)
+    monkeypatch.setattr(accounts, "forget_etesync_user", invalidated.append)
+
+    def replacement_hash(_password):
+        assert invalidated == []
+        return "salt", "hash"
+
+    monkeypatch.setattr(accounts, "_password_hash", replacement_hash)
+
+    accounts.store_authenticated_account(
+        "alice@example.com",
+        "replacement-password",
+        "new-session",
+        "https://server.test",
+    )
+
+    assert invalidated == ["alice@example.com"]
+    assert Credentials().get_etebase("alice@example.com") == "new-session"
+
+
 def test_reauth_rejects_server_change_without_touching_existing_account(
     tmp_path, monkeypatch,
 ):

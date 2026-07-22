@@ -924,12 +924,15 @@ class Collection(BaseCollection):
             return
         if not is_safe_dav_href(href):
             raise ValueError("invalid DAV href")
-        self._sanitize_href_mappings()
-
         vobject_item = item.vobject_item
-        previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
 
-        with db.database_proxy.atomic():
+        with db.database_proxy.atomic("IMMEDIATE"):
+            cache_col = CollectionEntity.get_by_id(self.collection.cache_col.id)
+            if cache_col.deleted:
+                raise ValueError("collection is unavailable")
+            self.collection.cache_col = cache_col
+            self._sanitize_href_mappings()
+            previous_state_hash = dav_collection_state_hash(cache_col)
             existing = self._get(href)
             if existing is not None:
                 etesync_item = existing.etesync_item
@@ -988,12 +991,15 @@ class Collection(BaseCollection):
             log_sync_event("sync", "Deleted collection")
             return
 
-        item = self._get(href)
-        if item is None:
-            raise ComponentNotFoundError(href)
-
-        previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
-        with db.database_proxy.atomic():
+        with db.database_proxy.atomic("IMMEDIATE"):
+            cache_col = CollectionEntity.get_by_id(self.collection.cache_col.id)
+            if cache_col.deleted:
+                raise ValueError("collection is unavailable")
+            self.collection.cache_col = cache_col
+            item = self._get(href)
+            if item is None:
+                raise ComponentNotFoundError(href)
+            previous_state_hash = dav_collection_state_hash(cache_col)
             etag = item.etesync_item.etag
             item.etesync_item.delete()
             record_dav_change(

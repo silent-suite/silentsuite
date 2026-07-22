@@ -13,7 +13,6 @@ import os
 from radicale.auth import BaseAuth
 
 from .creds import Credentials
-from .. import config
 
 logger = logging.getLogger("silentsuite-bridge.auth")
 
@@ -51,6 +50,7 @@ class Auth(BaseAuth):
             return ""
 
         stored_salt = self._creds.get_password_salt(login)
+        credential_snapshot = (stored_session, stored_hash, stored_salt)
         if stored_salt:
             # PBKDF2 verification
             password_hash = hashlib.pbkdf2_hmac(
@@ -59,6 +59,16 @@ class Auth(BaseAuth):
         else:
             # Legacy SHA-256 fallback for existing credentials
             password_hash = hashlib.sha256(password.encode()).hexdigest()
+
+        self._creds.load()
+        current_snapshot = (
+            self._creds.get_etebase(login),
+            self._creds.get_password_hash(login),
+            self._creds.get_password_salt(login),
+        )
+        if current_snapshot != credential_snapshot:
+            logger.info("Credentials changed during authentication")
+            return ""
 
         if not hmac.compare_digest(password_hash, stored_hash):
             logger.warning("Invalid password for configured user")
@@ -73,6 +83,15 @@ class Auth(BaseAuth):
             new_hash = hashlib.pbkdf2_hmac(
                 "sha256", password.encode(), new_salt, 600000,
             ).hex()
+            self._creds.load()
+            current_snapshot = (
+                self._creds.get_etebase(login),
+                self._creds.get_password_hash(login),
+                self._creds.get_password_salt(login),
+            )
+            if current_snapshot != credential_snapshot:
+                logger.info("Credentials changed during password-hash upgrade")
+                return ""
             self._creds.set_password_salt(login, new_salt.hex())
             self._creds.set_password_hash(login, new_hash)
             self._creds.save()

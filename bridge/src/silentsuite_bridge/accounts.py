@@ -112,13 +112,15 @@ def store_authenticated_account(
                 raise ValueError(
                     "An existing account cannot be moved to a different server"
                 )
-            stop_sync_thread(normalized)
-            forget_etesync_user(normalized)
         salt_hex, password_hash = _password_hash(password)
+        if existed:
+            stop_sync_thread(normalized)
         creds.set_etebase(normalized, stored_session, server_url)
         creds.set_password_salt(normalized, salt_hex)
         creds.set_password_hash(normalized, password_hash)
         creds.save()
+        if existed:
+            forget_etesync_user(normalized)
         _account_epochs[normalized] = _account_epochs.get(normalized, 0) + 1
 
     return AccountOperationResult(username=normalized, existed=existed)

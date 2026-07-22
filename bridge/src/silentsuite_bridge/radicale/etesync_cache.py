@@ -74,7 +74,13 @@ class EteSyncCache:
             with self._cache_lock:
                 return self._session_epochs.get(user, 0) == epoch
 
+        @contextmanager
+        def session_guard():
+            with self._cache_lock:
+                yield self._session_epochs.get(user, 0) == epoch
+
         etesync._session_is_current = is_current
+        etesync._session_guard = session_guard
 
     def fresh_for_user(self, user, *, read_only=True):
         """Restore an independent session for bounded local-cache work."""
