@@ -739,6 +739,11 @@ class Etebase:
                 col_list = col_mgr.list(config.COL_TYPES, fetch_options)
                 self._assert_session_current()
 
+                done, stoken = self._apply_collection_list_page(col_mgr, col_list)
+
+    def _apply_collection_list_page(self, col_mgr, col_list):
+        with self._mutation_session_guard():
+            with db.database_proxy.atomic("IMMEDIATE"):
                 for col in col_list.data:
                     collection = models.CollectionEntity.get_or_none(
                         local_user=self.user, uid=col.uid
@@ -755,7 +760,15 @@ class Etebase:
                     collection.eb_col = col_mgr.cache_save(col)
                     collection.stoken = col.stoken
                     collection.deleted = col.deleted
-                    collection.save()
+                    collection.save(
+                        only=[
+                            models.CollectionEntity.local_user,
+                            models.CollectionEntity.uid,
+                            models.CollectionEntity.eb_col,
+                            models.CollectionEntity.stoken,
+                            models.CollectionEntity.deleted,
+                        ]
+                    )
                     if collection.deleted:
                         models.DavUnresolvedItem.delete().where(
                             models.DavUnresolvedItem.collection == collection
@@ -763,41 +776,44 @@ class Etebase:
 
                 for col_uid in col_list.removed_memberships:
                     try:
-                        with db.database_proxy.atomic("IMMEDIATE"):
-                            collection = models.CollectionEntity.get(
-                                local_user=self.user, uid=col_uid
-                            )
-                            if collection.dirty or collection.new:
-                                continue
-                            has_pending_items = collection.items.where(
-                                models.ItemEntity.dirty | models.ItemEntity.new
-                            ).exists()
-                            if has_pending_items:
-                                collection.dirty = True
-                                collection.save(only=[models.CollectionEntity.dirty])
-                                continue
-                            collection.deleted = True
-                            collection.save(only=[models.CollectionEntity.deleted])
-                            models.DavUnresolvedItem.delete().where(
-                                models.DavUnresolvedItem.collection == collection
+                        collection = models.CollectionEntity.get(
+                            local_user=self.user, uid=col_uid
+                        )
+                        if collection.dirty or collection.new:
+                            continue
+                        has_pending_items = collection.items.where(
+                            models.ItemEntity.dirty | models.ItemEntity.new
+                        ).exists()
+                        if has_pending_items:
+                            collection.dirty = True
+                            collection.save(only=[models.CollectionEntity.dirty])
+                            continue
+                        collection.deleted = True
+                        collection.save(only=[models.CollectionEntity.deleted])
+                        models.DavUnresolvedItem.delete().where(
+                            models.DavUnresolvedItem.collection == collection
+                        ).execute()
+                        # The immediate transaction serializes this check/delete
+                        # with DAV writers, which reject deleted collections.
+                        for item in collection.items:
+                            models.HrefMapper.delete().where(
+                                models.HrefMapper.content == item
                             ).execute()
-                            # The immediate transaction serializes this check/delete
-                            # with DAV writers, which reject deleted collections.
-                            for item in collection.items:
-                                models.HrefMapper.delete().where(
-                                    models.HrefMapper.content == item
-                                ).execute()
-                            models.ItemEntity.delete().where(
-                                models.ItemEntity.collection == collection
-                            ).execute()
+                        models.ItemEntity.delete().where(
+                            models.ItemEntity.collection == collection
+                        ).execute()
                     except models.CollectionEntity.DoesNotExist:
                         pass
 
-                done = col_list.done
                 stoken = col_list.stoken
-
+                (
+                    models.User.update(stoken=stoken)
+                    .where(models.User.id == self.user.id)
+                    .execute()
+                )
                 self.user.stoken = stoken
-                self.user.save()
+                self._assert_session_current()
+                return col_list.done, stoken
 
     def _collection_list_dirty_get(self):
         with db.database_proxy:

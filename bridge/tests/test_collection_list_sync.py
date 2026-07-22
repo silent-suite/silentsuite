@@ -2,9 +2,10 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from playhouse.sqlite_ext import SqliteExtDatabase
 
-from silentsuite_bridge.local_cache import Etebase, db, models
+from silentsuite_bridge.local_cache import Etebase, SessionSuperseded, db, models
 
 
 def _database(path):
@@ -47,6 +48,30 @@ def _remote_collection(uid, *, stoken, name="Contacts"):
     collection.deleted = False
     collection.meta = {"name": name}
     return collection
+
+
+def test_superseded_session_cannot_apply_collection_page_or_token(tmp_path):
+    database = _database(tmp_path / "superseded-collection-page.sqlite")
+    user = models.User.create(username="books@example.test", stoken="before")
+    manager = MagicMock()
+    manager.cache_save.return_value = b"collection-cache"
+    manager.list.return_value = MagicMock(
+        data=[_remote_collection("replacement", stoken="remote")],
+        removed_memberships=[],
+        done=True,
+        stoken="after",
+    )
+    service = _service(database, user, manager)
+    guard = MagicMock()
+    guard.__enter__.return_value = False
+    guard.__exit__.return_value = False
+    service._session_guard = lambda: guard
+
+    with pytest.raises(SessionSuperseded):
+        service.sync_collection_list()
+
+    assert models.User.get_by_id(user.id).stoken == "before"
+    assert models.CollectionEntity.select().count() == 0
 
 
 def test_paginated_collection_list_adds_second_address_book_without_hiding_first(tmp_path):
