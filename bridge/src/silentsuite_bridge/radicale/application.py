@@ -16,6 +16,11 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
             record.args = ()
             record.exc_info = None
             record.exc_text = None
+        elif "/radicale/item/" in normalized_path:
+            record.msg = "Radicale item diagnostic suppressed"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
         elif (
             "/radicale/app/" in normalized_path
             and "/silentsuite_bridge/" not in normalized_path
@@ -44,7 +49,12 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
         return True
 
 
-for _logger_name in ("radicale", "radicale.app", "radicale.server"):
+for _logger_name in (
+    "radicale",
+    "radicale.app",
+    "radicale.item",
+    "radicale.server",
+):
     logging.getLogger(_logger_name).addFilter(_DavDiagnosticRedactionFilter())
 
 

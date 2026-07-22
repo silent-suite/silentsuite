@@ -204,3 +204,24 @@ def test_radicale_filter_redacts_server_request_exception():
     assert record.args == ()
     assert record.exc_info is None
     assert private_value not in record.getMessage()
+
+
+def test_radicale_item_normalization_diagnostic_redacts_component_uid():
+    private_uid = "private-calendar-component-uid"
+    record = logging.LogRecord(
+        name="radicale.item",
+        level=logging.DEBUG,
+        pathname="/site-packages/radicale/item/__init__.py",
+        lineno=160,
+        msg="Normalized %s object %r in %.3f seconds",
+        args=("calendar", private_uid, 0.0),
+        exc_info=None,
+    )
+
+    item_logger = logging.getLogger("radicale.item")
+    for diagnostic_filter in item_logger.filters:
+        diagnostic_filter.filter(record)
+
+    assert record.msg == "Radicale item diagnostic suppressed"
+    assert record.args == ()
+    assert private_uid not in record.getMessage()
