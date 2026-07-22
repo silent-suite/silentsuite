@@ -748,6 +748,14 @@ class Etebase:
                     collection = models.CollectionEntity.get_or_none(
                         local_user=self.user, uid=col.uid
                     )
+                    if collection is not None and col.deleted:
+                        has_pending_items = collection.items.where(
+                            models.ItemEntity.dirty | models.ItemEntity.new
+                        ).exists()
+                        if has_pending_items:
+                            collection.dirty = True
+                            collection.save(only=[models.CollectionEntity.dirty])
+                            continue
                     if collection is not None and (
                         collection.dirty or collection.new
                     ):
@@ -816,10 +824,9 @@ class Etebase:
                 return col_list.done, stoken
 
     def _collection_list_dirty_get(self):
-        with db.database_proxy:
-            return self.user.collections.where(
-                models.CollectionEntity.dirty | models.CollectionEntity.new
-            )
+        return self.user.collections.where(
+            models.CollectionEntity.dirty | models.CollectionEntity.new
+        )
 
     def collection_list_is_dirty(self):
         changed = list(self._collection_list_dirty_get())
@@ -828,7 +835,7 @@ class Etebase:
     def push_collection_list(self):
         col_mgr = self.etebase.get_collection_manager()
 
-        with db.database_proxy:
+        with db.database_proxy.connection_context():
             changed = list(self._collection_list_dirty_get())
 
             for collection in changed:
@@ -841,19 +848,20 @@ class Etebase:
                 if collection.deleted:
                     col.delete()
                 col_mgr.upload(col, None)
-                self._assert_session_current()
-
-                (
-                    models.CollectionEntity.update(dirty=False, new=False)
-                    .where(
-                        (models.CollectionEntity.id == collection.id)
-                        & (models.CollectionEntity.eb_col == original_envelope)
-                        & (models.CollectionEntity.dirty == original_dirty)
-                        & (models.CollectionEntity.new == original_new)
-                        & (models.CollectionEntity.deleted == original_deleted)
-                    )
-                    .execute()
-                )
+                with self._mutation_session_guard():
+                    with db.database_proxy.atomic("IMMEDIATE"):
+                        self._assert_session_current()
+                        (
+                            models.CollectionEntity.update(dirty=False, new=False)
+                            .where(
+                                (models.CollectionEntity.id == collection.id)
+                                & (models.CollectionEntity.eb_col == original_envelope)
+                                & (models.CollectionEntity.dirty == original_dirty)
+                                & (models.CollectionEntity.new == original_new)
+                                & (models.CollectionEntity.deleted == original_deleted)
+                            )
+                            .execute()
+                        )
 
     def sync_collection(self, uid):
         """Sync a single collection (push then pull)."""
@@ -1106,10 +1114,9 @@ class Etebase:
                         )
 
     def _collection_dirty_get(self, collection):
-        with db.database_proxy:
-            return collection.items.where(
-                models.ItemEntity.dirty | models.ItemEntity.new
-            )
+        return collection.items.where(
+            models.ItemEntity.dirty | models.ItemEntity.new
+        )
 
     def collection_is_dirty(self, uid):
         with db.database_proxy:
@@ -1120,7 +1127,7 @@ class Etebase:
     def push_collection(self, uid):
         CHUNK_PUSH = 30
 
-        with db.database_proxy:
+        with db.database_proxy.connection_context():
             col_mgr = self.etebase.get_collection_manager()
             cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
             col = col_mgr.cache_load(cache_col.eb_col)
@@ -1140,25 +1147,27 @@ class Etebase:
                 chunk_items = list(map(lambda x: item_mgr.cache_load(x.eb_item), chunk))
                 logger.info("PUSH collection: uploading batch of %d items", len(chunk_items))
                 item_mgr.batch(chunk_items, None, None)
-                self._assert_session_current()
                 logger.info("PUSH collection: batch upload succeeded")
-                for original, item in zip(original_rows, chunk_items):
-                    item_id, original_envelope, original_dirty, original_new = original
-                    uploaded_envelope = item_mgr.cache_save(item)
-                    (
-                        models.ItemEntity.update(
-                            eb_item=uploaded_envelope,
-                            dirty=False,
-                            new=False,
-                        )
-                        .where(
-                            (models.ItemEntity.id == item_id)
-                            & (models.ItemEntity.eb_item == original_envelope)
-                            & (models.ItemEntity.dirty == original_dirty)
-                            & (models.ItemEntity.new == original_new)
-                        )
-                        .execute()
-                    )
+                with self._mutation_session_guard():
+                    with db.database_proxy.atomic("IMMEDIATE"):
+                        self._assert_session_current()
+                        for original, item in zip(original_rows, chunk_items):
+                            item_id, original_envelope, original_dirty, original_new = original
+                            uploaded_envelope = item_mgr.cache_save(item)
+                            (
+                                models.ItemEntity.update(
+                                    eb_item=uploaded_envelope,
+                                    dirty=False,
+                                    new=False,
+                                )
+                                .where(
+                                    (models.ItemEntity.id == item_id)
+                                    & (models.ItemEntity.eb_item == original_envelope)
+                                    & (models.ItemEntity.dirty == original_dirty)
+                                    & (models.ItemEntity.new == original_new)
+                                )
+                                .execute()
+                            )
 
     # --- CRUD operations ---
 

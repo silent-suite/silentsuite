@@ -635,6 +635,47 @@ class TestSyncLogic:
             assert persisted.deleted is True
             assert persisted.dirty is True
 
+    @patch("silentsuite_bridge.local_cache.Account")
+    @patch("silentsuite_bridge.local_cache.Client")
+    def test_superseded_session_cannot_clear_uploaded_collection_dirty_state(
+        self, MockClient, MockAccount, mem_db,
+    ):
+        mock_account = MagicMock()
+        MockAccount.restore.return_value = mock_account
+        mock_col_mgr = MagicMock()
+        mock_account.get_collection_manager.return_value = mock_col_mgr
+        mock_col_mgr.cache_load.return_value = MagicMock(deleted=False)
+        guard = MagicMock()
+        guard.__enter__.return_value = False
+        guard.__exit__.return_value = False
+
+        with patch("silentsuite_bridge.local_cache.Etebase._init_db"):
+            etebase = Etebase.__new__(Etebase)
+            etebase.etebase = mock_account
+            etebase.username = "test@example.com"
+            etebase._database = mem_db
+            etebase.stored_session = "fake"
+            etebase._session_is_current = lambda: True
+            etebase._session_guard = lambda: guard
+            db.database_proxy.initialize(mem_db)
+            user_obj = User.create(username="test@example.com")
+            etebase.user = user_obj
+            cache_col = CollectionEntity.create(
+                local_user=user_obj,
+                uid="dirty-col",
+                eb_col=b"collection-envelope",
+                dirty=True,
+            )
+
+            with (
+                patch.object(mem_db, "close", return_value=False),
+                pytest.raises(SessionSuperseded),
+            ):
+                etebase.push_collection_list()
+
+            assert CollectionEntity.get_by_id(cache_col.id).dirty is True
+            mock_col_mgr.upload.assert_called_once()
+
     def test_collection_list_is_dirty(self, mem_db, user):
         """Test dirty detection without Etebase SDK."""
         # Directly test the query logic that _collection_list_dirty_get uses
