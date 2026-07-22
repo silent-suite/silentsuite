@@ -13,19 +13,17 @@ import android.accounts.AccountManager
 import android.app.Activity
 import android.app.Dialog
 import android.os.Bundle
-import android.provider.CalendarContract
 import androidx.fragment.app.DialogFragment
-import at.bitfire.ical4android.TaskProvider.Companion.TASK_PROVIDERS
 import io.silentsuite.sync.*
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
 import io.silentsuite.sync.ui.ActiveAccountManager
 import io.silentsuite.sync.ui.AccountActivity
-import io.silentsuite.sync.utils.TaskProviderHandling
 import java.util.logging.Level
 
 class CreateAccountFragment : DialogFragment() {
+    private var failureRecoveryScheduled = false
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         isCancelable = false
@@ -42,10 +40,7 @@ class CreateAccountFragment : DialogFragment() {
         val config = SetupSecretHolder.getPendingConfiguration()
         if (config == null) {
             Logger.log.severe("Setup configuration expired before account creation")
-            notifyAccountCreationFailed()
-            parentFragmentManager.beginTransaction()
-                    .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
-                    .commitAllowingStateLoss()
+            notifyRecoverableFailure(R.string.setup_state_expired)
             dismissAllowingStateLoss()
             return
         }
@@ -53,22 +48,27 @@ class CreateAccountFragment : DialogFragment() {
         val activity = requireActivity()
         val attempt = try {
             createAccount(config.userName, config)
-        } catch (e: InvalidAccountException) {
-            notifyAccountCreationFailed()
-            throw e
         } catch (e: Exception) {
-            notifyAccountCreationFailed()
-            throw e
+            // A lifecycle callback must never propagate an account-creation exception. The
+            // durable evidence determines whether retry is safe; do not retain its message.
+            Logger.log.log(Level.SEVERE, "Account creation failed: ${e.javaClass.name}")
+            recoverFromUnexpectedFailure(config.userName)
         }
         if (attempt is CreationAttempt.SettingsResolution) {
             startActivity(PostLoginSetupActivity.newIntent(requireContext(), attempt.account, null)); notifyAccountCreationFailed(); dismissAllowingStateLoss()
+        } else if (attempt is CreationAttempt.Recovery) {
+            startActivity(PostLoginSetupActivity.newIntent(requireContext(), attempt.account, attempt.creationId))
+            notifyAccountCreationFailed()
+            dismissAllowingStateLoss()
         } else if (attempt is CreationAttempt.Created || attempt is CreationAttempt.Completed) {
             val account = when (attempt) { is CreationAttempt.Created -> attempt.account; is CreationAttempt.Completed -> attempt.account; else -> error("unreachable") }
-            if (AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_CREATION_ID) == null) {
+            val verifiedId = AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_CREATION_ID)
+            if (verifiedId == null) {
+                startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, null))
                 notifyAccountCreationFailed()
+                dismissAllowingStateLoss()
                 return
             }
-            val verifiedId = AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_CREATION_ID)!!
             val kind = if (attempt is CreationAttempt.Completed) AccountCreationCompletionDispatcher.Kind.Dashboard else AccountCreationCompletionDispatcher.Kind.Setup
             val dispatched = AccountCreationCompletionDispatcher(object : AccountCreationCompletionDispatcher.Seams {
                 override fun stageExact(name: String, type: String, id: String) =
@@ -77,11 +77,11 @@ class CreateAccountFragment : DialogFragment() {
                 override fun openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account, verifiedId)) }
                 override fun finish() { activity.setResult(Activity.RESULT_OK); SetupSecretHolder.clearCredentialsAndConfiguration(); activity.finish() }
             }).dispatch(kind, account.name, account.type, verifiedId)
-            if (!dispatched) { notifyRetryableCollision(); dismissAllowingStateLoss() }
-        } else if (attempt == CreationAttempt.ExistsOrBusy) {
+            if (!dispatched) { notifyRecoverableFailure(R.string.setup_account_busy_retry); dismissAllowingStateLoss() }
+        } else if (attempt == CreationAttempt.RetryCredentials) {
             // A collision is retryable.  The authenticator flow remains live and therefore
             // must not receive cancellation merely because this add attempt lost a race.
-            notifyRetryableCollision()
+            notifyRecoverableFailure(R.string.setup_account_busy_retry)
             dismissAllowingStateLoss()
         } else {
             // Issue #119: addAccountExplicitly returned false (e.g. partial-state collision
@@ -90,8 +90,33 @@ class CreateAccountFragment : DialogFragment() {
             // staring at a frozen "setting up encryption" progress dialog. Log the failure
             // and dismiss the dialog so the operator notices and the user can retry.
             Logger.log.log(Level.SEVERE, "addAccountExplicitly returned false")
-            notifyAccountCreationFailed()
+            notifyRecoverableFailure(R.string.login_account_creation_failed_retry)
             dismissAllowingStateLoss()
+        }
+    }
+
+    /** Restores the login surface before one bounded, resource-backed failure dialog is shown. */
+    private fun notifyRecoverableFailure(messageRes: Int) {
+        SetupSecretHolder.clearCredentialsAndConfiguration()
+        if (failureRecoveryScheduled) return
+        failureRecoveryScheduled = true
+        val manager = parentFragmentManager
+        // CreateAccountFragment replaced the credentials fragment and put it on the back stack.
+        // Defer the synchronous pop until this lifecycle transaction is complete; FragmentManager
+        // rejects nested execution from onCreate. The login content is restored before the dialog.
+        val host = activity ?: return
+        host.window.decorView.post {
+            if (host.isFinishing || host.isDestroyed || manager.isStateSaved || manager.isDestroyed) return@post
+            try {
+                manager.popBackStackImmediate()
+                (manager.findFragmentById(android.R.id.content) as? LoginCredentialsFragment)
+                    ?.onSubmissionFailed()
+                if (manager.findFragmentByTag(RETRY_ERROR_TAG) == null)
+                    DetectConfigurationFragment.NothingDetectedFragment.newInstance(messageRes)
+                        .show(manager, RETRY_ERROR_TAG)
+            } catch (e: Exception) {
+                Logger.log.warning("Unable to restore login after account creation failure: ${e.javaClass.name}")
+            }
         }
     }
 
@@ -105,15 +130,6 @@ class CreateAccountFragment : DialogFragment() {
         // A failure before the durable ACCOUNT_CREATED boundary cannot be reported as an
         // Android Settings success. finish() is idempotent in the response controller.
         (activity as? LoginActivity)?.cancelBeforeAccountCreated()
-    }
-
-    private fun notifyRetryableCollision() {
-        SetupSecretHolder.clearCredentialsAndConfiguration()
-        parentFragmentManager.fragments.filterIsInstance<LoginCredentialsFragment>()
-            .forEach { it.onSubmissionFailed() }
-        parentFragmentManager.beginTransaction()
-            .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(getString(R.string.setup_account_busy_retry)), null)
-            .commitAllowingStateLoss()
     }
 
     @Throws(InvalidAccountException::class)
@@ -139,26 +155,6 @@ class CreateAccountFragment : DialogFragment() {
                     AccountSettings.writeVerified(accountManager, account, key, value)
                 override fun phase(id: String, phase: AccountCreationRegistry.Phase) = registry.updateOwned(
                     AccountCreationRegistry.Record(accountName, id, phase, System.currentTimeMillis(), App.accountType))
-                override fun configureAndReadBack(): Boolean = runCatching {
-                    val settings = AccountSettings(requireContext(), account)
-                    settings.setSyncInterval(App.addressBooksAuthority, Constants.DEFAULT_SYNC_INTERVAL.toLong())
-                    settings.setSyncInterval(CalendarContract.AUTHORITY, Constants.DEFAULT_SYNC_INTERVAL.toLong())
-                    TASK_PROVIDERS.forEach { TaskProviderHandling.updateTaskSync(requireContext(), it, account) }
-                    val coreVerified = android.content.ContentResolver.getSyncAutomatically(account, App.addressBooksAuthority) &&
-                        android.content.ContentResolver.getSyncAutomatically(account, CalendarContract.AUTHORITY) &&
-                        settings.getSyncInterval(App.addressBooksAuthority) == Constants.DEFAULT_SYNC_INTERVAL.toLong() &&
-                        settings.getSyncInterval(CalendarContract.AUTHORITY) == Constants.DEFAULT_SYNC_INTERVAL.toLong()
-                    val wanted = TaskProviderHandling.getWantedTaskSyncProvider(requireContext())
-                    val taskVerified = TASK_PROVIDERS.all { provider ->
-                        if (provider == wanted)
-                            android.content.ContentResolver.getIsSyncable(account, provider.authority) > 0 &&
-                                settings.getSyncInterval(provider.authority) == Constants.DEFAULT_SYNC_INTERVAL.toLong()
-                        else android.content.ContentResolver.getIsSyncable(account, provider.authority) <= 0
-                    }
-                    coreVerified && taskVerified
-                }.getOrDefault(false)
-                override fun accountCreated(id: String): Boolean = (activity as? LoginActivity)
-                    ?.onAccountCreated(account, id) ?: true
                 override fun activateAndReadBack() = ActiveAccountManager.setActiveAccount(requireContext(), account)
                 override fun clear(id: String) = registry.clearOwned(App.accountType, accountName, id)
                 override fun quarantine(id: String) = PostLoginSetupMigration.persistPendingRecovery(
@@ -175,44 +171,79 @@ class CreateAccountFragment : DialogFragment() {
                 AccountCreationCoordinator.Result.CREATED,
                 AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED -> CreationAttempt.Created(account)
                 AccountCreationCoordinator.Result.EXISTS_OR_BUSY,
-                AccountCreationCoordinator.Result.NOT_ADDED -> when (AccountCreationCallerPolicy.disposition(result)) {
-                    AccountCreationCallerPolicy.Disposition.RetryCredentials ->
-                        resumableOwnedIncomplete(account, accountManager, registry) ?: CreationAttempt.ExistsOrBusy
-                    else -> CreationAttempt.Failed
-                }
-                AccountCreationCoordinator.Result.QUARANTINED -> if (account in accountManager.getAccountsByType(account.type) && accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID) == null) CreationAttempt.SettingsResolution(account) else CreationAttempt.Failed
-                else -> CreationAttempt.Failed
+                AccountCreationCoordinator.Result.NOT_ADDED,
+                AccountCreationCoordinator.Result.QUARANTINED,
+                AccountCreationCoordinator.Result.QUARANTINE_FAILED ->
+                    creationAttemptFromDurableEvidence(account, accountManager, registry)
             }
         }
     }
 
-    private fun resumableOwnedIncomplete(
+    /**
+     * Routes all interrupted-creation outcomes from the current durable row and generation
+     * evidence. This total router deliberately fails closed once it has observed a row.
+     */
+    private fun recoverFromUnexpectedFailure(accountName: String): CreationAttempt {
+        val account = Account(accountName, App.accountType)
+        val manager = AccountManager.get(requireContext())
+        var rowObserved = false
+        return try {
+            rowObserved = account in manager.getAccountsByType(account.type)
+            if (!rowObserved)
+                CreationAttempt.RetryCredentials
+            else
+                creationAttemptFromDurableEvidence(
+                    account,
+                    manager,
+                    AccountCreationRegistry.open(requireContext())
+                )
+        } catch (e: Exception) {
+            // Once a row has been observed, incomplete registry/state inspection cannot safely
+            // downgrade the outcome to credential retry or adopt that row as this generation.
+            if (rowObserved) CreationAttempt.SettingsResolution(account) else CreationAttempt.RetryCredentials
+        }
+    }
+
+    private fun creationAttemptFromDurableEvidence(
         account: Account,
         manager: AccountManager,
         registry: AccountCreationRegistry
-    ): CreationAttempt? {
-        if (account !in manager.getAccountsByType(account.type)) return null
-        val id = manager.getUserData(account, AccountSettings.KEY_CREATION_ID) ?: return null
-        if (!AccountCreationRegistry.owns(registry.get(account.type, account.name), id)) return null
-        val state = AccountSettings.setupState(manager, account, PostLoginSetupMigration.isBootstrapped(requireContext()))
-        // CREATING has not crossed the durable account-created boundary and can never be
-        // resumed as success. COMPLETE belongs at the exact dashboard, not setup.
-        if (state == PostLoginSetupState.COMPLETE) return CreationAttempt.Completed(account)
-        return account.takeIf { state in setOf(PostLoginSetupState.ACCOUNT_CREATED, PostLoginSetupState.COLLECTIONS,
-                PostLoginSetupState.PERMISSIONS, PostLoginSetupState.INITIAL_SYNC, PostLoginSetupState.READY) }
-            ?.let(CreationAttempt::Created)
+    ): CreationAttempt {
+        var rowObserved = false
+        return try {
+            val rowPresent = account in manager.getAccountsByType(account.type)
+            rowObserved = rowPresent
+            val id = if (rowPresent) manager.getUserData(account, AccountSettings.KEY_CREATION_ID) else null
+            val registryOwns = rowPresent && id != null && AccountCreationRegistry.owns(
+                registry.get(account.type, account.name), id)
+            when (DurableCreationAttemptPolicy.outcome(DurableCreationAttemptPolicy.Evidence(
+                rowPresent, id, registryOwns,
+                if (registryOwns) AccountSettings.setupState(manager, account, PostLoginSetupMigration.isBootstrapped(requireContext())) else null
+            ))) {
+                DurableCreationAttemptPolicy.Outcome.RetryCredentials -> CreationAttempt.RetryCredentials
+                DurableCreationAttemptPolicy.Outcome.SettingsResolution -> CreationAttempt.SettingsResolution(account)
+                DurableCreationAttemptPolicy.Outcome.Recovery -> CreationAttempt.Recovery(account, requireNotNull(id))
+                DurableCreationAttemptPolicy.Outcome.Created -> CreationAttempt.Created(account)
+                DurableCreationAttemptPolicy.Outcome.Completed -> CreationAttempt.Completed(account)
+            }
+        } catch (e: Exception) {
+            // The row was observed. An incomplete inspection must never turn it into retry.
+            if (rowObserved) CreationAttempt.SettingsResolution(account) else CreationAttempt.RetryCredentials
+        }
     }
 
     sealed class CreationAttempt {
         data class Created(val account: Account) : CreationAttempt()
         data class Completed(val account: Account) : CreationAttempt()
+        data class Recovery(val account: Account, val creationId: String) : CreationAttempt()
         data class SettingsResolution(val account: Account) : CreationAttempt()
-        object ExistsOrBusy : CreationAttempt()
+        object RetryCredentials : CreationAttempt()
         object Failed : CreationAttempt()
     }
 
     companion object {
         private val CREATION_LOCK = Any()
+        private const val RETRY_ERROR_TAG = "account_creation_retry_error"
         fun newInstance(config: Configuration): CreateAccountFragment {
             SetupSecretHolder.setPendingConfiguration(config)
             return CreateAccountFragment()

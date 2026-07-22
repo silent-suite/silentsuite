@@ -30,6 +30,7 @@ class PostLoginSetupActivity : BaseActivity() {
     private lateinit var accountCreationId: String
     private var ambiguousOwnership = false
     private var missingCreationId = false
+    private var syncConfigurationFailed = false
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         accountManager = AccountManager.get(this)
@@ -37,7 +38,9 @@ class PostLoginSetupActivity : BaseActivity() {
         val expectedCreationId = intent.getStringExtra(EXTRA_CREATION_ID)
         if (supplied == null || supplied.type != App.accountType) { finish(); return }
         if (expectedCreationId.isNullOrBlank()) {
-            if (supplied in accountManager.getAccountsByType(App.accountType) && accountManager.getUserData(supplied, AccountSettings.KEY_CREATION_ID) == null) {
+            // A caller without exact generation evidence is resolution-only even when a
+            // same-name row has a generation; it must never adopt or mutate that row.
+            if (supplied in accountManager.getAccountsByType(App.accountType)) {
                 account=supplied; missingCreationId=true; ambiguousOwnership=true; setContentView(R.layout.activity_post_login_setup)
                 findViewById<Button>(R.id.setup_resolve_ambiguity).setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_SYNC_SETTINGS)) }
                 render(); return
@@ -109,7 +112,10 @@ class PostLoginSetupActivity : BaseActivity() {
         if (ambiguousOwnership) return
         when (state()) {
             PostLoginSetupState.CREATING -> render()
-            PostLoginSetupState.ACCOUNT_CREATED -> write(PostLoginSetupState.COLLECTIONS)
+            PostLoginSetupState.ACCOUNT_CREATED -> {
+                syncConfigurationFailed = !PostLoginSyncConfigurator.configure(applicationContext, account)
+                if (!syncConfigurationFailed) write(PostLoginSetupState.COLLECTIONS) else render()
+            }
             PostLoginSetupState.COLLECTIONS -> if (model.limitedContinuation) write(PostLoginSetupState.PERMISSIONS)
                 else model.inventoryAndCreate(applicationContext, account)
             PostLoginSetupState.PERMISSIONS -> {
@@ -179,11 +185,14 @@ class PostLoginSetupActivity : BaseActivity() {
             findViewById<Button>(R.id.setup_resolve_ambiguity).visibility=View.VISIBLE
             return
         }
-        findViewById<TextView>(R.id.setup_status).text = when (current) {
+        findViewById<TextView>(R.id.setup_status).text = when {
+            current == PostLoginSetupState.ACCOUNT_CREATED && syncConfigurationFailed -> getString(R.string.post_login_setup_sync_retry)
+            else -> when (current) {
             PostLoginSetupState.PERMISSIONS -> getString(R.string.post_login_setup_permissions)
             PostLoginSetupState.READY -> readySummary()
             PostLoginSetupState.RECOVERY_REQUIRED -> getString(R.string.post_login_setup_recovery)
             else -> getString(R.string.post_login_setup_status, current.name)
+            }
         }
         findViewById<Button>(R.id.setup_done).visibility = if (current == PostLoginSetupState.READY) View.VISIBLE else View.GONE
         val permits = SetupContinuationPolicy.permits(current, model.inventoryOutcome, SetupContinuationPolicy.Action.SkipIntegrations)
