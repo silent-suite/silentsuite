@@ -245,14 +245,14 @@ class ProviderBoundaryPolicyTest {
     @Test fun `contacts terminal paths preserve frozen v1 terminal evidence`() {
         val main = Account("main", "main-type")
         val child = Account("child", "child-type")
-        val storage = MemoryStorage()
-        val store = boundaryStore(storage, main, child)
         val cases = listOf(
             SyncStatusStore.ChildResult.SUCCESS to null,
             SyncStatusStore.ChildResult.FAILURE to SyncStatusStore.FailureCategory.NETWORK,
             SyncStatusStore.ChildResult.REMOVED to SyncStatusStore.FailureCategory.CHILD_REMOVED,
         )
         cases.forEachIndexed { index, (result, category) ->
+            val storage = MemoryStorage()
+            val store = boundaryStore(storage, main, child)
             val attempt = "frozen-$index"
             assertTrue(store.beginAttempt(main, SyncStatusStore.Service.CONTACTS, attempt, index.toLong(), null))
             assertEquals(SyncStatusStore.ContactsStart.Started(attempt),
@@ -263,6 +263,7 @@ class ProviderBoundaryPolicyTest {
             val shadow = storage.values.entries.single { it.key.startsWith("status.") && it.key.endsWith(".CONTACTS") }
             val frozen = FrozenBaselineV1StatusReader(storage::get).status(shadow.key, contacts = true)
             assertEquals(store.status(main, SyncStatusStore.Service.CONTACTS).lastSuccessAt, frozen.successAt)
+            assertEquals(store.status(main, SyncStatusStore.Service.CONTACTS).lastFailureAt, frozen.failureAt)
             assertEquals(store.status(main, SyncStatusStore.Service.CONTACTS).lastFailureCategory?.name, frozen.failureCategory)
         }
     }

@@ -80,7 +80,9 @@ class AccountDashboardRuntimeTest {
             assertNoGenericAttention(scenario)
             assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, "runtime-attempt", now + 2))
             scenario.onActivity { it.refresh() }
-            waitForText(scenario, R.id.caldav_status) { it.startsWith("Synced") }
+            waitForText(scenario, R.id.caldav_status) {
+                it == context.getString(R.string.dashboard_status_synced)
+            }
             assertNoGenericAttention(scenario)
         }
     }
@@ -168,8 +170,11 @@ class AccountDashboardRuntimeTest {
                 waitForText(scenario, R.id.caldav_status) {
                     it == context.getString(R.string.dashboard_status_interrupted)
                 }
+                waitForText(scenario, R.id.dashboard_overall_status) {
+                    it == context.getString(R.string.dashboard_status_task_app_needed)
+                }
                 scenario.onActivity { activity ->
-                    assertEquals(context.getString(R.string.dashboard_retry_sync),
+                    assertEquals(context.getString(R.string.dashboard_install_task_app),
                         activity.findViewById<TextView>(R.id.dashboard_context_action).text.toString())
                 }
             }

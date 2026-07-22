@@ -138,6 +138,29 @@ class AccountDashboardStateTest {
             aggregateAccountDashboard(listOf(config, master, auth)).failure)
     }
 
+    @Test fun `missing task provider owns aggregate action while interrupted calendar retains retry`() {
+        val interruptedCalendar = AccountDashboardModel(AccountDashboardState.INTERRUPTED,
+            failure = SyncStatusStore.FailureCategory.INTERRUPTED)
+        val readyContacts = AccountDashboardModel(AccountDashboardState.SUCCESS)
+        val missingTaskProvider = AccountDashboardModel(AccountDashboardState.BLOCKED,
+            blockedBy = AccountDashboardBlock.PROVIDER)
+
+        val calendarPresentation = presentAccountDashboard(interruptedCalendar, null)
+        assertEquals(AccountDashboardLabel.INTERRUPTED, calendarPresentation.label)
+        assertEquals(AccountDashboardAction.RETRY_SYNC, calendarPresentation.action)
+
+        val aggregate = aggregateAccountDashboard(listOf(interruptedCalendar, readyContacts, missingTaskProvider))
+        val aggregatePresentation = presentAccountDashboard(aggregate, null)
+        assertEquals(AccountDashboardState.BLOCKED, aggregate.state)
+        assertEquals(AccountDashboardBlock.PROVIDER, aggregate.blockedBy)
+        assertEquals(AccountDashboardLabel.TASK_APP_NEEDED, aggregatePresentation.label)
+        assertEquals(AccountDashboardAction.INSTALL_TASK_APP, aggregatePresentation.action)
+        assertTrue(aggregate.secondaryIssues.any {
+            it.serviceIndex == 0 && it.state == AccountDashboardState.INTERRUPTED &&
+                it.category == SyncStatusStore.FailureCategory.INTERRUPTED
+        })
+    }
+
     @Test fun `restored aggregate safety never reports success for incomplete service sets`() {
         val success = AccountDashboardModel(AccountDashboardState.SUCCESS)
         assertEquals(AccountDashboardState.NEVER_SYNCED,
