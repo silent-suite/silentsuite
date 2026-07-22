@@ -95,7 +95,7 @@ def test_contacts_child_cleanup_snapshots_identity_and_signals_retry_on_every_fa
     assert "finishWithoutOutcomeAtAdapterBoundary" in adapter
     assert "USER_DATA_MAIN_ACCOUNT_IDENTITY" in address_book
     assert "USER_DATA_MAIN_ACCOUNT_CREATION_ID" not in address_book
-    assert "val capturedIdentity = statusStore.identityFromStorageKey(" in address_book
+    assert "val capturedIdentity = SyncStatusStore.identityFromStorageKey(" in address_book
     assert "if (capturedIdentity != null)" in address_book
     assert "recordContactsChildRemoved(capturedIdentity, child)" in address_book
     assert "mainGenerationStillCurrent" in address_book
@@ -129,7 +129,7 @@ def test_address_book_child_identity_missing_or_malformed_fails_closed_and_repla
 
     assert "identityFromStorageKey(storageKey: String?): MainIdentity?" in store
     assert "storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)" in store
-    assert "val capturedIdentity = statusStore.identityFromStorageKey(" in source
+    assert "val capturedIdentity = SyncStatusStore.identityFromStorageKey(" in source
     removal = source.split("val recordConfirmedRemoval =", 1)[1].split('@Suppress("DEPRECATION")', 1)[0]
     assert "if (capturedIdentity != null)" in removal
     assert "recordContactsChildRemoved" not in removal.split("if (capturedIdentity != null)", 1)[0]

@@ -218,7 +218,7 @@ class LocalAddressBook(
         val main = mainAccount
         val child = account
         val statusStore = SyncStatusStore(context)
-        val capturedIdentity = statusStore.identityFromStorageKey(
+        val capturedIdentity = SyncStatusStore.identityFromStorageKey(
             accountManager.getUserData(child, USER_DATA_MAIN_ACCOUNT_IDENTITY))
         val recordConfirmedRemoval = {
             // Legacy children have no trustworthy parent generation: delete them without

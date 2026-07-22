@@ -99,8 +99,6 @@ class SyncStatusStore internal constructor(
 
     fun identity(account: Account) = MainIdentity(mainAccountKey(account))
     internal fun identity(account: Account, creationId: String) = MainIdentity(hashIdentity(account.type, account.name, creationId))
-    internal fun identityFromStorageKey(storageKey: String?): MainIdentity? =
-        storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)
 
     @Synchronized
     fun status(account: Account, service: Service): Status = synchronized(STORE_LOCK) {
@@ -720,9 +718,6 @@ class SyncStatusStore internal constructor(
     }
     private fun isSafeOpaqueId(value: String) = value.length in 1..MAX_OPAQUE_ID_LENGTH &&
         value.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' || it == '-' }
-    private fun isSha256Id(value: String) = value.length == SHA256_HEX_LENGTH &&
-        value.all { it in '0'..'9' || it in 'a'..'f' }
-
     private fun persistFaults(keys: Set<String>, retainInProcess: Boolean = false) {
         val timestamp = System.currentTimeMillis().coerceAtLeast(0)
         val puts = keys.associate { key ->
@@ -768,6 +763,10 @@ class SyncStatusStore internal constructor(
             FailureCategory.CONFIGURATION, FailureCategory.UNKNOWN)
         private val STORE_LOCK = Any()
         private val failedWrites = mutableMapOf<String, Long>()
+        internal fun identityFromStorageKey(storageKey: String?): MainIdentity? =
+            storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)
+        private fun isSha256Id(value: String) = value.length == SHA256_HEX_LENGTH &&
+            value.all { it in '0'..'9' || it in 'a'..'f' }
         private fun hashIdentity(type: String?, name: String?, creationId: String?): String = MessageDigest.getInstance("SHA-256")
             .digest("$type\u0000$name\u0000${creationId.orEmpty()}".toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
