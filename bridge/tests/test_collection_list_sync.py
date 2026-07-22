@@ -150,7 +150,12 @@ def test_removed_membership_preserves_pending_item_and_marks_collection_dirty(
     original_atomic = database.atomic
 
     def tracked_atomic(*args, **kwargs):
-        lock_types.append(args[0] if args else kwargs.get("lock_type"))
+        lock_types.append(
+            (
+                args[0] if args else kwargs.get("lock_type"),
+                database.in_transaction(),
+            )
+        )
         return original_atomic(*args, **kwargs)
 
     monkeypatch.setattr(database, "atomic", tracked_atomic)
@@ -184,4 +189,4 @@ def test_removed_membership_preserves_pending_item_and_marks_collection_dirty(
     assert persisted_collection.dirty is True
     assert models.ItemEntity.get_by_id(pending_item.id).dirty is True
     assert models.HrefMapper.get_by_id(pending_item.id).href == "pending-contact.vcf"
-    assert "IMMEDIATE" in lock_types
+    assert ("IMMEDIATE", False) in lock_types

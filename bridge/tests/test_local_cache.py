@@ -1417,7 +1417,12 @@ def test_pulled_item_hash_is_captured_under_immediate_writer_lock(
     @contextmanager
     def tracked_atomic(*args, **kwargs):
         nonlocal active
-        lock_types.append(args[0] if args else kwargs.get("lock_type"))
+        lock_types.append(
+            (
+                args[0] if args else kwargs.get("lock_type"),
+                mem_db.in_transaction(),
+            )
+        )
         with original_atomic(*args, **kwargs):
             active = True
             try:
@@ -1443,7 +1448,7 @@ def test_pulled_item_hash_is_captured_under_immediate_writer_lock(
         item_mgr,
         item,
     ) is True
-    assert "IMMEDIATE" in lock_types
+    assert ("IMMEDIATE", False) in lock_types
 
 
 def test_remote_pull_cannot_overwrite_newer_dirty_local_item(mem_db, user):

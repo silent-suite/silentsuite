@@ -733,7 +733,7 @@ class Etebase:
         stoken = self.user.stoken
         done = False
 
-        with db.database_proxy:
+        with db.database_proxy.connection_context():
             while not done:
                 fetch_options = FetchOptions().stoken(stoken)
                 col_list = col_mgr.list(config.COL_TYPES, fetch_options)
@@ -1053,7 +1053,7 @@ class Etebase:
                 unresolved.delete_instance()
 
     def pull_collection(self, uid):
-        with db.database_proxy:
+        with db.database_proxy.connection_context():
             col_mgr = self.etebase.get_collection_manager()
             cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
 
