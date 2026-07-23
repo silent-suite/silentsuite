@@ -12,20 +12,24 @@ Choose the install channel you want to keep using for updates.
 
 ### Option 1: Google Play
 
-Install from Google Play if you want Play-managed updates. If you installed SilentSuite from Google Play, keep updating it from Google Play.
+[Download SilentSuite from Google Play](https://play.google.com/store/apps/details?id=io.silentsuite.android) if you want Play-managed installation and updates. If you installed SilentSuite from Google Play, keep updating it from Google Play.
 
-### Option 2: Obtainium
+### Option 2: Zapstore
+
+[Download SilentSuite from Zapstore](https://zapstore.dev/apps/io.silentsuite.android) if you prefer an open app store that installs the signed APK and manages updates outside Google Play.
+
+### Option 3: Obtainium
 
 [Obtainium](https://github.com/ImranR98/Obtainium) is an open-source Android app that installs and auto-updates apps directly from GitHub releases -- no Google Play, no tracking, no account needed.
 
 1. Install Obtainium from [GitHub Releases](https://github.com/ImranR98/Obtainium/releases) or [F-Droid](https://f-droid.org/packages/dev.imranr.obtainium.fdroid/).
-2. In Obtainium, tap **Add App** and paste this URL:
+2. Tap [Add SilentSuite to Obtainium](https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/silent-suite/silentsuite), or open Obtainium, tap **Add App**, and paste this URL:
    ```
    https://github.com/silent-suite/silentsuite
    ```
 3. Obtainium will detect the latest SilentSuite release and install the APK. It will notify you whenever a new release is published.
 
-### Option 3: Direct APK download
+### Option 4: Direct APK download
 
 Grab the latest APK directly from GitHub Releases:
 
