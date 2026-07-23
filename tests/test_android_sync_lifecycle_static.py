@@ -403,26 +403,41 @@ def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_re
     batch_b = set(batch_b_ordered)
     monolithic = set(monolithic_ordered)
     assert batch_a.isdisjoint(batch_b)
-    assert batch_a == {dashboard}
-    assert batch_a | batch_b == monolithic
-    assert batch_a_ordered + batch_b_ordered == [
-        dashboard,
-        *[class_name for class_name in monolithic_ordered if class_name != dashboard],
-    ]
-    assert len(batch_b) == 8
+    diagnostic = (
+        f"{dashboard}#"
+        "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
+    )
+    dashboard_source = (
+        ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/"
+        "AccountDashboardRuntimeTest.kt"
+    ).read_text(encoding="utf-8")
+    dashboard_methods = set(re.findall(r"@Test\s+fun\s+(\w+)", dashboard_source))
+    expected_other_dashboard = {
+        f"{dashboard}#{method}"
+        for method in dashboard_methods
+        if method != diagnostic.split("#", 1)[1]
+    }
+    non_dashboard = set(monolithic) - {dashboard}
+    assert batch_a == {diagnostic}
+    assert batch_b == expected_other_dashboard | non_dashboard
+    assert batch_a.isdisjoint(batch_b)
+    assert {selector.split("#", 1)[0] for selector in batch_a | batch_b} == monolithic
+    assert len(expected_other_dashboard) == 9
+    assert len(batch_b) == 17
     assert len(monolithic) == 9
+    assert all(batch_b_ordered.count(selector) == 1 for selector in batch_b)
     assert script.count('"${focused_classes}"') == 1
+    assert 'command -v timeout >/dev/null 2>&1' in script
+    assert 'timeout --signal=TERM --kill-after=10s 600s' in script
     first_run = script.index(
         '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"'
     )
-    save_results = script.index(
-        'cp -R "app/build/outputs/androidTest-results/connected/." "${api21_saved_results}/"'
-    )
     install_trap = script.index("trap restore_api21_batch_a EXIT")
+    save_results = script.index("\n  save_api21_batch_a", first_run)
     second_run = script.index(
         '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"'
     )
-    assert first_run < save_results < install_trap < second_run
+    assert install_trap < first_run < save_results < second_run
     assert "status=$?" in script
     assert "set +e" in script
     assert "restore_status=$?" in script
@@ -448,6 +463,37 @@ def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
     assert "repeat(200)" in helper
     assert "scenario.onActivity" in helper
     assert "SystemClock.sleep(50)" in helper
+
+
+def test_api21_diagnostic_publishes_privacy_safe_stage_boundaries():
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
+    diagnostic = runtime.split(
+        "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()", 1
+    )[1].split("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()", 1)[0]
+
+    assert 'Log.i("DashboardRuntime", "lifecycle-diagnostic:$value")' in diagnostic
+    for boundary in (
+        "before-setup", "after-setup", "before-store-old-requested",
+        "after-store-old-requested", "before-store-old-attempt", "after-store-old-attempt",
+        "before-store-expire-pending", "after-store-expire-pending",
+        "before-store-expire-active", "after-store-expire-active",
+        "before-store-runtime-requested", "after-store-runtime-requested",
+        "before-store-runtime-attempt", "after-store-runtime-attempt",
+        "before-store-success", "after-store-success",
+        "before-refresh-requested", "after-refresh-requested",
+        "before-refresh-queued", "after-refresh-queued",
+        "before-refresh-running", "after-refresh-running",
+        "before-refresh-settling", "after-refresh-settling",
+        "before-refresh-terminal", "after-refresh-terminal",
+        "before-wait-requested", "after-wait-requested",
+        "before-wait-queued", "after-wait-queued",
+        "before-wait-running", "after-wait-running",
+        "before-wait-settling", "after-wait-settling",
+        "before-wait-terminal", "after-wait-terminal", "completion",
+    ):
+        assert f'stage("{boundary}")' in diagnostic
+    assert "account.name" not in diagnostic
+    assert "activeRequestId" not in diagnostic.split('stage("after-setup")', 1)[0]
 
 
 def test_dashboard_runtime_polling_helpers_retain_synchronization_and_bounds():

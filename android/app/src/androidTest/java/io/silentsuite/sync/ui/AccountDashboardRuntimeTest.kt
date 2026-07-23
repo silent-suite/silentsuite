@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
@@ -40,6 +41,8 @@ import org.junit.runner.RunWith
 class AccountDashboardRuntimeTest {
     @Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention() {
         val phase = AtomicInteger(0)
+        val stage = { value: String -> Log.i("DashboardRuntime", "lifecycle-diagnostic:$value") }
+        stage("before-setup")
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
             val store = SyncStatusStore(loaderContext)
             AccountActivity.AccountInfo().apply {
@@ -51,39 +54,75 @@ class AccountDashboardRuntimeTest {
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
             }
         }) { context, account, scenario ->
+            stage("after-setup")
             val store = SyncStatusStore(context)
             val now = System.currentTimeMillis()
+            stage("before-store-old-requested")
             assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.TASKS), "old-pending", 1))
+            stage("after-store-old-requested")
+            stage("before-store-old-attempt")
             assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, "old-active", 1, null))
+            stage("after-store-old-attempt")
+            stage("before-store-expire-pending")
             assertTrue(store.expireStale(account, SyncStatusStore.Service.TASKS, now,
                 platformActive = false, platformPending = true, interruptionAfterMillis = 1))
+            stage("after-store-expire-pending")
+            stage("before-store-expire-active")
             assertTrue(store.expireStale(account, SyncStatusStore.Service.CONTACTS, now,
                 platformActive = true, platformPending = false, interruptionAfterMillis = 1))
+            stage("after-store-expire-active")
             assertEquals("old-pending", store.status(account, SyncStatusStore.Service.TASKS).activeRequestId)
             assertEquals("old-active", store.status(account, SyncStatusStore.Service.CONTACTS).activeAttemptId)
+            stage("before-store-runtime-requested")
             assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.CALENDAR), "runtime-request", now))
+            stage("after-store-runtime-requested")
+            stage("before-refresh-requested")
             scenario.onActivity { it.refresh() }
+            stage("after-refresh-requested")
+            stage("before-wait-requested")
             waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_requested) }
+            stage("after-wait-requested")
             assertNoGenericAttention(scenario)
             phase.set(1)
+            stage("before-refresh-queued")
             scenario.onActivity { it.refresh() }
+            stage("after-refresh-queued")
+            stage("before-wait-queued")
             waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_queued) }
+            stage("after-wait-queued")
             assertNoGenericAttention(scenario)
             phase.set(2)
+            stage("before-refresh-running")
             scenario.onActivity { it.refresh() }
+            stage("after-refresh-running")
+            stage("before-wait-running")
             waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_syncing) }
+            stage("after-wait-running")
             assertNoGenericAttention(scenario)
+            stage("before-store-runtime-attempt")
             assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CALENDAR, "runtime-attempt", now + 1, "runtime-request"))
+            stage("after-store-runtime-attempt")
             phase.set(3)
+            stage("before-refresh-settling")
             scenario.onActivity { it.refresh() }
+            stage("after-refresh-settling")
+            stage("before-wait-settling")
             waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_settling) }
+            stage("after-wait-settling")
             assertNoGenericAttention(scenario)
+            stage("before-store-success")
             assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, "runtime-attempt", now + 2))
+            stage("after-store-success")
+            stage("before-refresh-terminal")
             scenario.onActivity { it.refresh() }
+            stage("after-refresh-terminal")
+            stage("before-wait-terminal")
             waitForText(scenario, R.id.caldav_status) {
                 it == context.getString(R.string.dashboard_status_synced)
             }
+            stage("after-wait-terminal")
             assertNoGenericAttention(scenario)
+            stage("completion")
         }
     }
 

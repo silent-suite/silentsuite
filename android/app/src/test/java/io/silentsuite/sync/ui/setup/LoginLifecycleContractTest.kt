@@ -1,6 +1,7 @@
 package io.silentsuite.sync.ui.setup
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -164,5 +165,51 @@ class LoginLifecycleContractTest {
             assertTrue(test.contains("phase.set($phase)"))
         }
         assertFalse(test.contains("var phase = 0"))
+    }
+
+    @Test
+    fun api21DiagnosticBatchIsBoundedAndExactlyDisjointFromTheRemainingRuntimeCoverage() {
+        val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
+        val dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
+        val diagnostic = "$dashboard#requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
+        val batchA = Regex("""^api21_batch_a='([^']+)'$""", RegexOption.MULTILINE)
+            .find(runtimeScript)!!.groupValues[1].split(",")
+        val batchB = Regex("""^api21_batch_b='([^']+)'$""", RegexOption.MULTILINE)
+            .find(runtimeScript)!!.groupValues[1].split(",")
+        val expectedOtherDashboard = setOf(
+            "freshContactsGenerationFinishesBeforeChildDispatchOrCompletion",
+            "mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue",
+            "futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent",
+            "truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation",
+            "serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting",
+            "retainedLoadRejectsSameNameReplacementBeforePublication",
+            "initialLoadFailurePublishesTerminalErrorAndRefreshFailureRetainsValidDashboard",
+            "retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes",
+            "dashboardExportCompletionPreservesExactDashboardAfterRecreation",
+        ).map { "$dashboard#$it" }.toSet()
+
+        assertEquals(setOf(diagnostic), batchA.toSet())
+        assertEquals(expectedOtherDashboard, batchB.filter { it.startsWith("$dashboard#") }.toSet())
+        assertTrue(batchA.toSet().intersect(batchB.toSet()).isEmpty())
+        assertEquals(17, batchB.size)
+        assertTrue(runtimeScript.contains("timeout --signal=TERM --kill-after=10s 600s"))
+        assertTrue(runtimeScript.indexOf("trap restore_api21_batch_a EXIT") <
+            runtimeScript.indexOf("""class="${'$'}{api21_batch_a}""""))
+    }
+
+    @Test
+    fun dashboardDiagnosticLogsOnlyNamedStageBoundaries() {
+        val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        val diagnostic = source.substringAfter(
+            "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()"
+        ).substringBefore("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()")
+
+        assertTrue(diagnostic.contains("""Log.i("DashboardRuntime", "lifecycle-diagnostic:${'$'}value")"""))
+        listOf("before-setup", "after-setup", "before-store-old-requested",
+            "after-store-success", "before-refresh-requested", "after-refresh-terminal",
+            "before-wait-requested", "after-wait-terminal", "completion")
+            .forEach { assertTrue(diagnostic.contains("""stage("$it")""")) }
+        assertFalse(diagnostic.contains("""Log.i("DashboardRuntime", account"""))
+        assertFalse(diagnostic.contains("""Log.i("DashboardRuntime", exact"""))
     }
 }
