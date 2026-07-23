@@ -371,7 +371,8 @@ def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_re
     assertion = workflow.split("- name: Assert focused runtime methods executed", 1)[1]
     dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
 
-    assert "set -euo pipefail" in step
+    assert "set -eu" in step
+    assert "pipefail" not in step
     assert "if [ '${{ matrix.api-level }}' = '21' ]; then" in step
     assert step.count("app:connectedDebugAndroidTest") == 3
     assert "mktemp -d" in step
