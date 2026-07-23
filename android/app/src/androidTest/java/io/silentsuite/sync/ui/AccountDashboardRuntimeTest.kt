@@ -494,15 +494,19 @@ class AccountDashboardRuntimeTest {
                         navigation.menu.findItem(R.id.nav_invitations)))
                     activity.reloadSubscriptionStatusForTesting()
                 }
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-                assertTrue("stale Activity read a replacement fingerprint", fingerprints.isEmpty())
-                assertTrue("stale Activity launched a replacement route", routes.isEmpty())
-                assertTrue("stale Activity opened an export document", exportDocuments.isEmpty())
-                assertEquals("stale Activity wrote replacement export data", 0, exports)
-                assertEquals("stale Activity read replacement billing state", 0, billingReads)
-                assertEquals("stale Activity requested runtime permissions", 0, permissionRequests)
-                assertEquals("stale Activity launched permission remediation", 0, permissionRemediations)
-                assertEquals("stale Activity enabled global sync", 0, masterSyncEnables)
+                repeat(20) {
+                    android.os.SystemClock.sleep(25)
+                    scenario.onActivity {
+                        assertTrue("stale Activity read a replacement fingerprint", fingerprints.isEmpty())
+                        assertTrue("stale Activity launched a replacement route", routes.isEmpty())
+                        assertTrue("stale Activity opened an export document", exportDocuments.isEmpty())
+                        assertEquals("stale Activity wrote replacement export data", 0, exports)
+                        assertEquals("stale Activity read replacement billing state", 0, billingReads)
+                        assertEquals("stale Activity requested runtime permissions", 0, permissionRequests)
+                        assertEquals("stale Activity launched permission remediation", 0, permissionRemediations)
+                        assertEquals("stale Activity enabled global sync", 0, masterSyncEnables)
+                    }
+                }
             } finally {
                 AccountActivity.fingerprintLoaderOverride = null
                 AccountActivity.accountRouteLauncherOverride = null
@@ -649,7 +653,6 @@ class AccountDashboardRuntimeTest {
 
     private fun waitForRetainedGenerationInvalidation(scenario: ActivityScenario<AccountActivity>) {
         repeat(100) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var observed = false
             scenario.onActivity { observed = it.hasObservedRetainedGenerationInvalidation() }
             if (observed) return
@@ -660,7 +663,6 @@ class AccountDashboardRuntimeTest {
 
     private fun assertNoAdditionalDelivery(scenario: ActivityScenario<AccountActivity>, deliveriesBefore: Int) {
         repeat(20) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var deliveries = deliveriesBefore
             scenario.onActivity { deliveries = it.accountInfoDeliveryCount }
             assertEquals("replacement generation published dashboard data", deliveriesBefore, deliveries)
@@ -683,7 +685,6 @@ class AccountDashboardRuntimeTest {
 
     private fun waitForModel(scenario: ActivityScenario<AccountActivity>) {
         repeat(50) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var delivered = false
             scenario.onActivity { delivered = it.hasDeliveredAccountInfo }
             if (delivered) return
@@ -694,7 +695,6 @@ class AccountDashboardRuntimeTest {
 
     private fun waitForDeliveryAfter(scenario: ActivityScenario<AccountActivity>, previous: Int) {
         repeat(200) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var count = previous
             scenario.onActivity { count = it.accountInfoDeliveryCount }
             if (count > previous) return
@@ -706,7 +706,6 @@ class AccountDashboardRuntimeTest {
     private fun waitUntil(description: String, timeoutMillis: Long = 10_000, predicate: () -> Boolean) {
         val deadline = android.os.SystemClock.uptimeMillis() + timeoutMillis
         while (android.os.SystemClock.uptimeMillis() < deadline) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             if (predicate()) return
             android.os.SystemClock.sleep(50)
         }

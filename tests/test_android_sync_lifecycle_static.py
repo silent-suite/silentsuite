@@ -366,10 +366,68 @@ def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
     runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
     helper = runtime.split("private fun waitForText(", 1)[1].split("private fun assertNoGenericAttention", 1)[0]
 
+    assert "waitForIdleSync" not in runtime
     assert "repeat(200)" in helper
     assert "scenario.onActivity" in helper
     assert "SystemClock.sleep(50)" in helper
-    assert "waitForIdleSync" not in helper
+
+
+def test_dashboard_runtime_polling_helpers_retain_synchronization_and_bounds():
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
+
+    retained = runtime.split("private fun waitForRetainedGenerationInvalidation(", 1)[1].split("private fun assertNoAdditionalDelivery", 1)[0]
+    assert "repeat(100)" in retained
+    assert "scenario.onActivity" in retained
+    assert "SystemClock.sleep(50)" in retained
+    assert 'throw AssertionError("retained OnAccountsUpdateListener did not observe generation absence")' in retained
+
+    no_delivery = runtime.split("private fun assertNoAdditionalDelivery(", 1)[1].split("private fun service", 1)[0]
+    assert "repeat(20)" in no_delivery
+    assert "scenario.onActivity" in no_delivery
+    assert 'assertEquals("replacement generation published dashboard data", deliveriesBefore, deliveries)' in no_delivery
+    assert "SystemClock.sleep(25)" in no_delivery
+
+    model = runtime.split("private fun waitForModel(", 1)[1].split("private fun waitForDeliveryAfter", 1)[0]
+    assert "repeat(50)" in model
+    assert "scenario.onActivity" in model
+    assert "SystemClock.sleep(50)" in model
+    assert 'throw AssertionError("Dashboard model was not delivered")' in model
+
+    delivery = runtime.split("private fun waitForDeliveryAfter(", 1)[1].split("private fun waitUntil", 1)[0]
+    assert "repeat(200)" in delivery
+    assert "scenario.onActivity" in delivery
+    assert "SystemClock.sleep(50)" in delivery
+    assert 'throw AssertionError("Dashboard model was not delivered again")' in delivery
+
+    until = runtime.split("private fun waitUntil(", 1)[1].split("private fun waitForText", 1)[0]
+    assert "val deadline = android.os.SystemClock.uptimeMillis() + timeoutMillis" in until
+    assert "while (android.os.SystemClock.uptimeMillis() < deadline)" in until
+    assert "if (predicate()) return" in until
+    assert "SystemClock.sleep(50)" in until
+    assert 'throw AssertionError("Timed out waiting for $description")' in until
+
+
+def test_stale_dashboard_actions_use_bounded_main_thread_quiet_window():
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
+    method = runtime.split("fun retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes()", 1)[1].split("\n    @Test", 1)[0]
+    quiet_window = method.split("repeat(20) {", 1)[1].split("\n                }", 1)[0]
+
+    assert "waitForIdleSync" not in method
+    assert "android.os.SystemClock.sleep(25)" in quiet_window
+    assert "scenario.onActivity {" in quiet_window
+    assert quiet_window.index("android.os.SystemClock.sleep(25)") < quiet_window.index("scenario.onActivity {")
+    assertions = (
+        'assertTrue("stale Activity read a replacement fingerprint", fingerprints.isEmpty())',
+        'assertTrue("stale Activity launched a replacement route", routes.isEmpty())',
+        'assertTrue("stale Activity opened an export document", exportDocuments.isEmpty())',
+        'assertEquals("stale Activity wrote replacement export data", 0, exports)',
+        'assertEquals("stale Activity read replacement billing state", 0, billingReads)',
+        'assertEquals("stale Activity requested runtime permissions", 0, permissionRequests)',
+        'assertEquals("stale Activity launched permission remediation", 0, permissionRemediations)',
+        'assertEquals("stale Activity enabled global sync", 0, masterSyncEnables)',
+    )
+    for assertion in assertions:
+        assert assertion in quiet_window
 
 
 def test_no_event_runtime_boundary_uses_viewmodel_maintenance_not_direct_expiry():
