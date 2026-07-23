@@ -172,13 +172,13 @@ class LoginLifecycleContractTest {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         val dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
         val diagnostic = "$dashboard#requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
+        val mixed = "$dashboard#mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue"
         val batchA = Regex("""^api21_batch_a='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
         val batchB = Regex("""^api21_batch_b='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
         val expectedOtherDashboard = setOf(
             "freshContactsGenerationFinishesBeforeChildDispatchOrCompletion",
-            "mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue",
             "futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent",
             "truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation",
             "serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting",
@@ -188,10 +188,11 @@ class LoginLifecycleContractTest {
             "dashboardExportCompletionPreservesExactDashboardAfterRecreation",
         ).map { "$dashboard#$it" }.toSet()
 
-        assertEquals(setOf(diagnostic), batchA.toSet())
+        assertEquals(listOf(diagnostic, mixed), batchA)
+        assertEquals(setOf(diagnostic, mixed), batchA.toSet())
         assertEquals(expectedOtherDashboard, batchB.filter { it.startsWith("$dashboard#") }.toSet())
         assertTrue(batchA.toSet().intersect(batchB.toSet()).isEmpty())
-        assertEquals(17, batchB.size)
+        assertEquals(16, batchB.size)
         assertTrue(runtimeScript.contains(
             """timeout --signal=TERM --kill-after=10s 600s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_a}""""
@@ -224,6 +225,27 @@ class LoginLifecycleContractTest {
         assertTrue(observerPoll.contains("AtomicReference<String>"))
         assertTrue(observerPoll.contains("System.nanoTime()"))
         assertFalse(observerPoll.contains("scenario.onActivity"))
+    }
+
+    @Test
+    fun mixedDashboardObserversPrecedeMutationAndAvoidPostRefreshBarriers() {
+        val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        val mixed = source.substringAfter(
+            "@Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue()"
+        ).substringBefore("@Test fun futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent()")
+
+        assertEquals(2, Regex("scenario\\.onActivity").findAll(mixed).count())
+        assertEquals(1, Regex("addTextChangedListener").findAll(mixed).count())
+        assertTrue(mixed.indexOf("scenario.onActivity") < mixed.indexOf("val store = SyncStatusStore(context)"))
+        assertTrue(mixed.contains("observe(R.id.dashboard_overall_status, overallText)"))
+        assertTrue(mixed.contains("observe(R.id.caldav_status, caldavText)"))
+        assertTrue(mixed.contains("observe(R.id.carddav_status, carddavText)"))
+        assertEquals(3, Regex("waitForObservedText\\(").findAll(mixed).count())
+        assertFalse(mixed.contains("waitForText(scenario"))
+        assertFalse(mixed.substringAfter("scenario.onActivity { it.refresh() }").contains("scenario.onActivity"))
+        assertTrue(mixed.contains("assertEquals(syncing, overallText.get())"))
+        assertTrue(mixed.contains("assertEquals(syncing, caldavText.get())"))
+        assertTrue(mixed.contains("assertEquals(issue, carddavText.get())"))
     }
 
     @Test

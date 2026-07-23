@@ -407,6 +407,10 @@ def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_re
         f"{dashboard}#"
         "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
     )
+    mixed = (
+        f"{dashboard}#"
+        "mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue"
+    )
     dashboard_source = (
         ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/"
         "AccountDashboardRuntimeTest.kt"
@@ -415,15 +419,16 @@ def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_re
     expected_other_dashboard = {
         f"{dashboard}#{method}"
         for method in dashboard_methods
-        if method != diagnostic.split("#", 1)[1]
+        if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
     }
     non_dashboard = set(monolithic) - {dashboard}
-    assert batch_a == {diagnostic}
+    assert batch_a_ordered == [diagnostic, mixed]
+    assert batch_a == {diagnostic, mixed}
     assert batch_b == expected_other_dashboard | non_dashboard
     assert batch_a.isdisjoint(batch_b)
     assert {selector.split("#", 1)[0] for selector in batch_a | batch_b} == monolithic
-    assert len(expected_other_dashboard) == 9
-    assert len(batch_b) == 17
+    assert len(expected_other_dashboard) == 8
+    assert len(batch_b) == 16
     assert len(monolithic) == 9
     assert all(batch_b_ordered.count(selector) == 1 for selector in batch_b)
     assert script.count('"${focused_classes}"') == 1
@@ -492,6 +497,27 @@ def test_api21_lifecycle_observer_avoids_blocking_activity_polling():
     assert "AtomicReference<String>" in observer_poll
     assert "System.nanoTime()" in observer_poll
     assert "scenario.onActivity" not in observer_poll
+
+
+def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh_barriers():
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
+    mixed = runtime.split(
+        "@Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue()", 1
+    )[1].split("@Test fun futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent()", 1)[0]
+
+    assert mixed.count("scenario.onActivity") == 2
+    assert mixed.count("addTextChangedListener") == 1
+    assert mixed.index("scenario.onActivity") < mixed.index("val store = SyncStatusStore(context)")
+    assert "observe(R.id.dashboard_overall_status, overallText)" in mixed
+    assert "observe(R.id.caldav_status, caldavText)" in mixed
+    assert "observe(R.id.carddav_status, carddavText)" in mixed
+    assert mixed.count("waitForObservedText(") == 3
+    assert "waitForText(scenario" not in mixed
+    after_refresh = mixed.split("scenario.onActivity { it.refresh() }", 1)[1]
+    assert "scenario.onActivity" not in after_refresh
+    assert "assertEquals(syncing, overallText.get())" in mixed
+    assert "assertEquals(syncing, caldavText.get())" in mixed
+    assert "assertEquals(issue, carddavText.get())" in mixed
 
 
 def test_dashboard_runtime_polling_helpers_retain_synchronization_and_bounds():

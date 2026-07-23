@@ -139,6 +139,25 @@ class AccountDashboardRuntimeTest {
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
             }
         }) { context, account, scenario ->
+            val overallText = AtomicReference<String>("")
+            val caldavText = AtomicReference<String>("")
+            val carddavText = AtomicReference<String>("")
+            scenario.onActivity { activity ->
+                fun observe(viewId: Int, observed: AtomicReference<String>) {
+                    val view = activity.findViewById<TextView>(viewId)
+                    observed.set(view.text.toString())
+                    view.addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                        override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                            observed.set(text?.toString().orEmpty())
+                        }
+                        override fun afterTextChanged(text: Editable?) = Unit
+                    })
+                }
+                observe(R.id.dashboard_overall_status, overallText)
+                observe(R.id.caldav_status, caldavText)
+                observe(R.id.carddav_status, carddavText)
+            }
             val store = SyncStatusStore(context)
             val categories = listOf(
                 SyncStatusStore.FailureCategory.PERMISSION to R.string.dashboard_status_permission_needed,
@@ -158,15 +177,14 @@ class AccountDashboardRuntimeTest {
                         child, SyncStatusStore.ChildResult.FAILURE, category, System.currentTimeMillis()))
                 }
                 scenario.onActivity { it.refresh() }
-                waitForText(scenario, R.id.dashboard_overall_status) {
-                    it == context.getString(R.string.dashboard_status_syncing)
-                }
-                waitForText(scenario, R.id.carddav_status) { it == context.getString(label) }
-                scenario.onActivity { activity ->
-                    assertEquals(context.getString(R.string.dashboard_status_syncing),
-                        activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                    assertEquals(context.getString(label), activity.findViewById<TextView>(R.id.carddav_status).text.toString())
-                }
+                val syncing = context.getString(R.string.dashboard_status_syncing)
+                val issue = context.getString(label)
+                assertEquals(syncing, waitForObservedText(overallText, syncing))
+                assertEquals(syncing, waitForObservedText(caldavText, syncing))
+                assertEquals(issue, waitForObservedText(carddavText, issue))
+                assertEquals(syncing, overallText.get())
+                assertEquals(syncing, caldavText.get())
+                assertEquals(issue, carddavText.get())
             }
         }
     }
