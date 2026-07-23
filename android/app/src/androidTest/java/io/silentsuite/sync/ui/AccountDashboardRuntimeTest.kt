@@ -39,13 +39,13 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AccountDashboardRuntimeTest {
     @Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention() {
-        var phase = 0
+        val phase = AtomicInteger(0)
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
             val store = SyncStatusStore(loaderContext)
             AccountActivity.AccountInfo().apply {
                 caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR)).also {
-                    it.pending = phase == 1
-                    it.refreshing = phase == 2
+                    it.pending = phase.get() == 1
+                    it.refreshing = phase.get() == 2
                 }
                 carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
@@ -65,16 +65,16 @@ class AccountDashboardRuntimeTest {
             scenario.onActivity { it.refresh() }
             waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_requested) }
             assertNoGenericAttention(scenario)
-            phase = 1
+            phase.set(1)
             scenario.onActivity { it.refresh() }
             waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_queued) }
             assertNoGenericAttention(scenario)
-            phase = 2
+            phase.set(2)
             scenario.onActivity { it.refresh() }
             waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_syncing) }
             assertNoGenericAttention(scenario)
             assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CALENDAR, "runtime-attempt", now + 1, "runtime-request"))
-            phase = 3
+            phase.set(3)
             scenario.onActivity { it.refresh() }
             waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_settling) }
             assertNoGenericAttention(scenario)

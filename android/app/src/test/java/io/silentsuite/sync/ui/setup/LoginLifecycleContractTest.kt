@@ -113,6 +113,7 @@ class LoginLifecycleContractTest {
     @Test
     fun accountRecreationRuntimeJobUsesTheRequiredUnsignedMatrixAndPinnedRunner() {
         val workflow = File("../../.github/workflows/build-android.yml").readText()
+        val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         val unsignedBuild = workflow.substringAfter("  build-pr:").substringBefore("  account-recreation-runtime:")
         val job = workflow.substringAfter("account-recreation-runtime:").substringBefore("  # ─────────────────────────────────────────────────────────────────────\n  # Release")
         val runnerReference = Regex("ReactiveCircus/android-emulator-runner@([0-9a-f]{40})").find(job)
@@ -126,10 +127,11 @@ class LoginLifecycleContractTest {
             "cert4android:assembleDebugAndroidTest", "ical4android:assembleDebugAndroidTest",
             "vcard4android:assembleDebugAndroidTest"
         ).forEach { command -> assertTrue(unsignedBuild.contains(command)) }
+        assertTrue(job.contains("""script: bash android/scripts/run-focused-runtime-tests.sh "${'$'}{{ matrix.api-level }}""""))
         listOf(
             "app:connectedDebugAndroidTest", "io.silentsuite.sync.ui.AccountActivityRecreationTest",
             "-PrequireEtebase16Kb=true", "--no-daemon"
-        ).forEach { command -> assertTrue(job.contains(command)) }
+        ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))
         assertFalse(job.contains("secrets."))
     }
@@ -146,5 +148,21 @@ class LoginLifecycleContractTest {
         assertTrue(expectedSet.contains(bootstrapTuple))
         assertTrue(expectedSet.contains("('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncConfigurationEnablesCoreAuthoritiesWithoutRecovery')"))
         assertTrue(expectedSet.contains("('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncFailureKeepsExactRowAndOffersContinueRetry')"))
+    }
+
+    @Test
+    fun dashboardRuntimePhaseControlIsPublishedAcrossInstrumentationAndLoaderThreads() {
+        val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        val test = source.substringAfter(
+            "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()"
+        ).substringBefore("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()")
+
+        assertTrue(test.contains("val phase = AtomicInteger(0)"))
+        assertTrue(test.contains("phase.get() == 1"))
+        assertTrue(test.contains("phase.get() == 2"))
+        listOf(1, 2, 3).forEach { phase ->
+            assertTrue(test.contains("phase.set($phase)"))
+        }
+        assertFalse(test.contains("var phase = 0"))
     }
 }
