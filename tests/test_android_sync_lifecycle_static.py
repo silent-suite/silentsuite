@@ -3,6 +3,7 @@
 from pathlib import Path
 import json
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 
 
@@ -15,6 +16,7 @@ ACTIVITY = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/AccountActiv
 REDUCER = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/account/AccountDashboardState.kt"
 WINDOWS = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/account/SyncLifecycleWindows.kt"
 WORKFLOW = ROOT / ".github/workflows/build-android.yml"
+FOCUSED_RUNTIME_SCRIPT = ROOT / "android/scripts/run-focused-runtime-tests.sh"
 FROZEN_V1 = ROOT / "android/app/src/test/java/io/silentsuite/sync/syncadapter/FrozenBaselineV1StatusReader.kt"
 
 
@@ -368,46 +370,64 @@ def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_re
     step = workflow.split(
         "- name: Run focused launcher and setup recreation contracts", 1
     )[1].split("- name: Upload focused androidTest reports and results", 1)[0]
+    script = FOCUSED_RUNTIME_SCRIPT.read_text(encoding="utf-8")
     assertion = workflow.split("- name: Assert focused runtime methods executed", 1)[1]
     dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
 
-    assert "set -eu" in step
-    assert "pipefail" not in step
-    assert "if [ '${{ matrix.api-level }}' = '21' ]; then" in step
-    assert step.count("app:connectedDebugAndroidTest") == 3
-    assert "mktemp -d" in step
-    assert "app/build/outputs/androidTest-results/connected/." in step
-    assert "${RUNNER_TEMP}" in step
-    assert "api21-batch-a" in step
+    assert re.findall(r"^\s+script:\s*(.+)$", step, re.MULTILINE) == [
+        'bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}"'
+    ]
+    assert "api21_batch_a=" not in step
+    assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    subprocess.run(["bash", "-n", FOCUSED_RUNTIME_SCRIPT], check=True)
+    # android-emulator-runner sends each script line through /usr/bin/sh -c.
+    # The workflow therefore contains one dash-compatible command; Bash owns all state.
+    subprocess.run(
+        ["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "21"'],
+        check=True,
+    )
+    assert 'if [[ "${api_level}" == "21" ]]; then' in script
+    assert script.count("app:connectedDebugAndroidTest") == 3
+    assert "mktemp -d" in script
+    assert '${RUNNER_TEMP:-${TMPDIR:-/tmp}}' in script
+    assert "app/build/outputs/androidTest-results/connected/." in script
+    assert "api21-batch-a" in script
 
     assignments = dict(
-        re.findall(r"^\s+(api21_batch_[ab]|focused_classes)='([^']+)'$", step, re.MULTILINE)
+        re.findall(r"^(api21_batch_[ab]|focused_classes)='([^']+)'$", script, re.MULTILINE)
     )
-    batch_a = set(assignments["api21_batch_a"].split(","))
-    batch_b = set(assignments["api21_batch_b"].split(","))
-    monolithic = set(assignments["focused_classes"].split(","))
+    batch_a_ordered = assignments["api21_batch_a"].split(",")
+    batch_b_ordered = assignments["api21_batch_b"].split(",")
+    monolithic_ordered = assignments["focused_classes"].split(",")
+    batch_a = set(batch_a_ordered)
+    batch_b = set(batch_b_ordered)
+    monolithic = set(monolithic_ordered)
     assert batch_a.isdisjoint(batch_b)
     assert batch_a == {dashboard}
     assert batch_a | batch_b == monolithic
+    assert batch_a_ordered + batch_b_ordered == [
+        dashboard,
+        *[class_name for class_name in monolithic_ordered if class_name != dashboard],
+    ]
     assert len(batch_b) == 8
     assert len(monolithic) == 9
-    assert step.count('"${focused_classes}"') == 1
-    first_run = step.index(
+    assert script.count('"${focused_classes}"') == 1
+    first_run = script.index(
         '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"'
     )
-    save_results = step.index(
+    save_results = script.index(
         'cp -R "app/build/outputs/androidTest-results/connected/." "${api21_saved_results}/"'
     )
-    install_trap = step.index("trap restore_api21_batch_a EXIT")
-    second_run = step.index(
+    install_trap = script.index("trap restore_api21_batch_a EXIT")
+    second_run = script.index(
         '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"'
     )
     assert first_run < save_results < install_trap < second_run
-    assert "status=$?" in step
-    assert "set +e" in step
-    assert "restore_status=$?" in step
-    assert "trap - EXIT" in step
-    assert 'exit "${status}"' in step
+    assert "status=$?" in script
+    assert "set +e" in script
+    assert "restore_status=$?" in script
+    assert script.index("trap - EXIT") < script.index('exit "${status}"')
+    assert 'exit "${status}"' in script
 
     assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     ledger = re.findall(r"^\s+\('([^']+)','([^']+)'\),$", assertion, re.MULTILINE)
