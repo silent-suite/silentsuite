@@ -358,8 +358,65 @@ def test_five_runtime_methods_appear_once_in_the_exact_workflow_ledger():
     )
     for method in methods:
         class_name, method_name = method.split(".")
-        assert workflow.count(f"'{method_name}'") == 1
-        assert workflow.count(class_name) >= 1
+        package = "syncadapter" if class_name == "SyncStatusRuntimeTest" else "ui"
+        entry = f"('io.silentsuite.sync.{package}.{class_name}','{method_name}')"
+        assert workflow.count(entry) == 1
+
+
+def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_result_sets():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    step = workflow.split(
+        "- name: Run focused launcher and setup recreation contracts", 1
+    )[1].split("- name: Upload focused androidTest reports and results", 1)[0]
+    assertion = workflow.split("- name: Assert focused runtime methods executed", 1)[1]
+    dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
+
+    assert "set -euo pipefail" in step
+    assert "if [ '${{ matrix.api-level }}' = '21' ]; then" in step
+    assert step.count("app:connectedDebugAndroidTest") == 3
+    assert "mktemp -d" in step
+    assert "app/build/outputs/androidTest-results/connected/." in step
+    assert "${RUNNER_TEMP}" in step
+    assert "api21-batch-a" in step
+
+    assignments = dict(
+        re.findall(r"^\s+(api21_batch_[ab]|focused_classes)='([^']+)'$", step, re.MULTILINE)
+    )
+    batch_a = set(assignments["api21_batch_a"].split(","))
+    batch_b = set(assignments["api21_batch_b"].split(","))
+    monolithic = set(assignments["focused_classes"].split(","))
+    assert batch_a.isdisjoint(batch_b)
+    assert batch_a == {dashboard}
+    assert batch_a | batch_b == monolithic
+    assert len(batch_b) == 8
+    assert len(monolithic) == 9
+    assert step.count('"${focused_classes}"') == 1
+    first_run = step.index(
+        '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"'
+    )
+    save_results = step.index(
+        'cp -R "app/build/outputs/androidTest-results/connected/." "${api21_saved_results}/"'
+    )
+    install_trap = step.index("trap restore_api21_batch_a EXIT")
+    second_run = step.index(
+        '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"'
+    )
+    assert first_run < save_results < install_trap < second_run
+    assert "status=$?" in step
+    assert "set +e" in step
+    assert "restore_status=$?" in step
+    assert "trap - EXIT" in step
+    assert 'exit "${status}"' in step
+
+    assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
+    ledger = re.findall(r"^\s+\('([^']+)','([^']+)'\),$", assertion, re.MULTILINE)
+    assert len(ledger) == 64
+    assert len(set(ledger)) == 64
+    runtime_methods = []
+    for class_name in monolithic:
+        source = ROOT / "android/app/src/androidTest/java" / Path(*class_name.split(".")).with_suffix(".kt")
+        runtime_methods.extend(re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8")))
+    assert len(runtime_methods) == 66
 
 
 def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
