@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
-import android.util.Log
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
@@ -132,12 +131,12 @@ class AccountDashboardRuntimeTest {
     }
 
     @Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue() {
-        fun stage(value: String) = Log.i("DashboardRuntime", "mixed-diagnostic:$value")
-        stage("test-start")
+        val calendarRefreshing = AtomicBoolean(false)
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
             val store = SyncStatusStore(loaderContext)
             AccountActivity.AccountInfo().apply {
-                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR)).also { it.refreshing = true }
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                    .also { it.refreshing = calendarRefreshing.get() }
                 carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
             }
@@ -145,7 +144,6 @@ class AccountDashboardRuntimeTest {
             val overallText = AtomicReference<String>("")
             val caldavText = AtomicReference<String>("")
             val carddavText = AtomicReference<String>("")
-            stage("before-observers")
             scenario.onActivity { activity ->
                 fun observe(viewId: Int, observed: AtomicReference<String>) {
                     val view = activity.findViewById<TextView>(viewId)
@@ -162,7 +160,7 @@ class AccountDashboardRuntimeTest {
                 observe(R.id.caldav_status, caldavText)
                 observe(R.id.carddav_status, carddavText)
             }
-            stage("after-observers")
+            calendarRefreshing.set(true)
             val store = SyncStatusStore(context)
             val categories = listOf(
                 SyncStatusStore.FailureCategory.PERMISSION to R.string.dashboard_status_permission_needed,
@@ -172,7 +170,6 @@ class AccountDashboardRuntimeTest {
                 SyncStatusStore.FailureCategory.STORAGE to R.string.dashboard_status_storage,
             )
             categories.forEachIndexed { index, (category, label) ->
-                stage("iteration-$index-before-store")
                 val child = Account("runtime-contacts-child-$index", "child")
                 val attempt = store.beginContacts(account, setOf(child), startedAt = System.currentTimeMillis(),
                     attemptId = "runtime-contacts-parent-$index") as SyncStatusStore.ContactsStart.Started
@@ -182,24 +179,17 @@ class AccountDashboardRuntimeTest {
                     assertEquals(SyncStatusStore.ChildWrite.RECORDED, store.recordContactsChild(account, attempt.attemptId,
                         child, SyncStatusStore.ChildResult.FAILURE, category, System.currentTimeMillis()))
                 }
-                stage("iteration-$index-after-store")
-                stage("iteration-$index-before-refresh")
                 scenario.onActivity { it.refresh() }
-                stage("iteration-$index-after-refresh")
                 val syncing = context.getString(R.string.dashboard_status_syncing)
                 val issue = context.getString(label)
                 assertEquals(syncing, waitForObservedText(overallText, syncing))
-                stage("iteration-$index-after-overall")
                 assertEquals(syncing, waitForObservedText(caldavText, syncing))
-                stage("iteration-$index-after-caldav")
                 assertEquals(issue, waitForObservedText(carddavText, issue))
-                stage("iteration-$index-after-carddav")
                 assertEquals(syncing, overallText.get())
                 assertEquals(syncing, caldavText.get())
                 assertEquals(issue, carddavText.get())
             }
         }
-        stage("completion")
     }
 
     @Test fun futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent() {

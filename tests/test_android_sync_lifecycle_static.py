@@ -538,13 +538,10 @@ def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh
     assert "assertEquals(syncing, overallText.get())" in mixed
     assert "assertEquals(syncing, caldavText.get())" in mixed
     assert "assertEquals(issue, carddavText.get())" in mixed
-    assert 'Log.i("DashboardRuntime", "mixed-diagnostic:$value")' in mixed
-    assert 'stage("before-observers")' in mixed
-    assert 'stage("iteration-$index-before-refresh")' in mixed
-    assert 'stage("iteration-$index-after-carddav")' in mixed
-    assert 'stage("completion")' in mixed
-    assert 'Log.i("DashboardRuntime", account' not in mixed
-    assert 'Log.i("DashboardRuntime", attempt' not in mixed
+    assert "val calendarRefreshing = AtomicBoolean(false)" in mixed
+    assert "it.refreshing = calendarRefreshing.get()" in mixed
+    assert mixed.index("calendarRefreshing.set(true)") < mixed.index("val store = SyncStatusStore(context)")
+    assert "mixed-diagnostic" not in mixed
 
 
 def test_dashboard_runtime_polling_helpers_retain_synchronization_and_bounds():
