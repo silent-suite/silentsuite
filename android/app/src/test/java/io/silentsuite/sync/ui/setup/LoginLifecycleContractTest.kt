@@ -278,6 +278,13 @@ class LoginLifecycleContractTest {
         assertTrue(mixed.contains("assertEquals(syncing, overallText.get())"))
         assertTrue(mixed.contains("assertEquals(syncing, caldavText.get())"))
         assertTrue(mixed.contains("assertEquals(issue, carddavText.get())"))
+        assertTrue(mixed.contains("Log.i(\"DashboardRuntime\", \"mixed-diagnostic:${'$'}value\")"))
+        assertTrue(mixed.contains("stage(\"before-observers\")"))
+        assertTrue(mixed.contains("stage(\"iteration-${'$'}index-before-refresh\")"))
+        assertTrue(mixed.contains("stage(\"iteration-${'$'}index-after-carddav\")"))
+        assertTrue(mixed.contains("stage(\"completion\")"))
+        assertFalse(mixed.contains("Log.i(\"DashboardRuntime\", account"))
+        assertFalse(mixed.contains("Log.i(\"DashboardRuntime\", attempt"))
     }
 
     @Test
