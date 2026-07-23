@@ -168,7 +168,7 @@ class LoginLifecycleContractTest {
     }
 
     @Test
-    fun api21DiagnosticBatchIsBoundedAndExactlyDisjointFromTheRemainingRuntimeCoverage() {
+    fun api21ThreeProcessBatchesAreBoundedOrderedAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         val dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
         val diagnostic = "$dashboard#requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
@@ -176,6 +176,10 @@ class LoginLifecycleContractTest {
         val batchA = Regex("""^api21_batch_a='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
         val batchB = Regex("""^api21_batch_b='([^']+)'$""", RegexOption.MULTILINE)
+            .find(runtimeScript)!!.groupValues[1].split(",")
+        val batchC = Regex("""^api21_batch_c='([^']+)'$""", RegexOption.MULTILINE)
+            .find(runtimeScript)!!.groupValues[1].split(",")
+        val focusedClasses = Regex("""^focused_classes='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
         val expectedOtherDashboard = setOf(
             "freshContactsGenerationFinishesBeforeChildDispatchOrCompletion",
@@ -188,21 +192,49 @@ class LoginLifecycleContractTest {
             "dashboardExportCompletionPreservesExactDashboardAfterRecreation",
         ).map { "$dashboard#$it" }.toSet()
 
-        assertEquals(listOf(diagnostic, mixed), batchA)
-        assertEquals(setOf(diagnostic, mixed), batchA.toSet())
-        assertEquals(expectedOtherDashboard, batchB.filter { it.startsWith("$dashboard#") }.toSet())
+        assertEquals(listOf(diagnostic), batchA)
+        assertEquals(listOf(mixed), batchB)
+        assertEquals(expectedOtherDashboard, batchC.filter { it.startsWith("$dashboard#") }.toSet())
         assertTrue(batchA.toSet().intersect(batchB.toSet()).isEmpty())
-        assertEquals(16, batchB.size)
+        assertTrue(batchA.toSet().intersect(batchC.toSet()).isEmpty())
+        assertTrue(batchB.toSet().intersect(batchC.toSet()).isEmpty())
+        assertEquals(16, batchC.size)
+        assertEquals(expectedOtherDashboard.toList(), batchC.take(8))
+        val runtimeMethods = focusedClasses.flatMap { className ->
+            val source = File(
+                "src/androidTest/java/${className.replace('.', '/')}.kt"
+            ).readText()
+            Regex("""@Test\s+fun\s+(\w+)""").findAll(source)
+                .map { "$className#${it.groupValues[1]}" }.toList()
+        }
+        val expandedBatches = (batchA + batchB + batchC).flatMap { selector ->
+            if ("#" in selector) listOf(selector)
+            else runtimeMethods.filter { it.startsWith("$selector#") }
+        }
+        assertEquals(66, runtimeMethods.size)
+        assertEquals(66, runtimeMethods.toSet().size)
+        assertEquals(runtimeMethods.toSet(), expandedBatches.toSet())
+        assertEquals(66, expandedBatches.size)
         assertTrue(runtimeScript.contains(
             """timeout --signal=TERM --kill-after=10s 600s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_a}""""
         ))
         assertTrue(runtimeScript.contains(
-            """timeout --signal=TERM --kill-after=10s 1200s \
+            """timeout --signal=TERM --kill-after=10s 300s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_b}""""
         ))
-        assertTrue(runtimeScript.indexOf("trap restore_api21_batch_a EXIT") <
+        assertTrue(runtimeScript.contains(
+            """timeout --signal=TERM --kill-after=10s 900s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_c}""""
+        ))
+        assertTrue(runtimeScript.indexOf("trap restore_api21_batches EXIT") <
             runtimeScript.indexOf("""class="${'$'}{api21_batch_a}""""))
+        assertTrue(runtimeScript.contains("connected/api21-batch-a"))
+        assertTrue(runtimeScript.contains("connected/api21-batch-b"))
+        assertTrue(runtimeScript.contains("api21_batch_a_results="))
+        assertTrue(runtimeScript.contains("api21_batch_b_results="))
+        assertTrue(runtimeScript.contains("api21_batch_b_started=1"))
+        assertTrue(runtimeScript.contains("""if [[ "${'$'}{status}" -eq 0 && "${'$'}{restore_status}" -ne 0 ]]"""))
     }
 
     @Test

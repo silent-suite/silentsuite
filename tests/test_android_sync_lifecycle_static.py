@@ -365,7 +365,7 @@ def test_five_runtime_methods_appear_once_in_the_exact_workflow_ledger():
         assert workflow.count(entry) == 1
 
 
-def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_result_sets():
+def test_api21_runtime_workflow_uses_three_processes_and_preserves_isolated_result_sets():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     step = workflow.split(
         "- name: Run focused launcher and setup recreation contracts", 1
@@ -387,22 +387,24 @@ def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_re
         check=True,
     )
     assert 'if [[ "${api_level}" == "21" ]]; then' in script
-    assert script.count("app:connectedDebugAndroidTest") == 3
+    assert script.count("app:connectedDebugAndroidTest") == 4
     assert "mktemp -d" in script
     assert '${RUNNER_TEMP:-${TMPDIR:-/tmp}}' in script
     assert "app/build/outputs/androidTest-results/connected/." in script
     assert "api21-batch-a" in script
+    assert "api21-batch-b" in script
 
     assignments = dict(
-        re.findall(r"^(api21_batch_[ab]|focused_classes)='([^']+)'$", script, re.MULTILINE)
+        re.findall(r"^(api21_batch_[abc]|focused_classes)='([^']+)'$", script, re.MULTILINE)
     )
     batch_a_ordered = assignments["api21_batch_a"].split(",")
     batch_b_ordered = assignments["api21_batch_b"].split(",")
+    batch_c_ordered = assignments["api21_batch_c"].split(",")
     monolithic_ordered = assignments["focused_classes"].split(",")
     batch_a = set(batch_a_ordered)
     batch_b = set(batch_b_ordered)
+    batch_c = set(batch_c_ordered)
     monolithic = set(monolithic_ordered)
-    assert batch_a.isdisjoint(batch_b)
     diagnostic = (
         f"{dashboard}#"
         "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
@@ -422,43 +424,61 @@ def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_re
         if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
     }
     non_dashboard = set(monolithic) - {dashboard}
-    assert batch_a_ordered == [diagnostic, mixed]
-    assert batch_a == {diagnostic, mixed}
-    assert batch_b == expected_other_dashboard | non_dashboard
+    assert batch_a_ordered == [diagnostic]
+    assert batch_b_ordered == [mixed]
+    assert batch_c == expected_other_dashboard | non_dashboard
+    assert batch_c_ordered[:8] == [
+        f"{dashboard}#{method}" for method in re.findall(r"@Test\s+fun\s+(\w+)", dashboard_source)
+        if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
+    ]
+    assert batch_c_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
     assert batch_a.isdisjoint(batch_b)
-    assert {selector.split("#", 1)[0] for selector in batch_a | batch_b} == monolithic
+    assert batch_a.isdisjoint(batch_c)
+    assert batch_b.isdisjoint(batch_c)
+    assert {selector.split("#", 1)[0] for selector in batch_a | batch_b | batch_c} == monolithic
     assert len(expected_other_dashboard) == 8
-    assert len(batch_b) == 16
+    assert len(batch_c) == 16
     assert len(monolithic) == 9
-    assert all(batch_b_ordered.count(selector) == 1 for selector in batch_b)
+    assert all(batch_c_ordered.count(selector) == 1 for selector in batch_c)
     assert script.count('"${focused_classes}"') == 1
     assert 'command -v timeout >/dev/null 2>&1' in script
     assert 'timeout --signal=TERM --kill-after=10s 600s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"' in script
-    assert 'timeout --signal=TERM --kill-after=10s 1200s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"' in script
+    assert 'timeout --signal=TERM --kill-after=10s 300s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"' in script
+    assert 'timeout --signal=TERM --kill-after=10s 900s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_c}"' in script
     first_run = script.index(
         '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"'
     )
-    install_trap = script.index("trap restore_api21_batch_a EXIT")
-    save_results = script.index("\n  save_api21_batch_a", first_run)
+    install_trap = script.index("trap restore_api21_batches EXIT")
+    save_a = script.index("\n  save_api21_batch_a", first_run)
     second_run = script.index(
         '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"'
     )
-    assert install_trap < first_run < save_results < second_run
+    save_b = script.index("\n  save_api21_batch_b", second_run)
+    third_run = script.index(
+        '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_c}"'
+    )
+    assert install_trap < first_run < save_a < second_run < save_b < third_run
+    assert script.index("api21_batch_b_started=1", first_run) < second_run
     assert "status=$?" in script
     assert "set +e" in script
     assert "restore_status=$?" in script
+    assert script.count('if [[ "${status}" -eq 0 && "') >= 4
     assert script.index("trap - EXIT") < script.index('exit "${status}"')
     assert 'exit "${status}"' in script
 
     assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     ledger = re.findall(r"^\s+\('([^']+)','([^']+)'\),$", assertion, re.MULTILINE)
-    assert len(ledger) == 64
-    assert len(set(ledger)) == 64
+    assert len(ledger) == 66
+    assert len(set(ledger)) == 66
     runtime_methods = []
     for class_name in monolithic:
         source = ROOT / "android/app/src/androidTest/java" / Path(*class_name.split(".")).with_suffix(".kt")
-        runtime_methods.extend(re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8")))
+        runtime_methods.extend(
+            (class_name, method)
+            for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
+        )
     assert len(runtime_methods) == 66
+    assert set(ledger) == set(runtime_methods)
 
 
 def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
