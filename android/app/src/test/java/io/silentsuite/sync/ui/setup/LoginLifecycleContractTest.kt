@@ -192,7 +192,14 @@ class LoginLifecycleContractTest {
         assertEquals(expectedOtherDashboard, batchB.filter { it.startsWith("$dashboard#") }.toSet())
         assertTrue(batchA.toSet().intersect(batchB.toSet()).isEmpty())
         assertEquals(17, batchB.size)
-        assertTrue(runtimeScript.contains("timeout --signal=TERM --kill-after=10s 600s"))
+        assertTrue(runtimeScript.contains(
+            """timeout --signal=TERM --kill-after=10s 600s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_a}""""
+        ))
+        assertTrue(runtimeScript.contains(
+            """timeout --signal=TERM --kill-after=10s 1200s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_b}""""
+        ))
         assertTrue(runtimeScript.indexOf("trap restore_api21_batch_a EXIT") <
             runtimeScript.indexOf("""class="${'$'}{api21_batch_a}""""))
     }
@@ -217,5 +224,19 @@ class LoginLifecycleContractTest {
         assertTrue(observerPoll.contains("AtomicReference<String>"))
         assertTrue(observerPoll.contains("System.nanoTime()"))
         assertFalse(observerPoll.contains("scenario.onActivity"))
+    }
+
+    @Test
+    fun sharedDashboardTextWaitUsesOneActivityScenarioBarrierAndEventDrivenPolling() {
+        val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        val helper = source.substringAfter("private fun waitForText(")
+            .substringBefore("private fun assertNoGenericAttention")
+
+        assertEquals(1, Regex("scenario\\.onActivity").findAll(helper).count())
+        assertTrue(helper.contains("addTextChangedListener"))
+        assertTrue(helper.contains("AtomicReference<String>"))
+        assertTrue(helper.contains("System.nanoTime()"))
+        assertTrue(helper.contains("SystemClock.sleep(50)"))
+        assertFalse(helper.contains("repeat(200)"))
     }
 }

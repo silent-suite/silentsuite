@@ -750,10 +750,21 @@ class AccountDashboardRuntimeTest {
     }
 
     private fun waitForText(scenario: ActivityScenario<AccountActivity>, viewId: Int, predicate: (String) -> Boolean) {
-        repeat(200) {
-            var text = ""
-            scenario.onActivity { text = it.findViewById<TextView>(viewId).text.toString() }
-            if (predicate(text)) return
+        val observed = AtomicReference<String>("")
+        scenario.onActivity {
+            val view = it.findViewById<TextView>(viewId)
+            observed.set(view.text.toString())
+            view.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                    observed.set(text?.toString().orEmpty())
+                }
+                override fun afterTextChanged(text: Editable?) = Unit
+            })
+        }
+        val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (System.nanoTime() < deadlineNanos) {
+            if (predicate(observed.get())) return
             android.os.SystemClock.sleep(50)
         }
         throw AssertionError("Dashboard text did not reach expected state")

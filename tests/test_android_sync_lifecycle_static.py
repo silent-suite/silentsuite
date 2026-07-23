@@ -428,7 +428,8 @@ def test_api21_runtime_workflow_isolates_dashboard_process_and_preserves_both_re
     assert all(batch_b_ordered.count(selector) == 1 for selector in batch_b)
     assert script.count('"${focused_classes}"') == 1
     assert 'command -v timeout >/dev/null 2>&1' in script
-    assert 'timeout --signal=TERM --kill-after=10s 600s' in script
+    assert 'timeout --signal=TERM --kill-after=10s 600s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"' in script
+    assert 'timeout --signal=TERM --kill-after=10s 1200s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"' in script
     first_run = script.index(
         '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"'
     )
@@ -460,8 +461,11 @@ def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
     helper = runtime.split("private fun waitForText(", 1)[1].split("private fun assertNoGenericAttention", 1)[0]
 
     assert "waitForIdleSync" not in runtime
-    assert "repeat(200)" in helper
-    assert "scenario.onActivity" in helper
+    assert helper.count("scenario.onActivity") == 1
+    assert "addTextChangedListener" in helper
+    assert "AtomicReference<String>" in helper
+    assert "System.nanoTime()" in helper
+    assert "repeat(200)" not in helper
     assert "SystemClock.sleep(50)" in helper
 
 
