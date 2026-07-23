@@ -198,18 +198,24 @@ class LoginLifecycleContractTest {
     }
 
     @Test
-    fun dashboardDiagnosticLogsOnlyNamedStageBoundaries() {
+    fun dashboardLifecycleObservationAvoidsRepeatedActivityScenarioPolling() {
         val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
-        val diagnostic = source.substringAfter(
+        val lifecycle = source.substringAfter(
             "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()"
         ).substringBefore("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()")
+        val observerPoll = source.substringAfter("private fun waitForObservedText(")
+            .substringBefore("private fun waitForText(")
 
-        assertTrue(diagnostic.contains("""Log.i("DashboardRuntime", "lifecycle-diagnostic:${'$'}value")"""))
-        listOf("before-setup", "after-setup", "before-store-old-requested",
-            "after-store-success", "before-refresh-requested", "after-refresh-terminal",
-            "before-wait-requested", "after-wait-terminal", "completion")
-            .forEach { assertTrue(diagnostic.contains("""stage("$it")""")) }
-        assertFalse(diagnostic.contains("""Log.i("DashboardRuntime", account"""))
-        assertFalse(diagnostic.contains("""Log.i("DashboardRuntime", exact"""))
+        assertEquals(6, Regex("scenario\\.onActivity").findAll(lifecycle).count())
+        assertEquals(1, Regex("addTextChangedListener").findAll(lifecycle).count())
+        assertTrue(lifecycle.contains("observe(R.id.dashboard_overall_status, overallText)"))
+        assertTrue(lifecycle.contains("observe(R.id.caldav_status, caldavText)"))
+        assertTrue(lifecycle.contains("waitForObservedText("))
+        assertFalse(lifecycle.contains("waitForText(scenario"))
+        assertFalse(lifecycle.contains("assertNoGenericAttention(scenario)"))
+        assertFalse(lifecycle.contains("lifecycle-diagnostic"))
+        assertTrue(observerPoll.contains("AtomicReference<String>"))
+        assertTrue(observerPoll.contains("System.nanoTime()"))
+        assertFalse(observerPoll.contains("scenario.onActivity"))
     }
 }

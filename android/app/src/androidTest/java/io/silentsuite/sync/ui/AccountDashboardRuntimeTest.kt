@@ -7,7 +7,8 @@ import android.content.Intent
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
@@ -31,6 +32,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -41,8 +43,6 @@ import org.junit.runner.RunWith
 class AccountDashboardRuntimeTest {
     @Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention() {
         val phase = AtomicInteger(0)
-        val stage = { value: String -> Log.i("DashboardRuntime", "lifecycle-diagnostic:$value") }
-        stage("before-setup")
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
             val store = SyncStatusStore(loaderContext)
             AccountActivity.AccountInfo().apply {
@@ -54,75 +54,59 @@ class AccountDashboardRuntimeTest {
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
             }
         }) { context, account, scenario ->
-            stage("after-setup")
+            val overallText = AtomicReference<String>("")
+            val caldavText = AtomicReference<String>("")
+            scenario.onActivity { activity ->
+                fun observe(viewId: Int, observed: AtomicReference<String>) {
+                    val view = activity.findViewById<TextView>(viewId)
+                    observed.set(view.text.toString())
+                    view.addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                        override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                            observed.set(text?.toString().orEmpty())
+                        }
+                        override fun afterTextChanged(text: Editable?) = Unit
+                    })
+                }
+                observe(R.id.dashboard_overall_status, overallText)
+                observe(R.id.caldav_status, caldavText)
+            }
             val store = SyncStatusStore(context)
             val now = System.currentTimeMillis()
-            stage("before-store-old-requested")
             assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.TASKS), "old-pending", 1))
-            stage("after-store-old-requested")
-            stage("before-store-old-attempt")
             assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, "old-active", 1, null))
-            stage("after-store-old-attempt")
-            stage("before-store-expire-pending")
             assertTrue(store.expireStale(account, SyncStatusStore.Service.TASKS, now,
                 platformActive = false, platformPending = true, interruptionAfterMillis = 1))
-            stage("after-store-expire-pending")
-            stage("before-store-expire-active")
             assertTrue(store.expireStale(account, SyncStatusStore.Service.CONTACTS, now,
                 platformActive = true, platformPending = false, interruptionAfterMillis = 1))
-            stage("after-store-expire-active")
             assertEquals("old-pending", store.status(account, SyncStatusStore.Service.TASKS).activeRequestId)
             assertEquals("old-active", store.status(account, SyncStatusStore.Service.CONTACTS).activeAttemptId)
-            stage("before-store-runtime-requested")
             assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.CALENDAR), "runtime-request", now))
-            stage("after-store-runtime-requested")
-            stage("before-refresh-requested")
             scenario.onActivity { it.refresh() }
-            stage("after-refresh-requested")
-            stage("before-wait-requested")
-            waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_requested) }
-            stage("after-wait-requested")
-            assertNoGenericAttention(scenario)
+            val requested = context.getString(R.string.dashboard_status_requested)
+            assertEquals(requested, waitForObservedText(overallText, requested))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
             phase.set(1)
-            stage("before-refresh-queued")
             scenario.onActivity { it.refresh() }
-            stage("after-refresh-queued")
-            stage("before-wait-queued")
-            waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_queued) }
-            stage("after-wait-queued")
-            assertNoGenericAttention(scenario)
+            val queued = context.getString(R.string.dashboard_status_queued)
+            assertEquals(queued, waitForObservedText(overallText, queued))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
             phase.set(2)
-            stage("before-refresh-running")
             scenario.onActivity { it.refresh() }
-            stage("after-refresh-running")
-            stage("before-wait-running")
-            waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_syncing) }
-            stage("after-wait-running")
-            assertNoGenericAttention(scenario)
-            stage("before-store-runtime-attempt")
+            val syncing = context.getString(R.string.dashboard_status_syncing)
+            assertEquals(syncing, waitForObservedText(overallText, syncing))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
             assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CALENDAR, "runtime-attempt", now + 1, "runtime-request"))
-            stage("after-store-runtime-attempt")
             phase.set(3)
-            stage("before-refresh-settling")
             scenario.onActivity { it.refresh() }
-            stage("after-refresh-settling")
-            stage("before-wait-settling")
-            waitForText(scenario, R.id.dashboard_overall_status) { it == context.getString(R.string.dashboard_status_settling) }
-            stage("after-wait-settling")
-            assertNoGenericAttention(scenario)
-            stage("before-store-success")
+            val settling = context.getString(R.string.dashboard_status_settling)
+            assertEquals(settling, waitForObservedText(overallText, settling))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
             assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, "runtime-attempt", now + 2))
-            stage("after-store-success")
-            stage("before-refresh-terminal")
             scenario.onActivity { it.refresh() }
-            stage("after-refresh-terminal")
-            stage("before-wait-terminal")
-            waitForText(scenario, R.id.caldav_status) {
-                it == context.getString(R.string.dashboard_status_synced)
-            }
-            stage("after-wait-terminal")
-            assertNoGenericAttention(scenario)
-            stage("completion")
+            val synced = context.getString(R.string.dashboard_status_synced)
+            assertEquals(synced, waitForObservedText(caldavText, synced))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
         }
     }
 
@@ -749,6 +733,20 @@ class AccountDashboardRuntimeTest {
             android.os.SystemClock.sleep(50)
         }
         throw AssertionError("Timed out waiting for $description")
+    }
+
+    private fun waitForObservedText(
+        observed: AtomicReference<String>,
+        expected: String,
+        timeoutMillis: Long = 10_000,
+    ): String {
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+        while (System.nanoTime() < deadlineNanos) {
+            val text = observed.get()
+            if (text == expected) return text
+            android.os.SystemClock.sleep(50)
+        }
+        throw AssertionError("Dashboard text did not reach expected state; last observed text=${observed.get()}")
     }
 
     private fun waitForText(scenario: ActivityScenario<AccountActivity>, viewId: Int, predicate: (String) -> Boolean) {

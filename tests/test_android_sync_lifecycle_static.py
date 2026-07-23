@@ -465,35 +465,29 @@ def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
     assert "SystemClock.sleep(50)" in helper
 
 
-def test_api21_diagnostic_publishes_privacy_safe_stage_boundaries():
+def test_api21_lifecycle_observer_avoids_blocking_activity_polling():
     runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
-    diagnostic = runtime.split(
+    lifecycle = runtime.split(
         "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()", 1
     )[1].split("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()", 1)[0]
 
-    assert 'Log.i("DashboardRuntime", "lifecycle-diagnostic:$value")' in diagnostic
-    for boundary in (
-        "before-setup", "after-setup", "before-store-old-requested",
-        "after-store-old-requested", "before-store-old-attempt", "after-store-old-attempt",
-        "before-store-expire-pending", "after-store-expire-pending",
-        "before-store-expire-active", "after-store-expire-active",
-        "before-store-runtime-requested", "after-store-runtime-requested",
-        "before-store-runtime-attempt", "after-store-runtime-attempt",
-        "before-store-success", "after-store-success",
-        "before-refresh-requested", "after-refresh-requested",
-        "before-refresh-queued", "after-refresh-queued",
-        "before-refresh-running", "after-refresh-running",
-        "before-refresh-settling", "after-refresh-settling",
-        "before-refresh-terminal", "after-refresh-terminal",
-        "before-wait-requested", "after-wait-requested",
-        "before-wait-queued", "after-wait-queued",
-        "before-wait-running", "after-wait-running",
-        "before-wait-settling", "after-wait-settling",
-        "before-wait-terminal", "after-wait-terminal", "completion",
-    ):
-        assert f'stage("{boundary}")' in diagnostic
-    assert "account.name" not in diagnostic
-    assert "activeRequestId" not in diagnostic.split('stage("after-setup")', 1)[0]
+    assert lifecycle.count("scenario.onActivity") == 6
+    assert lifecycle.count("addTextChangedListener") == 1
+    assert "observe(R.id.dashboard_overall_status, overallText)" in lifecycle
+    assert "observe(R.id.caldav_status, caldavText)" in lifecycle
+    assert "AtomicReference<String>" in lifecycle
+    assert "waitForObservedText(" in lifecycle
+    assert "waitForText(scenario" not in lifecycle
+    assert "assertNoGenericAttention(scenario)" not in lifecycle
+    assert "overallText.get()" in lifecycle
+    assert "lifecycle-diagnostic" not in lifecycle
+    assert "Log." not in lifecycle
+    observer_poll = runtime.split("private fun waitForObservedText(", 1)[1].split(
+        "private fun waitForText(", 1
+    )[0]
+    assert "AtomicReference<String>" in observer_poll
+    assert "System.nanoTime()" in observer_poll
+    assert "scenario.onActivity" not in observer_poll
 
 
 def test_dashboard_runtime_polling_helpers_retain_synchronization_and_bounds():
@@ -580,7 +574,8 @@ def test_runtime_ledgers_cover_review3_lifecycle_and_provider_evidence():
     assert "recordContactsChildAtAdapterBoundary" in manual
     requested_queued = dashboard_runtime.split("@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()", 1)[1]
     requested_queued = requested_queued.split("@Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue()", 1)[0]
-    assert requested_queued.count("assertNoGenericAttention") == 5
+    assert requested_queued.count("assertNoGenericAttention") == 0
+    assert requested_queued.count('contains("Needs attention", ignoreCase = true)') == 5
     mixed = dashboard_runtime.split("@Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue()", 1)[1]
     for category in ("PERMISSION", "INTERRUPTED", "NETWORK", "PROVIDER", "STORAGE"):
         assert f"FailureCategory.{category}" in mixed
