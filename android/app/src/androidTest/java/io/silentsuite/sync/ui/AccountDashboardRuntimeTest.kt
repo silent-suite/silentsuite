@@ -715,7 +715,6 @@ class AccountDashboardRuntimeTest {
 
     private fun waitForText(scenario: ActivityScenario<AccountActivity>, viewId: Int, predicate: (String) -> Boolean) {
         repeat(200) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var text = ""
             scenario.onActivity { text = it.findViewById<TextView>(viewId).text.toString() }
             if (predicate(text)) return

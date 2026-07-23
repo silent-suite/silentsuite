@@ -362,6 +362,16 @@ def test_five_runtime_methods_appear_once_in_the_exact_workflow_ledger():
         assert workflow.count(class_name) >= 1
 
 
+def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
+    helper = runtime.split("private fun waitForText(", 1)[1].split("private fun assertNoGenericAttention", 1)[0]
+
+    assert "repeat(200)" in helper
+    assert "scenario.onActivity" in helper
+    assert "SystemClock.sleep(50)" in helper
+    assert "waitForIdleSync" not in helper
+
+
 def test_no_event_runtime_boundary_uses_viewmodel_maintenance_not_direct_expiry():
     runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
     method = runtime.split("@Test fun futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent()", 1)[1]
