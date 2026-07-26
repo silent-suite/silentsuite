@@ -2,6 +2,9 @@
   "name": "silentsuite",
   "version": "0.4.2-beta",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "author": "SilentSuite <info@silentsuite.io>",
   "scripts": {
     "dev": "turbo dev",
