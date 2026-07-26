@@ -18,13 +18,13 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
-import io.silentsuite.sync.ui.DebugInfoActivity
 import io.silentsuite.sync.utils.ProgressDialogHelper
+import io.silentsuite.sync.ui.DebugInfoActivity
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.logging.Level
 
 class LoginCredentialsChangeFragment : DialogFragment() {
     private lateinit var account: Account
@@ -47,9 +47,9 @@ class LoginCredentialsChangeFragment : DialogFragment() {
             val credentials = SetupSecretHolder.getLoginCredentials()
             if (credentials == null) {
                 Logger.log.warning("Updated login credentials expired before configuration detection")
-                SetupSecretHolder.clearLoginCredentials()
+                SetupSecretHolder.clearProcessOnlySecrets()
                 parentFragmentManager.beginTransaction()
-                        .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
+                        .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(R.string.setup_state_expired), null)
                         .commitAllowingStateLoss()
                 dismissAllowingStateLoss()
             } else {
@@ -60,8 +60,14 @@ class LoginCredentialsChangeFragment : DialogFragment() {
 
     private fun findConfiguration(credentials: LoginCredentials) {
         lifecycleScope.launch {
-            val data = withContext(Dispatchers.IO) {
-                BaseConfigurationFinder(requireContext(), credentials).findInitialConfiguration()
+            val data = try {
+                withContext(Dispatchers.IO) {
+                    BaseConfigurationFinder(requireContext(), credentials).findInitialConfiguration()
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.log.warning("Updated configuration detection failed: ${e.javaClass.name}")
+                null
             }
             onLoadFinished(data)
         }
@@ -72,7 +78,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
             if (data.isFailed)
             // no service found: show error message
                 parentFragmentManager.beginTransaction()
-                        .add(NothingDetectedFragment.newInstance(data.error!!.localizedMessage), null)
+                        .add(NothingDetectedFragment.newInstance(messageResource(data.error)), null)
                         .commitAllowingStateLoss()
             else {
                 val settings: AccountSettings
@@ -80,19 +86,36 @@ class LoginCredentialsChangeFragment : DialogFragment() {
                 try {
                     settings = AccountSettings(requireActivity(), account)
                 } catch (e: InvalidAccountException) {
-                    Logger.log.log(Level.INFO, "Account is invalid or doesn't exist (anymore)", e)
-                    SetupSecretHolder.clearLoginCredentials()
+                    Logger.log.info("Account is invalid or doesn't exist (anymore): ${e.javaClass.name}")
+                    SetupSecretHolder.clearProcessOnlySecrets()
                     requireActivity().finish()
                     return
                 }
 
-                settings.etebaseSession = data.etebaseSession
+                try {
+                    settings.etebaseSession = data.etebaseSession
+                } catch (e: Exception) {
+                    Logger.log.warning("Updated credentials could not be saved: ${e.javaClass.name}")
+                    parentFragmentManager.beginTransaction()
+                        .add(NothingDetectedFragment.newInstance(R.string.login_error_generic), null)
+                        .commitAllowingStateLoss()
+                }
             }
-        } else
+        } else {
             Logger.log.severe("Configuration detection failed")
+            parentFragmentManager.beginTransaction()
+                .add(NothingDetectedFragment.newInstance(R.string.login_error_generic), null)
+                .commitAllowingStateLoss()
+        }
 
-        SetupSecretHolder.clearLoginCredentials()
+        SetupSecretHolder.clearProcessOnlySecrets()
         dismissAllowingStateLoss()
+    }
+
+    private fun messageResource(error: Throwable?): Int = when (LoginFailureMessagePolicy.messageFor(error)) {
+        LoginFailureMessagePolicy.Message.Authentication -> R.string.login_wrong_username_or_password
+        LoginFailureMessagePolicy.Message.Connection -> R.string.login_connection_error
+        LoginFailureMessagePolicy.Message.Generic -> R.string.login_error_generic
     }
 
 
@@ -102,11 +125,9 @@ class LoginCredentialsChangeFragment : DialogFragment() {
             return MaterialAlertDialogBuilder(requireActivity())
                     .setTitle(R.string.setting_up_encryption)
                     .setIcon(R.drawable.ic_error_dark)
-                    .setMessage(R.string.login_wrong_username_or_password)
-                    .setNeutralButton(R.string.login_view_logs) { dialog, which ->
-                        val intent = DebugInfoActivity.newIntent(context, this::class.toString())
-                        intent.putExtra(DebugInfoActivity.KEY_LOGS, requireArguments().getString(KEY_LOGS))
-                        startActivity(intent)
+                    .setMessage(requireArguments().getInt(KEY_MESSAGE_RES))
+                    .setNeutralButton(R.string.login_view_logs) { _, _ ->
+                        startActivity(DebugInfoActivity.newIntent(requireContext(), NothingDetectedFragment::class.java.name))
                     }
                     .setPositiveButton(android.R.string.ok) { dialog, which ->
                         // dismiss
@@ -115,11 +136,11 @@ class LoginCredentialsChangeFragment : DialogFragment() {
         }
 
         companion object {
-            private val KEY_LOGS = "logs"
+            private const val KEY_MESSAGE_RES = "message_res"
 
-            fun newInstance(logs: String): NothingDetectedFragment {
+            fun newInstance(messageRes: Int): NothingDetectedFragment {
                 val args = Bundle()
-                args.putString(KEY_LOGS, logs)
+                args.putInt(KEY_MESSAGE_RES, messageRes)
                 val fragment = NothingDetectedFragment()
                 fragment.arguments = args
                 return fragment

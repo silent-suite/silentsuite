@@ -91,7 +91,9 @@ class CollectionItemFragment : Fragment() {
             R.id.on_send_event_invite -> {
                 val account = accountHolder.account
                 val intent = EventEmailInvitation(requireContext(), account).createIntent(emailInvitationEvent!!, emailInvitationEventString!!)
-                startActivity(intent)
+                // Attachment creation can fail, in which case no share Intent exists.
+                // Newer AndroidX nullability annotations correctly expose that contract.
+                intent?.let(::startActivity)
             }
             R.id.on_restore_item -> {
                 restoreItem(accountHolder)

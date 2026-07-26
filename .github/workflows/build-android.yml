@@ -7,11 +7,13 @@ on:
       - 'v*'
     paths:
       - 'android/**'
+      - 'tests/test_android_*.py'
       - '.github/workflows/build-android.yml'
   pull_request:
     branches: [dev]
     paths:
       - 'android/**'
+      - 'tests/test_android_*.py'
       - '.github/workflows/build-android.yml'
   workflow_dispatch:
 
@@ -39,6 +41,16 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+
+      - name: Set up Python for static Android contracts
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run Android static Python contracts
+        run: |
+          python -m pip install --disable-pip-version-check pytest
+          python -m pytest ../tests/test_android_*.py -q
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
@@ -70,8 +82,20 @@ jobs:
       - name: Build 16 KB-aligned Etebase client AAR
         run: scripts/build-etebase-client-16kb.sh
 
-      - name: Run debug unit tests and lint
-        run: ./gradlew app:testDebugUnitTest app:lintDebug --continue --no-daemon -PrequireEtebase16Kb=true
+      - name: Run debug unit tests, lint, and assemble instrumentation APKs
+        # Assemble each Android module's androidTest APK so AGP merges and
+        # validates its instrumentation manifest. Runtime coverage stays
+        # focused on the app test below (API 21 and API 35).
+        run: >-
+          ./gradlew
+          app:testDebugUnitTest
+          app:lintDebug
+          app:assembleDebugAndroidTest
+          verifyDebugAndroidTestDesugarRuntime
+          cert4android:assembleDebugAndroidTest
+          ical4android:assembleDebugAndroidTest
+          vcard4android:assembleDebugAndroidTest
+          --continue --no-daemon -PrequireEtebase16Kb=true
 
       - name: Upload unit test reports and results
         if: always()
@@ -170,6 +194,163 @@ jobs:
           path: |
             android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
+
+  account-recreation-runtime:
+    name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 21
+            arch: x86
+          - api-level: 35
+            arch: x86_64
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Rust Android targets
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build 16 KB-aligned Etebase client AAR
+        run: scripts/build-etebase-client-16kb.sh
+
+      - name: Enable KVM for the emulator
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+      - name: Run focused launcher and setup recreation contracts
+        uses: ReactiveCircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest,io.silentsuite.sync.ui.AccountDashboardRuntimeTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest,io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest,io.silentsuite.sync.ui.SettingsRuntimeTest,io.silentsuite.sync.ui.SiblingRoutesRuntimeTest
+
+      - name: Upload focused androidTest reports and results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            android/app/build/outputs/androidTest-results/connected/
+            android/app/build/reports/androidTests/connected/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Assert focused runtime methods executed
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          from collections import Counter
+          expected={
+            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','recreationKeepsTheExactAccountRouteAndDeliversModelStateToTheRecreatedUi'),
+            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','readyDoneCompletesOnlyTheExactGeneratedAccount'),
+            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','replacementGenerationCannotCompleteThePreviouslyValidatedSetupRoute'),
+            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','oneAccountSwitcherExposesAddRowAndCurrentSemanticsAfterRecreation'),
+            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','delayedRemovalFailureSurvivesRecreationAndDuplicateTapStartsOnce'),
+            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','actualTwoAccountSignOutRemovesExactMainAndChildAndActivatesSibling'),
+            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','adapterRefusesToRemoveSameNameReplacementGeneration'),
+            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','delayedSuccessfulRemovalAfterRecreationRoutesRetainedSibling'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','retainedLoadRejectsSameNameReplacementBeforePublication'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','initialLoadFailurePublishesTerminalErrorAndRefreshFailureRetainsValidDashboard'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','dashboardExportCompletionPreservesExactDashboardAfterRecreation'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','noNetworkDashboardShellRoutesExactAccountAfterReadyDone'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','recoveryRemovalConfirmedRoutesCleanLoginAndPreservesSibling'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionsRecoveryBlocksActionsAndLimitedSkipReachesReady'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','pendingRecoveryRemovalSurvivesRecreationAndCleansExactOwner'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','missingCreationIdShowsSettingsOnlyResolution'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','readOnlyLimitedTasksUseNormalContinueAndReachReady'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','generationMismatchShowsSettingsOnlyAcrossRecreation'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncConfigurationEnablesCoreAuthoritiesWithoutRecovery'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncFailureKeepsExactRowAndOffersContinueRetry'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','controllerLiveResultCancellationDuplicatesAndRestoreAreExactOnce'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','cleanInstallBootstrapPublishesMarkerAfterReconciliation'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','obsoleteCoordinatorCancelsBeforeNormalLaunch'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','staleLoginActivityRestorationUsesObsoletePathBeforeController'),
+            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','sameProcessRotationPolicyPreservesAuthenticator'),
+            ('io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest','explicitCreatingTargetOnlyReceivesProviderConfiguration'),
+            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','contactsAttemptExtraRoundTripsAtProviderBoundary'),
+            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','persistedEvidenceIsExactAccountGenerationScopedAndContainsNoAccountName'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCompletionRecreatesAndReturnsToCallerForExactGeneration'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCancelReturnsToCallerAfterRecreation'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importRecreationAndBackCancelReturnToItsCaller'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importCompletionShowsResultAndReturnsToCallerForExactCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCopyRevalidatesGenerationBeforeWritingClipboard'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCopyCompletesAfterRecreationForItsExactGeneration'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCancelAfterRecreationReturnsToExactDashboard'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionCreateLaunchRecreateAndBackPreserveExactRoute'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationsLaunchRecreateAndBackKeepsExactGenerationRoute'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','exactGenerationRoutesLaunchRealActivitiesAndRejectReplacement'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','aboutHelpRemainsReadableAndSelectedAcrossRecreation'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','staleSameNameGenerationRoutesFailClosedBeforeRendering'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionExportCompletionReturnsToExactRenderedCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionViewRendersRecreatesAndReturnsForExactCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionCreateCompletionRendersCreatedCollectionAndPreservesReturn'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionEditCompletionReturnsToUpdatedCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionMembersRenderRemoveAndReturnToExactCollection'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationAcceptCompletionReturnsToCallerForExactGeneration'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationRejectCompletionUpdatesListAndReturnsForExactGeneration'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','exactAccountSyncSettingAndCategorySurviveRecreationWithoutChangingSibling'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','staleNotificationAndLegacyRoutesRejectReaddedSameNameAcrossProcessStyleRelaunch'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','loggerNotificationRouteKeepsAdvancedExactGenerationAcrossRecreationAndRejectsReplacement'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','retainedSettingsRejectSameNameReplacementBeforeAccountMutation'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','proxyPortPreferenceAcceptsBoundsAndPreservesPriorValueOnInvalidInput'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','twoStoreMigrationRerunsAfterDefaultAliasCommitFailure'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationRerunsAfterCanonicalStoreCommitFailureWithoutTouchingAliases'),
+            ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationMarkerFailureRerunsAndMarkerIsAlwaysLast'),
+          }
+          seen=[]
+          for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
+            root=ET.parse(path).getroot()
+            for case in root.iter('testcase'):
+              pair=(case.attrib.get('classname'),case.attrib.get('name')); seen.append(pair)
+              if pair in expected and list(case): raise SystemExit(f'failed {pair}')
+          counts=Counter(seen)
+          missing=expected-set(counts)
+          if missing: raise SystemExit(f'missing {sorted(missing)}')
+          duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}
+          if duplicates: raise SystemExit(f'expected test count mismatch {duplicates}')
+          PY
 
   # ─────────────────────────────────────────────────────────────────────
   # Release builds — signed, only on version tags.

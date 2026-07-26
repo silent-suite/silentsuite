@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+    android:padding="24dp" android:gravity="center_vertical">
+    <TextView android:id="@+id/setup_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="@string/post_login_setup_title" android:textAppearance="?attr/textAppearanceHeadlineSmall" />
+    <TextView android:id="@+id/setup_status" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="16dp" android:accessibilityLiveRegion="polite" />
+    <Button android:id="@+id/setup_continue_limited" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="24dp" android:text="@string/post_login_setup_continue" />
+    <Button android:id="@+id/setup_skip_integrations" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="8dp" android:text="@string/post_login_setup_skip_integrations" />
+    <Button android:id="@+id/setup_remove_incomplete" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="8dp" android:text="@string/post_login_setup_remove_incomplete" />
+    <Button android:id="@+id/setup_retry_inventory" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="8dp" android:text="@string/post_login_setup_retry_inventory" />
+    <Button android:id="@+id/setup_resolve_ambiguity" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="8dp" android:text="@string/post_login_setup_resolve_ambiguity" />
+    <Button android:id="@+id/setup_done" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="8dp" android:text="@string/post_login_setup_done" />
+</LinearLayout>

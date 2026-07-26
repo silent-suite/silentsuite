@@ -10,13 +10,16 @@ import android.view.*
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.fragment.app.Fragment
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.ui.BaseActivity
+import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
 
 class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
 
     private lateinit var account: Account
+    private lateinit var identity: CollectionLifecycleIdentity
     protected lateinit var info: CollectionInfo
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,6 +32,24 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
         val extras = requireNotNull(intent.extras) { "ImportActivity requires intent extras" }
         account = requireNotNull(extras.getParcelable(EXTRA_ACCOUNT)) { "ImportActivity requires EXTRA_ACCOUNT" }
         info = requireNotNull(extras.getSerializable(EXTRA_COLLECTION_INFO) as? CollectionInfo) { "ImportActivity requires EXTRA_COLLECTION_INFO" }
+        val creationId = extras.getString(EXTRA_CREATION_ID)?.takeIf { it.isNotBlank() }
+        val uid = info.uid?.takeIf { it.isNotBlank() }
+        val type = when (info.enumType) {
+            CollectionInfo.Type.CALENDAR -> Constants.ETEBASE_TYPE_CALENDAR
+            CollectionInfo.Type.TASKS -> Constants.ETEBASE_TYPE_TASKS
+            CollectionInfo.Type.ADDRESS_BOOK -> Constants.ETEBASE_TYPE_ADDRESS_BOOK
+            null -> null
+        }
+        identity = runCatching {
+            CollectionLifecycleIdentity.existing(account, requireNotNull(creationId), requireNotNull(uid), requireNotNull(type))
+        }.getOrNull() ?: run {
+            finish()
+            return
+        }
+        if (!identity.validate(this)) {
+            finish()
+            return
+        }
 
         if (savedInstanceState == null)
             supportFragmentManager.beginTransaction()
@@ -38,7 +59,7 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
 
     override fun importFile() {
         supportFragmentManager.beginTransaction()
-                .add(ImportFragment.newInstance(account, info), null)
+                .add(ImportFragment.newInstance(identity), null)
                 .commit()
 
     }
@@ -47,13 +68,13 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
         if (info.enumType == CollectionInfo.Type.CALENDAR) {
             supportFragmentManager.beginTransaction()
                     .replace(android.R.id.content,
-                            LocalCalendarImportFragment.newInstance(account, info.uid!!))
+                            LocalCalendarImportFragment.newInstance(identity))
                     .addToBackStack(LocalCalendarImportFragment::class.java.name)
                     .commit()
         } else if (info.enumType == CollectionInfo.Type.ADDRESS_BOOK) {
             supportFragmentManager.beginTransaction()
                     .replace(android.R.id.content,
-                            LocalContactImportFragment.newInstance(account, info.uid!!))
+                            LocalContactImportFragment.newInstance(identity))
                     .addToBackStack(LocalContactImportFragment::class.java.name)
                     .commit()
         }
@@ -149,11 +170,14 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
     companion object {
         val EXTRA_ACCOUNT = "account"
         val EXTRA_COLLECTION_INFO = "collectionInfo"
+        private const val EXTRA_CREATION_ID = "creationId"
 
-        fun newIntent(context: Context, account: Account, info: CollectionInfo): Intent {
+        fun newIntent(context: Context, account: Account, creationId: String, info: CollectionInfo): Intent {
+            require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
             val intent = Intent(context, ImportActivity::class.java)
             intent.putExtra(ImportActivity.EXTRA_ACCOUNT, account)
             intent.putExtra(ImportActivity.EXTRA_COLLECTION_INFO, info)
+            intent.putExtra(EXTRA_CREATION_ID, creationId)
             return intent
         }
     }

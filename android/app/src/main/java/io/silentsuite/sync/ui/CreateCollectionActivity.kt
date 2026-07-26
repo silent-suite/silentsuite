@@ -9,6 +9,7 @@
 package io.silentsuite.sync.ui
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.ColorDrawable
@@ -20,6 +21,7 @@ import android.view.View
 import android.widget.EditText
 import androidx.core.app.NavUtils
 import io.silentsuite.sync.R
+import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.resource.LocalTaskList
@@ -95,8 +97,9 @@ open class CreateCollectionActivity : BaseActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         if (item.itemId == android.R.id.home) {
-            val intent = Intent(this, AccountActivity::class.java)
-            intent.putExtra(AccountActivity.EXTRA_ACCOUNT, account)
+            val creationId = AccountManager.get(this).getUserData(account, AccountSettings.KEY_CREATION_ID)
+                ?.takeIf { it.isNotBlank() } ?: return true
+            val intent = AccountActivity.newIntent(this, account, creationId)
             NavUtils.navigateUpTo(this, intent)
             return true
         }

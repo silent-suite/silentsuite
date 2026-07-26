@@ -13,7 +13,8 @@ android {
     compileSdkVersion rootProject.ext.compileSdkVersion
 
     defaultConfig {
-        minSdkVersion 14            // Android 4.0
+        // cert4android is consumed only by this API-21 application.
+        minSdkVersion 21            // Android 5.0
         targetSdkVersion 33
     }
 
@@ -37,19 +38,33 @@ android {
     }
 }
 
-dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.kotlin_version}"
+// Keep release-library packaging unchanged. Only the generated androidTest APK
+// exceeds the single-DEX reference limit (68,523 references). API 21 natively
+// loads the additional DEX files, so no legacy multidex support library is needed.
+androidComponents {
+    beforeVariants(selector().all()) { variantBuilder ->
+        variantBuilder.androidTest?.enableMultiDex = true
+    }
+}
 
-    implementation 'androidx.appcompat:appcompat:1.2.0'
-    implementation 'androidx.cardview:cardview:1.0.0'
-    implementation 'androidx.lifecycle:lifecycle-extensions:2.2.0'
-    implementation 'androidx.lifecycle:lifecycle-livedata:2.4.0'
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.4.0'
-    implementation 'com.google.android.material:material:1.2.1'
+dependencies {
+    def androidX = rootProject.ext.androidXVersions
+
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}"
+
+    implementation "androidx.core:core:${androidX.core}"
+    implementation "androidx.appcompat:appcompat:${androidX.appcompat}"
+    implementation "androidx.cardview:cardview:${androidX.cardview}"
+    implementation "androidx.lifecycle:lifecycle-livedata:${androidX.lifecycle}"
+    implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:${androidX.lifecycle}"
+    implementation "com.google.android.material:material:${androidX.material}"
     implementation "org.conscrypt:conscrypt-android:${versions.conscrypt}"
 
-    androidTestImplementation 'androidx.test:runner:1.3.0'
-    androidTestImplementation 'androidx.test:rules:1.3.0'
+    androidTestImplementation "androidx.test:runner:${androidX.testRunner}"
+    androidTestImplementation "androidx.test:rules:${androidX.testRules}"
+    androidTestImplementation "androidx.test:core:${androidX.testCore}"
+    androidTestImplementation "androidx.test.ext:junit:${androidX.testExtJunit}"
+    androidTestImplementation "androidx.test.espresso:espresso-core:${androidX.espresso}"
     androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.9.0'
 
     testImplementation 'junit:junit:4.13'

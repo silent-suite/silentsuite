@@ -31,23 +31,71 @@ class ViewCollectionFragment : Fragment() {
     private val collectionModel: CollectionViewModel by activityViewModels()
     private val itemsModel: ItemsViewModel by activityViewModels()
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val identity = CollectionLifecycleIdentity.from(arguments)
+        if (identity?.collectionUid == null || !identity.validate(requireContext()))
+            requireActivity().finish()
+    }
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val ret = inflater.inflate(R.layout.view_collection_fragment, container, false)
         setHasOptionsMenu(true)
 
-        if (savedInstanceState == null) {
-            collectionModel.observe(this) {
-                (activity as? BaseActivity?)?.supportActionBar?.title = it.meta.name
-                if (container != null) {
-                    initUi(inflater, ret, it)
-                }
-            }
-        }
-
         return ret
     }
 
-    private fun initUi(inflater: LayoutInflater, container: View, cachedCollection: CachedCollection) {
+    override fun onResume() {
+        super.onResume()
+        val root = view ?: return
+        runtimeFixture(requireContext(), requireIdentity())?.let { initFixtureUi(root, it) }
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        runtimeFixture(requireContext(), requireIdentity())?.let { fixture ->
+            initFixtureUi(view, fixture)
+            return
+        }
+        collectionModel.observe(viewLifecycleOwner) {
+            val identity = CollectionLifecycleIdentity.from(arguments)
+            if (identity == null || identity.account != accountModel.value?.account ||
+                identity.collectionUid != it.col.uid || identity.collectionType != it.collectionType) {
+                requireActivity().finish()
+                return@observe
+            }
+            (activity as? BaseActivity?)?.supportActionBar?.title = it.meta.name
+            initUi(view, it)
+        }
+        itemsModel.observe(viewLifecycleOwner) {
+            val stats = view.findViewById<TextView>(R.id.stats)
+            view.findViewById<View>(R.id.progressBar).visibility = View.GONE
+            val status = if (it.isEmpty()) {
+                getString(R.string.collection_recent_activity_none)
+            } else {
+                resources.getQuantityString(R.plurals.collection_recent_activity_items, it.size, it.size)
+            }
+            if (stats.text != status) stats.text = status
+        }
+    }
+
+    private fun initFixtureUi(container: View, fixture: RuntimeCollectionFixture) {
+        (activity as? BaseActivity?)?.supportActionBar?.title = fixture.name
+        container.findViewById<TextView>(R.id.display_name).text = fixture.name
+        container.findViewById<TextView>(R.id.description).text = fixture.description
+        container.findViewById<View>(R.id.color).apply {
+            visibility = if (fixture.type == Constants.ETEBASE_TYPE_ADDRESS_BOOK) View.GONE else View.VISIBLE
+            setBackgroundColor(fixture.color)
+        }
+        container.findViewById<TextView>(R.id.owner).visibility =
+            if (fixture.accessLevel == CollectionAccessLevel.Admin) View.GONE else View.VISIBLE
+        val stats = container.findViewById<TextView>(R.id.stats)
+        stats.text = if (fixture.itemContents.isEmpty()) getString(R.string.collection_recent_activity_none)
+        else resources.getQuantityString(R.plurals.collection_recent_activity_items, fixture.itemContents.size, fixture.itemContents.size)
+        container.findViewById<View>(R.id.progressBar).visibility = View.GONE
+    }
+
+    private fun initUi(container: View, cachedCollection: CachedCollection) {
         val title = container.findViewById<TextView>(R.id.display_name)
 
         val col = cachedCollection.col
@@ -87,15 +135,6 @@ class ViewCollectionFragment : Fragment() {
             owner.text = getString(R.string.collection_shared_with_us)
         }
 
-        itemsModel.observe(this) {
-            val stats = container.findViewById<TextView>(R.id.stats)
-            container.findViewById<View>(R.id.progressBar).visibility = View.GONE
-            stats.text = if (it.isEmpty()) {
-                getString(R.string.collection_recent_activity_none)
-            } else {
-                resources.getQuantityString(R.plurals.collection_recent_activity_items, it.size, it.size)
-            }
-        }
     }
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
@@ -104,6 +143,8 @@ class ViewCollectionFragment : Fragment() {
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        val fixture = runtimeFixture(requireContext(), requireIdentity())
+        if (fixture != null) return onFixtureOption(item, fixture)
         val cachedCollection = collectionModel.value
         if (cachedCollection == null) {
             Toast.makeText(context, R.string.loading_error_title, Toast.LENGTH_LONG).show()
@@ -114,7 +155,7 @@ class ViewCollectionFragment : Fragment() {
             R.id.on_edit -> {
                 if (cachedCollection.col.accessLevel == CollectionAccessLevel.Admin) {
                     parentFragmentManager.commit {
-                        replace(R.id.fragment_container, EditCollectionFragment.newInstance(cachedCollection))
+                        replace(R.id.fragment_container, EditCollectionFragment.newInstance(requireIdentity(), false))
                         addToBackStack(EditCollectionFragment::class.java.name)
                     }
                 } else {
@@ -128,7 +169,7 @@ class ViewCollectionFragment : Fragment() {
             }
             R.id.on_manage_members -> {
                 parentFragmentManager.commit {
-                    replace(R.id.fragment_container, CollectionMembersFragment())
+                    replace(R.id.fragment_container, CollectionMembersFragment.newInstance(requireIdentity(), cachedCollection.col.accessLevel == CollectionAccessLevel.Admin))
                     addToBackStack(null)
                 }
             }
@@ -144,6 +185,32 @@ class ViewCollectionFragment : Fragment() {
         return super.onOptionsItemSelected(item)
     }
 
+    private fun onFixtureOption(item: MenuItem, fixture: RuntimeCollectionFixture): Boolean {
+        when (item.itemId) {
+            R.id.on_edit -> if (fixture.accessLevel == CollectionAccessLevel.Admin) parentFragmentManager.commit {
+                replace(R.id.fragment_container, EditCollectionFragment.newInstance(requireIdentity(), false))
+                addToBackStack(EditCollectionFragment::class.java.name)
+            }
+            R.id.on_manage_members -> parentFragmentManager.commit {
+                replace(R.id.fragment_container, CollectionMembersFragment.newInstance(requireIdentity(), fixture.accessLevel == CollectionAccessLevel.Admin))
+                addToBackStack(null)
+            }
+            R.id.on_export -> createFixtureExportDocument(fixture)
+            else -> return super.onOptionsItemSelected(item)
+        }
+        return true
+    }
+
+    private fun createFixtureExportDocument(fixture: RuntimeCollectionFixture) {
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = AndroidDataExporter.collectionMimeType(fixture.type)
+            putExtra(Intent.EXTRA_TITLE, AndroidDataExporter.suggestedCollectionFileName(fixture.type, fixture.name))
+        }
+        collectionExportDocumentLauncherOverride?.invoke(this, intent, REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT)
+            ?: startActivityForResult(intent, REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT)
+    }
+
     private fun startImport(cachedCollection: CachedCollection) {
         if (cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly) {
             val dialog = MaterialAlertDialogBuilder(requireContext())
@@ -155,6 +222,10 @@ class ViewCollectionFragment : Fragment() {
             return
         }
 
+        if (!requireIdentity().validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
         val accountHolder = accountModel.value
         if (accountHolder == null) {
             Toast.makeText(context, R.string.loading_error_title, Toast.LENGTH_LONG).show()
@@ -162,17 +233,22 @@ class ViewCollectionFragment : Fragment() {
         }
 
         parentFragmentManager.commit {
-            add(ImportFragment.newInstance(accountHolder.account, cachedCollection), null)
+            add(ImportFragment.newInstance(requireIdentity()), null)
         }
     }
 
     private fun createExportDocument(cachedCollection: CachedCollection) {
+        if (!requireIdentity().validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = AndroidDataExporter.collectionMimeType(cachedCollection.collectionType)
             putExtra(Intent.EXTRA_TITLE, AndroidDataExporter.suggestedCollectionFileName(cachedCollection.collectionType, cachedCollection.meta.name))
         }
-        startActivityForResult(intent, REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT)
+        collectionExportDocumentLauncherOverride?.invoke(this, intent, REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT)
+            ?: startActivityForResult(intent, REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -182,25 +258,54 @@ class ViewCollectionFragment : Fragment() {
         val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
         if (uri == null) return
 
-        val cachedCollection = collectionModel.value ?: run {
+        val identity = requireIdentity()
+        if (!identity.validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
+
+        val fixture = runtimeFixture(requireContext(), identity)
+        val cachedCollection = collectionModel.value
+        if (fixture == null && cachedCollection == null) {
             Toast.makeText(context, R.string.loading_error_title, Toast.LENGTH_LONG).show()
             return
         }
-        val itemContents = itemsModel.value
+        val itemContents = fixture?.itemContents ?: itemsModel.value
             ?.filter { !it.item.isDeleted }
             ?.map { it.content }
             ?: emptyList()
+        val collectionType = fixture?.type ?: requireNotNull(cachedCollection).collectionType
 
+        val applicationContext = requireContext().applicationContext
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    val outputStream = requireContext().contentResolver.openOutputStream(uri)
-                            ?: throw IOException("Could not open export destination")
-                    outputStream.use {
-                        AndroidDataExporter.writeCollectionExport(cachedCollection.collectionType, itemContents, it)
-                    }
+                val exported = withContext(Dispatchers.IO) {
+                    if (!identity.validate(applicationContext)) return@withContext false
+                    val completed = collectionExportOverride?.invoke(applicationContext, identity, collectionType, itemContents, uri)
+                        ?: run {
+                            val outputStream = applicationContext.contentResolver.openOutputStream(uri)
+                                    ?: throw IOException("Could not open export destination")
+                            outputStream.use {
+                                AndroidDataExporter.writeCollectionExport(
+                                    applicationContext,
+                                    identity.account,
+                                    identity.creationId,
+                                    collectionType,
+                                    itemContents,
+                                    it,
+                                )
+                            }
+                        }
+                    completed && identity.validate(applicationContext)
+                }
+                if (!exported) {
+                    activity?.finish()
+                    return@launch
                 }
                 Toast.makeText(requireContext(), R.string.export_data_success, Toast.LENGTH_LONG).show()
+                // Process-only observation point for runtime tests; production behavior
+                // remains the Toast above when no observer is installed.
+                collectionExportCompletionOverride?.invoke(identity)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 io.silentsuite.sync.log.Logger.log.log(Level.SEVERE, "Collection data export failed", e)
@@ -211,5 +316,14 @@ class ViewCollectionFragment : Fragment() {
 
     companion object {
         private const val REQUEST_CREATE_COLLECTION_EXPORT_DOCUMENT = 6385
+        @Volatile internal var collectionExportDocumentLauncherOverride: ((ViewCollectionFragment, Intent, Int) -> Unit)? = null
+        @Volatile internal var collectionExportOverride: ((android.content.Context, CollectionLifecycleIdentity, String, List<String>, android.net.Uri) -> Boolean)? = null
+        @Volatile internal var collectionExportCompletionOverride: ((CollectionLifecycleIdentity) -> Unit)? = null
+
+        fun newInstance(identity: CollectionLifecycleIdentity) = ViewCollectionFragment().apply {
+            arguments = identity.toBundle()
+        }
     }
+
+    private fun requireIdentity() = requireNotNull(CollectionLifecycleIdentity.from(arguments))
 }

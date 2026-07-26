@@ -17,6 +17,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.observe
+import androidx.lifecycle.lifecycleScope
 import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.FetchOptions
 import com.etebase.client.SignedInvitation
@@ -32,12 +33,30 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.*
 
+internal data class RuntimeInvitation(
+    val id: String, val fromUsername: String, val accessLevel: CollectionAccessLevel, val fingerprint: String
+)
+internal enum class RuntimeInvitationAction { ACCEPT, REJECT }
+@Volatile internal var invitationsOverride: ((InvitationLifecycleIdentity) -> List<RuntimeInvitation>)? = null
+@Volatile internal var invitationActionOverride:
+    ((Context, InvitationLifecycleIdentity, String, RuntimeInvitationAction) -> Result<Unit>)? = null
+internal data class InvitationRow(val runtime: RuntimeInvitation, private val signedInvitation: SignedInvitation? = null) {
+    internal fun realInvitation() = signedInvitation
+}
 
 class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener {
     private val model: AccountViewModel by activityViewModels()
     private val invitationsModel: InvitationsViewModel by viewModels()
 
     private var emptyTextView: TextView? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val identity = InvitationLifecycleIdentity.from(arguments)
+        if (identity == null || !identity.validate(requireContext())) {
+            requireActivity().finish()
+        }
+    }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val view = inflater.inflate(R.layout.invitations_list, container, false)
@@ -48,7 +67,7 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
         return view
     }
 
-    private fun setListAdapterInvitations(invitations: List<SignedInvitation>) {
+    private fun setListAdapterInvitations(invitations: List<InvitationRow>) {
         val context = context
         if (context != null) {
             val listAdapter = InvitationsListAdapter(context)
@@ -62,12 +81,24 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
-        model.observe(this) {
-            invitationsModel.loadInvitations(it)
+        val identity = requireNotNull(InvitationLifecycleIdentity.from(arguments))
+        invitationsOverride?.let { override ->
+            setListAdapterInvitations(override(identity).map { InvitationRow(it) })
+            emptyTextView!!.setText(R.string.invitations_list_empty)
+            listView.onItemClickListener = this
+            return
         }
 
-        invitationsModel.observe(this) {
+        model.observe(viewLifecycleOwner) { accountHolder ->
+            val identity = InvitationLifecycleIdentity.from(arguments)
+            if (identity == null || identity.account != accountHolder.account || !identity.validate(requireContext())) {
+                requireActivity().finish()
+                return@observe
+            }
+            invitationsModel.loadInvitations(requireContext().applicationContext, identity, accountHolder)
+        }
+
+        invitationsModel.observe(viewLifecycleOwner) {
             setListAdapterInvitations(it)
         }
 
@@ -81,25 +112,39 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
     }
 
     override fun onItemClick(parent: AdapterView<*>, view_: View, position: Int, id: Long) {
-        val invitation = listAdapter?.getItem(position) as SignedInvitation
-        val fingerprint = Utils.prettyFingerprint(invitation.fromPubkey)
+        val invitation = listAdapter?.getItem(position) as InvitationRow
+        val identity = InvitationLifecycleIdentity.from(arguments)
+        if (identity == null || !identity.validate(requireContext())) {
+            requireActivity().finish()
+            return
+        }
+        val fingerprint = invitation.runtime.fingerprint
         val view = layoutInflater.inflate(R.layout.invitation_alert_dialog, null)
         view.findViewById<TextView>(R.id.body).text = getString(R.string.invitations_accept_reject_dialog)
         view.findViewById<TextView>(R.id.fingerprint).text = fingerprint
+        val applicationContext = requireContext().applicationContext
 
         MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.invitations_title)
                 .setIcon(R.drawable.ic_email_black)
                 .setView(view)
-                .setNegativeButton(R.string.invitations_reject) { dialogInterface, i ->
-                    invitationsModel.reject(model.value!!, invitation)
+                .setNegativeButton(R.string.invitations_reject) { _, _ ->
+                    if (invitation.realInvitation() == null) completeFixtureAction(applicationContext, identity, invitation, RuntimeInvitationAction.REJECT)
+                    else invitationsModel.reject(applicationContext, identity, model.value!!, invitation.realInvitation()!!)
                 }
-                .setPositiveButton(R.string.invitations_accept) { dialogInterface, i ->
+                .setPositiveButton(R.string.invitations_accept) { _, _ ->
+                    if (invitation.realInvitation() == null) {
+                        completeFixtureAction(applicationContext, identity, invitation, RuntimeInvitationAction.ACCEPT)
+                        return@setPositiveButton
+                    }
                     val accountHolder = model.value!!
-                    val applicationContext = requireContext().applicationContext
                     val account = accountHolder.account
-                    invitationsModel.accept(accountHolder, invitation) { result ->
+                    invitationsModel.accept(applicationContext, identity, accountHolder, invitation.realInvitation()!!) { result ->
                         result.onSuccess {
+                            if (!identity.validate(applicationContext)) {
+                                activity?.finish()
+                                return@onSuccess
+                            }
                             requestSync(applicationContext, account, forceCollectionRefresh = true)
                             Toast.makeText(applicationContext, R.string.invitations_accept_success_syncing, Toast.LENGTH_LONG).show()
                             activity?.finish()
@@ -112,86 +157,143 @@ class InvitationsListFragment : ListFragment(), AdapterView.OnItemClickListener 
                     }
                 }
                 .show()
-        return
     }
 
-    internal inner class InvitationsListAdapter(context: Context) : ArrayAdapter<SignedInvitation>(context, R.layout.invitations_list_item) {
+    private fun completeFixtureAction(context: Context, identity: InvitationLifecycleIdentity, row: InvitationRow, action: RuntimeInvitationAction) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                if (!identity.validate(context)) Result.failure(IllegalStateException("Account generation changed"))
+                else invitationActionOverride?.invoke(context, identity, row.runtime.id, action)
+                    ?: Result.failure(IllegalStateException("Missing fixture action"))
+            }
+            if (!result.isSuccess || !identity.validate(context)) return@launch
+            if (action == RuntimeInvitationAction.ACCEPT) {
+                activity?.finish()
+            } else {
+                setListAdapterInvitations(invitationsOverride?.invoke(identity).orEmpty().map { InvitationRow(it) })
+            }
+        }
+    }
+
+    internal inner class InvitationsListAdapter(context: Context) : ArrayAdapter<InvitationRow>(context, R.layout.invitations_list_item) {
 
         override fun getView(position: Int, _v: View?, parent: ViewGroup): View {
             var v = _v
             if (v == null)
                 v = LayoutInflater.from(context).inflate(R.layout.invitations_list_item, parent, false)
 
-            val invitation = getItem(position)!!
+            val invitation = getItem(position)!!.runtime
 
             val tv = v!!.findViewById<View>(R.id.title) as TextView
-            // FIXME: Should have a sensible string here
-            tv.text = "Invitation from ${invitation.fromUsername}"
+            tv.text = getString(R.string.invitations_from, invitation.fromUsername)
 
-            // FIXME: Also mark admins
             val readOnly = v.findViewById<View>(R.id.read_only)
             readOnly.visibility = if (invitation.accessLevel == CollectionAccessLevel.ReadOnly) View.VISIBLE else View.GONE
+            v.contentDescription = getString(
+                if (invitation.accessLevel == CollectionAccessLevel.ReadOnly)
+                    R.string.invitations_accessibility_read_only
+                else R.string.invitations_accessibility,
+                invitation.fromUsername
+            )
+            tv.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            readOnly.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
 
             return v
+        }
+    }
+
+    companion object {
+        fun newInstance(identity: InvitationLifecycleIdentity) = InvitationsListFragment().apply {
+            arguments = identity.toBundle()
         }
     }
 }
 
 class InvitationsViewModel : ViewModel() {
-    private val invitations = MutableLiveData<List<SignedInvitation>>()
+    private val invitations = MutableLiveData<List<InvitationRow>>()
     private var asyncTask: Job? = null
 
-    fun loadInvitations(accountCollectionHolder: AccountHolder) {
+    fun loadInvitations(
+        applicationContext: Context,
+        identity: InvitationLifecycleIdentity,
+        accountCollectionHolder: AccountHolder
+    ) {
         asyncTask = viewModelScope.launch {
             val ret = withContext(Dispatchers.IO) {
+                if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account)
+                    return@withContext null
                 val result = LinkedList<SignedInvitation>()
                 val invitationManager = accountCollectionHolder.etebase.invitationManager
                 var iterator: String? = null
                 var done = false
                 while (!done) {
+                    if (!identity.validate(applicationContext)) return@withContext null
                     val chunk = invitationManager.listIncoming(FetchOptions().iterator(iterator).limit(30))
+                    if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account)
+                        return@withContext null
                     iterator = chunk.stoken
                     done = chunk.isDone
-
                     result.addAll(chunk.data)
                 }
-                result
+                result.map {
+                    InvitationRow(RuntimeInvitation(
+                        it.uid,
+                        it.fromUsername ?: applicationContext.getString(R.string.invitations_sender_unknown),
+                        it.accessLevel,
+                        Utils.prettyFingerprint(it.fromPubkey),
+                    ), it)
+                }
             }
-            invitations.value = ret
+            if (ret != null && identity.validate(applicationContext) && identity.account == accountCollectionHolder.account)
+                invitations.value = ret
         }
     }
 
-    fun accept(accountCollectionHolder: AccountHolder, invitation: SignedInvitation, onComplete: (Result<Unit>) -> Unit = {}) {
+    fun accept(
+        applicationContext: Context,
+        identity: InvitationLifecycleIdentity,
+        accountCollectionHolder: AccountHolder,
+        invitation: SignedInvitation,
+        onComplete: (Result<Unit>) -> Unit = {}
+    ) {
         viewModelScope.launch {
             val result = try {
-                withContext(Dispatchers.IO) {
-                    val invitationManager = accountCollectionHolder.etebase.invitationManager
-                    invitationManager.accept(invitation)
+                val accepted = withContext(Dispatchers.IO) {
+                    if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account)
+                        return@withContext false
+                    accountCollectionHolder.etebase.invitationManager.accept(invitation)
+                    true
                 }
-                Result.success(Unit)
+                if (accepted && identity.validate(applicationContext)) Result.success(Unit)
+                else Result.failure(IllegalStateException("Account generation changed"))
             } catch (e: Exception) {
-                if (e is CancellationException) {
-                    throw e
-                }
+                if (e is CancellationException) throw e
                 Result.failure(e)
             }
 
             if (result.isSuccess) {
-                val ret = invitations.value.orEmpty().filter { it != invitation }
-                invitations.value = ret
+                invitations.value = invitations.value.orEmpty().filter { it.realInvitation() != invitation }
             }
             onComplete(result)
         }
     }
 
-    fun reject(accountCollectionHolder: AccountHolder, invitation: SignedInvitation) {
+    fun reject(
+        applicationContext: Context,
+        identity: InvitationLifecycleIdentity,
+        accountCollectionHolder: AccountHolder,
+        invitation: SignedInvitation
+    ) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                val invitationManager = accountCollectionHolder.etebase.invitationManager
-                invitationManager.reject(invitation)
+            val rejected = withContext(Dispatchers.IO) {
+                if (!identity.validate(applicationContext) || identity.account != accountCollectionHolder.account)
+                    return@withContext false
+                accountCollectionHolder.etebase.invitationManager.reject(invitation)
+                identity.validate(applicationContext) && identity.account == accountCollectionHolder.account
             }
-            val ret = invitations.value!!.filter { it != invitation }
-            invitations.value = ret
+            if (rejected) {
+                invitations.value = invitations.value.orEmpty().filter { it.realInvitation() != invitation }
+            }
         }
     }
 
@@ -199,6 +301,6 @@ class InvitationsViewModel : ViewModel() {
         asyncTask?.cancel()
     }
 
-    fun observe(owner: LifecycleOwner, observer: (List<SignedInvitation>) -> Unit) =
+    internal fun observe(owner: LifecycleOwner, observer: (List<InvitationRow>) -> Unit) =
             invitations.observe(owner, observer)
 }

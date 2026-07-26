@@ -8,122 +8,125 @@
   -->
 
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-            xmlns:tools="http://schemas.android.com/tools"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_margin="@dimen/activity_margin">
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/permissions_scroll"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:paddingStart="@dimen/spacing_16"
+    android:paddingTop="@dimen/spacing_16"
+    android:paddingEnd="@dimen/spacing_16"
+    android:paddingBottom="@dimen/spacing_24"
+    android:scrollbarStyle="outsideOverlay">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <LinearLayout
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="@dimen/spacing_16"
+            android:text="@string/permissions_intro"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
+
+        <com.google.android.material.card.MaterialCardView
             android:id="@+id/calendar_permissions"
+            style="@style/Widget.AppTheme.Material3.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginBottom="16dp"
-            tools:ignore="UselessParent">
+            android:layout_marginBottom="@dimen/spacing_16"
+            tools:visibility="visible">
 
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                style="@style/TextView.Heading"
-                android:text="@string/permissions_calendar"/>
+                android:orientation="vertical"
+                android:padding="@dimen/spacing_16">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/permissions_calendar_details"/>
+                <TextView
+                    style="@style/TextAppearance.AppTheme.Material3.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/permissions_calendar" />
 
-            <Button
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/permissions_calendar_request"
-                android:onClick="requestCalendarPermissions"/>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/spacing_8"
+                    android:text="@string/permissions_action_needed"
+                    android:textAppearance="@style/TextAppearance.AppTheme.Material3.Status" />
 
-        </LinearLayout>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/spacing_8"
+                    android:text="@string/permissions_calendar_details"
+                    android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
 
-        <LinearLayout
+                <com.google.android.material.button.MaterialButton
+                    style="@style/Widget.AppTheme.Material3.Button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/spacing_16"
+                    android:minHeight="@dimen/touch_target_min"
+                    android:onClick="requestCalendarPermissions"
+                    android:text="@string/permissions_calendar_request" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
             android:id="@+id/contacts_permissions"
+            style="@style/Widget.AppTheme.Material3.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginBottom="16dp"
-            tools:ignore="UselessParent">
+            android:layout_marginBottom="@dimen/spacing_16"
+            tools:visibility="visible">
 
-            <TextView
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                style="@style/TextView.Heading"
-                android:text="@string/permissions_contacts"/>
+                android:orientation="vertical"
+                android:padding="@dimen/spacing_16">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/permissions_contacts_details"/>
+                <TextView style="@style/TextAppearance.AppTheme.Material3.Title" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/permissions_contacts" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:text="@string/permissions_action_needed" android:textAppearance="@style/TextAppearance.AppTheme.Material3.Status" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:text="@string/permissions_contacts_details" android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
+                <com.google.android.material.button.MaterialButton style="@style/Widget.AppTheme.Material3.Button" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_16" android:minHeight="@dimen/touch_target_min" android:onClick="requestContactsPermissions" android:text="@string/permissions_contacts_request" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
-            <Button
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/permissions_contacts_request"
-                android:onClick="requestContactsPermissions"/>
-
-        </LinearLayout>
-
-        <LinearLayout
+        <com.google.android.material.card.MaterialCardView
             android:id="@+id/opentasks_permissions"
+            style="@style/Widget.AppTheme.Material3.Card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginBottom="16dp"
-            tools:ignore="UselessParent">
+            android:layout_marginBottom="@dimen/spacing_16"
+            tools:visibility="visible">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                style="@style/TextView.Heading"
-                android:text="@string/permissions_opentasks"/>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/spacing_16">
+                <TextView style="@style/TextAppearance.AppTheme.Material3.Title" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/permissions_opentasks" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:text="@string/permissions_action_needed" android:textAppearance="@style/TextAppearance.AppTheme.Material3.Status" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:text="@string/permissions_opentasks_details" android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
+                <com.google.android.material.button.MaterialButton style="@style/Widget.AppTheme.Material3.Button" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_16" android:minHeight="@dimen/touch_target_min" android:onClick="requestOpenTasksPermissions" android:text="@string/permissions_opentasks_request" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/permissions_opentasks_details"/>
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/tasksorg_permissions"
+            style="@style/Widget.AppTheme.Material3.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:visibility="visible">
 
-            <Button
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/permissions_opentasks_request"
-                android:onClick="requestOpenTasksPermissions"/>
-
-        </LinearLayout>
-
-        <LinearLayout
-          android:id="@+id/tasksorg_permissions"
-          android:layout_width="match_parent"
-          android:layout_height="wrap_content"
-          android:orientation="vertical"
-          tools:ignore="UselessParent">
-
-            <TextView
-              android:layout_width="match_parent"
-              android:layout_height="wrap_content"
-              style="@style/TextView.Heading"
-              android:text="@string/permissions_tasks_org"/>
-
-            <TextView
-              android:layout_width="match_parent"
-              android:layout_height="wrap_content"
-              android:text="@string/permissions_tasks_org_details"/>
-
-            <Button
-              android:layout_width="wrap_content"
-              android:layout_height="wrap_content"
-              android:text="@string/permissions_tasks_org_request"
-              android:onClick="requestTasksOrgPermissions"/>
-
-        </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="@dimen/spacing_16">
+                <TextView style="@style/TextAppearance.AppTheme.Material3.Title" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/permissions_tasks_org" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:text="@string/permissions_action_needed" android:textAppearance="@style/TextAppearance.AppTheme.Material3.Status" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:text="@string/permissions_tasks_org_details" android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body" />
+                <com.google.android.material.button.MaterialButton style="@style/Widget.AppTheme.Material3.Button" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_16" android:minHeight="@dimen/touch_target_min" android:onClick="requestTasksOrgPermissions" android:text="@string/permissions_tasks_org_request" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
-
 </ScrollView>

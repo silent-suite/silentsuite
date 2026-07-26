@@ -13,6 +13,7 @@
     <item
         android:title="@string/help"
         android:icon="@drawable/ic_help_light"
+        app:iconTint="@color/semantic_on_surface"
         app:showAsAction="always"
         android:onClick="showHelp">
     </item>

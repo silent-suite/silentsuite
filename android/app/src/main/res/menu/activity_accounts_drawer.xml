@@ -3,80 +3,30 @@
 
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <group android:id="@+id/nav_account_group" android:checkableBehavior="none">
+    <group android:id="@+id/nav_destinations_group" android:checkableBehavior="none">
         <item
-            android:id="@+id/nav_add_account"
-            android:icon="@drawable/ic_add_light"
-            android:title="@string/navigation_drawer_add_account"/>
+            android:id="@+id/nav_sync_overview"
+            android:icon="@drawable/ic_sync_light"
+            android:title="@string/navigation_drawer_sync_overview"/>
         <item
-            android:id="@+id/nav_logout"
-            android:icon="@drawable/ic_logout"
-            android:title="@string/navigation_drawer_logout"/>
-    </group>
-
-    <group android:id="@+id/nav_sync_group" android:checkableBehavior="none">
-        <item
-            android:id="@+id/nav_calendar"
-            android:icon="@drawable/ic_event_light"
-            android:title="@string/navigation_drawer_calendar"/>
-        <item
-            android:id="@+id/nav_tasks"
-            android:icon="@drawable/ic_task_light"
-            android:title="@string/navigation_drawer_tasks"/>
-        <item
-            android:id="@+id/nav_contacts"
-            android:icon="@drawable/ic_account_dark"
-            android:title="@string/navigation_drawer_contacts"/>
-    </group>
-
-    <group android:id="@+id/nav_account_tools_group" android:checkableBehavior="none">
+            android:id="@+id/nav_invitations"
+            android:icon="@drawable/ic_people_light"
+            android:title="@string/invitations_title"/>
         <item
             android:id="@+id/nav_app_settings"
             android:icon="@drawable/ic_settings_dark"
             android:title="@string/navigation_drawer_settings"/>
         <item
-            android:id="@+id/nav_invitations"
-            android:icon="@drawable/ic_people_light"
-            android:title="@string/invitations_title"/>
-    </group>
-
-    <group android:id="@+id/nav_security_group" android:checkableBehavior="none">
-        <item
-            android:id="@+id/nav_show_fingerprint"
-            android:icon="@drawable/ic_fingerprint_dark"
-            android:title="@string/account_show_fingerprint"/>
-        <item
-            android:id="@+id/nav_export_data"
-            android:icon="@drawable/ic_import_export_black"
-            android:title="@string/export_data_title"/>
-    </group>
-
-    <group android:id="@+id/nav_app_group" android:checkableBehavior="none">
-        <item
-            android:id="@+id/nav_theme"
-            android:icon="@drawable/ic_palette"
-            android:title="@string/navigation_drawer_theme"/>
-        <item
             android:id="@+id/nav_about"
             android:icon="@drawable/ic_info_dark"
-            android:title="@string/navigation_drawer_about"/>
+            android:title="@string/navigation_drawer_help_about"/>
     </group>
 
-    <item android:title="@string/navigation_drawer_external_links">
-        <menu>
-            <item
-                android:id="@+id/nav_website"
-                android:icon="@drawable/ic_language"
-                android:title="@string/navigation_drawer_website_label"/>
-            <item
-                android:id="@+id/nav_webapp"
-                android:icon="@drawable/ic_devices"
-                android:title="@string/navigation_drawer_webapp_label"/>
-            <item
-                android:id="@+id/nav_guide"
-                android:icon="@drawable/ic_menu_book"
-                android:title="@string/navigation_drawer_guide_label"/>
-        </menu>
-    </item>
+    <group android:id="@+id/nav_sign_out_group" android:checkableBehavior="none">
+        <item
+            android:id="@+id/nav_logout"
+            android:icon="@drawable/ic_logout"
+            android:title="@string/navigation_drawer_logout"/>
+    </group>
 
 </menu>

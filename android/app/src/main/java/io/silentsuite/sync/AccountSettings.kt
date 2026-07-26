@@ -23,6 +23,7 @@ import io.silentsuite.sync.log.Logger
 import java.net.URI
 import java.net.URISyntaxException
 import java.util.logging.Level
+import io.silentsuite.sync.ui.setup.PostLoginSetupState
 
 class AccountSettings @TargetApi(Build.VERSION_CODES.LOLLIPOP)
 @Throws(InvalidAccountException::class)
@@ -194,12 +195,15 @@ constructor(internal val context: Context, internal val account: Account) {
     class AccountMigrationException(msg: String) : Exception(msg)
 
     companion object {
-        private val CURRENT_VERSION = 2
-        private val KEY_SETTINGS_VERSION = "version"
-        private val KEY_URI = "uri"
-        private val KEY_USERNAME = "user_name"
+        const val CURRENT_VERSION = 2
+        const val KEY_SETTINGS_VERSION = "version"
+        const val KEY_URI = "uri"
+        const val KEY_USERNAME = "user_name"
         private val KEY_WIFI_ONLY = "wifi_only"
-        private val KEY_ETEBASE_SESSION = "etebase_session"
+        const val KEY_ETEBASE_SESSION = "etebase_session"
+        const val KEY_POST_LOGIN_SETUP_STATE = "post_login_setup_state_v1"
+        const val KEY_CREATION_ID = "post_login_creation_id"
+        const val KEY_LIMITED_INTEGRATIONS = "post_login_limited_integrations_v1"
         // sync on WiFi only (default: false)
         private val KEY_WIFI_ONLY_SSID = "wifi_only_ssid"  // restrict sync to specific WiFi SSID
 
@@ -232,5 +236,20 @@ constructor(internal val context: Context, internal val account: Account) {
             accountManager.setUserData(account, KEY_USERNAME, userName)
             accountManager.setUserData(account, KEY_URI, uri?.toString())
         }
+
+        /** Writes one AccountManager field and proves its exact read-back before continuing. */
+        fun writeVerified(accountManager: AccountManager, account: Account, key: String, value: String?): Boolean {
+            accountManager.setUserData(account, key, value)
+            return accountManager.getUserData(account, key) == value
+        }
+
+        fun setupState(accountManager: AccountManager, account: Account, bootstrapped: Boolean): PostLoginSetupState? =
+            PostLoginSetupState.decode(accountManager.getUserData(account, KEY_POST_LOGIN_SETUP_STATE), bootstrapped)
+
+        fun writeSetupState(accountManager: AccountManager, account: Account, state: PostLoginSetupState): Boolean =
+            writeVerified(accountManager, account, KEY_POST_LOGIN_SETUP_STATE, state.name)
+
+        fun limitedIntegrations(accountManager: AccountManager, account: Account) =
+            accountManager.getUserData(account, KEY_LIMITED_INTEGRATIONS) == "true"
     }
 }

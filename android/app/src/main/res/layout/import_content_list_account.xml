@@ -4,29 +4,35 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:minHeight="@dimen/touch_target_min"
     android:orientation="horizontal"
-    android:paddingLeft="8dp">
+    android:paddingStart="@dimen/spacing_8"
+    android:paddingEnd="@dimen/spacing_8">
 
     <ImageView
         android:id="@+id/icon"
-        android:layout_gravity="center"
         android:layout_width="40dp"
         android:layout_height="40dp"
-        android:src="@drawable/ic_account_dark" 
+        android:contentDescription="@null"
+        android:importantForAccessibility="no"
+        android:src="@drawable/ic_account_dark"
         app:tint="?attr/colorControlNormal" />
 
-    <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-        xmlns:tools="http://schemas.android.com/tools"
-        android:layout_width="match_parent"
+    <LinearLayout
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/spacing_8"
+        android:layout_weight="1"
         android:orientation="vertical"
-        android:padding="8dp">
+        android:paddingTop="@dimen/spacing_8"
+        android:paddingBottom="@dimen/spacing_8">
 
         <TextView
             android:id="@+id/title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Body"
             tools:text="me@silentsuite.io" />
 
         <TextView
@@ -34,6 +40,5 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             tools:text="SilentSuite" />
-
     </LinearLayout>
 </LinearLayout>

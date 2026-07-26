@@ -18,6 +18,7 @@ import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -37,25 +38,32 @@ class DetectConfigurationFragment : DialogFragment() {
 
         Logger.log.fine("DetectConfigurationFragment: loading")
 
-        if (savedInstanceState == null) {
-            val credentials = SetupSecretHolder.getLoginCredentials()
-            if (credentials == null) {
-                Logger.log.warning("Setup login credentials expired before configuration detection")
-                SetupSecretHolder.clearLoginCredentials()
-                parentFragmentManager.beginTransaction()
-                        .add(NothingDetectedFragment.newInstance(getString(R.string.setup_state_expired)), null)
-                        .commitAllowingStateLoss()
-                dismissAllowingStateLoss()
-            } else {
-                findConfiguration(credentials)
-            }
+        val credentials = SetupSecretHolder.getLoginCredentials()
+        if (credentials == null) {
+            Logger.log.warning("Setup login credentials expired before configuration detection")
+            SetupSecretHolder.clearLoginCredentials()
+            notifySubmissionFailed()
+            parentFragmentManager.beginTransaction()
+                    .add(NothingDetectedFragment.newInstance(R.string.setup_state_expired), null)
+                    .commitAllowingStateLoss()
+            dismissAllowingStateLoss()
+        } else {
+            // Credentials live only in process memory. Restarting detection is safe after a
+            // recreated dialog and avoids restoring a non-running progress indicator.
+            findConfiguration(credentials)
         }
     }
 
     private fun findConfiguration(credentials: LoginCredentials) {
         lifecycleScope.launch {
-            val data = withContext(Dispatchers.IO) {
-                BaseConfigurationFinder(requireContext(), credentials).findInitialConfiguration()
+            val data = try {
+                withContext(Dispatchers.IO) {
+                    BaseConfigurationFinder(requireContext(), credentials).findInitialConfiguration()
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Logger.log.warning("Configuration detection failed: ${e.javaClass.name}")
+                null
             }
             onLoadFinished(data)
         }
@@ -67,7 +75,7 @@ class DetectConfigurationFragment : DialogFragment() {
                 Logger.log.warning("Failed login configuration ${data.error?.javaClass?.name}")
                 // no service found: show error message
                 requireFragmentManager().beginTransaction()
-                        .add(NothingDetectedFragment.newInstance(data.error!!.localizedMessage), null)
+                        .add(NothingDetectedFragment.newInstance(messageResource(data.error)), null)
                         .commitAllowingStateLoss()
             } else {
                 Logger.log.info("Found Etebase account")
@@ -76,11 +84,31 @@ class DetectConfigurationFragment : DialogFragment() {
                         .addToBackStack(null)
                         .commitAllowingStateLoss()
             }
-        } else
+        } else {
             Logger.log.severe("Configuration detection failed")
+            requireFragmentManager().beginTransaction()
+                .add(NothingDetectedFragment.newInstance(R.string.login_error_generic), null)
+                .commitAllowingStateLoss()
+        }
 
-        SetupSecretHolder.clearLoginCredentials()
+        if (data == null || data.isFailed)
+            SetupSecretHolder.clearProcessOnlySecrets()
+        else
+            SetupSecretHolder.clearLoginCredentials()
+        if (data == null || data.isFailed)
+            notifySubmissionFailed()
         dismissAllowingStateLoss()
+    }
+
+    private fun notifySubmissionFailed() {
+        (parentFragmentManager.findFragmentById(android.R.id.content) as? LoginCredentialsFragment)
+            ?.onSubmissionFailed()
+    }
+
+    private fun messageResource(error: Throwable?): Int = when (LoginFailureMessagePolicy.messageFor(error)) {
+        LoginFailureMessagePolicy.Message.Authentication -> R.string.login_wrong_username_or_password
+        LoginFailureMessagePolicy.Message.Connection -> R.string.login_connection_error
+        LoginFailureMessagePolicy.Message.Generic -> R.string.login_error_generic
     }
 
     class NothingDetectedFragment : DialogFragment() {
@@ -89,7 +117,7 @@ class DetectConfigurationFragment : DialogFragment() {
             return MaterialAlertDialogBuilder(requireActivity())
                     .setTitle(R.string.setting_up_encryption)
                     .setIcon(R.drawable.ic_error_dark)
-                    .setMessage(requireArguments().getString(KEY_LOGS))
+                    .setMessage(requireArguments().getInt(KEY_MESSAGE_RES))
                     .setPositiveButton(android.R.string.ok) { dialog, which ->
                         // dismiss
                     }
@@ -97,11 +125,11 @@ class DetectConfigurationFragment : DialogFragment() {
         }
 
         companion object {
-            private val KEY_LOGS = "logs"
+            private const val KEY_MESSAGE_RES = "message_res"
 
-            fun newInstance(logs: String): NothingDetectedFragment {
+            fun newInstance(messageRes: Int): NothingDetectedFragment {
                 val args = Bundle()
-                args.putString(KEY_LOGS, logs)
+                args.putInt(KEY_MESSAGE_RES, messageRes)
                 val fragment = NothingDetectedFragment()
                 fragment.arguments = args
                 return fragment
