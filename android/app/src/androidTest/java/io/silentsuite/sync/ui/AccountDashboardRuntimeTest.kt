@@ -292,7 +292,7 @@ class AccountDashboardRuntimeTest {
             }
             AccountActivity.accountRouteLauncherOverride = { routes += Intent(it) }
             AccountActivity.exportDocumentLauncherOverride = { exportDocuments += Intent(it) }
-            AccountActivity.exportWriterOverride = { _, _, _, _, _ -> exports += 1 }
+            AccountActivity.exportWriterOverride = { _, _, _, _, _ -> exports += 1; true }
             AccountActivity.billingStatusOverride = { _, _, _ ->
                 billingReads += 1
                 io.silentsuite.sync.billing.BillingManager.SubscriptionStatus(
@@ -380,6 +380,7 @@ class AccountDashboardRuntimeTest {
             AccountActivity.exportDocumentLauncherOverride = { launched += Intent(it) }
             AccountActivity.exportWriterOverride = { _, exact, creationId, _, _ ->
                 writes += exact to creationId
+                true
             }
             try {
                 scenario.onActivity { it.beginExportForTesting(AndroidExportKind.CALENDAR) }
