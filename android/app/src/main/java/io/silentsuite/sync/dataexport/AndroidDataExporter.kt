@@ -232,7 +232,18 @@ object AndroidDataExporter {
         }
     }
 
-    private fun clearExportDestination(context: Context, destination: Uri) {
+    internal fun finalizePublishedExport(
+        committed: Boolean,
+        clearDestination: () -> Unit,
+        exactGenerationStillCurrent: () -> Boolean,
+    ): Boolean {
+        if (!committed) return false
+        if (exactGenerationStillCurrent()) return true
+        clearDestination()
+        return false
+    }
+
+    internal fun clearExportDestination(context: Context, destination: Uri) {
         val resolver = context.contentResolver
         var truncateFailure: Throwable? = null
         try {

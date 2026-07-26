@@ -291,7 +291,13 @@ class ViewCollectionFragment : Fragment() {
                                 uri,
                             )
                         }
-                    completed && identity.validate(applicationContext)
+                    AndroidDataExporter.finalizePublishedExport(
+                        committed = completed,
+                        clearDestination = {
+                            AndroidDataExporter.clearExportDestination(applicationContext, uri)
+                        },
+                        exactGenerationStillCurrent = { identity.validate(applicationContext) },
+                    )
                 }
                 if (!exported) {
                     activity?.finish()

@@ -589,7 +589,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     ) ?: AndroidDataExporter.writeExport(
                         this@AccountActivity, account, accountCreationId, kind, uri
                     )
-                    completed && exactAccountStillCurrent()
+                    AndroidDataExporter.finalizePublishedExport(
+                        committed = completed,
+                        clearDestination = {
+                            AndroidDataExporter.clearExportDestination(this@AccountActivity, uri)
+                        },
+                        exactGenerationStillCurrent = ::exactAccountStillCurrent,
+                    )
                 }
                 .takeIf { it && exactAccountStillCurrent() } ?: return@launch
                 Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_success, Snackbar.LENGTH_LONG).show()
