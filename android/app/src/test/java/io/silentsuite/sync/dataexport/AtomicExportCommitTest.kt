@@ -110,4 +110,24 @@ class AtomicExportCommitTest {
         assertEquals(1, cleanupCalls)
         assertEquals(0, destination.size())
     }
+
+    @Test
+    fun invalidationImmediatelyAfterCommitClearsPublishedPlaintext() {
+        val destination = ByteArrayOutputStream()
+        destination.write("published private data".toByteArray())
+        var cleanupCalls = 0
+
+        val published = AndroidDataExporter.finalizePublishedExport(
+            committed = true,
+            clearDestination = {
+                cleanupCalls += 1
+                destination.reset()
+            },
+            exactGenerationStillCurrent = { false },
+        )
+
+        assertFalse(published)
+        assertEquals(1, cleanupCalls)
+        assertEquals(0, destination.size())
+    }
 }
