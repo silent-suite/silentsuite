@@ -10,7 +10,7 @@ on:
       - 'tests/test_android_*.py'
       - '.github/workflows/build-android.yml'
   pull_request:
-    branches: [dev]
+    branches: [dev, main]
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
