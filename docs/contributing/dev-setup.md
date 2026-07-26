@@ -6,7 +6,7 @@ Get a local SilentSuite development environment running. You should be able to g
 
 | Tool | Version | Install |
 |---|---|---|
-| **Node.js** | 18+ | [nodejs.org](https://nodejs.org/) |
+| **Node.js** | 22.12+ | [nodejs.org](https://nodejs.org/) |
 | **pnpm** | 10.6+ | `corepack enable && corepack prepare pnpm@latest --activate` |
 | **Docker** | 24+ | [docs.docker.com](https://docs.docker.com/engine/install/) (for running services locally) |
 
