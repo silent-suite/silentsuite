@@ -54,8 +54,8 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
 
         var restored = false
 
-        collectionModel.observe(this) { col ->
-            itemsModel.observe(this) {
+        collectionModel.observe(viewLifecycleOwner) { col ->
+            itemsModel.observe(viewLifecycleOwner) {
                 val entries = it.sortedByDescending { item ->
                     item.meta.mtime ?: 0
                 }
@@ -115,7 +115,8 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
     private fun onUserRefresh() {
         val refresh = swipeRefreshLayout ?: return
         val account = accountModel.value?.account
-        if (account == null) {
+        val identity = CollectionLifecycleIdentity.from(parentFragment?.arguments)
+        if (account == null || identity == null || identity.account != account || !identity.validate(requireContext())) {
             refresh.isRefreshing = false
             return
         }
@@ -179,6 +180,19 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
             val item = getItem(position)!!
 
             setItemView(v, cachedCollection.collectionType, item)
+
+            val title = v.findViewById<TextView>(R.id.title)
+            val description = v.findViewById<TextView>(R.id.description)
+            val action = v.findViewById<ImageView>(R.id.action)
+            v.contentDescription = context.getString(
+                R.string.collection_activity_accessibility,
+                title.text,
+                description.text,
+                action.contentDescription
+            )
+            title.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            description.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            action.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
 
             /* FIXME: handle entry error:
             val entryError = data.select(EntryErrorEntity::class.java).where(EntryErrorEntity.ENTRY.eq(entryEntity)).limit(1).get().firstOrNull()

@@ -49,9 +49,11 @@ android {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.kotlin_version}"
+    def androidX = rootProject.ext.androidXVersions
 
-    implementation 'androidx.annotation:annotation:1.1.0'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}"
+
+    implementation "androidx.annotation:annotation:${androidX.annotation}"
     // noinspection GradleDependency
     implementation "commons-io:commons-io:${versions.commonsIO}"
     // noinspection GradleDependency
@@ -66,8 +68,11 @@ dependencies {
         exclude group: 'com.fasterxml.jackson.core'
     }
 
-    androidTestImplementation 'androidx.test:runner:1.3.0'
-    androidTestImplementation 'androidx.test:rules:1.3.0'
+    // vcard4android retains its upstream API-16 library contract. AndroidX
+    // Test 1.6/3.6 require API 19, so keep this module's instrumentation lane
+    // on the last compatible versions rather than raising its published floor.
+    androidTestImplementation "androidx.test:runner:1.5.2"
+    androidTestImplementation "androidx.test:rules:1.5.0"
 
     testImplementation 'junit:junit:4.13'
 }

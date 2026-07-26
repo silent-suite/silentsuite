@@ -51,8 +51,6 @@ import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.Until;
 
-import io.silentsuite.sync.ui.setup.LoginActivity;
-
 import static androidx.test.espresso.Espresso.onView;
 import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.action.ViewActions.closeSoftKeyboard;
@@ -121,12 +119,10 @@ public class StoreScreenshotsTest {
         SystemClock.sleep(2000);
     }
 
-    private static void launchPrefilledLogin() {
+    private static void launchLogin() {
         Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        Intent intent = new Intent(targetContext, LoginActivity.class);
+        Intent intent = new Intent(targetContext, io.silentsuite.sync.ui.setup.LoginActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-        intent.putExtra(LoginActivity.EXTRA_INITIAL_USERNAME, testEmail);
-        intent.putExtra(LoginActivity.EXTRA_INITIAL_PASSWORD, testPassword);
         targetContext.startActivity(intent);
         device.wait(Until.hasObject(By.pkg(PACKAGE).depth(0)), LAUNCH_TIMEOUT);
         SystemClock.sleep(2000);
@@ -327,11 +323,16 @@ public class StoreScreenshotsTest {
             return; // no credentials, skip login
         }
 
-        Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
-        ScreenshotAccountProvisioner.ensureAccount(targetContext, testEmail, testPassword);
-        loggedIn = true;
-        launchApp();
+        launchLogin();
+        fillLoginFields();
+        if (!tapRes("login")) {
+            espressoLoginFallback();
+        }
+        if (isLoginScreen()) {
+            coordinateLoginFallback();
+        }
         sleep(5000);
+        loggedIn = !isLoginScreen();
     }
 
     /**
@@ -451,7 +452,10 @@ public class StoreScreenshotsTest {
             drawer.click();
             sleep(1000);
         }
-        tapTextContains("Invitations");
+        UiObject2 invitations = device.wait(
+                Until.findObject(By.res(device.getCurrentPackageName(), "nav_invitations")), NAV_TIMEOUT);
+        if (invitations == null) throw new AssertionError("Stable Invitations drawer row not found");
+        invitations.click();
         sleep(2000);
         capture("6-invitations");
         device.pressBack();

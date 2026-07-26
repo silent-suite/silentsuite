@@ -8,15 +8,14 @@ APP_RESOURCES = ROOT / "android/app/src/main/res"
 ANDROID_BUILD_WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 
 
-def test_login_activity_credential_prefill_extras_are_debug_only_and_not_exported():
+def test_login_activity_rejects_credential_prefill_extras_and_is_not_exported():
     activity = LOGIN_ACTIVITY.read_text(encoding="utf-8")
     manifest = MANIFEST.read_text(encoding="utf-8")
 
-    assert "EXTRA_INITIAL_USERNAME" in activity
-    assert "EXTRA_INITIAL_PASSWORD" in activity
-    assert "BuildConfig.DEBUG" in activity
-    assert "if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_USERNAME) else null" in activity
-    assert "if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_INITIAL_PASSWORD) else null" in activity
+    assert "EXTRA_INITIAL_USERNAME" not in activity
+    assert "EXTRA_INITIAL_PASSWORD" not in activity
+    assert "getStringExtra(EXTRA_INITIAL_USERNAME)" not in activity
+    assert "getStringExtra(EXTRA_INITIAL_PASSWORD)" not in activity
 
     login_decl = manifest[manifest.index('android:name=".ui.setup.LoginActivity"'):]
     login_decl = login_decl[:login_decl.index("</activity>")]
@@ -47,3 +46,12 @@ def test_bundletool_uses_a_private_temporary_password_file():
     assert 'printf \'%s\' "$KSTOREPWD" > "$BUNDLETOOL_PASSWORD_FILE"' in workflow
     assert '--ks-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in workflow
     assert '--key-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in workflow
+
+
+def test_android_build_runs_for_dev_and_main_pull_requests():
+    workflow = ANDROID_BUILD_WORKFLOW.read_text(encoding="utf-8")
+    pull_request = workflow.split("  pull_request:\n", 1)[1].split(
+        "  workflow_dispatch:\n", 1
+    )[0]
+
+    assert "branches: [dev, main]" in pull_request

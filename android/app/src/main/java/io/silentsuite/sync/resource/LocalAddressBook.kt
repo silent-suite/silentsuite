@@ -22,19 +22,26 @@ import at.bitfire.vcard4android.*
 import com.etebase.client.CollectionAccessLevel
 import io.silentsuite.sync.App
 import io.silentsuite.sync.CachedCollection
+import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.syncadapter.SyncStatusStore
 
 import java.io.FileNotFoundException
 import java.util.*
 import java.util.logging.Level
 
+internal fun onConfirmedAddressBookRemoval(removed: Boolean, record: () -> Unit) {
+    if (removed) record()
+}
 
 class LocalAddressBook(
         private val context: Context,
         account: Account,
         provider: ContentProviderClient?
 ): AndroidAddressBook<LocalContact, LocalGroup>(account, provider, LocalContact.Factory, LocalGroup.Factory), LocalCollection<LocalAddress> {
+
+    val androidAccount: Account get() = account
 
     companion object {
         val USER_DATA_MAIN_ACCOUNT_TYPE = "real_account_type"
@@ -193,13 +200,29 @@ class LocalAddressBook(
 
     fun delete() {
         val accountManager = AccountManager.get(context)
+        val main = mainAccount
+        val child = account
+        val recordConfirmedRemoval = {
+            val recorded = runCatching { SyncStatusStore(context).recordContactsChildRemoved(main, child) }.getOrDefault(false)
+            if (!recorded) {
+                val extras = Bundle().apply {
+                    putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)
+                    putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                }
+                ContentResolver.requestSync(main, context.getString(R.string.address_books_authority), extras)
+            }
+            Unit
+        }
 
         @Suppress("DEPRECATION")
         @TargetApi(Build.VERSION_CODES.LOLLIPOP_MR1)
-        if (Build.VERSION.SDK_INT >= 22)
-            accountManager.removeAccountExplicitly(account)
-        else
-            accountManager.removeAccount(account, null, null)
+        if (Build.VERSION.SDK_INT >= 22) {
+            onConfirmedAddressBookRemoval(accountManager.removeAccountExplicitly(account), recordConfirmedRemoval)
+        } else {
+            accountManager.removeAccount(account, { future ->
+                onConfirmedAddressBookRemoval(runCatching { future.result }.getOrDefault(false), recordConfirmedRemoval)
+            }, null)
+        }
     }
 
     override fun findAll(): List<LocalAddress> =

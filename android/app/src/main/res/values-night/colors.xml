@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="semantic_background">@color/navy900</color>
+    <color name="semantic_surface">@color/navy800</color>
+    <color name="semantic_on_surface">#F0F3F7</color>
+    <color name="semantic_outline">#AAB5C4</color>
+    <color name="semantic_primary">@color/teal400</color>
+    <color name="semantic_success">#4ADE80</color>
+    <color name="semantic_warning">#FBBF24</color>
+    <color name="semantic_error">#FCA5A5</color>
+    <color name="semantic_disabled">#64748B</color>
+    <color name="semantic_focus">@color/teal400</color>
+    <color name="semantic_system_bar">@color/navy900</color>
+
+    <color name="infoColor">#0F2A3D</color>
+    <color name="nav_header_email">@color/teal400</color>
+    <color name="nav_header_subtitle">#B0BEC5</color>
+</resources>
