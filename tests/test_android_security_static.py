@@ -46,3 +46,12 @@ def test_bundletool_uses_a_private_temporary_password_file():
     assert 'printf \'%s\' "$KSTOREPWD" > "$BUNDLETOOL_PASSWORD_FILE"' in workflow
     assert '--ks-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in workflow
     assert '--key-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in workflow
+
+
+def test_android_build_runs_for_dev_and_main_pull_requests():
+    workflow = ANDROID_BUILD_WORKFLOW.read_text(encoding="utf-8")
+    pull_request = workflow.split("  pull_request:\n", 1)[1].split(
+        "  workflow_dispatch:\n", 1
+    )[0]
+
+    assert "branches: [dev, main]" in pull_request
