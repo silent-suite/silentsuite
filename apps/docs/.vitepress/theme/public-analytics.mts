@@ -26,7 +26,7 @@ const ANDROID_DESTINATIONS: Readonly<Record<string, DocsOutboundEvent>> = {
     event: 'Android Download Click',
     props: { surface: 'docs_android', channel: 'zapstore' },
   },
-  'https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/silent-suite/silentsuite': {
+  'obtainium://add/https://github.com/silent-suite/silentsuite': {
     event: 'Android Download Click',
     props: { surface: 'docs_android', channel: 'obtainium' },
   },

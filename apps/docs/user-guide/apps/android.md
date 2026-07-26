@@ -23,7 +23,7 @@ Choose the install channel you want to keep using for updates.
 [Obtainium](https://github.com/ImranR98/Obtainium) is an open-source Android app that installs and auto-updates apps directly from GitHub releases -- no Google Play, no tracking, no account needed.
 
 1. Install Obtainium from [GitHub Releases](https://github.com/ImranR98/Obtainium/releases) or [F-Droid](https://f-droid.org/packages/dev.imranr.obtainium.fdroid/).
-2. Tap [Add SilentSuite to Obtainium](https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/silent-suite/silentsuite), or open Obtainium, tap **Add App**, and paste this URL:
+2. Tap [Add SilentSuite to Obtainium](obtainium://add/https://github.com/silent-suite/silentsuite), or open Obtainium, tap **Add App**, and paste this URL:
    ```
    https://github.com/silent-suite/silentsuite
    ```

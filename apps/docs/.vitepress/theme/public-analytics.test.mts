@@ -29,7 +29,7 @@ test('classifies Android destinations only on the Android guide', () => {
   })
   assert.deepEqual(
     classifyDocsOutboundEvent(
-      'https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/silent-suite/silentsuite',
+      'obtainium://add/https://github.com/silent-suite/silentsuite',
       '/user-guide/apps/android',
     ),
     {
