@@ -210,6 +210,92 @@ class TestFavoriteCardDavRoundTrip:
         assert "X-SILENTSUITE-FAVORITE:1" in created.serialize()
         assert HrefMapper.get_by_id(new_cache_item.id).href == "new-name.vcf"
 
+    def test_recreate_at_tombstone_href_revives_owned_mapping(self, mem_db, user):
+        collection, cached_collection, _ = self._collection(
+            mem_db,
+            user,
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fav-1\r\nFN:Existing\r\nEND:VCARD",
+        )
+        tombstone = ItemEntity.create(
+            collection=cached_collection.cache_col,
+            uid="restored-contact",
+            eb_item=b"deleted-cache",
+            deleted=True,
+        )
+        HrefMapper.create(content=tombstone, href="restored.vcf")
+        new_item = MagicMock()
+        new_item.content = (
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:restored-contact\r\n"
+            "FN:Restored\r\nEND:VCARD"
+        )
+        new_item.etag = "etag-restored"
+        new_item.meta = {"mtime": 1700000000000}
+
+        def create(_vobject_item):
+            new_item.cache_item = ItemEntity(
+                collection=cached_collection.cache_col,
+                uid="restored-contact",
+                eb_item=b"restored-cache",
+            )
+            return new_item
+
+        def save():
+            new_item.cache_item.save()
+
+        cached_collection.create.side_effect = create
+        new_item.save.side_effect = save
+        original_get = cached_collection.get.side_effect
+        cached_collection.get.side_effect = (
+            lambda uid: new_item if uid == "restored-contact" else original_get(uid)
+        )
+        incoming = MagicMock(vobject_item=vobject.readOne(new_item.content))
+
+        restored = collection.upload("restored.vcf", incoming)
+
+        assert restored.href == "restored.vcf"
+        restored_cache = ItemEntity.get_by_id(tombstone.id)
+        assert restored_cache.deleted is False
+        assert HrefMapper.get_by_id(restored_cache.id).href == "restored.vcf"
+        assert HrefMapper.select().where(HrefMapper.href == "restored.vcf").count() == 1
+        assert ItemEntity.select().where(
+            ItemEntity.collection == cached_collection.cache_col
+        ).count() == 2
+
+    def test_recreate_at_dirty_tombstone_href_preserves_pending_deletion(
+        self, mem_db, user
+    ):
+        collection, cached_collection, _ = self._collection(
+            mem_db,
+            user,
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fav-1\r\nFN:Existing\r\nEND:VCARD",
+        )
+        tombstone = ItemEntity.create(
+            collection=cached_collection.cache_col,
+            uid="pending-delete",
+            remote_uid="remote-item-to-delete",
+            eb_item=b"encrypted-pending-deletion",
+            deleted=True,
+            dirty=True,
+        )
+        HrefMapper.create(content=tombstone, href="pending-delete.vcf")
+        incoming = MagicMock(
+            vobject_item=vobject.readOne(
+                "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:replacement\r\n"
+                "FN:Replacement\r\nEND:VCARD"
+            )
+        )
+
+        with pytest.raises(ValueError, match="pending deletion"):
+            collection.upload("pending-delete.vcf", incoming)
+
+        preserved = ItemEntity.get_by_id(tombstone.id)
+        assert preserved.deleted is True
+        assert preserved.dirty is True
+        assert preserved.remote_uid == "remote-item-to-delete"
+        assert preserved.eb_item == b"encrypted-pending-deletion"
+        assert HrefMapper.get_by_id(tombstone.id).href == "pending-delete.vcf"
+        cached_collection.create.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # acquire_lock — sync is forced on every client request

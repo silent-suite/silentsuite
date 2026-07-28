@@ -2,6 +2,7 @@
 
 import io
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from radicale.app import Application
@@ -12,6 +13,7 @@ from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.accounts import AccountOperationResult
 from silentsuite_bridge.auth_browser import AuthenticatedAccount, AuthenticationError
+from silentsuite_bridge.local_cache.models import CollectionEntity, ItemEntity
 from silentsuite_bridge.radicale import storage
 from silentsuite_bridge.radicale.creds import Credentials
 from silentsuite_bridge.web import (
@@ -122,6 +124,7 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert "2 calendars, 1 contacts, 0 tasks" in html
     assert "window.SILENTSUITE_DASHBOARD_CSRF" in html
     assert "X-SilentSuite-CSRF" in html
+    assert "!r.ok || !data.ok" in html
     assert "Add / Re-authenticate Account" in html
     assert "Add or re-authenticate an account" in html
     assert 'class="login-panel hidden"' in html
@@ -289,6 +292,38 @@ def test_dump_api_requires_csrf_when_enabled(monkeypatch):
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
 
 
+def test_dump_api_redacts_identifiers_and_remote_tokens(mem_db, user, monkeypatch):
+    monkeypatch.setattr(config, "DASHBOARD_DUMP_ENABLED", True)
+    collection = CollectionEntity.create(
+        local_user=user,
+        uid="private-address-book",
+        stoken="private-remote-stoken",
+        local_stoken="private-local-stoken",
+        eb_col=b"collection-cache",
+    )
+    ItemEntity.create(
+        collection=collection,
+        uid="private-contact-uid",
+        eb_item=b"item-cache",
+        dirty=True,
+    )
+    environ = _get_environ()
+    environ["HTTP_X_SILENTSUITE_CSRF"] = _dashboard_csrf_token
+    web = Web.__new__(Web)
+
+    status, _, body = web.get(environ, "", "/.web/api/dump", None)
+
+    assert status == 200
+    text = body.decode()
+    assert "private-address-book" not in text
+    assert "private-contact-uid" not in text
+    assert "private-remote-stoken" not in text
+    assert "private-local-stoken" not in text
+    assert '"uid"' not in text
+    assert '"stoken"' not in text
+    assert '"local_stoken"' not in text
+
+
 def test_root_route_serves_dashboard(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     web = Web.__new__(Web)
@@ -385,7 +420,11 @@ def test_dashboard_post_requires_csrf_token():
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
 
 
-def test_dashboard_sync_post_accepts_valid_csrf_token():
+def test_dashboard_sync_post_accepts_valid_csrf_token(monkeypatch):
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.wait_for_sync.return_value = True
+    monkeypatch.setattr(storage, "_sync_threads", {"account": thread})
     web = Web.__new__(Web)
 
     status, headers, body = web.post(
@@ -398,6 +437,25 @@ def test_dashboard_sync_post_accepts_valid_csrf_token():
     assert status == 200
     assert headers["Content-Type"] == "application/json"
     assert json.loads(body) == {"ok": True}
+
+
+def test_dashboard_sync_post_reports_incomplete_worker(monkeypatch):
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.wait_for_sync.return_value = False
+    monkeypatch.setattr(storage, "_sync_threads", {"account": thread})
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+
+    assert status == 503
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(body) == {"ok": False, "status": "incomplete"}
 
 
 def test_dashboard_sync_post_rejects_wrong_csrf_token():

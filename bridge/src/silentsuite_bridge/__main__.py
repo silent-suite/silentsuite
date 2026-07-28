@@ -171,7 +171,7 @@ def start_tray():
         tray.run_detached()
         return tray
     except Exception as e:
-        logger.warning("Failed to start system tray: %s", e)
+        logger.warning("Failed to start system tray (%s)", e.__class__.__name__)
         return None
 
 
@@ -225,21 +225,31 @@ def _initial_status_check():
                     collections["tasks"],
                 )
         except Exception as e:
-            logger.warning("Initial status check failed for a configured account: %s", e)
-            errors.append(str(e))
-            log_sync_event("error", f"Initial sync failed for an account: {e}")
+            error_code = e.__class__.__name__
+            logger.warning(
+                "Initial status check failed for a configured account (%s)",
+                error_code,
+            )
+            errors.append(error_code)
+            log_sync_event("error", "Initial sync failed for a configured account")
 
-    if synced:
+    if synced and not errors:
         update_status(
             "connected",
             collections=totals,
             scope="all configured accounts",
         )
-        if errors:
-            log_sync_event(
-                "error",
-                f"Initial sync skipped {len(errors)} account(s)",
-            )
+    elif synced and errors:
+        update_status(
+            "error",
+            error=f"Initial sync failed for {len(errors)} account(s)",
+            collections=totals,
+            scope="all configured accounts",
+        )
+        log_sync_event(
+            "error",
+            f"Initial sync skipped {len(errors)} account(s)",
+        )
     elif errors:
         update_status("error", error=f"Initial status check failed for {len(errors)} account(s)")
     else:
@@ -532,10 +542,7 @@ def run_server():
     logger.info("CalDAV/CardDAV scheme: %s", config.dav_scheme())
     logger.info("CalDAV/CardDAV host(s): %s", config.SERVER_HOSTS)
 
-    # Run initial sync so dashboard shows correct status immediately
-    _initial_status_check()
-
-    # Start periodic SyncThread for all configured users
+    # Start account workers without blocking DAV/dashboard startup on provider I/O.
     _start_sync_threads()
 
     # Start system tray (non-blocking)

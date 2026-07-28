@@ -9,9 +9,11 @@ Original: https://github.com/etesync/etesync-dav
 """
 
 import email.utils
+import hashlib
 import logging
 import posixpath
 import re
+import secrets
 import threading
 import time
 from contextlib import contextmanager
@@ -26,7 +28,22 @@ from radicale.storage import (
 )
 
 from .. import config
-from ..local_cache.models import HrefMapper, ItemEntity
+from ..local_cache import (
+    dav_collection_state_hash,
+    db,
+    ensure_dav_href,
+    is_safe_dav_href,
+    opaque_dav_href,
+    record_dav_change,
+)
+from ..local_cache.models import (
+    CollectionEntity,
+    DavChange,
+    DavRevision,
+    DavSyncToken,
+    HrefMapper,
+    ItemEntity,
+)
 from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
@@ -40,6 +57,14 @@ SYNC_MINIMUM = config.SYNC_MINIMUM
 # Global registry of sync threads keyed by username
 _sync_threads = {}
 _sync_threads_lock = threading.Lock()
+_dav_token_locks = {}
+_dav_token_locks_guard = threading.Lock()
+_INVALID_SYNC_HISTORY = object()
+
+
+def _dav_token_lock(collection_id):
+    with _dav_token_locks_guard:
+        return _dav_token_locks.setdefault(collection_id, threading.Lock())
 
 
 class SyncThread(threading.Thread):
@@ -51,6 +76,7 @@ class SyncThread(threading.Thread):
         self._stop_sync = threading.Event()
         self._done_syncing = threading.Event()
         self._done_syncing.set()
+        self._sync_state_lock = threading.Lock()
         self.user = user
         self.last_sync = None
         self._exception = None
@@ -62,8 +88,9 @@ class SyncThread(threading.Thread):
         self.last_sync_duration = None
 
     def force_sync(self):
-        self._force_sync.set()
-        self._done_syncing.clear()
+        with self._sync_state_lock:
+            self._force_sync.set()
+            self._done_syncing.clear()
 
     def stop(self):
         """Request a clean shutdown and wake any interval wait."""
@@ -87,7 +114,6 @@ class SyncThread(threading.Thread):
     def wait_for_sync(self, timeout=None):
         ret = self._done_syncing.wait(timeout)
         e = self._exception
-        self._exception = None
         if e is not None:
             raise e
         return ret
@@ -105,22 +131,20 @@ class SyncThread(threading.Thread):
                     self.is_syncing = True
                     self.sync_started_at = self.last_sync
                     etesync.sync()
+                    self._exception = None
                     self.last_sync_duration = time.time() - self.sync_started_at
                     self.is_syncing = False
                     logger.debug("Sync completed for configured account")
 
                     # Update dashboard status with collection counts
                     collections = {"calendars": 0, "contacts": 0, "tasks": 0}
-                    try:
-                        for col in etesync.list():
-                            if col.col_type == "etebase.vevent":
-                                collections["calendars"] += 1
-                            elif col.col_type == "etebase.vcard":
-                                collections["contacts"] += 1
-                            elif col.col_type == "etebase.vtodo":
-                                collections["tasks"] += 1
-                    except Exception:
-                        pass
+                    for col in etesync.list():
+                        if col.col_type == "etebase.vevent":
+                            collections["calendars"] += 1
+                        elif col.col_type == "etebase.vcard":
+                            collections["contacts"] += 1
+                        elif col.col_type == "etebase.vtodo":
+                            collections["tasks"] += 1
                     update_status(
                         "connected",
                         collections=collections,
@@ -128,18 +152,28 @@ class SyncThread(threading.Thread):
                     )
                     log_sync_event("sync", "Synced account")
             except Exception as e:
-                logger.exception("Sync error for configured account: %s", e)
+                error_code = e.__class__.__name__
+                logger.warning(
+                    "Sync failed for configured account (%s)",
+                    error_code,
+                )
                 self._exception = e
-                update_status("error", error=str(e))
-                log_sync_event("error", f"Sync failed: {e}")
+                update_status("error", error=error_code)
+                log_sync_event("error", "Sync failed")
             finally:
                 self.is_syncing = False
-                was_re_requested = self._force_sync.is_set()
-                self._force_sync.clear()
-                self._done_syncing.set()
+                with self._sync_state_lock:
+                    was_re_requested = (
+                        self._force_sync.is_set() and not self._stop_sync.is_set()
+                    )
+                    self._force_sync.clear()
+                    if not was_re_requested:
+                        self._done_syncing.set()
 
             if was_re_requested:
                 continue  # immediately loop back to sync without waiting
+            if self._stop_sync.is_set():
+                break
             self._force_sync.wait(self.interval)
 
 
@@ -348,7 +382,7 @@ class Collection(BaseCollection):
     def etag(self):
         if self.is_fake:
             return
-        return '"{}"'.format(self.collection.stoken)
+        return f'"dav-{self.collection.cache_col.dav_revision}"'
 
     @property
     def tag(self) -> str:
@@ -362,12 +396,181 @@ class Collection(BaseCollection):
         return ""
 
     def sync(self, old_token=None):
-        token_prefix = "http://radicale.org/ns/sync/"
-        token = None
-        if old_token is not None and old_token.startswith(token_prefix):
-            old_token = old_token[len(token_prefix):]
+        collection_id = self.collection.cache_col.id
+        with _dav_token_lock(collection_id):
+            with db.database_proxy.atomic("IMMEDIATE"):
+                result = self._sync_locked(old_token)
+            if result is _INVALID_SYNC_HISTORY:
+                raise ValueError("unknown sync token")
+            return result
 
-        return token, self._list()
+    def _sync_locked(self, old_token=None):
+        token_prefix = "http://radicale.org/ns/sync/"
+        self._sanitize_href_mappings()
+        self.collection.cache_col = CollectionEntity.get_by_id(
+            self.collection.cache_col.id
+        )
+        revision = self.collection.cache_col.dav_revision
+        token_cutoff = int(time.time()) - config.DAV_SYNC_TOKEN_MAX_AGE
+        DavSyncToken.delete().where(
+            (DavSyncToken.collection == self.collection.cache_col)
+            & (DavSyncToken.created_at < token_cutoff)
+        ).execute()
+        initial_hrefs = list(self._list()) if not old_token else None
+        state_hash = dav_collection_state_hash(self.collection.cache_col)
+        current_token_row = DavSyncToken.get_or_none(
+            (DavSyncToken.collection == self.collection.cache_col)
+            & (DavSyncToken.revision == revision)
+        )
+        if current_token_row is not None:
+            state_is_proven = current_token_row.state_hash == state_hash
+        elif revision:
+            current_revision_row = DavRevision.get_or_none(
+                (DavRevision.collection == self.collection.cache_col)
+                & (DavRevision.revision == revision)
+            )
+            state_is_proven = (
+                current_revision_row is not None
+                and current_revision_row.state_hash == state_hash
+            )
+        else:
+            state_is_proven = True
+        if not state_is_proven:
+            DavSyncToken.delete().where(
+                DavSyncToken.collection == self.collection.cache_col
+            ).execute()
+            if old_token:
+                return _INVALID_SYNC_HISTORY
+            current_token_row = None
+        if current_token_row is None:
+            current_token_row = DavSyncToken.create(
+                collection=self.collection.cache_col,
+                revision=revision,
+                token=secrets.token_urlsafe(24),
+                created_at=int(time.time()),
+                state_hash=state_hash,
+            )
+        self._prune_sync_history()
+        token = token_prefix + current_token_row.token
+
+        if not old_token:
+            return token, initial_hrefs
+        if not old_token.startswith(token_prefix):
+            raise ValueError("invalid sync token")
+        old_token_value = old_token[len(token_prefix):]
+        token_row = DavSyncToken.get_or_none(
+            (DavSyncToken.collection == self.collection.cache_col)
+            & (DavSyncToken.token == old_token_value)
+        )
+        if token_row is None or token_row.revision > revision:
+            raise ValueError("unknown sync token")
+        if old_token == token:
+            return token, []
+        changed_revisions = list(
+            DavRevision.select()
+            .where(
+                (DavRevision.collection == self.collection.cache_col)
+                & (DavRevision.revision > token_row.revision)
+                & (DavRevision.revision <= revision)
+            )
+            .order_by(DavRevision.revision)
+        )
+        expected_revisions = revision - token_row.revision
+        if len(changed_revisions) != expected_revisions:
+            raise ValueError("unknown sync token")
+        proven_state_hash = token_row.state_hash
+        for change in changed_revisions:
+            if (
+                proven_state_hash is None
+                or change.previous_state_hash != proven_state_hash
+            ):
+                DavSyncToken.delete().where(
+                    DavSyncToken.collection == self.collection.cache_col
+                ).execute()
+                return _INVALID_SYNC_HISTORY
+            proven_state_hash = change.state_hash
+        if proven_state_hash != state_hash:
+            DavSyncToken.delete().where(
+                DavSyncToken.collection == self.collection.cache_col
+            ).execute()
+            return _INVALID_SYNC_HISTORY
+        changed_hrefs = sorted({change.href for change in changed_revisions})
+        return token, changed_hrefs
+
+    def _sanitize_href_mappings(self):
+        cache_col = self.collection.cache_col
+        replaced = False
+        for cache_item in cache_col.items:
+            mapper = HrefMapper.get_or_none(HrefMapper.content == cache_item)
+            if mapper is None:
+                continue
+            old_href = mapper.href
+            identity = cache_item.remote_uid or cache_item.uid
+            preferred = old_href or opaque_dav_href(identity, self.content_suffix)
+            mapper = ensure_dav_href(
+                cache_item, preferred, self.content_suffix
+            )
+            if mapper.href != old_href:
+                replaced = True
+        if replaced:
+            DavSyncToken.delete().where(
+                DavSyncToken.collection == cache_col
+            ).execute()
+
+    def _prune_sync_history(self):
+        cache_col = self.collection.cache_col
+        retained_tokens = (
+            DavSyncToken.select(DavSyncToken.id, DavSyncToken.revision)
+            .where(DavSyncToken.collection == cache_col)
+            .order_by(DavSyncToken.revision.desc(), DavSyncToken.id.desc())
+        )
+        expired_ids = [
+            row.id
+            for row in retained_tokens.offset(config.DAV_SYNC_TOKEN_RETENTION)
+        ]
+        if expired_ids:
+            DavSyncToken.delete().where(DavSyncToken.id.in_(expired_ids)).execute()
+
+        oldest_token = (
+            DavSyncToken.select(DavSyncToken.revision)
+            .where(DavSyncToken.collection == cache_col)
+            .order_by(DavSyncToken.revision)
+            .first()
+        )
+        if oldest_token is not None:
+            DavChange.delete().where(
+                (DavChange.collection == cache_col)
+                & (DavChange.revision <= oldest_token.revision)
+            ).execute()
+            DavRevision.delete().where(
+                (DavRevision.collection == cache_col)
+                & (DavRevision.revision <= oldest_token.revision)
+            ).execute()
+
+        revision_count = DavRevision.select().where(
+            DavRevision.collection == cache_col
+        ).count()
+        if revision_count > config.DAV_CHANGE_RETENTION:
+            cutoff = (
+                DavRevision.select(DavRevision.revision)
+                .where(DavRevision.collection == cache_col)
+                .order_by(DavRevision.revision.desc())
+                .offset(config.DAV_CHANGE_RETENTION - 1)
+                .first()
+            )
+            if cutoff is not None:
+                DavChange.delete().where(
+                    (DavChange.collection == cache_col)
+                    & (DavChange.revision < cutoff.revision)
+                ).execute()
+                DavRevision.delete().where(
+                    (DavRevision.collection == cache_col)
+                    & (DavRevision.revision < cutoff.revision)
+                ).execute()
+                DavSyncToken.delete().where(
+                    (DavSyncToken.collection == cache_col)
+                    & (DavSyncToken.revision < cutoff.revision)
+                ).execute()
 
     def _list(self):
         """List collection items by their CalDAV/CardDAV hrefs."""
@@ -375,9 +578,13 @@ class Collection(BaseCollection):
             return
 
         for item in self.collection.list():
-            href = item.item.uid + self.content_suffix
-            href_mapper, _ = HrefMapper.get_or_create(
-                content=item.cache_item, defaults={"href": href}
+            remote_identity = item.cache_item.remote_uid or str(item.item.uid)
+            href = (
+                hashlib.sha256(remote_identity.encode()).hexdigest()
+                + self.content_suffix
+            )
+            href_mapper = ensure_dav_href(
+                item.cache_item, href, self.content_suffix
             )
             yield href_mapper.href
 
@@ -398,20 +605,20 @@ class Collection(BaseCollection):
         if self.is_fake:
             return
 
-        try:
-            href_mapper = (
-                HrefMapper
-                .select(HrefMapper, ItemEntity)
-                .join(ItemEntity)
-                .where(
-                    (HrefMapper.href == href)
-                    & (ItemEntity.collection == self.collection.cache_col)
-                )
-                .get()
+        href_mapper = (
+            HrefMapper
+            .select(HrefMapper, ItemEntity)
+            .join(ItemEntity)
+            .where(
+                (HrefMapper.href == href)
+                & (ItemEntity.collection == self.collection.cache_col)
+                & (ItemEntity.deleted == False)  # noqa: E712
             )
-            uid = href_mapper.content.uid
-        except HrefMapper.DoesNotExist:
+            .first()
+        )
+        if href_mapper is None:
             return None
+        uid = href_mapper.content.uid
 
         etesync_item = self.collection.get(uid)
         if etesync_item is None:
@@ -446,10 +653,8 @@ class Collection(BaseCollection):
             if item.name == "VCARD" and not hasattr(item, "fn"):
                 item.add("fn").value = str(item.n)
 
-        except Exception as e:
-            raise RuntimeError(
-                "Failed to parse item %r in %r" % (href, self.path)
-            ) from e
+        except Exception:
+            raise RuntimeError("Failed to parse DAV item") from None
 
         mtime_ms = etesync_item.meta.get("mtime", 0)
         last_modified = email.utils.formatdate(mtime_ms / 1000, usegmt=True)
@@ -469,24 +674,68 @@ class Collection(BaseCollection):
         """
         if self.is_fake:
             return
+        if not is_safe_dav_href(href):
+            raise ValueError("invalid DAV href")
+        self._sanitize_href_mappings()
 
         vobject_item = item.vobject_item
+        previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
 
-        existing = self._get(href)
-        if existing is not None:
-            etesync_item = existing.etesync_item
-            etesync_item.content = vobject_item.serialize()
-            etesync_item.save()
-            log_sync_event("sync", f"Updated item {href}")
-        else:
-            etesync_item = self.collection.create(vobject_item)
-            etesync_item.save()
-            href_mapper = HrefMapper(
-                content=etesync_item.cache_item, href=href
+        with db.database_proxy.atomic():
+            existing = self._get(href)
+            if existing is not None:
+                etesync_item = existing.etesync_item
+                etesync_item.content = vobject_item.serialize()
+                etesync_item.save()
+                event = "Updated item"
+            else:
+                stale_mappers = list(
+                    HrefMapper
+                    .select(HrefMapper, ItemEntity)
+                    .join(ItemEntity)
+                    .where(
+                        (HrefMapper.href == href)
+                        & (ItemEntity.collection == self.collection.cache_col)
+                        & (ItemEntity.deleted == True)  # noqa: E712
+                    )
+                )
+                if any(
+                    mapper.content.dirty or mapper.content.new
+                    for mapper in stale_mappers
+                ):
+                    raise ValueError("Cannot recreate href with pending deletion")
+                etesync_item = self.collection.create(vobject_item)
+                if stale_mappers:
+                    # Revive the row that already owns this collection-scoped
+                    # href so retained DAV history never loses its identity.
+                    tombstone = stale_mappers[0].content
+                    created_cache = etesync_item.cache_item
+                    tombstone.uid = created_cache.uid
+                    tombstone.remote_uid = created_cache.remote_uid
+                    tombstone.eb_item = created_cache.eb_item
+                    tombstone.deleted = False
+                    tombstone.new = True
+                    tombstone.dirty = True
+                    etesync_item.cache_item = tombstone
+                    etesync_item.save()
+                else:
+                    etesync_item.save()
+                    ensure_dav_href(
+                        etesync_item.cache_item,
+                        href,
+                        self.content_suffix,
+                        strict=True,
+                    )
+                event = "Created item"
+
+            record_dav_change(
+                self.collection.cache_col,
+                href,
+                previous_state_hash=previous_state_hash,
+                etag=etesync_item.etag,
+                deleted=False,
             )
-            href_mapper.save(force_insert=True)
-            log_sync_event("sync", f"Created item {href}")
-
+        log_sync_event("sync", event)
         return self._get(href)
 
     def delete(self, href=None):
@@ -496,15 +745,25 @@ class Collection(BaseCollection):
 
         if href is None:
             self.collection.delete()
-            log_sync_event("sync", f"Deleted collection {self._path}")
+            log_sync_event("sync", "Deleted collection")
             return
 
         item = self._get(href)
         if item is None:
             raise ComponentNotFoundError(href)
 
-        item.etesync_item.delete()
-        log_sync_event("sync", f"Deleted item {href}")
+        previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
+        with db.database_proxy.atomic():
+            etag = item.etesync_item.etag
+            item.etesync_item.delete()
+            record_dav_change(
+                self.collection.cache_col,
+                href,
+                previous_state_hash=previous_state_hash,
+                etag=etag,
+                deleted=True,
+            )
+        log_sync_event("sync", "Deleted item")
 
     def get_meta(self, key=None):
         if self.is_fake:
@@ -602,10 +861,7 @@ class Storage(BaseStorage):
             return
 
         if not self._path_belongs_to_user(path):
-            logger.warning(
-                "Rejecting DAV path %s authenticated as configured account",
-                path,
-            )
+            logger.warning("Rejecting DAV path for configured account")
             return
 
         if len(attributes) == 3:
@@ -667,8 +923,7 @@ class Storage(BaseStorage):
         attributes = _get_attributes_from_path(href)
         if not self._path_belongs_to_user(href):
             logger.warning(
-                "Rejecting collection create for path %s authenticated as configured account",
-                href,
+                "Rejecting collection create path for configured account"
             )
             raise ComponentNotFoundError(href)
 
@@ -763,7 +1018,8 @@ class Storage(BaseStorage):
             sync_thread.wait_for_sync(20)
         except Exception as e:
             logger.warning(
-                "Sync failed for configured account, continuing with local cache: %s", e
+                "Sync failed for configured account; continuing with local cache (%s)",
+                e.__class__.__name__,
             )
 
         with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
@@ -784,7 +1040,10 @@ class Storage(BaseStorage):
                             etesync.push_collection(col.uid)
                     logger.info("acquire_lock(w): inline push done")
                 except Exception as e:
-                    logger.warning("acquire_lock(w): inline push FAILED: %s", e)
+                    logger.warning(
+                        "acquire_lock(w): inline push failed (%s)",
+                        e.__class__.__name__,
+                    )
 
             self.etesync = None
             self.user = None
@@ -800,7 +1059,8 @@ class Storage(BaseStorage):
             sync_thread.wait_for_sync(20)
         except Exception as e:
             logger.warning(
-                "Sync failed for configured account, continuing with local cache: %s", e
+                "Sync failed for configured account; continuing with local cache (%s)",
+                e.__class__.__name__,
             )
 
         with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):

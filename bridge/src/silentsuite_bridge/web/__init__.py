@@ -102,10 +102,10 @@ def _account_mutation_response(action, result):
     if action == "logout":
         if result.existed:
             message = f"Logged out {result.username}. Local bridge cache was kept."
-            log_sync_event("info", f"Logged out account: {result.username}")
+            log_sync_event("info", "Logged out configured account")
         else:
             message = f"No configured account found for {result.username}; nothing changed."
-            log_sync_event("info", f"Logout requested for unknown account: {result.username}")
+            log_sync_event("info", "Logout requested for unknown account")
         return _json_response(200, {
             "ok": True,
             "username": result.username,
@@ -117,14 +117,14 @@ def _account_mutation_response(action, result):
     if result.existed:
         if result.cache_cleared:
             message = f"Removed {result.username}. Local bridge cache for this account was deleted."
-            log_message = f"Removed account and cleared cache: {result.username}"
+            log_message = "Removed account and cleared cache"
         else:
             message = f"Removed {result.username}. No local bridge cache rows were found for this account."
-            log_message = f"Removed account with no cache rows: {result.username}"
+            log_message = "Removed account with no cache rows"
         log_sync_event("info", log_message)
     else:
         message = f"No configured account found for {result.username}; nothing changed."
-        log_sync_event("info", f"Remove requested for unknown account: {result.username}")
+        log_sync_event("info", "Remove requested for unknown account")
     return _json_response(200, {
         "ok": True,
         "username": result.username,
@@ -180,10 +180,13 @@ def _handle_account_login(environ):
 
         result = authenticate_and_store_account(email, password, server_url)
     except AuthenticationError as exc:
-        logger.warning("Dashboard account sign-in failed: %s", exc)
+        logger.warning(
+            "Dashboard account sign-in failed (%s)",
+            exc.__class__.__name__,
+        )
         return _json_response(401, {"error": str(exc)})
-    except ValueError as exc:
-        return _json_response(400, {"error": str(exc)})
+    except ValueError:
+        return _json_response(400, {"error": "Invalid account settings"})
     except Exception:
         logger.warning("Dashboard account sign-in failed")
         return _json_response(500, {"error": "Account sign-in failed"})
@@ -192,14 +195,17 @@ def _handle_account_login(environ):
     message = "Account added or re-authenticated. The bridge will start syncing it now."
     try:
         refresh_sync_thread(result.username)
-    except Exception:
+    except Exception as exc:
         sync_started = False
         message = "Account added, but sync could not start automatically. Restart the bridge if sync does not begin."
-        logger.exception("Dashboard account sync refresh failed after sign-in")
+        logger.warning(
+            "Dashboard account sync refresh failed after sign-in (%s)",
+            exc.__class__.__name__,
+        )
         log_sync_event("error", "Account sign-in succeeded, but sync did not start automatically")
 
-    log_sync_event("info", f"Account added or re-authenticated: {result.username}")
-    logger.info("Account added or re-authenticated: %s", result.username)
+    log_sync_event("info", "Account added or re-authenticated")
+    logger.info("Account added or re-authenticated")
     return _json_response(200, {
         "ok": True,
         "username": result.username,
@@ -268,8 +274,11 @@ def _account_fingerprint(creds, username):
 
         account = Account.restore(Client("silentsuite-bridge", server_url), stored_session, None)
         return pretty_fingerprint(account.get_invitation_manager().pubkey)
-    except Exception:
-        logger.warning("Failed to compute bridge account fingerprint", exc_info=True)
+    except Exception as exc:
+        logger.warning(
+            "Failed to compute bridge account fingerprint (%s)",
+            exc.__class__.__name__,
+        )
         return None
 
 
@@ -739,7 +748,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 btn.textContent = 'Syncing...';
                 btn.disabled = true;
                 fetch('/.web/api/sync', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
-                    .then(function(r) { return r.json(); })
+                    .then(function(r) {
+                        return r.json().then(function(data) {
+                            if (!r.ok || !data.ok) throw new Error('Sync failed');
+                            return data;
+                        });
+                    })
                     .then(function() { btn.textContent = 'Done!'; setTimeout(function() { location.reload(); }, 1000); })
                     .catch(function() { btn.textContent = 'Error'; })
                     .finally(function() { setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Now'; }, 3000); });
@@ -1090,23 +1104,24 @@ class Web(BaseWeb):
                 with db.database_proxy:
                     result = {"collections": []}
                     for col in models.CollectionEntity.select():
-                        items = []
-                        for item in col.items:
-                            items.append({
-                                "uid": item.uid,
-                                "dirty": item.dirty,
-                                "new": item.new,
-                                "deleted": item.deleted,
-                            })
+                        items = col.items
                         result["collections"].append({
-                            "uid": col.uid,
-                            "stoken": col.stoken[:20] if col.stoken else None,
-                            "local_stoken": col.local_stoken[:20] if col.local_stoken else None,
                             "dirty": col.dirty,
                             "new": col.new,
                             "deleted": col.deleted,
-                            "item_count": len(items),
-                            "items": items,
+                            "dav_revision": col.dav_revision,
+                            "item_count": items.count(),
+                            "item_states": {
+                                "dirty": items.where(
+                                    models.ItemEntity.dirty
+                                ).count(),
+                                "new": items.where(
+                                    models.ItemEntity.new
+                                ).count(),
+                                "deleted": items.where(
+                                    models.ItemEntity.deleted
+                                ).count(),
+                            },
                         })
                 return (
                     200,
@@ -1143,12 +1158,27 @@ class Web(BaseWeb):
         if path == "/.web/api/sync":
             if not _has_valid_csrf(environ):
                 return _csrf_error()
-            from ..radicale.storage import _sync_threads
+            from ..radicale.storage import _sync_threads, _sync_threads_lock
 
-            for thread in _sync_threads.values():
+            with _sync_threads_lock:
+                threads = list(_sync_threads.values())
+            completed = bool(threads)
+            for thread in threads:
                 if thread.is_alive():
                     thread.force_sync()
-                    thread.wait_for_sync(30)
+                    try:
+                        completed = thread.wait_for_sync(30) and completed
+                    except Exception:
+                        completed = False
+                else:
+                    completed = False
+            if not completed:
+                log_sync_event("error", "Manual sync did not complete")
+                return (
+                    503,
+                    {"Content-Type": "application/json"},
+                    json.dumps({"ok": False, "status": "incomplete"}).encode(),
+                )
             log_sync_event("info", "Manual sync triggered from dashboard")
             return (
                 200,
