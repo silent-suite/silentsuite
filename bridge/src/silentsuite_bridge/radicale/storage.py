@@ -959,6 +959,11 @@ class Collection(BaseCollection):
                         & (ItemEntity.deleted == True)  # noqa: E712
                     )
                 )
+                if any(
+                    mapper.content.dirty or mapper.content.new
+                    for mapper in stale_mappers
+                ):
+                    raise ValueError("Cannot recreate href with pending deletion")
                 etesync_item = self.collection.create(vobject_item)
                 if stale_mappers:
                     # Revive the row that already owns this collection-scoped
