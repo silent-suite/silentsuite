@@ -74,13 +74,27 @@ def _schedule_deferred_cache_cleanup(username, *, creds_path=None):
 
 
 def resume_pending_cache_cleanups(*, credentials=None):
-    """Resume durable cache deletion intents after process restart."""
+    """Attempt durable cache deletions synchronously before startup may exit."""
     creds = credentials or Credentials()
+    creds_path = getattr(creds, "filename", None)
+    deferred = []
     for username in creds.list_cache_cleanups():
-        _schedule_deferred_cache_cleanup(
-            username,
-            creds_path=getattr(creds, "filename", None),
-        )
+        try:
+            with account_maintenance(username, timeout=1) as available:
+                if not available:
+                    deferred.append(username)
+                    continue
+                clear_cached_user(username)
+                _clear_cache_cleanup_marker(username, creds_path)
+        except Exception as exc:
+            logger.warning(
+                "Startup cache cleanup failed (%s); deferring",
+                exc.__class__.__name__,
+            )
+            deferred.append(username)
+    for username in deferred:
+        _schedule_deferred_cache_cleanup(username, creds_path=creds_path)
+    return not deferred
 
 
 @dataclass(frozen=True)

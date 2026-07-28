@@ -92,6 +92,25 @@ def test_check_credentials_blocks_no_accounts_when_dashboard_disabled(tmp_path, 
     assert "--manual-login" in output
 
 
+def test_headless_zero_account_startup_resumes_cleanup_before_exit(monkeypatch):
+    from silentsuite_bridge import accounts
+
+    calls = []
+    monkeypatch.setattr(
+        accounts,
+        "resume_pending_cache_cleanups",
+        lambda: calls.append("resume"),
+    )
+    monkeypatch.setattr(
+        bridge_main,
+        "check_credentials",
+        lambda open_browser=True: calls.append("check") or False,
+    )
+
+    assert bridge_main._prepare_server_start(open_browser=False) is False
+    assert calls == ["resume", "check"]
+
+
 def test_check_credentials_prints_https_dashboard_url_when_ssl_enabled(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")

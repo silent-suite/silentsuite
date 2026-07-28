@@ -232,21 +232,32 @@ def test_remove_account_persists_cleanup_after_immediate_failure(
     assert User.get_or_none(User.username == "alice@example.com") is not None
 
 
-def test_resume_pending_cleanup_restarts_durable_intent(tmp_path, monkeypatch):
+def test_resume_pending_cleanup_runs_synchronously_before_startup_exit(
+    tmp_path, monkeypatch
+):
     creds_path = _configure_creds(tmp_path, monkeypatch)
     creds = Credentials(str(creds_path))
     creds.mark_cache_cleanup("alice@example.com")
     creds.save()
-    scheduled = []
+    cleared = []
+
+    @contextmanager
+    def available_maintenance(username, timeout=0):
+        yield True
+
+    monkeypatch.setattr(accounts, "account_maintenance", available_maintenance)
     monkeypatch.setattr(
         accounts,
-        "_schedule_deferred_cache_cleanup",
-        lambda username, **kwargs: scheduled.append((username, kwargs["creds_path"])),
+        "clear_cached_user",
+        lambda username: cleared.append(username) or True,
     )
 
-    accounts.resume_pending_cache_cleanups(credentials=Credentials(str(creds_path)))
+    assert accounts.resume_pending_cache_cleanups(
+        credentials=Credentials(str(creds_path))
+    ) is True
 
-    assert scheduled == [("alice@example.com", str(creds_path))]
+    assert cleared == ["alice@example.com"]
+    assert Credentials(str(creds_path)).list_cache_cleanups() == []
 
 
 def test_deferred_cache_cleanup_retries_after_maintenance_becomes_available(monkeypatch):
