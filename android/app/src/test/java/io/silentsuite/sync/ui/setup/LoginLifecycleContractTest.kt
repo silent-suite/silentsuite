@@ -120,15 +120,20 @@ class LoginLifecycleContractTest {
         val runnerReference = Regex("ReactiveCircus/android-emulator-runner@([0-9a-f]{40})").find(job)
 
         assertTrue(job.contains("contents: read"))
-        assertTrue(job.contains("api-level: 21") && job.contains("arch: x86"))
-        assertTrue(job.contains("api-level: 35") && job.contains("arch: x86_64"))
+        assertEquals(2, Regex("""api-level: 21\n\s+arch: x86""").findAll(job).count())
+        assertEquals(1, Regex("""api-level: 35\n\s+arch: x86_64""").findAll(job).count())
+        listOf("shard: mixed", "shard: remaining", "shard: all").forEach {
+            assertEquals(1, Regex(it).findAll(job).count())
+        }
+        assertTrue(job.contains("""name: Account recreation (API ${'$'}{{ matrix.api-level }}, ${'$'}{{ matrix.arch }}, ${'$'}{{ matrix.shard }})"""))
         assertTrue(runnerReference != null)
         listOf(
             "app:testDebugUnitTest", "app:lintDebug", "app:assembleDebugAndroidTest",
             "cert4android:assembleDebugAndroidTest", "ical4android:assembleDebugAndroidTest",
             "vcard4android:assembleDebugAndroidTest"
         ).forEach { command -> assertTrue(unsignedBuild.contains(command)) }
-        assertTrue(job.contains("""script: bash android/scripts/run-focused-runtime-tests.sh "${'$'}{{ matrix.api-level }}""""))
+        assertTrue(job.contains("""script: bash android/scripts/run-focused-runtime-tests.sh "${'$'}{{ matrix.api-level }}" "${'$'}{{ matrix.shard }}""""))
+        assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
             "app:connectedDebugAndroidTest", "io.silentsuite.sync.ui.AccountActivityRecreationTest",
             "-PrequireEtebase16Kb=true", "--no-daemon"
@@ -140,8 +145,8 @@ class LoginLifecycleContractTest {
     @Test
     fun focusedRuntimeExpectedSetIncludesAuthenticatorLifecycleContracts() {
         val workflow = File("../../.github/workflows/build-android.yml").readText()
-        val expectedSet = workflow.substringAfter("          expected={")
-            .substringBefore("          }\n          seen=[]")
+        val expectedSet = workflow.substringAfter("          canonical={")
+            .substringBefore("          mixed=next")
         val expectedTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling')"
         val bootstrapTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','cleanInstallBootstrapPublishesMarkerAfterReconciliation')"
 
@@ -168,38 +173,19 @@ class LoginLifecycleContractTest {
     }
 
     @Test
-    fun api21ThreeProcessBatchesAreBoundedOrderedAndExactlyCoverRuntimeMethods() {
+    fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         val dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
         val diagnostic = "$dashboard#requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
         val mixed = "$dashboard#mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue"
-        val batchA = Regex("""^api21_batch_a='([^']+)'$""", RegexOption.MULTILINE)
+        val mixedSelectors = Regex("""^mixed_selector='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
-        val batchB = Regex("""^api21_batch_b='([^']+)'$""", RegexOption.MULTILINE)
+        val requestedSelectors = Regex("""^requested_selector='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
-        val batchC = Regex("""^api21_batch_c='([^']+)'$""", RegexOption.MULTILINE)
+        val other64 = Regex("""^other64_selectors='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
         val focusedClasses = Regex("""^focused_classes='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
-        val expectedOtherDashboard = setOf(
-            "freshContactsGenerationFinishesBeforeChildDispatchOrCompletion",
-            "futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent",
-            "truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation",
-            "serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting",
-            "retainedLoadRejectsSameNameReplacementBeforePublication",
-            "initialLoadFailurePublishesTerminalErrorAndRefreshFailureRetainsValidDashboard",
-            "retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes",
-            "dashboardExportCompletionPreservesExactDashboardAfterRecreation",
-        ).map { "$dashboard#$it" }.toSet()
-
-        assertEquals(listOf(diagnostic), batchA)
-        assertEquals(listOf(mixed), batchB)
-        assertEquals(expectedOtherDashboard, batchC.filter { it.startsWith("$dashboard#") }.toSet())
-        assertTrue(batchA.toSet().intersect(batchB.toSet()).isEmpty())
-        assertTrue(batchA.toSet().intersect(batchC.toSet()).isEmpty())
-        assertTrue(batchB.toSet().intersect(batchC.toSet()).isEmpty())
-        assertEquals(16, batchC.size)
-        assertEquals(expectedOtherDashboard.toList(), batchC.take(8))
         val runtimeMethods = focusedClasses.flatMap { className ->
             val source = File(
                 "src/androidTest/java/${className.replace('.', '/')}.kt"
@@ -207,33 +193,33 @@ class LoginLifecycleContractTest {
             Regex("""@Test\s+fun\s+(\w+)""").findAll(source)
                 .map { "$className#${it.groupValues[1]}" }.toList()
         }
-        val expandedBatches = (batchA + batchB + batchC).flatMap { selector ->
+        fun expand(selectors: List<String>) = selectors.flatMap { selector ->
             if ("#" in selector) listOf(selector)
             else runtimeMethods.filter { it.startsWith("$selector#") }
         }
+        val mixedExpanded = expand(mixedSelectors)
+        val remainingExpanded = expand(requestedSelectors + other64)
+        val allExpanded = expand(focusedClasses)
+
+        assertEquals(listOf(mixed), mixedSelectors)
+        assertEquals(listOf(diagnostic), requestedSelectors)
         assertEquals(66, runtimeMethods.size)
         assertEquals(66, runtimeMethods.toSet().size)
-        assertEquals(runtimeMethods.toSet(), expandedBatches.toSet())
-        assertEquals(66, expandedBatches.size)
-        assertTrue(runtimeScript.contains(
-            """timeout --signal=TERM --kill-after=10s 600s \
-    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_a}""""
-        ))
-        assertTrue(runtimeScript.contains(
-            """timeout --signal=TERM --kill-after=10s 300s \
-    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_b}""""
-        ))
-        assertTrue(runtimeScript.contains(
-            """timeout --signal=TERM --kill-after=10s 900s \
-    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${'$'}{api21_batch_c}""""
-        ))
-        assertTrue(runtimeScript.indexOf("trap restore_api21_batches EXIT") <
-            runtimeScript.indexOf("""class="${'$'}{api21_batch_a}""""))
-        assertTrue(runtimeScript.contains("connected/api21-batch-a"))
-        assertTrue(runtimeScript.contains("connected/api21-batch-b"))
-        assertTrue(runtimeScript.contains("api21_batch_a_results="))
-        assertTrue(runtimeScript.contains("api21_batch_b_results="))
-        assertTrue(runtimeScript.contains("api21_batch_b_started=1"))
+        assertEquals(listOf(1, 65, 66), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
+        assertTrue(mixedExpanded.toSet().intersect(remainingExpanded.toSet()).isEmpty())
+        assertEquals(allExpanded.toSet(), mixedExpanded.toSet() + remainingExpanded.toSet())
+        assertEquals(runtimeMethods.toSet(), allExpanded.toSet())
+        assertEquals(listOf("600", "600", "1500", "2400"),
+            Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
+                .findAll(runtimeScript).map { it.groupValues[1] }.toList())
+        assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)
+        assertTrue(runtimeScript.indexOf("trap restore_requested_results EXIT") <
+            runtimeScript.indexOf("""class="${'$'}{requested_selector}""""))
+        assertTrue(runtimeScript.indexOf("\n  save_requested_results",
+            runtimeScript.indexOf("""class="${'$'}{requested_selector}""")) <
+            runtimeScript.indexOf("""class="${'$'}{other64_selectors}""""))
+        assertTrue(runtimeScript.contains("connected/api21-requested"))
+        assertFalse(runtimeScript.contains("api21_batch_"))
         assertTrue(runtimeScript.contains("""if [[ "${'$'}{status}" -eq 0 && "${'$'}{restore_status}" -ne 0 ]]"""))
     }
 

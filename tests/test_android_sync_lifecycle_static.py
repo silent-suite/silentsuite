@@ -365,8 +365,11 @@ def test_five_runtime_methods_appear_once_in_the_exact_workflow_ledger():
         assert workflow.count(entry) == 1
 
 
-def test_api21_runtime_workflow_uses_three_processes_and_preserves_isolated_result_sets():
+def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results():
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    job = workflow.split("  account-recreation-runtime:", 1)[1].split(
+        "  # ─────────────────────────────────────────────────────────────────────", 1
+    )[0]
     step = workflow.split(
         "- name: Run focused launcher and setup recreation contracts", 1
     )[1].split("- name: Upload focused androidTest reports and results", 1)[0]
@@ -374,36 +377,39 @@ def test_api21_runtime_workflow_uses_three_processes_and_preserves_isolated_resu
     assertion = workflow.split("- name: Assert focused runtime methods executed", 1)[1]
     dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
 
+    assert "timeout-minutes: 60" in job
     assert re.findall(r"^\s+script:\s*(.+)$", step, re.MULTILINE) == [
-        'bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}"'
+        'bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"'
     ]
-    assert "api21_batch_a=" not in step
+    rows = re.findall(
+        r"- api-level: (\d+)\n\s+arch: (\S+)\n\s+shard: (\S+)", job
+    )
+    assert rows == [("21", "x86", "mixed"), ("21", "x86", "remaining"), ("35", "x86_64", "all")]
+    assert "name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})" in job
+    artifact = re.search(r"^\s+name: (account-recreation-androidTest-.+)$", job, re.MULTILINE).group(1)
+    assert artifact == "account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ matrix.shard }}-${{ github.sha }}"
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     subprocess.run(["bash", "-n", FOCUSED_RUNTIME_SCRIPT], check=True)
-    # android-emulator-runner sends each script line through /usr/bin/sh -c.
-    # The workflow therefore contains one dash-compatible command; Bash owns all state.
     subprocess.run(
-        ["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "21"'],
+        ["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "21" "mixed"'],
         check=True,
     )
-    assert 'if [[ "${api_level}" == "21" ]]; then' in script
+    assert 'api_level="${1:?usage: run-focused-runtime-tests.sh API_LEVEL SHARD}"' in script
+    assert 'shard="${2:?usage: run-focused-runtime-tests.sh API_LEVEL SHARD}"' in script
     assert script.count("app:connectedDebugAndroidTest") == 4
     assert "mktemp -d" in script
     assert '${RUNNER_TEMP:-${TMPDIR:-/tmp}}' in script
     assert "app/build/outputs/androidTest-results/connected/." in script
-    assert "api21-batch-a" in script
-    assert "api21-batch-b" in script
+    assert "api21-requested" in script
+    assert "api21_batch_" not in script
 
     assignments = dict(
-        re.findall(r"^(api21_batch_[abc]|focused_classes)='([^']+)'$", script, re.MULTILINE)
+        re.findall(r"^(mixed_selector|requested_selector|other64_selectors|focused_classes)='([^']+)'$", script, re.MULTILINE)
     )
-    batch_a_ordered = assignments["api21_batch_a"].split(",")
-    batch_b_ordered = assignments["api21_batch_b"].split(",")
-    batch_c_ordered = assignments["api21_batch_c"].split(",")
+    mixed_selectors = assignments["mixed_selector"].split(",")
+    requested_selectors = assignments["requested_selector"].split(",")
+    other64_ordered = assignments["other64_selectors"].split(",")
     monolithic_ordered = assignments["focused_classes"].split(",")
-    batch_a = set(batch_a_ordered)
-    batch_b = set(batch_b_ordered)
-    batch_c = set(batch_c_ordered)
     monolithic = set(monolithic_ordered)
     diagnostic = (
         f"{dashboard}#"
@@ -423,48 +429,27 @@ def test_api21_runtime_workflow_uses_three_processes_and_preserves_isolated_resu
         for method in dashboard_methods
         if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
     }
-    non_dashboard = set(monolithic) - {dashboard}
-    assert batch_a_ordered == [diagnostic]
-    assert batch_b_ordered == [mixed]
-    assert batch_c == expected_other_dashboard | non_dashboard
-    assert batch_c_ordered[:8] == [
+    assert mixed_selectors == [mixed]
+    assert requested_selectors == [diagnostic]
+    assert set(other64_ordered) == expected_other_dashboard | (monolithic - {dashboard})
+    assert other64_ordered[:8] == [
         f"{dashboard}#{method}" for method in re.findall(r"@Test\s+fun\s+(\w+)", dashboard_source)
         if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
     ]
-    assert batch_c_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
-    assert batch_a.isdisjoint(batch_b)
-    assert batch_a.isdisjoint(batch_c)
-    assert batch_b.isdisjoint(batch_c)
-    assert {selector.split("#", 1)[0] for selector in batch_a | batch_b | batch_c} == monolithic
-    assert len(expected_other_dashboard) == 8
-    assert len(batch_c) == 16
-    assert len(monolithic) == 9
-    assert all(batch_c_ordered.count(selector) == 1 for selector in batch_c)
+    assert other64_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
     assert script.count('"${focused_classes}"') == 1
     assert 'command -v timeout >/dev/null 2>&1' in script
-    assert 'timeout --signal=TERM --kill-after=10s 600s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"' in script
-    assert 'timeout --signal=TERM --kill-after=10s 300s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"' in script
-    assert 'timeout --signal=TERM --kill-after=10s 900s \\\n    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_c}"' in script
-    first_run = script.index(
-        '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_a}"'
-    )
-    install_trap = script.index("trap restore_api21_batches EXIT")
-    save_a = script.index("\n  save_api21_batch_a", first_run)
-    second_run = script.index(
-        '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_b}"'
-    )
-    save_b = script.index("\n  save_api21_batch_b", second_run)
-    third_run = script.index(
-        '-Pandroid.testInstrumentationRunnerArguments.class="${api21_batch_c}"'
-    )
-    assert install_trap < first_run < save_a < second_run < save_b < third_run
-    assert script.index("api21_batch_b_started=1", first_run) < second_run
+    assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == ["600", "600", "1500", "2400"]
+    assert 600 < 2700 and 600 + 1500 < 2700 and 2400 < 2700
+    requested_run = script.index('class="${requested_selector}"')
+    save = script.index("\n  save_requested_results", requested_run)
+    other_run = script.index('class="${other64_selectors}"')
+    assert script.index("trap restore_requested_results EXIT") < requested_run < save < other_run
     assert "status=$?" in script
     assert "set +e" in script
     assert "restore_status=$?" in script
-    assert script.count('if [[ "${status}" -eq 0 && "') >= 4
+    assert script.count('if [[ "${status}" -eq 0 && "') >= 3
     assert script.index("trap - EXIT") < script.index('exit "${status}"')
-    assert 'exit "${status}"' in script
 
     assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     ledger = re.findall(r"^\s+\('([^']+)','([^']+)'\),$", assertion, re.MULTILINE)
@@ -479,6 +464,26 @@ def test_api21_runtime_workflow_uses_three_processes_and_preserves_isolated_resu
         )
     assert len(runtime_methods) == 66
     assert set(ledger) == set(runtime_methods)
+    def expand(selectors):
+        return {
+            method
+            for selector in selectors
+            for method in (
+                [selector] if "#" in selector
+                else [f"{name}#{method}" for name, method in runtime_methods if name == selector]
+            )
+        }
+    mixed_expanded = expand(mixed_selectors)
+    remaining_expanded = expand(requested_selectors + other64_ordered)
+    all_expanded = expand(monolithic_ordered)
+    assert (len(mixed_expanded), len(remaining_expanded), len(all_expanded)) == (1, 65, 66)
+    assert mixed_expanded.isdisjoint(remaining_expanded)
+    assert mixed_expanded | remaining_expanded == all_expanded
+    assert "expected_sizes={'mixed': 1, 'remaining': 65, 'all': 66}" in assertion
+    assert "expected=canonical-{mixed}" in assertion
+    assert "if pair in expected and list(case)" in assertion
+    assert "unexpected=(canonical & set(counts))-expected" in assertion
+    assert "duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}" in assertion
 
 
 def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
