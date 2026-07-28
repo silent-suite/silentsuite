@@ -138,16 +138,13 @@ class SyncThread(threading.Thread):
 
                     # Update dashboard status with collection counts
                     collections = {"calendars": 0, "contacts": 0, "tasks": 0}
-                    try:
-                        for col in etesync.list():
-                            if col.col_type == "etebase.vevent":
-                                collections["calendars"] += 1
-                            elif col.col_type == "etebase.vcard":
-                                collections["contacts"] += 1
-                            elif col.col_type == "etebase.vtodo":
-                                collections["tasks"] += 1
-                    except Exception:
-                        pass
+                    for col in etesync.list():
+                        if col.col_type == "etebase.vevent":
+                            collections["calendars"] += 1
+                        elif col.col_type == "etebase.vcard":
+                            collections["contacts"] += 1
+                        elif col.col_type == "etebase.vtodo":
+                            collections["tasks"] += 1
                     update_status(
                         "connected",
                         collections=collections,
@@ -702,25 +699,28 @@ class Collection(BaseCollection):
                         & (ItemEntity.deleted == True)  # noqa: E712
                     )
                 )
-                for stale_mapper in stale_mappers:
-                    stale_item = stale_mapper.content
-                    stale_mapper.delete_instance()
-                    tombstone_identity = stale_item.remote_uid or stale_item.eb_item.hex()
-                    stale_item.uid = (
-                        "dav-tombstone:"
-                        + hashlib.sha256(
-                            f"{stale_item.id}:{tombstone_identity}".encode()
-                        ).hexdigest()
-                    )
-                    stale_item.save(only=[ItemEntity.uid])
                 etesync_item = self.collection.create(vobject_item)
-                etesync_item.save()
-                ensure_dav_href(
-                    etesync_item.cache_item,
-                    href,
-                    self.content_suffix,
-                    strict=True,
-                )
+                if stale_mappers:
+                    # Revive the row that already owns this collection-scoped
+                    # href so retained DAV history never loses its identity.
+                    tombstone = stale_mappers[0].content
+                    created_cache = etesync_item.cache_item
+                    tombstone.uid = created_cache.uid
+                    tombstone.remote_uid = created_cache.remote_uid
+                    tombstone.eb_item = created_cache.eb_item
+                    tombstone.deleted = False
+                    tombstone.new = True
+                    tombstone.dirty = True
+                    etesync_item.cache_item = tombstone
+                    etesync_item.save()
+                else:
+                    etesync_item.save()
+                    ensure_dav_href(
+                        etesync_item.cache_item,
+                        href,
+                        self.content_suffix,
+                        strict=True,
+                    )
                 event = "Created item"
 
             record_dav_change(

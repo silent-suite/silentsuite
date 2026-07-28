@@ -679,6 +679,14 @@ class Etebase:
                     collection = models.CollectionEntity.get_or_none(
                         local_user=self.user, uid=col.uid
                     )
+                    if collection is not None and col.deleted:
+                        has_pending_items = collection.items.where(
+                            models.ItemEntity.dirty | models.ItemEntity.new
+                        ).exists()
+                        if has_pending_items:
+                            collection.dirty = True
+                            collection.save(only=[models.CollectionEntity.dirty])
+                            continue
                     if collection is None:
                         collection = models.CollectionEntity(
                             local_user=self.user,

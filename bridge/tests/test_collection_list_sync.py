@@ -90,6 +90,42 @@ def test_paginated_collection_list_adds_second_address_book_without_hiding_first
     assert manager.list.call_count == 2
 
 
+def test_remote_tombstone_preserves_pending_child_for_restoration(tmp_path):
+    database = _database(tmp_path / "remote-tombstone-pending.sqlite")
+    user = models.User.create(username="books@example.test", stoken="before")
+    collection = models.CollectionEntity.create(
+        local_user=user,
+        uid="contacts-pending",
+        eb_col=b"local-collection-cache",
+    )
+    pending_item = models.ItemEntity.create(
+        collection=collection,
+        uid="pending-contact",
+        eb_item=b"pending-item",
+        dirty=True,
+    )
+    models.HrefMapper.create(content=pending_item, href="pending-contact.vcf")
+    tombstone = _remote_collection("contacts-pending", stoken="remote-tombstone")
+    tombstone.deleted = True
+    manager = MagicMock()
+    manager.list.return_value = MagicMock(
+        data=[tombstone],
+        removed_memberships=[],
+        done=True,
+        stoken="after-tombstone",
+    )
+    manager.cache_save.return_value = b"remote-tombstone-cache"
+    service = _service(database, user, manager)
+
+    service.sync_collection_list()
+
+    persisted = models.CollectionEntity.get_by_id(collection.id)
+    assert persisted.deleted is False
+    assert persisted.dirty is True
+    assert persisted.eb_col == b"local-collection-cache"
+    assert models.ItemEntity.get_by_id(pending_item.id).dirty is True
+
+
 def test_removed_membership_tombstones_only_exact_collection(tmp_path):
     database = _database(tmp_path / "removed-membership.sqlite")
     user = models.User.create(username="books@example.test", stoken="before")
