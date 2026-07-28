@@ -548,6 +548,11 @@ def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh
     assert mixed.index("calendarRefreshing.set(true)") < mixed.index("val store = SyncStatusStore(context)")
     assert "mixed-diagnostic:loader-start" in mixed
     assert "mixed-diagnostic:loader-end" in mixed
+    assert 'mixed-stage:$value' in mixed
+    assert 'stage("before-observers")' in mixed
+    assert 'stage("$index-before-refresh")' in mixed
+    assert 'stage("$index-after-carddav")' in mixed
+    assert 'stage("complete")' in mixed
     assert "helper-diagnostic:before-launch" in runtime
     assert "helper-diagnostic:after-launch" in runtime
     assert "helper-diagnostic:before-wait-model" in runtime

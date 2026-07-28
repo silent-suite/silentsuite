@@ -132,6 +132,7 @@ class AccountDashboardRuntimeTest {
     }
 
     @Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue() {
+        fun stage(value: String) = Log.i("DashboardRuntime", "mixed-stage:$value")
         val calendarRefreshing = AtomicBoolean(false)
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
             Log.i("DashboardRuntime", "mixed-diagnostic:loader-start")
@@ -146,6 +147,7 @@ class AccountDashboardRuntimeTest {
             val overallText = AtomicReference<String>("")
             val caldavText = AtomicReference<String>("")
             val carddavText = AtomicReference<String>("")
+            stage("before-observers")
             scenario.onActivity { activity ->
                 fun observe(viewId: Int, observed: AtomicReference<String>) {
                     val view = activity.findViewById<TextView>(viewId)
@@ -162,6 +164,7 @@ class AccountDashboardRuntimeTest {
                 observe(R.id.caldav_status, caldavText)
                 observe(R.id.carddav_status, carddavText)
             }
+            stage("after-observers")
             calendarRefreshing.set(true)
             val store = SyncStatusStore(context)
             val categories = listOf(
@@ -172,6 +175,7 @@ class AccountDashboardRuntimeTest {
                 SyncStatusStore.FailureCategory.STORAGE to R.string.dashboard_status_storage,
             )
             categories.forEachIndexed { index, (category, label) ->
+                stage("$index-before-store")
                 val child = Account("runtime-contacts-child-$index", "child")
                 val attempt = store.beginContacts(account, setOf(child), startedAt = System.currentTimeMillis(),
                     attemptId = "runtime-contacts-parent-$index") as SyncStatusStore.ContactsStart.Started
@@ -181,16 +185,23 @@ class AccountDashboardRuntimeTest {
                     assertEquals(SyncStatusStore.ChildWrite.RECORDED, store.recordContactsChild(account, attempt.attemptId,
                         child, SyncStatusStore.ChildResult.FAILURE, category, System.currentTimeMillis()))
                 }
+                stage("$index-after-store")
+                stage("$index-before-refresh")
                 scenario.onActivity { it.refresh() }
+                stage("$index-after-refresh")
                 val syncing = context.getString(R.string.dashboard_status_syncing)
                 val issue = context.getString(label)
                 assertEquals(syncing, waitForObservedText(overallText, syncing))
+                stage("$index-after-overall")
                 assertEquals(syncing, waitForObservedText(caldavText, syncing))
+                stage("$index-after-caldav")
                 assertEquals(issue, waitForObservedText(carddavText, issue))
+                stage("$index-after-carddav")
                 assertEquals(syncing, overallText.get())
                 assertEquals(syncing, caldavText.get())
                 assertEquals(issue, carddavText.get())
             }
+            stage("complete")
         }
     }
 
