@@ -48,11 +48,13 @@ from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
 logger = logging.getLogger("silentsuite-bridge.storage")
+_DAV_SESSION_LOCK_TIMEOUT = 2.0
 
 
 # --- Sync Thread ---
 
 SYNC_MINIMUM = config.SYNC_MINIMUM
+_GENERATION_STATUS_RETENTION = 100
 
 # Global registry of sync threads keyed by username
 _sync_threads = {}
@@ -76,10 +78,13 @@ class SyncThread(threading.Thread):
         self._stop_sync = threading.Event()
         self._done_syncing = threading.Event()
         self._done_syncing.set()
-        self._sync_state_lock = threading.Lock()
+        self._generation_condition = threading.Condition()
+        self._next_generation = 0
+        self._requested_generation = None
+        self._active_generation = None
+        self._generation_statuses = {}
         self.user = user
         self.last_sync = None
-        self._exception = None
         self.interval = config.SYNC_INTERVAL
         # Progress tracking — etebase-py doesn't expose per-item hooks, so we
         # can only report "a sync is in flight" plus the last sync's duration.
@@ -87,14 +92,82 @@ class SyncThread(threading.Thread):
         self.sync_started_at = None
         self.last_sync_duration = None
 
-    def force_sync(self):
-        with self._sync_state_lock:
+    def force_sync(self, *, deadline=None, after_generation=None):
+        with self._generation_condition:
+            if self._stop_sync.is_set():
+                self._next_generation += 1
+                generation = self._next_generation
+                self._generation_statuses[generation] = {
+                    "generation": generation,
+                    "state": "failed",
+                    "started_at": None,
+                    "completed_at": time.time(),
+                    "error_code": "SyncStopped",
+                    "deadline": deadline,
+                }
+                self._generation_condition.notify_all()
+                return generation
+            if (
+                self._active_generation is not None
+                and (
+                    after_generation is None
+                    or self._active_generation > after_generation
+                )
+            ):
+                status = self._generation_statuses[self._active_generation]
+                if deadline is not None and status.get("deadline") is None:
+                    status["deadline"] = deadline
+                return self._active_generation
+            if (
+                self._requested_generation is not None
+                and (
+                    after_generation is None
+                    or self._requested_generation > after_generation
+                )
+            ):
+                status = self._generation_statuses[self._requested_generation]
+                if deadline is not None and status.get("deadline") is None:
+                    status["deadline"] = deadline
+                return self._requested_generation
+            self._next_generation += 1
+            generation = self._next_generation
+            self._requested_generation = generation
+            self._generation_statuses[generation] = {
+                "generation": generation,
+                "state": "pending",
+                "started_at": None,
+                "completed_at": None,
+                "error_code": None,
+                "deadline": deadline,
+            }
             self._force_sync.set()
             self._done_syncing.clear()
+            return generation
 
     def stop(self):
         """Request a clean shutdown and wake any interval wait."""
-        self._stop_sync.set()
+        with self._generation_condition:
+            self._stop_sync.set()
+            stopped_at = time.time()
+            generations = {
+                generation
+                for generation in (
+                    self._active_generation,
+                    self._requested_generation,
+                )
+                if generation is not None
+            }
+            for generation in generations:
+                status = self._generation_statuses[generation]
+                if status["state"] in {"pending", "running"}:
+                    status.update({
+                        "state": "failed",
+                        "completed_at": stopped_at,
+                        "error_code": "SyncStopped",
+                    })
+            self._requested_generation = None
+            self._done_syncing.set()
+            self._generation_condition.notify_all()
         self._force_sync.set()
 
     def request_sync(self):
@@ -112,66 +185,245 @@ class SyncThread(threading.Thread):
         self._force_sync.set()
 
     def wait_for_sync(self, timeout=None):
-        ret = self._done_syncing.wait(timeout)
-        e = self._exception
-        if e is not None:
-            raise e
-        return ret
+        with self._generation_condition:
+            generation = (
+                self._requested_generation
+                or self._active_generation
+                or (self._next_generation if self._next_generation else None)
+            )
+        if generation is None:
+            return True
+        if not self.wait_for_generation(generation, timeout):
+            return False
+        status = self.generation_status(generation)
+        if status["state"] == "failed":
+            raise RuntimeError(status["error_code"] or "SyncFailure")
+        return status["state"] == "succeeded"
+
+    def generation_status(self, generation):
+        with self._generation_condition:
+            status = self._generation_statuses.get(generation)
+            return self._generation_status_snapshot(status)
+
+    def generation_handle(self, generation):
+        """Return a stable in-process handle retained by dashboard requests."""
+        with self._generation_condition:
+            return self._generation_statuses.get(generation)
+
+    def generation_status_for_handle(self, status):
+        with self._generation_condition:
+            return self._generation_status_snapshot(status)
+
+    def _generation_status_snapshot(self, status):
+        if (
+            status is not None
+            and status["state"] in {"pending", "running"}
+            and status.get("deadline") is not None
+            and time.time() >= status["deadline"]
+        ):
+            status.update({
+                "state": "timed_out",
+                "completed_at": status["deadline"],
+                "error_code": "SyncTimeout",
+            })
+        return dict(status) if status is not None else None
+
+    def wait_for_generation(self, generation, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._generation_condition:
+            while True:
+                status = self._generation_statuses.get(generation)
+                if status is None:
+                    return False
+                self._generation_status_snapshot(status)
+                if status["state"] in {"succeeded", "failed", "timed_out"}:
+                    return True
+                caller_remaining = (
+                    None if deadline is None else deadline - time.monotonic()
+                )
+                if caller_remaining is not None and caller_remaining <= 0:
+                    return False
+                remaining = caller_remaining
+                if status.get("deadline") is not None:
+                    wall_remaining = status["deadline"] - time.time()
+                    if wall_remaining <= 0:
+                        continue
+                    remaining = (
+                        wall_remaining
+                        if remaining is None
+                        else min(remaining, wall_remaining)
+                    )
+                self._generation_condition.wait(remaining)
+
+    def _begin_generation(self):
+        with self._generation_condition:
+            self._force_sync.clear()
+            generation = self._requested_generation
+            if generation is None:
+                self._next_generation += 1
+                generation = self._next_generation
+                self._generation_statuses[generation] = {
+                    "generation": generation,
+                    "state": "pending",
+                    "started_at": None,
+                    "completed_at": None,
+                    "error_code": None,
+                    "deadline": None,
+                }
+            self._requested_generation = None
+            self._active_generation = generation
+            started_at = time.time()
+            status = self._generation_statuses[generation]
+            if status["state"] != "timed_out":
+                status.update({
+                    "state": "running",
+                    "started_at": started_at,
+                })
+            self._done_syncing.clear()
+            return generation, started_at
+
+    def _complete_generation(self, generation, state, completed_at, error_code=None):
+        with self._generation_condition:
+            status = self._generation_statuses[generation]
+            deadline = status.get("deadline")
+            if status["state"] in {"succeeded", "failed", "timed_out"}:
+                pass
+            elif self._stop_sync.is_set():
+                status.update({
+                    "state": "failed",
+                    "completed_at": completed_at,
+                    "error_code": "SyncStopped",
+                })
+            elif deadline is not None and completed_at >= deadline:
+                status.update({
+                    "state": "timed_out",
+                    "completed_at": deadline,
+                    "error_code": "SyncTimeout",
+                })
+            else:
+                status.update({
+                    "state": state,
+                    "completed_at": completed_at,
+                    "error_code": error_code,
+                })
+            if self._requested_generation == generation:
+                self._requested_generation = None
+            if self._active_generation == generation:
+                self._active_generation = None
+            if self._requested_generation is None:
+                self._done_syncing.set()
+            else:
+                self._done_syncing.clear()
+            self._generation_condition.notify_all()
+            terminal = [
+                key
+                for key, value in self._generation_statuses.items()
+                if value["state"] in {"succeeded", "failed", "timed_out"}
+            ]
+            for expired in terminal[:-_GENERATION_STATUS_RETENTION]:
+                del self._generation_statuses[expired]
 
     def run(self):
         while not self._stop_sync.is_set():
+            generation, started_at = self._begin_generation()
+            state = "failed"
+            error_code = None
+            successful_collections = None
             try:
                 if self._stop_sync.is_set():
                     break
                 with etesync_for_user(self.user) as (etesync, _):
                     if self._stop_sync.is_set():
                         break
-                    self.last_sync = time.time()
-                    self._done_syncing.clear()
                     self.is_syncing = True
-                    self.sync_started_at = self.last_sync
+                    self.sync_started_at = started_at
                     etesync.sync()
-                    self._exception = None
-                    self.last_sync_duration = time.time() - self.sync_started_at
+                    completed_at = time.time()
+                    self.last_sync_duration = completed_at - self.sync_started_at
                     self.is_syncing = False
-                    logger.debug("Sync completed for configured account")
-
-                    # Update dashboard status with collection counts
-                    collections = {"calendars": 0, "contacts": 0, "tasks": 0}
-                    for col in etesync.list():
-                        if col.col_type == "etebase.vevent":
-                            collections["calendars"] += 1
-                        elif col.col_type == "etebase.vcard":
-                            collections["contacts"] += 1
-                        elif col.col_type == "etebase.vtodo":
-                            collections["tasks"] += 1
-                    update_status(
-                        "connected",
-                        collections=collections,
-                        account=self.user,
-                    )
-                    log_sync_event("sync", "Synced account")
+                    with self._generation_condition:
+                        status = self._generation_status_snapshot(
+                            self._generation_statuses[generation]
+                        )
+                    if self._stop_sync.is_set():
+                        state = "failed"
+                        error_code = "SyncStopped"
+                        logger.info("Sync returned after account worker stopped")
+                    elif status["state"] == "timed_out":
+                        state = "timed_out"
+                        error_code = "SyncTimeout"
+                        logger.warning("Sync returned after its generation deadline")
+                        update_status("error", error="SyncTimeout", account=self.user)
+                        log_sync_event("error", "Sync timed out")
+                    else:
+                        state = "succeeded"
+                        logger.debug("Sync completed for configured account")
+                    if state == "succeeded":
+                        collections = {"calendars": 0, "contacts": 0, "tasks": 0}
+                        for col in etesync.list():
+                            if col.col_type == "etebase.vevent":
+                                collections["calendars"] += 1
+                            elif col.col_type == "etebase.vcard":
+                                collections["contacts"] += 1
+                            elif col.col_type == "etebase.vtodo":
+                                collections["tasks"] += 1
+                        with self._generation_condition:
+                            status = self._generation_status_snapshot(
+                                self._generation_statuses[generation]
+                            )
+                            if self._stop_sync.is_set():
+                                state = "failed"
+                                error_code = "SyncStopped"
+                            elif status["state"] == "timed_out":
+                                state = "timed_out"
+                                error_code = "SyncTimeout"
+                                update_status(
+                                    "error", error="SyncTimeout", account=self.user
+                                )
+                                log_sync_event("error", "Sync timed out")
+                            else:
+                                successful_collections = collections
             except Exception as e:
-                error_code = e.__class__.__name__
-                logger.warning(
-                    "Sync failed for configured account (%s)",
-                    error_code,
-                )
-                self._exception = e
-                update_status("error", error=error_code)
-                log_sync_event("error", "Sync failed")
-            finally:
-                self.is_syncing = False
-                with self._sync_state_lock:
-                    was_re_requested = (
-                        self._force_sync.is_set() and not self._stop_sync.is_set()
+                if self._stop_sync.is_set():
+                    state = "failed"
+                    error_code = "SyncStopped"
+                    logger.info("Stopped account sync discarded its late result")
+                else:
+                    state = "failed"
+                    error_code = e.__class__.__name__
+                    logger.warning(
+                        "Sync failed for configured account (%s)",
+                        error_code,
                     )
-                    self._force_sync.clear()
-                    if not was_re_requested:
-                        self._done_syncing.set()
+                    update_status("error", error=error_code, account=self.user)
+                    log_sync_event("error", "Sync failed")
+            finally:
+                completed_at = time.time()
+                if self.sync_started_at is not None:
+                    self.last_sync_duration = completed_at - self.sync_started_at
+                self.is_syncing = False
+                with self._generation_condition:
+                    self._complete_generation(
+                        generation,
+                        state,
+                        completed_at,
+                        error_code,
+                    )
+                    final_status = self._generation_status_snapshot(
+                        self._generation_statuses.get(generation)
+                    )
+                    if (
+                        final_status["state"] == "succeeded"
+                        and successful_collections is not None
+                    ):
+                        self.last_sync = completed_at
+                        update_status(
+                            "connected",
+                            collections=successful_collections,
+                            account=self.user,
+                        )
+                        log_sync_event("sync", "Synced account")
 
-            if was_re_requested:
-                continue  # immediately loop back to sync without waiting
             if self._stop_sync.is_set():
                 break
             self._force_sync.wait(self.interval)
@@ -184,7 +436,13 @@ def start_sync_thread(user):
     """
     with _sync_threads_lock:
         thread = _sync_threads.get(user)
-        if thread is not None and thread.is_alive():
+        stop_event = getattr(thread, "_stop_sync", None)
+        is_stopping = stop_event is not None and stop_event.is_set() is True
+        if (
+            thread is not None
+            and thread.is_alive()
+            and not is_stopping
+        ):
             return thread
         thread = SyncThread(user, daemon=True)
         _sync_threads[user] = thread
@@ -194,16 +452,15 @@ def start_sync_thread(user):
 
 
 def refresh_sync_thread(user):
-    """Start or wake one user's SyncThread after credentials changed."""
+    """Replace one user's worker after credentials changed."""
     with _sync_threads_lock:
         existing = _sync_threads.get(user)
-        had_live_thread = existing is not None and existing.is_alive()
+    if existing is not None and existing.is_alive():
+        existing.stop()
 
     forget_etesync_user(user)
-    thread = start_sync_thread(user)
-    if had_live_thread and thread.is_alive():
-        thread.force_sync()
-    return thread
+    update_status("syncing", account=user)
+    return start_sync_thread(user)
 
 
 def get_sync_thread(user):
@@ -676,12 +933,15 @@ class Collection(BaseCollection):
             return
         if not is_safe_dav_href(href):
             raise ValueError("invalid DAV href")
-        self._sanitize_href_mappings()
-
         vobject_item = item.vobject_item
-        previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
 
-        with db.database_proxy.atomic():
+        with db.database_proxy.atomic("IMMEDIATE"):
+            cache_col = CollectionEntity.get_by_id(self.collection.cache_col.id)
+            if cache_col.deleted:
+                raise ValueError("collection is unavailable")
+            self.collection.cache_col = cache_col
+            self._sanitize_href_mappings()
+            previous_state_hash = dav_collection_state_hash(cache_col)
             existing = self._get(href)
             if existing is not None:
                 etesync_item = existing.etesync_item
@@ -748,12 +1008,15 @@ class Collection(BaseCollection):
             log_sync_event("sync", "Deleted collection")
             return
 
-        item = self._get(href)
-        if item is None:
-            raise ComponentNotFoundError(href)
-
-        previous_state_hash = dav_collection_state_hash(self.collection.cache_col)
-        with db.database_proxy.atomic():
+        with db.database_proxy.atomic("IMMEDIATE"):
+            cache_col = CollectionEntity.get_by_id(self.collection.cache_col.id)
+            if cache_col.deleted:
+                raise ValueError("collection is unavailable")
+            self.collection.cache_col = cache_col
+            item = self._get(href)
+            if item is None:
+                raise ComponentNotFoundError(href)
+            previous_state_hash = dav_collection_state_hash(cache_col)
             etag = item.etesync_item.etag
             item.etesync_item.delete()
             record_dav_change(
@@ -817,12 +1080,24 @@ class PrincipalDiscoveryCollection(Collection):
 class Storage(BaseStorage):
     """Radicale storage that serves Etebase data via local cache."""
 
-    _etesync_user_lock = None
+    @property
+    def user(self):
+        return getattr(self._request_context, "user", None)
+
+    @user.setter
+    def user(self, value):
+        self._request_context.user = value
+
+    @property
+    def etesync(self):
+        return getattr(self._request_context, "etesync", None)
+
+    @etesync.setter
+    def etesync(self, value):
+        self._request_context.etesync = value
 
     def __init__(self, configuration):
-        self.user = None
-        self.etesync = None
-        self._etesync_user_lock = threading.RLock()
+        self._request_context = threading.local()
         super().__init__(configuration)
 
     def verify(self):
@@ -965,10 +1240,10 @@ class Storage(BaseStorage):
             # Use last path component as display name fallback
             meta["name"] = attributes[-1]
 
-        # Create the collection via Etebase
+        # Create and cache locally. The background generation queued by the
+        # write lock performs the potentially unbounded upstream upload.
         col_mgr = self.etesync.etebase.get_collection_manager()
         col = col_mgr.create(col_type, meta, b"")
-        col_mgr.upload(col)
 
         # Cache it locally
         from ..local_cache import db, models
@@ -980,7 +1255,7 @@ class Storage(BaseStorage):
             cache_col.eb_col = col_mgr.cache_save(col)
             cache_col.stoken = col.stoken or ""
             cache_col.local_stoken = col.stoken or ""
-            cache_col.new = False
+            cache_col.new = True
             cache_col.dirty = False
             cache_col.save()
 
@@ -997,73 +1272,61 @@ class Storage(BaseStorage):
 
     @contextmanager
     def acquire_lock(self, mode, user=""):
-        """Acquire storage lock and sync with Etebase server."""
+        """Acquire request-local storage context and sync when required."""
         if not user:
             yield
             return
 
         if mode == "r":
-            with self._etesync_user_lock:
-                self.user = user
-                try:
-                    yield
-                finally:
-                    self.user = None
+            self.user = user
+            try:
+                yield
+            finally:
+                self.etesync = None
+                self.user = None
             return
 
         sync_thread = start_sync_thread(user)
         logger.info("acquire_lock(%s): pre-yield sync", mode)
-        sync_thread.force_sync()
+        initial_generation = sync_thread.force_sync()
         try:
-            sync_thread.wait_for_sync(20)
-        except Exception as e:
+            if not sync_thread.wait_for_sync(20):
+                logger.warning(
+                    "Sync timed out for configured account; continuing with local cache"
+                )
+        except Exception as exc:
             logger.warning(
                 "Sync failed for configured account; continuing with local cache (%s)",
-                e.__class__.__name__,
+                exc.__class__.__name__,
             )
 
-        with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
+        session_options = (
+            {"exclusive": False, "read_only": False}
+            if mode == "w"
+            else {"timeout": _DAV_SESSION_LOCK_TIMEOUT}
+        )
+        with etesync_for_user(user, **session_options) as (etesync, _):
             self.user = user
             self.etesync = etesync
+            try:
+                yield
+            finally:
+                self.etesync = None
+                self.user = None
 
-            yield
-
-            if mode == "w":
-                # Push dirty items inline — the SyncThread can't acquire
-                # _get_etesync_lock while we hold it, so push here directly.
-                logger.info("acquire_lock(w): post-write — pushing inline")
-                try:
-                    etesync.push_collection_list()
-                    for col in etesync.list():
-                        if etesync.collection_is_dirty(col.uid):
-                            logger.info("acquire_lock: pushing dirty collection")
-                            etesync.push_collection(col.uid)
-                    logger.info("acquire_lock(w): inline push done")
-                except Exception as e:
-                    logger.warning(
-                        "acquire_lock(w): inline push failed (%s)",
-                        e.__class__.__name__,
-                    )
-
-            self.etesync = None
-            self.user = None
+        if mode == "w":
+            logger.info("acquire_lock(w): queued background push")
+            sync_thread.force_sync(after_generation=initial_generation)
 
     @contextmanager
     def _acquire_read_backend(self):
-        """Initialize sync/cache lazily after static discovery paths are handled."""
+        """Open an independent local-cache reader without waiting on remote sync."""
         user = self.user
         sync_thread = start_sync_thread(user)
-        logger.info("acquire_lock(r): pre-yield sync")
+        logger.info("acquire_lock(r): requesting background sync")
         sync_thread.force_sync()
-        try:
-            sync_thread.wait_for_sync(20)
-        except Exception as e:
-            logger.warning(
-                "Sync failed for configured account; continuing with local cache (%s)",
-                e.__class__.__name__,
-            )
 
-        with self._etesync_user_lock, etesync_for_user(user) as (etesync, _):
+        with etesync_for_user(user, exclusive=False) as (etesync, _):
             self.etesync = etesync
             try:
                 yield

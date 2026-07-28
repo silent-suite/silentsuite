@@ -14,9 +14,27 @@ from silentsuite_bridge import config
 from silentsuite_bridge.radicale.application import Application as BridgeApplication
 
 
+def test_startup_does_not_delete_cache_for_logged_out_accounts(monkeypatch):
+    from silentsuite_bridge import local_cache, web
+    from silentsuite_bridge.radicale import creds, storage
+
+    credentials = MagicMock()
+    credentials.list_users.return_value = []
+    monkeypatch.setattr(creds, "Credentials", lambda: credentials)
+    monkeypatch.setattr(
+        local_cache,
+        "clear_unconfigured_cached_users",
+        MagicMock(side_effect=AssertionError("startup must retain logged-out cache")),
+    )
+    monkeypatch.setattr(storage, "start_sync_thread", MagicMock())
+    monkeypatch.setattr(web, "update_status", MagicMock())
+
+    bridge_main._start_sync_threads()
+
+
 def test_initial_status_check_reports_partial_account_failure(monkeypatch):
-    from silentsuite_bridge.radicale import creds, etesync_cache
     from silentsuite_bridge import web
+    from silentsuite_bridge.radicale import creds, etesync_cache
 
     credentials = MagicMock()
     credentials.list_users.return_value = ["good@example.com", "bad@example.com"]
@@ -72,6 +90,25 @@ def test_check_credentials_blocks_no_accounts_when_dashboard_disabled(tmp_path, 
     assert "dashboard is disabled" in output
     assert "--login" in output
     assert "--manual-login" in output
+
+
+def test_headless_zero_account_startup_resumes_cleanup_before_exit(monkeypatch):
+    from silentsuite_bridge import accounts
+
+    calls = []
+    monkeypatch.setattr(
+        accounts,
+        "resume_pending_cache_cleanups",
+        lambda: calls.append("resume"),
+    )
+    monkeypatch.setattr(
+        bridge_main,
+        "check_credentials",
+        lambda open_browser=True: calls.append("check") or False,
+    )
+
+    assert bridge_main._prepare_server_start(open_browser=False) is False
+    assert calls == ["resume", "check"]
 
 
 def test_check_credentials_prints_https_dashboard_url_when_ssl_enabled(tmp_path, monkeypatch, capsys):

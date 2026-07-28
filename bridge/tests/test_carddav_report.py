@@ -117,7 +117,7 @@ def test_sync_collection_report_emits_literal_404_for_remote_deletion(
     monkeypatch.setattr(
         bridge_storage,
         "etesync_for_user",
-        lambda _user: context,
+        lambda _user, exclusive=True: context,
     )
 
     status, _headers, body = _request(

@@ -179,11 +179,22 @@ def _start_sync_threads():
     """Start a SyncThread for each configured user at boot."""
     from .radicale.creds import Credentials
     from .radicale.storage import start_sync_thread
+    from .web import update_status
 
     creds = Credentials()
     users = creds.list_users()
     for user in users:
+        update_status("syncing", account=user)
+    for user in users:
         start_sync_thread(user)
+
+
+def _prepare_server_start(open_browser=True):
+    """Resume durable maintenance before credential-based early exits."""
+    from .accounts import resume_pending_cache_cleanups
+
+    resume_pending_cache_cleanups()
+    return check_credentials(open_browser=open_browser)
 
 
 def _initial_status_check():
@@ -705,7 +716,15 @@ def main():
 
         result = remove_account(sys.argv[idx + 1])
         if result.existed:
-            print(f"Removed {result.username}. Credentials and local cache were deleted.")
+            if result.cache_cleanup == "deferred":
+                print(
+                    f"Removed {result.username}. Credentials were deleted; local cache "
+                    "cleanup is deferred until the active sync exits."
+                )
+            elif result.cache_cleared:
+                print(f"Removed {result.username}. Credentials and local cache were deleted.")
+            else:
+                print(f"Removed {result.username}. Credentials were deleted; no cache rows were found.")
             if not result.sync_stopped:
                 print("Warning: sync thread is still shutting down; no duplicate will be started.")
         else:
@@ -740,8 +759,8 @@ def main():
         remove_autostart()
         sys.exit(0)
 
-    # Check credentials exist
-    if not check_credentials():
+    # Resume durable cleanup before checking whether account state allows startup.
+    if not _prepare_server_start():
         sys.exit(1)
 
     # Start the server

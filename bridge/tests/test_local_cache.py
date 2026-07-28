@@ -3,19 +3,31 @@
 import logging
 import os
 import stat
-from unittest.mock import MagicMock, patch, PropertyMock
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 import peewee as pw
 import pytest
 import vobject
 
 import silentsuite_bridge.local_cache as local_cache_module
-from silentsuite_bridge.local_cache import Collection, Etebase, Item, clear_cached_user, db, models
+from silentsuite_bridge.local_cache import (
+    Collection,
+    Etebase,
+    Item,
+    SessionSuperseded,
+    clear_cached_user,
+    db,
+    models,
+)
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
     DavChange,
-    ItemEntity,
     HrefMapper,
+    ItemEntity,
     User,
 )
 from tests.conftest import (
@@ -24,7 +36,6 @@ from tests.conftest import (
     _make_mock_collection,
     _make_mock_item,
 )
-
 
 # ---------------------------------------------------------------------------
 # Model CRUD
@@ -170,6 +181,59 @@ class TestClearCachedUser:
         assert clear_cached_user("ghost@example.com") is False
         assert User.get_or_none(User.username == "bob@example.com") is not None
 
+    def test_clear_cached_user_serializes_proxy_initialization(self, monkeypatch):
+        active = 0
+        max_active = 0
+        state_lock = threading.Lock()
+
+        def clear(_username, _db_path=None):
+            nonlocal active, max_active
+            with state_lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.02)
+            with state_lock:
+                active -= 1
+            return True
+
+        monkeypatch.setattr(local_cache_module, "_clear_cached_user_locked", clear)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(clear_cached_user, ["alice", "bob"]))
+
+        assert results == [True, True]
+        assert max_active == 1
+
+    def test_clear_cached_user_rolls_back_partial_deletion(self, mem_db, monkeypatch):
+        self._seed_user("alice@example.com")
+        original_execute_sql = mem_db.execute_sql
+
+        def fail_item_delete(sql, *args, **kwargs):
+            if sql.startswith('DELETE FROM "itementity"'):
+                raise RuntimeError("injected deletion failure")
+            return original_execute_sql(sql, *args, **kwargs)
+
+        monkeypatch.setattr(mem_db, "execute_sql", fail_item_delete)
+        with pytest.raises(RuntimeError, match="injected deletion failure"):
+            clear_cached_user("alice@example.com")
+
+        assert User.get_or_none(User.username == "alice@example.com") is not None
+        assert CollectionEntity.select().count() == 1
+        assert ItemEntity.select().count() == 1
+        assert HrefMapper.select().count() == 1
+
+    def test_startup_reconciliation_clears_only_unconfigured_cache_users(self, mem_db):
+        self._seed_user("kept@example.com")
+        self._seed_user("orphaned@example.com")
+
+        with patch.object(mem_db, "close", return_value=False):
+            cleared = local_cache_module.clear_unconfigured_cached_users(
+                ["kept@example.com"]
+            )
+
+            assert cleared == 1
+            assert User.get_or_none(User.username == "kept@example.com") is not None
+            assert User.get_or_none(User.username == "orphaned@example.com") is None
+
 
 # ---------------------------------------------------------------------------
 # Collection wrapper
@@ -277,6 +341,50 @@ class TestCollectionWrapper:
         assert mock_col.meta == {"name": "New", "color": "#00FF00"}
         assert refreshed.eb_col == b"saved"
         assert refreshed.dirty is True
+
+    def test_stale_meta_update_cannot_restore_removed_collection(self, mem_db, user):
+        stale_remote = _make_mock_collection(
+            "col-1", "etebase.vevent", meta={"name": "Old"}
+        )
+        mgr = self._simple_col_mgr(stale_remote)
+        cache_col = CollectionEntity.create(
+            local_user=user, uid="col-1", eb_col=b"old-envelope"
+        )
+        col = Collection(mgr, cache_col)
+        (
+            CollectionEntity.update(deleted=True, eb_col=b"removed-envelope")
+            .where(CollectionEntity.id == cache_col.id)
+            .execute()
+        )
+
+        with pytest.raises(RuntimeError, match="collection is unavailable"):
+            col.update_meta({"name": "Stale Update"})
+
+        refreshed = CollectionEntity.get_by_id(cache_col.id)
+        assert refreshed.deleted is True
+        assert refreshed.eb_col == b"removed-envelope"
+
+    def test_stale_collection_delete_preserves_current_remote_envelope(
+        self, mem_db, user,
+    ):
+        stale_remote = _make_mock_collection("col-1", "etebase.vevent")
+        mgr = self._simple_col_mgr(stale_remote)
+        cache_col = CollectionEntity.create(
+            local_user=user, uid="col-1", eb_col=b"old-envelope"
+        )
+        col = Collection(mgr, cache_col)
+        (
+            CollectionEntity.update(eb_col=b"current-envelope")
+            .where(CollectionEntity.id == cache_col.id)
+            .execute()
+        )
+
+        col.delete()
+
+        refreshed = CollectionEntity.get_by_id(cache_col.id)
+        assert refreshed.deleted is True
+        assert refreshed.dirty is True
+        assert refreshed.eb_col == b"current-envelope"
 
     def test_list_items(self, mem_db, user, mock_item_mgr):
         mock_col = _make_mock_collection("col-1", "etebase.vevent")
@@ -485,6 +593,89 @@ class TestSyncLogic:
             etebase.push_collection_list()
             mock_col_mgr.upload.assert_called_once()
 
+    @patch("silentsuite_bridge.local_cache.Account")
+    @patch("silentsuite_bridge.local_cache.Client")
+    def test_collection_delete_during_upload_remains_dirty(
+        self, MockClient, MockAccount, mem_db,
+    ):
+        mock_account = MagicMock()
+        MockAccount.restore.return_value = mock_account
+        mock_col_mgr = MagicMock()
+        mock_account.get_collection_manager.return_value = mock_col_mgr
+        mock_col_mgr.cache_load.return_value = MagicMock(deleted=False)
+
+        with patch("silentsuite_bridge.local_cache.Etebase._init_db"):
+            etebase = Etebase.__new__(Etebase)
+            etebase.etebase = mock_account
+            etebase.username = "test@example.com"
+            etebase._database = mem_db
+            etebase.stored_session = "fake"
+            db.database_proxy.initialize(mem_db)
+            user_obj = User.create(username="test@example.com")
+            etebase.user = user_obj
+            cache_col = CollectionEntity.create(
+                local_user=user_obj,
+                uid="dirty-col",
+                eb_col=b"\x00" * 8,
+                dirty=True,
+            )
+
+            def concurrent_delete(*_args):
+                (
+                    CollectionEntity.update(deleted=True, dirty=True)
+                    .where(CollectionEntity.id == cache_col.id)
+                    .execute()
+                )
+
+            mock_col_mgr.upload.side_effect = concurrent_delete
+            with patch.object(mem_db, "close", return_value=False):
+                etebase.push_collection_list()
+                persisted = CollectionEntity.get_by_id(cache_col.id)
+
+            assert persisted.deleted is True
+            assert persisted.dirty is True
+
+    @patch("silentsuite_bridge.local_cache.Account")
+    @patch("silentsuite_bridge.local_cache.Client")
+    def test_superseded_session_cannot_clear_uploaded_collection_dirty_state(
+        self, MockClient, MockAccount, mem_db,
+    ):
+        mock_account = MagicMock()
+        MockAccount.restore.return_value = mock_account
+        mock_col_mgr = MagicMock()
+        mock_account.get_collection_manager.return_value = mock_col_mgr
+        mock_col_mgr.cache_load.return_value = MagicMock(deleted=False)
+        guard = MagicMock()
+        guard.__enter__.return_value = False
+        guard.__exit__.return_value = False
+
+        with patch("silentsuite_bridge.local_cache.Etebase._init_db"):
+            etebase = Etebase.__new__(Etebase)
+            etebase.etebase = mock_account
+            etebase.username = "test@example.com"
+            etebase._database = mem_db
+            etebase.stored_session = "fake"
+            etebase._session_is_current = lambda: True
+            etebase._session_guard = lambda: guard
+            db.database_proxy.initialize(mem_db)
+            user_obj = User.create(username="test@example.com")
+            etebase.user = user_obj
+            cache_col = CollectionEntity.create(
+                local_user=user_obj,
+                uid="dirty-col",
+                eb_col=b"collection-envelope",
+                dirty=True,
+            )
+
+            with (
+                patch.object(mem_db, "close", return_value=False),
+                pytest.raises(SessionSuperseded),
+            ):
+                etebase.push_collection_list()
+
+            assert CollectionEntity.get_by_id(cache_col.id).dirty is True
+            mock_col_mgr.upload.assert_called_once()
+
     def test_collection_list_is_dirty(self, mem_db, user):
         """Test dirty detection without Etebase SDK."""
         # Directly test the query logic that _collection_list_dirty_get uses
@@ -511,15 +702,15 @@ class TestSyncLogic:
         The key assertion: the code path sets collection.new = False.
         """
         import inspect
+
         from silentsuite_bridge.local_cache import Etebase
 
         source = inspect.getsource(Etebase.push_collection_list)
-        # The method MUST clear new flag alongside dirty
-        assert "collection.new = False" in source, (
-            "push_collection_list must clear the new flag to prevent "
-            "re-uploading already-pushed collections"
+        # The compare-and-swap must clear both flags only if the row is unchanged.
+        assert "new=False" in source and "dirty=False" in source, (
+            "push_collection_list must atomically clear both flags after upload"
         )
-        assert "collection.dirty = False" in source
+        assert "CollectionEntity.update(dirty=False, new=False)" in source
 
     @patch("silentsuite_bridge.local_cache.Account")
     @patch("silentsuite_bridge.local_cache.Client")
@@ -568,10 +759,56 @@ class TestSyncLogic:
                 local_stoken="same-token",
             )
 
-            etebase.pull_collection("pull-test-col")
+            def concurrent_collection_change(*_args):
+                (
+                    CollectionEntity.update(dav_revision=7, dirty=True)
+                    .where(CollectionEntity.id == col.id)
+                    .execute()
+                )
+                return mock_item_list
 
-            # Key assertion: item_mgr.list() MUST be called even when stokens match
+            mock_item_mgr.list.side_effect = concurrent_collection_change
+            with patch.object(mem_db, "close", return_value=False):
+                etebase.pull_collection("pull-test-col")
+
+                # The stoken update must not save stale copies of unrelated fields.
+                persisted = CollectionEntity.get_by_id(col.id)
+            assert persisted.local_stoken == "same-token"
+            assert persisted.dav_revision == 7
+            assert persisted.dirty is True
             mock_item_mgr.list.assert_called_once()
+
+    def test_superseded_session_cannot_apply_page_or_advance_token(self, mem_db):
+        user = User.create(username="superseded@example.com")
+        collection = CollectionEntity.create(
+            local_user=user,
+            uid="contacts",
+            eb_col=b"collection-cache",
+            local_stoken="old-token",
+        )
+        item_list = MagicMock(data=[], done=True, stoken="new-token")
+        item_mgr = MagicMock()
+        item_mgr.list.return_value = item_list
+        col_mgr = MagicMock()
+        col_mgr.cache_load.return_value = MagicMock()
+        col_mgr.get_item_manager.return_value = item_mgr
+        account = MagicMock()
+        account.get_collection_manager.return_value = col_mgr
+        guard = MagicMock()
+        guard.__enter__.return_value = False
+        guard.__exit__.return_value = False
+        etebase = Etebase.__new__(Etebase)
+        etebase.etebase = account
+        etebase.user = user
+        etebase._session_guard = lambda: guard
+
+        with (
+            patch.object(mem_db, "close", return_value=False),
+            pytest.raises(SessionSuperseded),
+        ):
+            etebase.pull_collection("contacts")
+
+        assert CollectionEntity.get_by_id(collection.id).local_stoken == "old-token"
 
     @patch("silentsuite_bridge.local_cache.Account")
     @patch("silentsuite_bridge.local_cache.Client")
@@ -662,15 +899,28 @@ class TestSyncLogic:
                 uid="private-push-collection-uid",
                 eb_col=b"\x00" * 8,
             )
-            ItemEntity.create(
+            cache_item = ItemEntity.create(
                 collection=col,
                 uid="private-push-item-uid",
                 eb_item=b"\x00" * 8,
                 dirty=True,
             )
 
-            with caplog.at_level(logging.INFO, logger="silentsuite-bridge.cache"):
-                etebase.push_collection("private-push-collection-uid")
+            def concurrent_local_write(*_args):
+                (
+                    ItemEntity.update(eb_item=b"newer-local-write", dirty=True)
+                    .where(ItemEntity.id == cache_item.id)
+                    .execute()
+                )
+
+            mock_item_mgr.batch.side_effect = concurrent_local_write
+            with patch.object(mem_db, "close", return_value=False):
+                with caplog.at_level(logging.INFO, logger="silentsuite-bridge.cache"):
+                    etebase.push_collection("private-push-collection-uid")
+
+                persisted = ItemEntity.get_by_id(cache_item.id)
+            assert persisted.eb_item == b"newer-local-write"
+            assert persisted.dirty is True
 
         logs = caplog.text
         assert "1 dirty/new items" in logs
@@ -701,6 +951,21 @@ def test_cache_database_files_are_owner_only(tmp_path):
         sidecar = f"{db_path}{suffix}"
         if os.path.exists(sidecar):
             assert stat.S_IMODE(os.stat(sidecar).st_mode) == 0o600
+
+
+def test_same_cache_path_reuses_one_database_proxy_object(tmp_path):
+    db_path = tmp_path / "shared.sqlite"
+    first = Etebase.__new__(Etebase)
+    first.username = "first@example.com"
+    first._init_db(str(db_path))
+    first_database = first._database
+
+    second = Etebase.__new__(Etebase)
+    second.username = "second@example.com"
+    second._init_db(str(db_path))
+
+    assert second._database is first_database
+    assert db.database_proxy.obj is first_database
 
 
 def test_remote_tombstone_without_name_reuses_remote_identity_and_original_href(tmp_path):
@@ -1094,6 +1359,57 @@ def test_backfill_quarantines_legacy_duplicate_remote_identity(mem_db, user):
     assert quarantine.attempts == 0
 
 
+def test_unresolved_retry_preserves_concurrent_local_item_mutation(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    local_item = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-1",
+        eb_item=b"stale-envelope",
+    )
+    HrefMapper.create(content=local_item, href="contact-1.vcf")
+    models.DavUnresolvedItem.create(
+        collection=cache_col,
+        remote_uid="remote-contact",
+        eb_item=b"deferred-envelope",
+        reason="legacy_corrupt",
+        local_item=local_item,
+    )
+    remote_item = MagicMock(
+        uid="remote-contact",
+        deleted=False,
+        etag="remote-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_load.return_value = remote_item
+
+    def concurrent_local_mutation(_item):
+        (
+            ItemEntity.update(eb_item=b"local-envelope", dirty=True)
+            .where(ItemEntity.id == local_item.id)
+            .execute()
+        )
+        return b"remote-envelope"
+
+    item_mgr.cache_save.side_effect = concurrent_local_mutation
+    etebase = Etebase.__new__(Etebase)
+    etebase.user = user
+
+    etebase._retry_unresolved_items(
+        cache_col,
+        MagicMock(collection_type="etebase.vcard"),
+        item_mgr,
+    )
+
+    persisted = ItemEntity.get_by_id(local_item.id)
+    assert persisted.eb_item == b"local-envelope"
+    assert persisted.dirty is True
+    assert persisted.remote_uid == "remote-contact"
+
+
 def test_backfill_quarantines_malformed_legacy_envelope(mem_db, user):
     cache_col = CollectionEntity.create(
         local_user=user,
@@ -1160,6 +1476,102 @@ def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):
     assert cache_item.uid == "urn:uuid:contact/with/slashes"
     assert mapper.href.endswith(".vcf")
     assert "/" not in mapper.href
+
+
+def test_pulled_item_hash_is_captured_under_immediate_writer_lock(
+    mem_db, user, monkeypatch,
+):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    item = MagicMock(
+        uid="remote-contact",
+        meta={"name": "contact-name"},
+        deleted=False,
+        etag="remote-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"remote-envelope"
+    active = False
+    lock_types = []
+    original_atomic = mem_db.atomic
+    original_hash = local_cache_module.dav_collection_state_hash
+
+    @contextmanager
+    def tracked_atomic(*args, **kwargs):
+        nonlocal active
+        lock_types.append(
+            (
+                args[0] if args else kwargs.get("lock_type"),
+                mem_db.in_transaction(),
+            )
+        )
+        with original_atomic(*args, **kwargs):
+            active = True
+            try:
+                yield
+            finally:
+                active = False
+
+    def checked_hash(collection):
+        assert active is True
+        return original_hash(collection)
+
+    monkeypatch.setattr(mem_db, "atomic", tracked_atomic)
+    monkeypatch.setattr(
+        local_cache_module,
+        "dav_collection_state_hash",
+        checked_hash,
+    )
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(
+        cache_col,
+        MagicMock(collection_type="etebase.vcard"),
+        item_mgr,
+        item,
+    ) is True
+    assert ("IMMEDIATE", False) in lock_types
+
+
+def test_remote_pull_cannot_overwrite_newer_dirty_local_item(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="contacts",
+        eb_col=b"collection-cache",
+    )
+    cache_item = ItemEntity.create(
+        collection=cache_col,
+        uid="contact-name",
+        remote_uid="remote-contact",
+        eb_item=b"newer-local-write",
+        dirty=True,
+    )
+    HrefMapper.create(content=cache_item, href="contact.vcf")
+    remote_item = MagicMock(
+        uid="remote-contact",
+        meta={"name": "contact-name"},
+        deleted=False,
+        etag="stale-remote-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"stale-remote-envelope"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(
+        cache_col,
+        MagicMock(collection_type="etebase.vcard"),
+        item_mgr,
+        remote_item,
+    ) is True
+
+    persisted = ItemEntity.get_by_id(cache_item.id)
+    assert persisted.eb_item == b"newer-local-write"
+    assert persisted.dirty is True
+    assert cache_col.dav_revision == 0
+    item_mgr.cache_save.assert_not_called()
 
 
 def test_unknown_tombstone_cannot_rebind_identity_bound_contact(mem_db, user):

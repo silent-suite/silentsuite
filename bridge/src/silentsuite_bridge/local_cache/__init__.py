@@ -24,6 +24,7 @@ from .. import config
 from . import db, models
 
 logger = logging.getLogger("silentsuite-bridge.cache")
+_cache_database_init_lock = threading.RLock()
 DAV_UNRESOLVED_RETRY_LIMIT = 8
 
 
@@ -59,16 +60,29 @@ def _restrict_cache_database_files(path):
 def _init_cache_database(db_path=None):
     """Initialize the cache DB proxy only when it is not already initialized.
 
-    When tests or the running bridge have already initialized the proxy, keep
-    using that database even if a db_path was supplied.
+    Reuse the initialized database only when it targets the requested cache path.
     """
+    path = db_path or config.DATABASE_FILE
     database = getattr(db.database_proxy, "obj", None)
     if database is not None:
-        return database, False
+        if db_path is None:
+            return database, False
+        current_path = getattr(database, "database", None)
+        normalized_current = (
+            current_path
+            if current_path == ":memory:"
+            else os.path.abspath(os.path.expanduser(str(current_path)))
+        )
+        normalized_requested = (
+            path
+            if path == ":memory:"
+            else os.path.abspath(os.path.expanduser(str(path)))
+        )
+        if normalized_current == normalized_requested:
+            return database, False
 
     from playhouse.sqlite_ext import SqliteExtDatabase
 
-    path = db_path or config.DATABASE_FILE
     _ensure_private_cache_dir(path)
 
     with _private_umask():
@@ -192,6 +206,35 @@ def _activate_dav_revision_ledger():
 
 
 def clear_cached_user(username, db_path=None):
+    """Delete one user's cache while serializing proxy setup and migrations."""
+    with _cache_database_init_lock:
+        return _clear_cached_user_locked(username, db_path)
+
+
+def clear_unconfigured_cached_users(configured_users, db_path=None):
+    """Clear orphaned account caches left by an interrupted deferred removal."""
+    configured = {(user or "").strip() for user in configured_users}
+    with _cache_database_init_lock:
+        database, initialized_here = _init_cache_database(db_path)
+        if database.is_closed():
+            with _private_umask():
+                database.connect(reuse_if_open=True)
+        try:
+            _ensure_cache_tables(database)
+            orphaned = [
+                user.username
+                for user in models.User.select(models.User.username)
+                if user.username not in configured
+            ]
+        finally:
+            if initialized_here and not database.is_closed():
+                database.close()
+        for username in orphaned:
+            _clear_cached_user_locked(username, db_path)
+        return len(orphaned)
+
+
+def _clear_cached_user_locked(username, db_path=None):
     """Delete one user's cached rows without needing a live Etebase session.
 
     Returns True when a cache user row existed and was deleted. Missing users are
@@ -208,35 +251,36 @@ def clear_cached_user(username, db_path=None):
 
     try:
         _ensure_cache_tables(database)
-        user = models.User.get_or_none(models.User.username == normalized)
-        if user is None:
-            return False
+        with database.atomic():
+            user = models.User.get_or_none(models.User.username == normalized)
+            if user is None:
+                return False
 
-        collection_ids = [
-            col.id
-            for col in models.CollectionEntity.select(models.CollectionEntity.id).where(
-                models.CollectionEntity.local_user == user
-            )
-        ]
-        if collection_ids:
-            item_ids = [
-                item.id
-                for item in models.ItemEntity.select(models.ItemEntity.id).where(
-                    models.ItemEntity.collection.in_(collection_ids)
-                )
+            collection_ids = [
+                col.id
+                for col in models.CollectionEntity.select(
+                    models.CollectionEntity.id
+                ).where(models.CollectionEntity.local_user == user)
             ]
-            if item_ids:
-                models.HrefMapper.delete().where(
-                    models.HrefMapper.content.in_(item_ids)
+            if collection_ids:
+                item_ids = [
+                    item.id
+                    for item in models.ItemEntity.select(models.ItemEntity.id).where(
+                        models.ItemEntity.collection.in_(collection_ids)
+                    )
+                ]
+                if item_ids:
+                    models.HrefMapper.delete().where(
+                        models.HrefMapper.content.in_(item_ids)
+                    ).execute()
+                models.ItemEntity.delete().where(
+                    models.ItemEntity.collection.in_(collection_ids)
                 ).execute()
-            models.ItemEntity.delete().where(
-                models.ItemEntity.collection.in_(collection_ids)
-            ).execute()
-            models.CollectionEntity.delete().where(
-                models.CollectionEntity.id.in_(collection_ids)
-            ).execute()
-        user.delete_instance()
-        return True
+                models.CollectionEntity.delete().where(
+                    models.CollectionEntity.id.in_(collection_ids)
+                ).execute()
+            user.delete_instance()
+            return True
     finally:
         if initialized_here and not database.is_closed():
             database.close()
@@ -440,6 +484,10 @@ class StorageException(Exception):
     pass
 
 
+class SessionSuperseded(StorageException):
+    pass
+
+
 class DoesNotExist(StorageException):
     pass
 
@@ -451,7 +499,24 @@ class Etebase:
     collections and items.
     """
 
-    def __init__(self, username, stored_session, remote_url=None):
+    def _assert_session_current(self):
+        checker = getattr(self, "_session_is_current", None)
+        if checker is not None and not checker():
+            raise SessionSuperseded("Account session was replaced")
+
+    @contextmanager
+    def _mutation_session_guard(self):
+        guard = getattr(self, "_session_guard", None)
+        if guard is None:
+            self._assert_session_current()
+            yield
+            return
+        with guard() as current:
+            if not current:
+                raise SessionSuperseded("Account session was replaced")
+            yield
+
+    def __init__(self, username, stored_session, remote_url=None, *, read_only=False):
         if remote_url is None:
             remote_url = config.ETEBASE_SERVER_URL
 
@@ -461,7 +526,15 @@ class Etebase:
         self.etebase = Account.restore(client, stored_session, None)
         self.username = username
 
-        self._init_db(db_path)
+        if read_only:
+            database = getattr(db.database_proxy, "obj", None)
+            if database is None:
+                raise RuntimeError("Local cache is not initialized")
+            self._database = database
+            with db.database_proxy:
+                self.user = models.User.get(username=self.username)
+        else:
+            self._init_db(db_path)
 
     def reinit(self):
         self._set_db(self._database)
@@ -484,20 +557,10 @@ class Etebase:
         _restrict_cache_database_files(getattr(database, "database", None))
 
     def _init_db(self, db_path):
-        from playhouse.sqlite_ext import SqliteExtDatabase
-
         _ensure_private_cache_dir(db_path)
-
-        with _private_umask():
-            database = SqliteExtDatabase(
-                db_path,
-                pragmas={
-                    "journal_mode": "wal",
-                    "foreign_keys": 1,
-                },
-            )
-
-        self._set_db(database)
+        with _cache_database_init_lock:
+            database, _ = _init_cache_database(db_path)
+            self._set_db(database)
 
     def _init_db_tables(self, database, additional_tables=None):
         database.create_tables(
@@ -596,8 +659,8 @@ class Etebase:
         quarantine_uid = "legacy-cache:" + hashlib.sha256(
             str(cache_item.id).encode("ascii") + b":" + cache_item.eb_item
         ).hexdigest()
-        previous_state_hash = dav_collection_state_hash(cache_col)
-        with db.database_proxy.atomic():
+        with db.database_proxy.atomic("IMMEDIATE"):
+            previous_state_hash = dav_collection_state_hash(cache_col)
             (
                 models.DavUnresolvedItem.insert(
                     collection=cache_col,
@@ -670,11 +733,17 @@ class Etebase:
         stoken = self.user.stoken
         done = False
 
-        with db.database_proxy:
+        with db.database_proxy.connection_context():
             while not done:
                 fetch_options = FetchOptions().stoken(stoken)
                 col_list = col_mgr.list(config.COL_TYPES, fetch_options)
+                self._assert_session_current()
 
+                done, stoken = self._apply_collection_list_page(col_mgr, col_list)
+
+    def _apply_collection_list_page(self, col_mgr, col_list):
+        with self._mutation_session_guard():
+            with db.database_proxy.atomic("IMMEDIATE"):
                 for col in col_list.data:
                     collection = models.CollectionEntity.get_or_none(
                         local_user=self.user, uid=col.uid
@@ -687,6 +756,10 @@ class Etebase:
                             collection.dirty = True
                             collection.save(only=[models.CollectionEntity.dirty])
                             continue
+                    if collection is not None and (
+                        collection.dirty or collection.new
+                    ):
+                        continue
                     if collection is None:
                         collection = models.CollectionEntity(
                             local_user=self.user,
@@ -695,7 +768,15 @@ class Etebase:
                     collection.eb_col = col_mgr.cache_save(col)
                     collection.stoken = col.stoken
                     collection.deleted = col.deleted
-                    collection.save()
+                    collection.save(
+                        only=[
+                            models.CollectionEntity.local_user,
+                            models.CollectionEntity.uid,
+                            models.CollectionEntity.eb_col,
+                            models.CollectionEntity.stoken,
+                            models.CollectionEntity.deleted,
+                        ]
+                    )
                     if collection.deleted:
                         models.DavUnresolvedItem.delete().where(
                             models.DavUnresolvedItem.collection == collection
@@ -720,7 +801,8 @@ class Etebase:
                         models.DavUnresolvedItem.delete().where(
                             models.DavUnresolvedItem.collection == collection
                         ).execute()
-                        # Cascade-delete orphaned ItemEntity and HrefMapper rows
+                        # The immediate transaction serializes this check/delete
+                        # with DAV writers, which reject deleted collections.
                         for item in collection.items:
                             models.HrefMapper.delete().where(
                                 models.HrefMapper.content == item
@@ -731,17 +813,20 @@ class Etebase:
                     except models.CollectionEntity.DoesNotExist:
                         pass
 
-                done = col_list.done
                 stoken = col_list.stoken
-
+                (
+                    models.User.update(stoken=stoken)
+                    .where(models.User.id == self.user.id)
+                    .execute()
+                )
                 self.user.stoken = stoken
-                self.user.save()
+                self._assert_session_current()
+                return col_list.done, stoken
 
     def _collection_list_dirty_get(self):
-        with db.database_proxy:
-            return self.user.collections.where(
-                models.CollectionEntity.dirty | models.CollectionEntity.new
-            )
+        return self.user.collections.where(
+            models.CollectionEntity.dirty | models.CollectionEntity.new
+        )
 
     def collection_list_is_dirty(self):
         changed = list(self._collection_list_dirty_get())
@@ -750,19 +835,33 @@ class Etebase:
     def push_collection_list(self):
         col_mgr = self.etebase.get_collection_manager()
 
-        with db.database_proxy:
+        with db.database_proxy.connection_context():
             changed = list(self._collection_list_dirty_get())
 
             for collection in changed:
+                original_envelope = collection.eb_col
+                original_dirty = collection.dirty
+                original_new = collection.new
+                original_deleted = collection.deleted
                 col = col_mgr.cache_load(collection.eb_col)
 
                 if collection.deleted:
                     col.delete()
                 col_mgr.upload(col, None)
-
-                collection.dirty = False
-                collection.new = False
-                collection.save()
+                with self._mutation_session_guard():
+                    with db.database_proxy.atomic("IMMEDIATE"):
+                        self._assert_session_current()
+                        (
+                            models.CollectionEntity.update(dirty=False, new=False)
+                            .where(
+                                (models.CollectionEntity.id == collection.id)
+                                & (models.CollectionEntity.eb_col == original_envelope)
+                                & (models.CollectionEntity.dirty == original_dirty)
+                                & (models.CollectionEntity.new == original_new)
+                                & (models.CollectionEntity.deleted == original_deleted)
+                            )
+                            .execute()
+                        )
 
     def sync_collection(self, uid):
         """Sync a single collection (push then pull)."""
@@ -804,8 +903,8 @@ class Etebase:
         quarantine=True,
     ):
         meta = dict(item.meta)
-        previous_state_hash = dav_collection_state_hash(cache_col)
-        with db.database_proxy.atomic():
+        with db.database_proxy.atomic("IMMEDIATE"):
+            previous_state_hash = dav_collection_state_hash(cache_col)
             cache_item = models.ItemEntity.get_or_none(
                 (models.ItemEntity.collection == cache_col)
                 & (models.ItemEntity.remote_uid == item.uid)
@@ -837,6 +936,16 @@ class Etebase:
                     collection=cache_col,
                     uid=meta.get("name") or item.uid,
                 )
+
+            if cache_item.id is not None and (cache_item.dirty or cache_item.new):
+                if cache_item.remote_uid is None:
+                    cache_item.remote_uid = item.uid
+                    cache_item.save(only=[models.ItemEntity.remote_uid])
+                models.DavUnresolvedItem.delete().where(
+                    (models.DavUnresolvedItem.collection == cache_col)
+                    & (models.DavUnresolvedItem.local_item == cache_item)
+                ).execute()
+                return True
 
             cache_item.remote_uid = item.uid
             cache_item.eb_item = item_mgr.cache_save(item)
@@ -904,30 +1013,43 @@ class Etebase:
                 )
                 continue
             if unresolved.local_item_id is not None:
-                local_item = models.ItemEntity.get_or_none(
-                    models.ItemEntity.id == unresolved.local_item_id
-                )
-                conflict = models.ItemEntity.get_or_none(
-                    (models.ItemEntity.collection == cache_col)
-                    & (models.ItemEntity.remote_uid == item.uid)
-                    & (models.ItemEntity.id != unresolved.local_item_id)
-                )
-                if local_item is None or conflict is not None:
-                    unresolved.reason = "legacy_duplicate"
-                    unresolved.attempts += 1
-                    unresolved.save(
+                remote_envelope = item_mgr.cache_save(item)
+                with db.database_proxy.atomic("IMMEDIATE"):
+                    local_item = models.ItemEntity.get_or_none(
+                        models.ItemEntity.id == unresolved.local_item_id
+                    )
+                    conflict = models.ItemEntity.get_or_none(
+                        (models.ItemEntity.collection == cache_col)
+                        & (models.ItemEntity.remote_uid == item.uid)
+                        & (models.ItemEntity.id != unresolved.local_item_id)
+                    )
+                    if local_item is None or conflict is not None:
+                        unresolved.reason = "legacy_duplicate"
+                        unresolved.attempts += 1
+                        unresolved.save(
+                            only=[
+                                models.DavUnresolvedItem.reason,
+                                models.DavUnresolvedItem.attempts,
+                            ]
+                        )
+                        continue
+                    if local_item.dirty or local_item.new:
+                        if local_item.remote_uid is None:
+                            local_item.remote_uid = item.uid
+                            local_item.save(only=[models.ItemEntity.remote_uid])
+                        unresolved.delete_instance()
+                        continue
+                    previous_state_hash = dav_collection_state_hash(cache_col)
+                    local_item.remote_uid = item.uid
+                    local_item.eb_item = remote_envelope
+                    local_item.deleted = item.deleted
+                    local_item.save(
                         only=[
-                            models.DavUnresolvedItem.reason,
-                            models.DavUnresolvedItem.attempts,
+                            models.ItemEntity.remote_uid,
+                            models.ItemEntity.eb_item,
+                            models.ItemEntity.deleted,
                         ]
                     )
-                    continue
-                previous_state_hash = dav_collection_state_hash(cache_col)
-                with db.database_proxy.atomic():
-                    local_item.remote_uid = item.uid
-                    local_item.eb_item = item_mgr.cache_save(item)
-                    local_item.deleted = item.deleted
-                    local_item.save()
                     href_mapper = models.HrefMapper.get_or_none(
                         models.HrefMapper.content == local_item
                     )
@@ -955,13 +1077,15 @@ class Etebase:
                 unresolved.delete_instance()
 
     def pull_collection(self, uid):
-        with db.database_proxy:
+        with db.database_proxy.connection_context():
             col_mgr = self.etebase.get_collection_manager()
             cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
 
             col = col_mgr.cache_load(cache_col.eb_col)
             item_mgr = col_mgr.get_item_manager(col)
-            self._retry_unresolved_items(cache_col, col, item_mgr)
+            with self._mutation_session_guard():
+                with db.database_proxy.atomic("IMMEDIATE"):
+                    self._retry_unresolved_items(cache_col, col, item_mgr)
             stoken = cache_col.local_stoken
             done = False
 
@@ -975,20 +1099,24 @@ class Etebase:
                     len(items_data),
                 )
 
-                for item in items_data:
-                    self._apply_pulled_item(cache_col, col, item_mgr, item)
+                with self._mutation_session_guard():
+                    with db.database_proxy.atomic("IMMEDIATE"):
+                        for item in items_data:
+                            self._apply_pulled_item(cache_col, col, item_mgr, item)
 
-                done = item_list.done
-                stoken = item_list.stoken
-
-                cache_col.local_stoken = stoken
-                cache_col.save()
+                        done = item_list.done
+                        stoken = item_list.stoken
+                        self._assert_session_current()
+                        (
+                            models.CollectionEntity.update(local_stoken=stoken)
+                            .where(models.CollectionEntity.id == cache_col.id)
+                            .execute()
+                        )
 
     def _collection_dirty_get(self, collection):
-        with db.database_proxy:
-            return collection.items.where(
-                models.ItemEntity.dirty | models.ItemEntity.new
-            )
+        return collection.items.where(
+            models.ItemEntity.dirty | models.ItemEntity.new
+        )
 
     def collection_is_dirty(self, uid):
         with db.database_proxy:
@@ -999,7 +1127,7 @@ class Etebase:
     def push_collection(self, uid):
         CHUNK_PUSH = 30
 
-        with db.database_proxy:
+        with db.database_proxy.connection_context():
             col_mgr = self.etebase.get_collection_manager()
             cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
             col = col_mgr.cache_load(cache_col.eb_col)
@@ -1012,15 +1140,34 @@ class Etebase:
                 return
 
             for chunk in batch(changed, CHUNK_PUSH):
+                original_rows = [
+                    (item.id, item.eb_item, item.dirty, item.new)
+                    for item in chunk
+                ]
                 chunk_items = list(map(lambda x: item_mgr.cache_load(x.eb_item), chunk))
                 logger.info("PUSH collection: uploading batch of %d items", len(chunk_items))
                 item_mgr.batch(chunk_items, None, None)
                 logger.info("PUSH collection: batch upload succeeded")
-                for cache_item, item in zip(chunk, chunk_items):
-                    cache_item.eb_item = item_mgr.cache_save(item)
-                    cache_item.dirty = False
-                    cache_item.new = False
-                    cache_item.save()
+                with self._mutation_session_guard():
+                    with db.database_proxy.atomic("IMMEDIATE"):
+                        self._assert_session_current()
+                        for original, item in zip(original_rows, chunk_items):
+                            item_id, original_envelope, original_dirty, original_new = original
+                            uploaded_envelope = item_mgr.cache_save(item)
+                            (
+                                models.ItemEntity.update(
+                                    eb_item=uploaded_envelope,
+                                    dirty=False,
+                                    new=False,
+                                )
+                                .where(
+                                    (models.ItemEntity.id == item_id)
+                                    & (models.ItemEntity.eb_item == original_envelope)
+                                    & (models.ItemEntity.dirty == original_dirty)
+                                    & (models.ItemEntity.new == original_new)
+                                )
+                                .execute()
+                            )
 
     # --- CRUD operations ---
 
@@ -1082,12 +1229,24 @@ class Collection:
     def update_meta(self, update_info):
         if update_info is None:
             raise RuntimeError("update_info can't be None.")
-        meta = self.meta
-        meta.update(update_info)
-        self.col.meta = meta
-        self.cache_col.eb_col = self.col_mgr.cache_save(self.col)
-        self.cache_col.dirty = True
-        self.cache_col.save()
+        with db.database_proxy.atomic("IMMEDIATE"):
+            current_cache = models.CollectionEntity.get_by_id(self.cache_col.id)
+            if current_cache.deleted:
+                raise RuntimeError("collection is unavailable")
+            current_col = self.col_mgr.cache_load(current_cache.eb_col)
+            meta = dict(current_col.meta)
+            meta.update(update_info)
+            current_col.meta = meta
+            current_cache.eb_col = self.col_mgr.cache_save(current_col)
+            current_cache.dirty = True
+            current_cache.save(
+                only=[
+                    models.CollectionEntity.eb_col,
+                    models.CollectionEntity.dirty,
+                ]
+            )
+            self.cache_col = current_cache
+            self.col = current_col
 
     def create(self, vobject_item):
         with db.database_proxy:
@@ -1123,10 +1282,17 @@ class Collection:
 
     def delete(self):
         """Mark this collection as deleted and dirty so push_collection_list() will handle it."""
-        with db.database_proxy:
-            self.cache_col.deleted = True
-            self.cache_col.dirty = True
-            self.cache_col.save()
+        with db.database_proxy.atomic("IMMEDIATE"):
+            current_cache = models.CollectionEntity.get_by_id(self.cache_col.id)
+            current_cache.deleted = True
+            current_cache.dirty = True
+            current_cache.save(
+                only=[
+                    models.CollectionEntity.deleted,
+                    models.CollectionEntity.dirty,
+                ]
+            )
+            self.cache_col = current_cache
 
     def list(self):
         with db.database_proxy:

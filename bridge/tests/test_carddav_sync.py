@@ -1,8 +1,8 @@
 """CardDAV sync-token and deletion convergence regressions."""
 
-from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
 import pytest
@@ -60,6 +60,25 @@ def _carddav_collection(mem_db, user):
     storage = MagicMock()
     storage.etesync.get.return_value = cached_collection
     return Collection(storage, "/test@example.com/contacts")
+
+
+def test_upload_rejects_collection_removed_before_local_transaction(mem_db, user):
+    collection = _carddav_collection(mem_db, user)
+    (
+        CollectionEntity.update(deleted=True)
+        .where(CollectionEntity.id == collection.collection.cache_col.id)
+        .execute()
+    )
+    incoming = MagicMock()
+    incoming.vobject_item = vobject.readOne(
+        "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:contact-1\r\n"
+        "FN:Updated Contact\r\nEND:VCARD"
+    )
+
+    with pytest.raises(ValueError, match="collection is unavailable"):
+        collection.upload("contact-1.vcf", incoming)
+
+    assert ItemEntity.get(uid="contact-1").dirty is False
 
 
 @pytest.mark.parametrize(

@@ -34,9 +34,15 @@ _bridge_status = {
     "error": None,
     "collections": {"calendars": 0, "contacts": 0, "tasks": 0},
     "collections_by_account": {},
+    "account_states": {},
     "collections_scope": "all configured accounts",
 }
 _bridge_status_lock = threading.RLock()
+_sync_requests = {}
+_sync_requests_lock = threading.RLock()
+_sync_request_timeout = 30
+_sync_request_retention = 100
+_sync_request_terminal_ttl = 300
 # Process-local token protects localhost dashboard POSTs from cross-site form/script submissions.
 _dashboard_csrf_token = secrets.token_urlsafe(32)
 
@@ -52,6 +58,170 @@ def _json_response(status, payload):
 def _has_valid_csrf(environ):
     token = environ.get("HTTP_X_SILENTSUITE_CSRF", "")
     return bool(token) and hmac.compare_digest(token, _dashboard_csrf_token)
+
+
+def _sync_request_status(request_id):
+    poll_token = object()
+    with _sync_requests_lock:
+        request = _sync_requests.get(request_id)
+        if request is None:
+            return None
+        if request.get("terminal_result") is not None:
+            return dict(request["terminal_result"])
+        targets = list(request["targets"])
+        requested_at = request["requested_at"]
+        deadline = request["deadline"]
+        request.setdefault("pollers", {})[poll_token] = time.monotonic()
+
+    counts = {
+        "total": len(targets),
+        "pending": 0,
+        "running": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "timed_out": 0,
+    }
+    for target in targets:
+        if target["thread"] is None:
+            state = "failed"
+        else:
+            if target.get("status_handle") is not None:
+                status = target["thread"].generation_status_for_handle(
+                    target["status_handle"]
+                )
+            else:
+                status = target["thread"].generation_status(target["generation"])
+            state = status["state"] if status is not None else "failed"
+            if state in {"pending", "running"} and not target["thread"].is_alive():
+                state = "failed"
+        counts[state] += 1
+
+    active = counts["pending"] + counts["running"]
+    failures = counts["failed"] + counts["timed_out"]
+    if active:
+        state = "running" if counts["running"] else "pending"
+    elif failures and counts["succeeded"]:
+        state = "partial_failure"
+    elif counts["failed"]:
+        state = "failed"
+    elif counts["timed_out"]:
+        state = "timed_out"
+    else:
+        state = "succeeded"
+    result = {
+        "request_id": request_id,
+        "state": state,
+        "requested_at": requested_at,
+        "deadline": deadline,
+        "accounts": counts,
+    }
+    with _sync_requests_lock:
+        request = _sync_requests.get(request_id)
+        if request is None:
+            request = {
+                "requested_at": requested_at,
+                "deadline": deadline,
+                "targets": targets,
+                "signature": tuple(
+                    (id(target["thread"]), target["generation"])
+                    for target in targets
+                ),
+                "terminal_result": None,
+                "terminal_at": None,
+                "pollers": {},
+            }
+            _sync_requests[request_id] = request
+        request.get("pollers", {}).pop(poll_token, None)
+        if request.get("terminal_result") is not None:
+            return dict(request["terminal_result"])
+        if not active:
+            request["terminal_result"] = dict(result)
+            request["terminal_at"] = time.time()
+    return result
+
+
+def _prune_sync_requests(now):
+    monotonic_now = time.monotonic()
+    for request in _sync_requests.values():
+        request["pollers"] = {
+            token: started_at
+            for token, started_at in request.get("pollers", {}).items()
+            if monotonic_now - started_at < 60
+        }
+    for request_id in list(_sync_requests):
+        _sync_request_status(request_id)
+    terminal = [
+        (request_id, request)
+        for request_id, request in _sync_requests.items()
+        if request.get("terminal_at") is not None and not request.get("pollers")
+    ]
+    for request_id, request in terminal:
+        if now - request["terminal_at"] >= _sync_request_terminal_ttl:
+            _sync_requests.pop(request_id, None)
+    terminal = sorted(
+        (
+            (request_id, request)
+            for request_id, request in _sync_requests.items()
+            if request.get("terminal_at") is not None and not request.get("pollers")
+        ),
+        key=lambda entry: entry[1]["terminal_at"],
+    )
+    for request_id, _ in terminal[:-_sync_request_retention]:
+        _sync_requests.pop(request_id, None)
+
+
+def _create_sync_request():
+    from ..accounts import list_accounts
+    from ..radicale import storage as storage_module
+
+    configured_accounts = list_accounts()
+    with storage_module._sync_threads_lock:
+        threads = dict(storage_module._sync_threads)
+    requested_at = time.time()
+    deadline = requested_at + _sync_request_timeout
+    targets = []
+    live_targets = 0
+    for account in configured_accounts:
+        thread = threads.get(account)
+        if thread is not None and thread.is_alive():
+            generation = thread.force_sync(deadline=deadline)
+            status_handle = (
+                thread.generation_handle(generation)
+                if isinstance(thread, storage_module.SyncThread)
+                else None
+            )
+            live_targets += 1
+        else:
+            thread = None
+            generation = None
+            status_handle = None
+        targets.append({
+            "thread": thread,
+            "generation": generation,
+            "status_handle": status_handle,
+        })
+    if not live_targets:
+        return None
+
+    signature = tuple(
+        (id(target["thread"]), target["generation"])
+        for target in targets
+    )
+    request_id = secrets.token_urlsafe(18)
+    with _sync_requests_lock:
+        _prune_sync_requests(requested_at)
+        for existing_id, request in _sync_requests.items():
+            if request.get("terminal_result") is None and request["signature"] == signature:
+                return _sync_request_status(existing_id)
+        _sync_requests[request_id] = {
+            "requested_at": requested_at,
+            "deadline": deadline,
+            "targets": targets,
+            "signature": signature,
+            "terminal_result": None,
+            "terminal_at": None,
+        }
+    return _sync_request_status(request_id)
 
 
 # Localhost Host allowlist for defense-in-depth against DNS-rebinding and
@@ -115,7 +285,13 @@ def _account_mutation_response(action, result):
         })
 
     if result.existed:
-        if result.cache_cleared:
+        if result.cache_cleanup == "deferred":
+            message = (
+                f"Removed {result.username}. Credentials were deleted, but local "
+                "cache cleanup is deferred until the active sync exits."
+            )
+            log_message = "Removed account; cache cleanup deferred"
+        elif result.cache_cleared:
             message = f"Removed {result.username}. Local bridge cache for this account was deleted."
             log_message = "Removed account and cleared cache"
         else:
@@ -131,6 +307,7 @@ def _account_mutation_response(action, result):
         "existed": result.existed,
         "syncStopped": result.sync_stopped,
         "cacheCleared": result.cache_cleared,
+        "cacheCleanup": result.cache_cleanup,
         "message": message,
     })
 
@@ -227,12 +404,37 @@ def log_sync_event(event_type, message):
 def update_status(state, error=None, collections=None, account=None, scope=None):
     """Update the bridge status."""
     with _bridge_status_lock:
-        _bridge_status["state"] = state
-        if state == "connected":
-            _bridge_status["last_sync"] = time.strftime("%Y-%m-%d %H:%M:%S")
-            _bridge_status["error"] = None
-        if error:
-            _bridge_status["error"] = str(error)
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        if account:
+            account_states = _bridge_status.setdefault("account_states", {})
+            account_state = account_states.setdefault(account, {})
+            account_state["state"] = state
+            account_state["error"] = str(error) if error else None
+            if state == "connected":
+                account_state["last_sync"] = now
+            states = list(account_states.values())
+            failed = [entry for entry in states if entry["state"] == "error"]
+            if failed:
+                _bridge_status["state"] = "error"
+                _bridge_status["error"] = (
+                    "One or more configured accounts failed to sync"
+                )
+            elif states and all(entry["state"] == "connected" for entry in states):
+                _bridge_status["state"] = "connected"
+                _bridge_status["error"] = None
+                _bridge_status["last_sync"] = max(
+                    entry.get("last_sync", now) for entry in states
+                )
+            else:
+                _bridge_status["state"] = "syncing"
+                _bridge_status["error"] = None
+        else:
+            _bridge_status["state"] = state
+            if state == "connected":
+                _bridge_status["last_sync"] = now
+                _bridge_status["error"] = None
+            if error:
+                _bridge_status["error"] = str(error)
         if collections:
             if account:
                 _bridge_status.setdefault("collections_by_account", {})[account] = collections
@@ -252,6 +454,21 @@ def forget_account_status(account):
     with _bridge_status_lock:
         account_collections = _bridge_status.setdefault("collections_by_account", {})
         account_collections.pop(account, None)
+        account_states = _bridge_status.setdefault("account_states", {})
+        account_states.pop(account, None)
+        states = list(account_states.values())
+        if any(entry["state"] == "error" for entry in states):
+            _bridge_status["state"] = "error"
+            _bridge_status["error"] = "One or more configured accounts failed to sync"
+        elif states and all(entry["state"] == "connected" for entry in states):
+            _bridge_status["state"] = "connected"
+            _bridge_status["error"] = None
+        elif states:
+            _bridge_status["state"] = "syncing"
+            _bridge_status["error"] = None
+        else:
+            _bridge_status["state"] = "disconnected"
+            _bridge_status["error"] = None
         _bridge_status["collections"] = _aggregate_collections(account_collections.values())
 
 
@@ -743,20 +960,52 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     if (copyBtn) copyBtn.disabled = false;
                 }
             }
+            function pollSyncRequest(requestId, btn) {
+                fetch('/.web/api/sync/' + encodeURIComponent(requestId))
+                    .then(function(r) {
+                        if (!r.ok) throw new Error('Sync status request failed');
+                        return r.json();
+                    })
+                    .then(function(data) {
+                        if (data.state === 'succeeded') {
+                            btn.textContent = 'Synced';
+                            setTimeout(function() { location.reload(); }, 750);
+                        } else if (data.state === 'failed' || data.state === 'timed_out' || data.state === 'partial_failure') {
+                            if (data.state === 'timed_out') {
+                                btn.textContent = 'Timed out';
+                            } else if (data.state === 'partial_failure') {
+                                btn.textContent = 'Partially failed';
+                            } else {
+                                btn.textContent = 'Sync failed';
+                            }
+                            btn.disabled = false;
+                        } else {
+                            btn.textContent = data.state === 'running' ? 'Syncing...' : 'Queued...';
+                            setTimeout(function() { pollSyncRequest(requestId, btn); }, 750);
+                        }
+                    })
+                    .catch(function() {
+                        btn.textContent = 'Error';
+                        btn.disabled = false;
+                    });
+            }
             function triggerSync() {
                 var btn = document.getElementById('syncNowBtn');
-                btn.textContent = 'Syncing...';
+                btn.textContent = 'Requesting...';
                 btn.disabled = true;
                 fetch('/.web/api/sync', {method:'POST', headers:{'X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}})
                     .then(function(r) {
-                        return r.json().then(function(data) {
-                            if (!r.ok || !data.ok) throw new Error('Sync failed');
-                            return data;
-                        });
+                        if (!r.ok) throw new Error('Sync request failed');
+                        return r.json();
                     })
-                    .then(function() { btn.textContent = 'Done!'; setTimeout(function() { location.reload(); }, 1000); })
-                    .catch(function() { btn.textContent = 'Error'; })
-                    .finally(function() { setTimeout(function() { btn.disabled = false; btn.textContent = 'Sync Now'; }, 3000); });
+                    .then(function(data) {
+                        if (!data.request_id) throw new Error('Missing sync request ID');
+                        pollSyncRequest(data.request_id, btn);
+                    })
+                    .catch(function() {
+                        btn.textContent = 'Error';
+                        btn.disabled = false;
+                    });
             }
             function updateInterval() {
                 var val = document.getElementById('syncInterval').value;
@@ -1057,14 +1306,23 @@ class Web(BaseWeb):
                 json.dumps(data).encode(),
             )
 
+        if path.startswith("/.web/api/sync/"):
+            request_id = path.removeprefix("/.web/api/sync/")
+            data = _sync_request_status(request_id)
+            if data is None:
+                return _json_response(404, {"error": "Sync request not found"})
+            return _json_response(200, data)
+
         # Live sync progress — polled by the dashboard while a sync is running.
         if path == "/.web/api/progress":
-            from ..radicale.storage import _sync_threads
+            from ..radicale.storage import _sync_threads, _sync_threads_lock
             is_syncing = False
             sync_started_at = None
             last_sync_duration = None
             latest_completed_sync = None
-            for thread in _sync_threads.values():
+            with _sync_threads_lock:
+                threads = list(_sync_threads.values())
+            for thread in threads:
                 if getattr(thread, "is_syncing", False):
                     is_syncing = True
                     started_at = getattr(thread, "sync_started_at", None)
@@ -1158,33 +1416,14 @@ class Web(BaseWeb):
         if path == "/.web/api/sync":
             if not _has_valid_csrf(environ):
                 return _csrf_error()
-            from ..radicale.storage import _sync_threads, _sync_threads_lock
-
-            with _sync_threads_lock:
-                threads = list(_sync_threads.values())
-            completed = bool(threads)
-            for thread in threads:
-                if thread.is_alive():
-                    thread.force_sync()
-                    try:
-                        completed = thread.wait_for_sync(30) and completed
-                    except Exception:
-                        completed = False
-                else:
-                    completed = False
-            if not completed:
-                log_sync_event("error", "Manual sync did not complete")
-                return (
-                    503,
-                    {"Content-Type": "application/json"},
-                    json.dumps({"ok": False, "status": "incomplete"}).encode(),
-                )
+            request = _create_sync_request()
+            if request is None:
+                return _json_response(503, {
+                    "ok": False,
+                    "error": "No sync workers available",
+                })
             log_sync_event("info", "Manual sync triggered from dashboard")
-            return (
-                200,
-                {"Content-Type": "application/json"},
-                json.dumps({"ok": True}).encode(),
-            )
+            return _json_response(202, {"ok": True, **request})
 
         # Inline dashboard account login/setup
         if path == "/.web/api/accounts/login":
@@ -1225,9 +1464,11 @@ class Web(BaseWeb):
                 config.SYNC_INTERVAL = new_interval
 
                 # Update all running SyncThreads
-                from ..radicale.storage import _sync_threads
+                from ..radicale.storage import _sync_threads, _sync_threads_lock
 
-                for thread in _sync_threads.values():
+                with _sync_threads_lock:
+                    threads = list(_sync_threads.values())
+                for thread in threads:
                     if thread.is_alive():
                         thread.set_interval(new_interval)
 

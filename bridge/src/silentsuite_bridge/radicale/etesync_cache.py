@@ -9,13 +9,18 @@ Forked and adapted from etesync-dav (AGPL-3.0).
 import logging
 import os
 import threading
+import time
 from contextlib import contextmanager
 
 from .. import config
 from ..local_cache import Etebase
-from .creds import Credentials
+from .creds import Credentials, credentials_locked
 
 logger = logging.getLogger("silentsuite-bridge.cache")
+
+
+class EteSyncBusyError(RuntimeError):
+    """Raised when an exclusive account session is already busy."""
 
 
 class EteSyncCache:
@@ -23,37 +28,84 @@ class EteSyncCache:
 
     def __init__(self, creds_path, db_path):
         self._etesync_cache = {}
+        self._session_epochs = {}
+        self._cache_lock = threading.RLock()
         self.creds = None
         self.creds_path = os.path.expanduser(creds_path)
         self.db_path = os.path.expanduser(db_path)
 
+    @credentials_locked
     def etesync_for_user(self, user):
-        if self.creds:
-            self.creds.load()
+        with self._cache_lock:
+            if self.creds:
+                self.creds.load()
 
-            if user in self._etesync_cache:
-                etesync = self._etesync_cache[user]
-                if isinstance(etesync, Etebase) and (
-                    etesync.stored_session == self.creds.get_etebase(user)
-                ):
-                    return etesync, False
-                else:
+                if user in self._etesync_cache:
+                    etesync = self._etesync_cache[user]
+                    if isinstance(etesync, Etebase) and (
+                        etesync.stored_session == self.creds.get_etebase(user)
+                    ):
+                        return etesync, False
                     del self._etesync_cache[user]
-        else:
-            self.creds = Credentials(self.creds_path)
+            else:
+                self.creds = Credentials(self.creds_path)
 
-        remote_url = self.creds.get_server_url(user)
-        stored_session = self.creds.get_etebase(user)
-        if stored_session is None:
-            raise Exception(
-                f'User "{user}" not found in credentials file. '
-                "Please authenticate via the browser first."
+            remote_url = self.creds.get_server_url(user)
+            stored_session = self.creds.get_etebase(user)
+            if stored_session is None:
+                raise Exception(
+                    "Configured account not found in credentials file. "
+                    "Please authenticate via the browser first."
+                )
+
+            etesync = Etebase(user, stored_session, remote_url)
+            self._bind_epoch(user, etesync)
+            self._etesync_cache[user] = etesync
+            return etesync, True
+
+    def forget_user(self, user):
+        with self._cache_lock:
+            self._session_epochs[user] = self._session_epochs.get(user, 0) + 1
+            self._etesync_cache.pop(user, None)
+
+    def _bind_epoch(self, user, etesync):
+        epoch = self._session_epochs.get(user, 0)
+
+        def is_current():
+            with self._cache_lock:
+                return self._session_epochs.get(user, 0) == epoch
+
+        @contextmanager
+        def session_guard():
+            with self._cache_lock:
+                yield self._session_epochs.get(user, 0) == epoch
+
+        etesync._session_is_current = is_current
+        etesync._session_guard = session_guard
+
+    @credentials_locked
+    def fresh_for_user(self, user, *, read_only=True):
+        """Restore an independent session for bounded local-cache work."""
+        with self._cache_lock:
+            if self.creds:
+                self.creds.load()
+            else:
+                self.creds = Credentials(self.creds_path)
+            remote_url = self.creds.get_server_url(user)
+            stored_session = self.creds.get_etebase(user)
+            if stored_session is None:
+                raise Exception(
+                    "Configured account not found in credentials file. "
+                    "Please authenticate via the browser first."
+                )
+            etesync = Etebase(
+                user,
+                stored_session,
+                remote_url,
+                read_only=read_only,
             )
-
-        etesync = Etebase(user, stored_session, remote_url)
-        self._etesync_cache[user] = etesync
-
-        return etesync, True
+            self._bind_epoch(user, etesync)
+            return etesync, True
 
 
 _etesync_cache = EteSyncCache(
@@ -61,18 +113,82 @@ _etesync_cache = EteSyncCache(
     db_path=config.DATABASE_FILE,
 )
 
-_get_etesync_lock = threading.RLock()
+_user_locks = {}
+_user_locks_guard = threading.Lock()
+_reader_condition = threading.Condition(_user_locks_guard)
+_active_readers = {}
+_users_closing = set()
+
+
+def _lock_for_user(user):
+    with _user_locks_guard:
+        return _user_locks.setdefault(user, threading.RLock())
 
 
 @contextmanager
-def etesync_for_user(user):
+def etesync_for_user(user, *, exclusive=True, timeout=None, read_only=True):
     """Get an Etebase session for a user (thread-safe, cached)."""
-    with _get_etesync_lock:
+    if not exclusive:
+        with _reader_condition:
+            if user in _users_closing:
+                raise EteSyncBusyError("Account session is closing")
+            _active_readers[user] = _active_readers.get(user, 0) + 1
+        try:
+            session = (
+                _etesync_cache.fresh_for_user(user)
+                if read_only
+                else _etesync_cache.fresh_for_user(user, read_only=False)
+            )
+            yield session
+            return
+        finally:
+            with _reader_condition:
+                remaining = _active_readers.get(user, 1) - 1
+                if remaining:
+                    _active_readers[user] = remaining
+                else:
+                    _active_readers.pop(user, None)
+                _reader_condition.notify_all()
+    lock = _lock_for_user(user)
+    acquired = lock.acquire() if timeout is None else lock.acquire(timeout=timeout)
+    if not acquired:
+        raise EteSyncBusyError("Account session is busy")
+    try:
         ret = _etesync_cache.etesync_for_user(user)
         yield ret
+    finally:
+        lock.release()
 
 
 def forget_etesync_user(user):
-    """Evict one user's restored Etebase session from the runtime cache."""
-    with _get_etesync_lock:
-        _etesync_cache._etesync_cache.pop(user, None)
+    """Evict one user's restored session without waiting on a wedged sync."""
+    _etesync_cache.forget_user(user)
+
+
+@contextmanager
+def account_maintenance(user, *, timeout=0):
+    """Enter bounded exclusive maintenance only when no readers are active."""
+    lock = _lock_for_user(user)
+    started_at = time.monotonic()
+    acquired = lock.acquire() if timeout is None else lock.acquire(timeout=timeout)
+    if not acquired:
+        yield False
+        return
+    try:
+        with _reader_condition:
+            _users_closing.add(user)
+            while _active_readers.get(user, 0):
+                if timeout is None:
+                    _reader_condition.wait()
+                    continue
+                remaining = timeout - (time.monotonic() - started_at)
+                if remaining <= 0:
+                    break
+                _reader_condition.wait(remaining)
+            available = _active_readers.get(user, 0) == 0
+        yield available
+    finally:
+        with _reader_condition:
+            _users_closing.discard(user)
+            _reader_condition.notify_all()
+        lock.release()

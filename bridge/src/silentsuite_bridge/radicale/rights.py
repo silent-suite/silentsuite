@@ -34,7 +34,7 @@ class Rights(OwnerOnlyRights):
 
         collection_uid = parts[1]
         try:
-            with etesync_for_user(user) as (etesync, _):
+            with etesync_for_user(user, exclusive=False) as (etesync, _):
                 collection = etesync.get(collection_uid)
         except Exception as exc:
             # Missing collections include legitimate creates. Preserve the base
