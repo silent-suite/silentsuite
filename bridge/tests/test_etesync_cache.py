@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from silentsuite_bridge.radicale import etesync_cache
+from silentsuite_bridge.radicale.creds import CREDENTIALS_LOCK
 
 
 def test_wedged_account_session_does_not_block_another_account(monkeypatch):
@@ -237,3 +238,26 @@ def test_fresh_session_construction_is_atomic_with_epoch_binding():
 
     assert forgotten.is_set()
     assert session._session_is_current() is False
+
+
+def test_fresh_session_waits_for_atomic_credential_mutation():
+    cache = etesync_cache.EteSyncCache("/tmp/creds", "/tmp/cache")
+    cache.creds = MagicMock()
+    cache.creds.get_etebase.return_value = "stored-session"
+    cache.creds.get_server_url.return_value = "https://server.example"
+    constructed = threading.Event()
+
+    def construct(*_args, **_kwargs):
+        constructed.set()
+        return MagicMock(stored_session="stored-session")
+
+    with patch.object(etesync_cache, "Etebase", side_effect=construct):
+        with CREDENTIALS_LOCK:
+            opener = threading.Thread(
+                target=lambda: cache.fresh_for_user("same@example.com")
+            )
+            opener.start()
+            assert not constructed.wait(0.05)
+        opener.join(1)
+
+    assert constructed.is_set()

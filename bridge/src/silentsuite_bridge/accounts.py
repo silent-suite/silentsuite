@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from . import config
 from .local_cache import clear_cached_user
-from .radicale.creds import Credentials, credentials_locked
+from .radicale.creds import CREDENTIALS_LOCK, Credentials
 from .radicale.etesync_cache import account_maintenance, forget_etesync_user
 from .radicale.storage import stop_sync_thread
 
@@ -88,7 +88,11 @@ def _password_hash(password: str) -> tuple[str, str]:
     return salt.hex(), password_hash
 
 
-@credentials_locked
+def _reload_credentials(credentials: Credentials) -> None:
+    if getattr(credentials, "filename", None):
+        credentials.load()
+
+
 def store_authenticated_account(
     username: str,
     password: str,
@@ -106,22 +110,26 @@ def store_authenticated_account(
 
     with _account_lock:
         creds = credentials or Credentials()
-        existed = normalized in creds.list_users()
-        if existed:
-            existing_server = creds.get_server_url(normalized)
-            if existing_server and existing_server.rstrip("/") != server_url.rstrip("/"):
-                raise ValueError(
-                    "An existing account cannot be moved to a different server"
-                )
+        with CREDENTIALS_LOCK:
+            _reload_credentials(creds)
+            existed = normalized in creds.list_users()
+            if existed:
+                existing_server = creds.get_server_url(normalized)
+                if existing_server and existing_server.rstrip("/") != server_url.rstrip("/"):
+                    raise ValueError(
+                        "An existing account cannot be moved to a different server"
+                    )
         salt_hex, password_hash = _password_hash(password)
         if existed:
             stop_sync_thread(normalized)
-        creds.set_etebase(normalized, stored_session, server_url)
-        creds.set_password_salt(normalized, salt_hex)
-        creds.set_password_hash(normalized, password_hash)
-        creds.save()
-        if existed:
-            forget_etesync_user(normalized)
+        with CREDENTIALS_LOCK:
+            _reload_credentials(creds)
+            creds.set_etebase(normalized, stored_session, server_url)
+            creds.set_password_salt(normalized, salt_hex)
+            creds.set_password_hash(normalized, password_hash)
+            creds.save()
+            if existed:
+                forget_etesync_user(normalized)
         _account_epochs[normalized] = _account_epochs.get(normalized, 0) + 1
 
     return AccountOperationResult(username=normalized, existed=existed)
@@ -134,7 +142,6 @@ def list_accounts(*, credentials: Credentials | None = None) -> list[str]:
         return creds.list_users()
 
 
-@credentials_locked
 def logout_account(
     username: str,
     *,
@@ -145,17 +152,22 @@ def logout_account(
 
     with _account_lock:
         creds = credentials or Credentials()
-        existed = normalized in creds.list_users()
+        with CREDENTIALS_LOCK:
+            _reload_credentials(creds)
+            existed = normalized in creds.list_users()
 
         sync_stopped = stop_sync_thread(normalized)
-        forget_etesync_user(normalized)
         from .web import forget_account_status
 
         forget_account_status(normalized)
 
-        if existed:
-            creds.delete(normalized)
-            creds.save()
+        with CREDENTIALS_LOCK:
+            _reload_credentials(creds)
+            existed = normalized in creds.list_users()
+            if existed:
+                creds.delete(normalized)
+                creds.save()
+            forget_etesync_user(normalized)
 
     return AccountOperationResult(
         username=normalized,
@@ -164,7 +176,6 @@ def logout_account(
     )
 
 
-@credentials_locked
 def remove_account(
     username: str,
     *,

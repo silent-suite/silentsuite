@@ -14,7 +14,7 @@ from contextlib import contextmanager
 
 from .. import config
 from ..local_cache import Etebase
-from .creds import Credentials
+from .creds import Credentials, credentials_locked
 
 logger = logging.getLogger("silentsuite-bridge.cache")
 
@@ -34,6 +34,7 @@ class EteSyncCache:
         self.creds_path = os.path.expanduser(creds_path)
         self.db_path = os.path.expanduser(db_path)
 
+    @credentials_locked
     def etesync_for_user(self, user):
         with self._cache_lock:
             if self.creds:
@@ -82,6 +83,7 @@ class EteSyncCache:
         etesync._session_is_current = is_current
         etesync._session_guard = session_guard
 
+    @credentials_locked
     def fresh_for_user(self, user, *, read_only=True):
         """Restore an independent session for bounded local-cache work."""
         with self._cache_lock:
