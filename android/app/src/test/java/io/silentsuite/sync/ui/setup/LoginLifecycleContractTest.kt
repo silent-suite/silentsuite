@@ -252,7 +252,7 @@ class LoginLifecycleContractTest {
             "@Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue()"
         ).substringBefore("@Test fun futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent()")
 
-        assertEquals(2, Regex("scenario\\.onActivity").findAll(mixed).count())
+        assertEquals(1, Regex("scenario\\.onActivity").findAll(mixed).count())
         assertEquals(1, Regex("addTextChangedListener").findAll(mixed).count())
         assertTrue(mixed.indexOf("scenario.onActivity") < mixed.indexOf("val store = SyncStatusStore(context)"))
         assertTrue(mixed.contains("observe(R.id.dashboard_overall_status, overallText)"))
@@ -260,7 +260,10 @@ class LoginLifecycleContractTest {
         assertTrue(mixed.contains("observe(R.id.carddav_status, carddavText)"))
         assertEquals(3, Regex("waitForObservedText\\(").findAll(mixed).count())
         assertFalse(mixed.contains("waitForText(scenario"))
-        assertFalse(mixed.substringAfter("scenario.onActivity { it.refresh() }").contains("scenario.onActivity"))
+        assertTrue(mixed.contains("val dashboardActivity = AtomicReference<AccountActivity>()"))
+        assertTrue(mixed.contains("dashboardActivity.set(activity)"))
+        assertTrue(mixed.contains("activity.runOnUiThread { activity.refresh() }"))
+        assertFalse(mixed.substringAfter("val store = SyncStatusStore(context)").contains("scenario.onActivity"))
         assertTrue(mixed.contains("assertEquals(syncing, overallText.get())"))
         assertTrue(mixed.contains("assertEquals(syncing, caldavText.get())"))
         assertTrue(mixed.contains("assertEquals(issue, carddavText.get())"))
@@ -268,17 +271,8 @@ class LoginLifecycleContractTest {
         assertTrue(mixed.contains("it.refreshing = calendarRefreshing.get()"))
         assertTrue(mixed.indexOf("calendarRefreshing.set(true)") <
             mixed.indexOf("val store = SyncStatusStore(context)"))
-        assertTrue(mixed.contains("mixed-diagnostic:loader-start"))
-        assertTrue(mixed.contains("mixed-diagnostic:loader-end"))
-        assertTrue(mixed.contains("mixed-stage:${'$'}value"))
-        assertTrue(mixed.contains("stage(\"before-observers\")"))
-        assertTrue(mixed.contains("stage(\"${'$'}index-before-refresh\")"))
-        assertTrue(mixed.contains("stage(\"${'$'}index-after-carddav\")"))
-        assertTrue(mixed.contains("stage(\"complete\")"))
-        assertTrue(source.contains("helper-diagnostic:before-launch"))
-        assertTrue(source.contains("helper-diagnostic:after-launch"))
-        assertTrue(source.contains("helper-diagnostic:before-wait-model"))
-        assertTrue(source.contains("helper-diagnostic:after-wait-model"))
+        assertFalse(mixed.contains("mixed-diagnostic"))
+        assertFalse(source.contains("helper-diagnostic"))
     }
 
     @Test

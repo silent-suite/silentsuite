@@ -9,7 +9,6 @@ import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
-import android.util.Log
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
@@ -132,23 +131,22 @@ class AccountDashboardRuntimeTest {
     }
 
     @Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue() {
-        fun stage(value: String) = Log.i("DashboardRuntime", "mixed-stage:$value")
         val calendarRefreshing = AtomicBoolean(false)
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
-            Log.i("DashboardRuntime", "mixed-diagnostic:loader-start")
             val store = SyncStatusStore(loaderContext)
             AccountActivity.AccountInfo().apply {
                 caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
                     .also { it.refreshing = calendarRefreshing.get() }
                 carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
-            }.also { Log.i("DashboardRuntime", "mixed-diagnostic:loader-end") }
+            }
         }) { context, account, scenario ->
             val overallText = AtomicReference<String>("")
             val caldavText = AtomicReference<String>("")
             val carddavText = AtomicReference<String>("")
-            stage("before-observers")
+            val dashboardActivity = AtomicReference<AccountActivity>()
             scenario.onActivity { activity ->
+                dashboardActivity.set(activity)
                 fun observe(viewId: Int, observed: AtomicReference<String>) {
                     val view = activity.findViewById<TextView>(viewId)
                     observed.set(view.text.toString())
@@ -164,7 +162,6 @@ class AccountDashboardRuntimeTest {
                 observe(R.id.caldav_status, caldavText)
                 observe(R.id.carddav_status, carddavText)
             }
-            stage("after-observers")
             calendarRefreshing.set(true)
             val store = SyncStatusStore(context)
             val categories = listOf(
@@ -175,7 +172,6 @@ class AccountDashboardRuntimeTest {
                 SyncStatusStore.FailureCategory.STORAGE to R.string.dashboard_status_storage,
             )
             categories.forEachIndexed { index, (category, label) ->
-                stage("$index-before-store")
                 val child = Account("runtime-contacts-child-$index", "child")
                 val attempt = store.beginContacts(account, setOf(child), startedAt = System.currentTimeMillis(),
                     attemptId = "runtime-contacts-parent-$index") as SyncStatusStore.ContactsStart.Started
@@ -185,23 +181,17 @@ class AccountDashboardRuntimeTest {
                     assertEquals(SyncStatusStore.ChildWrite.RECORDED, store.recordContactsChild(account, attempt.attemptId,
                         child, SyncStatusStore.ChildResult.FAILURE, category, System.currentTimeMillis()))
                 }
-                stage("$index-after-store")
-                stage("$index-before-refresh")
-                scenario.onActivity { it.refresh() }
-                stage("$index-after-refresh")
+                val activity = dashboardActivity.get()
+                activity.runOnUiThread { activity.refresh() }
                 val syncing = context.getString(R.string.dashboard_status_syncing)
                 val issue = context.getString(label)
                 assertEquals(syncing, waitForObservedText(overallText, syncing))
-                stage("$index-after-overall")
                 assertEquals(syncing, waitForObservedText(caldavText, syncing))
-                stage("$index-after-caldav")
                 assertEquals(issue, waitForObservedText(carddavText, issue))
-                stage("$index-after-carddav")
                 assertEquals(syncing, overallText.get())
                 assertEquals(syncing, caldavText.get())
                 assertEquals(issue, carddavText.get())
             }
-            stage("complete")
         }
     }
 
@@ -658,12 +648,8 @@ class AccountDashboardRuntimeTest {
         AccountActivity.AccountInfoViewModel.accountLoaderOverride = loaderOverride ?: defaultLoader
         beforeLaunch?.invoke(context, account)
         try {
-            Log.i("DashboardRuntime", "helper-diagnostic:before-launch")
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { scenario ->
-                Log.i("DashboardRuntime", "helper-diagnostic:after-launch")
-                Log.i("DashboardRuntime", "helper-diagnostic:before-wait-model")
                 waitForModel(scenario)
-                Log.i("DashboardRuntime", "helper-diagnostic:after-wait-model")
                 block(context, account, scenario)
             }
         } finally {

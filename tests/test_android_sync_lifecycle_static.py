@@ -530,7 +530,7 @@ def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh
         "@Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue()", 1
     )[1].split("@Test fun futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent()", 1)[0]
 
-    assert mixed.count("scenario.onActivity") == 2
+    assert mixed.count("scenario.onActivity") == 1
     assert mixed.count("addTextChangedListener") == 1
     assert mixed.index("scenario.onActivity") < mixed.index("val store = SyncStatusStore(context)")
     assert "observe(R.id.dashboard_overall_status, overallText)" in mixed
@@ -538,25 +538,18 @@ def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh
     assert "observe(R.id.carddav_status, carddavText)" in mixed
     assert mixed.count("waitForObservedText(") == 3
     assert "waitForText(scenario" not in mixed
-    after_refresh = mixed.split("scenario.onActivity { it.refresh() }", 1)[1]
-    assert "scenario.onActivity" not in after_refresh
+    assert "val dashboardActivity = AtomicReference<AccountActivity>()" in mixed
+    assert "dashboardActivity.set(activity)" in mixed
+    assert "activity.runOnUiThread { activity.refresh() }" in mixed
+    assert "scenario.onActivity" not in mixed.split("val store = SyncStatusStore(context)", 1)[1]
     assert "assertEquals(syncing, overallText.get())" in mixed
     assert "assertEquals(syncing, caldavText.get())" in mixed
     assert "assertEquals(issue, carddavText.get())" in mixed
     assert "val calendarRefreshing = AtomicBoolean(false)" in mixed
     assert "it.refreshing = calendarRefreshing.get()" in mixed
     assert mixed.index("calendarRefreshing.set(true)") < mixed.index("val store = SyncStatusStore(context)")
-    assert "mixed-diagnostic:loader-start" in mixed
-    assert "mixed-diagnostic:loader-end" in mixed
-    assert 'mixed-stage:$value' in mixed
-    assert 'stage("before-observers")' in mixed
-    assert 'stage("$index-before-refresh")' in mixed
-    assert 'stage("$index-after-carddav")' in mixed
-    assert 'stage("complete")' in mixed
-    assert "helper-diagnostic:before-launch" in runtime
-    assert "helper-diagnostic:after-launch" in runtime
-    assert "helper-diagnostic:before-wait-model" in runtime
-    assert "helper-diagnostic:after-wait-model" in runtime
+    assert "mixed-diagnostic" not in mixed
+    assert "helper-diagnostic" not in runtime
 
 
 def test_dashboard_runtime_polling_helpers_retain_synchronization_and_bounds():
