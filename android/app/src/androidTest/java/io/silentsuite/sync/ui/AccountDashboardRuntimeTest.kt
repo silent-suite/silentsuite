@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
@@ -133,13 +134,14 @@ class AccountDashboardRuntimeTest {
     @Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue() {
         val calendarRefreshing = AtomicBoolean(false)
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            Log.i("DashboardRuntime", "mixed-diagnostic:loader-start")
             val store = SyncStatusStore(loaderContext)
             AccountActivity.AccountInfo().apply {
                 caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
                     .also { it.refreshing = calendarRefreshing.get() }
                 carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
-            }
+            }.also { Log.i("DashboardRuntime", "mixed-diagnostic:loader-end") }
         }) { context, account, scenario ->
             val overallText = AtomicReference<String>("")
             val caldavText = AtomicReference<String>("")
@@ -645,8 +647,12 @@ class AccountDashboardRuntimeTest {
         AccountActivity.AccountInfoViewModel.accountLoaderOverride = loaderOverride ?: defaultLoader
         beforeLaunch?.invoke(context, account)
         try {
+            Log.i("DashboardRuntime", "helper-diagnostic:before-launch")
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { scenario ->
+                Log.i("DashboardRuntime", "helper-diagnostic:after-launch")
+                Log.i("DashboardRuntime", "helper-diagnostic:before-wait-model")
                 waitForModel(scenario)
+                Log.i("DashboardRuntime", "helper-diagnostic:after-wait-model")
                 block(context, account, scenario)
             }
         } finally {

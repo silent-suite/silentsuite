@@ -546,7 +546,12 @@ def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh
     assert "val calendarRefreshing = AtomicBoolean(false)" in mixed
     assert "it.refreshing = calendarRefreshing.get()" in mixed
     assert mixed.index("calendarRefreshing.set(true)") < mixed.index("val store = SyncStatusStore(context)")
-    assert "mixed-diagnostic" not in mixed
+    assert "mixed-diagnostic:loader-start" in mixed
+    assert "mixed-diagnostic:loader-end" in mixed
+    assert "helper-diagnostic:before-launch" in runtime
+    assert "helper-diagnostic:after-launch" in runtime
+    assert "helper-diagnostic:before-wait-model" in runtime
+    assert "helper-diagnostic:after-wait-model" in runtime
 
 
 def test_dashboard_runtime_polling_helpers_retain_synchronization_and_bounds():

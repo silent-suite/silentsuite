@@ -268,7 +268,12 @@ class LoginLifecycleContractTest {
         assertTrue(mixed.contains("it.refreshing = calendarRefreshing.get()"))
         assertTrue(mixed.indexOf("calendarRefreshing.set(true)") <
             mixed.indexOf("val store = SyncStatusStore(context)"))
-        assertFalse(mixed.contains("mixed-diagnostic"))
+        assertTrue(mixed.contains("mixed-diagnostic:loader-start"))
+        assertTrue(mixed.contains("mixed-diagnostic:loader-end"))
+        assertTrue(source.contains("helper-diagnostic:before-launch"))
+        assertTrue(source.contains("helper-diagnostic:after-launch"))
+        assertTrue(source.contains("helper-diagnostic:before-wait-model"))
+        assertTrue(source.contains("helper-diagnostic:after-wait-model"))
     }
 
     @Test
