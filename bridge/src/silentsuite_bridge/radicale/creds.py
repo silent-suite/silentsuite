@@ -135,6 +135,23 @@ class Credentials:
         users = self.content.get("users", {})
         users.pop(username, None)
 
+    def mark_cache_cleanup(self, username):
+        """Persist cache deletion intent independently of account credentials."""
+        pending = self.content.setdefault("pendingCacheCleanup", [])
+        if username not in pending:
+            pending.append(username)
+
+    def clear_cache_cleanup(self, username):
+        """Clear a completed cache deletion intent."""
+        pending = self.content.get("pendingCacheCleanup", [])
+        self.content["pendingCacheCleanup"] = [
+            candidate for candidate in pending if candidate != username
+        ]
+
+    def list_cache_cleanups(self):
+        """List accounts whose local cache still requires deletion."""
+        return list(self.content.get("pendingCacheCleanup", []))
+
     def list_users(self):
         """List all stored usernames."""
         return list(self.content.get("users", {}).keys())

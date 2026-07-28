@@ -21,7 +21,17 @@ _account_epochs = {}
 logger = logging.getLogger("silentsuite-bridge.accounts")
 
 
-def _schedule_deferred_cache_cleanup(username):
+def _clear_cache_cleanup_marker(username, creds_path):
+    if not creds_path:
+        return
+    with CREDENTIALS_LOCK:
+        creds = Credentials(creds_path)
+        if username in creds.list_cache_cleanups():
+            creds.clear_cache_cleanup(username)
+            creds.save()
+
+
+def _schedule_deferred_cache_cleanup(username, *, creds_path=None):
     with _account_lock:
         epoch = _account_epochs.get(username, 0)
         cleanup_key = (username, epoch)
@@ -44,6 +54,7 @@ def _schedule_deferred_cache_cleanup(username):
                             if _account_epochs.get(username, 0) != epoch:
                                 return
                             clear_cached_user(username)
+                            _clear_cache_cleanup_marker(username, creds_path)
                             return
                 except Exception as exc:
                     logger.warning(
@@ -60,6 +71,16 @@ def _schedule_deferred_cache_cleanup(username):
         name="silentsuite-cache-cleanup",
         daemon=True,
     ).start()
+
+
+def resume_pending_cache_cleanups(*, credentials=None):
+    """Resume durable cache deletion intents after process restart."""
+    creds = credentials or Credentials()
+    for username in creds.list_cache_cleanups():
+        _schedule_deferred_cache_cleanup(
+            username,
+            creds_path=getattr(creds, "filename", None),
+        )
 
 
 @dataclass(frozen=True)
@@ -127,6 +148,7 @@ def store_authenticated_account(
             creds.set_etebase(normalized, stored_session, server_url)
             creds.set_password_salt(normalized, salt_hex)
             creds.set_password_hash(normalized, password_hash)
+            creds.clear_cache_cleanup(normalized)
             creds.save()
             if existed:
                 forget_etesync_user(normalized)
@@ -146,6 +168,7 @@ def logout_account(
     username: str,
     *,
     credentials: Credentials | None = None,
+    cache_cleanup_pending: bool = False,
 ) -> AccountOperationResult:
     """Remove local credential/session material while retaining cache rows."""
     normalized = _normalize_username(username)
@@ -166,6 +189,9 @@ def logout_account(
             existed = normalized in creds.list_users()
             if existed:
                 creds.delete(normalized)
+            if cache_cleanup_pending:
+                creds.mark_cache_cleanup(normalized)
+            if existed or cache_cleanup_pending:
                 creds.save()
             forget_etesync_user(normalized)
 
@@ -184,16 +210,42 @@ def remove_account(
     """Remove local credentials plus that account's local decrypted cache."""
     normalized = _normalize_username(username)
     with _account_lock:
-        logout_result = logout_account(normalized, credentials=credentials)
+        creds_path = (
+            getattr(credentials, "filename", None)
+            if credentials is not None
+            else config.CREDS_FILE
+        )
+        logout_result = logout_account(
+            normalized,
+            credentials=credentials,
+            cache_cleanup_pending=True,
+        )
         _account_epochs[normalized] = _account_epochs.get(normalized, 0) + 1
         with account_maintenance(normalized, timeout=0) as available:
             if available:
-                cache_cleared = clear_cached_user(normalized)
-                cache_cleanup = "cleared" if cache_cleared else "not_found"
+                try:
+                    cache_cleared = clear_cached_user(normalized)
+                except Exception as exc:
+                    logger.warning(
+                        "Immediate cache cleanup failed (%s); deferring",
+                        exc.__class__.__name__,
+                    )
+                    cache_cleared = False
+                    cache_cleanup = "deferred"
+                    _schedule_deferred_cache_cleanup(
+                        normalized,
+                        creds_path=creds_path,
+                    )
+                else:
+                    cache_cleanup = "cleared" if cache_cleared else "not_found"
+                    _clear_cache_cleanup_marker(normalized, creds_path)
             else:
                 cache_cleared = False
                 cache_cleanup = "deferred"
-                _schedule_deferred_cache_cleanup(normalized)
+                _schedule_deferred_cache_cleanup(
+                    normalized,
+                    creds_path=creds_path,
+                )
 
     return AccountOperationResult(
         username=normalized,

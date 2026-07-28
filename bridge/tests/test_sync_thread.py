@@ -168,6 +168,57 @@ class TestSyncThreadRun:
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.update_status")
     @patch("silentsuite_bridge.radicale.storage.log_sync_event")
+    def test_stop_cannot_return_between_success_commit_and_publication(
+        self, mock_log, mock_status, mock_etesync_ctx
+    ):
+        mock_etesync = MagicMock()
+        mock_etesync.list.return_value = []
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(mock_etesync, False)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+        thread = SyncThread("user@test.com", daemon=True)
+        thread.interval = 300
+        completed = threading.Event()
+        release = threading.Event()
+        stop_returned = threading.Event()
+        original_complete = thread._complete_generation
+
+        def complete(*args, **kwargs):
+            original_complete(*args, **kwargs)
+            completed.set()
+            assert release.wait(1)
+
+        thread._complete_generation = complete
+        thread.start()
+        assert completed.wait(1)
+        stopper = threading.Thread(
+            target=lambda: (thread.stop(), stop_returned.set())
+        )
+        stopper.start()
+        try:
+            assert not stop_returned.wait(0.05)
+            release.set()
+            stopper.join(1)
+            thread.join(1)
+            assert stop_returned.is_set()
+            assert any(
+                call.args and call.args[0] == "connected"
+                for call in mock_status.call_args_list
+            )
+            assert any(
+                call.args[:2] == ("sync", "Synced account")
+                for call in mock_log.call_args_list
+            )
+        finally:
+            release.set()
+            thread.stop()
+            stopper.join(1)
+            thread.join(1)
+
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.update_status")
+    @patch("silentsuite_bridge.radicale.storage.log_sync_event")
     def test_force_sync_wakes_thread(self, mock_log, mock_status, mock_etesync_ctx):
         mock_etesync = MagicMock()
         mock_etesync.list.return_value = []

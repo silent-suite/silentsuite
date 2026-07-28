@@ -199,7 +199,54 @@ def test_remove_account_reports_deferred_cache_cleanup(tmp_path, monkeypatch, me
     assert result.cache_cleared is False
     assert result.cache_cleanup == "deferred"
     assert Credentials().list_users() == []
+    assert Credentials().list_cache_cleanups() == ["alice@example.com"]
     assert User.get_or_none(User.username == "alice@example.com") is not None
+
+
+def test_remove_account_persists_cleanup_after_immediate_failure(
+    tmp_path, monkeypatch, mem_db
+):
+    _configure_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(accounts, "stop_sync_thread", lambda user: True)
+    monkeypatch.setattr(accounts, "forget_etesync_user", lambda user: None)
+    monkeypatch.setattr(
+        accounts,
+        "clear_cached_user",
+        lambda user: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+    )
+    monkeypatch.setattr(
+        accounts,
+        "_schedule_deferred_cache_cleanup",
+        lambda *args, **kwargs: None,
+    )
+    accounts.store_authenticated_account(
+        "alice@example.com", PASSWORD, "alice-session", "https://server.test"
+    )
+    _seed_cache("alice@example.com")
+
+    result = accounts.remove_account("alice@example.com")
+
+    assert result.cache_cleanup == "deferred"
+    assert Credentials().list_users() == []
+    assert Credentials().list_cache_cleanups() == ["alice@example.com"]
+    assert User.get_or_none(User.username == "alice@example.com") is not None
+
+
+def test_resume_pending_cleanup_restarts_durable_intent(tmp_path, monkeypatch):
+    creds_path = _configure_creds(tmp_path, monkeypatch)
+    creds = Credentials(str(creds_path))
+    creds.mark_cache_cleanup("alice@example.com")
+    creds.save()
+    scheduled = []
+    monkeypatch.setattr(
+        accounts,
+        "_schedule_deferred_cache_cleanup",
+        lambda username, **kwargs: scheduled.append((username, kwargs["creds_path"])),
+    )
+
+    accounts.resume_pending_cache_cleanups(credentials=Credentials(str(creds_path)))
+
+    assert scheduled == [("alice@example.com", str(creds_path))]
 
 
 def test_deferred_cache_cleanup_retries_after_maintenance_becomes_available(monkeypatch):
@@ -280,7 +327,11 @@ def test_deferred_cleanup_retries_transient_failure(monkeypatch):
 def test_repeated_remove_truthfully_reports_deferred_cleanup(monkeypatch):
     monkeypatch.setattr(accounts, "stop_sync_thread", lambda user: False)
     monkeypatch.setattr(accounts, "forget_etesync_user", lambda user: None)
-    monkeypatch.setattr(accounts, "_schedule_deferred_cache_cleanup", lambda user: None)
+    monkeypatch.setattr(
+        accounts,
+        "_schedule_deferred_cache_cleanup",
+        lambda user, **kwargs: None,
+    )
 
     @contextmanager
     def unavailable_maintenance(user, timeout=0):
@@ -289,6 +340,7 @@ def test_repeated_remove_truthfully_reports_deferred_cleanup(monkeypatch):
     monkeypatch.setattr(accounts, "account_maintenance", unavailable_maintenance)
     credentials = Credentials.__new__(Credentials)
     credentials._creds = {}
+    credentials.content = {"users": {}}
     credentials.list_users = lambda: []
     credentials.delete = lambda user: None
     credentials.save = lambda: None

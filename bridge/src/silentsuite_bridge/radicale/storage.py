@@ -402,24 +402,27 @@ class SyncThread(threading.Thread):
                 if self.sync_started_at is not None:
                     self.last_sync_duration = completed_at - self.sync_started_at
                 self.is_syncing = False
-                self._complete_generation(
-                    generation,
-                    state,
-                    completed_at,
-                    error_code,
-                )
-                final_status = self.generation_status(generation)
-                if (
-                    final_status["state"] == "succeeded"
-                    and successful_collections is not None
-                ):
-                    self.last_sync = completed_at
-                    update_status(
-                        "connected",
-                        collections=successful_collections,
-                        account=self.user,
+                with self._generation_condition:
+                    self._complete_generation(
+                        generation,
+                        state,
+                        completed_at,
+                        error_code,
                     )
-                    log_sync_event("sync", "Synced account")
+                    final_status = self._generation_status_snapshot(
+                        self._generation_statuses.get(generation)
+                    )
+                    if (
+                        final_status["state"] == "succeeded"
+                        and successful_collections is not None
+                    ):
+                        self.last_sync = completed_at
+                        update_status(
+                            "connected",
+                            collections=successful_collections,
+                            account=self.user,
+                        )
+                        log_sync_event("sync", "Synced account")
 
             if self._stop_sync.is_set():
                 break
