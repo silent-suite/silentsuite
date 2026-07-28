@@ -210,7 +210,7 @@ class TestFavoriteCardDavRoundTrip:
         assert "X-SILENTSUITE-FAVORITE:1" in created.serialize()
         assert HrefMapper.get_by_id(new_cache_item.id).href == "new-name.vcf"
 
-    def test_recreate_at_tombstone_href_replaces_stale_mapping(self, mem_db, user):
+    def test_recreate_at_tombstone_href_revives_owned_mapping(self, mem_db, user):
         collection, cached_collection, _ = self._collection(
             mem_db,
             user,
@@ -232,14 +232,18 @@ class TestFavoriteCardDavRoundTrip:
         new_item.meta = {"mtime": 1700000000000}
 
         def create(_vobject_item):
-            new_item.cache_item = ItemEntity.create(
+            new_item.cache_item = ItemEntity(
                 collection=cached_collection.cache_col,
                 uid="restored-contact",
                 eb_item=b"restored-cache",
             )
             return new_item
 
+        def save():
+            new_item.cache_item.save()
+
         cached_collection.create.side_effect = create
+        new_item.save.side_effect = save
         original_get = cached_collection.get.side_effect
         cached_collection.get.side_effect = (
             lambda uid: new_item if uid == "restored-contact" else original_get(uid)
@@ -249,17 +253,13 @@ class TestFavoriteCardDavRoundTrip:
         restored = collection.upload("restored.vcf", incoming)
 
         assert restored.href == "restored.vcf"
-        restored_cache = ItemEntity.get(
-            (ItemEntity.collection == cached_collection.cache_col)
-            & (ItemEntity.uid == "restored-contact")
-        )
+        restored_cache = ItemEntity.get_by_id(tombstone.id)
         assert restored_cache.deleted is False
-        preserved_tombstone = ItemEntity.get_by_id(tombstone.id)
-        assert preserved_tombstone.deleted is True
-        assert preserved_tombstone.uid.startswith("dav-tombstone:")
-        assert HrefMapper.get_or_none(HrefMapper.content == preserved_tombstone) is None
         assert HrefMapper.get_by_id(restored_cache.id).href == "restored.vcf"
         assert HrefMapper.select().where(HrefMapper.href == "restored.vcf").count() == 1
+        assert ItemEntity.select().where(
+            ItemEntity.collection == cached_collection.cache_col
+        ).count() == 2
 
 
 # ---------------------------------------------------------------------------
