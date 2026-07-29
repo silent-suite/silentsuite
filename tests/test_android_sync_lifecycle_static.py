@@ -517,6 +517,9 @@ def test_api21_lifecycle_observer_avoids_blocking_activity_polling():
     assert "SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)" in lifecycle
     assert "lifecycle-diagnostic" not in lifecycle
     assert "Log." not in lifecycle
+    protected = "store.status(account, SyncStatusStore.Service.CONTACTS).activeAttemptId"
+    projected = 'store.recordRequested(account, setOf(SyncStatusStore.Service.CALENDAR), "runtime-request", now)'
+    assert lifecycle.index(protected) < lifecycle.index("store.clear(account)") < lifecycle.index(projected)
     observer_poll = runtime.split("private fun waitForObservedText(", 1)[1].split(
         "private fun waitForText(", 1
     )[0]

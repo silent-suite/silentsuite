@@ -84,6 +84,9 @@ class AccountDashboardRuntimeTest {
                 platformActive = true, platformPending = false, interruptionAfterMillis = 1))
             assertEquals("old-pending", store.status(account, SyncStatusStore.Service.TASKS).activeRequestId)
             assertEquals("old-active", store.status(account, SyncStatusStore.Service.CONTACTS).activeAttemptId)
+            // The assertions above prove platform-authoritative stale retention. Clear that
+            // independent fixture before verifying the dashboard's Calendar phase projection.
+            assertTrue(store.clear(account))
             assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.CALENDAR), "runtime-request", now))
             scenario.onActivity { it.refresh() }
             val requested = context.getString(R.string.dashboard_status_requested)
