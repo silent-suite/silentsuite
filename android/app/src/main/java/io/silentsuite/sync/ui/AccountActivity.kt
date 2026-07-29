@@ -76,6 +76,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -727,6 +728,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         class ServiceInfo {
             internal var refreshing: Boolean = false
+            internal var pending: Boolean = false
             internal var status: SyncStatusStore.Status? = null
 
             internal var infos: List<CollectionListItemInfo>? = null
@@ -825,6 +827,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 providerReady = provider,
                 collectionsAvailable = service?.infos?.isNotEmpty() == true,
                 status = service?.status,
+                pending = service?.pending == true,
+                now = System.currentTimeMillis(),
             ))
 
         val services = listOf(
@@ -843,10 +847,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val latest = latestMeaningfulResult(services.map { it.status })
         val overall = presentAccountDashboard(aggregateAccountDashboard(services.map { it.model }), latest?.timestamp)
         val statusText = dashboardStatusText(overall)
-        val detailText = latest?.let { result ->
-            val relative = relativeTime(result.timestamp)
-            getString(if (result.success) R.string.dashboard_last_success else R.string.dashboard_last_issue, relative)
-        } ?: getString(R.string.dashboard_waiting_for_results)
+        val detailText = overall.secondaryIssues.firstOrNull()?.let { issue ->
+            val service = services[issue.serviceIndex]
+            val issueModel = AccountDashboardModel(issue.state, issue.blockedBy, failure = issue.category)
+            "${getString(service.title)}: ${dashboardStatusText(presentAccountDashboard(issueModel, null))}"
+        } ?: if (overall.label == AccountDashboardLabel.SYNCING) {
+            dashboardActiveServicesDetail(services.filter { it.model.state == AccountDashboardState.RUNNING }.map { getString(it.title) })
+        } else dashboardDetailText(overall, latest, R.string.dashboard_waiting_for_results)
         val statusView = findViewById<TextView>(R.id.dashboard_overall_status)
         val detailView = findViewById<TextView>(R.id.dashboard_last_result)
         val row = findViewById<View>(R.id.dashboard_status_row)
@@ -865,9 +872,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val result = latestMeaningfulResult(listOf(service.status))
         val presentation = presentAccountDashboard(service.model, result?.timestamp)
         val statusText = dashboardStatusText(presentation)
-        val detailText = result?.let {
-            getString(if (it.success) R.string.dashboard_last_success else R.string.dashboard_last_issue, relativeTime(it.timestamp))
-        } ?: getString(service.destination)
+        val detailText = dashboardDetailText(presentation, result, service.destination)
         val statusView = findViewById<TextView>(service.statusView)
         statusView.text = statusText
         findViewById<TextView>(service.detailView).text = detailText
@@ -879,15 +884,75 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private fun dashboardStatusText(presentation: AccountDashboardPresentation): String = when (presentation.label) {
         AccountDashboardLabel.CHECKING -> getString(R.string.dashboard_status_checking)
         AccountDashboardLabel.SYNCING -> getString(R.string.dashboard_status_syncing)
+        AccountDashboardLabel.SETTLING -> getString(R.string.dashboard_status_settling)
+        AccountDashboardLabel.QUEUED -> getString(R.string.dashboard_status_queued)
+        AccountDashboardLabel.REQUESTED -> getString(R.string.dashboard_status_requested)
         AccountDashboardLabel.NEVER_SYNCED -> getString(R.string.dashboard_status_never_synced)
-        AccountDashboardLabel.SYNCED -> getString(R.string.dashboard_status_synced,
-            presentation.lastMeaningfulAt?.let(::relativeTime) ?: getString(R.string.dashboard_recently))
-        AccountDashboardLabel.NEEDS_ATTENTION -> getString(R.string.dashboard_status_needs_attention)
+        AccountDashboardLabel.SYNCED -> getString(R.string.dashboard_status_synced)
+        AccountDashboardLabel.INTERRUPTED -> getString(R.string.dashboard_status_interrupted)
+        AccountDashboardLabel.NETWORK -> getString(R.string.dashboard_status_network)
+        AccountDashboardLabel.AUTHENTICATION -> getString(R.string.dashboard_status_authentication)
+        AccountDashboardLabel.CONFIGURATION -> getString(R.string.dashboard_status_configuration)
+        AccountDashboardLabel.PROVIDER -> getString(R.string.dashboard_status_provider)
+        AccountDashboardLabel.STORAGE -> getString(R.string.dashboard_status_storage)
+        AccountDashboardLabel.PARENT_REFRESH -> getString(R.string.dashboard_status_parent_refresh)
+        AccountDashboardLabel.CHILD_REMOVED -> getString(R.string.dashboard_status_child_removed)
+        AccountDashboardLabel.UNKNOWN, AccountDashboardLabel.NEEDS_ATTENTION -> getString(R.string.dashboard_status_unknown)
+        AccountDashboardLabel.MIXED_FAILURE -> getString(R.string.dashboard_status_mixed)
         AccountDashboardLabel.SYNC_PAUSED -> getString(R.string.dashboard_status_paused)
         AccountDashboardLabel.PERMISSION_NEEDED -> getString(R.string.dashboard_status_permission_needed)
         AccountDashboardLabel.TASK_APP_NEEDED -> getString(R.string.dashboard_status_task_app_needed)
         AccountDashboardLabel.SETUP_NEEDED -> getString(R.string.dashboard_status_setup_needed)
     }
+
+    private fun dashboardDetailText(
+        presentation: AccountDashboardPresentation,
+        result: AccountDashboardResult?,
+        fallback: Int,
+    ): String = when (presentation.label) {
+        AccountDashboardLabel.CHECKING -> getString(R.string.dashboard_detail_checking)
+        AccountDashboardLabel.REQUESTED -> getString(R.string.dashboard_detail_requested)
+        AccountDashboardLabel.QUEUED -> getString(R.string.dashboard_detail_queued)
+        AccountDashboardLabel.SYNCING -> dashboardActiveServicesDetail(listOf(dashboardServiceName(fallback)))
+        AccountDashboardLabel.SETTLING -> getString(R.string.dashboard_detail_settling)
+        AccountDashboardLabel.INTERRUPTED -> getString(R.string.dashboard_detail_interrupted)
+        AccountDashboardLabel.NETWORK -> getString(R.string.dashboard_detail_network)
+        AccountDashboardLabel.AUTHENTICATION -> getString(R.string.dashboard_detail_authentication)
+        AccountDashboardLabel.CONFIGURATION -> getString(R.string.dashboard_detail_configuration)
+        AccountDashboardLabel.PROVIDER -> getString(R.string.dashboard_detail_provider, dashboardServiceName(fallback))
+        AccountDashboardLabel.PERMISSION_NEEDED -> getString(R.string.dashboard_detail_permission, dashboardServiceName(fallback))
+        AccountDashboardLabel.SETUP_NEEDED -> getString(R.string.dashboard_detail_setup)
+        AccountDashboardLabel.SYNC_PAUSED -> getString(R.string.dashboard_detail_paused)
+        AccountDashboardLabel.TASK_APP_NEEDED -> getString(R.string.dashboard_detail_task_provider)
+        AccountDashboardLabel.STORAGE -> getString(R.string.dashboard_detail_storage)
+        AccountDashboardLabel.PARENT_REFRESH -> getString(R.string.dashboard_detail_parent_refresh)
+        AccountDashboardLabel.CHILD_REMOVED -> getString(R.string.dashboard_detail_child_removed)
+        AccountDashboardLabel.UNKNOWN -> getString(R.string.dashboard_detail_unknown)
+        AccountDashboardLabel.NEVER_SYNCED -> getString(R.string.dashboard_detail_never_synced)
+        AccountDashboardLabel.SYNCED -> result?.let { getString(R.string.dashboard_detail_synced, relativeTime(it.timestamp)) }
+            ?: getString(R.string.dashboard_detail_never_synced)
+        else -> result?.let {
+            getString(if (it.success) R.string.dashboard_last_success else R.string.dashboard_last_issue, relativeTime(it.timestamp))
+        } ?: getString(fallback)
+    }
+
+    private fun dashboardActiveServicesDetail(activeServices: List<String>): String {
+        val names = when (activeServices.size) {
+            0 -> getString(R.string.dashboard_services_title)
+            1 -> activeServices.single()
+            2 -> "${activeServices[0]} and ${activeServices[1]}"
+            else -> activeServices.dropLast(1).joinToString(", ") + ", and " + activeServices.last()
+        }
+        return getString(if (activeServices.size == 1) R.string.dashboard_detail_syncing_single
+            else R.string.dashboard_detail_syncing_multiple, names)
+    }
+
+    private fun dashboardServiceName(destination: Int) = getString(when (destination) {
+        R.string.dashboard_calendar_destination -> R.string.settings_caldav
+        R.string.dashboard_contacts_destination -> R.string.settings_carddav
+        R.string.dashboard_tasks_destination -> R.string.settings_taskdav
+        else -> R.string.dashboard_services_title
+    })
 
     private fun relativeTime(timestamp: Long): CharSequence = DateUtils.getRelativeTimeSpanString(
         timestamp, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE)
@@ -924,6 +989,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             AccountDashboardAction.FIX_PERMISSIONS -> R.string.dashboard_fix_permissions
             AccountDashboardAction.INSTALL_TASK_APP -> R.string.dashboard_install_task_app
             AccountDashboardAction.REVIEW_SETUP -> R.string.dashboard_review_setup
+            AccountDashboardAction.OPEN_ACCOUNT_SETTINGS -> R.string.dashboard_open_account_settings
+            AccountDashboardAction.OPEN_SYNC_SETTINGS -> R.string.dashboard_open_sync_settings
         })
         button.setOnClickListener {
             when (action) {
@@ -944,6 +1011,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 AccountDashboardAction.REVIEW_SETUP -> setupTarget?.let { target ->
                     findViewById<ScrollView>(R.id.parent).smoothScrollTo(0, findViewById<View>(target).top)
                 }
+                AccountDashboardAction.OPEN_ACCOUNT_SETTINGS -> launchExactAccountRoute(
+                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.ACCOUNT))
+                AccountDashboardAction.OPEN_SYNC_SETTINGS -> launchExactAccountRoute(
+                    AppSettingsActivity.newIntent(this, account, accountCreationId, SettingsCategory.SYNC))
             }
         }
     }
@@ -965,6 +1036,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private lateinit var context: Context
         private lateinit var account: Account
         private lateinit var accountCreationId: String
+        private lateinit var statusIdentity: SyncStatusStore.MainIdentity
         private var davService: AccountUpdateService.InfoBinder? = null
         private var syncStatusListener: Any? = null
         private var serviceBound = false
@@ -972,7 +1044,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private val dashboardTransitionDeduper = MeaningfulDashboardTransitionDeduper()
         private val latestLoad = LatestRequestWins<AccountActivity.AccountInfo>()
         private var loadJob: Job? = null
+        private var lifecycleDeadlineJob: Job? = null
+        private val lifecycleWindows: SyncLifecycleWindows
+            get() = lifecycleWindowsOverride ?: SyncLifecycleWindows()
         @Volatile private var cleared = false
+        private var lastImmediateLifecycleDeadline: Long? = null
 
         fun shouldAnnounce(presentation: AccountDashboardPresentation) =
             dashboardTransitionDeduper.shouldAnnounce(presentation)
@@ -986,9 +1062,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             this.context = context.applicationContext
             this.account = account
             this.accountCreationId = creationId
+            statusIdentity = SyncStatusStore(context).identity(account, creationId)
             initializedIdentity = identity
 
-            syncStatusListener = ContentResolver.addStatusChangeListener(SYNC_OBSERVER_TYPE_ACTIVE, this)
+            syncStatusListener = ContentResolver.addStatusChangeListener(
+                SYNC_OBSERVER_TYPE_ACTIVE or ContentResolver.SYNC_OBSERVER_TYPE_PENDING, this)
 
             context.bindService(Intent(context, AccountUpdateService::class.java), this, Context.BIND_AUTO_CREATE)
         }
@@ -1013,13 +1091,19 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 // The IO loader validates after private reads. Validate on the publishing thread
                 // too, so a replacement between completion and delivery cannot update this UI.
                 if (info != null && !cleared && exactGenerationStillCurrent()) {
-                    latestLoad.publishIfLatest(request, info) { holder.value = it }
+                    latestLoad.publishIfLatest(request, info) {
+                        holder.value = it
+                        scheduleLifecycleDeadline(it)
+                    }
                 } else if (ordinaryFailure && !cleared && exactGenerationStillCurrent() && holder.value == null) {
                     // An initial ordinary failure is terminal evidence, not perpetual loading.
                     // Refresh failures retain the last valid dashboard instead.
                     latestLoad.publishIfLatest(request, AccountActivity.AccountInfo().apply {
                         loadFailed = true
                     }) { holder.value = it }
+                    // Cache/session failure must not discard an already scheduled no-event
+                    // interruption boundary. Read only status evidence, never private account data.
+                    scheduleLifecycleDeadlineFromStore()
                 }
             }
         }
@@ -1032,6 +1116,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 latestLoad.invalidate()
                 loadJob?.cancel()
                 loadJob = null
+                lifecycleDeadlineJob?.cancel()
+                lifecycleDeadlineJob = null
             }
             davService?.removeRefreshingStatusListener(this)
             if (serviceBound) {
@@ -1103,6 +1189,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             ) != null
 
         private fun doLoad(): AccountActivity.AccountInfo? {
+            // Status maintenance must not depend on cache/session loading or its test seam.
+            // A no-event deadline can therefore expire durable evidence after an unrelated load fails.
+            maintainLifecycle()
             accountLoaderOverride?.let { loader ->
                 // Test loaders represent the complete private-load boundary and receive the
                 // retained generation explicitly, never a name-keyed re-read.
@@ -1145,8 +1234,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val statusStore = SyncStatusStore(context)
             info.carddav = AccountInfo.ServiceInfo()
             info.carddav!!.refreshing = ContentResolver.isSyncActive(account, App.addressBooksAuthority)
-            if (!exactGenerationStillCurrent()) return null
-            info.carddav!!.status = statusStore.status(account, SyncStatusStore.Service.CONTACTS)
+            info.carddav!!.pending = ContentResolver.isSyncPending(account, App.addressBooksAuthority)
             if (!exactGenerationStillCurrent()) return null
             info.carddav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.ADDRESS_BOOK)
 
@@ -1156,15 +1244,22 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 try {
                     if (account == addressBook.mainAccount)
                         info.carddav!!.refreshing = info.carddav!!.refreshing or ContentResolver.isSyncActive(addrBookAccount, ContactsContract.AUTHORITY)
+                    if (account == addressBook.mainAccount)
+                        info.carddav!!.pending = info.carddav!!.pending or ContentResolver.isSyncPending(addrBookAccount, ContactsContract.AUTHORITY)
                 } catch (e: ContactsStorageException) {
                 }
 
             }
+            if (!exactGenerationStillCurrent()) return null
+            info.carddav!!.status = lifecycleStatus(statusStore, SyncStatusStore.Service.CONTACTS,
+                info.carddav!!.refreshing, info.carddav!!.pending)
 
             info.caldav = AccountInfo.ServiceInfo()
             info.caldav!!.refreshing = ContentResolver.isSyncActive(account, CalendarContract.AUTHORITY)
+            info.caldav!!.pending = ContentResolver.isSyncPending(account, CalendarContract.AUTHORITY)
             if (!exactGenerationStillCurrent()) return null
-            info.caldav!!.status = statusStore.status(account, SyncStatusStore.Service.CALENDAR)
+            info.caldav!!.status = lifecycleStatus(statusStore, SyncStatusStore.Service.CALENDAR,
+                info.caldav!!.refreshing, info.caldav!!.pending)
             if (!exactGenerationStillCurrent()) return null
             info.caldav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.CALENDAR)
 
@@ -1172,8 +1267,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             info.taskdav!!.refreshing = TASK_PROVIDERS.any {
                 ContentResolver.isSyncActive(account, it.authority)
             }
+            info.taskdav!!.pending = TASK_PROVIDERS.any {
+                ContentResolver.isSyncPending(account, it.authority)
+            }
             if (!exactGenerationStillCurrent()) return null
-            info.taskdav!!.status = statusStore.status(account, SyncStatusStore.Service.TASKS)
+            info.taskdav!!.status = lifecycleStatus(statusStore, SyncStatusStore.Service.TASKS,
+                info.taskdav!!.refreshing, info.taskdav!!.pending)
             if (!exactGenerationStillCurrent()) return null
             info.taskdav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.TASKS)
 
@@ -1181,6 +1280,109 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             // the result can reach the publisher.
             return info.takeIf { exactGenerationStillCurrent() }
         }
+
+        /** Cold-load lifecycle maintenance is explicit, IO-bound, and never a rendering effect. */
+        private fun lifecycleStatus(store: SyncStatusStore, service: SyncStatusStore.Service, active: Boolean, pending: Boolean): SyncStatusStore.Status {
+            val now = lifecycleNow()
+            store.rebaseFutureLifecycle(statusIdentity, service, now)
+            store.expireStale(statusIdentity, service, now, active, pending, lifecycleWindows.interruptionAfterMillis)
+            return store.status(statusIdentity, service)
+        }
+
+        private fun maintainLifecycle() {
+            if (!exactGenerationStillCurrent()) return
+            val store = SyncStatusStore(context)
+            var contactsActive = ContentResolver.isSyncActive(account, App.addressBooksAuthority)
+            var contactsPending = ContentResolver.isSyncPending(account, App.addressBooksAuthority)
+            AccountManager.get(context).getAccountsByType(App.addressBookAccountType).forEach { child ->
+                try {
+                    if (LocalAddressBook(context, child, null).mainAccount == account) {
+                        contactsActive = contactsActive || ContentResolver.isSyncActive(child, ContactsContract.AUTHORITY)
+                        contactsPending = contactsPending || ContentResolver.isSyncPending(child, ContactsContract.AUTHORITY)
+                    }
+                } catch (_: ContactsStorageException) {
+                    // A child that cannot be resolved supplies no authority evidence.
+                }
+            }
+            val facts = listOf(
+                SyncStatusStore.Service.CALENDAR to (ContentResolver.isSyncActive(account, CalendarContract.AUTHORITY) to
+                    ContentResolver.isSyncPending(account, CalendarContract.AUTHORITY)),
+                SyncStatusStore.Service.CONTACTS to (contactsActive to contactsPending),
+                SyncStatusStore.Service.TASKS to (TASK_PROVIDERS.any { ContentResolver.isSyncActive(account, it.authority) } to
+                    TASK_PROVIDERS.any { ContentResolver.isSyncPending(account, it.authority) }),
+            )
+            val now = lifecycleNow()
+            facts.forEach { (service, fact) ->
+                store.rebaseFutureLifecycle(statusIdentity, service, now)
+                store.expireStale(statusIdentity, service, now, fact.first, fact.second, lifecycleWindows.interruptionAfterMillis)
+            }
+        }
+
+        private fun scheduleLifecycleDeadline(info: AccountActivity.AccountInfo) {
+            lifecycleDeadlineJob?.cancel()
+            val now = lifecycleNow()
+            val deadline = listOf(info.caldav, info.carddav, info.taskdav)
+                .filterNotNull()
+                .filter { service -> service.status?.let { !it.structuralStorageFailure } == true &&
+                    !service.refreshing && !service.pending }
+                .mapNotNull { service -> service.status?.let { status ->
+                    (status.attemptStartedAt ?: status.requestedAt)
+                        ?.let { saturatingAdd(it, lifecycleWindows.interruptionAfterMillis) }
+                } }
+                .minOrNull() ?: run {
+                    lastImmediateLifecycleDeadline = null
+                    return
+                }
+            if (deadline <= now) {
+                runDueLifecycleMaintenance(deadline)
+                return
+            }
+            lastImmediateLifecycleDeadline = null
+            lifecycleDeadlineJob = viewModelScope.launch {
+                delay(deadline - now)
+                withContext(Dispatchers.IO) { maintainLifecycle() }
+                loadAccount()
+            }
+        }
+
+        private fun scheduleLifecycleDeadlineFromStore() {
+            val now = lifecycleNow()
+            val deadline = SyncStatusStore.Service.values()
+                .map { SyncStatusStore(context).status(statusIdentity, it) }
+                .filterNot { it.structuralStorageFailure }
+                .mapNotNull { status -> (status.attemptStartedAt ?: status.requestedAt)
+                    ?.let { saturatingAdd(it, lifecycleWindows.interruptionAfterMillis) } }
+                .minOrNull() ?: run {
+                    lastImmediateLifecycleDeadline = null
+                    return
+                }
+            if (deadline <= now) {
+                runDueLifecycleMaintenance(deadline)
+                return
+            }
+            lastImmediateLifecycleDeadline = null
+            lifecycleDeadlineJob?.cancel()
+            lifecycleDeadlineJob = viewModelScope.launch {
+                delay(deadline - now)
+                withContext(Dispatchers.IO) { maintainLifecycle() }
+                loadAccount()
+            }
+        }
+
+        /** One immediate pass handles a deadline crossed between load and dispatch without a loop. */
+        private fun runDueLifecycleMaintenance(deadline: Long) {
+            if (lastImmediateLifecycleDeadline == deadline) return
+            lastImmediateLifecycleDeadline = deadline
+            lifecycleDeadlineJob = viewModelScope.launch {
+                withContext(Dispatchers.IO) { maintainLifecycle() }
+                loadAccount()
+            }
+        }
+
+        private fun saturatingAdd(value: Long, increment: Long): Long =
+            if (value > Long.MAX_VALUE - increment) Long.MAX_VALUE else value + increment
+
+        private fun lifecycleNow() = lifecycleNowOverride?.invoke() ?: System.currentTimeMillis()
 
         fun observe(owner: LifecycleOwner, observer: (AccountActivity.AccountInfo) -> Unit) =
                 holder.observe(owner, observer)
@@ -1193,6 +1395,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             @VisibleForTesting
             @JvmField internal var accountLoaderOverride:
                 ((Context, Account, String) -> AccountActivity.AccountInfo)? = null
+            @VisibleForTesting
+            @JvmField internal var lifecycleWindowsOverride: SyncLifecycleWindows? = null
+            @VisibleForTesting
+            @JvmField internal var lifecycleNowOverride: (() -> Long)? = null
         }
 
         private class AccountLoadFailure(cause: Throwable) : Exception(cause)
@@ -1268,6 +1474,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         if (isSyncActive()) return        // don't stack a duplicate concurrent sync
         syncRequestOverride?.invoke(applicationContext, account)
             ?: requestSync(applicationContext, account)
+        model.loadAccount()
         Snackbar.make(findViewById(R.id.coordinator), R.string.account_synchronizing_now, Snackbar.LENGTH_LONG).show()
     }
 

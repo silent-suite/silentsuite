@@ -1,6 +1,7 @@
 package io.silentsuite.sync.ui.setup
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -113,23 +114,30 @@ class LoginLifecycleContractTest {
     @Test
     fun accountRecreationRuntimeJobUsesTheRequiredUnsignedMatrixAndPinnedRunner() {
         val workflow = File("../../.github/workflows/build-android.yml").readText()
+        val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         val unsignedBuild = workflow.substringAfter("  build-pr:").substringBefore("  account-recreation-runtime:")
         val job = workflow.substringAfter("account-recreation-runtime:").substringBefore("  # ─────────────────────────────────────────────────────────────────────\n  # Release")
         val runnerReference = Regex("ReactiveCircus/android-emulator-runner@([0-9a-f]{40})").find(job)
 
         assertTrue(job.contains("contents: read"))
-        assertTrue(job.contains("api-level: 21") && job.contains("arch: x86"))
-        assertTrue(job.contains("api-level: 35") && job.contains("arch: x86_64"))
+        assertEquals(2, Regex("""api-level: 21\n\s+arch: x86""").findAll(job).count())
+        assertEquals(1, Regex("""api-level: 35\n\s+arch: x86_64""").findAll(job).count())
+        listOf("shard: mixed", "shard: remaining", "shard: all").forEach {
+            assertEquals(1, Regex(it).findAll(job).count())
+        }
+        assertTrue(job.contains("""name: Account recreation (API ${'$'}{{ matrix.api-level }}, ${'$'}{{ matrix.arch }}, ${'$'}{{ matrix.shard }})"""))
         assertTrue(runnerReference != null)
         listOf(
             "app:testDebugUnitTest", "app:lintDebug", "app:assembleDebugAndroidTest",
             "cert4android:assembleDebugAndroidTest", "ical4android:assembleDebugAndroidTest",
             "vcard4android:assembleDebugAndroidTest"
         ).forEach { command -> assertTrue(unsignedBuild.contains(command)) }
+        assertTrue(job.contains("""script: bash android/scripts/run-focused-runtime-tests.sh "${'$'}{{ matrix.api-level }}" "${'$'}{{ matrix.shard }}""""))
+        assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
             "app:connectedDebugAndroidTest", "io.silentsuite.sync.ui.AccountActivityRecreationTest",
             "-PrequireEtebase16Kb=true", "--no-daemon"
-        ).forEach { command -> assertTrue(job.contains(command)) }
+        ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))
         assertFalse(job.contains("secrets."))
     }
@@ -137,8 +145,8 @@ class LoginLifecycleContractTest {
     @Test
     fun focusedRuntimeExpectedSetIncludesAuthenticatorLifecycleContracts() {
         val workflow = File("../../.github/workflows/build-android.yml").readText()
-        val expectedSet = workflow.substringAfter("          expected={")
-            .substringBefore("          }\n          seen=[]")
+        val expectedSet = workflow.substringAfter("          canonical={")
+            .substringBefore("          mixed=next")
         val expectedTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling')"
         val bootstrapTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','cleanInstallBootstrapPublishesMarkerAfterReconciliation')"
 
@@ -146,5 +154,143 @@ class LoginLifecycleContractTest {
         assertTrue(expectedSet.contains(bootstrapTuple))
         assertTrue(expectedSet.contains("('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncConfigurationEnablesCoreAuthoritiesWithoutRecovery')"))
         assertTrue(expectedSet.contains("('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncFailureKeepsExactRowAndOffersContinueRetry')"))
+    }
+
+    @Test
+    fun dashboardRuntimePhaseControlIsPublishedAcrossInstrumentationAndLoaderThreads() {
+        val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        val test = source.substringAfter(
+            "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()"
+        ).substringBefore("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()")
+
+        assertTrue(test.contains("val phase = AtomicInteger(0)"))
+        assertTrue(test.contains("phase.get() == 1"))
+        assertTrue(test.contains("phase.get() == 2"))
+        listOf(1, 2, 3).forEach { phase ->
+            assertTrue(test.contains("phase.set($phase)"))
+        }
+        assertFalse(test.contains("var phase = 0"))
+    }
+
+    @Test
+    fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
+        val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
+        val dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
+        val diagnostic = "$dashboard#requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
+        val mixed = "$dashboard#mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue"
+        val mixedSelectors = Regex("""^mixed_selector='([^']+)'$""", RegexOption.MULTILINE)
+            .find(runtimeScript)!!.groupValues[1].split(",")
+        val requestedSelectors = Regex("""^requested_selector='([^']+)'$""", RegexOption.MULTILINE)
+            .find(runtimeScript)!!.groupValues[1].split(",")
+        val other64 = Regex("""^other64_selectors='([^']+)'$""", RegexOption.MULTILINE)
+            .find(runtimeScript)!!.groupValues[1].split(",")
+        val focusedClasses = Regex("""^focused_classes='([^']+)'$""", RegexOption.MULTILINE)
+            .find(runtimeScript)!!.groupValues[1].split(",")
+        val runtimeMethods = focusedClasses.flatMap { className ->
+            val source = File(
+                "src/androidTest/java/${className.replace('.', '/')}.kt"
+            ).readText()
+            Regex("""@Test\s+fun\s+(\w+)""").findAll(source)
+                .map { "$className#${it.groupValues[1]}" }.toList()
+        }
+        fun expand(selectors: List<String>) = selectors.flatMap { selector ->
+            if ("#" in selector) listOf(selector)
+            else runtimeMethods.filter { it.startsWith("$selector#") }
+        }
+        val mixedExpanded = expand(mixedSelectors)
+        val remainingExpanded = expand(requestedSelectors + other64)
+        val allExpanded = expand(focusedClasses)
+
+        assertEquals(listOf(mixed), mixedSelectors)
+        assertEquals(listOf(diagnostic), requestedSelectors)
+        assertEquals(66, runtimeMethods.size)
+        assertEquals(66, runtimeMethods.toSet().size)
+        assertEquals(listOf(1, 65, 66), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
+        assertTrue(mixedExpanded.toSet().intersect(remainingExpanded.toSet()).isEmpty())
+        assertEquals(allExpanded.toSet(), mixedExpanded.toSet() + remainingExpanded.toSet())
+        assertEquals(runtimeMethods.toSet(), allExpanded.toSet())
+        assertEquals(listOf("600", "600", "1500", "2400"),
+            Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
+                .findAll(runtimeScript).map { it.groupValues[1] }.toList())
+        assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)
+        assertTrue(runtimeScript.indexOf("trap restore_requested_results EXIT") <
+            runtimeScript.indexOf("""class="${'$'}{requested_selector}""""))
+        assertTrue(runtimeScript.indexOf("\n  save_requested_results",
+            runtimeScript.indexOf("""class="${'$'}{requested_selector}""")) <
+            runtimeScript.indexOf("""class="${'$'}{other64_selectors}""""))
+        assertTrue(runtimeScript.contains("connected/api21-requested"))
+        assertFalse(runtimeScript.contains("api21_batch_"))
+        assertTrue(runtimeScript.contains("""if [[ "${'$'}{status}" -eq 0 && "${'$'}{restore_status}" -ne 0 ]]"""))
+    }
+
+    @Test
+    fun dashboardLifecycleObservationAvoidsRepeatedActivityScenarioPolling() {
+        val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        val lifecycle = source.substringAfter(
+            "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()"
+        ).substringBefore("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()")
+        val observerPoll = source.substringAfter("private fun waitForObservedText(")
+            .substringBefore("private fun waitForText(")
+
+        assertEquals(6, Regex("scenario\\.onActivity").findAll(lifecycle).count())
+        assertEquals(1, Regex("addTextChangedListener").findAll(lifecycle).count())
+        assertTrue(lifecycle.contains("observe(R.id.dashboard_overall_status, overallText)"))
+        assertTrue(lifecycle.contains("observe(R.id.caldav_status, caldavText)"))
+        assertTrue(lifecycle.contains("waitForObservedText("))
+        assertFalse(lifecycle.contains("waitForText(scenario"))
+        assertFalse(lifecycle.contains("assertNoGenericAttention(scenario)"))
+        assertTrue(lifecycle.contains("SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)"))
+        assertFalse(lifecycle.contains("lifecycle-diagnostic"))
+        assertTrue(observerPoll.contains("AtomicReference<String>"))
+        assertTrue(observerPoll.contains("System.nanoTime()"))
+        assertFalse(observerPoll.contains("scenario.onActivity"))
+    }
+
+    @Test
+    fun mixedDashboardObserversPrecedeMutationAndAvoidPostRefreshBarriers() {
+        val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        val mixed = source.substringAfter(
+            "@Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue()"
+        ).substringBefore("@Test fun futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent()")
+
+        assertEquals(1, Regex("scenario\\.onActivity").findAll(mixed).count())
+        assertEquals(1, Regex("addTextChangedListener").findAll(mixed).count())
+        assertTrue(mixed.indexOf("scenario.onActivity") < mixed.indexOf("val store = SyncStatusStore(context)"))
+        assertTrue(mixed.contains("observe(R.id.dashboard_overall_status, overallText)"))
+        assertTrue(mixed.contains("observe(R.id.caldav_status, caldavText)"))
+        assertTrue(mixed.contains("observe(R.id.carddav_status, carddavText)"))
+        assertEquals(4, Regex("waitForObservedText\\(").findAll(mixed).count())
+        assertFalse(mixed.contains("waitForText(scenario"))
+        assertTrue(mixed.contains("val dashboardActivity = AtomicReference<AccountActivity>()"))
+        assertTrue(mixed.contains("dashboardActivity.set(activity)"))
+        assertTrue(mixed.contains("activity.runOnUiThread { activity.refresh() }"))
+        assertFalse(mixed.substringAfter("val store = SyncStatusStore(context)").contains("scenario.onActivity"))
+        assertTrue(mixed.contains("assertEquals(syncing, overallText.get())"))
+        assertTrue(mixed.contains("assertEquals(syncing, caldavText.get())"))
+        assertTrue(mixed.contains("assertEquals(issue, carddavText.get())"))
+        assertTrue(mixed.contains("val calendarRefreshing = AtomicBoolean(false)"))
+        assertTrue(mixed.contains("it.refreshing = calendarRefreshing.get()"))
+        assertTrue(mixed.indexOf("calendarRefreshing.set(true)") <
+            mixed.indexOf("val store = SyncStatusStore(context)"))
+        assertTrue(mixed.contains("calendarRefreshing.set(false)"))
+        assertTrue(mixed.indexOf("calendarRefreshing.set(false)") >
+            mixed.indexOf("categories.forEachIndexed"))
+        assertTrue(mixed.contains("dashboard_status_never_synced"))
+        assertFalse(mixed.contains("mixed-diagnostic"))
+        assertFalse(source.contains("helper-diagnostic"))
+    }
+
+    @Test
+    fun sharedDashboardTextWaitUsesOneActivityScenarioBarrierAndEventDrivenPolling() {
+        val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        val helper = source.substringAfter("private fun waitForText(")
+            .substringBefore("private fun assertNoGenericAttention")
+
+        assertEquals(1, Regex("scenario\\.onActivity").findAll(helper).count())
+        assertTrue(helper.contains("addTextChangedListener"))
+        assertTrue(helper.contains("AtomicReference<String>"))
+        assertTrue(helper.contains("System.nanoTime()"))
+        assertTrue(helper.contains("SystemClock.sleep(50)"))
+        assertFalse(helper.contains("repeat(200)"))
     }
 }

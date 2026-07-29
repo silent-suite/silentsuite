@@ -196,10 +196,10 @@ jobs:
           retention-days: 14
 
   account-recreation-runtime:
-    name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+    name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -208,8 +208,13 @@ jobs:
         include:
           - api-level: 21
             arch: x86
+            shard: mixed
+          - api-level: 21
+            arch: x86
+            shard: remaining
           - api-level: 35
             arch: x86_64
+            shard: all
     defaults:
       run:
         working-directory: android
@@ -259,13 +264,13 @@ jobs:
           target: google_apis
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
-          script: cd android && ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest,io.silentsuite.sync.ui.AccountDashboardRuntimeTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest,io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest,io.silentsuite.sync.ui.SettingsRuntimeTest,io.silentsuite.sync.ui.SiblingRoutesRuntimeTest
+          script: bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"
 
       - name: Upload focused androidTest reports and results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+          name: account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ matrix.shard }}-${{ github.sha }}
           path: |
             android/app/build/outputs/androidTest-results/connected/
             android/app/build/reports/androidTests/connected/
@@ -278,7 +283,7 @@ jobs:
           python3 - <<'PY'
           import glob, xml.etree.ElementTree as ET
           from collections import Counter
-          expected={
+          canonical={
             ('io.silentsuite.sync.ui.AccountActivityRecreationTest','recreationKeepsTheExactAccountRouteAndDeliversModelStateToTheRecreatedUi'),
             ('io.silentsuite.sync.ui.AccountActivityRecreationTest','readyDoneCompletesOnlyTheExactGeneratedAccount'),
             ('io.silentsuite.sync.ui.AccountActivityRecreationTest','replacementGenerationCannotCompleteThePreviouslyValidatedSetupRoute'),
@@ -293,6 +298,7 @@ jobs:
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','initialLoadFailurePublishesTerminalErrorAndRefreshFailureRetainsValidDashboard'),
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes'),
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','dashboardExportCompletionPreservesExactDashboardAfterRecreation'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','freshContactsGenerationFinishesBeforeChildDispatchOrCompletion'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','noNetworkDashboardShellRoutesExactAccountAfterReadyDone'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','recoveryRemovalConfirmedRoutesCleanLoginAndPreservesSibling'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionsRecoveryBlocksActionsAndLimitedSkipReachesReady'),
@@ -311,6 +317,12 @@ jobs:
             ('io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest','explicitCreatingTargetOnlyReceivesProviderConfiguration'),
             ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','contactsAttemptExtraRoundTripsAtProviderBoundary'),
             ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','persistedEvidenceIsExactAccountGenerationScopedAndContainsNoAccountName'),
+            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','v1EvidenceReadsCompatiblyAndV2MutationStaysExactAndPrivate'),
+            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','manualRequestPersistsBeforeDispatchAndMatchingTerminalClearsLifecycle'),
+            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','requestAndParentChildCorrelationExtrasRoundTripAtAndroidBoundary'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue'),
+            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent'),
             ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCompletionRecreatesAndReturnsToCallerForExactGeneration'),
             ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCancelReturnsToCallerAfterRecreation'),
             ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importRecreationAndBackCancelReturnToItsCaller'),
@@ -339,6 +351,19 @@ jobs:
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationRerunsAfterCanonicalStoreCommitFailureWithoutTouchingAliases'),
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationMarkerFailureRerunsAndMarkerIsAlwaysLast'),
           }
+          mixed=next(pair for pair in canonical if pair[1] == 'mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue')
+          shard='${{ matrix.shard }}'
+          if shard == 'mixed':
+            expected={mixed}
+          elif shard == 'remaining':
+            expected=canonical-{mixed}
+          elif shard == 'all':
+            expected=canonical
+          else:
+            raise SystemExit(f'unsupported shard {shard}')
+          expected_sizes={'mixed': 1, 'remaining': 65, 'all': 66}
+          if len(canonical) != 66 or len(expected) != expected_sizes[shard]:
+            raise SystemExit(f'bad expected ledger size for {shard}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
             root=ET.parse(path).getroot()
@@ -346,6 +371,8 @@ jobs:
               pair=(case.attrib.get('classname'),case.attrib.get('name')); seen.append(pair)
               if pair in expected and list(case): raise SystemExit(f'failed {pair}')
           counts=Counter(seen)
+          unexpected=(canonical & set(counts))-expected
+          if unexpected: raise SystemExit(f'unexpected tests for {shard}: {sorted(unexpected)}')
           missing=expected-set(counts)
           if missing: raise SystemExit(f'missing {sorted(missing)}')
           duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}

@@ -33,7 +33,6 @@ class AccountDrawerSignOutRuntimeTest {
     private fun waitUntil(description: String, timeoutMillis: Long = 10_000, predicate: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + timeoutMillis
         while (SystemClock.uptimeMillis() < deadline) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             if (predicate()) return
             SystemClock.sleep(25)
         }
@@ -104,7 +103,7 @@ class AccountDrawerSignOutRuntimeTest {
         check(target.manager.addAccountExplicitly(
             child,
             null,
-            LocalAddressBook.initialUserData(target.account, "https://example.invalid/address-book"),
+            LocalAddressBook.initialUserData(target.account, SyncStatusStore(target.context).identity(target.account), "https://example.invalid/address-book"),
         ))
         try {
             assertTrue(ActiveAccountManager.setActiveAccount(target.context, target.account))
