@@ -126,10 +126,19 @@ abstract class SyncAdapterService : Service() {
             val service = outcomeService
             val attemptId = service?.let { UUID.randomUUID().toString() }
             val statusStore = service?.let { SyncStatusStore(context) }
-            val admittedIdentity = service?.let { statusStore?.identity(account) }
+            val currentIdentity = service?.let { statusStore?.identity(account) }
+            val scheduledIdentityPresent = extras.containsKey(SyncStatusStore.EXTRA_SYNC_MAIN_IDENTITY)
+            val scheduledIdentity = syncMainIdentity(extras)
+            val requestId = syncRequestId(extras)
+            if (service != null && ((scheduledIdentityPresent && scheduledIdentity != currentIdentity) ||
+                    (requestId != null && !scheduledIdentityPresent))) {
+                Logger.log.info("Skipping sync for a replaced account generation")
+                return
+            }
+            val admittedIdentity = scheduledIdentity ?: currentIdentity
             val admission = service?.let { outcomeService -> attemptId?.let { id ->
                 admittedIdentity?.let { identity -> statusStore?.beginAttemptResult(
-                    identity, outcomeService, id, System.currentTimeMillis(), syncRequestId(extras)) }
+                    identity, outcomeService, id, System.currentTimeMillis(), requestId) }
             } }
             // Preserve correlation after a failed persistence admission: a real direct sync can
             // still repair request/terminal evidence at its completion boundary.

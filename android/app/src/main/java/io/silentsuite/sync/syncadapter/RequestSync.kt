@@ -36,9 +36,13 @@ fun requestSync(
         }
     }
     val requestId = explicitRequestId ?: UUID.randomUUID().toString()
+    val statusStore = account?.let { SyncStatusStore(context) }
+    val requestedIdentity = account?.let { statusStore?.identity(it) }
 
     // Durable UI evidence must lead scheduling, but a storage failure never blocks real sync.
-    account?.let { SyncStatusStore(context).recordRequested(it, authorities.values.toSet(), requestId, System.currentTimeMillis()) }
+    requestedIdentity?.let {
+        statusStore?.recordRequested(it, authorities.values.toSet(), requestId, System.currentTimeMillis())
+    }
 
     for ((authority, _) in authorities) {
         val extras = Bundle()
@@ -47,7 +51,10 @@ fun requestSync(
         if (forceCollectionRefresh) {
             extras.putBoolean(EXTRA_FORCE_COLLECTION_REFRESH, true)
         }
-        putSyncRequestId(extras, requestId)
+        requestedIdentity?.let {
+            putSyncRequestId(extras, requestId)
+            putSyncMainIdentity(extras, it)
+        }
         requestSyncDispatchOverride?.invoke(account, authority, extras)
             ?: ContentResolver.requestSync(account, authority, extras)
     }

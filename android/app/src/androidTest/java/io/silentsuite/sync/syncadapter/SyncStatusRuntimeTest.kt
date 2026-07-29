@@ -56,11 +56,13 @@ class SyncStatusRuntimeTest {
             assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
                 SyncStatusStore.FailureCategory.NETWORK, historicalFailureAt))
             val dispatched = mutableListOf<String>()
-            requestSyncDispatchOverride = { _, authority, _ ->
+            requestSyncDispatchOverride = { _, authority, extras ->
                 // The dispatcher is deliberately held here: evidence must be visible before a
                 // real adapter can complete and replace it.
                 assertEquals("runtime-request", store.status(account,
                     SyncStatusStore.Service.CALENDAR).activeRequestId)
+                assertEquals("runtime-request", syncRequestId(extras))
+                assertEquals(store.identity(account), syncMainIdentity(extras))
                 dispatched += authority
             }
             val beforeRequest = System.currentTimeMillis()

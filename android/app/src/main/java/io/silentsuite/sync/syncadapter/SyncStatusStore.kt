@@ -153,21 +153,28 @@ class SyncStatusStore internal constructor(
     /** Records all requested services atomically before Android scheduling is attempted. */
     @Synchronized
     fun recordRequested(account: Account, services: Set<Service>, requestId: String, requestedAt: Long): Boolean = synchronized(STORE_LOCK) {
+        recordRequested(MainIdentity(mainAccountKey(account)), services, requestId, requestedAt)
+    }
+
+    /** Uses the main generation captured before Android scheduling. */
+    @Synchronized
+    internal fun recordRequested(identity: MainIdentity, services: Set<Service>, requestId: String,
+        requestedAt: Long): Boolean = synchronized(STORE_LOCK) {
         require(isSafeOpaqueId(requestId))
         requireValidTimestamp(requestedAt)
-        val identity = mainAccountKey(account)
+        val storageKey = identity.storageKey
         val targeted = services.toSortedSet(compareBy { it.ordinal })
         if (targeted.isEmpty()) return@synchronized true
         val puts = linkedMapOf<String, String>()
         targeted.forEach { service ->
-            val current = readOrLegacy(identity, service)
-            puts[v2RecordKey(identity, service)] = encodeV2(current.copy(
+            val current = readOrLegacy(storageKey, service)
+            puts[v2RecordKey(storageKey, service)] = encodeV2(current.copy(
                 revision = nextRevision(current.revision), requestId = requestId, requestedAt = requestedAt,
                 attemptId = null, attemptStartedAt = null, attemptRequestId = null,
                 contacts = if (service == Service.CONTACTS) ContactsGeneration() else current.contacts,
             ))
         }
-        commitLifecycle(puts, targeted.mapTo(linkedSetOf()) { v2FaultKey(identity, it) })
+        commitLifecycle(puts, targeted.mapTo(linkedSetOf()) { v2FaultKey(storageKey, it) })
     }
 
     @Synchronized

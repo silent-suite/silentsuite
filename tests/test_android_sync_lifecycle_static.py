@@ -59,10 +59,16 @@ def test_product_interruption_window_is_owned_without_android_initialization():
 
 def test_request_evidence_precedes_platform_dispatch_without_sensitive_logging():
     source = REQUEST.read_text(encoding="utf-8")
+    adapter = ADAPTER.read_text(encoding="utf-8")
 
     assert "recordRequested" in source
     assert source.index("recordRequested") < source.index("ContentResolver.requestSync")
     assert "EXTRA_SYNC_REQUEST_ID" in source
+    assert "val requestedIdentity = account?.let { statusStore?.identity(it) }" in source
+    assert "statusStore?.recordRequested(it, authorities.values.toSet(), requestId" in source
+    assert "putSyncMainIdentity(extras, it)" in source
+    assert "scheduledIdentity != currentIdentity" in adapter
+    assert "requestId != null && !scheduledIdentityPresent" in adapter
     assert "Logger" not in source
     assert "println" not in source
 

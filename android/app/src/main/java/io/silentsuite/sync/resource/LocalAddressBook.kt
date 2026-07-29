@@ -27,6 +27,7 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.syncadapter.putSyncMainIdentity
 
 import java.io.FileNotFoundException
 import java.util.*
@@ -261,6 +262,7 @@ class LocalAddressBook(
                     val extras = Bundle().apply {
                         putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)
                         putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                        putSyncMainIdentity(this, capturedIdentity)
                     }
                     ContentResolver.requestSync(main, context.getString(R.string.address_books_authority), extras)
                 }
