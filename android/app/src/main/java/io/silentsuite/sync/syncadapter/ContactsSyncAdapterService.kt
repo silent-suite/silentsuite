@@ -46,7 +46,14 @@ internal fun contactsLifecycleTargetMatches(
     storedMainIdentity: SyncStatusStore.MainIdentity?,
     currentMainAccount: Account?,
 ): Boolean = contactsChildGenerationMatches(store, child, target) &&
-    storedMainIdentity == target.mainIdentity &&
+    contactsParentGenerationMatches(store, target, storedMainIdentity, currentMainAccount)
+
+internal fun contactsParentGenerationMatches(
+    store: SyncStatusStore,
+    target: ContactsChildTarget,
+    storedMainIdentity: SyncStatusStore.MainIdentity?,
+    currentMainAccount: Account?,
+): Boolean = storedMainIdentity == target.mainIdentity &&
     currentMainAccount != null && store.identity(currentMainAccount) == target.mainIdentity
 
 internal fun contactsLifecycleTargetMatchesCurrent(
@@ -59,6 +66,22 @@ internal fun contactsLifecycleTargetMatchesCurrent(
     contactsLifecycleTargetMatches(
         store,
         child,
+        target,
+        SyncStatusStore.identityFromStorageKey(
+            accountManager.getUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY)),
+        LocalAddressBook(context, child, null).mainAccount,
+    )
+}.getOrDefault(false)
+
+internal fun contactsParentGenerationMatchesCurrent(
+    context: Context,
+    store: SyncStatusStore,
+    child: Account,
+    target: ContactsChildTarget,
+): Boolean = runCatching {
+    val accountManager = android.accounts.AccountManager.get(context)
+    contactsParentGenerationMatches(
+        store,
         target,
         SyncStatusStore.identityFromStorageKey(
             accountManager.getUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY)),
@@ -96,6 +119,14 @@ internal fun recordContactsChildAtAdapterBoundary(
     SyncStatusStore.ChildWrite.STORAGE_FAILURE -> SyncStatusStore.MutationResult.STORAGE_FAILURE
 }
 
+internal fun closeReplacedContactsChildAtAdapterBoundary(
+    store: SyncStatusStore,
+    target: ContactsChildTarget,
+    parentGenerationCurrent: Boolean,
+): SyncStatusStore.MutationResult = if (!parentGenerationCurrent) SyncStatusStore.MutationResult.REJECTED else
+    recordContactsChildAtAdapterBoundary(store, target, SyncStatusStore.ChildResult.REMOVED,
+        SyncStatusStore.FailureCategory.CHILD_REMOVED)
+
 internal fun putContactsAttempt(extras: Bundle, attemptId: String) {
     extras.putString(SyncStatusStore.EXTRA_CONTACTS_ATTEMPT, attemptId)
 }
@@ -128,6 +159,12 @@ class ContactsSyncAdapterService : SyncAdapterService() {
             if (hasContactsLifecycleTarget(extras) &&
                 (lifecycleTarget == null ||
                     !contactsLifecycleTargetMatchesCurrent(context, SyncStatusStore(context), account, lifecycleTarget))) {
+                if (lifecycleTarget != null) {
+                    val store = SyncStatusStore(context)
+                    val closed = closeReplacedContactsChildAtAdapterBoundary(store, lifecycleTarget,
+                        contactsParentGenerationMatchesCurrent(context, store, account, lifecycleTarget))
+                    if (closed == SyncStatusStore.MutationResult.STORAGE_FAILURE) signalPersistenceRetry(syncResult)
+                }
                 Logger.log.info("Skipping sync for a replaced address-book generation")
                 return Completion.SKIPPED
             }
@@ -187,7 +224,8 @@ class ContactsSyncAdapterService : SyncAdapterService() {
             val target = contactsChildTarget(extras) ?: return SyncStatusStore.MutationResult.REJECTED
             val store = SyncStatusStore(context)
             if (!contactsLifecycleTargetMatchesCurrent(context, store, child, target))
-                return SyncStatusStore.MutationResult.REJECTED
+                return closeReplacedContactsChildAtAdapterBoundary(store, target,
+                    contactsParentGenerationMatchesCurrent(context, store, child, target))
             return recordContactsChildAtAdapterBoundary(store, target, result, category)
         }
     }

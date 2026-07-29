@@ -82,6 +82,17 @@ class ProviderBoundaryPolicyTest {
         assertFalse(contactsLifecycleTargetMatches(store, replacementChild, target, store.identity(oldMain), oldMain))
         assertFalse(contactsLifecycleTargetMatches(store, oldChild, target, store.identity(replacementMain), oldMain))
         assertFalse(contactsLifecycleTargetMatches(store, oldChild, target, store.identity(oldMain), replacementMain))
+
+        assertTrue(store.beginAttempt(oldMain, SyncStatusStore.Service.CONTACTS, "attempt", 1, null))
+        assertEquals(SyncStatusStore.ContactsStart.Started("attempt"),
+            store.attachContactsChildren(store.identity(oldMain), "attempt",
+                setOf(requireNotNull(store.childIdentity(oldChild))), 1))
+        assertEquals(SyncStatusStore.MutationResult.REJECTED,
+            closeReplacedContactsChildAtAdapterBoundary(store, target, parentGenerationCurrent = false))
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            closeReplacedContactsChildAtAdapterBoundary(store, target, parentGenerationCurrent = true))
+        assertEquals(SyncStatusStore.FailureCategory.CHILD_REMOVED,
+            store.status(oldMain, SyncStatusStore.Service.CONTACTS).lastFailureCategory)
     }
 
     @Test fun `cancelled completion is classified before any fabricated terminal`() {

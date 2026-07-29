@@ -168,6 +168,9 @@ def test_contacts_children_use_captured_generation_identities_across_dispatch_an
     assert "contactsChildTarget(extras)" in child
     assert "contactsLifecycleTargetMatchesCurrent(context, SyncStatusStore(context), account, lifecycleTarget)" in child
     assert "contactsLifecycleTargetMatchesCurrent(context, store, child, target)" in child
+    assert "closeReplacedContactsChildAtAdapterBoundary" in child
+    assert "contactsParentGenerationMatchesCurrent" in child
+    assert "SyncStatusStore.ChildResult.REMOVED" in child
     assert "LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY" in child
     assert "store.identity(currentMainAccount) == target.mainIdentity" in child
     assert "LocalAddressBook(context, child, null).mainAccount" in child
