@@ -147,9 +147,9 @@ def test_node_security_floor_matches_manifest_docs_and_sharp_lock_requirement():
         ROOT / "apps/docs/contributing/dev-setup.md",
     ]
 
-    assert manifest["engines"]["node"] == ">=20.9.0"
-    assert all("| **Node.js** | 20.9+ |" in path.read_text(encoding="utf-8") for path in docs)
-    sharp = re.search(r"sharp@0\.35\.0:.*?engines: \{node: '([^']+)'\}", lock, re.DOTALL)
+    assert manifest["engines"]["node"] == ">=22.12.0"
+    assert all("| **Node.js** | 22.12+ |" in path.read_text(encoding="utf-8") for path in docs)
+    sharp = re.search(r"sharp@0\.35\.3:.*?engines: \{node: '([^']+)'\}", lock, re.DOTALL)
     assert sharp and sharp.group(1) == ">=20.9.0"
 
 
