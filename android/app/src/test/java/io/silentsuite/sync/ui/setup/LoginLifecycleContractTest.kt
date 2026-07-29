@@ -239,6 +239,7 @@ class LoginLifecycleContractTest {
         assertTrue(lifecycle.contains("waitForObservedText("))
         assertFalse(lifecycle.contains("waitForText(scenario"))
         assertFalse(lifecycle.contains("assertNoGenericAttention(scenario)"))
+        assertTrue(lifecycle.contains("SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)"))
         assertFalse(lifecycle.contains("lifecycle-diagnostic"))
         assertTrue(observerPoll.contains("AtomicReference<String>"))
         assertTrue(observerPoll.contains("System.nanoTime()"))
@@ -258,7 +259,7 @@ class LoginLifecycleContractTest {
         assertTrue(mixed.contains("observe(R.id.dashboard_overall_status, overallText)"))
         assertTrue(mixed.contains("observe(R.id.caldav_status, caldavText)"))
         assertTrue(mixed.contains("observe(R.id.carddav_status, carddavText)"))
-        assertEquals(3, Regex("waitForObservedText\\(").findAll(mixed).count())
+        assertEquals(4, Regex("waitForObservedText\\(").findAll(mixed).count())
         assertFalse(mixed.contains("waitForText(scenario"))
         assertTrue(mixed.contains("val dashboardActivity = AtomicReference<AccountActivity>()"))
         assertTrue(mixed.contains("dashboardActivity.set(activity)"))
@@ -271,6 +272,10 @@ class LoginLifecycleContractTest {
         assertTrue(mixed.contains("it.refreshing = calendarRefreshing.get()"))
         assertTrue(mixed.indexOf("calendarRefreshing.set(true)") <
             mixed.indexOf("val store = SyncStatusStore(context)"))
+        assertTrue(mixed.contains("calendarRefreshing.set(false)"))
+        assertTrue(mixed.indexOf("calendarRefreshing.set(false)") >
+            mixed.indexOf("categories.forEachIndexed"))
+        assertTrue(mixed.contains("dashboard_status_never_synced"))
         assertFalse(mixed.contains("mixed-diagnostic"))
         assertFalse(source.contains("helper-diagnostic"))
     }

@@ -33,7 +33,6 @@ class AccountDrawerSignOutRuntimeTest {
     private fun waitUntil(description: String, timeoutMillis: Long = 10_000, predicate: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + timeoutMillis
         while (SystemClock.uptimeMillis() < deadline) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             if (predicate()) return
             SystemClock.sleep(25)
         }

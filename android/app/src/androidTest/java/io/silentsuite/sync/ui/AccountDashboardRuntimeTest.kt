@@ -25,6 +25,7 @@ import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.etebase.CollectionActivity
+import io.silentsuite.sync.ui.account.SyncLifecycleWindows
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.utils.AndroidCompat
 import java.net.URI
@@ -43,6 +44,8 @@ import org.junit.runner.RunWith
 class AccountDashboardRuntimeTest {
     @Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention() {
         val phase = AtomicInteger(0)
+        AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
+            SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
             val store = SyncStatusStore(loaderContext)
             AccountActivity.AccountInfo().apply {
@@ -192,6 +195,11 @@ class AccountDashboardRuntimeTest {
                 assertEquals(syncing, caldavText.get())
                 assertEquals(issue, carddavText.get())
             }
+            calendarRefreshing.set(false)
+            val activity = dashboardActivity.get()
+            activity.runOnUiThread { activity.refresh() }
+            val inactive = context.getString(R.string.dashboard_status_never_synced)
+            assertEquals(inactive, waitForObservedText(caldavText, inactive))
         }
     }
 

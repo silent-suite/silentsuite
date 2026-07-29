@@ -514,6 +514,7 @@ def test_api21_lifecycle_observer_avoids_blocking_activity_polling():
     assert "waitForText(scenario" not in lifecycle
     assert "assertNoGenericAttention(scenario)" not in lifecycle
     assert "overallText.get()" in lifecycle
+    assert "SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)" in lifecycle
     assert "lifecycle-diagnostic" not in lifecycle
     assert "Log." not in lifecycle
     observer_poll = runtime.split("private fun waitForObservedText(", 1)[1].split(
@@ -536,7 +537,7 @@ def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh
     assert "observe(R.id.dashboard_overall_status, overallText)" in mixed
     assert "observe(R.id.caldav_status, caldavText)" in mixed
     assert "observe(R.id.carddav_status, carddavText)" in mixed
-    assert mixed.count("waitForObservedText(") == 3
+    assert mixed.count("waitForObservedText(") == 4
     assert "waitForText(scenario" not in mixed
     assert "val dashboardActivity = AtomicReference<AccountActivity>()" in mixed
     assert "dashboardActivity.set(activity)" in mixed
@@ -548,8 +549,21 @@ def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh
     assert "val calendarRefreshing = AtomicBoolean(false)" in mixed
     assert "it.refreshing = calendarRefreshing.get()" in mixed
     assert mixed.index("calendarRefreshing.set(true)") < mixed.index("val store = SyncStatusStore(context)")
+    assert "calendarRefreshing.set(false)" in mixed
+    assert mixed.index("calendarRefreshing.set(false)") > mixed.index("categories.forEachIndexed")
+    assert "dashboard_status_never_synced" in mixed
     assert "mixed-diagnostic" not in mixed
     assert "helper-diagnostic" not in runtime
+
+
+def test_account_replacement_visibility_poll_does_not_wait_for_global_main_queue_idle():
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDrawerSignOutRuntimeTest.kt").read_text(encoding="utf-8")
+    helper = runtime.split("private fun waitUntil(", 1)[1].split("\n    @Test", 1)[0]
+
+    assert "waitForIdleSync" not in helper
+    assert "SystemClock.uptimeMillis()" in helper
+    assert "if (predicate()) return" in helper
+    assert "SystemClock.sleep(25)" in helper
 
 
 def test_dashboard_runtime_polling_helpers_retain_synchronization_and_bounds():
