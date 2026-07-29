@@ -73,7 +73,7 @@ class ProviderBoundaryPolicyTest {
             put(oldMain, "a".repeat(64))
             put(replacementMain, "d".repeat(64))
         }
-        val store = SyncStatusStore(MemoryStatusStorage(),
+        val store = SyncStatusStore(MemoryStorage(),
             mainAccountKey = { mainKeys[it] ?: error("missing main") }, childAccountKey = { childKeys[it] })
         val target = requireNotNull(contactsChildTarget(store.identity(oldMain), "attempt",
             store.childIdentity(oldChild)))
