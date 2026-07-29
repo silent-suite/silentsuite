@@ -64,16 +64,15 @@ def authenticate_and_store_account(email, password, server_url=None):
     except Exception as exc:
         raise AuthenticationError(_auth_error_message(exc)) from exc
 
-    # Preserve existing custom-server behavior for subsequent bridge operations.
-    if server_url != config.ETEBASE_SERVER_URL:
-        config.ETEBASE_SERVER_URL = server_url
-
     result = store_authenticated_account(
         email,
         password,
         etebase.save(None),
         server_url,
     )
+    # Update the process default only after account validation and persistence.
+    if server_url != config.ETEBASE_SERVER_URL:
+        config.ETEBASE_SERVER_URL = server_url
     logger.info("Authentication successful")
     return AuthenticatedAccount(username=result.username, server_url=server_url)
 

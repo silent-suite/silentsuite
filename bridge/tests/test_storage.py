@@ -210,6 +210,92 @@ class TestFavoriteCardDavRoundTrip:
         assert "X-SILENTSUITE-FAVORITE:1" in created.serialize()
         assert HrefMapper.get_by_id(new_cache_item.id).href == "new-name.vcf"
 
+    def test_recreate_at_tombstone_href_revives_owned_mapping(self, mem_db, user):
+        collection, cached_collection, _ = self._collection(
+            mem_db,
+            user,
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fav-1\r\nFN:Existing\r\nEND:VCARD",
+        )
+        tombstone = ItemEntity.create(
+            collection=cached_collection.cache_col,
+            uid="restored-contact",
+            eb_item=b"deleted-cache",
+            deleted=True,
+        )
+        HrefMapper.create(content=tombstone, href="restored.vcf")
+        new_item = MagicMock()
+        new_item.content = (
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:restored-contact\r\n"
+            "FN:Restored\r\nEND:VCARD"
+        )
+        new_item.etag = "etag-restored"
+        new_item.meta = {"mtime": 1700000000000}
+
+        def create(_vobject_item):
+            new_item.cache_item = ItemEntity(
+                collection=cached_collection.cache_col,
+                uid="restored-contact",
+                eb_item=b"restored-cache",
+            )
+            return new_item
+
+        def save():
+            new_item.cache_item.save()
+
+        cached_collection.create.side_effect = create
+        new_item.save.side_effect = save
+        original_get = cached_collection.get.side_effect
+        cached_collection.get.side_effect = (
+            lambda uid: new_item if uid == "restored-contact" else original_get(uid)
+        )
+        incoming = MagicMock(vobject_item=vobject.readOne(new_item.content))
+
+        restored = collection.upload("restored.vcf", incoming)
+
+        assert restored.href == "restored.vcf"
+        restored_cache = ItemEntity.get_by_id(tombstone.id)
+        assert restored_cache.deleted is False
+        assert HrefMapper.get_by_id(restored_cache.id).href == "restored.vcf"
+        assert HrefMapper.select().where(HrefMapper.href == "restored.vcf").count() == 1
+        assert ItemEntity.select().where(
+            ItemEntity.collection == cached_collection.cache_col
+        ).count() == 2
+
+    def test_recreate_at_dirty_tombstone_href_preserves_pending_deletion(
+        self, mem_db, user
+    ):
+        collection, cached_collection, _ = self._collection(
+            mem_db,
+            user,
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fav-1\r\nFN:Existing\r\nEND:VCARD",
+        )
+        tombstone = ItemEntity.create(
+            collection=cached_collection.cache_col,
+            uid="pending-delete",
+            remote_uid="remote-item-to-delete",
+            eb_item=b"encrypted-pending-deletion",
+            deleted=True,
+            dirty=True,
+        )
+        HrefMapper.create(content=tombstone, href="pending-delete.vcf")
+        incoming = MagicMock(
+            vobject_item=vobject.readOne(
+                "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:replacement\r\n"
+                "FN:Replacement\r\nEND:VCARD"
+            )
+        )
+
+        with pytest.raises(ValueError, match="pending deletion"):
+            collection.upload("pending-delete.vcf", incoming)
+
+        preserved = ItemEntity.get_by_id(tombstone.id)
+        assert preserved.deleted is True
+        assert preserved.dirty is True
+        assert preserved.remote_uid == "remote-item-to-delete"
+        assert preserved.eb_item == b"encrypted-pending-deletion"
+        assert HrefMapper.get_by_id(tombstone.id).href == "pending-delete.vcf"
+        cached_collection.create.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # acquire_lock — sync is forced on every client request
@@ -221,7 +307,7 @@ class TestBackendDiscoveryForcesSync:
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
-    def test_acquire_lock_calls_force_sync(self, mock_start, mock_etesync_ctx):
+    def test_read_backend_requests_sync_without_waiting(self, mock_start, mock_etesync_ctx):
         mock_thread = MagicMock()
         mock_thread.wait_for_sync.return_value = True
         mock_start.return_value = mock_thread
@@ -241,11 +327,12 @@ class TestBackendDiscoveryForcesSync:
             list(storage.discover("/test@example.com", depth="1"))
 
         mock_thread.force_sync.assert_called()
+        mock_thread.wait_for_sync.assert_not_called()
         mock_thread.request_sync.assert_not_called()
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
-    def test_acquire_lock_wait_timeout_is_20(self, mock_start, mock_etesync_ctx):
+    def test_read_backend_uses_independent_local_session(self, mock_start, mock_etesync_ctx):
         mock_thread = MagicMock()
         mock_thread.wait_for_sync.return_value = True
         mock_start.return_value = mock_thread
@@ -264,18 +351,67 @@ class TestBackendDiscoveryForcesSync:
         with storage.acquire_lock("r", user="test@example.com"):
             list(storage.discover("/test@example.com", depth="1"))
 
-        mock_thread.wait_for_sync.assert_called_with(20)
+        mock_etesync_ctx.assert_called_with("test@example.com", exclusive=False)
+        mock_thread.wait_for_sync.assert_not_called()
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
-    def test_acquire_lock_write_pushes_inline_after_yield(self, mock_start, mock_etesync_ctx):
-        """Write mode: pull via force_sync on entry, then push INLINE on
-        exit — not a second force_sync. The SyncThread can't acquire the
-        etesync lock while we hold it (storage.py:665-677), so push runs
-        directly here. The previous version of this test asserted
-        force_sync.call_count == 2 against an older "request another sync"
-        contract; it had been red since the inline-push refactor.
-        """
+    def test_write_lock_uses_independent_local_writer(self, mock_start, mock_etesync_ctx):
+        mock_thread = MagicMock()
+        mock_thread.force_sync.side_effect = [1, 2]
+        mock_thread.wait_for_sync.return_value = False
+        mock_start.return_value = mock_thread
+        mock_etesync_ctx.return_value.__enter__ = MagicMock(
+            return_value=(MagicMock(), True)
+        )
+        mock_etesync_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+        from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
+
+        storage = Storage(Configuration(DEFAULT_CONFIG_SCHEMA))
+        with storage.acquire_lock("w", user="test@example.com"):
+            pass
+
+        mock_etesync_ctx.assert_called_once_with(
+            "test@example.com", exclusive=False, read_only=False
+        )
+        mock_thread.force_sync.assert_any_call(after_generation=1)
+
+    def test_read_context_is_request_local_across_accounts(self):
+        from radicale.config import Configuration, DEFAULT_CONFIG_SCHEMA
+
+        storage = Storage(Configuration(DEFAULT_CONFIG_SCHEMA))
+        barrier = threading.Barrier(2)
+        observed = {}
+        errors = []
+
+        def read_as(user):
+            try:
+                with storage.acquire_lock("r", user=user):
+                    barrier.wait(timeout=1)
+                    observed[user] = storage.user
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=read_as, args=("first@example.com",))
+        second = threading.Thread(target=read_as, args=("second@example.com",))
+        first.start()
+        second.start()
+        first.join(2)
+        second.join(2)
+
+        assert errors == []
+        assert observed == {
+            "first@example.com": "first@example.com",
+            "second@example.com": "second@example.com",
+        }
+
+    @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
+    @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
+    def test_acquire_lock_write_queues_push_after_releasing_session(
+        self, mock_start, mock_etesync_ctx
+    ):
+        """Write requests never perform an unbounded upstream push inline."""
         mock_thread = MagicMock()
         mock_thread.wait_for_sync.return_value = True
         mock_start.return_value = mock_thread
@@ -298,10 +434,9 @@ class TestBackendDiscoveryForcesSync:
         with storage.acquire_lock("w", user="test@example.com"):
             pass
 
-        # Pre-yield: one force_sync() to pull the latest server state.
-        assert mock_thread.force_sync.call_count == 1
-        # Post-yield: inline push of the collection list (write mode only).
-        mock_etesync.push_collection_list.assert_called_once()
+        assert mock_thread.force_sync.call_count == 2
+        mock_etesync.push_collection_list.assert_not_called()
+        mock_etesync.push_collection.assert_not_called()
 
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")
     @patch("silentsuite_bridge.radicale.storage.start_sync_thread")
@@ -345,6 +480,9 @@ class TestBridgeRights:
         rights = self._rights()
 
         assert rights.authorization("user@example.com", "/user@example.com/shared-col") == "r"
+        mock_etesync_ctx.assert_called_once_with(
+            "user@example.com", exclusive=False
+        )
 
     @patch("silentsuite_bridge.radicale.rights.etesync_for_user")
     def test_writable_collection_keeps_owner_write_permission(self, mock_etesync_ctx):
@@ -514,7 +652,8 @@ class TestCreateCollection:
         mock_col_mgr.create.assert_called_once()
         call_args = mock_col_mgr.create.call_args
         assert call_args[0][0] == "etebase.vevent"
-        mock_col_mgr.upload.assert_called_once()
+        mock_col_mgr.upload.assert_not_called()
+        assert mock_thread.force_sync.call_count == 2
 
     @patch("silentsuite_bridge.radicale.storage.log_sync_event")
     @patch("silentsuite_bridge.radicale.storage.etesync_for_user")

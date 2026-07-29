@@ -16,6 +16,13 @@ const ALLOWLIST = [
     expires: '2026-07-14',
     rationale: 'Transitive build-tool exposure from Vite/Webpack paths. The patched esbuild 0.28.x line currently breaks VitePress production builds in this workspace, so keep this visible while upstream-compatible patches are evaluated. No runtime browser/server dependency on esbuild is introduced by this allowlist.',
   },
+  {
+    advisory: 'GHSA-mh99-v99m-4gvg',
+    module: 'brace-expansion',
+    severity: 'high',
+    expires: '2026-08-09',
+    rationale: 'Transitive build-tool exposure through legacy minimatch/glob consumers. Forcing brace-expansion 5.0.8 into minimatch 3.x/5.x breaks brace matching at runtime because v5 exports a named API. Keep the compatible patched 1.1.16/2.1.2 lines visible while upstream consumers migrate; no production request path evaluates attacker-controlled glob patterns.',
+  },
 ]
 
 function advisoryId(advisory) {

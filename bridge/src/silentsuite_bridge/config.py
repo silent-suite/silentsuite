@@ -93,6 +93,9 @@ HTPASSWD_FILE = os.path.join(DATA_DIR, "htpasswd")
 _DEFAULT_SYNC_INTERVAL = int(os.environ.get("SILENTSUITE_SYNC_INTERVAL", str(15 * 60)))  # 15 minutes
 SYNC_INTERVAL = _DEFAULT_SYNC_INTERVAL
 SYNC_MINIMUM = int(os.environ.get("SILENTSUITE_SYNC_MINIMUM", "30"))  # 30 seconds
+DAV_SYNC_TOKEN_RETENTION = 256
+DAV_SYNC_TOKEN_MAX_AGE = 30 * 24 * 60 * 60
+DAV_CHANGE_RETENTION = 10_000
 
 # --- Settings file ---
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
