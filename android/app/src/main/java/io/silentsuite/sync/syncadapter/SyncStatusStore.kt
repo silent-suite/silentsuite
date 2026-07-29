@@ -180,6 +180,12 @@ class SyncStatusStore internal constructor(
         beginAttemptResult(mainAccountKey(account), service, attemptId, startedAt, requestId)
     }
 
+    @Synchronized
+    internal fun beginAttemptResult(identity: MainIdentity, service: Service, attemptId: String,
+        startedAt: Long, requestId: String?): MutationResult = synchronized(STORE_LOCK) {
+        beginAttemptResult(identity.storageKey, service, attemptId, startedAt, requestId)
+    }
+
     private fun beginAttemptResult(identity: String, service: Service, attemptId: String, startedAt: Long, requestId: String?): MutationResult {
         require(isSafeOpaqueId(attemptId))
         require(requestId == null || isSafeOpaqueId(requestId))
@@ -227,9 +233,23 @@ class SyncStatusStore internal constructor(
     }
 
     @Synchronized
+    internal fun recordSuccessResult(identity: MainIdentity, service: Service, attemptId: String,
+        requestId: String?, timestamp: Long): MutationResult = synchronized(STORE_LOCK) {
+        require(service != Service.CONTACTS) { "Contacts outcomes are generation-scoped" }
+        recordTerminal(identity.storageKey, service, attemptId, requestId, TerminalResult.SUCCESS, null, timestamp)
+    }
+
+    @Synchronized
     fun recordFailureResult(account: Account, service: Service, attemptId: String, requestId: String?, category: FailureCategory, timestamp: Long): MutationResult = synchronized(STORE_LOCK) {
         require(service != Service.CONTACTS) { "Contacts outcomes are generation-scoped" }
         recordTerminal(mainAccountKey(account), service, attemptId, requestId, TerminalResult.FAILURE, category, timestamp)
+    }
+
+    @Synchronized
+    internal fun recordFailureResult(identity: MainIdentity, service: Service, attemptId: String,
+        requestId: String?, category: FailureCategory, timestamp: Long): MutationResult = synchronized(STORE_LOCK) {
+        require(service != Service.CONTACTS) { "Contacts outcomes are generation-scoped" }
+        recordTerminal(identity.storageKey, service, attemptId, requestId, TerminalResult.FAILURE, category, timestamp)
     }
 
     /** Starts a Contacts parent generation when this adapter was not admitted by the shared boundary. */
@@ -806,6 +826,7 @@ class SyncStatusStore internal constructor(
         const val EXTRA_CONTACTS_MAIN_IDENTITY = "io.silentsuite.sync.CONTACTS_MAIN_IDENTITY"
         const val EXTRA_CONTACTS_CHILD_IDENTITY = "io.silentsuite.sync.CONTACTS_CHILD_IDENTITY"
         const val EXTRA_SYNC_ATTEMPT = "io.silentsuite.sync.SYNC_ATTEMPT"
+        const val EXTRA_SYNC_MAIN_IDENTITY = "io.silentsuite.sync.SYNC_MAIN_IDENTITY"
         const val DEFAULT_INTERRUPTION_AFTER_MILLIS = 30L * 60L * 1000L
         private const val V1_VERSION = "1"
         private const val V2_VERSION = "2"

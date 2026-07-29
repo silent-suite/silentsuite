@@ -39,6 +39,33 @@ internal fun contactsChildTarget(extras: Bundle): ContactsChildTarget? = contact
 internal fun contactsChildGenerationMatches(store: SyncStatusStore, child: Account, target: ContactsChildTarget): Boolean =
     runCatching { store.childIdentity(child) == target.childIdentity }.getOrDefault(false)
 
+internal fun contactsLifecycleTargetMatches(
+    store: SyncStatusStore,
+    child: Account,
+    target: ContactsChildTarget,
+    storedMainIdentity: SyncStatusStore.MainIdentity?,
+    currentMainAccount: Account?,
+): Boolean = contactsChildGenerationMatches(store, child, target) &&
+    storedMainIdentity == target.mainIdentity &&
+    currentMainAccount != null && store.identity(currentMainAccount) == target.mainIdentity
+
+internal fun contactsLifecycleTargetMatchesCurrent(
+    context: Context,
+    store: SyncStatusStore,
+    child: Account,
+    target: ContactsChildTarget,
+): Boolean = runCatching {
+    val accountManager = android.accounts.AccountManager.get(context)
+    contactsLifecycleTargetMatches(
+        store,
+        child,
+        target,
+        SyncStatusStore.identityFromStorageKey(
+            accountManager.getUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY)),
+        LocalAddressBook(context, child, null).mainAccount,
+    )
+}.getOrDefault(false)
+
 internal fun hasContactsLifecycleTarget(extras: Bundle): Boolean =
     extras.containsKey(SyncStatusStore.EXTRA_CONTACTS_ATTEMPT) ||
         extras.containsKey(SyncStatusStore.EXTRA_CONTACTS_MAIN_IDENTITY) ||
@@ -99,7 +126,8 @@ class ContactsSyncAdapterService : SyncAdapterService() {
         override fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult): Completion {
             val lifecycleTarget = contactsChildTarget(extras)
             if (hasContactsLifecycleTarget(extras) &&
-                (lifecycleTarget == null || !contactsChildGenerationMatches(SyncStatusStore(context), account, lifecycleTarget))) {
+                (lifecycleTarget == null ||
+                    !contactsLifecycleTargetMatchesCurrent(context, SyncStatusStore(context), account, lifecycleTarget))) {
                 Logger.log.info("Skipping sync for a replaced address-book generation")
                 return Completion.SKIPPED
             }
@@ -158,7 +186,8 @@ class ContactsSyncAdapterService : SyncAdapterService() {
         ): SyncStatusStore.MutationResult {
             val target = contactsChildTarget(extras) ?: return SyncStatusStore.MutationResult.REJECTED
             val store = SyncStatusStore(context)
-            if (!contactsChildGenerationMatches(store, child, target)) return SyncStatusStore.MutationResult.REJECTED
+            if (!contactsLifecycleTargetMatchesCurrent(context, store, child, target))
+                return SyncStatusStore.MutationResult.REJECTED
             return recordContactsChildAtAdapterBoundary(store, target, result, category)
         }
     }

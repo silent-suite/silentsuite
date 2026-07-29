@@ -786,6 +786,29 @@ class SyncStatusStoreTest {
         assertTrue(seed.clear(captured))
     }
 
+    @Test fun `calendar and task terminals use the identity captured at admission`() {
+        val capturedIdentity = store.identity(first)
+        val replacementLookup = SyncStatusStore(storage,
+            mainAccountKey = { "replacement-generation" }, childAccountKey = { children[it] })
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "captured-calendar", 1, null))
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            replacementLookup.recordSuccessResult(
+                capturedIdentity, SyncStatusStore.Service.CALENDAR, "captured-calendar", null, 2))
+        assertEquals(2L, store.status(first, SyncStatusStore.Service.CALENDAR).lastSuccessAt)
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.TASKS, "captured-tasks", 3, null))
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            replacementLookup.recordFailureResult(capturedIdentity, SyncStatusStore.Service.TASKS,
+                "captured-tasks", null, SyncStatusStore.FailureCategory.PROVIDER, 4))
+        assertEquals(SyncStatusStore.FailureCategory.PROVIDER,
+            store.status(first, SyncStatusStore.Service.TASKS).lastFailureCategory)
+        assertEquals(SyncStatusStore.Status(),
+            replacementLookup.status(first, SyncStatusStore.Service.CALENDAR))
+        assertEquals(SyncStatusStore.Status(),
+            replacementLookup.status(first, SyncStatusStore.Service.TASKS))
+    }
+
     @Test fun `confirmed child removal and exact clear preserve generation isolation`() {
         val child = child("remove-snapshot")
         val attempt = begin(setOf(child), "remove-snapshot-attempt")

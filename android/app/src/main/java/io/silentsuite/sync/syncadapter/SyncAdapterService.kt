@@ -126,17 +126,20 @@ abstract class SyncAdapterService : Service() {
             val service = outcomeService
             val attemptId = service?.let { UUID.randomUUID().toString() }
             val statusStore = service?.let { SyncStatusStore(context) }
-            val contactsMainIdentity = if (service == SyncStatusStore.Service.CONTACTS)
-                statusStore?.identity(account) else null
+            val admittedIdentity = service?.let { statusStore?.identity(account) }
             val admission = service?.let { outcomeService -> attemptId?.let { id ->
-                statusStore?.beginAttemptResult(account, outcomeService, id, System.currentTimeMillis(), syncRequestId(extras))
+                admittedIdentity?.let { identity -> statusStore?.beginAttemptResult(
+                    identity, outcomeService, id, System.currentTimeMillis(), syncRequestId(extras)) }
             } }
             // Preserve correlation after a failed persistence admission: a real direct sync can
             // still repair request/terminal evidence at its completion boundary.
-            if (admission != SyncStatusStore.MutationResult.REJECTED && attemptId != null) putSyncAttempt(extras, attemptId)
+            if (admission != SyncStatusStore.MutationResult.REJECTED && attemptId != null && admittedIdentity != null) {
+                putSyncAttempt(extras, attemptId)
+                putSyncMainIdentity(extras, admittedIdentity)
+            }
             if (admission != SyncStatusStore.MutationResult.REJECTED && service == SyncStatusStore.Service.CONTACTS &&
-                attemptId != null && contactsMainIdentity != null)
-                putContactsParent(extras, contactsMainIdentity, attemptId)
+                attemptId != null && admittedIdentity != null)
+                putContactsParent(extras, admittedIdentity, attemptId)
 
             // Check subscription status before allowing sync.
             // Blocks sync when subscription is cancelled/expired (read-only mode).
@@ -204,20 +207,25 @@ abstract class SyncAdapterService : Service() {
         protected open fun recordSuccess(account: Account, extras: Bundle): SyncStatusStore.MutationResult {
             val service = outcomeService ?: return SyncStatusStore.MutationResult.RECORDED
             val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
-            return SyncStatusStore(context).recordSuccessResult(account, service, attemptId, syncRequestId(extras), System.currentTimeMillis())
+            val identity = syncMainIdentity(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return SyncStatusStore(context).recordSuccessResult(
+                identity, service, attemptId, syncRequestId(extras), System.currentTimeMillis())
         }
 
         protected open fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): SyncStatusStore.MutationResult {
             val service = outcomeService ?: return SyncStatusStore.MutationResult.RECORDED
             val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
-            return SyncStatusStore(context).recordFailureResult(account, service, attemptId, syncRequestId(extras), category, System.currentTimeMillis())
+            val identity = syncMainIdentity(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return SyncStatusStore(context).recordFailureResult(
+                identity, service, attemptId, syncRequestId(extras), category, System.currentTimeMillis())
         }
 
-        protected open fun finishWithoutOutcome(account: Account, extras: Bundle): SyncStatusStore.MutationResult =
-            outcomeService?.let { service -> syncAttempt(extras)?.let {
-                finishWithoutOutcomeResultAtAdapterBoundary(SyncStatusStore(context), account, service, it)
-            } }
-                ?: SyncStatusStore.MutationResult.REJECTED
+        protected open fun finishWithoutOutcome(account: Account, extras: Bundle): SyncStatusStore.MutationResult {
+            val service = outcomeService ?: return SyncStatusStore.MutationResult.REJECTED
+            val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            val identity = syncMainIdentity(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return SyncStatusStore(context).finishWithoutOutcomeResult(identity, service, attemptId)
+        }
 
         private fun recordCompletedOutcome(account: Account, extras: Bundle, before: SyncCompletionSnapshot, result: SyncResult, forceFailure: Boolean = false) {
             val after = snapshot(result)
@@ -366,3 +374,7 @@ abstract class SyncAdapterService : Service() {
 
 internal fun putSyncAttempt(extras: Bundle, attemptId: String) = extras.putString(SyncStatusStore.EXTRA_SYNC_ATTEMPT, attemptId)
 internal fun syncAttempt(extras: Bundle): String? = extras.getString(SyncStatusStore.EXTRA_SYNC_ATTEMPT)?.takeIf { it.isNotBlank() }
+internal fun putSyncMainIdentity(extras: Bundle, identity: SyncStatusStore.MainIdentity) =
+    extras.putString(SyncStatusStore.EXTRA_SYNC_MAIN_IDENTITY, identity.storageKey)
+internal fun syncMainIdentity(extras: Bundle): SyncStatusStore.MainIdentity? =
+    SyncStatusStore.identityFromStorageKey(extras.getString(SyncStatusStore.EXTRA_SYNC_MAIN_IDENTITY))

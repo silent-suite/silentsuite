@@ -122,8 +122,10 @@ class SyncStatusRuntimeTest {
         val extras = Bundle()
         val mainIdentity = SyncStatusStore.identityFromStorageKey("a".repeat(64))!!
         val childIdentity = SyncStatusStore.childIdentityFromStorageKey("b".repeat(64))!!
+        putSyncMainIdentity(extras, mainIdentity)
         putContactsTarget(extras, mainIdentity, "opaque-attempt", childIdentity)
         val target = requireNotNull(contactsChildTarget(extras))
+        assertEquals(mainIdentity, syncMainIdentity(extras))
         assertEquals("opaque-attempt", target.attemptId)
         assertEquals(mainIdentity, target.mainIdentity)
         assertEquals(childIdentity, target.childIdentity)

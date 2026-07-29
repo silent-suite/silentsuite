@@ -67,13 +67,21 @@ class ProviderBoundaryPolicyTest {
             put(oldChild, "b".repeat(64))
             put(replacementChild, "c".repeat(64))
         }
+        val oldMain = Account("same-main", "main")
+        val replacementMain = Account("same-main", "main")
+        val mainKeys = java.util.IdentityHashMap<Account, String>().apply {
+            put(oldMain, "a".repeat(64))
+            put(replacementMain, "d".repeat(64))
+        }
         val store = SyncStatusStore(MemoryStatusStorage(),
-            mainAccountKey = { "a".repeat(64) }, childAccountKey = { childKeys[it] })
-        val target = requireNotNull(contactsChildTarget(store.identity(Account("main", "main")), "attempt",
+            mainAccountKey = { mainKeys[it] ?: error("missing main") }, childAccountKey = { childKeys[it] })
+        val target = requireNotNull(contactsChildTarget(store.identity(oldMain), "attempt",
             store.childIdentity(oldChild)))
 
-        assertTrue(contactsChildGenerationMatches(store, oldChild, target))
-        assertFalse(contactsChildGenerationMatches(store, replacementChild, target))
+        assertTrue(contactsLifecycleTargetMatches(store, oldChild, target, store.identity(oldMain), oldMain))
+        assertFalse(contactsLifecycleTargetMatches(store, replacementChild, target, store.identity(oldMain), oldMain))
+        assertFalse(contactsLifecycleTargetMatches(store, oldChild, target, store.identity(replacementMain), oldMain))
+        assertFalse(contactsLifecycleTargetMatches(store, oldChild, target, store.identity(oldMain), replacementMain))
     }
 
     @Test fun `cancelled completion is classified before any fabricated terminal`() {

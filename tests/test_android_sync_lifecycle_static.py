@@ -71,10 +71,11 @@ def test_attempt_admission_is_correlation_bound_for_every_adapter_outcome():
     source = ADAPTER.read_text(encoding="utf-8")
     address_books = ADDRESS_BOOKS.read_text(encoding="utf-8")
 
-    assert "beginAttemptResult(account, outcomeService" in source
+    assert "beginAttemptResult(\n                    identity, outcomeService" in source
+    assert "putSyncMainIdentity(extras, admittedIdentity)" in source
     assert "admission != SyncStatusStore.MutationResult.REJECTED" in source
-    assert "recordSuccessResult(account, service, attemptId, syncRequestId(extras)" in source
-    assert "recordFailureResult(account, service, attemptId, syncRequestId(extras)" in source
+    assert "recordSuccessResult(\n                identity, service, attemptId, syncRequestId(extras)" in source
+    assert "recordFailureResult(\n                identity, service, attemptId, syncRequestId(extras)" in source
     assert "write() == SyncStatusStore.MutationResult.STORAGE_FAILURE" in source
     assert "else store.recordSuccess" not in source
     assert "else store.recordFailure" not in source
@@ -159,13 +160,17 @@ def test_contacts_children_use_captured_generation_identities_across_dispatch_an
     assert "putContactsTarget(syncExtras, mainIdentity, it, childIdentity)" in parent
     assert 'Logger.log.log(Level.INFO, "Running sync for address book", addressBookAccount)' not in parent
     assert "contactsChildTarget(extras)" in child
-    assert "contactsChildGenerationMatches(SyncStatusStore(context), account, lifecycleTarget)" in child
-    assert "contactsChildGenerationMatches(store, child, target)" in child
-    assert "LocalAddressBook(context, child, null).mainAccount" not in child
+    assert "contactsLifecycleTargetMatchesCurrent(context, SyncStatusStore(context), account, lifecycleTarget)" in child
+    assert "contactsLifecycleTargetMatchesCurrent(context, store, child, target)" in child
+    assert "LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY" in child
+    assert "store.identity(currentMainAccount) == target.mainIdentity" in child
+    assert "LocalAddressBook(context, child, null).mainAccount" in child
     assert "target.childIdentity" in child
     assert "failContactsParentResult(mainIdentity, attemptId" in parent
     assert "failContactsParentResult(account, attemptId" not in parent
     assert "finishWithoutOutcomeResult(\n                mainIdentity, SyncStatusStore.Service.CONTACTS, attemptId)" in parent
+    assert "EXTRA_SYNC_MAIN_IDENTITY" in store
+    assert "syncMainIdentity(extras)" in ADAPTER.read_text(encoding="utf-8")
 
 
 def test_runtime_contacts_fixtures_do_not_query_account_manager_for_synthetic_children():
@@ -215,7 +220,7 @@ def test_contacts_parent_precedes_admission_and_identity_maintenance_is_snapshot
     activity = ACTIVITY.read_text(encoding="utf-8")
 
     assert "service == SyncStatusStore.Service.CONTACTS" in adapter
-    assert "putContactsParent(extras, contactsMainIdentity, attemptId)" in adapter
+    assert "putContactsParent(extras, admittedIdentity, attemptId)" in adapter
     assert "attachContactsChildren" in address_books
     assert activity.index("for (addrBookAccount") < activity.index("lifecycleStatus(statusStore, SyncStatusStore.Service.CONTACTS")
     assert "statusIdentity = SyncStatusStore(context).identity(account, creationId)" in activity
