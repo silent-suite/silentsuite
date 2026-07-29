@@ -758,8 +758,6 @@ class SyncStatusStore internal constructor(
         ChildResult.REMOVED -> category == FailureCategory.CHILD_REMOVED
         ChildResult.FAILURE -> category != null && category in CHILD_FAILURE_CATEGORIES
     }
-    private fun isSafeOpaqueId(value: String) = value.length in 1..MAX_OPAQUE_ID_LENGTH &&
-        value.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' || it == '-' }
     private fun persistFaults(keys: Set<String>, retainInProcess: Boolean = false) {
         val timestamp = System.currentTimeMillis().coerceAtLeast(0)
         val puts = keys.associate { key ->
@@ -807,6 +805,8 @@ class SyncStatusStore internal constructor(
             FailureCategory.CONFIGURATION, FailureCategory.UNKNOWN)
         private val STORE_LOCK = Any()
         private val failedWrites = mutableMapOf<String, Long>()
+        private fun isSafeOpaqueId(value: String) = value.length in 1..MAX_OPAQUE_ID_LENGTH &&
+            value.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' || it == '-' }
         internal fun identityFromStorageKey(storageKey: String?): MainIdentity? =
             storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)
         internal fun childIdentityFromStorageKey(storageKey: String?): ChildIdentity? =
