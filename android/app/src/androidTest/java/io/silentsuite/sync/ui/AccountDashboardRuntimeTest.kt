@@ -126,8 +126,12 @@ class AccountDashboardRuntimeTest {
             }
         }) { context, account, scenario ->
             val child = Account("runtime-pending-child", "child")
-            val started = SyncStatusStore(context).beginContacts(account, setOf(child),
-                startedAt = System.currentTimeMillis(), attemptId = "runtime-pending-parent")
+            val store = SyncStatusStore(context)
+            val startedAt = System.currentTimeMillis()
+            val attemptId = "runtime-pending-parent"
+            assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, attemptId, startedAt, null))
+            val started = store.attachContactsChildren(store.identity(account), attemptId,
+                setOf(store.childIdentity(child, "runtime-pending-child-generation")), startedAt)
             assertTrue(started is SyncStatusStore.ContactsStart.Started)
             scenario.onActivity { it.refresh() }
             waitForText(scenario, R.id.carddav_status) {
@@ -170,6 +174,7 @@ class AccountDashboardRuntimeTest {
             }
             calendarRefreshing.set(true)
             val store = SyncStatusStore(context)
+            val mainIdentity = store.identity(account)
             val categories = listOf(
                 SyncStatusStore.FailureCategory.PERMISSION to R.string.dashboard_status_permission_needed,
                 SyncStatusStore.FailureCategory.INTERRUPTED to R.string.dashboard_status_interrupted,
@@ -179,13 +184,17 @@ class AccountDashboardRuntimeTest {
             )
             categories.forEachIndexed { index, (category, label) ->
                 val child = Account("runtime-contacts-child-$index", "child")
-                val attempt = store.beginContacts(account, setOf(child), startedAt = System.currentTimeMillis(),
-                    attemptId = "runtime-contacts-parent-$index") as SyncStatusStore.ContactsStart.Started
+                val childIdentity = store.childIdentity(child, "runtime-contacts-child-generation-$index")
+                val attemptId = "runtime-contacts-parent-$index"
+                val startedAt = System.currentTimeMillis()
+                assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, attemptId, startedAt, null))
+                val attempt = store.attachContactsChildren(mainIdentity, attemptId, setOf(childIdentity), startedAt)
+                    as SyncStatusStore.ContactsStart.Started
                 if (category == SyncStatusStore.FailureCategory.INTERRUPTED) {
                     assertTrue(store.failContactsParent(account, attempt.attemptId, category))
                 } else {
-                    assertEquals(SyncStatusStore.ChildWrite.RECORDED, store.recordContactsChild(account, attempt.attemptId,
-                        child, SyncStatusStore.ChildResult.FAILURE, category, System.currentTimeMillis()))
+                    assertEquals(SyncStatusStore.ChildWrite.RECORDED, store.recordContactsChild(mainIdentity, attempt.attemptId,
+                        childIdentity, SyncStatusStore.ChildResult.FAILURE, category, System.currentTimeMillis()))
                 }
                 val activity = dashboardActivity.get()
                 activity.runOnUiThread { activity.refresh() }

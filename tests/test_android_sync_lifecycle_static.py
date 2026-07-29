@@ -163,6 +163,15 @@ def test_contacts_children_use_captured_generation_identities_across_dispatch_an
     assert "target.childIdentity" in child
 
 
+def test_runtime_contacts_fixtures_do_not_query_account_manager_for_synthetic_children():
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
+
+    assert "beginContacts(account, setOf(child)" not in runtime
+    assert 'childIdentity(child, "runtime-pending-child-generation")' in runtime
+    assert 'childIdentity(child, "runtime-contacts-child-generation-$index")' in runtime
+    assert "attachContactsChildren(mainIdentity, attemptId, setOf(childIdentity)" in runtime
+
+
 def test_node_security_floor_matches_manifest_docs_and_sharp_lock_requirement():
     manifest = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     lock = (ROOT / "pnpm-lock.yaml").read_text(encoding="utf-8")

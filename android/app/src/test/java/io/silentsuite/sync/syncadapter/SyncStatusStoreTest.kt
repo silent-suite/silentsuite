@@ -700,7 +700,7 @@ class SyncStatusStoreTest {
         record(SyncStatusStore.Service.CONTACTS, attempt = "parent", attemptAt = "1", contacts = "$hash;$hash:FAILURE:CHILD_REMOVED")
     }
 
-    @Test fun `writers reject unsafe opaque IDs child keys and direct active contacts terminals`() {
+    @Test fun `writers reject unsafe opaque IDs and direct active contacts terminals`() {
         fun assertRejected(write: () -> Unit) {
             try {
                 write()
@@ -715,7 +715,8 @@ class SyncStatusStoreTest {
 
         val unsafeChild = Account("unsafe-child", "child")
         children[unsafeChild] = "not-a-sha256"
-        assertRejected { store.beginContacts(first, setOf(unsafeChild), startedAt = 1, attemptId = "parent") }
+        assertEquals(SyncStatusStore.ContactsStart.StorageFailure,
+            store.beginContacts(first, setOf(unsafeChild), startedAt = 1, attemptId = "parent"))
 
         val child = child("direct-terminal")
         val attempt = begin(setOf(child), "direct-parent")
