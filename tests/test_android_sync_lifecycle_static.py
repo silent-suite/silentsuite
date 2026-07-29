@@ -99,7 +99,8 @@ def test_contacts_child_cleanup_snapshots_identity_and_signals_retry_on_every_fa
     assert "USER_DATA_MAIN_ACCOUNT_CREATION_ID" not in address_book
     assert "val capturedIdentity = SyncStatusStore.identityFromStorageKey(" in address_book
     assert "if (capturedIdentity != null)" in address_book
-    assert "recordContactsChildRemoved(capturedIdentity, child)" in address_book
+    assert "if (capturedChildIdentity != null)" in address_book
+    assert "recordContactsChildRemoved(capturedIdentity, capturedChildIdentity)" in address_book
     assert "mainGenerationStillCurrent" in address_book
     assert "statusStore.identity(candidate) == capturedIdentity" in address_book
     assert "recordContactsChildRemoved(statusStore.identity(main)" not in address_book
@@ -113,9 +114,10 @@ def test_address_book_child_persists_only_hashed_parent_generation_on_creation_a
     source = (ROOT / "android/app/src/main/java/io/silentsuite/sync/resource/LocalAddressBook.kt").read_text(encoding="utf-8")
     runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDrawerSignOutRuntimeTest.kt").read_text(encoding="utf-8")
 
-    assert "fun initialUserData(mainAccount: Account, mainIdentity: SyncStatusStore.MainIdentity, url: String)" in source
+    assert "fun initialUserData(mainAccount: Account, mainIdentity: SyncStatusStore.MainIdentity, url: String," in source
     assert "require(SyncStatusStore.identityFromStorageKey(storageKey) != null)" in source
     assert "bundle.putString(USER_DATA_MAIN_ACCOUNT_IDENTITY, storageKey)" in source
+    assert "bundle.putString(USER_DATA_CREATION_ID, childCreationId)" in source
     assert "USER_DATA_MAIN_ACCOUNT_CREATION_ID" not in source
     assert "bundle.putString(USER_DATA_MAIN_ACCOUNT_IDENTITY, mainCreationId)" not in source
     assert "getUserData(mainAccount, AccountSettings.KEY_CREATION_ID)" in source
@@ -133,10 +135,32 @@ def test_address_book_child_identity_missing_or_malformed_fails_closed_and_repla
     assert "storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)" in store
     assert "val capturedIdentity = SyncStatusStore.identityFromStorageKey(" in source
     removal = source.split("val recordConfirmedRemoval =", 1)[1].split('@Suppress("DEPRECATION")', 1)[0]
-    assert "if (capturedIdentity != null)" in removal
-    assert "recordContactsChildRemoved" not in removal.split("if (capturedIdentity != null)", 1)[0]
-    assert "ContentResolver.requestSync" not in removal.split("if (capturedIdentity != null)", 1)[0]
+    exact_guard = "if (capturedIdentity != null)"
+    assert exact_guard in removal
+    assert "recordContactsChildRemoved" not in removal.split(exact_guard, 1)[0]
+    assert "ContentResolver.requestSync" not in removal.split(exact_guard, 1)[0]
     assert "statusStore.identity(candidate) == capturedIdentity" in removal
+
+
+def test_contacts_children_use_captured_generation_identities_across_dispatch_and_removal():
+    store = STORE.read_text(encoding="utf-8")
+    address_book = (ROOT / "android/app/src/main/java/io/silentsuite/sync/resource/LocalAddressBook.kt").read_text(encoding="utf-8")
+    parent = ADDRESS_BOOKS.read_text(encoding="utf-8")
+    child = (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/ContactsSyncAdapterService.kt").read_text(encoding="utf-8")
+
+    assert "data class ChildIdentity" in store
+    assert "LocalAddressBook.USER_DATA_CREATION_ID" in store
+    assert "childIdentityFromStorageKey" in store
+    assert 'const val USER_DATA_CREATION_ID = "sync_status_child_creation_id"' in address_book
+    assert "UUID.randomUUID().toString()" in address_book
+    assert "ensureLifecycleCreationId()" in address_book
+    assert "val capturedChildIdentity = statusStore.childIdentity(child)" in address_book
+    assert "recordContactsChildRemoved(capturedIdentity, capturedChildIdentity)" in address_book
+    assert "putContactsTarget(syncExtras, mainIdentity, it, childIdentity)" in parent
+    assert 'Logger.log.log(Level.INFO, "Running sync for address book", addressBookAccount)' not in parent
+    assert "contactsChildTarget(extras)" in child
+    assert "LocalAddressBook(context, child, null).mainAccount" not in child
+    assert "target.childIdentity" in child
 
 
 def test_node_security_floor_matches_manifest_docs_and_sharp_lock_requirement():
@@ -164,11 +188,11 @@ def test_compile_and_contacts_evidence_failures_do_not_block_real_children():
     assert "return@synchronized" not in lifecycle_finisher
     assert ".status?." in activity
     dispatch = address_books.split("val childAccounts", 1)[1]
-    before_children, _ = dispatch.split("for (addressBookAccount in childAccounts)", 1)
+    before_children, _ = dispatch.split("for ((addressBookAccount, childIdentity) in childTargets)", 1)
     assert "return Completion.DISPATCHED" not in before_children
     assert "syncResult.stats.numIoExceptions++" in before_children
-    assert "if (attemptId == null)" in before_children
-    assert "attemptId?.let { putContactsAttempt(syncExtras, it) }" in address_books
+    assert "if (attemptId == null || mainIdentity == null || childTargets.size != childAccounts.size)" in before_children
+    assert "attemptId?.let { putContactsTarget(syncExtras, mainIdentity, it, childIdentity) }" in address_books
 
 
 def test_contacts_parent_precedes_admission_and_identity_maintenance_is_snapshot_bound():
@@ -177,7 +201,7 @@ def test_contacts_parent_precedes_admission_and_identity_maintenance_is_snapshot
     activity = ACTIVITY.read_text(encoding="utf-8")
 
     assert "service == SyncStatusStore.Service.CONTACTS" in adapter
-    assert "putContactsAttempt(extras, attemptId)" in adapter
+    assert "putContactsParent(extras, contactsMainIdentity, attemptId)" in adapter
     assert "attachContactsChildren" in address_books
     assert activity.index("for (addrBookAccount") < activity.index("lifecycleStatus(statusStore, SyncStatusStore.Service.CONTACTS")
     assert "statusIdentity = SyncStatusStore(context).identity(account, creationId)" in activity
@@ -191,14 +215,14 @@ def test_failed_contacts_admission_is_repaired_before_real_children_complete():
     store = STORE.read_text(encoding="utf-8")
     address_books = ADDRESS_BOOKS.read_text(encoding="utf-8")
 
-    attachment = store.split("private fun attachContactsChildren", 1)[1].split("@Synchronized", 1)[0]
+    attachment = store.split("private fun attachContactsChildKeys", 1)[1].split("@Synchronized", 1)[0]
     assert "repairingFailedAdmission" in attachment
     assert "hasLifecycleFault(identity, Service.CONTACTS)" in attachment
     assert "current.attemptId == null" in attachment
     assert "attemptId = attemptId" in attachment
     assert "contacts = ContactsGeneration(expected)" in attachment
     assert "signalPersistenceRetry(syncResult)" in address_books
-    assert "for (addressBookAccount in childAccounts)" in address_books
+    assert "for ((addressBookAccount, childIdentity) in childTargets)" in address_books
 
 
 def test_dashboard_uses_every_exact_approved_pr1_copy_string():

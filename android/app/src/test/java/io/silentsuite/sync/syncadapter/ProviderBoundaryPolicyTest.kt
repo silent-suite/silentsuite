@@ -49,12 +49,15 @@ class ProviderBoundaryPolicyTest {
     }
 
     @Test fun `contacts child outcome requires exact main mapping and propagated attempt`() {
-        val main = Account("main", "main-type")
-        val target = contactsChildTarget(main, "attempt")
-        assertSame(main, target?.mainAccount)
+        val main = SyncStatusStore.identityFromStorageKey("a".repeat(64))!!
+        val child = SyncStatusStore.childIdentityFromStorageKey("b".repeat(64))!!
+        val target = contactsChildTarget(main, "attempt", child)
+        assertSame(main, target?.mainIdentity)
+        assertSame(child, target?.childIdentity)
         assertEquals("attempt", target?.attemptId)
-        assertEquals(null, contactsChildTarget(main, null))
-        assertEquals(null, contactsChildTarget(null, "attempt"))
+        assertEquals(null, contactsChildTarget(main, null, child))
+        assertEquals(null, contactsChildTarget(null, "attempt", child))
+        assertEquals(null, contactsChildTarget(main, "attempt", null))
     }
 
     @Test fun `cancelled completion is classified before any fabricated terminal`() {
@@ -98,7 +101,7 @@ class ProviderBoundaryPolicyTest {
         assertEquals(SyncStatusStore.ContactsStart.Started("parent-success"),
             attachContactsChildrenAtAdapterBoundary(store, main, "parent-success", setOf(child), 10))
         assertEquals(SyncStatusStore.MutationResult.RECORDED, recordContactsChildAtAdapterBoundary(store,
-            requireNotNull(contactsChildTarget(main, "parent-success")), child,
+            target(store, main, "parent-success", child),
             SyncStatusStore.ChildResult.SUCCESS, timestamp = 11))
         assertEquals(11L, store.status(main, SyncStatusStore.Service.CONTACTS).lastSuccessAt)
         assertFalse(store.status(main, SyncStatusStore.Service.CONTACTS).latestGenerationIncomplete)
@@ -107,7 +110,7 @@ class ProviderBoundaryPolicyTest {
         assertEquals(SyncStatusStore.ContactsStart.Started("parent-failure"),
             attachContactsChildrenAtAdapterBoundary(store, main, "parent-failure", setOf(child), 20))
         assertEquals(SyncStatusStore.MutationResult.RECORDED, recordContactsChildAtAdapterBoundary(store,
-            requireNotNull(contactsChildTarget(main, "parent-failure")), child,
+            target(store, main, "parent-failure", child),
             SyncStatusStore.ChildResult.FAILURE, SyncStatusStore.FailureCategory.PROVIDER, 21))
         assertEquals(SyncStatusStore.FailureCategory.PROVIDER,
             store.status(main, SyncStatusStore.Service.CONTACTS).lastFailureCategory)
@@ -125,12 +128,13 @@ class ProviderBoundaryPolicyTest {
             store.beginAttemptResult(main, SyncStatusStore.Service.CONTACTS, "failed-admission", 10, null))
         assertEquals(SyncStatusStore.ContactsStart.Started("failed-admission"),
             attachContactsChildrenAtAdapterBoundary(store, main, "failed-admission", setOf(firstChild, secondChild), 11))
-        val target = contactsChildTarget(main, "failed-admission")!!
         assertEquals(SyncStatusStore.MutationResult.RECORDED,
-            recordContactsChildAtAdapterBoundary(store, target, firstChild, SyncStatusStore.ChildResult.SUCCESS, timestamp = 12))
+            recordContactsChildAtAdapterBoundary(store, target(store, main, "failed-admission", firstChild),
+                SyncStatusStore.ChildResult.SUCCESS, timestamp = 12))
         assertEquals(1, store.status(main, SyncStatusStore.Service.CONTACTS).pendingChildren)
         assertEquals(SyncStatusStore.MutationResult.RECORDED,
-            recordContactsChildAtAdapterBoundary(store, target, secondChild, SyncStatusStore.ChildResult.FAILURE,
+            recordContactsChildAtAdapterBoundary(store, target(store, main, "failed-admission", secondChild),
+                SyncStatusStore.ChildResult.FAILURE,
                 SyncStatusStore.FailureCategory.NETWORK, 13))
         val terminal = store.status(main, SyncStatusStore.Service.CONTACTS)
         assertEquals(SyncStatusStore.FailureCategory.NETWORK, terminal.lastFailureCategory)
@@ -152,8 +156,8 @@ class ProviderBoundaryPolicyTest {
             attachContactsChildrenAtAdapterBoundary(store, main, "provider-attempt", setOf(child), 12, "provider-request"))
         assertEquals("provider-request", store.status(main, SyncStatusStore.Service.CONTACTS).attemptRequestId)
         assertEquals(SyncStatusStore.MutationResult.RECORDED,
-            recordContactsChildAtAdapterBoundary(store, contactsChildTarget(main, "provider-attempt")!!,
-                child, SyncStatusStore.ChildResult.SUCCESS, timestamp = 13))
+            recordContactsChildAtAdapterBoundary(store, target(store, main, "provider-attempt", child),
+                SyncStatusStore.ChildResult.SUCCESS, timestamp = 13))
         assertEquals(null, store.status(main, SyncStatusStore.Service.CONTACTS).activeRequestId)
     }
 
@@ -199,13 +203,13 @@ class ProviderBoundaryPolicyTest {
             store.beginAttemptResult(main, SyncStatusStore.Service.CONTACTS, "repair-final", 10, null))
         assertEquals(SyncStatusStore.ContactsStart.Started("repair-final"),
             attachContactsChildrenAtAdapterBoundary(store, main, "repair-final", setOf(child), 11))
-        val target = contactsChildTarget(main, "repair-final")!!
+        val target = target(store, main, "repair-final", child)
         storage.failNext = true
         assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE,
-            recordContactsChildAtAdapterBoundary(store, target, child, SyncStatusStore.ChildResult.SUCCESS, timestamp = 12))
+            recordContactsChildAtAdapterBoundary(store, target, SyncStatusStore.ChildResult.SUCCESS, timestamp = 12))
         assertEquals("repair-final", store.status(main, SyncStatusStore.Service.CONTACTS).activeAttemptId)
         assertEquals(SyncStatusStore.MutationResult.RECORDED,
-            recordContactsChildAtAdapterBoundary(store, target, child, SyncStatusStore.ChildResult.SUCCESS, timestamp = 12))
+            recordContactsChildAtAdapterBoundary(store, target, SyncStatusStore.ChildResult.SUCCESS, timestamp = 12))
         assertEquals(12L, store.status(main, SyncStatusStore.Service.CONTACTS).lastSuccessAt)
     }
 
@@ -223,9 +227,9 @@ class ProviderBoundaryPolicyTest {
         assertTrue(store.beginAttempt(main, SyncStatusStore.Service.CONTACTS, "child-skip", 2, null))
         assertEquals(SyncStatusStore.ContactsStart.Started("child-skip"),
             attachContactsChildrenAtAdapterBoundary(store, main, "child-skip", setOf(child), 3))
-        val skipped = contactsChildTarget(main, "child-skip")!!
+        val skipped = target(store, main, "child-skip", child)
         assertEquals(SyncStatusStore.MutationResult.RECORDED,
-            recordContactsChildAtAdapterBoundary(store, skipped, child, SyncStatusStore.ChildResult.SKIPPED, timestamp = 4))
+            recordContactsChildAtAdapterBoundary(store, skipped, SyncStatusStore.ChildResult.SKIPPED, timestamp = 4))
         assertEquals(null, store.status(main, SyncStatusStore.Service.CONTACTS).activeAttemptId)
         assertEquals(null, store.status(main, SyncStatusStore.Service.CONTACTS).lastFailureAt)
 
@@ -233,12 +237,12 @@ class ProviderBoundaryPolicyTest {
         assertEquals(SyncStatusStore.ContactsStart.Started("cleanup-retry"),
             attachContactsChildrenAtAdapterBoundary(store, main, "cleanup-retry", setOf(child), 5))
         storage.failNext = true
-        val retry = contactsChildTarget(main, "cleanup-retry")!!
+        val retry = target(store, main, "cleanup-retry", child)
         assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE,
-            recordContactsChildAtAdapterBoundary(store, retry, child, SyncStatusStore.ChildResult.SKIPPED, timestamp = 6))
+            recordContactsChildAtAdapterBoundary(store, retry, SyncStatusStore.ChildResult.SKIPPED, timestamp = 6))
         assertEquals("cleanup-retry", store.status(main, SyncStatusStore.Service.CONTACTS).activeAttemptId)
         assertEquals(SyncStatusStore.MutationResult.RECORDED,
-            recordContactsChildAtAdapterBoundary(store, retry, child, SyncStatusStore.ChildResult.SKIPPED, timestamp = 6))
+            recordContactsChildAtAdapterBoundary(store, retry, SyncStatusStore.ChildResult.SKIPPED, timestamp = 6))
         assertEquals(null, store.status(main, SyncStatusStore.Service.CONTACTS).activeAttemptId)
     }
 
@@ -258,7 +262,7 @@ class ProviderBoundaryPolicyTest {
             assertEquals(SyncStatusStore.ContactsStart.Started(attempt),
                 attachContactsChildrenAtAdapterBoundary(store, main, attempt, setOf(child), index.toLong()))
             assertEquals(SyncStatusStore.MutationResult.RECORDED,
-                recordContactsChildAtAdapterBoundary(store, contactsChildTarget(main, attempt)!!, child,
+                recordContactsChildAtAdapterBoundary(store, target(store, main, attempt, child),
                 result, category ?: SyncStatusStore.FailureCategory.PROVIDER, index.toLong() + 1))
             val shadow = storage.values.entries.single { it.key.startsWith("status.") && it.key.endsWith(".CONTACTS") }
             val frozen = FrozenBaselineV1StatusReader(storage::get).status(shadow.key, contacts = true)
@@ -292,4 +296,14 @@ class ProviderBoundaryPolicyTest {
             marker.repeat(64)
         },
     )
+
+    private fun attachContactsChildrenAtAdapterBoundary(store: SyncStatusStore, parent: Account, attemptId: String,
+        children: Set<Account>, startedAt: Long, requestId: String? = null): SyncStatusStore.ContactsStart {
+        val identities = children.mapTo(linkedSetOf()) { requireNotNull(store.childIdentity(it)) }
+        return io.silentsuite.sync.syncadapter.attachContactsChildrenAtAdapterBoundary(
+            store, store.identity(parent), attemptId, identities, startedAt, requestId)
+    }
+
+    private fun target(store: SyncStatusStore, main: Account, attemptId: String, child: Account) =
+        requireNotNull(contactsChildTarget(store.identity(main), attemptId, store.childIdentity(child)))
 }

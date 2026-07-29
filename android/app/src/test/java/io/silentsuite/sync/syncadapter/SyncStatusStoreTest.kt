@@ -33,8 +33,8 @@ class SyncStatusStoreTest {
             else -> "replacement-generation"
         } },
         childAccountKey = { children[it] ?: error("missing child") })
-    private fun child(id: String) = Account(id, "child").also {
-        children[it] = MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
+    private fun child(id: String, generation: String = id) = Account(id, "child").also {
+        children[it] = MessageDigest.getInstance("SHA-256").digest(generation.toByteArray()).joinToString("") { byte -> "%02x".format(byte) }
     }
     private fun begin(children: Set<Account>, attempt: String = "attempt") =
         store.beginContacts(first, children, startedAt = 10, attemptId = attempt) as SyncStatusStore.ContactsStart.Started
@@ -173,6 +173,30 @@ class SyncStatusStoreTest {
             timestamp = 21))
         assertEquals(SyncStatusStore.FailureCategory.NETWORK, store.status(first, SyncStatusStore.Service.CONTACTS).lastFailureCategory)
         assertFalse(store.status(first, SyncStatusStore.Service.CONTACTS).latestGenerationIncomplete)
+    }
+
+    @Test fun `same name child replacement rejects every stale captured generation close`() {
+        val oldChild = child("same-name-child", "old-child-generation")
+        val replacementChild = child("same-name-child", "replacement-child-generation")
+        val mainIdentity = store.identity(first)
+        val oldIdentity = requireNotNull(store.childIdentity(oldChild))
+        val replacementIdentity = requireNotNull(store.childIdentity(replacementChild))
+        assertNotEquals(oldIdentity, replacementIdentity)
+
+        SyncStatusStore.ChildResult.values().forEachIndexed { index, result ->
+            val attempt = "replacement-parent-$index"
+            val startedAt = 10L + index * 10
+            assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CONTACTS, attempt, startedAt, null))
+            assertEquals(SyncStatusStore.ContactsStart.Started(attempt),
+                store.attachContactsChildren(mainIdentity, attempt, setOf(replacementIdentity), startedAt + 1))
+            assertEquals("stale $result must not close the replacement child",
+                SyncStatusStore.ChildWrite.REJECTED,
+                store.recordContactsChild(mainIdentity, attempt, oldIdentity, result, timestamp = startedAt + 2))
+            assertEquals(SyncStatusStore.ChildWrite.RECORDED,
+                store.recordContactsChild(mainIdentity, attempt, replacementIdentity, result,
+                    SyncStatusStore.FailureCategory.PROVIDER, startedAt + 3))
+            assertNull(store.status(first, SyncStatusStore.Service.CONTACTS).activeAttemptId)
+        }
     }
 
     @Test fun `contacts start supersedes an older generation without accepting its terminals`() {

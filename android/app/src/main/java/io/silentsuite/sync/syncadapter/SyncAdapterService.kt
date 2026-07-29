@@ -125,14 +125,18 @@ abstract class SyncAdapterService : Service() {
 
             val service = outcomeService
             val attemptId = service?.let { UUID.randomUUID().toString() }
+            val statusStore = service?.let { SyncStatusStore(context) }
+            val contactsMainIdentity = if (service == SyncStatusStore.Service.CONTACTS)
+                statusStore?.identity(account) else null
             val admission = service?.let { outcomeService -> attemptId?.let { id ->
-                SyncStatusStore(context).beginAttemptResult(account, outcomeService, id, System.currentTimeMillis(), syncRequestId(extras))
+                statusStore?.beginAttemptResult(account, outcomeService, id, System.currentTimeMillis(), syncRequestId(extras))
             } }
             // Preserve correlation after a failed persistence admission: a real direct sync can
             // still repair request/terminal evidence at its completion boundary.
             if (admission != SyncStatusStore.MutationResult.REJECTED && attemptId != null) putSyncAttempt(extras, attemptId)
-            if (admission != SyncStatusStore.MutationResult.REJECTED && service == SyncStatusStore.Service.CONTACTS && attemptId != null)
-                putContactsAttempt(extras, attemptId)
+            if (admission != SyncStatusStore.MutationResult.REJECTED && service == SyncStatusStore.Service.CONTACTS &&
+                attemptId != null && contactsMainIdentity != null)
+                putContactsParent(extras, contactsMainIdentity, attemptId)
 
             // Check subscription status before allowing sync.
             // Blocks sync when subscription is cancelled/expired (read-only mode).

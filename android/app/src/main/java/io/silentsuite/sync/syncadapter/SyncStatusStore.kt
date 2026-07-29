@@ -4,6 +4,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
 import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.resource.LocalAddressBook
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -14,7 +15,7 @@ import java.util.UUID
 class SyncStatusStore internal constructor(
     private val storage: Storage,
     private val mainAccountKey: (Account) -> String = { hashIdentity(it.type, it.name, null) },
-    private val childAccountKey: (Account) -> String = { hashIdentity(it.type, it.name, null) },
+    private val childAccountKey: (Account) -> String? = { hashIdentity(it.type, it.name, null) },
 ) {
     enum class Service { CALENDAR, CONTACTS, TASKS }
     enum class FailureCategory {
@@ -50,6 +51,7 @@ class SyncStatusStore internal constructor(
     )
 
     data class MainIdentity internal constructor(internal val storageKey: String)
+    data class ChildIdentity internal constructor(internal val storageKey: String)
 
     interface Storage {
         fun get(key: String): String?
@@ -95,10 +97,22 @@ class SyncStatusStore internal constructor(
                 .getUserData(account, AccountSettings.KEY_CREATION_ID)
             hashIdentity(account.type, account.name, creationId)
         },
+        childAccountKey = { account ->
+            AccountManager.get(context.applicationContext)
+                .getUserData(account, LocalAddressBook.USER_DATA_CREATION_ID)
+                ?.takeIf(::isSafeOpaqueId)
+                ?.let { hashIdentity(account.type, account.name, it) }
+        },
     )
 
     fun identity(account: Account) = MainIdentity(mainAccountKey(account))
     internal fun identity(account: Account, creationId: String) = MainIdentity(hashIdentity(account.type, account.name, creationId))
+    internal fun childIdentity(account: Account): ChildIdentity? =
+        childAccountKey(account)?.takeIf(::isSha256Id)?.let(::ChildIdentity)
+    internal fun childIdentity(account: Account, creationId: String): ChildIdentity {
+        require(isSafeOpaqueId(creationId))
+        return ChildIdentity(hashIdentity(account.type, account.name, creationId))
+    }
 
     @Synchronized
     fun status(account: Account, service: Service): Status = synchronized(STORE_LOCK) {
@@ -228,25 +242,33 @@ class SyncStatusStore internal constructor(
         attemptId: String = UUID.randomUUID().toString(),
     ): ContactsStart = synchronized(STORE_LOCK) {
         val identity = mainAccountKey(account)
-        require(childAccounts.all { isSha256Id(childAccountKey(it)) })
+        val childIdentities = childIdentities(childAccounts) ?: return@synchronized ContactsStart.StorageFailure
         if (beginAttemptResult(identity, Service.CONTACTS, attemptId, startedAt, requestId) != MutationResult.RECORDED)
             return@synchronized ContactsStart.StorageFailure
-        attachContactsChildren(identity, attemptId, childAccounts, startedAt, requestId)
+        attachContactsChildKeys(identity, attemptId, childIdentities.mapTo(sortedSetOf()) { it.storageKey }, startedAt, requestId)
     }
 
     /** Attaches immutable child evidence to the parent attempt admitted before any early return. */
     @Synchronized
     fun attachContactsChildren(account: Account, attemptId: String, childAccounts: Set<Account>, startedAt: Long,
         requestId: String? = null): ContactsStart = synchronized(STORE_LOCK) {
-        attachContactsChildren(mainAccountKey(account), attemptId, childAccounts, startedAt, requestId)
+        val childIdentities = childIdentities(childAccounts) ?: return@synchronized ContactsStart.StorageFailure
+        attachContactsChildKeys(mainAccountKey(account), attemptId,
+            childIdentities.mapTo(sortedSetOf()) { it.storageKey }, startedAt, requestId)
     }
 
-    private fun attachContactsChildren(identity: String, attemptId: String, childAccounts: Set<Account>, startedAt: Long,
+    @Synchronized
+    internal fun attachContactsChildren(identity: MainIdentity, attemptId: String, childIdentities: Set<ChildIdentity>,
+        startedAt: Long, requestId: String? = null): ContactsStart = synchronized(STORE_LOCK) {
+        attachContactsChildKeys(identity.storageKey, attemptId,
+            childIdentities.mapTo(sortedSetOf()) { it.storageKey }, startedAt, requestId)
+    }
+
+    private fun attachContactsChildKeys(identity: String, attemptId: String, expected: Set<String>, startedAt: Long,
         requestId: String?): ContactsStart {
         require(isSafeOpaqueId(attemptId))
         require(requestId == null || isSafeOpaqueId(requestId))
         val current = readOrLegacy(identity, Service.CONTACTS)
-        val expected = childAccounts.mapTo(sortedSetOf()) { childAccountKey(it) }
         require(expected.all(::isSha256Id))
         val repairingFailedAdmission = current.attemptId == null &&
             hasLifecycleFault(identity, Service.CONTACTS) &&
@@ -291,13 +313,21 @@ class SyncStatusStore internal constructor(
     fun recordContactsChild(account: Account, attemptId: String, childAccount: Account, result: ChildResult,
         failureCategory: FailureCategory = FailureCategory.PROVIDER, timestamp: Long = System.currentTimeMillis()): ChildWrite = synchronized(STORE_LOCK) {
         val identity = mainAccountKey(account)
-        recordContactsChild(identity, attemptId, childAccount, result, failureCategory, timestamp)
+        val childIdentity = childIdentity(childAccount) ?: return@synchronized ChildWrite.REJECTED
+        recordContactsChild(identity, attemptId, childIdentity, result, failureCategory, timestamp)
     }
 
-    private fun recordContactsChild(identity: String, attemptId: String, childAccount: Account, result: ChildResult,
+    @Synchronized
+    internal fun recordContactsChild(identity: MainIdentity, attemptId: String, childIdentity: ChildIdentity, result: ChildResult,
+        failureCategory: FailureCategory = FailureCategory.PROVIDER,
+        timestamp: Long = System.currentTimeMillis()): ChildWrite = synchronized(STORE_LOCK) {
+        recordContactsChild(identity.storageKey, attemptId, childIdentity, result, failureCategory, timestamp)
+    }
+
+    private fun recordContactsChild(identity: String, attemptId: String, childIdentity: ChildIdentity, result: ChildResult,
         failureCategory: FailureCategory, timestamp: Long): ChildWrite {
         val current = readOrLegacy(identity, Service.CONTACTS)
-        val child = childAccountKey(childAccount)
+        val child = childIdentity.storageKey
         require(isSafeOpaqueId(attemptId))
         require(isSha256Id(child))
         if (current.attemptId != attemptId || child !in current.contacts.expected || child in current.contacts.terminal)
@@ -331,9 +361,21 @@ class SyncStatusStore internal constructor(
     /** Uses the main generation captured before asynchronous child-account removal. */
     @Synchronized
     internal fun recordContactsChildRemoved(identity: MainIdentity, childAccount: Account): Boolean = synchronized(STORE_LOCK) {
+        val childIdentity = childIdentity(childAccount) ?: return@synchronized false
+        recordContactsChildRemoved(identity, childIdentity)
+    }
+
+    /** Uses both generations captured before asynchronous child-account removal. */
+    @Synchronized
+    internal fun recordContactsChildRemoved(identity: MainIdentity, childIdentity: ChildIdentity): Boolean = synchronized(STORE_LOCK) {
         val attempt = readOrLegacy(identity.storageKey, Service.CONTACTS).attemptId ?: return@synchronized false
-        recordContactsChild(identity.storageKey, attempt, childAccount, ChildResult.REMOVED,
+        recordContactsChild(identity.storageKey, attempt, childIdentity, ChildResult.REMOVED,
             FailureCategory.PROVIDER, System.currentTimeMillis()) == ChildWrite.RECORDED
+    }
+
+    private fun childIdentities(accounts: Set<Account>): Set<ChildIdentity>? {
+        val identities = accounts.mapNotNull(::childIdentity).toSet()
+        return identities.takeIf { it.size == accounts.size }
     }
 
     @Synchronized
@@ -751,6 +793,8 @@ class SyncStatusStore internal constructor(
 
     companion object {
         const val EXTRA_CONTACTS_ATTEMPT = "io.silentsuite.sync.CONTACTS_ATTEMPT"
+        const val EXTRA_CONTACTS_MAIN_IDENTITY = "io.silentsuite.sync.CONTACTS_MAIN_IDENTITY"
+        const val EXTRA_CONTACTS_CHILD_IDENTITY = "io.silentsuite.sync.CONTACTS_CHILD_IDENTITY"
         const val EXTRA_SYNC_ATTEMPT = "io.silentsuite.sync.SYNC_ATTEMPT"
         const val DEFAULT_INTERRUPTION_AFTER_MILLIS = 30L * 60L * 1000L
         private const val V1_VERSION = "1"
@@ -765,6 +809,8 @@ class SyncStatusStore internal constructor(
         private val failedWrites = mutableMapOf<String, Long>()
         internal fun identityFromStorageKey(storageKey: String?): MainIdentity? =
             storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)
+        internal fun childIdentityFromStorageKey(storageKey: String?): ChildIdentity? =
+            storageKey?.takeIf(::isSha256Id)?.let(::ChildIdentity)
         private fun isSha256Id(value: String) = value.length == SHA256_HEX_LENGTH &&
             value.all { it in '0'..'9' || it in 'a'..'f' }
         private fun hashIdentity(type: String?, name: String?, creationId: String?): String = MessageDigest.getInstance("SHA-256")

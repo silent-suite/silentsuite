@@ -19,17 +19,29 @@ import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalAddressBook
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-internal data class ContactsChildTarget(val mainAccount: Account, val attemptId: String)
+internal data class ContactsChildTarget(
+    val mainIdentity: SyncStatusStore.MainIdentity,
+    val attemptId: String,
+    val childIdentity: SyncStatusStore.ChildIdentity,
+)
 
-internal fun contactsChildTarget(mainAccount: Account?, attemptId: String?): ContactsChildTarget? =
-    if (mainAccount == null || attemptId.isNullOrBlank()) null else ContactsChildTarget(mainAccount, attemptId)
+internal fun contactsChildTarget(mainIdentity: SyncStatusStore.MainIdentity?, attemptId: String?,
+    childIdentity: SyncStatusStore.ChildIdentity?): ContactsChildTarget? =
+    if (mainIdentity == null || attemptId.isNullOrBlank() || childIdentity == null) null
+    else ContactsChildTarget(mainIdentity, attemptId, childIdentity)
+
+internal fun contactsChildTarget(extras: Bundle): ContactsChildTarget? = contactsChildTarget(
+    SyncStatusStore.identityFromStorageKey(extras.getString(SyncStatusStore.EXTRA_CONTACTS_MAIN_IDENTITY)),
+    contactsAttempt(extras),
+    SyncStatusStore.childIdentityFromStorageKey(extras.getString(SyncStatusStore.EXTRA_CONTACTS_CHILD_IDENTITY)),
+)
 
 /** The parent and child adapters share this correlation-only lifecycle boundary. */
 internal fun attachContactsChildrenAtAdapterBoundary(
     store: SyncStatusStore,
-    parent: Account,
+    parent: SyncStatusStore.MainIdentity,
     attemptId: String,
-    children: Set<Account>,
+    children: Set<SyncStatusStore.ChildIdentity>,
     startedAt: Long,
     requestId: String? = null,
 ): SyncStatusStore.ContactsStart = store.attachContactsChildren(parent, attemptId, children, startedAt, requestId)
@@ -38,12 +50,11 @@ internal fun attachContactsChildrenAtAdapterBoundary(
 internal fun recordContactsChildAtAdapterBoundary(
     store: SyncStatusStore,
     target: ContactsChildTarget,
-    child: Account,
     result: SyncStatusStore.ChildResult,
     category: SyncStatusStore.FailureCategory = SyncStatusStore.FailureCategory.PROVIDER,
     timestamp: Long = System.currentTimeMillis(),
 ): SyncStatusStore.MutationResult = when (
-    store.recordContactsChild(target.mainAccount, target.attemptId, child, result, category, timestamp)
+    store.recordContactsChild(target.mainIdentity, target.attemptId, target.childIdentity, result, category, timestamp)
 ) {
     SyncStatusStore.ChildWrite.RECORDED -> SyncStatusStore.MutationResult.RECORDED
     SyncStatusStore.ChildWrite.REJECTED -> SyncStatusStore.MutationResult.REJECTED
@@ -55,6 +66,19 @@ internal fun putContactsAttempt(extras: Bundle, attemptId: String) {
 }
 
 internal fun contactsAttempt(extras: Bundle): String? = extras.getString(SyncStatusStore.EXTRA_CONTACTS_ATTEMPT)
+internal fun contactsMainIdentity(extras: Bundle): SyncStatusStore.MainIdentity? =
+    SyncStatusStore.identityFromStorageKey(extras.getString(SyncStatusStore.EXTRA_CONTACTS_MAIN_IDENTITY))
+
+internal fun putContactsParent(extras: Bundle, mainIdentity: SyncStatusStore.MainIdentity, attemptId: String) {
+    putContactsAttempt(extras, attemptId)
+    extras.putString(SyncStatusStore.EXTRA_CONTACTS_MAIN_IDENTITY, mainIdentity.storageKey)
+}
+
+internal fun putContactsTarget(extras: Bundle, mainIdentity: SyncStatusStore.MainIdentity, attemptId: String,
+    childIdentity: SyncStatusStore.ChildIdentity) {
+    putContactsParent(extras, mainIdentity, attemptId)
+    extras.putString(SyncStatusStore.EXTRA_CONTACTS_CHILD_IDENTITY, childIdentity.storageKey)
+}
 
 class ContactsSyncAdapterService : SyncAdapterService() {
 
@@ -118,9 +142,8 @@ class ContactsSyncAdapterService : SyncAdapterService() {
             result: SyncStatusStore.ChildResult,
             category: SyncStatusStore.FailureCategory = SyncStatusStore.FailureCategory.PROVIDER,
         ): SyncStatusStore.MutationResult {
-            val main = runCatching { LocalAddressBook(context, child, null).mainAccount }.getOrNull()
-            val target = contactsChildTarget(main, contactsAttempt(extras)) ?: return SyncStatusStore.MutationResult.REJECTED
-            return recordContactsChildAtAdapterBoundary(SyncStatusStore(context), target, child, result, category)
+            val target = contactsChildTarget(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return recordContactsChildAtAdapterBoundary(SyncStatusStore(context), target, result, category)
         }
     }
 

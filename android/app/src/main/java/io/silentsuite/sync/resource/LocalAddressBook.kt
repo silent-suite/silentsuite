@@ -50,6 +50,8 @@ class LocalAddressBook(
         val USER_DATA_MAIN_ACCOUNT_IDENTITY = "real_account_identity"
         val USER_DATA_URL = "url"
         const val USER_DATA_READ_ONLY = "read_only"
+        const val USER_DATA_CREATION_ID = "sync_status_child_creation_id"
+        private val CHILD_ID_LOCK = Any()
 
         fun create(context: Context, provider: ContentProviderClient, mainAccount: Account, cachedCollection: CachedCollection): LocalAddressBook {
             val col = cachedCollection.col
@@ -126,14 +128,17 @@ class LocalAddressBook(
             return "${displayName} (${mainAccount.name} ${col.uid.substring(0, 2)})"
         }
 
-        fun initialUserData(mainAccount: Account, mainIdentity: SyncStatusStore.MainIdentity, url: String): Bundle {
+        fun initialUserData(mainAccount: Account, mainIdentity: SyncStatusStore.MainIdentity, url: String,
+            childCreationId: String = UUID.randomUUID().toString()): Bundle {
             val storageKey = mainIdentity.storageKey
             require(SyncStatusStore.identityFromStorageKey(storageKey) != null) { "Main account identity must be SHA-256" }
-            val bundle = Bundle(4)
+            require(childCreationId.isNotBlank())
+            val bundle = Bundle(5)
             bundle.putString(USER_DATA_MAIN_ACCOUNT_NAME, mainAccount.name)
             bundle.putString(USER_DATA_MAIN_ACCOUNT_TYPE, mainAccount.type)
             bundle.putString(USER_DATA_MAIN_ACCOUNT_IDENTITY, storageKey)
             bundle.putString(USER_DATA_URL, url)
+            bundle.putString(USER_DATA_CREATION_ID, childCreationId)
             return bundle
         }
     }
@@ -183,7 +188,22 @@ class LocalAddressBook(
         get() = AccountManager.get(context).getUserData(account, USER_DATA_READ_ONLY) != null
         set(readOnly) = AccountManager.get(context).setUserData(account, USER_DATA_READ_ONLY, if (readOnly) "1" else null)
 
+    internal fun ensureLifecycleCreationId(): String = synchronized(CHILD_ID_LOCK) {
+        val accountManager = AccountManager.get(context)
+        val existing = accountManager.getUserData(account, USER_DATA_CREATION_ID)
+            ?.takeIf { runCatching { SyncStatusStore(context).childIdentity(account, it) }.isSuccess }
+        if (existing != null) return@synchronized existing
+
+        val generated = UUID.randomUUID().toString()
+        accountManager.setUserData(account, USER_DATA_CREATION_ID, generated)
+        check(accountManager.getUserData(account, USER_DATA_CREATION_ID) == generated) {
+            "Couldn't persist address book lifecycle generation"
+        }
+        generated
+    }
+
     fun update(cachedCollection: CachedCollection) {
+        ensureLifecycleCreationId()
         val col = cachedCollection.col
         val newAccountName = accountName(mainAccount, cachedCollection)
 
@@ -218,11 +238,13 @@ class LocalAddressBook(
         val main = mainAccount
         val child = account
         val statusStore = SyncStatusStore(context)
+        runCatching { ensureLifecycleCreationId() }
+        val capturedChildIdentity = statusStore.childIdentity(child)
         val capturedIdentity = SyncStatusStore.identityFromStorageKey(
             accountManager.getUserData(child, USER_DATA_MAIN_ACCOUNT_IDENTITY))
         val recordConfirmedRemoval = {
-            // Legacy children have no trustworthy parent generation: delete them without
-            // attaching evidence or fallback work to a potentially replaced account.
+            // Legacy children have no trustworthy child generation: delete them without
+            // attaching evidence, then refresh only a still-current captured parent generation.
             if (capturedIdentity != null) {
                 // The platform callback may run after a same-name main account has been replaced.
                 val mainGenerationStillCurrent = {
@@ -232,7 +254,9 @@ class LocalAddressBook(
                             statusStore.identity(candidate) == capturedIdentity
                     }
                 }
-                val recorded = runCatching { statusStore.recordContactsChildRemoved(capturedIdentity, child) }.getOrDefault(false)
+                val recorded = if (capturedChildIdentity != null) runCatching {
+                    statusStore.recordContactsChildRemoved(capturedIdentity, capturedChildIdentity)
+                }.getOrDefault(false) else false
                 if (!recorded && mainGenerationStillCurrent()) {
                     val extras = Bundle().apply {
                         putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)

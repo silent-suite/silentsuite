@@ -88,23 +88,25 @@ class SyncStatusRuntimeTest {
             assertNull(store.status(account, SyncStatusStore.Service.CALENDAR).activeAttemptId)
 
             val child = Account("runtime-contacts-child", "child")
+            val mainIdentity = store.identity(account)
+            val childIdentity = store.childIdentity(child, "runtime-child-generation")
             assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, "contacts-success",
                 System.currentTimeMillis(), "runtime-request"))
             assertEquals(SyncStatusStore.ContactsStart.Started("contacts-success"),
-                attachContactsChildrenAtAdapterBoundary(store, account, "contacts-success", setOf(child),
+                attachContactsChildrenAtAdapterBoundary(store, mainIdentity, "contacts-success", setOf(childIdentity),
                     System.currentTimeMillis()))
-            val childSuccess = contactsChildTarget(account, "contacts-success")!!
+            val childSuccess = contactsChildTarget(mainIdentity, "contacts-success", childIdentity)!!
             assertEquals(SyncStatusStore.MutationResult.RECORDED,
-                recordContactsChildAtAdapterBoundary(store, childSuccess, child,
+                recordContactsChildAtAdapterBoundary(store, childSuccess,
                     SyncStatusStore.ChildResult.SUCCESS, timestamp = System.currentTimeMillis()))
             assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, "contacts-failure",
                 System.currentTimeMillis(), null))
             assertEquals(SyncStatusStore.ContactsStart.Started("contacts-failure"),
-                attachContactsChildrenAtAdapterBoundary(store, account, "contacts-failure", setOf(child),
+                attachContactsChildrenAtAdapterBoundary(store, mainIdentity, "contacts-failure", setOf(childIdentity),
                     System.currentTimeMillis()))
-            val childFailure = contactsChildTarget(account, "contacts-failure")!!
+            val childFailure = contactsChildTarget(mainIdentity, "contacts-failure", childIdentity)!!
             assertEquals(SyncStatusStore.MutationResult.RECORDED,
-                recordContactsChildAtAdapterBoundary(store, childFailure, child,
+                recordContactsChildAtAdapterBoundary(store, childFailure,
                     SyncStatusStore.ChildResult.FAILURE, SyncStatusStore.FailureCategory.PROVIDER,
                     System.currentTimeMillis()))
             assertEquals(SyncStatusStore.FailureCategory.PROVIDER,
@@ -118,8 +120,13 @@ class SyncStatusRuntimeTest {
 
     @Test fun contactsAttemptExtraRoundTripsAtProviderBoundary() {
         val extras = Bundle()
-        putContactsAttempt(extras, "opaque-attempt")
-        assertEquals("opaque-attempt", contactsAttempt(extras))
+        val mainIdentity = SyncStatusStore.identityFromStorageKey("a".repeat(64))!!
+        val childIdentity = SyncStatusStore.childIdentityFromStorageKey("b".repeat(64))!!
+        putContactsTarget(extras, mainIdentity, "opaque-attempt", childIdentity)
+        val target = requireNotNull(contactsChildTarget(extras))
+        assertEquals("opaque-attempt", target.attemptId)
+        assertEquals(mainIdentity, target.mainIdentity)
+        assertEquals(childIdentity, target.childIdentity)
     }
 
     @Test fun requestAndParentChildCorrelationExtrasRoundTripAtAndroidBoundary() {
@@ -129,7 +136,8 @@ class SyncStatusRuntimeTest {
 
         val attemptExtras = Bundle()
         putSyncAttempt(attemptExtras, "parent-attempt")
-        putContactsAttempt(attemptExtras, requireNotNull(syncAttempt(attemptExtras)))
+        putContactsParent(attemptExtras, SyncStatusStore.identityFromStorageKey("c".repeat(64))!!,
+            requireNotNull(syncAttempt(attemptExtras)))
         assertEquals("parent-attempt", contactsAttempt(attemptExtras))
         assertEquals("parent-attempt", syncAttempt(attemptExtras))
     }
