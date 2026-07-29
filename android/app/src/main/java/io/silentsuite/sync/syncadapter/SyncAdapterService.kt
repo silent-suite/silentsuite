@@ -144,7 +144,7 @@ abstract class SyncAdapterService : Service() {
             if (!BillingManager.getInstance().isSyncAllowed(context, account)) {
                 Logger.log.info("Sync skipped: subscription inactive")
                 if (admission == SyncStatusStore.MutationResult.RECORDED && attemptId != null && service != null)
-                    persistStatus(syncResult) { finishWithoutOutcomeResultAtAdapterBoundary(SyncStatusStore(context), account, service, attemptId) }
+                    persistStatus(syncResult) { finishWithoutOutcome(account, extras) }
                 else if (admission == SyncStatusStore.MutationResult.STORAGE_FAILURE)
                     signalPersistenceRetry(syncResult)
                 return

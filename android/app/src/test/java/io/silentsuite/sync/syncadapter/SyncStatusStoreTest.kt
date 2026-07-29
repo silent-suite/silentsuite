@@ -588,6 +588,28 @@ class SyncStatusStoreTest {
             store.status(first, SyncStatusStore.Service.CONTACTS).lastFailureCategory)
     }
 
+    @Test fun `captured parent identity closes only its admitted generation after replacement`() {
+        val child = child("captured-parent-failure")
+        val attempt = begin(setOf(child), "captured-parent-failure-attempt")
+        val capturedIdentity = store.identity(first)
+        val replacementLookup = SyncStatusStore(storage,
+            mainAccountKey = { "replacement-generation" }, childAccountKey = { children[it] })
+
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            replacementLookup.failContactsParentResult(capturedIdentity, attempt.attemptId))
+        assertEquals(SyncStatusStore.FailureCategory.PARENT_REFRESH,
+            store.status(first, SyncStatusStore.Service.CONTACTS).lastFailureCategory)
+        assertEquals(SyncStatusStore.Status(),
+            replacementLookup.status(first, SyncStatusStore.Service.CONTACTS))
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CONTACTS,
+            "captured-parent-skip-attempt", 20, null))
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            replacementLookup.finishWithoutOutcomeResult(
+                capturedIdentity, SyncStatusStore.Service.CONTACTS, "captured-parent-skip-attempt"))
+        assertNull(store.status(first, SyncStatusStore.Service.CONTACTS).activeAttemptId)
+    }
+
     @Test fun `malformed contacts v2 cannot expose historical success`() {
         val child = child("malformed")
         val attempt = begin(setOf(child), "malformed-attempt")

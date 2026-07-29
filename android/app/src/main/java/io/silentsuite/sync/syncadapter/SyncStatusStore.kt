@@ -305,8 +305,14 @@ class SyncStatusStore internal constructor(
     @Synchronized
     fun failContactsParentResult(account: Account, attemptId: String, requestId: String? = null,
         category: FailureCategory = FailureCategory.PARENT_REFRESH): MutationResult = synchronized(STORE_LOCK) {
-        val identity = mainAccountKey(account)
-        recordTerminal(identity, Service.CONTACTS, attemptId, requestId, TerminalResult.FAILURE, category, System.currentTimeMillis())
+        failContactsParentResult(MainIdentity(mainAccountKey(account)), attemptId, requestId, category)
+    }
+
+    @Synchronized
+    internal fun failContactsParentResult(identity: MainIdentity, attemptId: String, requestId: String? = null,
+        category: FailureCategory = FailureCategory.PARENT_REFRESH): MutationResult = synchronized(STORE_LOCK) {
+        recordTerminal(identity.storageKey, Service.CONTACTS, attemptId, requestId,
+            TerminalResult.FAILURE, category, System.currentTimeMillis())
     }
 
     @Synchronized
@@ -387,6 +393,12 @@ class SyncStatusStore internal constructor(
     fun finishWithoutOutcomeResult(account: Account, service: Service, attemptId: String): MutationResult = synchronized(STORE_LOCK) {
         finishWithoutOutcomeResult(mainAccountKey(account), service, attemptId)
     }
+
+    @Synchronized
+    internal fun finishWithoutOutcomeResult(identity: MainIdentity, service: Service, attemptId: String): MutationResult =
+        synchronized(STORE_LOCK) {
+            finishWithoutOutcomeResult(identity.storageKey, service, attemptId)
+        }
 
     private fun finishWithoutOutcomeResult(identity: String, service: Service, attemptId: String): MutationResult {
         val current = readOrLegacy(identity, service)

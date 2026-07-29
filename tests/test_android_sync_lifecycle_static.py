@@ -81,7 +81,7 @@ def test_attempt_admission_is_correlation_bound_for_every_adapter_outcome():
     assert "CompletedOutcome.CANCELLED -> finishWithoutOutcome()" in source
     assert "mutation == SyncStatusStore.MutationResult.STORAGE_FAILURE" in source
     assert "val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED" in address_books
-    assert "failContactsParentResult(account, attemptId, syncRequestId(extras), safeCategory)" in address_books
+    assert "failContactsParentResult(mainIdentity, attemptId, syncRequestId(extras), safeCategory)" in address_books
     assert "ChildResult.SKIPPED" in (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/ContactsSyncAdapterService.kt").read_text(encoding="utf-8")
 
 
@@ -159,8 +159,13 @@ def test_contacts_children_use_captured_generation_identities_across_dispatch_an
     assert "putContactsTarget(syncExtras, mainIdentity, it, childIdentity)" in parent
     assert 'Logger.log.log(Level.INFO, "Running sync for address book", addressBookAccount)' not in parent
     assert "contactsChildTarget(extras)" in child
+    assert "contactsChildGenerationMatches(SyncStatusStore(context), account, lifecycleTarget)" in child
+    assert "contactsChildGenerationMatches(store, child, target)" in child
     assert "LocalAddressBook(context, child, null).mainAccount" not in child
     assert "target.childIdentity" in child
+    assert "failContactsParentResult(mainIdentity, attemptId" in parent
+    assert "failContactsParentResult(account, attemptId" not in parent
+    assert "finishWithoutOutcomeResult(\n                mainIdentity, SyncStatusStore.Service.CONTACTS, attemptId)" in parent
 
 
 def test_runtime_contacts_fixtures_do_not_query_account_manager_for_synthetic_children():

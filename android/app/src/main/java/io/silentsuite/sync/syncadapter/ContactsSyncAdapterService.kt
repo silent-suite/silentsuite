@@ -36,6 +36,14 @@ internal fun contactsChildTarget(extras: Bundle): ContactsChildTarget? = contact
     SyncStatusStore.childIdentityFromStorageKey(extras.getString(SyncStatusStore.EXTRA_CONTACTS_CHILD_IDENTITY)),
 )
 
+internal fun contactsChildGenerationMatches(store: SyncStatusStore, child: Account, target: ContactsChildTarget): Boolean =
+    runCatching { store.childIdentity(child) == target.childIdentity }.getOrDefault(false)
+
+internal fun hasContactsLifecycleTarget(extras: Bundle): Boolean =
+    extras.containsKey(SyncStatusStore.EXTRA_CONTACTS_ATTEMPT) ||
+        extras.containsKey(SyncStatusStore.EXTRA_CONTACTS_MAIN_IDENTITY) ||
+        extras.containsKey(SyncStatusStore.EXTRA_CONTACTS_CHILD_IDENTITY)
+
 /** The parent and child adapters share this correlation-only lifecycle boundary. */
 internal fun attachContactsChildrenAtAdapterBoundary(
     store: SyncStatusStore,
@@ -89,6 +97,12 @@ class ContactsSyncAdapterService : SyncAdapterService() {
 
     private class ContactsSyncAdapter(context: Context) : SyncAdapterService.SyncAdapter(context) {
         override fun onPerformSyncDo(account: Account, extras: Bundle, authority: String, provider: ContentProviderClient, syncResult: SyncResult): Completion {
+            val lifecycleTarget = contactsChildTarget(extras)
+            if (hasContactsLifecycleTarget(extras) &&
+                (lifecycleTarget == null || !contactsChildGenerationMatches(SyncStatusStore(context), account, lifecycleTarget))) {
+                Logger.log.info("Skipping sync for a replaced address-book generation")
+                return Completion.SKIPPED
+            }
             val addressBook = LocalAddressBook(context, account, provider)
 
             val settings: AccountSettings
@@ -143,7 +157,9 @@ class ContactsSyncAdapterService : SyncAdapterService() {
             category: SyncStatusStore.FailureCategory = SyncStatusStore.FailureCategory.PROVIDER,
         ): SyncStatusStore.MutationResult {
             val target = contactsChildTarget(extras) ?: return SyncStatusStore.MutationResult.REJECTED
-            return recordContactsChildAtAdapterBoundary(SyncStatusStore(context), target, result, category)
+            val store = SyncStatusStore(context)
+            if (!contactsChildGenerationMatches(store, child, target)) return SyncStatusStore.MutationResult.REJECTED
+            return recordContactsChildAtAdapterBoundary(store, target, result, category)
         }
     }
 

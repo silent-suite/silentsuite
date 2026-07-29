@@ -60,6 +60,22 @@ class ProviderBoundaryPolicyTest {
         assertEquals(null, contactsChildTarget(main, "attempt", null))
     }
 
+    @Test fun `queued contacts target rejects a same name replacement child`() {
+        val oldChild = Account("same-child", "child")
+        val replacementChild = Account("same-child", "child")
+        val childKeys = java.util.IdentityHashMap<Account, String>().apply {
+            put(oldChild, "b".repeat(64))
+            put(replacementChild, "c".repeat(64))
+        }
+        val store = SyncStatusStore(MemoryStatusStorage(),
+            mainAccountKey = { "a".repeat(64) }, childAccountKey = { childKeys[it] })
+        val target = requireNotNull(contactsChildTarget(store.identity(Account("main", "main")), "attempt",
+            store.childIdentity(oldChild)))
+
+        assertTrue(contactsChildGenerationMatches(store, oldChild, target))
+        assertFalse(contactsChildGenerationMatches(store, replacementChild, target))
+    }
+
     @Test fun `cancelled completion is classified before any fabricated terminal`() {
         val before = SyncCompletionSnapshot(0, 0, 0, 0, false, false)
         assertEquals(CompletedOutcome.CANCELLED,

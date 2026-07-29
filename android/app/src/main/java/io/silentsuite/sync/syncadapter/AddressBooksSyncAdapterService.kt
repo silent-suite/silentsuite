@@ -85,7 +85,15 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
         override fun recordFailure(account: Account, extras: Bundle, category: SyncStatusStore.FailureCategory): SyncStatusStore.MutationResult {
             val safeCategory = if (category == SyncStatusStore.FailureCategory.PERMISSION) category else SyncStatusStore.FailureCategory.PARENT_REFRESH
             val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
-            return SyncStatusStore(context).failContactsParentResult(account, attemptId, syncRequestId(extras), safeCategory)
+            val mainIdentity = contactsMainIdentity(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return SyncStatusStore(context).failContactsParentResult(mainIdentity, attemptId, syncRequestId(extras), safeCategory)
+        }
+
+        override fun finishWithoutOutcome(account: Account, extras: Bundle): SyncStatusStore.MutationResult {
+            val attemptId = syncAttempt(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            val mainIdentity = contactsMainIdentity(extras) ?: return SyncStatusStore.MutationResult.REJECTED
+            return SyncStatusStore(context).finishWithoutOutcomeResult(
+                mainIdentity, SyncStatusStore.Service.CONTACTS, attemptId)
         }
 
         private fun updateLocalAddressBooks(provider: ContentProviderClient, account: Account, settings: AccountSettings) {
