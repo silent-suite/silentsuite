@@ -185,7 +185,8 @@ class AccountDrawerSignOutRuntimeTest {
             adapter = retainedAdapter
             removeAccountAndWait(fixture.manager, fixture.account)
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            val replacementGeneration = "replacement-generation"
+            val replacementGeneration = "replacement-successor-generation"
+            assertNotEquals(fixture.creationId, replacementGeneration)
             val replacementData = Bundle().apply {
                 putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
             }

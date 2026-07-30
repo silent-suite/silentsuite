@@ -74,6 +74,8 @@ def test_runtime_sources_characterize_dispatcher_toolbar_and_system_back_routes(
     assert "fun systemBackClosesDrawerWithoutFinishing()" in drawer_runtime
     assert "UiDevice.getInstance" in drawer_runtime
     assert "pressBack()" in drawer_runtime
+    assert 'val replacementGeneration = "replacement-successor-generation"' in drawer_runtime
+    assert "assertNotEquals(fixture.creationId, replacementGeneration)" in drawer_runtime
 
 
 def test_unsigned_apk_sdk_inspection_uses_pinned_build_tools_aapt():
