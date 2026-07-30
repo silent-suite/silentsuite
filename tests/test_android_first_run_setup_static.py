@@ -224,6 +224,22 @@ def test_setup_prepares_reuses_and_dispatches_the_exact_explicit_request_id():
     assert "KEY_INITIAL_SYNC_REQUEST_ID" in settings
 
 
+def test_no_network_dashboard_runtime_uses_a_bounded_exact_account_loader():
+    runtime = source(
+        ROOT
+        / "android/app/src/androidTest/java/io/silentsuite/sync/ui/"
+        "PostLoginSetupRuntimeTest.kt"
+    )
+    contract = runtime.split(
+        "@Test fun noNetworkDashboardShellRoutesExactAccountAfterReadyDone()", 1
+    )[1].split("@Test fun everyDurableSetupStateColdRenders", 1)[0]
+
+    assert "AccountInfoViewModel.accountLoaderOverride" in contract
+    assert "check(exact == target)" in contract
+    assert 'check(creationId == "target-generation")' in contract
+    assert "AccountInfoViewModel.accountLoaderOverride = null" in contract
+
+
 def test_setup_durable_evidence_contains_no_secrets_or_secret_extras():
     durable = "\n".join(source(path) for path in (
         SETUP / "PostLoginSetupState.kt",

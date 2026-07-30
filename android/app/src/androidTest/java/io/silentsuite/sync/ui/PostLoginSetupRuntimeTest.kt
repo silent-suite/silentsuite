@@ -210,6 +210,11 @@ class PostLoginSetupRuntimeTest {
         check(ActiveAccountManager.setActiveAccount(context, sibling))
         val previousBootstrap=App.postLoginBootstrapSucceeded
         App.postLoginBootstrapSucceeded=true
+        AccountActivity.AccountInfoViewModel.accountLoaderOverride = { _, exact, creationId ->
+            check(exact == target)
+            check(creationId == "target-generation")
+            AccountActivity.AccountInfo()
+        }
         PostLoginSetupViewModel.inventoryOverride={ candidate ->
             check(candidate==target)
             PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
@@ -248,6 +253,7 @@ class PostLoginSetupRuntimeTest {
             org.junit.Assert.assertTrue(exactDashboard.findViewById<android.view.View>(R.id.drawer_layout).isShown)
         } finally {
             runCatching { scenario?.close() }
+            AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
             PostLoginSetupViewModel.inventoryOverride=null
             App.postLoginBootstrapSucceeded=previousBootstrap
             AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling); ActiveAccountManager.clearActiveAccount(context)
