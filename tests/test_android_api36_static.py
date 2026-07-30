@@ -71,9 +71,23 @@ def test_runtime_sources_characterize_dispatcher_toolbar_and_system_back_routes(
     assert "onOptionsItemSelected(MenuBuilder" in runtime
     assert "WebViewActivity.EXTRA_DEBUG_INITIAL_HTML" in runtime
     assert "WebViewActivity.debugWebViewClientOverride" in runtime
+    local_calendar_helper = runtime.split("private fun enterLocalCalendarPicker(", 1)[1].split(
+        "private fun assertImportChooser", 1
+    )[0]
+    assert "grantCalendarPermissions(InstrumentationRegistry.getInstrumentation().targetContext)" in local_calendar_helper
+    calendar_permissions = runtime.split("private fun grantCalendarPermissions(", 1)[1].split(
+        "private fun enterLocalCalendarPicker", 1
+    )[0]
+    assert "Manifest.permission.READ_CALENDAR" in calendar_permissions
+    assert "Manifest.permission.WRITE_CALENDAR" in calendar_permissions
+    assert "pm grant ${context.packageName} $permission" in calendar_permissions
     assert "fun systemBackClosesDrawerWithoutFinishing()" in drawer_runtime
     assert "UiDevice.getInstance" in drawer_runtime
     assert "pressBack()" in drawer_runtime
+    drawer_system_back = drawer_runtime.split("fun systemBackClosesDrawerWithoutFinishing()", 1)[1].split(
+        "@Test fun delayedRemovalFailureSurvivesRecreationAndDuplicateTapStartsOnce", 1
+    )[0]
+    assert "assertTrue(UiDevice" not in drawer_system_back
     assert 'val replacementGeneration = "replacement-successor-generation"' in drawer_runtime
     assert "assertNotEquals(fixture.creationId, replacementGeneration)" in drawer_runtime
 

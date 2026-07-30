@@ -103,7 +103,16 @@ class SiblingRoutesRuntimeTest {
         }
     }
 
+    private fun grantCalendarPermissions(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        listOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR).forEach { permission ->
+            InstrumentationRegistry.getInstrumentation().uiAutomation
+                .executeShellCommand("pm grant ${context.packageName} $permission").close()
+        }
+    }
+
     private fun enterLocalCalendarPicker(scenario: ActivityScenario<ImportActivity>) {
+        grantCalendarPermissions(InstrumentationRegistry.getInstrumentation().targetContext)
         waitUntil("import chooser") {
             var ready = false
             scenario.onActivity { activity ->

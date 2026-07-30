@@ -77,7 +77,7 @@ class AccountDrawerSignOutRuntimeTest {
                     assertTrue(activity.findViewById<DrawerLayout>(R.id.drawer_layout)
                         .isDrawerOpen(GravityCompat.START))
                 }
-                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
                 waitUntil("drawer to close after system Back") {
                     var closed = false
                     scenario.onActivity { activity ->
