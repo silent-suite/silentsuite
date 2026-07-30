@@ -122,9 +122,11 @@ class LoginLifecycleContractTest {
         assertTrue(job.contains("contents: read"))
         assertEquals(2, Regex("""api-level: 21\n\s+arch: x86""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 35\n\s+arch: x86_64""").findAll(job).count())
-        listOf("shard: mixed", "shard: remaining", "shard: all").forEach {
-            assertEquals(1, Regex(it).findAll(job).count())
-        }
+        assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: account-setup""").findAll(job).count())
+        assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: status-routes""").findAll(job).count())
+        assertEquals(1, Regex("shard: mixed").findAll(job).count())
+        assertEquals(1, Regex("shard: remaining").findAll(job).count())
+        assertEquals(1, Regex("shard: all").findAll(job).count())
         assertTrue(job.contains("""name: Account recreation (API ${'$'}{{ matrix.api-level }}, ${'$'}{{ matrix.arch }}, ${'$'}{{ matrix.shard }})"""))
         assertTrue(runnerReference != null)
         listOf(
@@ -140,6 +142,41 @@ class LoginLifecycleContractTest {
         ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))
         assertFalse(job.contains("secrets."))
+        assertTrue(unsignedBuild.contains("ANDROID_BUILD_TOOLS_VERSION: '36.0.0'"))
+        assertTrue(unsignedBuild.contains("\"\$ANDROID_HOME/build-tools/\$ANDROID_BUILD_TOOLS_VERSION/aapt\""))
+        assertTrue(unsignedBuild.contains("sdkVersion:'21'"))
+        assertTrue(unsignedBuild.contains("targetSdkVersion:'36'"))
+        assertTrue(unsignedBuild.contains("grep -Fxc \"sdkVersion:"))
+        assertTrue(unsignedBuild.contains("grep -Fxc \"targetSdkVersion:"))
+    }
+
+    @Test
+    fun api36BackContractsUseDebugOnlyWebViewContentAndDispatcherCallbacks() {
+        val appBuild = File("build.gradle").readText()
+        val webView = File("src/main/java/io/silentsuite/sync/ui/WebViewActivity.kt").readText()
+        val importActivity = File("src/main/java/io/silentsuite/sync/ui/importlocal/ImportActivity.kt").readText()
+        val runtime = File("src/androidTest/java/io/silentsuite/sync/ui/SiblingRoutesRuntimeTest.kt").readText()
+
+        assertTrue(appBuild.contains("targetSdkVersion 36"))
+        listOf(webView, importActivity).forEach { source ->
+            assertFalse(source.contains("KeyEvent"))
+            assertFalse(source.contains("onKeyDown("))
+            assertTrue(source.contains("OnBackPressedCallback"))
+            assertTrue(source.contains("onBackPressedDispatcher.addCallback(this"))
+        }
+        assertTrue(webView.contains("BuildConfig.DEBUG"))
+        assertTrue(webView.contains("EXTRA_DEBUG_INITIAL_HTML"))
+        assertTrue(webView.contains("debugWebViewClientOverride"))
+        assertTrue(webView.contains("Constants.registrationUrl"))
+        listOf(
+            "importDispatcherBackPopsNestedStackThenFinishesWithCanceledResult",
+            "importToolbarUpPopsNestedStackThenFinishesWithCanceledResult",
+            "importSystemBackPopsNestedStackThenFinishesWithCanceledResult",
+            "webViewDispatcherBackConsumesLocalHistoryThenFinishes",
+            "webViewToolbarUpFinishesInsteadOfTraversingLocalHistory",
+            "webViewSystemBackConsumesLocalHistoryThenFinishes",
+        ).forEach { method -> assertTrue(runtime.contains("fun $method()")) }
+        assertTrue(runtime.contains("UiDevice.getInstance"))
     }
 
     @Test
@@ -188,7 +225,7 @@ class LoginLifecycleContractTest {
             .find(runtimeScript)!!.groupValues[1].split(",")
         val requestedSelectors = Regex("""^requested_selector='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
-        val other70 = Regex("""^other70_selectors='([^']+)'$""", RegexOption.MULTILINE)
+        val other76 = Regex("""^other76_selectors='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
         val focusedClasses = Regex("""^focused_classes='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
@@ -204,18 +241,18 @@ class LoginLifecycleContractTest {
             else runtimeMethods.filter { it.startsWith("$selector#") }
         }
         val mixedExpanded = expand(mixedSelectors)
-        val remainingExpanded = expand(requestedSelectors + other70)
+        val remainingExpanded = expand(requestedSelectors + other76)
         val allExpanded = expand(focusedClasses)
 
         assertEquals(listOf(mixed), mixedSelectors)
         assertEquals(listOf(diagnostic), requestedSelectors)
-        assertEquals(72, runtimeMethods.size)
-        assertEquals(72, runtimeMethods.toSet().size)
-        assertEquals(listOf(1, 71, 72), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
+        assertEquals(78, runtimeMethods.size)
+        assertEquals(78, runtimeMethods.toSet().size)
+        assertEquals(listOf(1, 77, 78), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
         assertTrue(mixedExpanded.toSet().intersect(remainingExpanded.toSet()).isEmpty())
         assertEquals(allExpanded.toSet(), mixedExpanded.toSet() + remainingExpanded.toSet())
         assertEquals(runtimeMethods.toSet(), allExpanded.toSet())
-        assertEquals(listOf("600", "600", "1500", "2400"),
+        assertEquals(listOf("600", "600", "1500", "2400", "1800", "1800"),
             Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
                 .findAll(runtimeScript).map { it.groupValues[1] }.toList())
         assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)
@@ -223,7 +260,7 @@ class LoginLifecycleContractTest {
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""""))
         assertTrue(runtimeScript.indexOf("\n  save_requested_results",
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""")) <
-            runtimeScript.indexOf("""class="${'$'}{other70_selectors}""""))
+            runtimeScript.indexOf("""class="${'$'}{other76_selectors}""""))
         assertTrue(runtimeScript.contains("connected/api21-requested"))
         assertFalse(runtimeScript.contains("api21_batch_"))
         assertTrue(runtimeScript.contains("""if [[ "${'$'}{status}" -eq 0 && "${'$'}{restore_status}" -ne 0 ]]"""))

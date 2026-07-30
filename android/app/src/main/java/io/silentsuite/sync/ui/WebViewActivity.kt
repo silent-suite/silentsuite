@@ -8,12 +8,14 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.view.KeyEvent
 import android.view.View
 import android.webkit.*
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.ActionBar
+import androidx.activity.OnBackPressedCallback
+import androidx.annotation.VisibleForTesting
+import io.silentsuite.sync.BuildConfig
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 
@@ -31,11 +33,14 @@ class WebViewActivity : BaseActivity() {
         mToolbar = supportActionBar
         mToolbar!!.setDisplayHomeAsUpEnabled(true)
 
-        val initialUri = intent.getParcelableExtra<Uri>(KEY_URL)
+        val initialUri = intent.getParcelableExtra<Uri>(EXTRA_URL)
         if (initialUri == null || !isAllowedUrl(initialUri)) {
             finish()
             return
         }
+        // Only debug instrumentation can replace the first page. Release builds always load
+        // the validated production URI below, even if an untrusted caller supplies this extra.
+        val debugInitialHtml = if (BuildConfig.DEBUG) intent.getStringExtra(EXTRA_DEBUG_INITIAL_HTML) else null
         var uri = initialUri
         uri = addQueryParams(uri)
         mWebView = findViewById<View>(R.id.webView) as WebView
@@ -47,31 +52,26 @@ class WebViewActivity : BaseActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             mWebView!!.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         }
-        if (savedInstanceState == null) {
-            mWebView!!.loadUrl(uri.toString())
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (mWebView!!.canGoBack()) {
+                    mWebView!!.goBack()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+        mWebView!!.webViewClient = if (BuildConfig.DEBUG) {
+            debugWebViewClientOverride ?: createWebViewClient()
+        } else {
+            createWebViewClient()
         }
-
-        mWebView!!.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView, url: String) {
-                title = view.title
-            }
-
-            override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
-                return shouldOverrideUrl(Uri.parse(url))
-            }
-
-            @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                return shouldOverrideUrl(request.url)
-            }
-
-            override fun onReceivedError(view: WebView, errorCode: Int, description: String, failingUrl: String) {
-                loadErrorPage(failingUrl)
-            }
-
-            @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                loadErrorPage(request.url.toString())
+        if (savedInstanceState == null) {
+            if (debugInitialHtml != null) {
+                mWebView!!.loadDataWithBaseURL(DEBUG_INITIAL_HTML_BASE_URL, debugInitialHtml, "text/html", "UTF-8", null)
+            } else {
+                mWebView!!.loadUrl(uri.toString())
             }
         }
 
@@ -87,6 +87,30 @@ class WebViewActivity : BaseActivity() {
                     mProgressBar!!.progress = progress
                 }
             }
+        }
+    }
+
+    private fun createWebViewClient() = object : WebViewClient() {
+        override fun onPageFinished(view: WebView, url: String) {
+            title = view.title
+        }
+
+        override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean {
+            return shouldOverrideUrl(Uri.parse(url))
+        }
+
+        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+            return shouldOverrideUrl(request.url)
+        }
+
+        override fun onReceivedError(view: WebView, errorCode: Int, description: String, failingUrl: String) {
+            loadErrorPage(failingUrl)
+        }
+
+        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+            loadErrorPage(request.url.toString())
         }
     }
 
@@ -158,25 +182,24 @@ class WebViewActivity : BaseActivity() {
         mWebView!!.restoreState(savedInstanceState)
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (mWebView!!.canGoBack()) {
-                mWebView!!.goBack()
-                return true
-            }
-        }
-        return super.onKeyDown(keyCode, event)
-    }
-
     companion object {
 
-        private val KEY_URL = "url"
+        @VisibleForTesting
+        internal const val EXTRA_URL = "url"
+        @VisibleForTesting
+        internal const val EXTRA_DEBUG_INITIAL_HTML = "io.silentsuite.sync.ui.WebViewActivity.DEBUG_INITIAL_HTML"
+        private const val DEBUG_INITIAL_HTML_BASE_URL = "https://silentsuite.invalid/runtime-page-one"
         private val QUERY_KEY_EMBEDDED = "embedded"
+
+        /** Debug-only instrumentation seam; release builds never read this value. */
+        @VisibleForTesting
+        @Volatile
+        internal var debugWebViewClientOverride: WebViewClient? = null
 
         fun openUrl(context: Context, uri: Uri) {
             if (isAllowedUrl(uri)) {
                 val intent = Intent(context, WebViewActivity::class.java)
-                intent.putExtra(KEY_URL, uri)
+                intent.putExtra(EXTRA_URL, uri)
                 context.startActivity(intent)
             } else {
                 try {
