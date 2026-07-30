@@ -43,7 +43,7 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
         private var permissionEvidenceOverrideForTest: Bundle? = null
 
         @JvmStatic
-        internal fun installPermissionEvidenceOverrideForTest(evidence: Bundle?) {
+        fun installPermissionEvidenceOverrideForTest(evidence: Bundle?) {
             permissionEvidenceOverrideForTest = evidence?.let(::Bundle)
         }
     }

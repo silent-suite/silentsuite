@@ -291,6 +291,7 @@ class PostLoginSetupRuntimeTest {
             }
         }
         requestSyncDispatchOverride = { _, _, _ -> Unit }
+        PostLoginSetupActivity.safeWorkPausedForTest = true
         try {
             states.forEachIndexed { index, state ->
                 val account = Account("cold-$index-${System.nanoTime()}@example.invalid", App.accountType)
@@ -345,6 +346,7 @@ class PostLoginSetupRuntimeTest {
                 registry.clearOwned(account.type, account.name, creationId)
             }
         } finally {
+            PostLoginSetupActivity.safeWorkPausedForTest = false
             PostLoginSyncConfigurator.configureOverride = null
             PostLoginSetupViewModel.inventoryOverride = null
             requestSyncDispatchOverride = null

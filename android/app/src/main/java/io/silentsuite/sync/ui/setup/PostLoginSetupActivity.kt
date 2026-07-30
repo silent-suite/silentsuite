@@ -181,7 +181,7 @@ class PostLoginSetupActivity : BaseActivity() {
 
     /** The ViewModel is the single retained serializer; this Activity only supplies one drain. */
     private fun resumeSetupWork() {
-        if (missingCreationId || !::account.isInitialized) return
+        if (safeWorkPausedForTest || missingCreationId || !::account.isInitialized) return
         model.resumeSafeWork {
             var keepDraining = true
             var decisions = 0
@@ -270,8 +270,8 @@ class PostLoginSetupActivity : BaseActivity() {
                     write(PostLoginSetupState.RECOVERY_REQUIRED)
                 }
             }
-            PostLoginSetupOrchestrator.Decision.ConfigureAndroidSync,
-            is PostLoginSetupOrchestrator.Decision.PersistState -> false
+            PostLoginSetupOrchestrator.Decision.ConfigureAndroidSync -> false
+            is PostLoginSetupOrchestrator.Decision.PersistState -> write(decision.state)
             PostLoginSetupOrchestrator.Decision.LoadInventory -> {
                 if (exactAccount() == null) return true
                 model.inventoryAndCreate(applicationContext, account, accountCreationId)
@@ -812,6 +812,7 @@ class PostLoginSetupActivity : BaseActivity() {
         private const val EXTRA_ACCOUNT = "post_login_setup_account"
         private const val EXTRA_CREATION_ID = "post_login_setup_creation_id"
         private const val MAX_SAFE_DECISIONS_PER_DRAIN = 24
+        @JvmField internal var safeWorkPausedForTest = false
 
         fun newIntent(context: Context, account: Account, creationId: String?) =
             Intent(context, PostLoginSetupActivity::class.java)
