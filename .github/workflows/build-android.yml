@@ -9,17 +9,39 @@ on:
       - 'android/**'
       - 'tests/test_android_*.py'
       - 'scripts/check-android-signing-boundary.py'
-      - '.github/workflows/build-android.yml'
+      - '.github/workflows/**'
+      - 'android/.github/workflows/**'
   pull_request:
     branches: [dev]
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
       - 'scripts/check-android-signing-boundary.py'
-      - '.github/workflows/build-android.yml'
+      - '.github/workflows/**'
+      - 'android/.github/workflows/**'
   workflow_dispatch:
 
 jobs:
+  signing-policy:
+    name: Enforce Android signing boundary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.x'
+
+      - name: Install signing policy dependency
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.3
+
+      - name: Enforce Android signing boundary
+        run: python scripts/check-android-signing-boundary.py
+
   # ─────────────────────────────────────────────────────────────────────
   # PR / dev / main builds — unsigned, no signing secrets accessible.
   # Validates that the Android project compiles and assembles.
@@ -49,13 +71,12 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Enforce Android signing boundary
-        run: python3 ../scripts/check-android-signing-boundary.py
+      - name: Install Android static contract dependencies
+        run: |
+          python -m pip install --disable-pip-version-check pytest PyYAML==6.0.3
 
       - name: Run Android static Python contracts
-        run: |
-          python -m pip install --disable-pip-version-check pytest
-          python -m pytest ../tests/test_android_*.py -q
+        run: python -m pytest ../tests/test_android_*.py -q
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
@@ -391,6 +412,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   build-release:
     name: Build (signed, tag release)
+    needs: signing-policy
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: android-release
@@ -403,9 +425,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Enforce Android signing boundary
-        run: python3 ../scripts/check-android-signing-boundary.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
