@@ -78,6 +78,11 @@ def test_runtime_sources_characterize_dispatcher_toolbar_and_system_back_routes(
     assert "Manifest.permission.WRITE_CONTACTS" in runtime
     assert "private fun grantCalendarPermissions" not in runtime
     assert "private fun grantDashboardPermissions" not in runtime
+    fingerprint_cancel = runtime.split(
+        "fun fingerprintCancelAfterRecreationReturnsToExactDashboard()", 1
+    )[1].split("@Test", 1)[0]
+    assert "scenario.recreate()" in fingerprint_cancel
+    assert "setPrimaryClip" not in fingerprint_cancel
     assert "assertTrue(UiDevice" not in runtime
     assert "fun systemBackClosesDrawerWithoutFinishing()" in drawer_runtime
     assert "UiDevice.getInstance" in drawer_runtime

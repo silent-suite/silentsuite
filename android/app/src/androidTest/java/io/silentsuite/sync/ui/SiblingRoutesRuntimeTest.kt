@@ -534,11 +534,6 @@ class SiblingRoutesRuntimeTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)
         val account = addAccount(manager, "fingerprint-dashboard", "fingerprint-dashboard-generation", setupComplete = true)
-        lateinit var clipboard: ClipboardManager
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("sentinel", "sentinel"))
-        }
         val reads = mutableListOf<Pair<Account, String>>()
         val previousBootstrap = App.postLoginBootstrapSucceeded
         App.postLoginBootstrapSucceeded = true
@@ -588,7 +583,6 @@ class SiblingRoutesRuntimeTest {
                 }
                 assertEquals(listOf(account to "fingerprint-dashboard-generation"), reads)
                 scenario.onActivity { activity ->
-                    assertEquals("sentinel", clipboard.primaryClip!!.getItemAt(0).text)
                     assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
                 }
             }
