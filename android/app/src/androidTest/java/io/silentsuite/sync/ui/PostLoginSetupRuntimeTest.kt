@@ -196,7 +196,18 @@ class PostLoginSetupRuntimeTest {
         }
     }
     @Test fun noNetworkDashboardShellRoutesExactAccountAfterReadyDone() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val restoreNotificationDenial = android.os.Build.VERSION.SDK_INT >=
+            android.os.Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (restoreNotificationDenial) {
+            instrumentation.uiAutomation.grantRuntimePermission(
+                context.packageName,
+                android.Manifest.permission.POST_NOTIFICATIONS,
+            )
+        }
         val manager = AccountManager.get(context)
         val target = Account("target-${System.nanoTime()}@example.invalid", App.accountType)
         val sibling = Account("sibling-${System.nanoTime()}@example.invalid", App.accountType)
@@ -260,6 +271,14 @@ class PostLoginSetupRuntimeTest {
             AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
             PostLoginSetupViewModel.inventoryOverride=null
             App.postLoginBootstrapSucceeded=previousBootstrap
+            if (restoreNotificationDenial) {
+                runCatching {
+                    instrumentation.uiAutomation.revokeRuntimePermission(
+                        context.packageName,
+                        android.Manifest.permission.POST_NOTIFICATIONS,
+                    )
+                }
+            }
             AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling); ActiveAccountManager.clearActiveAccount(context)
         }
     }
