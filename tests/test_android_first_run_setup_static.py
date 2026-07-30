@@ -185,6 +185,9 @@ def test_account_settings_owns_only_bounded_returned_permission_denials():
     callback = activity.split("private val permissionLauncher", 1)[1].split(
         "override fun onCreate", 1
     )[0]
+    assert ") { results ->" in callback
+    assert "results.filterKeys" in callback
+    assert "launched.isEmpty()" not in callback
     assert callback.index("recordReturnedPermissionEvidence") < callback.index(
         "persistReturnedPermissionDenials"
     )

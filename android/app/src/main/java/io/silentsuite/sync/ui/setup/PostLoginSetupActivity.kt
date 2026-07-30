@@ -41,22 +41,26 @@ class PostLoginSetupActivity : BaseActivity() {
      */
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) {
+    ) { results ->
         if (!::account.isInitialized || !::accountManager.isInitialized) return@registerForActivityResult
         if (exactAccount() == null) return@registerForActivityResult
-        val launched = model.launchedPermissionIntegrations()
-        if (launched.isEmpty()) return@registerForActivityResult
-        val returned = launched.associateWith { integration ->
-            val permissions = permissionsFor(integration)
-            when {
-                permissions.isNotEmpty() && permissions.all(::permissionGranted) ->
-                    PostLoginSetupOrchestrator.PermissionEvidence.GRANTED
-                permissions.any { ActivityCompat.shouldShowRequestPermissionRationale(this, it) } ->
-                    PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
-                else ->
+        val returned = PostLoginSetupOrchestrator.Integration.values().mapNotNull { integration ->
+            val permissions = allPermissionsFor(integration)
+            val explicitResults = results.filterKeys(permissions::contains)
+            val evidence = when {
+                explicitResults.isEmpty() -> null
+                explicitResults.values.any { granted -> !granted } && permissions.any {
+                    ActivityCompat.shouldShowRequestPermissionRationale(this, it)
+                } -> PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
+                explicitResults.values.any { granted -> !granted } ->
                     PostLoginSetupOrchestrator.PermissionEvidence.DENIED_BLOCKED_RETURNED
+                permissions.all(::permissionGranted) ->
+                    PostLoginSetupOrchestrator.PermissionEvidence.GRANTED
+                else -> null
             }
-        }
+            evidence?.let { integration to it }
+        }.toMap()
+        if (returned.isEmpty()) return@registerForActivityResult
         model.recordReturnedPermissionEvidence(returned)
         if (!persistReturnedPermissionDenials(returned)) {
             render()
@@ -507,6 +511,17 @@ class PostLoginSetupActivity : BaseActivity() {
         PostLoginSetupOrchestrator.Integration.TASKS ->
             listOf(ProviderName.OpenTasks, ProviderName.TasksOrg)
                 .filter { LocalTaskList.tasksProviderAvailable(this, it) }
+                .flatMap { it.permissions.toList() }
+                .distinct()
+    }
+
+    private fun allPermissionsFor(
+        integration: PostLoginSetupOrchestrator.Integration,
+    ): List<String> = when (integration) {
+        PostLoginSetupOrchestrator.Integration.CALENDAR -> ContextualPermissionPlan.CALENDAR
+        PostLoginSetupOrchestrator.Integration.CONTACTS -> ContextualPermissionPlan.CONTACTS
+        PostLoginSetupOrchestrator.Integration.TASKS ->
+            listOf(ProviderName.OpenTasks, ProviderName.TasksOrg)
                 .flatMap { it.permissions.toList() }
                 .distinct()
     }
