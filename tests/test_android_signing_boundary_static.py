@@ -11,7 +11,7 @@ CHECKER = ROOT / "scripts" / "check-android-signing-boundary.py"
 ROOT_WORKFLOW = Path(".github/workflows/build-android.yml")
 SIBLING_WORKFLOW = Path("android/.github/workflows/build.yml")
 POLICY_STEP = """      - name: Enforce Android signing boundary
-        run: python scripts/check-android-signing-boundary.py
+        run: python "$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py"
 
 """
 
@@ -110,6 +110,27 @@ jobs:
     assert_rejected(run_checker(root), "must not use dynamic or whole-context secret expressions")
 
 
+def test_secret_object_filter_serialization_is_rejected(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ".github" / "workflows" / "ci.yml"
+    workflow.write_text(
+        """name: object filter bypass
+on: pull_request
+jobs:
+  leak:
+    runs-on: ubuntu-latest
+    env:
+      ALL_SECRETS: ${{ toJSON(secrets.*) }}
+      JOINED_SECRETS: ${{ join(secrets.*, ',') }}
+    steps:
+      - run: 'true'
+""",
+        encoding="utf-8",
+    )
+
+    assert_rejected(run_checker(root), "must not use dynamic or whole-context secret expressions")
+
+
 def test_workflow_scope_signing_reference_is_rejected(tmp_path: Path) -> None:
     root = fixture_root(tmp_path)
     workflow = root / ".github" / "workflows" / "ci.yml"
@@ -170,7 +191,25 @@ jobs:
         encoding="utf-8",
     )
 
-    assert_rejected(run_checker(root), "YAML anchors and aliases are not allowed")
+    assert_rejected(run_checker(root), "YAML anchors, aliases, and explicit tags are not allowed")
+
+
+def test_explicit_yaml_tags_are_rejected(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ".github" / "workflows" / "ci.yml"
+    workflow.write_text(
+        """name: tag bypass
+on: pull_request
+jobs: !!map
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+""",
+        encoding="utf-8",
+    )
+
+    assert_rejected(run_checker(root), "YAML anchors, aliases, and explicit tags are not allowed")
 
 
 def test_reusable_workflow_secret_inheritance_is_rejected(tmp_path: Path) -> None:
@@ -219,6 +258,25 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: android-release
+    steps:
+      - run: 'true'
+""",
+        encoding="utf-8",
+    )
+
+    assert_rejected(run_checker(root), "binds android-release outside build-release")
+
+
+def test_android_environment_comparison_is_case_insensitive(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ".github" / "workflows" / "ci.yml"
+    workflow.write_text(
+        """name: case bypass
+on: pull_request
+jobs:
+  leak:
+    runs-on: ubuntu-latest
+    environment: ANDROID-RELEASE
     steps:
       - run: 'true'
 """,
@@ -311,7 +369,7 @@ def test_policy_job_cannot_be_conditional(tmp_path: Path) -> None:
         "  signing-policy:\n    name: Enforce Android signing boundary\n    if: ${{ false }}\n",
     )
 
-    assert_rejected(run_checker(root), "signing-policy must not be conditional")
+    assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
 
 
 def test_policy_checker_step_cannot_continue_on_error(tmp_path: Path) -> None:
@@ -323,7 +381,7 @@ def test_policy_checker_step_cannot_continue_on_error(tmp_path: Path) -> None:
         POLICY_STEP.rstrip() + "\n        continue-on-error: true\n\n",
     )
 
-    assert_rejected(run_checker(root), "checker step must be unconditional and fail closed")
+    assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
 
 
 def test_misleading_checker_command_is_rejected(tmp_path: Path) -> None:
@@ -331,11 +389,60 @@ def test_misleading_checker_command_is_rejected(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "        run: python scripts/check-android-signing-boundary.py\n",
-        "        run: echo python scripts/check-android-signing-boundary.py\n",
+        "        run: python \"$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py\"\n",
+        "        run: echo python \"$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py\"\n",
     )
 
-    assert_rejected(run_checker(root), "must execute the exact signing-boundary checker command once")
+    assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
+
+
+def test_policy_checker_cannot_use_working_directory(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        POLICY_STEP,
+        POLICY_STEP.rstrip() + "\n        working-directory: attacker\n\n",
+    )
+
+    assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
+
+
+def test_policy_checker_cannot_use_custom_shell(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        POLICY_STEP,
+        POLICY_STEP.rstrip() + "\n        shell: attacker-shell {0}\n\n",
+    )
+
+    assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
+
+
+def test_policy_checker_cannot_override_path(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        POLICY_STEP,
+        POLICY_STEP.rstrip() + "\n        env:\n          PATH: attacker\n\n",
+    )
+
+    assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
+
+
+def test_policy_job_cannot_add_preceding_workspace_mutation(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        POLICY_STEP,
+        "      - name: Replace checker\n        run: cp attacker.py scripts/check-android-signing-boundary.py\n\n"
+        + POLICY_STEP,
+    )
+
+    assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
 
 
 def test_all_root_workflow_changes_must_trigger_policy(tmp_path: Path) -> None:
@@ -361,6 +468,42 @@ def test_android_sibling_workflow_changes_must_trigger_policy(tmp_path: Path) ->
     result = run_checker(root)
     assert_rejected(result, "pull_request.paths is missing: android/.github/workflows/**")
     assert "push.paths is missing: android/.github/workflows/**" in result.stdout
+
+
+def test_later_negative_path_pattern_cannot_disable_policy_trigger(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "      - 'android/.github/workflows/**'\n  workflow_dispatch:\n",
+        "      - 'android/.github/workflows/**'\n      - '!.github/workflows/**'\n  workflow_dispatch:\n",
+    )
+
+    assert_rejected(run_checker(root), "pull_request.paths must not contain negative patterns")
+
+
+def test_policy_dependency_hash_pin_is_immutable(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+    )
+
+    assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
+
+
+def test_release_job_cannot_invoke_local_action(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Set up JDK 17\n",
+        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Local release action\n        uses: ./malicious-action\n\n      - name: Set up JDK 17\n",
+    )
+
+    assert_rejected(run_checker(root), "build-release must not invoke local actions")
 
 
 def test_mutable_action_in_root_workflow_is_rejected(tmp_path: Path) -> None:

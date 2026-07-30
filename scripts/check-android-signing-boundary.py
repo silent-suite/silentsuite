@@ -13,7 +13,7 @@ import yaml
 from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
 from yaml.resolver import BaseResolver
-from yaml.tokens import AliasToken, AnchorToken
+from yaml.tokens import AliasToken, AnchorToken, TagToken
 
 
 SIGNING_SECRETS = {
@@ -28,11 +28,43 @@ POLICY_JOB = "signing-policy"
 TAG_GUARD = "startsWith(github.ref, 'refs/tags/v')"
 ENVIRONMENT_NAME = "android-release"
 SHA_PIN = re.compile(r"^[0-9a-f]{40}$")
-POLICY_COMMAND = re.compile(r"^\s*python(?:3)?\s+scripts/check-android-signing-boundary\.py\s*$")
 UNSAFE_SECRET_EXPRESSION = re.compile(
-    r"\bsecrets\s*\[|\btojson\s*\(\s*secrets\s*\)",
+    r"\bsecrets\s*\[|\bsecrets\s*\.\s*\*|\btojson\s*\(\s*secrets\s*\)",
     re.IGNORECASE,
 )
+CHECKOUT_ACTION = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
+SETUP_PYTHON_ACTION = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+EXPECTED_POLICY_JOB: dict[str, Any] = {
+    "name": "Enforce Android signing boundary",
+    "runs-on": "ubuntu-latest",
+    "permissions": {"contents": "read"},
+    "steps": [
+        {
+            "name": "Set up Python",
+            "uses": SETUP_PYTHON_ACTION,
+            "with": {"python-version": "3.12"},
+        },
+        {
+            "name": "Install signing policy dependency",
+            "run": (
+                "printf '%s\\n' 'PyYAML==6.0.3 "
+                "--hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc' "
+                '> "$RUNNER_TEMP/android-signing-policy-requirements.txt"\n'
+                "python -m pip install --disable-pip-version-check --only-binary=:all: "
+                '--require-hashes -r "$RUNNER_TEMP/android-signing-policy-requirements.txt"\n'
+            ),
+        },
+        {
+            "name": "Checkout policy source",
+            "uses": CHECKOUT_ACTION,
+            "with": {"clean": "true", "persist-credentials": "false"},
+        },
+        {
+            "name": "Enforce Android signing boundary",
+            "run": 'python "$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py"',
+        },
+    ],
+}
 REQUIRED_TRIGGER_PATHS = {
     ".github/workflows/**",
     "android/.github/workflows/**",
@@ -79,8 +111,8 @@ StrictBaseLoader.add_constructor(BaseResolver.DEFAULT_MAPPING_TAG, construct_uni
 def load_workflow(path: Path) -> dict[str, Any]:
     try:
         text = path.read_text(encoding="utf-8")
-        if any(isinstance(token, (AnchorToken, AliasToken)) for token in yaml.scan(text)):
-            raise ValueError("YAML anchors and aliases are not allowed")
+        if any(isinstance(token, (AnchorToken, AliasToken, TagToken)) for token in yaml.scan(text)):
+            raise ValueError("YAML anchors, aliases, and explicit tags are not allowed")
         parsed = yaml.load(text, Loader=StrictBaseLoader)
     except ValueError:
         raise
@@ -181,17 +213,17 @@ def as_mapping(value: Any, label: str, violations: list[str]) -> dict[str, Any]:
     return value
 
 
-def trigger_paths(workflow: Mapping[str, Any], event: str) -> set[str]:
+def trigger_paths(workflow: Mapping[str, Any], event: str) -> list[str]:
     events = workflow.get("on")
     if not isinstance(events, Mapping):
-        return set()
+        return []
     config = events.get(event)
     if not isinstance(config, Mapping):
-        return set()
+        return []
     paths = config.get("paths")
     if not isinstance(paths, Sequence) or isinstance(paths, (str, bytes)):
-        return set()
-    return {item for item in paths if isinstance(item, str)}
+        return []
+    return [item for item in paths if isinstance(item, str)]
 
 
 def check(root: Path) -> list[str]:
@@ -242,7 +274,7 @@ def check(root: Path) -> list[str]:
                     f"{relative} job {job_name} references Android signing secrets: "
                     f"{', '.join(sorted(refs))}"
                 )
-            if env == ENVIRONMENT_NAME and not is_allowed:
+            if env and env.casefold() == ENVIRONMENT_NAME.casefold() and not is_allowed:
                 violations.append(f"{relative} job {job_name} binds {ENVIRONMENT_NAME} outside {ALLOWED_JOB}")
             if env and "${{" in env and not is_allowed:
                 violations.append(f"{relative} job {job_name} uses a dynamic environment outside {ALLOWED_JOB}")
@@ -278,27 +310,8 @@ def check(root: Path) -> list[str]:
                 f"{ROOT_WORKFLOW} job {job_name} has dynamic or write permissions outside {ALLOWED_JOB}"
             )
 
-    if policy.get("permissions") != {"contents": "read"}:
-        violations.append(f"{POLICY_JOB} permissions must be exactly contents: read")
-    if "if" in policy:
-        violations.append(f"{POLICY_JOB} must not be conditional")
-    if "continue-on-error" in policy:
-        violations.append(f"{POLICY_JOB} must not continue on error")
-    policy_steps = policy.get("steps")
-    if not isinstance(policy_steps, list):
-        violations.append(f"{POLICY_JOB} steps must be a sequence")
-    else:
-        checker_steps = [
-            step
-            for step in policy_steps
-            if isinstance(step, Mapping)
-            and isinstance(step.get("run"), str)
-            and POLICY_COMMAND.fullmatch(step["run"])
-        ]
-        if len(checker_steps) != 1:
-            violations.append(f"{POLICY_JOB} must execute the exact signing-boundary checker command once")
-        elif "if" in checker_steps[0] or "continue-on-error" in checker_steps[0]:
-            violations.append(f"{POLICY_JOB} checker step must be unconditional and fail closed")
+    if policy != EXPECTED_POLICY_JOB:
+        violations.append(f"{POLICY_JOB} must match the exact fail-closed job specification")
 
     missing_refs = SIGNING_SECRETS - signing_references(release)
     if missing_refs:
@@ -311,16 +324,21 @@ def check(root: Path) -> list[str]:
         violations.append(f"{ALLOWED_JOB} must bind the {ENVIRONMENT_NAME} environment")
     if "uses" in release:
         violations.append(f"{ALLOWED_JOB} must not delegate to a reusable workflow")
+    if any(target.startswith("./") for target in action_uses(release)):
+        violations.append(f"{ALLOWED_JOB} must not invoke local actions")
 
     if not isinstance(release.get("steps"), list):
         violations.append(f"{ALLOWED_JOB} steps must be a sequence")
 
     for event in ("push", "pull_request"):
-        missing_paths = REQUIRED_TRIGGER_PATHS - trigger_paths(root_workflow, event)
+        paths = trigger_paths(root_workflow, event)
+        missing_paths = REQUIRED_TRIGGER_PATHS - set(paths)
         if missing_paths:
             violations.append(
                 f"{ROOT_WORKFLOW} {event}.paths is missing: {', '.join(sorted(missing_paths))}"
             )
+        if any(path.startswith("!") for path in paths):
+            violations.append(f"{ROOT_WORKFLOW} {event}.paths must not contain negative patterns")
 
     for relative in (ROOT_WORKFLOW, ANDROID_SIBLING_WORKFLOW):
         path = root / relative
