@@ -236,11 +236,15 @@ class PostLoginSetupRuntimeTest {
             var dashboard: AccountActivity?=null
             while (android.os.SystemClock.uptimeMillis()<deadline) {
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-                val resumed=resumedActivityOrNull()
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    dashboard = ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<AccountActivity>()
+                        .singleOrNull()
+                        ?.takeIf { it.title.toString() == target.name }
+                }
                 if (AccountSettings.setupState(manager,target,true)==PostLoginSetupState.COMPLETE &&
-                    ActiveAccountManager.getActiveAccount(context)==target && resumed is AccountActivity &&
-                    resumed.title.toString()==target.name) {
-                    dashboard=resumed
+                    ActiveAccountManager.getActiveAccount(context)==target && dashboard != null) {
                     break
                 }
                 android.os.SystemClock.sleep(25)

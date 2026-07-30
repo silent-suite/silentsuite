@@ -238,6 +238,7 @@ def test_no_network_dashboard_runtime_uses_a_bounded_exact_account_loader():
     assert "check(exact == target)" in contract
     assert 'check(creationId == "target-generation")' in contract
     assert "AccountInfoViewModel.accountLoaderOverride = null" in contract
+    assert ".filterIsInstance<AccountActivity>()" in contract
 
 
 def test_setup_durable_evidence_contains_no_secrets_or_secret_extras():
