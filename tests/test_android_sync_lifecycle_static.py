@@ -440,7 +440,8 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
         ("21", "x86", "mixed"),
         ("21", "x86", "remaining"),
         ("35", "x86_64", "all"),
-        ("36", "x86_64", "all"),
+        ("36", "x86_64", "account-setup"),
+        ("36", "x86_64", "status-routes"),
     ]
     assert "name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})" in job
     artifact = re.search(r"^\s+name: (account-recreation-androidTest-.+)$", job, re.MULTILINE).group(1)
@@ -453,7 +454,7 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     )
     assert 'api_level="${1:?usage: run-focused-runtime-tests.sh API_LEVEL SHARD}"' in script
     assert 'shard="${2:?usage: run-focused-runtime-tests.sh API_LEVEL SHARD}"' in script
-    assert script.count("app:connectedDebugAndroidTest") == 4
+    assert script.count("app:connectedDebugAndroidTest") == 6
     assert "mktemp -d" in script
     assert '${RUNNER_TEMP:-${TMPDIR:-/tmp}}' in script
     assert "app/build/outputs/androidTest-results/connected/." in script
@@ -461,13 +462,15 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     assert "api21_batch_" not in script
 
     assignments = dict(
-        re.findall(r"^(mixed_selector|requested_selector|other70_selectors|focused_classes)='([^']+)'$", script, re.MULTILINE)
+        re.findall(r"^(mixed_selector|requested_selector|other70_selectors|focused_classes|api36_account_setup_classes|api36_status_routes_classes)='([^']+)'$", script, re.MULTILINE)
     )
     mixed_selectors = assignments["mixed_selector"].split(",")
     requested_selectors = assignments["requested_selector"].split(",")
     other70_ordered = assignments["other70_selectors"].split(",")
     monolithic_ordered = assignments["focused_classes"].split(",")
     monolithic = set(monolithic_ordered)
+    api36_account_setup = assignments["api36_account_setup_classes"].split(",")
+    api36_status_routes = assignments["api36_status_routes_classes"].split(",")
     diagnostic = (
         f"{dashboard}#"
         "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
@@ -495,9 +498,11 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     ]
     assert other70_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
     assert script.count('"${focused_classes}"') == 1
+    assert set(api36_account_setup).isdisjoint(api36_status_routes)
+    assert set(api36_account_setup) | set(api36_status_routes) == monolithic
     assert 'command -v timeout >/dev/null 2>&1' in script
-    assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == ["600", "600", "1500", "2400"]
-    assert 600 < 2700 and 600 + 1500 < 2700 and 2400 < 2700
+    assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == ["600", "600", "1500", "2400", "1800", "1800"]
+    assert 600 < 2700 and 600 + 1500 < 2700 and 2400 < 2700 and 1800 < 2700
     requested_run = script.index('class="${requested_selector}"')
     save = script.index("\n  save_requested_results", requested_run)
     other_run = script.index('class="${other70_selectors}"')
@@ -533,11 +538,18 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     mixed_expanded = expand(mixed_selectors)
     remaining_expanded = expand(requested_selectors + other70_ordered)
     all_expanded = expand(monolithic_ordered)
+    account_setup_expanded = expand(api36_account_setup)
+    status_routes_expanded = expand(api36_status_routes)
     assert (len(mixed_expanded), len(remaining_expanded), len(all_expanded)) == (1, 71, 72)
     assert mixed_expanded.isdisjoint(remaining_expanded)
     assert mixed_expanded | remaining_expanded == all_expanded
-    assert "expected_sizes={'mixed': 1, 'remaining': 71, 'all': 72}" in assertion
+    assert (len(account_setup_expanded), len(status_routes_expanded)) == (35, 37)
+    assert account_setup_expanded.isdisjoint(status_routes_expanded)
+    assert account_setup_expanded | status_routes_expanded == all_expanded
+    assert "expected_sizes={'mixed': 1, 'remaining': 71, 'all': 72, 'account-setup': 35, 'status-routes': 37}" in assertion
     assert "expected=canonical-{mixed}" in assertion
+    assert "expected={pair for pair in canonical if pair[0] in api36_account_setup_classes}" in assertion
+    assert "expected={pair for pair in canonical if pair[0] in api36_status_routes_classes}" in assertion
     assert "if pair in expected and list(case)" in assertion
     assert "unexpected=set(counts)-expected" in assertion
     assert "duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}" in assertion

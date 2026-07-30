@@ -122,10 +122,11 @@ class LoginLifecycleContractTest {
         assertTrue(job.contains("contents: read"))
         assertEquals(2, Regex("""api-level: 21\n\s+arch: x86""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 35\n\s+arch: x86_64""").findAll(job).count())
-        assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: all""").findAll(job).count())
+        assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: account-setup""").findAll(job).count())
+        assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: status-routes""").findAll(job).count())
         assertEquals(1, Regex("shard: mixed").findAll(job).count())
         assertEquals(1, Regex("shard: remaining").findAll(job).count())
-        assertEquals(2, Regex("shard: all").findAll(job).count())
+        assertEquals(1, Regex("shard: all").findAll(job).count())
         assertTrue(job.contains("""name: Account recreation (API ${'$'}{{ matrix.api-level }}, ${'$'}{{ matrix.arch }}, ${'$'}{{ matrix.shard }})"""))
         assertTrue(runnerReference != null)
         listOf(
@@ -245,7 +246,7 @@ class LoginLifecycleContractTest {
         assertTrue(mixedExpanded.toSet().intersect(remainingExpanded.toSet()).isEmpty())
         assertEquals(allExpanded.toSet(), mixedExpanded.toSet() + remainingExpanded.toSet())
         assertEquals(runtimeMethods.toSet(), allExpanded.toSet())
-        assertEquals(listOf("600", "600", "1500", "2400"),
+        assertEquals(listOf("600", "600", "1500", "2400", "1800", "1800"),
             Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
                 .findAll(runtimeScript).map { it.groupValues[1] }.toList())
         assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)

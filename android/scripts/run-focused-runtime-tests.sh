@@ -11,6 +11,8 @@ mixed_selector='io.silentsuite.sync.ui.AccountDashboardRuntimeTest#mixedActiveAn
 requested_selector='io.silentsuite.sync.ui.AccountDashboardRuntimeTest#requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention'
 other70_selectors='io.silentsuite.sync.ui.AccountDashboardRuntimeTest#freshContactsGenerationFinishesBeforeChildDispatchOrCompletion,io.silentsuite.sync.ui.AccountDashboardRuntimeTest#futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent,io.silentsuite.sync.ui.AccountDashboardRuntimeTest#truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation,io.silentsuite.sync.ui.AccountDashboardRuntimeTest#serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting,io.silentsuite.sync.ui.AccountDashboardRuntimeTest#retainedLoadRejectsSameNameReplacementBeforePublication,io.silentsuite.sync.ui.AccountDashboardRuntimeTest#initialLoadFailurePublishesTerminalErrorAndRefreshFailureRetainsValidDashboard,io.silentsuite.sync.ui.AccountDashboardRuntimeTest#retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes,io.silentsuite.sync.ui.AccountDashboardRuntimeTest#dashboardExportCompletionPreservesExactDashboardAfterRecreation,io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest,io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest,io.silentsuite.sync.ui.SettingsRuntimeTest,io.silentsuite.sync.ui.SiblingRoutesRuntimeTest'
 focused_classes='io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest,io.silentsuite.sync.ui.AccountDashboardRuntimeTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest,io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest,io.silentsuite.sync.ui.SettingsRuntimeTest,io.silentsuite.sync.ui.SiblingRoutesRuntimeTest'
+api36_account_setup_classes='io.silentsuite.sync.ui.AccountActivityRecreationTest,io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest,io.silentsuite.sync.ui.AccountDashboardRuntimeTest,io.silentsuite.sync.ui.PostLoginSetupRuntimeTest,io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest,io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest'
+api36_status_routes_classes='io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest,io.silentsuite.sync.ui.SettingsRuntimeTest,io.silentsuite.sync.ui.SiblingRoutesRuntimeTest'
 
 command -v timeout >/dev/null 2>&1
 
@@ -61,9 +63,15 @@ elif [[ "${api_level}:${shard}" == "21:remaining" ]]; then
 
   timeout --signal=TERM --kill-after=10s 1500s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${other70_selectors}"
-elif [[ "${api_level}:${shard}" == "35:all" || "${api_level}:${shard}" == "36:all" ]]; then
+elif [[ "${api_level}:${shard}" == "35:all" ]]; then
   timeout --signal=TERM --kill-after=10s 2400s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${focused_classes}"
+elif [[ "${api_level}:${shard}" == "36:account-setup" ]]; then
+  timeout --signal=TERM --kill-after=10s 1800s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_account_setup_classes}"
+elif [[ "${api_level}:${shard}" == "36:status-routes" ]]; then
+  timeout --signal=TERM --kill-after=10s 1800s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_status_routes_classes}"
 else
   echo "unsupported API level/shard: ${api_level}/${shard}" >&2
   exit 2

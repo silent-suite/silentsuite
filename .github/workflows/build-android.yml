@@ -241,7 +241,10 @@ jobs:
             shard: all
           - api-level: 36
             arch: x86_64
-            shard: all
+            shard: account-setup
+          - api-level: 36
+            arch: x86_64
+            shard: status-routes
     defaults:
       run:
         working-directory: android
@@ -385,6 +388,19 @@ jobs:
             ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationMarkerFailureRerunsAndMarkerIsAlwaysLast'),
           }
           mixed=next(pair for pair in canonical if pair[1] == 'mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue')
+          api36_account_setup_classes={
+            'io.silentsuite.sync.ui.AccountActivityRecreationTest',
+            'io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest',
+            'io.silentsuite.sync.ui.AccountDashboardRuntimeTest',
+            'io.silentsuite.sync.ui.PostLoginSetupRuntimeTest',
+            'io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest',
+            'io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest',
+          }
+          api36_status_routes_classes={
+            'io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest',
+            'io.silentsuite.sync.ui.SettingsRuntimeTest',
+            'io.silentsuite.sync.ui.SiblingRoutesRuntimeTest',
+          }
           shard='${{ matrix.shard }}'
           if shard == 'mixed':
             expected={mixed}
@@ -392,9 +408,13 @@ jobs:
             expected=canonical-{mixed}
           elif shard == 'all':
             expected=canonical
+          elif shard == 'account-setup':
+            expected={pair for pair in canonical if pair[0] in api36_account_setup_classes}
+          elif shard == 'status-routes':
+            expected={pair for pair in canonical if pair[0] in api36_status_routes_classes}
           else:
             raise SystemExit(f'unsupported shard {shard}')
-          expected_sizes={'mixed': 1, 'remaining': 71, 'all': 72}
+          expected_sizes={'mixed': 1, 'remaining': 71, 'all': 72, 'account-setup': 35, 'status-routes': 37}
           if len(canonical) != 72 or len(expected) != expected_sizes[shard]:
             raise SystemExit(f'bad expected ledger size for {shard}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
