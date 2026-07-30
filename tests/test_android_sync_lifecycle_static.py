@@ -401,19 +401,34 @@ def test_v2_validation_rejects_impossible_private_lifecycle_records():
     assert "attempt;delimiter" in tests
 
 
-def test_five_runtime_methods_appear_once_in_the_exact_workflow_ledger():
+def test_pr2_runtime_methods_appear_once_in_the_exact_workflow_ledger():
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    methods = (
-        "SyncStatusRuntimeTest.v1EvidenceReadsCompatiblyAndV2MutationStaysExactAndPrivate",
-        "SyncStatusRuntimeTest.manualRequestPersistsBeforeDispatchAndMatchingTerminalClearsLifecycle",
-        "AccountDashboardRuntimeTest.requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention",
-        "AccountDashboardRuntimeTest.mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue",
-        "AccountDashboardRuntimeTest.futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent",
+    entries = (
+        ("io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest",
+         "v1EvidenceReadsCompatiblyAndV2MutationStaysExactAndPrivate"),
+        ("io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest",
+         "manualRequestPersistsBeforeDispatchAndMatchingTerminalClearsLifecycle"),
+        ("io.silentsuite.sync.ui.AccountDashboardRuntimeTest",
+         "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"),
+        ("io.silentsuite.sync.ui.AccountDashboardRuntimeTest",
+         "mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue"),
+        ("io.silentsuite.sync.ui.AccountDashboardRuntimeTest",
+         "futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent"),
+        ("io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest",
+         "combinedSignInKeepsPrimaryActionReachableAndSecretsOutOfSavedState"),
+        ("io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest",
+         "normalAndAuthenticatorModesUseOneCombinedCredentialSurfaceAcrossRecreation"),
+        ("io.silentsuite.sync.ui.PostLoginSetupRuntimeTest",
+         "everyDurableSetupStateColdRendersApprovedPresentationWithoutRenderSideEffects"),
+        ("io.silentsuite.sync.ui.PostLoginSetupRuntimeTest",
+         "safeAutoAdvanceIsIdempotentAcrossRecreationAndStopsAtUserDecision"),
+        ("io.silentsuite.sync.ui.PostLoginSetupRuntimeTest",
+         "permissionGrantDenialBlockedSkipAndNoTaskProviderRemainResumable"),
+        ("io.silentsuite.sync.ui.PostLoginSetupRuntimeTest",
+         "initialSyncRequestIdSurvivesEveryCrashCutAndClearsAfterReady"),
     )
-    for method in methods:
-        class_name, method_name = method.split(".")
-        package = "syncadapter" if class_name == "SyncStatusRuntimeTest" else "ui"
-        entry = f"('io.silentsuite.sync.{package}.{class_name}','{method_name}')"
+    for class_name, method_name in entries:
+        entry = f"('{class_name}','{method_name}')"
         assert workflow.count(entry) == 1
 
 
@@ -456,11 +471,11 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     assert "api21_batch_" not in script
 
     assignments = dict(
-        re.findall(r"^(mixed_selector|requested_selector|other64_selectors|focused_classes)='([^']+)'$", script, re.MULTILINE)
+        re.findall(r"^(mixed_selector|requested_selector|other70_selectors|focused_classes)='([^']+)'$", script, re.MULTILINE)
     )
     mixed_selectors = assignments["mixed_selector"].split(",")
     requested_selectors = assignments["requested_selector"].split(",")
-    other64_ordered = assignments["other64_selectors"].split(",")
+    other70_ordered = assignments["other70_selectors"].split(",")
     monolithic_ordered = assignments["focused_classes"].split(",")
     monolithic = set(monolithic_ordered)
     diagnostic = (
@@ -483,19 +498,19 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     }
     assert mixed_selectors == [mixed]
     assert requested_selectors == [diagnostic]
-    assert set(other64_ordered) == expected_other_dashboard | (monolithic - {dashboard})
-    assert other64_ordered[:8] == [
+    assert set(other70_ordered) == expected_other_dashboard | (monolithic - {dashboard})
+    assert other70_ordered[:8] == [
         f"{dashboard}#{method}" for method in re.findall(r"@Test\s+fun\s+(\w+)", dashboard_source)
         if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
     ]
-    assert other64_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
+    assert other70_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
     assert script.count('"${focused_classes}"') == 1
     assert 'command -v timeout >/dev/null 2>&1' in script
     assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == ["600", "600", "1500", "2400"]
     assert 600 < 2700 and 600 + 1500 < 2700 and 2400 < 2700
     requested_run = script.index('class="${requested_selector}"')
     save = script.index("\n  save_requested_results", requested_run)
-    other_run = script.index('class="${other64_selectors}"')
+    other_run = script.index('class="${other70_selectors}"')
     assert script.index("trap restore_requested_results EXIT") < requested_run < save < other_run
     assert "status=$?" in script
     assert "set +e" in script
@@ -505,8 +520,8 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
 
     assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     ledger = re.findall(r"^\s+\('([^']+)','([^']+)'\),$", assertion, re.MULTILINE)
-    assert len(ledger) == 66
-    assert len(set(ledger)) == 66
+    assert len(ledger) == 72
+    assert len(set(ledger)) == 72
     runtime_methods = []
     for class_name in monolithic:
         source = ROOT / "android/app/src/androidTest/java" / Path(*class_name.split(".")).with_suffix(".kt")
@@ -514,7 +529,7 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
             (class_name, method)
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
-    assert len(runtime_methods) == 66
+    assert len(runtime_methods) == 72
     assert set(ledger) == set(runtime_methods)
     def expand(selectors):
         return {
@@ -526,12 +541,12 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
             )
         }
     mixed_expanded = expand(mixed_selectors)
-    remaining_expanded = expand(requested_selectors + other64_ordered)
+    remaining_expanded = expand(requested_selectors + other70_ordered)
     all_expanded = expand(monolithic_ordered)
-    assert (len(mixed_expanded), len(remaining_expanded), len(all_expanded)) == (1, 65, 66)
+    assert (len(mixed_expanded), len(remaining_expanded), len(all_expanded)) == (1, 71, 72)
     assert mixed_expanded.isdisjoint(remaining_expanded)
     assert mixed_expanded | remaining_expanded == all_expanded
-    assert "expected_sizes={'mixed': 1, 'remaining': 65, 'all': 66}" in assertion
+    assert "expected_sizes={'mixed': 1, 'remaining': 71, 'all': 72}" in assertion
     assert "expected=canonical-{mixed}" in assertion
     assert "if pair in expected and list(case)" in assertion
     assert "unexpected=(canonical & set(counts))-expected" in assertion

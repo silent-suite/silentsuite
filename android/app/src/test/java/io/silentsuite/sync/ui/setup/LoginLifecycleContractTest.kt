@@ -143,7 +143,7 @@ class LoginLifecycleContractTest {
     }
 
     @Test
-    fun focusedRuntimeExpectedSetIncludesAuthenticatorLifecycleContracts() {
+    fun focusedRuntimeExpectedSetIncludesFirstRunAndSetupLifecycleContracts() {
         val workflow = File("../../.github/workflows/build-android.yml").readText()
         val expectedSet = workflow.substringAfter("          canonical={")
             .substringBefore("          mixed=next")
@@ -152,8 +152,14 @@ class LoginLifecycleContractTest {
 
         assertTrue(expectedSet.contains(expectedTuple))
         assertTrue(expectedSet.contains(bootstrapTuple))
-        assertTrue(expectedSet.contains("('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncConfigurationEnablesCoreAuthoritiesWithoutRecovery')"))
-        assertTrue(expectedSet.contains("('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncFailureKeepsExactRowAndOffersContinueRetry')"))
+        listOf(
+            "('io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest','combinedSignInKeepsPrimaryActionReachableAndSecretsOutOfSavedState')",
+            "('io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest','normalAndAuthenticatorModesUseOneCombinedCredentialSurfaceAcrossRecreation')",
+            "('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','everyDurableSetupStateColdRendersApprovedPresentationWithoutRenderSideEffects')",
+            "('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','safeAutoAdvanceIsIdempotentAcrossRecreationAndStopsAtUserDecision')",
+            "('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionGrantDenialBlockedSkipAndNoTaskProviderRemainResumable')",
+            "('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','initialSyncRequestIdSurvivesEveryCrashCutAndClearsAfterReady')",
+        ).forEach { assertTrue(expectedSet.contains(it)) }
     }
 
     @Test
@@ -182,7 +188,7 @@ class LoginLifecycleContractTest {
             .find(runtimeScript)!!.groupValues[1].split(",")
         val requestedSelectors = Regex("""^requested_selector='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
-        val other64 = Regex("""^other64_selectors='([^']+)'$""", RegexOption.MULTILINE)
+        val other70 = Regex("""^other70_selectors='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
         val focusedClasses = Regex("""^focused_classes='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
@@ -198,14 +204,14 @@ class LoginLifecycleContractTest {
             else runtimeMethods.filter { it.startsWith("$selector#") }
         }
         val mixedExpanded = expand(mixedSelectors)
-        val remainingExpanded = expand(requestedSelectors + other64)
+        val remainingExpanded = expand(requestedSelectors + other70)
         val allExpanded = expand(focusedClasses)
 
         assertEquals(listOf(mixed), mixedSelectors)
         assertEquals(listOf(diagnostic), requestedSelectors)
-        assertEquals(66, runtimeMethods.size)
-        assertEquals(66, runtimeMethods.toSet().size)
-        assertEquals(listOf(1, 65, 66), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
+        assertEquals(72, runtimeMethods.size)
+        assertEquals(72, runtimeMethods.toSet().size)
+        assertEquals(listOf(1, 71, 72), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
         assertTrue(mixedExpanded.toSet().intersect(remainingExpanded.toSet()).isEmpty())
         assertEquals(allExpanded.toSet(), mixedExpanded.toSet() + remainingExpanded.toSet())
         assertEquals(runtimeMethods.toSet(), allExpanded.toSet())
@@ -217,7 +223,7 @@ class LoginLifecycleContractTest {
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""""))
         assertTrue(runtimeScript.indexOf("\n  save_requested_results",
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""")) <
-            runtimeScript.indexOf("""class="${'$'}{other64_selectors}""""))
+            runtimeScript.indexOf("""class="${'$'}{other70_selectors}""""))
         assertTrue(runtimeScript.contains("connected/api21-requested"))
         assertFalse(runtimeScript.contains("api21_batch_"))
         assertTrue(runtimeScript.contains("""if [[ "${'$'}{status}" -eq 0 && "${'$'}{restore_status}" -ne 0 ]]"""))

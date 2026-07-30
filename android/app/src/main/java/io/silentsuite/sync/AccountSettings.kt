@@ -204,6 +204,10 @@ constructor(internal val context: Context, internal val account: Account) {
         const val KEY_POST_LOGIN_SETUP_STATE = "post_login_setup_state_v1"
         const val KEY_CREATION_ID = "post_login_creation_id"
         const val KEY_LIMITED_INTEGRATIONS = "post_login_limited_integrations_v1"
+        const val KEY_INITIAL_SYNC_REQUEST_ID = "post_login_initial_sync_request_id_v1"
+        const val KEY_CONTEXTUAL_PERMISSION_DENIALS = "post_login_contextual_permission_denials_v1"
+        private const val MAX_INITIAL_SYNC_REQUEST_ID_LENGTH = 128
+        private val CONTEXTUAL_PERMISSION_DENIAL_VALUES = setOf("CALENDAR", "CONTACTS", "TASKS")
         // sync on WiFi only (default: false)
         private val KEY_WIFI_ONLY_SSID = "wifi_only_ssid"  // restrict sync to specific WiFi SSID
 
@@ -248,6 +252,59 @@ constructor(internal val context: Context, internal val account: Account) {
 
         fun writeSetupState(accountManager: AccountManager, account: Account, state: PostLoginSetupState): Boolean =
             writeVerified(accountManager, account, KEY_POST_LOGIN_SETUP_STATE, state.name)
+
+        fun initialSyncRequestId(
+            accountManager: AccountManager,
+            account: Account,
+        ): String? = accountManager.getUserData(account, KEY_INITIAL_SYNC_REQUEST_ID)
+            ?.takeIf { requestId ->
+                requestId.length in 1..MAX_INITIAL_SYNC_REQUEST_ID_LENGTH
+            }
+
+        fun writeInitialSyncRequestId(
+            accountManager: AccountManager,
+            account: Account,
+            requestId: String,
+        ): Boolean {
+            if (requestId.length !in 1..MAX_INITIAL_SYNC_REQUEST_ID_LENGTH) return false
+            return writeVerified(accountManager, account, KEY_INITIAL_SYNC_REQUEST_ID, requestId)
+        }
+
+        fun clearInitialSyncRequestId(
+            accountManager: AccountManager,
+            account: Account,
+            expectedRequestId: String,
+        ): Boolean {
+            if (initialSyncRequestId(accountManager, account) != expectedRequestId) return false
+            return writeVerified(accountManager, account, KEY_INITIAL_SYNC_REQUEST_ID, null)
+        }
+
+        fun contextualPermissionDenials(
+            accountManager: AccountManager,
+            account: Account,
+        ): Set<String> {
+            val encoded = accountManager.getUserData(account, KEY_CONTEXTUAL_PERMISSION_DENIALS)
+                ?.takeIf { it.isNotBlank() }
+                ?: return emptySet()
+            val values = encoded.split(',').toSet()
+            return values.takeIf { it.all(CONTEXTUAL_PERMISSION_DENIAL_VALUES::contains) }
+                ?: emptySet()
+        }
+
+        fun writeContextualPermissionDenials(
+            accountManager: AccountManager,
+            account: Account,
+            denials: Set<String>,
+        ): Boolean {
+            if (!denials.all(CONTEXTUAL_PERMISSION_DENIAL_VALUES::contains)) return false
+            val encoded = denials.sorted().joinToString(",").ifEmpty { null }
+            return writeVerified(
+                accountManager,
+                account,
+                KEY_CONTEXTUAL_PERMISSION_DENIALS,
+                encoded,
+            )
+        }
 
         fun limitedIntegrations(accountManager: AccountManager, account: Account) =
             accountManager.getUserData(account, KEY_LIMITED_INTEGRATIONS) == "true"

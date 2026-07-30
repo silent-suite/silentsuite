@@ -299,6 +299,8 @@ jobs:
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes'),
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','dashboardExportCompletionPreservesExactDashboardAfterRecreation'),
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','freshContactsGenerationFinishesBeforeChildDispatchOrCompletion'),
+            ('io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest','combinedSignInKeepsPrimaryActionReachableAndSecretsOutOfSavedState'),
+            ('io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest','normalAndAuthenticatorModesUseOneCombinedCredentialSurfaceAcrossRecreation'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','noNetworkDashboardShellRoutesExactAccountAfterReadyDone'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','recoveryRemovalConfirmedRoutesCleanLoginAndPreservesSibling'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionsRecoveryBlocksActionsAndLimitedSkipReachesReady'),
@@ -308,6 +310,10 @@ jobs:
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','generationMismatchShowsSettingsOnlyAcrossRecreation'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncConfigurationEnablesCoreAuthoritiesWithoutRecovery'),
             ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncFailureKeepsExactRowAndOffersContinueRetry'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','everyDurableSetupStateColdRendersApprovedPresentationWithoutRenderSideEffects'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','safeAutoAdvanceIsIdempotentAcrossRecreationAndStopsAtUserDecision'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionGrantDenialBlockedSkipAndNoTaskProviderRemainResumable'),
+            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','initialSyncRequestIdSurvivesEveryCrashCutAndClearsAfterReady'),
             ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','controllerLiveResultCancellationDuplicatesAndRestoreAreExactOnce'),
             ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','cleanInstallBootstrapPublishesMarkerAfterReconciliation'),
             ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling'),
@@ -361,8 +367,8 @@ jobs:
             expected=canonical
           else:
             raise SystemExit(f'unsupported shard {shard}')
-          expected_sizes={'mixed': 1, 'remaining': 65, 'all': 66}
-          if len(canonical) != 66 or len(expected) != expected_sizes[shard]:
+          expected_sizes={'mixed': 1, 'remaining': 71, 'all': 72}
+          if len(canonical) != 72 or len(expected) != expected_sizes[shard]:
             raise SystemExit(f'bad expected ledger size for {shard}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):

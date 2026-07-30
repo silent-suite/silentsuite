@@ -5,228 +5,800 @@ import android.accounts.AccountManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.observe
 import at.bitfire.ical4android.TaskProvider.ProviderName
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
-import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.resource.LocalTaskList
+import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.AccountActivity
-import io.silentsuite.sync.ui.ActiveAccountManager
 import io.silentsuite.sync.ui.BaseActivity
+import java.util.UUID
 
 /** Resumes a durable setup row. It deliberately accepts no credentials or session extra. */
 class PostLoginSetupActivity : BaseActivity() {
     private val model: PostLoginSetupViewModel by viewModels()
     private lateinit var account: Account
     private lateinit var accountManager: AccountManager
-    private lateinit var accountCreationId: String
-    private var ambiguousOwnership = false
+    private var accountCreationId: String? = null
     private var missingCreationId = false
-    private var syncConfigurationFailed = false
+
+    /**
+     * ActivityResultRegistry retains the platform-result association across recreation. Denial
+     * evidence is admitted to the retained model only from this callback and only for the exact
+     * account generation that launched the request.
+     */
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        if (!::account.isInitialized || !::accountManager.isInitialized) return@registerForActivityResult
+        if (exactAccount() == null) return@registerForActivityResult
+        val launched = model.launchedPermissionIntegrations()
+        if (launched.isEmpty()) return@registerForActivityResult
+        val returned = launched.associateWith { integration ->
+            val permissions = permissionsFor(integration)
+            when {
+                permissions.isNotEmpty() && permissions.all(::permissionGranted) ->
+                    PostLoginSetupOrchestrator.PermissionEvidence.GRANTED
+                permissions.any { ActivityCompat.shouldShowRequestPermissionRationale(this, it) } ->
+                    PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
+                else ->
+                    PostLoginSetupOrchestrator.PermissionEvidence.DENIED_BLOCKED_RETURNED
+            }
+        }
+        model.recordReturnedPermissionEvidence(returned)
+        if (!persistReturnedPermissionDenials(returned)) {
+            render()
+            return@registerForActivityResult
+        }
+        model.submitUserDecision(PostLoginSetupOrchestrator.UserDecision.CONTINUE)
+        resumeSetupWork()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         accountManager = AccountManager.get(this)
         val supplied = intent.getParcelableExtra<Account>(EXTRA_ACCOUNT)
-        val expectedCreationId = intent.getStringExtra(EXTRA_CREATION_ID)
-        if (supplied == null || supplied.type != App.accountType) { finish(); return }
-        if (expectedCreationId.isNullOrBlank()) {
-            // A caller without exact generation evidence is resolution-only even when a
-            // same-name row has a generation; it must never adopt or mutate that row.
-            if (supplied in accountManager.getAccountsByType(App.accountType)) {
-                account=supplied; missingCreationId=true; ambiguousOwnership=true; setContentView(R.layout.activity_post_login_setup)
-                findViewById<Button>(R.id.setup_resolve_ambiguity).setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_SYNC_SETTINGS)) }
-                render(); return
+        if (supplied == null || supplied.type != App.accountType) {
+            finish()
+            return
+        }
+        account = supplied
+        accountCreationId = intent.getStringExtra(EXTRA_CREATION_ID)?.takeIf { it.isNotBlank() }
+        missingCreationId = accountCreationId == null
+
+        if (missingCreationId && account !in accountManager.getAccountsByType(App.accountType)) {
+            finish()
+            return
+        }
+
+        val creationId = accountCreationId
+        if (creationId != null) {
+            val record = registry().get(account.type, account.name)
+            val ownsRecovery = AccountCreationRegistry.owns(record, creationId)
+            val rowExists = account in accountManager.getAccountsByType(App.accountType)
+            val durableState = state()
+            when {
+                !rowExists && ownsRecovery ->
+                    model.initializeRecovery(account, creationId)
+                rowExists &&
+                    (durableState == PostLoginSetupState.CREATING ||
+                        durableState == PostLoginSetupState.RECOVERY_REQUIRED) &&
+                    ownsRecovery ->
+                    model.initializeRecovery(account, creationId)
+                exactAccount() != null && (record == null || ownsRecovery) ->
+                    model.initialize(account)
             }
-            finish(); return
         }
-        val record = AccountCreationRegistry.open(applicationContext).get(supplied.type, supplied.name)
-        val registryOwns = AccountCreationRegistry.owns(record, expectedCreationId)
-        ambiguousOwnership = record != null && !registryOwns
-        val exact = ExactAccountRouting.validate(supplied, expectedCreationId, App.accountType, accountManager)
-        val cleanupOnly = exact == null && supplied !in accountManager.getAccountsByType(App.accountType) && registryOwns
-        account = exact ?: supplied.takeIf { cleanupOnly } ?: run { finish(); return }
-        accountCreationId = expectedCreationId
-        // Recovery removal is an app-owned mutation only with a matching durable registry owner.
-        if (!cleanupOnly && state() == PostLoginSetupState.RECOVERY_REQUIRED && !registryOwns)
-            ambiguousOwnership = true
-        if (!cleanupOnly && state() == PostLoginSetupState.CREATING && registryOwns &&
-            !AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.RECOVERY_REQUIRED))
-            ambiguousOwnership = true
-        if (ambiguousOwnership) {
-            setContentView(R.layout.activity_post_login_setup)
-            findViewById<Button>(R.id.setup_resolve_ambiguity).setOnClickListener { startActivity(Intent(android.provider.Settings.ACTION_SYNC_SETTINGS)) }
-            render(); return
-        }
-        if (!cleanupOnly && AccountSettings.setupState(accountManager, account, PostLoginSetupMigration.isBootstrapped(this)) == PostLoginSetupState.CREATING && !registryOwns) {
-            startActivity(Intent(this, LoginActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
-            finish(); return
-        }
-        if (cleanupOnly || (!cleanupOnly && state() == PostLoginSetupState.RECOVERY_REQUIRED))
-            model.initializeRecovery(account, expectedCreationId)
-        else model.initialize(account)
+
         setContentView(R.layout.activity_post_login_setup)
-        findViewById<Button>(R.id.setup_done).setOnClickListener { done() }
-        findViewById<Button>(R.id.setup_continue_limited).setOnClickListener { advance() }
-        findViewById<Button>(R.id.setup_skip_integrations).setOnClickListener { continueWithoutIntegrations() }
-        findViewById<Button>(R.id.setup_remove_incomplete).setOnClickListener { removeIncomplete() }
-        findViewById<Button>(R.id.setup_retry_inventory).setOnClickListener { if (SetupContinuationPolicy.permits(state(), model.inventoryOutcome, SetupContinuationPolicy.Action.RetryInventory)) model.inventoryAndCreate(applicationContext, account) }
-        model.collections.observe(this) { result ->
-            when (result) {
-                is PostLoginSetupViewModel.CollectionsResult.Ready -> {
-                    // LiveData re-delivers after recreation; never regress a later durable step.
-                    if (!result.limited && state() == PostLoginSetupState.COLLECTIONS)
-                        AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.PERMISSIONS)
-                    render()
-                }
-                PostLoginSetupViewModel.CollectionsResult.RecoveryRequired -> render()
-                PostLoginSetupViewModel.CollectionsResult.Working -> render()
+        findViewById<Button>(R.id.setup_done).setOnClickListener {
+            submit(PostLoginSetupOrchestrator.UserDecision.DONE)
+        }
+        findViewById<Button>(R.id.setup_continue_limited).setOnClickListener {
+            if (
+                state() == PostLoginSetupState.ACCOUNT_CREATED &&
+                model.syncConfigurationOutcome() ==
+                PostLoginSetupOrchestrator.SyncConfigurationOutcome.FAILED
+            ) {
+                model.retrySyncConfiguration()
+                model.clearUserDecision()
+                resumeSetupWork()
+                return@setOnClickListener
+            }
+            model.prepareReturnedPermissionRetry(
+                permissionEvidence().filterValues {
+                    it == PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
+                }.keys
+            )
+            submit(PostLoginSetupOrchestrator.UserDecision.CONTINUE)
+        }
+        findViewById<Button>(R.id.setup_skip_integrations).setOnClickListener {
+            submit(PostLoginSetupOrchestrator.UserDecision.SKIP_INTEGRATIONS)
+        }
+        findViewById<Button>(R.id.setup_remove_incomplete).setOnClickListener {
+            submit(PostLoginSetupOrchestrator.UserDecision.REMOVE_INCOMPLETE)
+        }
+        findViewById<Button>(R.id.setup_retry_inventory).setOnClickListener {
+            if (
+                SetupContinuationPolicy.permits(
+                    state(),
+                    model.inventoryOutcome,
+                    SetupContinuationPolicy.Action.RetryInventory,
+                )
+            ) {
+                model.prepareInventoryRetry()
+                submit(PostLoginSetupOrchestrator.UserDecision.RETRY_INVENTORY)
             }
         }
-        model.recoveryRemoval.observe(this) {
+        findViewById<Button>(R.id.setup_resolve_ambiguity).setOnClickListener {
+            openAndroidSettings()
+        }
+        model.collections.observe(this) {
             render()
-            if (it == RecoveryRemovalCoordinator.State.Removed && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) && model.consumeRecoveryRemovalRoute())
-                startActivity(Intent(this, LoginActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)).also { finish() }
+            resumeSetupWork()
+        }
+        model.recoveryRemoval.observe(this) { removal ->
+            render()
+            if (
+                removal == RecoveryRemovalCoordinator.State.Removed &&
+                lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
+                model.consumeRecoveryRemovalRoute()
+            ) {
+                returnToLogin()
+            }
         }
         render()
     }
+
     override fun onResume() {
         super.onResume()
-        if (ambiguousOwnership) { render(); return }
-        // ViewModel facts are intentionally non-durable; rebuild them from the exact account's
-        // remote inventory before making a contextual permission decision after restart.
-        if ((state() == PostLoginSetupState.PERMISSIONS || state() == PostLoginSetupState.READY) && !model.inventoryLoaded)
-            model.inventoryAndCreate(applicationContext, account)
         render()
+        resumeSetupWork()
     }
-    private fun state() = AccountSettings.setupState(accountManager, account,
-        PostLoginSetupMigration.isBootstrapped(this)) ?: PostLoginSetupState.RECOVERY_REQUIRED
-    private fun advance() {
-        if (ambiguousOwnership) return
-        when (state()) {
-            PostLoginSetupState.CREATING -> render()
-            PostLoginSetupState.ACCOUNT_CREATED -> {
-                syncConfigurationFailed = !PostLoginSyncConfigurator.configure(applicationContext, account)
-                if (!syncConfigurationFailed) write(PostLoginSetupState.COLLECTIONS) else render()
+
+    private fun submit(decision: PostLoginSetupOrchestrator.UserDecision) {
+        model.submitUserDecision(decision)
+        resumeSetupWork()
+    }
+
+    /** The ViewModel is the single retained serializer; this Activity only supplies one drain. */
+    private fun resumeSetupWork() {
+        if (missingCreationId || !::account.isInitialized) return
+        model.resumeSafeWork {
+            var keepDraining = true
+            var decisions = 0
+            while (keepDraining && decisions++ < MAX_SAFE_DECISIONS_PER_DRAIN) {
+                val input = orchestrationInput()
+                val decision = PostLoginSetupOrchestrator.decide(input)
+                keepDraining = execute(input, decision)
             }
-            PostLoginSetupState.COLLECTIONS -> if (model.limitedContinuation) write(PostLoginSetupState.PERMISSIONS)
-                else model.inventoryAndCreate(applicationContext, account)
-            PostLoginSetupState.PERMISSIONS -> {
-                if (!SetupContinuationPolicy.permits(state(), model.inventoryOutcome, SetupContinuationPolicy.Action.Continue)) return
-                if (!model.inventoryLoaded) {
-                    model.inventoryAndCreate(applicationContext, account)
-                    return
-                }
-                if (requestContextualPermissions()) return
-                // Permission denial is an explicit supported limited-integration path. The state
-                // has no permission truth and is recomputed on every resume.
-                if (write(PostLoginSetupState.INITIAL_SYNC)) {
-                    requestSync(applicationContext, account)
-                    write(PostLoginSetupState.READY)
-                }
-            }
-            PostLoginSetupState.INITIAL_SYNC -> {
-                requestSync(applicationContext, account)
-                write(PostLoginSetupState.READY)
-            }
-            PostLoginSetupState.READY, PostLoginSetupState.COMPLETE, PostLoginSetupState.RECOVERY_REQUIRED -> render()
+            render()
         }
     }
 
-    private fun write(next: PostLoginSetupState): Boolean =
-        AccountSettings.writeSetupState(accountManager, account, next).also { render() }
+    private fun orchestrationInput(): PostLoginSetupOrchestrator.Input {
+        val ownership = ownership()
+        return PostLoginSetupOrchestrator.Input(
+            state = state(),
+            ownership = ownership,
+            syncConfiguration = model.syncConfigurationOutcome(),
+            inventory = model.inventoryOutcome,
+            userDecision = model.pendingUserDecision(),
+            permissions = if (ownership == PostLoginSetupOrchestrator.Ownership.EXACT) {
+                permissionEvidence()
+            } else {
+                emptyMap()
+            },
+            initialSyncRequestId =
+                if (ownership == PostLoginSetupOrchestrator.Ownership.EXACT) {
+                    AccountSettings.initialSyncRequestId(accountManager, account)
+                } else {
+                    null
+                },
+        )
+    }
 
-    /** @return true while a platform request owns the interaction; no state is claimed yet. */
-    private fun requestContextualPermissions(): Boolean {
-        AccountSettings.writeVerified(accountManager, account, AccountSettings.KEY_LIMITED_INTEGRATIONS, null)
-        val taskPermissions = listOf(ProviderName.OpenTasks, ProviderName.TasksOrg)
-            .filter { LocalTaskList.tasksProviderAvailable(this, it) }
-            .flatMap { it.permissions.toList() }
-        val wanted = ContextualPermissionPlan.requested(
-            ContextualPermissionPlan.Inputs(model.integrationCollectionTypes, taskPermissions))
-            .filter { ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
-        if (wanted.isEmpty()) return false
-        ActivityCompat.requestPermissions(this, wanted.toTypedArray(), REQUEST_CONTEXTUAL_PERMISSIONS)
+    private fun execute(
+        input: PostLoginSetupOrchestrator.Input,
+        decision: PostLoginSetupOrchestrator.Decision,
+    ): Boolean {
+        /*
+         * Keep state-specific effects together: the pure decision selects the effect, while each
+         * branch validates the exact generation immediately before performing it.
+         */
+        when (input.state) {
+            PostLoginSetupState.ACCOUNT_CREATED -> when (decision) {
+                PostLoginSetupOrchestrator.Decision.ConfigureAndroidSync -> {
+                    if (exactAccount() == null) return true
+                    val configured =
+                        PostLoginSyncConfigurator.configure(applicationContext, account)
+                    if (exactAccount() == null) return true
+                    model.recordSyncConfiguration(configured)
+                    return true
+                }
+                is PostLoginSetupOrchestrator.Decision.PersistState ->
+                    if (decision.state == PostLoginSetupState.COLLECTIONS) {
+                        return write(PostLoginSetupState.COLLECTIONS)
+                    }
+                else -> Unit
+            }
+            PostLoginSetupState.COLLECTIONS -> when (decision) {
+                PostLoginSetupOrchestrator.Decision.LoadInventory -> {
+                    if (exactAccount() == null) return true
+                    model.inventoryAndCreate(applicationContext, account, accountCreationId)
+                    return false
+                }
+                is PostLoginSetupOrchestrator.Decision.PersistState ->
+                    if (decision.state == PostLoginSetupState.PERMISSIONS) {
+                        return write(PostLoginSetupState.PERMISSIONS)
+                    }
+                else -> Unit
+            }
+            else -> Unit
+        }
+
+        return when (decision) {
+            PostLoginSetupOrchestrator.Decision.RequireRecovery -> {
+                val creationId = accountCreationId ?: return false
+                if (
+                    exactAccount() == null ||
+                    !AccountCreationRegistry.owns(
+                        registry().get(account.type, account.name),
+                        creationId,
+                    )
+                ) {
+                    true
+                } else {
+                    write(PostLoginSetupState.RECOVERY_REQUIRED)
+                }
+            }
+            PostLoginSetupOrchestrator.Decision.ConfigureAndroidSync,
+            is PostLoginSetupOrchestrator.Decision.PersistState -> false
+            PostLoginSetupOrchestrator.Decision.LoadInventory -> {
+                if (exactAccount() == null) return true
+                model.inventoryAndCreate(applicationContext, account, accountCreationId)
+                false
+            }
+            PostLoginSetupOrchestrator.Decision.WaitForInventory,
+            PostLoginSetupOrchestrator.Decision.ShowInventoryRecovery,
+            PostLoginSetupOrchestrator.Decision.AwaitIntegrationDecision,
+            PostLoginSetupOrchestrator.Decision.ShowSyncConfigurationFailure,
+            is PostLoginSetupOrchestrator.Decision.ShowReturnedDenials,
+            PostLoginSetupOrchestrator.Decision.AwaitDone,
+            PostLoginSetupOrchestrator.Decision.ShowRecovery,
+            PostLoginSetupOrchestrator.Decision.ResolveInAndroidSettings -> false
+            PostLoginSetupOrchestrator.Decision.IgnoreUserDecision -> {
+                model.clearUserDecision()
+                true
+            }
+            is PostLoginSetupOrchestrator.Decision.RequestPermissions -> {
+                requestPermissions(decision.integrations)
+                false
+            }
+            is PostLoginSetupOrchestrator.Decision.BeginInitialSync ->
+                beginInitialSync(decision.limited)
+            PostLoginSetupOrchestrator.Decision.PrepareInitialSyncRequestId ->
+                prepareInitialSyncRequestId()
+            is PostLoginSetupOrchestrator.Decision.DispatchInitialSync ->
+                dispatchInitialSync(decision.requestId)
+            is PostLoginSetupOrchestrator.Decision.ClearInitialSyncRequestId -> {
+                if (exactAccount() == null) return true
+                val durable = state()
+                if (
+                    durable != PostLoginSetupState.READY &&
+                    durable != PostLoginSetupState.COMPLETE
+                ) {
+                    false
+                } else {
+                    AccountSettings.clearInitialSyncRequestId(
+                        accountManager,
+                        account,
+                        decision.requestId,
+                    ) && exactAccount() != null
+                }
+            }
+            PostLoginSetupOrchestrator.Decision.OpenDashboard -> {
+                val exact = exactAccount() ?: return true
+                val creationId = accountCreationId ?: return false
+                startActivity(AccountActivity.newIntent(this, exact, creationId))
+                if (exactAccount() == null) return false
+                finish()
+                false
+            }
+            PostLoginSetupOrchestrator.Decision.ClearOwnedRecordAndReturnToLogin -> {
+                model.clearUserDecision()
+                model.beginRecoveryRemoval()
+                false
+            }
+            PostLoginSetupOrchestrator.Decision.ReturnToLogin -> {
+                returnToLogin()
+                false
+            }
+            PostLoginSetupOrchestrator.Decision.RemoveIncompleteAccount -> {
+                model.clearUserDecision()
+                model.beginRecoveryRemoval()
+                false
+            }
+        }
+    }
+
+    private fun beginInitialSync(limited: Boolean): Boolean {
+        if (exactAccount() == null) return true
+        val marker = if (limited) "true" else null
+        if (
+            !AccountSettings.writeVerified(
+                accountManager,
+                account,
+                AccountSettings.KEY_LIMITED_INTEGRATIONS,
+                marker,
+            )
+        ) {
+            return false
+        }
+        if (exactAccount() == null) return true
+        if (!write(PostLoginSetupState.INITIAL_SYNC)) return false
+        model.clearUserDecision()
         return true
     }
-    private fun continueWithoutIntegrations() {
-        if (ambiguousOwnership) return
-        if (state() == PostLoginSetupState.RECOVERY_REQUIRED) {
+
+    private fun prepareInitialSyncRequestId(): Boolean {
+        if (exactAccount() == null) return true
+        if (AccountSettings.initialSyncRequestId(accountManager, account) != null) return true
+        val requestId = UUID.randomUUID().toString()
+        if (exactAccount() == null) return true
+        return AccountSettings.writeInitialSyncRequestId(
+            accountManager,
+            account,
+            requestId,
+        ) && exactAccount() != null &&
+            AccountSettings.initialSyncRequestId(accountManager, account) == requestId
+    }
+
+    private fun dispatchInitialSync(requestId: String): Boolean {
+        if (exactAccount() == null) return true
+        if (AccountSettings.initialSyncRequestId(accountManager, account) != requestId) return true
+        try {
+            requestSync(applicationContext, account, explicitRequestId = requestId)
+        } catch (_: Exception) {
+            return false
+        }
+        if (exactAccount() == null) return true
+        if (AccountSettings.initialSyncRequestId(accountManager, account) != requestId) return false
+        if (!write(PostLoginSetupState.READY)) return false
+        if (exactAccount() == null) return true
+        return state() == PostLoginSetupState.READY
+    }
+
+    private fun requestPermissions(
+        integrations: Set<PostLoginSetupOrchestrator.Integration>,
+    ) {
+        if (model.launchedPermissionIntegrations().isNotEmpty()) return
+        val wanted = integrations
+            .flatMap(::permissionsFor)
+            .distinct()
+            .filterNot(::permissionGranted)
+        if (wanted.isEmpty()) {
+            model.clearUserDecision()
+            resumeSetupWork()
             return
         }
-        if (!SetupContinuationPolicy.permits(state(), model.inventoryOutcome, SetupContinuationPolicy.Action.SkipIntegrations)) return
-        if (!AccountSettings.writeVerified(accountManager, account, AccountSettings.KEY_LIMITED_INTEGRATIONS, "true")) return
-        if (write(PostLoginSetupState.INITIAL_SYNC)) {
-            requestSync(applicationContext, account)
-            write(PostLoginSetupState.READY)
+        if (exactAccount() == null) return
+        model.markPermissionLaunch(integrations)
+        try {
+            permissionLauncher.launch(wanted.toTypedArray())
+        } catch (_: RuntimeException) {
+            model.clearPermissionLaunchWithoutResult()
         }
     }
-    private fun removeIncomplete() { if (!ambiguousOwnership) model.beginRecoveryRemoval() }
-    private fun done() {
-        if (state() != PostLoginSetupState.READY) return
-        if (ExactAccountRouting.validate(account, accountCreationId, App.accountType, accountManager) == null) return
-        if (!AccountSettings.writeSetupState(accountManager, account, PostLoginSetupState.COMPLETE)) return
-        if (ExactAccountRouting.validate(account, accountCreationId, App.accountType, accountManager) == null) return
-        val creationId = accountCreationId
-        startActivity(AccountActivity.newIntent(this, account, creationId)); finish()
-    }
-    private fun render() {
-        val current = state()
-        if (ambiguousOwnership) {
-            findViewById<TextView>(R.id.setup_status).text = getString(R.string.post_login_setup_recovery)
-            listOf(R.id.setup_done,R.id.setup_skip_integrations,R.id.setup_remove_incomplete,R.id.setup_continue_limited,R.id.setup_retry_inventory).forEach { findViewById<Button>(it).visibility=View.GONE }
-            findViewById<Button>(R.id.setup_resolve_ambiguity).visibility=View.VISIBLE
-            return
-        }
-        findViewById<TextView>(R.id.setup_status).text = when {
-            current == PostLoginSetupState.ACCOUNT_CREATED && syncConfigurationFailed -> getString(R.string.post_login_setup_sync_retry)
-            else -> when (current) {
-            PostLoginSetupState.PERMISSIONS -> getString(R.string.post_login_setup_permissions)
-            PostLoginSetupState.READY -> readySummary()
-            PostLoginSetupState.RECOVERY_REQUIRED -> getString(R.string.post_login_setup_recovery)
-            else -> getString(R.string.post_login_setup_status, current.name)
+
+    private fun permissionEvidence(): Map<
+        PostLoginSetupOrchestrator.Integration,
+        PostLoginSetupOrchestrator.PermissionEvidence
+    > {
+        model.permissionEvidenceOverrideForTest()?.let { override ->
+            return buildMap {
+                PostLoginSetupOrchestrator.Integration.values().forEach { integration ->
+                    override.getString(integration.name)?.let { encoded ->
+                        val evidence = when (encoded) {
+                            "UNKNOWN" ->
+                                PostLoginSetupOrchestrator.PermissionEvidence
+                                    .UNKNOWN_AFTER_LAUNCH_WITHOUT_RESULT
+                            else -> runCatching {
+                                PostLoginSetupOrchestrator.PermissionEvidence.valueOf(encoded)
+                            }.getOrNull()
+                        }
+                        if (evidence != null) put(integration, evidence)
+                    }
+                }
+                if (override.getBoolean("NO_TASK_PROVIDER", false)) {
+                    put(
+                        PostLoginSetupOrchestrator.Integration.TASKS,
+                        PostLoginSetupOrchestrator.PermissionEvidence.NO_PROVIDER,
+                    )
+                }
             }
         }
-        findViewById<Button>(R.id.setup_done).visibility = if (current == PostLoginSetupState.READY) View.VISIBLE else View.GONE
-        val permits = SetupContinuationPolicy.permits(current, model.inventoryOutcome, SetupContinuationPolicy.Action.SkipIntegrations)
-        findViewById<Button>(R.id.setup_skip_integrations).visibility = if (permits) View.VISIBLE else View.GONE
-        findViewById<Button>(R.id.setup_remove_incomplete).visibility = if (current == PostLoginSetupState.RECOVERY_REQUIRED && model.recoveryRemoval.value != null) View.VISIBLE else View.GONE
-        findViewById<Button>(R.id.setup_retry_inventory).visibility = if (SetupContinuationPolicy.permits(current, model.inventoryOutcome, SetupContinuationPolicy.Action.RetryInventory)) View.VISIBLE else View.GONE
-        findViewById<Button>(R.id.setup_resolve_ambiguity).visibility = View.GONE
-        val removalState = model.recoveryRemoval.value
-        findViewById<Button>(R.id.setup_remove_incomplete).isEnabled = removalState != RecoveryRemovalCoordinator.State.Pending
-        if (current == PostLoginSetupState.RECOVERY_REQUIRED && removalState == RecoveryRemovalCoordinator.State.Pending)
-            findViewById<TextView>(R.id.setup_status).text = getString(R.string.post_login_setup_removal_pending)
-        if (current == PostLoginSetupState.RECOVERY_REQUIRED && removalState == RecoveryRemovalCoordinator.State.Failed)
-            findViewById<TextView>(R.id.setup_status).text = getString(R.string.post_login_setup_removal_failed)
-        findViewById<Button>(R.id.setup_continue_limited).visibility = if (current == PostLoginSetupState.PERMISSIONS && permits) View.VISIBLE else if (current == PostLoginSetupState.READY || current == PostLoginSetupState.COMPLETE || current == PostLoginSetupState.RECOVERY_REQUIRED || current == PostLoginSetupState.CREATING) View.GONE else View.VISIBLE
+
+        val returned = model.returnedPermissionEvidence()
+        val retrying = model.retryPermissionIntegrations()
+        val persistedDenials = AccountSettings.contextualPermissionDenials(
+            accountManager,
+            account,
+        )
+        val launched = model.launchedPermissionIntegrations()
+        return activeIntegrations().associateWith { integration ->
+            val permissions = permissionsFor(integration)
+            when {
+                integration == PostLoginSetupOrchestrator.Integration.TASKS &&
+                    permissions.isEmpty() ->
+                    PostLoginSetupOrchestrator.PermissionEvidence.NO_PROVIDER
+                permissions.isNotEmpty() && permissions.all(::permissionGranted) ->
+                    PostLoginSetupOrchestrator.PermissionEvidence.GRANTED
+                integration in retrying ->
+                    PostLoginSetupOrchestrator.PermissionEvidence.NEWLY_ELIGIBLE
+                returned[integration] != null -> returned.getValue(integration)
+                integration.name in persistedDenials && permissions.any {
+                    ActivityCompat.shouldShowRequestPermissionRationale(this, it)
+                } -> PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
+                integration.name in persistedDenials ->
+                    PostLoginSetupOrchestrator.PermissionEvidence.DENIED_BLOCKED_RETURNED
+                integration in launched ->
+                    PostLoginSetupOrchestrator.PermissionEvidence
+                        .UNKNOWN_AFTER_LAUNCH_WITHOUT_RESULT
+                else -> PostLoginSetupOrchestrator.PermissionEvidence.NEWLY_ELIGIBLE
+            }
+        }
     }
+
+    private fun persistReturnedPermissionDenials(
+        returned: Map<
+            PostLoginSetupOrchestrator.Integration,
+            PostLoginSetupOrchestrator.PermissionEvidence
+        >,
+    ): Boolean {
+        if (exactAccount() == null) return false
+        val denials = AccountSettings.contextualPermissionDenials(accountManager, account)
+            .toMutableSet()
+        returned.forEach { (integration, evidence) ->
+            if (evidence == PostLoginSetupOrchestrator.PermissionEvidence.GRANTED) {
+                denials.remove(integration.name)
+            } else {
+                denials.add(integration.name)
+            }
+        }
+        if (exactAccount() == null) return false
+        if (!AccountSettings.writeContextualPermissionDenials(accountManager, account, denials)) {
+            return false
+        }
+        if (exactAccount() == null) return false
+        return AccountSettings.contextualPermissionDenials(accountManager, account) == denials
+    }
+
+    private fun activeIntegrations(): Set<PostLoginSetupOrchestrator.Integration> =
+        buildSet {
+            if (Constants.ETEBASE_TYPE_CALENDAR in model.integrationCollectionTypes) {
+                add(PostLoginSetupOrchestrator.Integration.CALENDAR)
+            }
+            if (Constants.ETEBASE_TYPE_ADDRESS_BOOK in model.integrationCollectionTypes) {
+                add(PostLoginSetupOrchestrator.Integration.CONTACTS)
+            }
+            if (Constants.ETEBASE_TYPE_TASKS in model.integrationCollectionTypes) {
+                add(PostLoginSetupOrchestrator.Integration.TASKS)
+            }
+        }
+
+    private fun permissionsFor(
+        integration: PostLoginSetupOrchestrator.Integration,
+    ): List<String> = when (integration) {
+        PostLoginSetupOrchestrator.Integration.CALENDAR -> ContextualPermissionPlan.CALENDAR
+        PostLoginSetupOrchestrator.Integration.CONTACTS -> ContextualPermissionPlan.CONTACTS
+        PostLoginSetupOrchestrator.Integration.TASKS ->
+            listOf(ProviderName.OpenTasks, ProviderName.TasksOrg)
+                .filter { LocalTaskList.tasksProviderAvailable(this, it) }
+                .flatMap { it.permissions.toList() }
+                .distinct()
+    }
+
+    private fun permissionGranted(permission: String): Boolean =
+        ActivityCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun ownership(): PostLoginSetupOrchestrator.Ownership {
+        val creationId = accountCreationId
+            ?: return PostLoginSetupOrchestrator.Ownership.MISSING_GENERATION
+        val record = registry().get(account.type, account.name)
+        val registryOwns = AccountCreationRegistry.owns(record, creationId)
+        val rowExists = account in accountManager.getAccountsByType(App.accountType)
+        if (!rowExists) {
+            return if (registryOwns) {
+                PostLoginSetupOrchestrator.Ownership.OWNED_ROW_MISSING
+            } else {
+                PostLoginSetupOrchestrator.Ownership.UNOWNED_ROW_MISSING
+            }
+        }
+        if (exactAccount() == null || (record != null && !registryOwns)) {
+            return PostLoginSetupOrchestrator.Ownership.GENERATION_MISMATCH
+        }
+        if (
+            (state() == PostLoginSetupState.CREATING ||
+                state() == PostLoginSetupState.RECOVERY_REQUIRED) &&
+            !registryOwns
+        ) {
+            return PostLoginSetupOrchestrator.Ownership.GENERATION_MISMATCH
+        }
+        return PostLoginSetupOrchestrator.Ownership.EXACT
+    }
+
+    private fun exactAccount(): Account? =
+        ExactAccountRouting.validate(
+            account,
+            accountCreationId,
+            App.accountType,
+            accountManager,
+        )
+
+    private fun state(): PostLoginSetupState =
+        AccountSettings.setupState(
+            accountManager,
+            account,
+            PostLoginSetupMigration.isBootstrapped(this),
+        ) ?: PostLoginSetupState.RECOVERY_REQUIRED
+
+    private fun write(next: PostLoginSetupState): Boolean {
+        if (exactAccount() == null) return false
+        if (!AccountSettings.writeSetupState(accountManager, account, next)) return false
+        if (exactAccount() == null) return false
+        return state() == next
+    }
+
+    private fun render() {
+        val current = state()
+        val permissions =
+            if (::accountManager.isInitialized && ownership() ==
+                PostLoginSetupOrchestrator.Ownership.EXACT
+            ) {
+                permissionEvidence()
+            } else {
+                emptyMap()
+            }
+        val condition = presentationCondition(current, permissions)
+        val noTaskProvider =
+            permissions[PostLoginSetupOrchestrator.Integration.TASKS] ==
+                PostLoginSetupOrchestrator.PermissionEvidence.NO_PROVIDER
+        val presentation = presentationFor(current, condition, noTaskProvider)
+
+        findViewById<TextView>(R.id.setup_title).setText(titleResource(presentation.title))
+        findViewById<TextView>(R.id.setup_body).setText(bodyResource(presentation.body))
+        findViewById<TextView>(R.id.setup_stage_connect).isSelected =
+            presentation.stage == PostLoginSetupPresentation.Stage.CONNECT
+        findViewById<TextView>(R.id.setup_stage_prepare).isSelected =
+            presentation.stage == PostLoginSetupPresentation.Stage.PREPARE
+        findViewById<TextView>(R.id.setup_stage_ready).isSelected =
+            presentation.stage == PostLoginSetupPresentation.Stage.READY
+
+        val exact = ownership() == PostLoginSetupOrchestrator.Ownership.EXACT
+        val permitsContinue = exact && SetupContinuationPolicy.permits(
+            current,
+            model.inventoryOutcome,
+            SetupContinuationPolicy.Action.Continue,
+        )
+        val permitsSkip = exact && SetupContinuationPolicy.permits(
+            current,
+            model.inventoryOutcome,
+            SetupContinuationPolicy.Action.SkipIntegrations,
+        )
+        findViewById<Button>(R.id.setup_done).visibility =
+            visible(exact && current == PostLoginSetupState.READY)
+        findViewById<Button>(R.id.setup_skip_integrations).visibility =
+            visible(permitsSkip)
+        findViewById<Button>(R.id.setup_continue_limited).visibility = visible(
+            exact && (
+                permitsContinue ||
+                    current == PostLoginSetupState.ACCOUNT_CREATED &&
+                    model.syncConfigurationOutcome() ==
+                    PostLoginSetupOrchestrator.SyncConfigurationOutcome.FAILED
+                )
+        )
+        findViewById<Button>(R.id.setup_retry_inventory).visibility = visible(
+            exact && SetupContinuationPolicy.permits(
+                current,
+                model.inventoryOutcome,
+                SetupContinuationPolicy.Action.RetryInventory,
+            )
+        )
+        val removal = model.recoveryRemoval.value
+        findViewById<Button>(R.id.setup_remove_incomplete).visibility = visible(
+            current == PostLoginSetupState.RECOVERY_REQUIRED &&
+                removal != null &&
+                ownership() != PostLoginSetupOrchestrator.Ownership.GENERATION_MISMATCH &&
+                ownership() != PostLoginSetupOrchestrator.Ownership.MISSING_GENERATION
+        )
+        findViewById<Button>(R.id.setup_remove_incomplete).isEnabled =
+            removal != RecoveryRemovalCoordinator.State.Pending
+        findViewById<Button>(R.id.setup_resolve_ambiguity).visibility = visible(
+            ownership() == PostLoginSetupOrchestrator.Ownership.GENERATION_MISMATCH ||
+                ownership() == PostLoginSetupOrchestrator.Ownership.MISSING_GENERATION ||
+                condition == PostLoginSetupPresentationCondition.PERMISSION_BLOCKED
+        )
+
+        val status = findViewById<TextView>(R.id.setup_status)
+        status.text = when {
+            condition == PostLoginSetupPresentationCondition.SYNC_CONFIGURATION_FAILED ->
+                getString(R.string.post_login_setup_sync_retry)
+            current == PostLoginSetupState.READY -> readySummary()
+            noTaskProvider -> getString(R.string.post_login_no_task_provider)
+            else -> ""
+        }
+        status.visibility = visible(status.text.isNotEmpty())
+    }
+
+    private fun presentationCondition(
+        current: PostLoginSetupState,
+        permissions: Map<
+            PostLoginSetupOrchestrator.Integration,
+            PostLoginSetupOrchestrator.PermissionEvidence
+        >,
+    ): PostLoginSetupPresentationCondition = when {
+        ownership() == PostLoginSetupOrchestrator.Ownership.GENERATION_MISMATCH ||
+            ownership() == PostLoginSetupOrchestrator.Ownership.MISSING_GENERATION ->
+            PostLoginSetupPresentationCondition.AMBIGUOUS
+        current == PostLoginSetupState.ACCOUNT_CREATED &&
+            model.syncConfigurationOutcome() ==
+            PostLoginSetupOrchestrator.SyncConfigurationOutcome.FAILED ->
+            PostLoginSetupPresentationCondition.SYNC_CONFIGURATION_FAILED
+        current == PostLoginSetupState.PERMISSIONS &&
+            model.inventoryOutcome == PostLoginSetupOrchestrator.InventoryOutcome.LOADING ->
+            PostLoginSetupPresentationCondition.INVENTORY_LOADING
+        (current == PostLoginSetupState.COLLECTIONS ||
+            current == PostLoginSetupState.PERMISSIONS) &&
+            model.inventoryOutcome == PostLoginSetupOrchestrator.InventoryOutcome.RECOVERY ->
+            PostLoginSetupPresentationCondition.INVENTORY_RECOVERY
+        permissions.values.any {
+            it == PostLoginSetupOrchestrator.PermissionEvidence.DENIED_BLOCKED_RETURNED
+        } -> PostLoginSetupPresentationCondition.PERMISSION_BLOCKED
+        permissions.values.any {
+            it == PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
+        } -> PostLoginSetupPresentationCondition.PERMISSION_DENIED
+        current == PostLoginSetupState.RECOVERY_REQUIRED &&
+            model.recoveryRemoval.value == RecoveryRemovalCoordinator.State.Pending ->
+            PostLoginSetupPresentationCondition.REMOVAL_PENDING
+        current == PostLoginSetupState.RECOVERY_REQUIRED &&
+            model.recoveryRemoval.value == RecoveryRemovalCoordinator.State.Failed ->
+            PostLoginSetupPresentationCondition.REMOVAL_FAILED
+        else -> PostLoginSetupPresentationCondition.DEFAULT
+    }
+
+    private fun titleResource(title: PostLoginSetupPresentation.Title): Int = when (title) {
+        PostLoginSetupPresentation.Title.CREATING -> R.string.post_login_creating_title
+        PostLoginSetupPresentation.Title.ACCOUNT_CREATED ->
+            R.string.post_login_account_created_title
+        PostLoginSetupPresentation.Title.SYNC_CONFIGURATION_FAILED ->
+            R.string.post_login_sync_configuration_failed_title
+        PostLoginSetupPresentation.Title.COLLECTIONS -> R.string.post_login_collections_title
+        PostLoginSetupPresentation.Title.COLLECTIONS_FAILED ->
+            R.string.post_login_collections_failed_title
+        PostLoginSetupPresentation.Title.PERMISSIONS_LOADING ->
+            R.string.post_login_permissions_loading_title
+        PostLoginSetupPresentation.Title.PERMISSIONS -> R.string.post_login_permissions_title
+        PostLoginSetupPresentation.Title.INITIAL_SYNC -> R.string.post_login_initial_sync_title
+        PostLoginSetupPresentation.Title.READY -> R.string.post_login_ready_title
+        PostLoginSetupPresentation.Title.COMPLETE -> R.string.post_login_complete_title
+        PostLoginSetupPresentation.Title.PERMISSION_DENIED ->
+            R.string.post_login_permission_denied_title
+        PostLoginSetupPresentation.Title.PERMISSION_BLOCKED ->
+            R.string.post_login_permission_blocked_title
+        PostLoginSetupPresentation.Title.REMOVAL_FAILED ->
+            R.string.post_login_removal_failed_title
+        PostLoginSetupPresentation.Title.AMBIGUOUS -> R.string.post_login_ambiguous_title
+    }
+
+    private fun bodyResource(body: PostLoginSetupPresentation.Body): Int = when (body) {
+        PostLoginSetupPresentation.Body.CREATING -> R.string.post_login_creating_body
+        PostLoginSetupPresentation.Body.ACCOUNT_CREATED ->
+            R.string.post_login_account_created_body
+        PostLoginSetupPresentation.Body.SYNC_CONFIGURATION_FAILED ->
+            R.string.post_login_sync_configuration_failed_body
+        PostLoginSetupPresentation.Body.COLLECTIONS -> R.string.post_login_collections_body
+        PostLoginSetupPresentation.Body.COLLECTIONS_FAILED ->
+            R.string.post_login_collections_failed_body
+        PostLoginSetupPresentation.Body.PERMISSIONS_LOADING ->
+            R.string.post_login_permissions_loading_body
+        PostLoginSetupPresentation.Body.PERMISSIONS -> R.string.post_login_permissions_body
+        PostLoginSetupPresentation.Body.PERMISSION_DENIED ->
+            R.string.post_login_permission_denied_body
+        PostLoginSetupPresentation.Body.PERMISSION_BLOCKED ->
+            R.string.post_login_permission_blocked_body
+        PostLoginSetupPresentation.Body.NO_TASK_PROVIDER -> R.string.post_login_no_task_provider
+        PostLoginSetupPresentation.Body.INITIAL_SYNC -> R.string.post_login_initial_sync_body
+        PostLoginSetupPresentation.Body.READY -> R.string.post_login_ready_body
+        PostLoginSetupPresentation.Body.COMPLETE -> R.string.post_login_complete_body
+        PostLoginSetupPresentation.Body.RECOVERY -> R.string.post_login_recovery_body
+        PostLoginSetupPresentation.Body.REMOVAL_PENDING ->
+            R.string.post_login_removal_pending_body
+        PostLoginSetupPresentation.Body.REMOVAL_FAILED ->
+            R.string.post_login_removal_failed_body
+        PostLoginSetupPresentation.Body.AMBIGUOUS -> R.string.post_login_ambiguous_body
+    }
+
     private fun readySummary(): String {
         val limits = mutableListOf(getString(R.string.post_login_setup_ready_requested))
-        if (!android.content.ContentResolver.getMasterSyncAutomatically()) limits += getString(R.string.post_login_setup_limit_master_sync)
+        if (!android.content.ContentResolver.getMasterSyncAutomatically()) {
+            limits += getString(R.string.post_login_setup_limit_master_sync)
+        }
         val qualifying = model.integrationCollectionTypes
-        val calendarDenied = ActivityCompat.checkSelfPermission(this, android.Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED
-        val contactsDenied = ActivityCompat.checkSelfPermission(this, android.Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED
-        if (io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR in qualifying && calendarDenied) limits += getString(R.string.post_login_setup_limit_calendar)
-        if (io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK in qualifying && contactsDenied) limits += getString(R.string.post_login_setup_limit_contacts)
-        if (io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS in qualifying && listOf(ProviderName.OpenTasks, ProviderName.TasksOrg).none { LocalTaskList.tasksProviderAvailable(this, it) })
+        if (
+            Constants.ETEBASE_TYPE_CALENDAR in qualifying &&
+            !permissionGranted(android.Manifest.permission.READ_CALENDAR)
+        ) {
+            limits += getString(R.string.post_login_setup_limit_calendar)
+        }
+        if (
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK in qualifying &&
+            !permissionGranted(android.Manifest.permission.READ_CONTACTS)
+        ) {
+            limits += getString(R.string.post_login_setup_limit_contacts)
+        }
+        if (
+            Constants.ETEBASE_TYPE_TASKS in qualifying &&
+            listOf(ProviderName.OpenTasks, ProviderName.TasksOrg).none {
+                LocalTaskList.tasksProviderAvailable(this, it)
+            }
+        ) {
             limits += getString(R.string.post_login_setup_limit_tasks)
-        if (!ConnectivityPolicy.isConnected(this)) limits += getString(R.string.post_login_setup_limit_offline)
+        }
+        if (!ConnectivityPolicy.isConnected(this)) {
+            limits += getString(R.string.post_login_setup_limit_offline)
+        }
         return limits.joinToString(" ")
     }
+
+    private fun openAndroidSettings() {
+        if (ownership() == PostLoginSetupOrchestrator.Ownership.EXACT) {
+            if (exactAccount() == null) return
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:$packageName"),
+                )
+            )
+        } else {
+            startActivity(Intent(Settings.ACTION_SYNC_SETTINGS))
+        }
+    }
+
+    private fun returnToLogin() {
+        startActivity(
+            Intent(this, LoginActivity::class.java).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            )
+        )
+        finish()
+    }
+
+    private fun registry(): AccountCreationRegistry =
+        AccountCreationRegistry.open(applicationContext)
+
+    private fun visible(visible: Boolean): Int = if (visible) View.VISIBLE else View.GONE
+
     companion object {
         private const val EXTRA_ACCOUNT = "post_login_setup_account"
         private const val EXTRA_CREATION_ID = "post_login_setup_creation_id"
-        private const val REQUEST_CONTEXTUAL_PERMISSIONS = 7007
-        fun newIntent(context: Context, account: Account, creationId: String?) = Intent(context, PostLoginSetupActivity::class.java)
-            .putExtra(EXTRA_ACCOUNT, account)
-            .putExtra(EXTRA_CREATION_ID, creationId)
+        private const val MAX_SAFE_DECISIONS_PER_DRAIN = 24
+
+        fun newIntent(context: Context, account: Account, creationId: String?) =
+            Intent(context, PostLoginSetupActivity::class.java)
+                .putExtra(EXTRA_ACCOUNT, account)
+                .putExtra(EXTRA_CREATION_ID, creationId)
     }
 }
