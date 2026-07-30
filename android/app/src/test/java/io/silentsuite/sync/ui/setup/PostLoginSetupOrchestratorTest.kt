@@ -323,6 +323,31 @@ class PostLoginSetupOrchestratorTest {
         )
     }
 
+    @Test
+    fun `explicit success admits permissions granted before and during the callback`() {
+        val read = "android.permission.READ_CONTACTS"
+        val write = "android.permission.WRITE_CONTACTS"
+
+        assertEquals(
+            PostLoginSetupOrchestrator.PermissionEvidence.GRANTED,
+            PostLoginSetupOrchestrator.returnedPermissionEvidence(
+                expectedPermissions = setOf(read, write),
+                explicitResults = mapOf(write to true),
+                grantedPermissions = setOf(read, write),
+                canAskAgain = false,
+            ),
+        )
+        assertEquals(
+            null,
+            PostLoginSetupOrchestrator.returnedPermissionEvidence(
+                expectedPermissions = setOf(read, write),
+                explicitResults = mapOf(write to true),
+                grantedPermissions = setOf(read),
+                canAskAgain = false,
+            ),
+        )
+    }
+
     private fun continueWith(
         integration: PostLoginSetupOrchestrator.Integration,
         evidence: PostLoginSetupOrchestrator.PermissionEvidence,

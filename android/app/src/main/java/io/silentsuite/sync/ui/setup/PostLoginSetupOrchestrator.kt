@@ -36,6 +36,23 @@ object PostLoginSetupOrchestrator {
         NO_PROVIDER,
     }
 
+    /** Classifies only an explicit platform callback; prior grants may be absent from its map. */
+    fun returnedPermissionEvidence(
+        expectedPermissions: Set<String>,
+        explicitResults: Map<String, Boolean>,
+        grantedPermissions: Set<String>,
+        canAskAgain: Boolean,
+    ): PermissionEvidence? = when {
+        explicitResults.isEmpty() -> null
+        explicitResults.values.any { granted -> !granted } && canAskAgain ->
+            PermissionEvidence.DENIED_CAN_ASK_RETURNED
+        explicitResults.values.any { granted -> !granted } ->
+            PermissionEvidence.DENIED_BLOCKED_RETURNED
+        explicitResults.values.all { granted -> granted } &&
+            expectedPermissions.all(grantedPermissions::contains) -> PermissionEvidence.GRANTED
+        else -> null
+    }
+
     enum class ReturnedDenial { CAN_ASK_AGAIN, BLOCKED_OPEN_SETTINGS }
 
     data class Input(

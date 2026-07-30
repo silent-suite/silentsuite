@@ -48,18 +48,14 @@ class PostLoginSetupActivity : BaseActivity() {
             val permissions = allPermissionsFor(integration)
             val explicitResults = results.filterKeys(permissions::contains)
             val expectedPermissions = permissionsFor(integration)
-            val evidence = when {
-                explicitResults.isEmpty() -> null
-                explicitResults.values.any { granted -> !granted } && permissions.any {
+            val evidence = PostLoginSetupOrchestrator.returnedPermissionEvidence(
+                expectedPermissions = expectedPermissions.toSet(),
+                explicitResults = explicitResults,
+                grantedPermissions = expectedPermissions.filter(::permissionGranted).toSet(),
+                canAskAgain = permissions.any {
                     ActivityCompat.shouldShowRequestPermissionRationale(this, it)
-                } -> PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
-                explicitResults.values.any { granted -> !granted } ->
-                    PostLoginSetupOrchestrator.PermissionEvidence.DENIED_BLOCKED_RETURNED
-                (expectedPermissions.isEmpty() || expectedPermissions.all(results::containsKey)) &&
-                    explicitResults.values.all { granted -> granted } ->
-                    PostLoginSetupOrchestrator.PermissionEvidence.GRANTED
-                else -> null
-            }
+                },
+            )
             evidence?.let { integration to it }
         }.toMap()
         if (returned.isEmpty()) return@registerForActivityResult
