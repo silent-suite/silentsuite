@@ -253,7 +253,7 @@ class LoginLifecycleContractTest {
         assertTrue(mixedExpanded.toSet().intersect(remainingExpanded.toSet()).isEmpty())
         assertEquals(allExpanded.toSet(), mixedExpanded.toSet() + remainingExpanded.toSet())
         assertEquals(runtimeMethods.toSet(), allExpanded.toSet())
-        assertEquals(listOf("600", "600", "1500", "2400", "1800", "1800"),
+        assertEquals(listOf("600", "600", "1500", "2400", "1800", "1800", "1800"),
             Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
                 .findAll(runtimeScript).map { it.groupValues[1] }.toList())
         assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)
