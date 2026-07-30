@@ -398,6 +398,7 @@ jobs:
             'io.silentsuite.sync.ui.AccountActivityRecreationTest',
             'io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest',
             'io.silentsuite.sync.ui.AccountDashboardRuntimeTest',
+            'io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest',
             'io.silentsuite.sync.ui.PostLoginSetupRuntimeTest',
             'io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest',
             'io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest',

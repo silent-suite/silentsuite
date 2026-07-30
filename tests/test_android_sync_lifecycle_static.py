@@ -555,12 +555,22 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     all_expanded = expand(monolithic_ordered)
     account_setup_expanded = expand(api36_account_setup)
     status_routes_expanded = expand(api36_status_routes)
+    workflow_account_setup = set(re.findall(
+        r"'([^']+)'",
+        assertion.split("api36_account_setup_classes={", 1)[1].split("}", 1)[0],
+    ))
+    workflow_status_routes = set(re.findall(
+        r"'([^']+)'",
+        assertion.split("api36_status_routes_classes={", 1)[1].split("}", 1)[0],
+    ))
     assert (len(mixed_expanded), len(remaining_expanded), len(all_expanded)) == (1, 77, 78)
     assert mixed_expanded.isdisjoint(remaining_expanded)
     assert mixed_expanded | remaining_expanded == all_expanded
     assert (len(account_setup_expanded), len(status_routes_expanded)) == (41, 37)
     assert account_setup_expanded.isdisjoint(status_routes_expanded)
     assert account_setup_expanded | status_routes_expanded == all_expanded
+    assert workflow_account_setup == set(api36_account_setup)
+    assert workflow_status_routes == set(api36_status_routes)
     assert "expected_sizes={'mixed': 1, 'remaining': 77, 'all': 78, 'account-setup': 41, 'status-routes': 37}" in assertion
     assert "expected=canonical-{mixed}" in assertion
     assert "expected={pair for pair in canonical if pair[0] in api36_account_setup_classes}" in assertion
