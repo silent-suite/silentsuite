@@ -18,6 +18,8 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.UiDevice
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
@@ -548,9 +550,13 @@ class SiblingRoutesRuntimeTest {
             ActivityScenario.launch<AccountActivity>(
                 AccountActivity.newIntent(context, account, "fingerprint-dashboard-generation")
             ).use { scenario ->
+                val originalActivity = AtomicReference<AccountActivity>()
                 waitUntil("rendered dashboard") {
                     var rendered = false
-                    scenario.onActivity { rendered = it.findViewById<TextView>(R.id.dashboard_account_identity).text.toString() == account.name }
+                    scenario.onActivity {
+                        originalActivity.set(it)
+                        rendered = it.findViewById<TextView>(R.id.dashboard_account_identity).text.toString() == account.name
+                    }
                     rendered
                 }
                 scenario.onActivity { activity ->
@@ -566,23 +572,45 @@ class SiblingRoutesRuntimeTest {
                     }
                     shown
                 }
-                scenario.recreate()
-                waitUntil("retained fingerprint dialog") {
-                    var shown = false
-                    scenario.onActivity { activity ->
-                        shown = (activity.supportFragmentManager.findFragmentByTag(FingerprintDialogFragment.TAG)
-                            as? FingerprintDialogFragment)?.dialog?.isShowing == true
-                    }
-                    shown
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    originalActivity.get().recreate()
                 }
-                scenario.onActivity { activity ->
+                val recreatedActivity = AtomicReference<AccountActivity>()
+                waitUntil("retained fingerprint dialog") {
+                    var retained = false
+                    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                        val activity = (ActivityLifecycleMonitorRegistry.getInstance()
+                            .getActivitiesInStage(Stage.PAUSED) +
+                            ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED))
+                            .filterIsInstance<AccountActivity>()
+                            .firstOrNull { it !== originalActivity.get() }
+                        if (activity != null) {
+                            retained = (activity.supportFragmentManager
+                                .findFragmentByTag(FingerprintDialogFragment.TAG)
+                                as? FingerprintDialogFragment)?.dialog?.isShowing == true
+                            if (retained) recreatedActivity.set(activity)
+                        }
+                    }
+                    retained
+                }
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    val activity = recreatedActivity.get()
                     val fragment = activity.supportFragmentManager
                         .findFragmentByTag(FingerprintDialogFragment.TAG) as FingerprintDialogFragment
                     fragment.dialog!!.cancel()
                     assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
                 }
                 assertEquals(listOf(account to "fingerprint-dashboard-generation"), reads)
-                scenario.onActivity { activity ->
+                waitUntil("recreated dashboard resumed after fingerprint cancel") {
+                    var resumed = false
+                    InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                        resumed = recreatedActivity.get() in ActivityLifecycleMonitorRegistry.getInstance()
+                            .getActivitiesInStage(Stage.RESUMED)
+                    }
+                    resumed
+                }
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    val activity = recreatedActivity.get()
                     assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
                 }
             }

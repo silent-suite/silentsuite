@@ -81,7 +81,10 @@ def test_runtime_sources_characterize_dispatcher_toolbar_and_system_back_routes(
     fingerprint_cancel = runtime.split(
         "fun fingerprintCancelAfterRecreationReturnsToExactDashboard()", 1
     )[1].split("@Test", 1)[0]
-    assert "scenario.recreate()" in fingerprint_cancel
+    assert "originalActivity.get().recreate()" in fingerprint_cancel
+    assert "ActivityLifecycleMonitorRegistry.getInstance()" in fingerprint_cancel
+    assert "Stage.PAUSED" in fingerprint_cancel
+    assert "Stage.RESUMED" in fingerprint_cancel
     assert "setPrimaryClip" not in fingerprint_cancel
     assert "assertTrue(UiDevice" not in runtime
     assert "fun systemBackClosesDrawerWithoutFinishing()" in drawer_runtime
