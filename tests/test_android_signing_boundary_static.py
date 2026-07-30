@@ -39,6 +39,13 @@ def mutate(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def mutate_last(path: Path, old: str, new: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    before, separator, after = text.rpartition(old)
+    assert separator
+    path.write_text(before + new + after, encoding="utf-8")
+
+
 def assert_rejected(result: subprocess.CompletedProcess[str], needle: str) -> None:
     assert result.returncode == 1, result.stdout + result.stderr
     assert needle in result.stdout
@@ -404,6 +411,18 @@ def test_release_requires_successful_policy_job(tmp_path: Path) -> None:
     assert_rejected(run_checker(root), "build-release must require successful signing-policy")
 
 
+def test_release_needs_must_be_exact(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    needs: signing-policy\n",
+        "    needs: [signing-policy, attacker]\n",
+    )
+
+    assert_rejected(run_checker(root), "build-release must require successful signing-policy")
+
+
 def test_policy_job_cannot_be_conditional(tmp_path: Path) -> None:
     root = fixture_root(tmp_path)
     workflow = root / ROOT_WORKFLOW
@@ -536,6 +555,152 @@ def test_policy_dependency_hash_pin_is_immutable(tmp_path: Path) -> None:
     )
 
     assert_rejected(run_checker(root), "signing-policy must match the exact fail-closed job specification")
+
+
+def test_release_job_must_use_github_hosted_runner(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    runs-on: ubuntu-latest\n    environment: android-release\n",
+        "    runs-on: self-hosted\n    environment: android-release\n",
+    )
+
+    assert_rejected(run_checker(root), "must run exactly on GitHub-hosted ubuntu-latest")
+
+
+def test_release_job_cannot_use_container(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    runs-on: ubuntu-latest\n    environment: android-release\n",
+        "    runs-on: ubuntu-latest\n    container: attacker/image:latest\n    environment: android-release\n",
+    )
+
+    assert_rejected(run_checker(root), "must not define job-level container")
+
+
+def test_release_job_cannot_use_services(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    runs-on: ubuntu-latest\n    environment: android-release\n",
+        "    runs-on: ubuntu-latest\n    services:\n      attacker:\n        image: attacker/image:latest\n    environment: android-release\n",
+    )
+
+    assert_rejected(run_checker(root), "must not define job-level services")
+
+
+def test_release_job_cannot_use_strategy(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    runs-on: ubuntu-latest\n    environment: android-release\n",
+        "    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        runner: [ubuntu-latest]\n    environment: android-release\n",
+    )
+
+    assert_rejected(run_checker(root), "must not define job-level strategy")
+
+
+def test_release_job_cannot_define_environment(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    runs-on: ubuntu-latest\n    environment: android-release\n",
+        "    runs-on: ubuntu-latest\n    env:\n      BASH_ENV: attacker\n    environment: android-release\n",
+    )
+
+    assert_rejected(run_checker(root), "must not define job-level env")
+
+
+def test_release_job_cannot_override_default_shell(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate_last(
+        workflow,
+        "      run:\n        working-directory: android\n",
+        "      run:\n        working-directory: android\n        shell: bash -c 'exit 0' {0}\n",
+    )
+
+    assert_rejected(run_checker(root), "must use the exact Android working-directory defaults")
+
+
+def test_release_job_cannot_continue_on_error(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    runs-on: ubuntu-latest\n    environment: android-release\n",
+        "    runs-on: ubuntu-latest\n    continue-on-error: true\n    environment: android-release\n",
+    )
+
+    assert_rejected(run_checker(root), "must not define job-level continue-on-error")
+
+
+def test_release_job_environment_must_be_exact_scalar(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    environment: android-release\n",
+        "    environment:\n      name: android-release\n      url: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}\n",
+    )
+
+    result = run_checker(root)
+    assert_rejected(result, "must bind the android-release environment")
+    assert "references signing secrets outside reviewed step environments" in result.stdout
+
+
+def test_release_job_rejects_unreviewed_job_keys(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "    runs-on: ubuntu-latest\n    environment: android-release\n",
+        "    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    environment: android-release\n",
+    )
+
+    assert_rejected(run_checker(root), "has unreviewed job keys: timeout-minutes")
+
+
+def test_release_step_cannot_override_shell(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "      - name: Decode release keystore\n        env:\n",
+        "      - name: Decode release keystore\n        shell: bash -c 'exit 0' {0}\n        env:\n",
+    )
+
+    assert_rejected(run_checker(root), "step 'Decode release keystore' must not define shell")
+
+
+def test_release_step_environment_is_exact(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "      - name: Decode release keystore\n        env:\n          KEYSTORE_BASE64:",
+        "      - name: Decode release keystore\n        env:\n          PATH: attacker\n          KEYSTORE_BASE64:",
+    )
+
+    assert_rejected(run_checker(root), "must use its exact reviewed environment")
+
+
+def test_release_secret_cannot_move_into_action_input(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate_last(
+        workflow,
+        "      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Set up JDK 17\n",
+        "      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n        with:\n          token: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}\n\n      - name: Set up JDK 17\n",
+    )
+
+    assert_rejected(run_checker(root), "references signing secrets outside reviewed step environments")
 
 
 def test_release_job_cannot_invoke_local_action(tmp_path: Path) -> None:

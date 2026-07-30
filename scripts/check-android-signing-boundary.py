@@ -65,6 +65,32 @@ EXPECTED_POLICY_JOB: dict[str, Any] = {
         },
     ],
 }
+EXPECTED_RELEASE_STEP_ENVIRONMENTS: dict[str, dict[str, str]] = {
+    "Decode release keystore": {
+        "KEYSTORE_BASE64": "${{ secrets.ANDROID_KEYSTORE_BASE64 }}",
+    },
+    "Build signed release APK and AAB": {
+        "KSTOREPWD": "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}",
+        "KEY_ALIAS": "${{ secrets.ANDROID_KEY_ALIAS }}",
+    },
+    "Capture release dependency graph and generate signed-release splits": {
+        "BUNDLETOOL_VERSION": "1.18.1",
+        "BUNDLETOOL_SHA256": "675786493983787ffa11550bdb7c0715679a44e1643f3ff980a529e9c822595c",
+        "KSTOREPWD": "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}",
+        "KEY_ALIAS": "${{ secrets.ANDROID_KEY_ALIAS }}",
+    },
+}
+ALLOWED_RELEASE_JOB_KEYS = {
+    "name",
+    "needs",
+    "if",
+    "runs-on",
+    "environment",
+    "permissions",
+    "defaults",
+    "steps",
+}
+ALLOWED_RELEASE_STEP_KEYS = {"name", "uses", "with", "run", "env", "if"}
 REQUIRED_TRIGGER_PATHS = {
     ".github/workflows/**",
     "android/.github/workflows/**",
@@ -175,16 +201,6 @@ def permissions_read_only(value: Any) -> bool:
     if value == "read-all":
         return True
     return isinstance(value, Mapping) and all(level in {"read", "none"} for level in value.values())
-
-
-def needs_job(value: Any, job_name: str) -> bool:
-    if value == job_name:
-        return True
-    return (
-        isinstance(value, Sequence)
-        and not isinstance(value, (str, bytes))
-        and job_name in value
-    )
 
 
 def action_uses(value: Any) -> Iterator[str]:
@@ -323,17 +339,80 @@ def check(root: Path) -> list[str]:
         violations.append(f"{ALLOWED_JOB} is missing signing references: {', '.join(sorted(missing_refs))}")
     if release.get("if") != TAG_GUARD:
         violations.append(f"{ALLOWED_JOB} must use the exact semantic version-tag guard")
-    if not needs_job(release.get("needs"), POLICY_JOB):
+    if release.get("needs") != POLICY_JOB:
         violations.append(f"{ALLOWED_JOB} must require successful {POLICY_JOB}")
-    if environment_name(release) != ENVIRONMENT_NAME:
+    if release.get("environment") != ENVIRONMENT_NAME:
         violations.append(f"{ALLOWED_JOB} must bind the {ENVIRONMENT_NAME} environment")
+    if release.get("runs-on") != "ubuntu-latest":
+        violations.append(f"{ALLOWED_JOB} must run exactly on GitHub-hosted ubuntu-latest")
+    if release.get("defaults") != {"run": {"working-directory": "android"}}:
+        violations.append(f"{ALLOWED_JOB} must use the exact Android working-directory defaults")
+    for forbidden_key in ("container", "services", "strategy", "env", "continue-on-error"):
+        if forbidden_key in release:
+            violations.append(f"{ALLOWED_JOB} must not define job-level {forbidden_key}")
+    unexpected_job_keys = set(release) - ALLOWED_RELEASE_JOB_KEYS
+    if unexpected_job_keys:
+        violations.append(
+            f"{ALLOWED_JOB} has unreviewed job keys: {', '.join(sorted(unexpected_job_keys))}"
+        )
     if "uses" in release:
         violations.append(f"{ALLOWED_JOB} must not delegate to a reusable workflow")
     if any(target.startswith("./") for target in action_uses(release)):
         violations.append(f"{ALLOWED_JOB} must not invoke local actions")
 
-    if not isinstance(release.get("steps"), list):
+    release_steps = release.get("steps")
+    if not isinstance(release_steps, list):
         violations.append(f"{ALLOWED_JOB} steps must be a sequence")
+    else:
+        for step in release_steps:
+            if not isinstance(step, Mapping):
+                violations.append(f"{ALLOWED_JOB} steps must contain only mappings")
+                continue
+            step_name = step.get("name")
+            unexpected_step_keys = set(step) - ALLOWED_RELEASE_STEP_KEYS
+            if unexpected_step_keys:
+                violations.append(
+                    f"{ALLOWED_JOB} step {step_name!r} has unreviewed keys: "
+                    f"{', '.join(sorted(unexpected_step_keys))}"
+                )
+            if ("run" in step) == ("uses" in step):
+                violations.append(
+                    f"{ALLOWED_JOB} step {step_name!r} must define exactly one of run or uses"
+                )
+            for forbidden_key in ("shell", "working-directory", "continue-on-error"):
+                if forbidden_key in step:
+                    violations.append(
+                        f"{ALLOWED_JOB} step {step_name!r} must not define {forbidden_key}"
+                    )
+            if "env" in step:
+                expected_env = EXPECTED_RELEASE_STEP_ENVIRONMENTS.get(str(step_name))
+                if step.get("env") != expected_env:
+                    violations.append(
+                        f"{ALLOWED_JOB} step {step_name!r} must use its exact reviewed environment"
+                    )
+        for step_name, expected_env in EXPECTED_RELEASE_STEP_ENVIRONMENTS.items():
+            matching_steps = [
+                step
+                for step in release_steps
+                if isinstance(step, Mapping) and step.get("name") == step_name
+            ]
+            if len(matching_steps) != 1 or matching_steps[0].get("env") != expected_env:
+                violations.append(
+                    f"{ALLOWED_JOB} must contain exactly one {step_name!r} step with reviewed environment"
+                )
+        release_without_step_env = dict(release)
+        release_without_step_env["steps"] = [
+            {key: value for key, value in step.items() if key != "env"}
+            if isinstance(step, Mapping)
+            else step
+            for step in release_steps
+        ]
+        refs_outside_reviewed_env = signing_references(release_without_step_env)
+        if refs_outside_reviewed_env:
+            violations.append(
+                f"{ALLOWED_JOB} references signing secrets outside reviewed step environments: "
+                f"{', '.join(sorted(refs_outside_reviewed_env))}"
+            )
 
     for event in ("push", "pull_request"):
         paths = trigger_paths(root_workflow, event)
