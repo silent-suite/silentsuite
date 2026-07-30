@@ -231,6 +231,8 @@ class PostLoginSetupRuntimeTest {
             check(candidate==target)
             PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
         }
+        val previousPermissionRequestOverride = AccountActivity.permissionRequestOverride
+        var dashboardPermissionRequests = 0
         var scenario: ActivityScenario<AccountActivity>?=null
         try {
             check(
@@ -238,6 +240,10 @@ class PostLoginSetupRuntimeTest {
                     .putBoolean("post_notifications_requested", true)
                     .commit()
             )
+            AccountActivity.permissionRequestOverride = { activity ->
+                check(activity is AccountActivity)
+                dashboardPermissionRequests += 1
+            }
             // Exact incomplete launcher route must not fall back to the active sibling.
             scenario=ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target, "target-generation"))
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
@@ -271,9 +277,11 @@ class PostLoginSetupRuntimeTest {
             assertEquals(target, ActiveAccountManager.getActiveAccount(context))
             val exactDashboard=requireNotNull(dashboard) { "Exact target dashboard did not resume before the deadline" }
             assertEquals(target.name, exactDashboard.title.toString())
+            assertEquals(1, dashboardPermissionRequests)
             org.junit.Assert.assertTrue(exactDashboard.findViewById<android.view.View>(R.id.drawer_layout).isShown)
         } finally {
             runCatching { scenario?.close() }
+            AccountActivity.permissionRequestOverride = previousPermissionRequestOverride
             AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
             PostLoginSetupViewModel.inventoryOverride=null
             App.postLoginBootstrapSucceeded=previousBootstrap
@@ -286,8 +294,9 @@ class PostLoginSetupRuntimeTest {
                     notificationRequestMarker,
                 )
             }
-            check(notificationRestore.commit())
+            val notificationRestored = notificationRestore.commit()
             AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling); ActiveAccountManager.clearActiveAccount(context)
+            check(notificationRestored)
         }
     }
 

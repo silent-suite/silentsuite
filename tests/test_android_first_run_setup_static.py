@@ -242,9 +242,19 @@ def test_no_network_dashboard_runtime_uses_a_bounded_exact_account_loader():
     assert '"notification_permissions"' in contract
     assert '"post_notifications_requested"' in contract
     assert "notificationRequestMarker" in contract
+    assert "previousPermissionRequestOverride" in contract
+    assert "AccountActivity.permissionRequestOverride = { activity ->" in contract
+    assert "assertEquals(1, dashboardPermissionRequests)" in contract
+    assert (
+        "AccountActivity.permissionRequestOverride = previousPermissionRequestOverride"
+        in contract
+    )
     assert "notificationRestore.remove(" in contract
     assert "notificationRestore.putBoolean(" in contract
-    assert "check(notificationRestore.commit())" in contract
+    assert "val notificationRestored = notificationRestore.commit()" in contract
+    assert contract.index("AndroidCompat.removeAccount") < contract.index(
+        "check(notificationRestored)"
+    )
     notification_utils = source(JAVA / "utils/NotificationUtils.kt")
     assert 'PREFERENCES = "notification_permissions"' in notification_utils
     assert (
