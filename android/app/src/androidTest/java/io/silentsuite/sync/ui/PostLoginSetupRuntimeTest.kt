@@ -198,15 +198,16 @@ class PostLoginSetupRuntimeTest {
     @Test fun noNetworkDashboardShellRoutesExactAccountAfterReadyDone() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
-        val restoreNotificationDenial = android.os.Build.VERSION.SDK_INT >=
-            android.os.Build.VERSION_CODES.TIRAMISU &&
-            context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (restoreNotificationDenial) {
-            instrumentation.uiAutomation.grantRuntimePermission(
-                context.packageName,
-                android.Manifest.permission.POST_NOTIFICATIONS,
-            )
+        val notificationPreferences = context.getSharedPreferences(
+            "notification_permissions",
+            android.content.Context.MODE_PRIVATE,
+        )
+        val notificationRequestMarker = if (
+            notificationPreferences.contains("post_notifications_requested")
+        ) {
+            notificationPreferences.getBoolean("post_notifications_requested", false)
+        } else {
+            null
         }
         val manager = AccountManager.get(context)
         val target = Account("target-${System.nanoTime()}@example.invalid", App.accountType)
@@ -232,6 +233,11 @@ class PostLoginSetupRuntimeTest {
         }
         var scenario: ActivityScenario<AccountActivity>?=null
         try {
+            check(
+                notificationPreferences.edit()
+                    .putBoolean("post_notifications_requested", true)
+                    .commit()
+            )
             // Exact incomplete launcher route must not fall back to the active sibling.
             scenario=ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target, "target-generation"))
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
@@ -271,14 +277,16 @@ class PostLoginSetupRuntimeTest {
             AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
             PostLoginSetupViewModel.inventoryOverride=null
             App.postLoginBootstrapSucceeded=previousBootstrap
-            if (restoreNotificationDenial) {
-                runCatching {
-                    instrumentation.uiAutomation.revokeRuntimePermission(
-                        context.packageName,
-                        android.Manifest.permission.POST_NOTIFICATIONS,
-                    )
-                }
+            val notificationRestore = notificationPreferences.edit()
+            if (notificationRequestMarker == null) {
+                notificationRestore.remove("post_notifications_requested")
+            } else {
+                notificationRestore.putBoolean(
+                    "post_notifications_requested",
+                    notificationRequestMarker,
+                )
             }
+            check(notificationRestore.commit())
             AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling); ActiveAccountManager.clearActiveAccount(context)
         }
     }

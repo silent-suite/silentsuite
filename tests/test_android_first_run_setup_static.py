@@ -239,9 +239,18 @@ def test_no_network_dashboard_runtime_uses_a_bounded_exact_account_loader():
     assert 'check(creationId == "target-generation")' in contract
     assert "AccountInfoViewModel.accountLoaderOverride = null" in contract
     assert ".filterIsInstance<AccountActivity>()" in contract
-    assert "grantRuntimePermission(" in contract
-    assert "revokeRuntimePermission(" in contract
-    assert "restoreNotificationDenial" in contract
+    assert '"notification_permissions"' in contract
+    assert '"post_notifications_requested"' in contract
+    assert "notificationRequestMarker" in contract
+    assert "notificationRestore.remove(" in contract
+    assert "notificationRestore.putBoolean(" in contract
+    assert "check(notificationRestore.commit())" in contract
+    notification_utils = source(JAVA / "utils/NotificationUtils.kt")
+    assert 'PREFERENCES = "notification_permissions"' in notification_utils
+    assert (
+        'KEY_POST_NOTIFICATIONS_REQUESTED = "post_notifications_requested"'
+        in notification_utils
+    )
 
 
 def test_setup_durable_evidence_contains_no_secrets_or_secret_extras():
