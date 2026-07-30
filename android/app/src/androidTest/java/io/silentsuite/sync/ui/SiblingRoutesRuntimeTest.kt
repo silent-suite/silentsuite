@@ -17,6 +17,7 @@ import androidx.appcompat.view.menu.MenuBuilder
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import androidx.test.uiautomator.UiDevice
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
@@ -41,6 +42,7 @@ import io.silentsuite.sync.utils.AndroidCompat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
@@ -50,6 +52,12 @@ import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class SiblingRoutesRuntimeTest {
+    @get:Rule
+    val calendarPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(
+        Manifest.permission.READ_CALENDAR,
+        Manifest.permission.WRITE_CALENDAR,
+    )
+
     private val localPageOneUrl = "https://silentsuite.invalid/runtime-page-one"
     private val localPageTwoUrl = "https://silentsuite.invalid/runtime-page-two"
     private val localPageOneHtml = "<html><head><title>runtime page one</title></head><body>one</body></html>"
@@ -103,16 +111,7 @@ class SiblingRoutesRuntimeTest {
         }
     }
 
-    private fun grantCalendarPermissions(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        listOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR).forEach { permission ->
-            InstrumentationRegistry.getInstrumentation().uiAutomation
-                .executeShellCommand("pm grant ${context.packageName} $permission").close()
-        }
-    }
-
     private fun enterLocalCalendarPicker(scenario: ActivityScenario<ImportActivity>) {
-        grantCalendarPermissions(InstrumentationRegistry.getInstrumentation().targetContext)
         waitUntil("import chooser") {
             var ready = false
             scenario.onActivity { activity ->
