@@ -14,6 +14,8 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
+import androidx.lifecycle.Lifecycle
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
@@ -61,6 +63,30 @@ class AccountDrawerSignOutRuntimeTest {
                     assertEquals(activity.getString(R.string.account_switcher_expanded),
                         ViewCompat.getStateDescription(header)?.toString())
                 }
+            }
+        }
+    }
+
+    @Test fun systemBackClosesDrawerWithoutFinishing() {
+        val fixture = Fixture("system-back-drawer")
+        fixture.use { account ->
+            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(fixture.context, account)).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                        .openDrawer(GravityCompat.START, false)
+                    assertTrue(activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                        .isDrawerOpen(GravityCompat.START))
+                }
+                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                waitUntil("drawer to close after system Back") {
+                    var closed = false
+                    scenario.onActivity { activity ->
+                        closed = !activity.isFinishing && !activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                            .isDrawerOpen(GravityCompat.START)
+                    }
+                    closed
+                }
+                assertEquals(Lifecycle.State.RESUMED, scenario.state)
             }
         }
     }

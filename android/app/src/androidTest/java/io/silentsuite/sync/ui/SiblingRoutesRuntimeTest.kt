@@ -9,12 +9,15 @@ import android.content.Context
 import android.os.Bundle
 import android.os.Build
 import android.os.SystemClock
-import android.view.KeyEvent
 import android.view.View
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.TextView
+import androidx.appcompat.view.menu.MenuBuilder
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.matcher.RootMatchers.isDialog
@@ -23,7 +26,6 @@ import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.lifecycle.Lifecycle
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.view.menu.MenuBuilder
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.textfield.TextInputLayout
 import io.silentsuite.sync.AccountSettings
@@ -48,6 +50,11 @@ import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(AndroidJUnit4::class)
 class SiblingRoutesRuntimeTest {
+    private val localPageOneUrl = "https://silentsuite.invalid/runtime-page-one"
+    private val localPageTwoUrl = "https://silentsuite.invalid/runtime-page-two"
+    private val localPageOneHtml = "<html><head><title>runtime page one</title></head><body>one</body></html>"
+    private val localPageTwoHtml = "<html><head><title>runtime page two</title></head><body>two</body></html>"
+
     /** Creates a fully-owned fixture row in one AccountManager transaction. */
     private fun addAccount(manager: AccountManager, namePrefix: String, creationId: String, setupComplete: Boolean = false): Account {
         val account = Account("$namePrefix-${System.nanoTime()}@example.invalid", App.accountType)
@@ -94,6 +101,69 @@ class SiblingRoutesRuntimeTest {
             InstrumentationRegistry.getInstrumentation().uiAutomation
                 .executeShellCommand("pm grant ${context.packageName} $permission").close()
         }
+    }
+
+    private fun enterLocalCalendarPicker(scenario: ActivityScenario<ImportActivity>) {
+        waitUntil("import chooser") {
+            var ready = false
+            scenario.onActivity { activity ->
+                ready = activity.findViewById<View>(R.id.import_account)?.isShown == true
+            }
+            ready
+        }
+        scenario.onActivity { it.findViewById<View>(R.id.import_account).performClick() }
+        waitUntil("local calendar picker") {
+            var selected = false
+            scenario.onActivity { activity ->
+                selected = activity.supportFragmentManager.fragments.any {
+                    it is io.silentsuite.sync.ui.importlocal.LocalCalendarImportFragment
+                }
+            }
+            selected
+        }
+    }
+
+    private fun assertImportChooser(scenario: ActivityScenario<ImportActivity>) {
+        scenario.onActivity { activity ->
+            assertEquals(activity.getString(R.string.import_dialog_title), activity.title)
+            assertTrue(activity.supportFragmentManager.fragments.any { it is ImportActivity.SelectImportFragment })
+        }
+        assertEquals(Lifecycle.State.RESUMED, scenario.state)
+    }
+
+    private fun localWebViewIntent(context: Context) = android.content.Intent(context, WebViewActivity::class.java).apply {
+        putExtra(WebViewActivity.EXTRA_URL, Constants.helpUri)
+        putExtra(WebViewActivity.EXTRA_DEBUG_INITIAL_HTML, localPageOneHtml)
+    }
+
+    private fun installLocalWebViewClient(
+        pageOneLoaded: CountDownLatch,
+        pageTwoLoaded: CountDownLatch,
+        pageOneRestored: CountDownLatch,
+    ) {
+        val pageOneDeliveries = AtomicInteger()
+        WebViewActivity.debugWebViewClientOverride = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                when (url) {
+                    localPageOneUrl -> if (pageOneDeliveries.incrementAndGet() == 1) {
+                        pageOneLoaded.countDown()
+                    } else {
+                        pageOneRestored.countDown()
+                    }
+                    localPageTwoUrl -> pageTwoLoaded.countDown()
+                }
+            }
+        }
+    }
+
+    private fun loadLocalPageTwo(scenario: ActivityScenario<WebViewActivity>, pageTwoLoaded: CountDownLatch) {
+        scenario.onActivity { activity ->
+            activity.findViewById<WebView>(R.id.webView).loadDataWithBaseURL(
+                localPageTwoUrl, localPageTwoHtml, "text/html", "UTF-8", null
+            )
+        }
+        assertTrue("Timed out loading deterministic page two", pageTwoLoaded.await(10, TimeUnit.SECONDS))
+        scenario.onActivity { activity -> assertTrue(activity.findViewById<WebView>(R.id.webView).canGoBack()) }
     }
     @Test
     fun encryptionPasswordCompletionRecreatesAndReturnsToCallerForExactGeneration() {
@@ -193,7 +263,7 @@ class SiblingRoutesRuntimeTest {
     }
 
     @Test
-    fun importRecreationAndBackCancelReturnToItsCaller() {
+    fun importDispatcherBackPopsNestedStackThenFinishesWithCanceledResult() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)
         val account = addAccount(manager, "import-cancel", "import-cancel-generation")
@@ -203,16 +273,142 @@ class SiblingRoutesRuntimeTest {
         }
 
         try {
-            ActivityScenario.launch<ImportActivity>(ImportActivity.newIntent(context, account, "import-cancel-generation", info)).use { scenario ->
+            ActivityScenario.launchActivityForResult<ImportActivity>(
+                ImportActivity.newIntent(context, account, "import-cancel-generation", info)
+            ).use { scenario ->
                 scenario.recreate()
+                enterLocalCalendarPicker(scenario)
                 scenario.onActivity { activity ->
-                    assertTrue(activity.onKeyDown(KeyEvent.KEYCODE_BACK, KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK)))
+                    activity.onBackPressedDispatcher.onBackPressed()
                 }
+                assertImportChooser(scenario)
+                scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
                 waitUntil("import cancel return") { scenario.state == Lifecycle.State.DESTROYED }
                 assertEquals(Lifecycle.State.DESTROYED, scenario.state)
+                assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
             }
         } finally {
             removeAccountAndWait(manager, account)
+        }
+    }
+
+    @Test
+    fun importToolbarUpPopsNestedStackThenFinishesWithCanceledResult() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = addAccount(manager, "import-toolbar", "import-toolbar-generation")
+        val info = CollectionInfo().apply { uid = "toolbar-collection-uid"; enumType = CollectionInfo.Type.CALENDAR }
+
+        try {
+            ActivityScenario.launchActivityForResult<ImportActivity>(
+                ImportActivity.newIntent(context, account, "import-toolbar-generation", info)
+            ).use { scenario ->
+                enterLocalCalendarPicker(scenario)
+                scenario.onActivity { activity ->
+                    assertTrue(activity.onOptionsItemSelected(MenuBuilder(activity).add(0, android.R.id.home, 0, "Up")))
+                }
+                assertImportChooser(scenario)
+                scenario.onActivity { activity ->
+                    assertTrue(activity.onOptionsItemSelected(MenuBuilder(activity).add(0, android.R.id.home, 0, "Up")))
+                }
+                waitUntil("import toolbar root return") { scenario.state == Lifecycle.State.DESTROYED }
+                assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
+            }
+        } finally {
+            removeAccountAndWait(manager, account)
+        }
+    }
+
+    @Test
+    fun importSystemBackPopsNestedStackThenFinishesWithCanceledResult() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = addAccount(manager, "import-system-back", "import-system-back-generation")
+        val info = CollectionInfo().apply { uid = "system-back-collection-uid"; enumType = CollectionInfo.Type.CALENDAR }
+
+        try {
+            ActivityScenario.launchActivityForResult<ImportActivity>(
+                ImportActivity.newIntent(context, account, "import-system-back-generation", info)
+            ).use { scenario ->
+                enterLocalCalendarPicker(scenario)
+                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                assertImportChooser(scenario)
+                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                waitUntil("import system Back root return") { scenario.state == Lifecycle.State.DESTROYED }
+                assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
+            }
+        } finally {
+            removeAccountAndWait(manager, account)
+        }
+    }
+
+    @Test
+    fun webViewDispatcherBackConsumesLocalHistoryThenFinishes() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val pageOneLoaded = CountDownLatch(1)
+        val pageTwoLoaded = CountDownLatch(1)
+        val pageOneRestored = CountDownLatch(1)
+        installLocalWebViewClient(pageOneLoaded, pageTwoLoaded, pageOneRestored)
+
+        try {
+            ActivityScenario.launchActivityForResult<WebViewActivity>(localWebViewIntent(context)).use { scenario ->
+                assertTrue("Timed out loading deterministic page one", pageOneLoaded.await(10, TimeUnit.SECONDS))
+                loadLocalPageTwo(scenario, pageTwoLoaded)
+                scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                assertTrue("Timed out restoring deterministic page one", pageOneRestored.await(10, TimeUnit.SECONDS))
+                assertEquals(Lifecycle.State.RESUMED, scenario.state)
+                scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                waitUntil("WebView dispatcher root Back return") { scenario.state == Lifecycle.State.DESTROYED }
+                assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
+            }
+        } finally {
+            WebViewActivity.debugWebViewClientOverride = null
+        }
+    }
+
+    @Test
+    fun webViewToolbarUpFinishesInsteadOfTraversingLocalHistory() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val pageOneLoaded = CountDownLatch(1)
+        val pageTwoLoaded = CountDownLatch(1)
+        installLocalWebViewClient(pageOneLoaded, pageTwoLoaded, CountDownLatch(1))
+
+        try {
+            ActivityScenario.launchActivityForResult<WebViewActivity>(localWebViewIntent(context)).use { scenario ->
+                assertTrue("Timed out loading deterministic page one", pageOneLoaded.await(10, TimeUnit.SECONDS))
+                loadLocalPageTwo(scenario, pageTwoLoaded)
+                scenario.onActivity { activity ->
+                    assertTrue(activity.onOptionsItemSelected(MenuBuilder(activity).add(0, android.R.id.home, 0, "Up")))
+                }
+                waitUntil("WebView toolbar Up return") { scenario.state == Lifecycle.State.DESTROYED }
+                assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
+            }
+        } finally {
+            WebViewActivity.debugWebViewClientOverride = null
+        }
+    }
+
+    @Test
+    fun webViewSystemBackConsumesLocalHistoryThenFinishes() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val pageOneLoaded = CountDownLatch(1)
+        val pageTwoLoaded = CountDownLatch(1)
+        val pageOneRestored = CountDownLatch(1)
+        installLocalWebViewClient(pageOneLoaded, pageTwoLoaded, pageOneRestored)
+
+        try {
+            ActivityScenario.launchActivityForResult<WebViewActivity>(localWebViewIntent(context)).use { scenario ->
+                assertTrue("Timed out loading deterministic page one", pageOneLoaded.await(10, TimeUnit.SECONDS))
+                loadLocalPageTwo(scenario, pageTwoLoaded)
+                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                assertTrue("Timed out restoring deterministic page one", pageOneRestored.await(10, TimeUnit.SECONDS))
+                assertEquals(Lifecycle.State.RESUMED, scenario.state)
+                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                waitUntil("WebView system Back root return") { scenario.state == Lifecycle.State.DESTROYED }
+                assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
+            }
+        } finally {
+            WebViewActivity.debugWebViewClientOverride = null
         }
     }
 

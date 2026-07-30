@@ -64,7 +64,7 @@ jobs:
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER="$(command -v sdkmanager)"
           fi
-          yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358" "build-tools;36.0.0"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Cache Gradle
@@ -85,7 +85,7 @@ jobs:
       - name: Run debug unit tests, lint, and assemble instrumentation APKs
         # Assemble each Android module's androidTest APK so AGP merges and
         # validates its instrumentation manifest. Runtime coverage stays
-        # focused on the app test below (API 21 and API 35).
+        # focused on the app test below (API 21, API 35, and API 36).
         run: >-
           ./gradlew
           app:testDebugUnitTest
@@ -129,6 +129,30 @@ jobs:
 
       - name: Build debug APK and unsigned release APK/AAB
         run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon -PrequireEtebase16Kb=true
+
+      - name: Verify packaged debug and unsigned release APK SDK levels
+        env:
+          ANDROID_BUILD_TOOLS_VERSION: '36.0.0'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          aapt="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS_VERSION/aapt"
+          test -x "$aapt"
+          debug_apks=(app/build/outputs/apk/debug/*.apk)
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          [[ ${#debug_apks[@]} -eq 1 ]] || { echo "expected exactly one debug APK, found ${#debug_apks[@]}" >&2; exit 1; }
+          [[ ${#release_apks[@]} -eq 1 ]] || { echo "expected exactly one unsigned release APK, found ${#release_apks[@]}" >&2; exit 1; }
+          for apk in "${debug_apks[@]}" "${release_apks[@]}"; do
+            badging="$("$aapt" dump badging "$apk")"
+            [[ $(grep -Fxc "sdkVersion:'21'" <<<"$badging" || true) -eq 1 ]] || {
+              echo "$apk does not report exactly one min SDK 21 entry" >&2
+              exit 1
+            }
+            [[ $(grep -Fxc "targetSdkVersion:'36'" <<<"$badging" || true) -eq 1 ]] || {
+              echo "$apk does not report exactly one target SDK 36 entry" >&2
+              exit 1
+            }
+          done
 
       - name: Generate universal split set from unsigned AAB
         env:
@@ -215,6 +239,9 @@ jobs:
           - api-level: 35
             arch: x86_64
             shard: all
+          - api-level: 36
+            arch: x86_64
+            shard: all
     defaults:
       run:
         working-directory: android
@@ -292,6 +319,7 @@ jobs:
             ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','actualTwoAccountSignOutRemovesExactMainAndChildAndActivatesSibling'),
             ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','adapterRefusesToRemoveSameNameReplacementGeneration'),
             ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','delayedSuccessfulRemovalAfterRecreationRoutesRetainedSibling'),
+            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','systemBackClosesDrawerWithoutFinishing'),
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation'),
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting'),
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','retainedLoadRejectsSameNameReplacementBeforePublication'),
@@ -325,7 +353,12 @@ jobs:
             ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent'),
             ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCompletionRecreatesAndReturnsToCallerForExactGeneration'),
             ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCancelReturnsToCallerAfterRecreation'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importRecreationAndBackCancelReturnToItsCaller'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importDispatcherBackPopsNestedStackThenFinishesWithCanceledResult'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importToolbarUpPopsNestedStackThenFinishesWithCanceledResult'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importSystemBackPopsNestedStackThenFinishesWithCanceledResult'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','webViewDispatcherBackConsumesLocalHistoryThenFinishes'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','webViewToolbarUpFinishesInsteadOfTraversingLocalHistory'),
+            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','webViewSystemBackConsumesLocalHistoryThenFinishes'),
             ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importCompletionShowsResultAndReturnsToCallerForExactCollection'),
             ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCopyRevalidatesGenerationBeforeWritingClipboard'),
             ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCopyCompletesAfterRecreationForItsExactGeneration'),
@@ -361,8 +394,8 @@ jobs:
             expected=canonical
           else:
             raise SystemExit(f'unsupported shard {shard}')
-          expected_sizes={'mixed': 1, 'remaining': 65, 'all': 66}
-          if len(canonical) != 66 or len(expected) != expected_sizes[shard]:
+          expected_sizes={'mixed': 1, 'remaining': 71, 'all': 72}
+          if len(canonical) != 72 or len(expected) != expected_sizes[shard]:
             raise SystemExit(f'bad expected ledger size for {shard}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
@@ -371,7 +404,7 @@ jobs:
               pair=(case.attrib.get('classname'),case.attrib.get('name')); seen.append(pair)
               if pair in expected and list(case): raise SystemExit(f'failed {pair}')
           counts=Counter(seen)
-          unexpected=(canonical & set(counts))-expected
+          unexpected=set(counts)-expected
           if unexpected: raise SystemExit(f'unexpected tests for {shard}: {sorted(unexpected)}')
           missing=expected-set(counts)
           if missing: raise SystemExit(f'missing {sorted(missing)}')
