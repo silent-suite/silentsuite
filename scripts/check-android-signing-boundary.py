@@ -27,7 +27,7 @@ ROOT_WORKFLOW = Path(".github/workflows/build-android.yml")
 ANDROID_SIBLING_WORKFLOW = Path("android/.github/workflows/build.yml")
 ALLOWED_JOB = "build-release"
 POLICY_JOB = "signing-policy"
-TAG_GUARD = "startsWith(github.ref, 'refs/tags/v')"
+TAG_GUARD = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
 ENVIRONMENT_NAME = "android-release"
 SHA_PIN = re.compile(r"^[0-9a-f]{40}$")
 UNSAFE_SECRET_EXPRESSION = re.compile(
@@ -89,7 +89,7 @@ EXPECTED_SECRET_STEP_SHA256 = {
         "0df837fe9af54e6cfb08d657238cd5eec036757c69e7dd216e76bc5904411652"
     ),
 }
-EXPECTED_RELEASE_JOB_SHA256 = "2c76d2e950e84fbd90263cbcc791b2c6274aa425f40c6bc9adfda370cbb3f849"
+EXPECTED_RELEASE_JOB_SHA256 = "2f77c370952a2819564dda7ad18d8ab83e7d55c787126dd41f32bb074c612e84"
 ALLOWED_RELEASE_JOB_KEYS = {
     "name",
     "needs",
@@ -358,7 +358,7 @@ def check(root: Path) -> list[str]:
     if missing_refs:
         violations.append(f"{ALLOWED_JOB} is missing signing references: {', '.join(sorted(missing_refs))}")
     if release.get("if") != TAG_GUARD:
-        violations.append(f"{ALLOWED_JOB} must use the exact semantic version-tag guard")
+        violations.append(f"{ALLOWED_JOB} must use the exact push-triggered version-tag guard")
     if release.get("needs") != POLICY_JOB:
         violations.append(f"{ALLOWED_JOB} must require successful {POLICY_JOB}")
     if release.get("environment") != ENVIRONMENT_NAME:
