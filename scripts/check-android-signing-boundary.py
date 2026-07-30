@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
@@ -80,6 +82,14 @@ EXPECTED_RELEASE_STEP_ENVIRONMENTS: dict[str, dict[str, str]] = {
         "KEY_ALIAS": "${{ secrets.ANDROID_KEY_ALIAS }}",
     },
 }
+EXPECTED_SECRET_STEP_SHA256 = {
+    "Decode release keystore": "44c1231395b5f7347980a05fa641b0e7d866451e10ddb88958e61459f649ffba",
+    "Build signed release APK and AAB": "07a1049b765ab5e0005e943a165dd5399b83741fc38cc91fa7919bd360873d94",
+    "Capture release dependency graph and generate signed-release splits": (
+        "0df837fe9af54e6cfb08d657238cd5eec036757c69e7dd216e76bc5904411652"
+    ),
+}
+EXPECTED_RELEASE_JOB_SHA256 = "2c76d2e950e84fbd90263cbcc791b2c6274aa425f40c6bc9adfda370cbb3f849"
 ALLOWED_RELEASE_JOB_KEYS = {
     "name",
     "needs",
@@ -201,6 +211,16 @@ def permissions_read_only(value: Any) -> bool:
     if value == "read-all":
         return True
     return isinstance(value, Mapping) and all(level in {"read", "none"} for level in value.values())
+
+
+def semantic_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def action_uses(value: Any) -> Iterator[str]:
@@ -347,6 +367,8 @@ def check(root: Path) -> list[str]:
         violations.append(f"{ALLOWED_JOB} must run exactly on GitHub-hosted ubuntu-latest")
     if release.get("defaults") != {"run": {"working-directory": "android"}}:
         violations.append(f"{ALLOWED_JOB} must use the exact Android working-directory defaults")
+    if semantic_sha256(release) != EXPECTED_RELEASE_JOB_SHA256:
+        violations.append(f"{ALLOWED_JOB} must match the exact reviewed release-job specification")
     for forbidden_key in ("container", "services", "strategy", "env", "continue-on-error"):
         if forbidden_key in release:
             violations.append(f"{ALLOWED_JOB} must not define job-level {forbidden_key}")
@@ -399,6 +421,10 @@ def check(root: Path) -> list[str]:
             if len(matching_steps) != 1 or matching_steps[0].get("env") != expected_env:
                 violations.append(
                     f"{ALLOWED_JOB} must contain exactly one {step_name!r} step with reviewed environment"
+                )
+            elif semantic_sha256(matching_steps[0]) != EXPECTED_SECRET_STEP_SHA256[step_name]:
+                violations.append(
+                    f"{ALLOWED_JOB} step {step_name!r} must match its exact reviewed execution"
                 )
         release_without_step_env = dict(release)
         release_without_step_env["steps"] = [
