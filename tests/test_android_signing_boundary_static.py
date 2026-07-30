@@ -337,11 +337,26 @@ def test_misleading_guard_text_does_not_replace_semantic_guard(tmp_path: Path) -
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "    if: startsWith(github.ref, 'refs/tags/v')\n",
+        "    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n",
         "    if: ${{ true }}\n    env:\n      DOCUMENTED_GUARD: \"startsWith(github.ref, 'refs/tags/v')\"\n",
     )
 
-    assert_rejected(run_checker(root), "must use the exact semantic version-tag guard")
+    assert_rejected(run_checker(root), "must use the exact push-triggered version-tag guard")
+
+
+def test_release_guard_requires_a_push_event(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    text = workflow.read_text(encoding="utf-8")
+    workflow.write_text(
+        text.replace(
+            "    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n",
+            "    if: startsWith(github.ref, 'refs/tags/v')\n",
+        ),
+        encoding="utf-8",
+    )
+
+    assert_rejected(run_checker(root), "must use the exact push-triggered version-tag guard")
 
 
 def test_workflow_level_write_all_is_rejected(tmp_path: Path) -> None:
@@ -758,8 +773,8 @@ def test_release_job_cannot_invoke_local_action(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Set up JDK 17\n",
-        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Local release action\n        uses: ./malicious-action\n\n      - name: Set up JDK 17\n",
+        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Set up JDK 17\n",
+        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Local release action\n        uses: ./malicious-action\n\n      - name: Set up JDK 17\n",
     )
 
     assert_rejected(run_checker(root), "build-release must not invoke local actions")

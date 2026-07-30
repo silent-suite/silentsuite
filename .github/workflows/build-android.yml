@@ -471,7 +471,7 @@ jobs:
   build-release:
     name: Build (signed, tag release)
     needs: signing-policy
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: android-release
     permissions:
