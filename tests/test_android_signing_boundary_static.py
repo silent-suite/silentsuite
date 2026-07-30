@@ -70,6 +70,26 @@ jobs:
     assert_rejected(run_checker(root), "job quoted-leak references Android signing secrets")
 
 
+def test_secret_name_comparison_is_case_insensitive(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ".github" / "workflows" / "ci.yml"
+    workflow.write_text(
+        """name: case bypass
+on: pull_request
+jobs:
+  leak:
+    runs-on: ubuntu-latest
+    env:
+      LEAK: ${{ secrets.android_keystore_base64 }}
+    steps:
+      - run: 'true'
+""",
+        encoding="utf-8",
+    )
+
+    assert_rejected(run_checker(root), "job leak references Android signing secrets")
+
+
 def test_computed_secret_index_is_rejected(tmp_path: Path) -> None:
     root = fixture_root(tmp_path)
     workflow = root / ".github" / "workflows" / "ci.yml"
@@ -323,6 +343,30 @@ def test_workflow_level_write_all_is_rejected(tmp_path: Path) -> None:
     mutate(workflow, "jobs:\n", "permissions: write-all\n\njobs:\n")
 
     assert_rejected(run_checker(root), "must not grant dynamic or write permissions at workflow scope")
+
+
+def test_workflow_level_run_defaults_are_rejected(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "jobs:\n",
+        "defaults:\n  run:\n    shell: bash -c 'exit 0' {0}\n\njobs:\n",
+    )
+
+    assert_rejected(run_checker(root), "must not define workflow-level defaults")
+
+
+def test_workflow_level_environment_is_rejected(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "jobs:\n",
+        "env:\n  PATH: attacker\n  BASH_ENV: attacker\n\njobs:\n",
+    )
+
+    assert_rejected(run_checker(root), "must not define workflow-level env")
 
 
 def test_nonrelease_job_write_permission_is_rejected(tmp_path: Path) -> None:

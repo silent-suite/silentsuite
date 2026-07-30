@@ -141,8 +141,8 @@ def strings(value: Any) -> Iterator[str]:
 
 
 def signing_references(value: Any) -> set[str]:
-    body = "\n".join(strings(value))
-    return {name for name in SIGNING_SECRETS if name in body}
+    body = "\n".join(strings(value)).casefold()
+    return {name for name in SIGNING_SECRETS if name.casefold() in body}
 
 
 def contains_unsafe_secret_expression(value: Any) -> bool:
@@ -295,6 +295,11 @@ def check(root: Path) -> list[str]:
     top_permissions = root_workflow.get("permissions")
     if top_permissions is not None and not permissions_read_only(top_permissions):
         violations.append(f"{ROOT_WORKFLOW} must not grant dynamic or write permissions at workflow scope")
+    for inherited_key in ("defaults", "env"):
+        if inherited_key in root_workflow:
+            violations.append(
+                f"{ROOT_WORKFLOW} must not define workflow-level {inherited_key} that can alter {POLICY_JOB}"
+            )
 
     for job_name, raw_job in jobs.items():
         if not isinstance(raw_job, Mapping):
