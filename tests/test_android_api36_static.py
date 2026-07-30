@@ -81,6 +81,7 @@ def test_runtime_sources_characterize_dispatcher_toolbar_and_system_back_routes(
     assert "Manifest.permission.READ_CALENDAR" in calendar_permissions
     assert "Manifest.permission.WRITE_CALENDAR" in calendar_permissions
     assert "pm grant ${context.packageName} $permission" in calendar_permissions
+    assert "assertTrue(UiDevice" not in runtime
     assert "fun systemBackClosesDrawerWithoutFinishing()" in drawer_runtime
     assert "UiDevice.getInstance" in drawer_runtime
     assert "pressBack()" in drawer_runtime

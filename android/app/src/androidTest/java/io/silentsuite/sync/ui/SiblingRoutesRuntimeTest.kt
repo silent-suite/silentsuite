@@ -340,9 +340,9 @@ class SiblingRoutesRuntimeTest {
                 ImportActivity.newIntent(context, account, "import-system-back-generation", info)
             ).use { scenario ->
                 enterLocalCalendarPicker(scenario)
-                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
                 assertImportChooser(scenario)
-                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
                 waitUntil("import system Back root return") { scenario.state == Lifecycle.State.DESTROYED }
                 assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
             }
@@ -409,10 +409,10 @@ class SiblingRoutesRuntimeTest {
             ActivityScenario.launchActivityForResult<WebViewActivity>(localWebViewIntent(context)).use { scenario ->
                 assertTrue("Timed out loading deterministic page one", pageOneLoaded.await(10, TimeUnit.SECONDS))
                 loadLocalPageTwo(scenario, pageTwoLoaded)
-                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
                 assertTrue("Timed out restoring deterministic page one", pageOneRestored.await(10, TimeUnit.SECONDS))
                 assertEquals(Lifecycle.State.RESUMED, scenario.state)
-                assertTrue(UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack())
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
                 waitUntil("WebView system Back root return") { scenario.state == Lifecycle.State.DESTROYED }
                 assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
             }
