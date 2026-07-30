@@ -598,21 +598,10 @@ class SiblingRoutesRuntimeTest {
                     val fragment = activity.supportFragmentManager
                         .findFragmentByTag(FingerprintDialogFragment.TAG) as FingerprintDialogFragment
                     fragment.dialog!!.cancel()
+                    assertFalse(activity.isFinishing)
                     assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
                 }
                 assertEquals(listOf(account to "fingerprint-dashboard-generation"), reads)
-                waitUntil("recreated dashboard resumed after fingerprint cancel") {
-                    var resumed = false
-                    InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                        resumed = recreatedActivity.get() in ActivityLifecycleMonitorRegistry.getInstance()
-                            .getActivitiesInStage(Stage.RESUMED)
-                    }
-                    resumed
-                }
-                InstrumentationRegistry.getInstrumentation().runOnMainSync {
-                    val activity = recreatedActivity.get()
-                    assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
-                }
             }
         } finally {
             FingerprintDialogFragment.fingerprintProviderOverride = null

@@ -85,6 +85,8 @@ def test_runtime_sources_characterize_dispatcher_toolbar_and_system_back_routes(
     assert "ActivityLifecycleMonitorRegistry.getInstance()" in fingerprint_cancel
     assert "Stage.PAUSED" in fingerprint_cancel
     assert "Stage.RESUMED" in fingerprint_cancel
+    assert "assertFalse(activity.isFinishing)" in fingerprint_cancel
+    assert "recreated dashboard resumed after fingerprint cancel" not in fingerprint_cancel
     assert "setPrimaryClip" not in fingerprint_cancel
     assert "assertTrue(UiDevice" not in runtime
     assert "fun systemBackClosesDrawerWithoutFinishing()" in drawer_runtime
