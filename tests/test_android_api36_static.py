@@ -71,10 +71,13 @@ def test_runtime_sources_characterize_dispatcher_toolbar_and_system_back_routes(
     assert "onOptionsItemSelected(MenuBuilder" in runtime
     assert "WebViewActivity.EXTRA_DEBUG_INITIAL_HTML" in runtime
     assert "WebViewActivity.debugWebViewClientOverride" in runtime
-    assert "val calendarPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(" in runtime
+    assert "val routePermissionRule: GrantPermissionRule = GrantPermissionRule.grant(" in runtime
     assert "Manifest.permission.READ_CALENDAR" in runtime
     assert "Manifest.permission.WRITE_CALENDAR" in runtime
+    assert "Manifest.permission.READ_CONTACTS" in runtime
+    assert "Manifest.permission.WRITE_CONTACTS" in runtime
     assert "private fun grantCalendarPermissions" not in runtime
+    assert "private fun grantDashboardPermissions" not in runtime
     assert "assertTrue(UiDevice" not in runtime
     assert "fun systemBackClosesDrawerWithoutFinishing()" in drawer_runtime
     assert "UiDevice.getInstance" in drawer_runtime

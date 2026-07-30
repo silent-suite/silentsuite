@@ -53,9 +53,11 @@ import java.util.concurrent.atomic.AtomicReference
 @RunWith(AndroidJUnit4::class)
 class SiblingRoutesRuntimeTest {
     @get:Rule
-    val calendarPermissionRule: GrantPermissionRule = GrantPermissionRule.grant(
+    val routePermissionRule: GrantPermissionRule = GrantPermissionRule.grant(
         Manifest.permission.READ_CALENDAR,
         Manifest.permission.WRITE_CALENDAR,
+        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.WRITE_CONTACTS,
     )
 
     private val localPageOneUrl = "https://silentsuite.invalid/runtime-page-one"
@@ -100,16 +102,6 @@ class SiblingRoutesRuntimeTest {
         assertTrue("Timed out waiting for $description", predicate())
     }
 
-    private fun grantDashboardPermissions(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        listOf(
-            Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR,
-            Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS,
-        ).forEach { permission ->
-            InstrumentationRegistry.getInstrumentation().uiAutomation
-                .executeShellCommand("pm grant ${context.packageName} $permission").close()
-        }
-    }
 
     private fun enterLocalCalendarPicker(scenario: ActivityScenario<ImportActivity>) {
         waitUntil("import chooser") {
@@ -550,7 +542,6 @@ class SiblingRoutesRuntimeTest {
         val reads = mutableListOf<Pair<Account, String>>()
         val previousBootstrap = App.postLoginBootstrapSucceeded
         App.postLoginBootstrapSucceeded = true
-        grantDashboardPermissions(context)
         AccountActivity.AccountInfoViewModel.accountLoaderOverride = { _, exact, creationId ->
             AccountActivity.AccountInfo().also { check(exact == account); check(creationId == "fingerprint-dashboard-generation") }
         }
