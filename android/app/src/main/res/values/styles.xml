@@ -111,6 +111,14 @@
         <item name="android:textColor">@color/semantic_on_surface</item>
     </style>
 
+    <style name="TextAppearance.AppTheme.FirstRun.Title" parent="TextAppearance.AppTheme.Material3.Title">
+        <item name="android:textSize">24sp</item>
+    </style>
+
+    <style name="TextAppearance.AppTheme.FirstRun.Body" parent="TextAppearance.AppTheme.Material3.Body">
+        <item name="android:textSize">16sp</item>
+    </style>
+
     <style name="ShapeAppearance.AppTheme.Material3.Standard" parent="ShapeAppearance.Material3.Corner.Medium">
         <item name="cornerSize">@dimen/shape_radius_standard</item>
     </style>

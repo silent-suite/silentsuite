@@ -70,6 +70,36 @@ class SyncStatusStoreTest {
         assertEquals("request", store.status(first, SyncStatusStore.Service.TASKS).activeRequestId)
     }
 
+    @Test fun `replaying the same request id preserves its admitted attempt`() {
+        assertTrue(store.recordRequested(
+            first,
+            setOf(SyncStatusStore.Service.CALENDAR),
+            "setup-request",
+            10,
+        ))
+        assertTrue(store.beginAttempt(
+            first,
+            SyncStatusStore.Service.CALENDAR,
+            "admitted-attempt",
+            11,
+            "setup-request",
+        ))
+
+        assertTrue(store.recordRequested(
+            first,
+            setOf(SyncStatusStore.Service.CALENDAR),
+            "setup-request",
+            12,
+        ))
+
+        val status = store.status(first, SyncStatusStore.Service.CALENDAR)
+        assertEquals("setup-request", status.activeRequestId)
+        assertEquals(10L, status.requestedAt)
+        assertEquals("admitted-attempt", status.activeAttemptId)
+        assertEquals(11L, status.attemptStartedAt)
+        assertEquals("setup-request", status.attemptRequestId)
+    }
+
     @Test fun `cancelled attempt retains terminal history and stale work expires only without authority`() {
         assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 1))
         assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "attempt", 2, null))

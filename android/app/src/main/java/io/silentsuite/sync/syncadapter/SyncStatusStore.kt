@@ -166,15 +166,19 @@ class SyncStatusStore internal constructor(
         val targeted = services.toSortedSet(compareBy { it.ordinal })
         if (targeted.isEmpty()) return@synchronized true
         val puts = linkedMapOf<String, String>()
+        val changed = linkedSetOf<Service>()
         targeted.forEach { service ->
             val current = readOrLegacy(storageKey, service)
+            if (current.requestId == requestId) return@forEach
             puts[v2RecordKey(storageKey, service)] = encodeV2(current.copy(
                 revision = nextRevision(current.revision), requestId = requestId, requestedAt = requestedAt,
                 attemptId = null, attemptStartedAt = null, attemptRequestId = null,
                 contacts = if (service == Service.CONTACTS) ContactsGeneration() else current.contacts,
             ))
+            changed += service
         }
-        commitLifecycle(puts, targeted.mapTo(linkedSetOf()) { v2FaultKey(storageKey, it) })
+        if (puts.isEmpty()) return@synchronized true
+        commitLifecycle(puts, changed.mapTo(linkedSetOf()) { v2FaultKey(storageKey, it) })
     }
 
     @Synchronized

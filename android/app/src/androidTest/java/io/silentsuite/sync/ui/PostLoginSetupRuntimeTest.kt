@@ -11,7 +11,11 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
+import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
+import io.silentsuite.sync.syncadapter.syncRequestId
 import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
 import io.silentsuite.sync.ui.setup.PostLoginSyncConfigurator
 
@@ -25,6 +29,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.URI
+import java.lang.reflect.Modifier
 
 @RunWith(AndroidJUnit4::class)
 class PostLoginSetupRuntimeTest {
@@ -191,7 +196,19 @@ class PostLoginSetupRuntimeTest {
         }
     }
     @Test fun noNetworkDashboardShellRoutesExactAccountAfterReadyDone() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val notificationPreferences = context.getSharedPreferences(
+            "notification_permissions",
+            android.content.Context.MODE_PRIVATE,
+        )
+        val notificationRequestMarker = if (
+            notificationPreferences.contains("post_notifications_requested")
+        ) {
+            notificationPreferences.getBoolean("post_notifications_requested", false)
+        } else {
+            null
+        }
         val manager = AccountManager.get(context)
         val target = Account("target-${System.nanoTime()}@example.invalid", App.accountType)
         val sibling = Account("sibling-${System.nanoTime()}@example.invalid", App.accountType)
@@ -205,12 +222,28 @@ class PostLoginSetupRuntimeTest {
         check(ActiveAccountManager.setActiveAccount(context, sibling))
         val previousBootstrap=App.postLoginBootstrapSucceeded
         App.postLoginBootstrapSucceeded=true
+        AccountActivity.AccountInfoViewModel.accountLoaderOverride = { _, exact, creationId ->
+            check(exact == target)
+            check(creationId == "target-generation")
+            AccountActivity.AccountInfo()
+        }
         PostLoginSetupViewModel.inventoryOverride={ candidate ->
             check(candidate==target)
             PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
         }
+        val previousPermissionRequestOverride = AccountActivity.permissionRequestOverride
+        var dashboardPermissionRequests = 0
         var scenario: ActivityScenario<AccountActivity>?=null
         try {
+            check(
+                notificationPreferences.edit()
+                    .putBoolean("post_notifications_requested", true)
+                    .commit()
+            )
+            AccountActivity.permissionRequestOverride = { activity ->
+                check(activity is AccountActivity)
+                dashboardPermissionRequests += 1
+            }
             // Exact incomplete launcher route must not fall back to the active sibling.
             scenario=ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, target, "target-generation"))
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
@@ -226,11 +259,15 @@ class PostLoginSetupRuntimeTest {
             var dashboard: AccountActivity?=null
             while (android.os.SystemClock.uptimeMillis()<deadline) {
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-                val resumed=resumedActivityOrNull()
+                InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                    dashboard = ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED)
+                        .filterIsInstance<AccountActivity>()
+                        .singleOrNull()
+                        ?.takeIf { it.title.toString() == target.name }
+                }
                 if (AccountSettings.setupState(manager,target,true)==PostLoginSetupState.COMPLETE &&
-                    ActiveAccountManager.getActiveAccount(context)==target && resumed is AccountActivity &&
-                    resumed.title.toString()==target.name) {
-                    dashboard=resumed
+                    ActiveAccountManager.getActiveAccount(context)==target && dashboard != null) {
                     break
                 }
                 android.os.SystemClock.sleep(25)
@@ -240,14 +277,405 @@ class PostLoginSetupRuntimeTest {
             assertEquals(target, ActiveAccountManager.getActiveAccount(context))
             val exactDashboard=requireNotNull(dashboard) { "Exact target dashboard did not resume before the deadline" }
             assertEquals(target.name, exactDashboard.title.toString())
+            assertEquals(1, dashboardPermissionRequests)
             org.junit.Assert.assertTrue(exactDashboard.findViewById<android.view.View>(R.id.drawer_layout).isShown)
         } finally {
             runCatching { scenario?.close() }
+            AccountActivity.permissionRequestOverride = previousPermissionRequestOverride
+            AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
             PostLoginSetupViewModel.inventoryOverride=null
             App.postLoginBootstrapSucceeded=previousBootstrap
+            val notificationRestore = notificationPreferences.edit()
+            if (notificationRequestMarker == null) {
+                notificationRestore.remove("post_notifications_requested")
+            } else {
+                notificationRestore.putBoolean(
+                    "post_notifications_requested",
+                    notificationRequestMarker,
+                )
+            }
+            val notificationRestored = notificationRestore.commit()
             AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling); ActiveAccountManager.clearActiveAccount(context)
+            check(notificationRestored)
         }
     }
+
+    @Test fun everyDurableSetupStateColdRendersApprovedPresentationWithoutRenderSideEffects() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val registry = AccountCreationRegistry.open(context)
+        val approvedTitles = setOf(
+            "Let's repair this setup",
+            "Preparing Android sync…",
+            "Android sync setup could not finish",
+            "Preparing your encrypted collections…",
+            "Collections could not be prepared",
+            "Checking Android integrations…",
+            "Connect to Android apps",
+            "Starting your first sync…",
+            "You're ready",
+            "Opening sync overview…",
+        )
+        val states = listOf(
+            PostLoginSetupState.CREATING,
+            PostLoginSetupState.ACCOUNT_CREATED,
+            PostLoginSetupState.COLLECTIONS,
+            PostLoginSetupState.PERMISSIONS,
+            PostLoginSetupState.INITIAL_SYNC,
+            PostLoginSetupState.READY,
+            PostLoginSetupState.COMPLETE,
+            PostLoginSetupState.RECOVERY_REQUIRED,
+        )
+        val accounts = mutableListOf<Account>()
+        PostLoginSyncConfigurator.configureOverride = { _, _ -> false }
+        PostLoginSetupViewModel.inventoryOverride = { account ->
+            when (AccountSettings.setupState(manager, account, true)) {
+                PostLoginSetupState.COLLECTIONS ->
+                    PostLoginSetupViewModel.InventoryOutcome.Recovery to emptySet()
+                else ->
+                    PostLoginSetupViewModel.InventoryOutcome.Usable to emptySet()
+            }
+        }
+        requestSyncDispatchOverride = { _, _, _ -> Unit }
+        PostLoginSetupActivity.safeWorkPausedForTest = true
+        try {
+            states.forEachIndexed { index, state ->
+                val account = Account("cold-$index-${System.nanoTime()}@example.invalid", App.accountType)
+                val creationId = "cold-generation-$index"
+                accounts += account
+                check(manager.addAccountExplicitly(account, null, null))
+                AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+                check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, creationId))
+                check(AccountSettings.writeSetupState(manager, account, state))
+                if (state == PostLoginSetupState.CREATING || state == PostLoginSetupState.RECOVERY_REQUIRED) {
+                    check(registry.prepare(AccountCreationRegistry.Record(
+                        account.name,
+                        creationId,
+                        if (state == PostLoginSetupState.CREATING) {
+                            AccountCreationRegistry.Phase.CREATING
+                        } else {
+                            AccountCreationRegistry.Phase.RECOVERY_REQUIRED
+                        },
+                        System.currentTimeMillis(),
+                        account.type,
+                    )))
+                }
+
+                ActivityScenario.launch<PostLoginSetupActivity>(
+                    PostLoginSetupActivity.newIntent(context, account, creationId)
+                ).use { scenario ->
+                    scenario.onActivity { activity ->
+                        listOf(
+                            "setup_stage_connect",
+                            "setup_stage_prepare",
+                            "setup_stage_ready",
+                            "setup_title",
+                            "setup_body",
+                        ).forEach { name ->
+                            org.junit.Assert.assertNotEquals(
+                                "Missing approved setup presentation view $name",
+                                0,
+                                activity.resources.getIdentifier(name, "id", activity.packageName),
+                            )
+                        }
+                        val title = activity.findViewById<android.widget.TextView>(
+                            activity.resources.getIdentifier("setup_title", "id", activity.packageName)
+                        ).text.toString()
+                        val body = activity.findViewById<android.widget.TextView>(
+                            activity.resources.getIdentifier("setup_body", "id", activity.packageName)
+                        ).text.toString()
+                        org.junit.Assert.assertTrue("Unapproved setup title: $title", title in approvedTitles)
+                        org.junit.Assert.assertFalse(states.any { body == it.name })
+                        org.junit.Assert.assertFalse(body.startsWith("Setup:"))
+                    }
+                }
+                registry.clearOwned(account.type, account.name, creationId)
+            }
+        } finally {
+            PostLoginSetupActivity.safeWorkPausedForTest = false
+            PostLoginSyncConfigurator.configureOverride = null
+            PostLoginSetupViewModel.inventoryOverride = null
+            requestSyncDispatchOverride = null
+            accounts.forEach { account ->
+                manager.getUserData(account, AccountSettings.KEY_CREATION_ID)?.let {
+                    registry.clearOwned(account.type, account.name, it)
+                }
+                AndroidCompat.removeAccount(manager, account)
+            }
+        }
+    }
+
+    @Test fun safeAutoAdvanceIsIdempotentAcrossRecreationAndStopsAtUserDecision() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = Account("safe-auto-${System.nanoTime()}@example.invalid", App.accountType)
+        val creationId = "safe-auto-generation"
+        val registry = AccountCreationRegistry.open(context)
+        var configureCalls = 0
+        check(manager.addAccountExplicitly(account, null, null))
+        seedAccountCreated(manager, registry, account, creationId)
+        PostLoginSyncConfigurator.configureOverride = { candidateContext, candidate ->
+            check(candidateContext.applicationContext == context.applicationContext)
+            check(candidate == account)
+            configureCalls++
+            true
+        }
+        PostLoginSetupViewModel.inventoryOverride = { candidate ->
+            check(candidate == account)
+            PostLoginSetupViewModel.InventoryOutcome.Usable to setOf(
+                Constants.ETEBASE_TYPE_CALENDAR,
+                Constants.ETEBASE_TYPE_ADDRESS_BOOK,
+            )
+        }
+        requestSyncDispatchOverride = { _, _, _ ->
+            throw AssertionError("Safe auto-advance crossed the permission decision")
+        }
+        try {
+            ActivityScenario.launch<PostLoginSetupActivity>(
+                PostLoginSetupActivity.newIntent(context, account, creationId)
+            ).use { scenario ->
+                waitForSetupState(manager, account, PostLoginSetupState.PERMISSIONS)
+                scenario.recreate()
+                scenario.recreate()
+                assertEquals(PostLoginSetupState.PERMISSIONS, AccountSettings.setupState(manager, account, true))
+                assertEquals(1, configureCalls)
+                assertEquals(null, manager.getUserData(account, INITIAL_SYNC_REQUEST_ID_KEY))
+                scenario.onActivity { activity ->
+                    assertEquals(
+                        "Connect to Android apps",
+                        activity.findViewById<android.widget.TextView>(
+                            requiredViewId(activity, "setup_title")
+                        ).text.toString(),
+                    )
+                }
+            }
+        } finally {
+            requestSyncDispatchOverride = null
+            PostLoginSetupViewModel.inventoryOverride = null
+            PostLoginSyncConfigurator.configureOverride = null
+            registry.clearOwned(account.type, account.name, creationId)
+            AndroidCompat.removeAccount(manager, account)
+        }
+    }
+
+    @Test fun permissionGrantDenialBlockedSkipAndNoTaskProviderRemainResumable() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = Account("permissions-${System.nanoTime()}@example.invalid", App.accountType)
+        val creationId = "permissions-generation"
+        check(manager.addAccountExplicitly(account, null, null))
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, creationId))
+        check(AccountSettings.writeSetupState(manager, account, PostLoginSetupState.PERMISSIONS))
+        PostLoginSetupViewModel.inventoryOverride = { candidate ->
+            check(candidate == account)
+            PostLoginSetupViewModel.InventoryOutcome.Usable to setOf(
+                Constants.ETEBASE_TYPE_CALENDAR,
+                Constants.ETEBASE_TYPE_ADDRESS_BOOK,
+                Constants.ETEBASE_TYPE_TASKS,
+            )
+        }
+        requestSyncDispatchOverride = { _, _, _ -> Unit }
+        try {
+            installPermissionEvidenceOverride(Bundle().apply {
+                putString("CALENDAR", "GRANTED")
+                putString("CONTACTS", "DENIED_CAN_ASK_RETURNED")
+                putString("TASKS", "UNKNOWN")
+            })
+            launchSetup(context, account, creationId) { activity ->
+                assertEquals("Android access wasn't allowed", setupTitle(activity))
+                assertEquals(PostLoginSetupState.PERMISSIONS, AccountSettings.setupState(manager, account, true))
+            }
+
+            installPermissionEvidenceOverride(Bundle().apply {
+                putString("CALENDAR", "DENIED_BLOCKED_RETURNED")
+                putString("CONTACTS", "GRANTED")
+                putString("TASKS", "UNKNOWN")
+            })
+            launchSetup(context, account, creationId) { activity ->
+                assertEquals("Allow access in Android settings", setupTitle(activity))
+            }
+
+            installPermissionEvidenceOverride(Bundle().apply {
+                putString("CALENDAR", "UNKNOWN_AFTER_LAUNCH_WITHOUT_RESULT")
+                putString("CONTACTS", "GRANTED")
+                putString("TASKS", "NEWLY_ELIGIBLE")
+            })
+            ActivityScenario.launch<PostLoginSetupActivity>(
+                PostLoginSetupActivity.newIntent(context, account, creationId)
+            ).use { scenario ->
+                scenario.recreate()
+                scenario.onActivity { activity ->
+                    assertEquals("Connect to Android apps", setupTitle(activity))
+                    org.junit.Assert.assertNotEquals("Allow access in Android settings", setupTitle(activity))
+                }
+            }
+
+            installPermissionEvidenceOverride(Bundle().apply {
+                putString("CALENDAR", "GRANTED")
+                putString("CONTACTS", "DENIED_CAN_ASK_RETURNED")
+                putBoolean("NO_TASK_PROVIDER", true)
+            })
+            launchSetup(context, account, creationId) { activity ->
+                val allText = descendantText(activity.findViewById(android.R.id.content))
+                org.junit.Assert.assertTrue(
+                    allText.contains(
+                        "Android has no built-in task provider. Install Tasks.org or OpenTasks later " +
+                            "to sync tasks on this device."
+                    )
+                )
+                findButton(activity, "Skip for now").performClick()
+            }
+            waitForSetupState(manager, account, PostLoginSetupState.READY)
+            assertEquals("true", manager.getUserData(account, AccountSettings.KEY_LIMITED_INTEGRATIONS))
+        } finally {
+            runCatching { installPermissionEvidenceOverride(null) }
+            requestSyncDispatchOverride = null
+            PostLoginSetupViewModel.inventoryOverride = null
+            AndroidCompat.removeAccount(manager, account)
+        }
+    }
+
+    @Test fun initialSyncRequestIdSurvivesEveryCrashCutAndClearsAfterReady() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val target = Account("initial-sync-${System.nanoTime()}@example.invalid", App.accountType)
+        val sibling = Account("initial-sync-sibling-${System.nanoTime()}@example.invalid", App.accountType)
+        val targetCreationId = "initial-sync-generation"
+        val siblingCreationId = "initial-sync-sibling-generation"
+        val requestId = "setup-request-${System.nanoTime()}"
+        val siblingRequestId = "sibling-request-${System.nanoTime()}"
+        val capturedRequestIds = mutableListOf<String>()
+        check(manager.addAccountExplicitly(target, null, null))
+        check(manager.addAccountExplicitly(sibling, null, null))
+        check(AccountSettings.writeVerified(manager, target, AccountSettings.KEY_CREATION_ID, targetCreationId))
+        check(AccountSettings.writeVerified(manager, sibling, AccountSettings.KEY_CREATION_ID, siblingCreationId))
+        check(AccountSettings.writeSetupState(manager, target, PostLoginSetupState.INITIAL_SYNC))
+        check(AccountSettings.writeSetupState(manager, sibling, PostLoginSetupState.COMPLETE))
+        check(AccountSettings.writeVerified(manager, target, INITIAL_SYNC_REQUEST_ID_KEY, requestId))
+        check(AccountSettings.writeVerified(manager, sibling, INITIAL_SYNC_REQUEST_ID_KEY, siblingRequestId))
+        var failBetweenStatusCommitAndDispatch = true
+        requestSyncDispatchOverride = { candidate, _, extras ->
+            check(candidate == target)
+            capturedRequestIds += requireNotNull(syncRequestId(extras))
+            if (failBetweenStatusCommitAndDispatch) {
+                failBetweenStatusCommitAndDispatch = false
+                throw IllegalStateException("synthetic setup dispatch crash cut")
+            }
+        }
+        try {
+            ActivityScenario.launch<PostLoginSetupActivity>(
+                PostLoginSetupActivity.newIntent(context, target, targetCreationId)
+            ).use { }
+            assertEquals(PostLoginSetupState.INITIAL_SYNC, AccountSettings.setupState(manager, target, true))
+            assertEquals(requestId, manager.getUserData(target, INITIAL_SYNC_REQUEST_ID_KEY))
+            val store = SyncStatusStore(context)
+            org.junit.Assert.assertTrue(
+                listOf(SyncStatusStore.Service.CALENDAR, SyncStatusStore.Service.CONTACTS).any {
+                    store.status(target, it).activeRequestId == requestId
+                }
+            )
+
+            // Adapter terminal clearing is not the setup marker owner.
+            check(store.clear(target))
+            assertEquals(requestId, manager.getUserData(target, INITIAL_SYNC_REQUEST_ID_KEY))
+
+            ActivityScenario.launch<PostLoginSetupActivity>(
+                PostLoginSetupActivity.newIntent(context, target, targetCreationId)
+            ).use { scenario ->
+                waitForSetupState(manager, target, PostLoginSetupState.READY)
+                scenario.recreate()
+            }
+            assertEquals(null, manager.getUserData(target, INITIAL_SYNC_REQUEST_ID_KEY))
+            assertEquals(siblingRequestId, manager.getUserData(sibling, INITIAL_SYNC_REQUEST_ID_KEY))
+            org.junit.Assert.assertTrue(capturedRequestIds.isNotEmpty())
+            assertEquals(setOf(requestId), capturedRequestIds.toSet())
+
+            // A crash after READY read-back but before cleanup must only clean the inert marker.
+            check(AccountSettings.writeVerified(manager, target, INITIAL_SYNC_REQUEST_ID_KEY, requestId))
+            val dispatchesBeforeReadyCleanup = capturedRequestIds.size
+            ActivityScenario.launch<PostLoginSetupActivity>(
+                PostLoginSetupActivity.newIntent(context, target, targetCreationId)
+            ).use { }
+            assertEquals(null, manager.getUserData(target, INITIAL_SYNC_REQUEST_ID_KEY))
+            assertEquals(dispatchesBeforeReadyCleanup, capturedRequestIds.size)
+        } finally {
+            requestSyncDispatchOverride = null
+            AndroidCompat.removeAccount(manager, target)
+            AndroidCompat.removeAccount(manager, sibling)
+        }
+    }
+
+    private fun launchSetup(
+        context: android.content.Context,
+        account: Account,
+        creationId: String,
+        assertion: (PostLoginSetupActivity) -> Unit,
+    ) {
+        ActivityScenario.launch<PostLoginSetupActivity>(
+            PostLoginSetupActivity.newIntent(context, account, creationId)
+        ).use { scenario -> scenario.onActivity { assertion(it) } }
+    }
+
+    private fun installPermissionEvidenceOverride(evidence: Bundle?) {
+        val method = PostLoginSetupViewModel::class.java.declaredMethods.firstOrNull {
+            it.name == "installPermissionEvidenceOverrideForTest" &&
+                it.parameterTypes.contentEquals(arrayOf(Bundle::class.java))
+        }
+        if (method != null && Modifier.isStatic(method.modifiers)) {
+            method.isAccessible = true
+            method.invoke(null, evidence)
+            return
+        }
+        val companionField = PostLoginSetupViewModel::class.java.getDeclaredField("Companion")
+        companionField.isAccessible = true
+        val companion = companionField.get(null)
+        val companionMethod = companion.javaClass.getDeclaredMethod(
+            "installPermissionEvidenceOverrideForTest",
+            Bundle::class.java,
+        )
+        companionMethod.isAccessible = true
+        companionMethod.invoke(companion, evidence)
+    }
+
+    private fun setupTitle(activity: PostLoginSetupActivity): String =
+        activity.findViewById<android.widget.TextView>(requiredViewId(activity, "setup_title"))
+            .text.toString()
+
+    private fun requiredViewId(activity: android.app.Activity, name: String): Int {
+        val id = activity.resources.getIdentifier(name, "id", activity.packageName)
+        org.junit.Assert.assertNotEquals("Missing setup view $name", 0, id)
+        return id
+    }
+
+    private fun findButton(activity: android.app.Activity, text: String): android.widget.Button =
+        descendants(activity.findViewById(android.R.id.content))
+            .filterIsInstance<android.widget.Button>()
+            .single { it.text.toString() == text }
+
+    private fun descendantText(root: android.view.View): String =
+        descendants(root).filterIsInstance<android.widget.TextView>()
+            .joinToString("\n") { it.text.toString() }
+
+    private fun descendants(view: android.view.View): Sequence<android.view.View> = sequence {
+        yield(view)
+        if (view is android.view.ViewGroup) {
+            for (index in 0 until view.childCount) yieldAll(descendants(view.getChildAt(index)))
+        }
+    }
+
+    private fun waitForSetupState(
+        manager: AccountManager,
+        account: Account,
+        expected: PostLoginSetupState,
+    ) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            if (AccountSettings.setupState(manager, account, true) == expected) return
+            android.os.SystemClock.sleep(25)
+        }
+        assertEquals(expected, AccountSettings.setupState(manager, account, true))
+    }
+
     private fun resumedActivityOrNull(): android.app.Activity? {
         var current: android.app.Activity? = null
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
@@ -263,5 +691,9 @@ class PostLoginSetupRuntimeTest {
             android.os.SystemClock.sleep(25)
         }
         throw IllegalStateException("No single resumed Activity before the deadline")
+    }
+
+    private companion object {
+        const val INITIAL_SYNC_REQUEST_ID_KEY = "post_login_initial_sync_request_id_v1"
     }
 }
