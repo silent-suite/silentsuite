@@ -190,6 +190,12 @@ def test_account_settings_owns_only_bounded_returned_permission_denials():
     assert "returnedPermissionEvidence(" in callback
     assert "expectedPermissions.filter(::permissionGranted)" in callback
     assert "launched.isEmpty()" not in callback
+    empty_result = callback.split("if (returned.isEmpty())", 1)[1].split(
+        "model.recordReturnedPermissionEvidence", 1
+    )[0]
+    assert "model.clearPermissionLaunchWithoutResult()" in empty_result
+    assert "model.clearUserDecision()" in empty_result
+    assert "render()" in empty_result
     assert callback.index("recordReturnedPermissionEvidence") < callback.index(
         "persistReturnedPermissionDenials"
     )

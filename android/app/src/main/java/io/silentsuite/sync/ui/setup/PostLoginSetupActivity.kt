@@ -58,7 +58,12 @@ class PostLoginSetupActivity : BaseActivity() {
             )
             evidence?.let { integration to it }
         }.toMap()
-        if (returned.isEmpty()) return@registerForActivityResult
+        if (returned.isEmpty()) {
+            model.clearPermissionLaunchWithoutResult()
+            model.clearUserDecision()
+            render()
+            return@registerForActivityResult
+        }
         model.recordReturnedPermissionEvidence(returned)
         if (!persistReturnedPermissionDenials(returned)) {
             render()
