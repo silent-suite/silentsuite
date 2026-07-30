@@ -187,6 +187,7 @@ def test_account_settings_owns_only_bounded_returned_permission_denials():
     )[0]
     assert ") { results ->" in callback
     assert "results.filterKeys" in callback
+    assert "results::containsKey" in callback
     assert "launched.isEmpty()" not in callback
     assert callback.index("recordReturnedPermissionEvidence") < callback.index(
         "persistReturnedPermissionDenials"

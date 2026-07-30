@@ -47,6 +47,7 @@ class PostLoginSetupActivity : BaseActivity() {
         val returned = PostLoginSetupOrchestrator.Integration.values().mapNotNull { integration ->
             val permissions = allPermissionsFor(integration)
             val explicitResults = results.filterKeys(permissions::contains)
+            val expectedPermissions = permissionsFor(integration)
             val evidence = when {
                 explicitResults.isEmpty() -> null
                 explicitResults.values.any { granted -> !granted } && permissions.any {
@@ -54,7 +55,8 @@ class PostLoginSetupActivity : BaseActivity() {
                 } -> PostLoginSetupOrchestrator.PermissionEvidence.DENIED_CAN_ASK_RETURNED
                 explicitResults.values.any { granted -> !granted } ->
                     PostLoginSetupOrchestrator.PermissionEvidence.DENIED_BLOCKED_RETURNED
-                permissions.all(::permissionGranted) ->
+                (expectedPermissions.isEmpty() || expectedPermissions.all(results::containsKey)) &&
+                    explicitResults.values.all { granted -> granted } ->
                     PostLoginSetupOrchestrator.PermissionEvidence.GRANTED
                 else -> null
             }
