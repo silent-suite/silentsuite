@@ -18,7 +18,7 @@ vi.mock('@/app/lib/self-hosted', () => ({
 }))
 
 vi.mock('lucide-react', () => ({
-  MailWarning: () => <svg data-testid="mail-warning-icon" />,
+  MailWarning: ({ className }: { className?: string }) => <svg data-testid="mail-warning-icon" className={className} />,
   Loader2: () => <svg data-testid="loader-icon" />,
 }))
 
@@ -37,6 +37,24 @@ describe('EmailVerificationBanner', () => {
     expect(screen.getByText('Please verify your email so you can receive account and billing messages.')).toBeInTheDocument()
     expect(screen.getByText('Resend email')).toBeInTheDocument()
     expect(screen.getByText('Change email')).toBeInTheDocument()
+  })
+
+  it('uses contrasting light and dark colours for the icon and recovery actions', () => {
+    render(<EmailVerificationBanner />)
+
+    expect(screen.getByTestId('mail-warning-icon')).toHaveClass(
+      'text-amber-700',
+      'dark:text-amber-400',
+    )
+
+    for (const name of [/resend email/i, /change email/i]) {
+      expect(screen.getByRole('button', { name })).toHaveClass(
+        'text-amber-800',
+        'hover:text-amber-900',
+        'dark:text-amber-300',
+        'dark:hover:text-amber-200',
+      )
+    }
   })
 
   it('opens a change email form with confirmation and careful contact-email copy', () => {
