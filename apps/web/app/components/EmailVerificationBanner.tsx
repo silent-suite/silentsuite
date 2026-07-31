@@ -200,14 +200,14 @@ export function EmailVerificationBanner() {
             <button
               type="button"
               onClick={() => setShowChangeEmail(false)}
-              className="text-xs font-medium text-amber-700 underline underline-offset-2 hover:text-amber-600 dark:text-amber-300 dark:hover:text-amber-200"
+              className="text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
             >
               Cancel
             </button>
           </div>
         </form>
       )}
-      {error && <p className="mt-2 text-xs text-red-500 dark:text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-xs text-red-700 dark:text-red-400">{error}</p>}
     </div>
   )
 }

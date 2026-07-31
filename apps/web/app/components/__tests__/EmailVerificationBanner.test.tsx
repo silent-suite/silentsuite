@@ -65,6 +65,12 @@ describe('EmailVerificationBanner', () => {
     expect(screen.getByLabelText('New email')).toBeInTheDocument()
     expect(screen.getByLabelText('Confirm new email')).toBeInTheDocument()
     expect(screen.getByText('This changes the email we use for account and billing messages. Your current login email may stay the same for now.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /cancel/i })).toHaveClass(
+      'text-amber-800',
+      'hover:text-amber-900',
+      'dark:text-amber-300',
+      'dark:hover:text-amber-200',
+    )
   })
 
   it('submits normalized contact email changes to billing and refreshes the session', async () => {
@@ -115,7 +121,10 @@ describe('EmailVerificationBanner', () => {
     fireEvent.change(screen.getByLabelText('Confirm new email'), { target: { value: 'two@example.com' } })
     fireEvent.click(screen.getByText('Save email'))
 
-    expect(screen.getByText('Email addresses do not match.')).toBeInTheDocument()
+    expect(screen.getByText('Email addresses do not match.')).toHaveClass(
+      'text-red-700',
+      'dark:text-red-400',
+    )
     expect(fetch).not.toHaveBeenCalled()
   })
 })
