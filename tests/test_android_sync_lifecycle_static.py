@@ -478,11 +478,11 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     assert "api21_batch_" not in script
 
     assignments = dict(
-        re.findall(r"^(mixed_selector|requested_selector|other76_selectors|focused_classes|api36_account_dashboard_classes|api36_first_run_setup_classes|api36_status_routes_classes)='([^']+)'$", script, re.MULTILINE)
+        re.findall(r"^(mixed_selector|requested_selector|other77_selectors|focused_classes|api36_account_dashboard_classes|api36_first_run_setup_classes|api36_status_routes_classes)='([^']+)'$", script, re.MULTILINE)
     )
     mixed_selectors = assignments["mixed_selector"].split(",")
     requested_selectors = assignments["requested_selector"].split(",")
-    other76_ordered = assignments["other76_selectors"].split(",")
+    other77_ordered = assignments["other77_selectors"].split(",")
     monolithic_ordered = assignments["focused_classes"].split(",")
     monolithic = set(monolithic_ordered)
     api36_account_dashboard = assignments["api36_account_dashboard_classes"].split(",")
@@ -508,12 +508,12 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     }
     assert mixed_selectors == [mixed]
     assert requested_selectors == [diagnostic]
-    assert set(other76_ordered) == expected_other_dashboard | (monolithic - {dashboard})
-    assert other76_ordered[:8] == [
+    assert set(other77_ordered) == expected_other_dashboard | (monolithic - {dashboard})
+    assert other77_ordered[:8] == [
         f"{dashboard}#{method}" for method in re.findall(r"@Test\s+fun\s+(\w+)", dashboard_source)
         if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
     ]
-    assert other76_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
+    assert other77_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
     assert script.count('"${focused_classes}"') == 1
     api36_class_shards = [
         set(api36_account_dashboard),
@@ -531,7 +531,7 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     assert 600 < 2700 and 600 + 1500 < 2700 and 2400 < 2700 and 1800 < 2700
     requested_run = script.index('class="${requested_selector}"')
     save = script.index("\n  save_requested_results", requested_run)
-    other_run = script.index('class="${other76_selectors}"')
+    other_run = script.index('class="${other77_selectors}"')
     assert script.index("trap restore_requested_results EXIT") < requested_run < save < other_run
     assert "status=$?" in script
     assert "set +e" in script
@@ -541,8 +541,8 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
 
     assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     ledger = re.findall(r"^\s+\('([^']+)','([^']+)'\),$", assertion, re.MULTILINE)
-    assert len(ledger) == 78
-    assert len(set(ledger)) == 78
+    assert len(ledger) == 79
+    assert len(set(ledger)) == 79
     runtime_methods = []
     for class_name in monolithic:
         source = ROOT / "android/app/src/androidTest/java" / Path(*class_name.split(".")).with_suffix(".kt")
@@ -550,7 +550,7 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
             (class_name, method)
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
-    assert len(runtime_methods) == 78
+    assert len(runtime_methods) == 79
     assert set(ledger) == set(runtime_methods)
     def expand(selectors):
         return {
@@ -562,7 +562,7 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
             )
         }
     mixed_expanded = expand(mixed_selectors)
-    remaining_expanded = expand(requested_selectors + other76_ordered)
+    remaining_expanded = expand(requested_selectors + other77_ordered)
     all_expanded = expand(monolithic_ordered)
     account_dashboard_expanded = expand(api36_account_dashboard)
     first_run_setup_expanded = expand(api36_first_run_setup)
@@ -579,14 +579,14 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
         r"'([^']+)'",
         assertion.split("api36_status_routes_classes={", 1)[1].split("}", 1)[0],
     ))
-    assert (len(mixed_expanded), len(remaining_expanded), len(all_expanded)) == (1, 77, 78)
+    assert (len(mixed_expanded), len(remaining_expanded), len(all_expanded)) == (1, 78, 79)
     assert mixed_expanded.isdisjoint(remaining_expanded)
     assert mixed_expanded | remaining_expanded == all_expanded
     assert (
         len(account_dashboard_expanded),
         len(first_run_setup_expanded),
         len(status_routes_expanded),
-    ) == (26, 15, 37)
+    ) == (27, 15, 37)
     api36_method_shards = [
         account_dashboard_expanded,
         first_run_setup_expanded,
@@ -601,7 +601,7 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     assert workflow_account_dashboard == set(api36_account_dashboard)
     assert workflow_first_run_setup == set(api36_first_run_setup)
     assert workflow_status_routes == set(api36_status_routes)
-    assert "expected_sizes={'mixed': 1, 'remaining': 77, 'all': 78, 'account-dashboard': 26, 'first-run-setup': 15, 'status-routes': 37}" in assertion
+    assert "expected_sizes={'mixed': 1, 'remaining': 78, 'all': 79, 'account-dashboard': 27, 'first-run-setup': 15, 'status-routes': 37}" in assertion
     assert "expected=canonical-{mixed}" in assertion
     assert "expected={pair for pair in canonical if pair[0] in api36_account_dashboard_classes}" in assertion
     assert "expected={pair for pair in canonical if pair[0] in api36_first_run_setup_classes}" in assertion

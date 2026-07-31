@@ -33,16 +33,19 @@ class FirstRunSignInRuntimeTest {
                 scenario.onActivity { activity ->
                     val root = activity.findViewById<ViewGroup>(android.R.id.content)
                     val brandMark = activity.findViewById<ImageView>(requiredId(activity, "login_brand_mark"))
-                    val title = findText(root, "Sign in")
+                    val title = findText(root, "Sign in to SilentSuite")
                     val support = findText(
                         root,
-                        "Private, end-to-end encrypted sync for your calendars, contacts, and tasks."
+                        "SilentSuite provides zero-knowledge, end-to-end encrypted sync for your " +
+                            "calendars, contacts, and tasks. Encryption keys stay on this device."
                     )
                     val privacy = findText(
                         root,
-                        "Your calendars, contacts, and tasks are encrypted before syncing. " +
-                            "Encryption keys stay on this device."
+                        "Your encryption keys stay on this device."
                     )
+                    findText(root, "Synced events appear in Android Calendar.")
+                    findText(root, "Synced contacts appear in Android Contacts.")
+                    findText(root, "Synced tasks appear in Tasks.org or OpenTasks when installed.")
                     val email = activity.findViewById<EditText>(R.id.user_name)
                     val password = activity.findViewById<EditText>(R.id.login_password)
                     val primary = activity.findViewById<TextView>(R.id.login)
@@ -57,7 +60,7 @@ class FirstRunSignInRuntimeTest {
                         assertEquals(16f, it.textSize / scaledDensity, 0.25f)
                     }
                     assertNotEquals(Typeface.MONOSPACE, password.typeface)
-                    assertEquals("Sign in and connect", primary.text.toString())
+                    assertEquals("Sign in and set up sync", primary.text.toString())
                     assertTrue(primary.minimumHeight >= (48 * density).toInt())
 
                     email.setText("first-run-${System.nanoTime()}@example.invalid")
@@ -132,8 +135,8 @@ class FirstRunSignInRuntimeTest {
                         "${activity.resources.getResourceEntryName(view.id)}:${view.javaClass.simpleName}"
                     }
                     val root = activity.findViewById<ViewGroup>(android.R.id.content)
-                    findText(root, "Sign in")
-                    findText(root, "Sign in and connect")
+                    findText(root, "Sign in to SilentSuite")
+                    findText(root, "Sign in and set up sync")
                     findText(root, "Forgot password?")
                     findText(root, "New to SilentSuite? Create an account")
                     findText(root, "Use a custom server")

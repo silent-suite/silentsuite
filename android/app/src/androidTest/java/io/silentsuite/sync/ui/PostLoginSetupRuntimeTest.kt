@@ -311,9 +311,9 @@ class PostLoginSetupRuntimeTest {
             "Preparing your encrypted collections…",
             "Collections could not be prepared",
             "Checking Android integrations…",
-            "Connect to Android apps",
+            "Show synced data in Android apps",
             "Starting your first sync…",
-            "You're ready",
+            "SilentSuite is ready",
             "Opening sync overview…",
         )
         val states = listOf(
@@ -366,6 +366,10 @@ class PostLoginSetupRuntimeTest {
                 ).use { scenario ->
                     scenario.onActivity { activity ->
                         listOf(
+                            "setup_stepper",
+                            "setup_step_connect_node",
+                            "setup_step_prepare_node",
+                            "setup_step_ready_node",
                             "setup_stage_connect",
                             "setup_stage_prepare",
                             "setup_stage_ready",
@@ -387,6 +391,10 @@ class PostLoginSetupRuntimeTest {
                         org.junit.Assert.assertTrue("Unapproved setup title: $title", title in approvedTitles)
                         org.junit.Assert.assertFalse(states.any { body == it.name })
                         org.junit.Assert.assertFalse(body.startsWith("Setup:"))
+                        org.junit.Assert.assertTrue(
+                            activity.findViewById<View>(requiredViewId(activity, "setup_stepper"))
+                                .contentDescription.toString().startsWith("Setup progress, step ")
+                        )
                     }
                 }
                 registry.clearOwned(account.type, account.name, creationId)
@@ -442,9 +450,18 @@ class PostLoginSetupRuntimeTest {
                 assertEquals(null, manager.getUserData(account, INITIAL_SYNC_REQUEST_ID_KEY))
                 scenario.onActivity { activity ->
                     assertEquals(
-                        "Connect to Android apps",
+                        "Show synced data in Android apps",
                         activity.findViewById<android.widget.TextView>(
                             requiredViewId(activity, "setup_title")
+                        ).text.toString(),
+                    )
+                    assertTrue(activity.findViewById<View>(
+                        requiredViewId(activity, "setup_integration_details")
+                    ).isShown)
+                    assertEquals(
+                        "Allow access and continue",
+                        activity.findViewById<android.widget.Button>(
+                            requiredViewId(activity, "setup_continue_limited")
                         ).text.toString(),
                     )
                 }
@@ -505,7 +522,7 @@ class PostLoginSetupRuntimeTest {
             ).use { scenario ->
                 scenario.recreate()
                 scenario.onActivity { activity ->
-                    assertEquals("Connect to Android apps", setupTitle(activity))
+                    assertEquals("Show synced data in Android apps", setupTitle(activity))
                     org.junit.Assert.assertNotEquals("Allow access in Android settings", setupTitle(activity))
                 }
             }

@@ -33,9 +33,19 @@ object ActiveAccountManager {
         val manager = AccountManager.get(context)
         if (account.type != App.accountType || account !in manager.getAccountsByType(App.accountType)) return false
         val creationId = manager.getUserData(account, AccountSettings.KEY_CREATION_ID) ?: return false
+        return setActiveAccount(context, ExactAccountIdentity(account.type, account.name, creationId))
+    }
+
+    fun setActiveAccount(context: Context, identity: ExactAccountIdentity): Boolean {
+        val manager = AccountManager.get(context)
+        val account = Account(identity.name, identity.type)
+        if (identity.type != App.accountType || account !in manager.getAccountsByType(App.accountType) ||
+            manager.getUserData(account, AccountSettings.KEY_CREATION_ID) != identity.creationId) return false
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return prefs.edit().putString(KEY_NAME, account.name).putString(KEY_CREATION_ID, creationId).commit() &&
-            prefs.getString(KEY_NAME, null) == account.name && prefs.getString(KEY_CREATION_ID, null) == creationId
+        return prefs.edit().putString(KEY_NAME, identity.name)
+            .putString(KEY_CREATION_ID, identity.creationId).commit() &&
+            prefs.getString(KEY_NAME, null) == identity.name &&
+            prefs.getString(KEY_CREATION_ID, null) == identity.creationId
     }
 
     fun clearActiveAccount(context: Context) {

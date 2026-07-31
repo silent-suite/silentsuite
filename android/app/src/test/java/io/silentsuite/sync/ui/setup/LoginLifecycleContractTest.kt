@@ -226,7 +226,7 @@ class LoginLifecycleContractTest {
             .find(runtimeScript)!!.groupValues[1].split(",")
         val requestedSelectors = Regex("""^requested_selector='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
-        val other76 = Regex("""^other76_selectors='([^']+)'$""", RegexOption.MULTILINE)
+        val other77 = Regex("""^other77_selectors='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
         val focusedClasses = Regex("""^focused_classes='([^']+)'$""", RegexOption.MULTILINE)
             .find(runtimeScript)!!.groupValues[1].split(",")
@@ -242,14 +242,14 @@ class LoginLifecycleContractTest {
             else runtimeMethods.filter { it.startsWith("$selector#") }
         }
         val mixedExpanded = expand(mixedSelectors)
-        val remainingExpanded = expand(requestedSelectors + other76)
+        val remainingExpanded = expand(requestedSelectors + other77)
         val allExpanded = expand(focusedClasses)
 
         assertEquals(listOf(mixed), mixedSelectors)
         assertEquals(listOf(diagnostic), requestedSelectors)
-        assertEquals(78, runtimeMethods.size)
-        assertEquals(78, runtimeMethods.toSet().size)
-        assertEquals(listOf(1, 77, 78), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
+        assertEquals(79, runtimeMethods.size)
+        assertEquals(79, runtimeMethods.toSet().size)
+        assertEquals(listOf(1, 78, 79), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
         assertTrue(mixedExpanded.toSet().intersect(remainingExpanded.toSet()).isEmpty())
         assertEquals(allExpanded.toSet(), mixedExpanded.toSet() + remainingExpanded.toSet())
         assertEquals(runtimeMethods.toSet(), allExpanded.toSet())
@@ -261,7 +261,7 @@ class LoginLifecycleContractTest {
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""""))
         assertTrue(runtimeScript.indexOf("\n  save_requested_results",
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""")) <
-            runtimeScript.indexOf("""class="${'$'}{other76_selectors}""""))
+            runtimeScript.indexOf("""class="${'$'}{other77_selectors}""""))
         assertTrue(runtimeScript.contains("connected/api21-requested"))
         assertFalse(runtimeScript.contains("api21_batch_"))
         assertTrue(runtimeScript.contains("""if [[ "${'$'}{status}" -eq 0 && "${'$'}{restore_status}" -ne 0 ]]"""))

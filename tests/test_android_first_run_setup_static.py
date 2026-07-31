@@ -24,19 +24,43 @@ def string_resources() -> dict[str, str]:
     }
 
 
+def test_drawer_uses_modern_local_icons_and_exact_generation_row_routing():
+    header = source(RES / "layout/nav_header_accounts.xml")
+    row = source(RES / "layout/nav_account_row.xml")
+    activity = source(JAVA / "ui/AccountActivity.kt")
+    active = source(JAVA / "ui/ActiveAccountManager.kt")
+
+    assert "@android:drawable/arrow_down_float" not in header
+    assert "@drawable/ic_chevron_down" in header
+    assert "@android:drawable/checkbox_on_background" not in row
+    assert "@drawable/ic_check" in row
+    assert "<ripple" in source(RES / "drawable/nav_account_row_background.xml")
+    assert (RES / "drawable/ic_chevron_down.xml").exists()
+    assert (RES / "drawable/ic_check.xml").exists()
+    assert "ActiveAccountManager.setActiveAccount(this, identity)" in activity
+    assert "newIntent(this, acc, identity.creationId)" in activity
+    assert "ExactAccountIdentity(account.type, account.name, creationId)" in activity
+    assert "identity.creationId == accountCreationId" in activity
+    assert "fun setActiveAccount(context: Context, identity: ExactAccountIdentity)" in active
+
+
 def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids():
     layout = source(RES / "layout/login_credentials_fragment.xml")
     strings = string_resources()
     styles = source(RES / "values/styles.xml")
 
     approved = {
-        "login_sign_in_title": "Sign in",
+        "login_sign_in_title": "Sign in to SilentSuite",
         "login_sign_in_supporting_copy":
-            "Private, end-to-end encrypted sync for your calendars, contacts, and tasks.",
+            "SilentSuite provides zero-knowledge, end-to-end encrypted sync for your calendars, "
+            "contacts, and tasks. Encryption keys stay on this device.",
+        "login_android_apps_heading": "Works with Android apps",
+        "login_calendar_outcome": "Synced events appear in Android Calendar.",
+        "login_contacts_outcome": "Synced contacts appear in Android Contacts.",
+        "login_tasks_outcome": "Synced tasks appear in Tasks.org or OpenTasks when installed.",
         "login_privacy_reassurance":
-            "Your calendars, contacts, and tasks are encrypted before syncing. "
-            "Encryption keys stay on this device.",
-        "login_sign_in_and_connect": "Sign in and connect",
+            "Your encryption keys stay on this device.",
+        "login_sign_in_and_connect": "Sign in and set up sync",
         "login_forgot_password": "Forgot password?",
         "login_signup_prompt": "New to SilentSuite? Create an account",
         "login_toggle_advanced": "Use a custom server",
@@ -48,7 +72,10 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
         "create_account", "show_advanced", "advanced_layout", "custom_server",
         "login_action_bar", "login",
     }
-    for view_id in stable_ids | {"login_brand_mark"}:
+    for view_id in stable_ids | {
+        "login_brand_mark", "login_android_apps", "login_calendar_outcome",
+        "login_contacts_outcome", "login_tasks_outcome",
+    }:
         assert f'android:id="@+id/{view_id}"' in layout
 
     assert "<ImageView" in layout
@@ -67,10 +94,13 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
     assert '<style name="TextAppearance.AppTheme.FirstRun.Body"' in styles
     assert '<item name="android:textSize">16sp</item>' in styles
     assert layout.count("@style/TextAppearance.AppTheme.FirstRun.Title") == 1
-    assert layout.count("@style/TextAppearance.AppTheme.FirstRun.Body") >= 2
+    assert layout.count("@style/TextAppearance.AppTheme.FirstRun.Body") >= 5
     assert 'android:fontFamily="monospace"' not in layout
     assert layout.count("<com.google.android.material.button.MaterialButton") == 1
     assert 'android:text="@string/login_sign_in_and_connect"' in layout
+    manifest = source(MAIN / "AndroidManifest.xml")
+    login_decl = manifest.split('android:name=".ui.setup.LoginActivity"', 1)[1].split("</activity>", 1)[0]
+    assert 'android:theme="@style/AppTheme.Material3"' in login_decl
 
 
 def test_setup_has_approved_stage_surface_stable_ids_and_copy():
@@ -78,6 +108,8 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
     strings = string_resources()
 
     for view_id in (
+        "setup_stepper", "setup_step_connect_node", "setup_step_prepare_node",
+        "setup_step_ready_node", "setup_step_connector_one", "setup_step_connector_two",
         "setup_stage_connect", "setup_stage_prepare", "setup_stage_ready",
         "setup_title", "setup_body", "setup_continue_limited",
         "setup_skip_integrations", "setup_remove_incomplete",
@@ -86,8 +118,8 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
         assert f'android:id="@+id/{view_id}"' in layout
 
     approved = {
-        "post_login_stage_connect": "Connect account",
-        "post_login_stage_prepare": "Prepare Android sync",
+        "post_login_stage_connect": "Account",
+        "post_login_stage_prepare": "Android apps",
         "post_login_stage_ready": "Ready",
         "post_login_creating_title": "Let's repair this setup",
         "post_login_account_created_title": "Preparing Android sync…",
@@ -99,9 +131,23 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
             "Collections could not be prepared",
         "post_login_permissions_loading_title":
             "Checking Android integrations…",
-        "post_login_permissions_title": "Connect to Android apps",
+        "post_login_permissions_title": "Show synced data in Android apps",
+        "post_login_permissions_body":
+            "Allow access so SilentSuite can keep local copies up to date on this device.",
+        "post_login_calendar_outcome": "Events appear in Android Calendar.",
+        "post_login_contacts_outcome": "Contacts appear in Android Contacts.",
+        "post_login_tasks_outcome":
+            "Tasks appear in Tasks.org or OpenTasks when a compatible app is installed.",
+        "post_login_permission_privacy":
+            "These permissions apply to data on this device. Sync remains end-to-end encrypted.",
+        "post_login_allow_and_continue": "Allow access and continue",
+        "post_login_setup_continue": "Continue setup",
         "post_login_initial_sync_title": "Starting your first sync…",
-        "post_login_ready_title": "You're ready",
+        "post_login_ready_title": "SilentSuite is ready",
+        "post_login_ready_body":
+            "Your first encrypted sync has been requested and may continue in the background. "
+            "Synchronized data appears in Android apps where access and a compatible app are available.",
+        "post_login_open_sync_overview": "Open sync overview",
         "post_login_complete_title": "Opening sync overview…",
         "post_login_permission_denied_title": "Android access wasn't allowed",
         "post_login_permission_blocked_title":
@@ -112,6 +158,15 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
             "OpenTasks later to sync tasks on this device.",
     }
     assert {name: strings.get(name) for name in approved} == approved
+    assert 'android:id="@+id/setup_stepper"' in layout
+    assert 'android:id="@+id/setup_action_bar"' in layout
+    assert 'android:orientation="horizontal"' in layout.split(
+        'android:id="@+id/setup_stepper"', 1)[1].split(">", 1)[0]
+    assert 'android:gravity="center_vertical"' not in layout.split(
+        'android:id="@+id/setup_content"', 1)[1].split(">", 1)[0]
+    assert layout.index("</ScrollView>") < layout.index('android:id="@+id/setup_action_bar"')
+    skip = layout.split('android:id="@+id/setup_skip_integrations"', 1)[1].split("/>", 1)[0]
+    assert 'style="@style/Widget.AppTheme.Material3.Button.Text"' in skip
     assert "Setup: %1$s" not in strings.values()
     assert not any(value in {state for state in (
         "CREATING", "ACCOUNT_CREATED", "COLLECTIONS", "PERMISSIONS",
@@ -137,6 +192,20 @@ def test_setup_presentation_and_orchestration_are_pure_and_render_has_no_effects
     assert "presentationFor(" in render
     assert "setup_title" in render
     assert "setup_body" in render
+    assert "renderSetupStepper(presentation)" in render
+    assert "setup_integration_details" in render
+    assert "post_login_allow_and_continue" in render
+    assert "setup_action_bar" in render
+    assert "actionButtons.any { it.visibility == View.VISIBLE }" in render
+    assert "R.color.semantic_warning" in render
+    assert "R.color.semantic_error" in render
+    assert "private fun renderSetupStepper(" in activity
+    assert "post_login_stepper_description" in activity
+    assert "bg_setup_step_current" in activity
+    assert "bg_setup_step_upcoming" in activity
+    assert "bg_setup_step_error" in activity
+    assert "ic_check_on_primary" in activity
+    assert "mutableListOf<String>()" in activity
     for forbidden in (
         "writeSetupState", "writeVerified", "requestSync(",
         "requestPermissions(", "inventoryAndCreate(", "configure(",

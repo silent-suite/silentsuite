@@ -128,6 +128,16 @@
         <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
     </style>
 
+    <style name="Widget.AppTheme.Material3.Button.Text" parent="Widget.Material3.Button.TextButton">
+        <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
+    </style>
+
+    <style name="Widget.AppTheme.Material3.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
+    </style>
+
     <style name="Widget.AppTheme.Material3.Card" parent="Widget.Material3.CardView.Filled">
         <item name="cardBackgroundColor">@color/semantic_surface</item>
         <item name="cardCornerRadius">@dimen/shape_radius_standard</item>

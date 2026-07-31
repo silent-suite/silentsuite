@@ -352,6 +352,7 @@ jobs:
             ('io.silentsuite.sync.ui.AccountActivityRecreationTest','readyDoneCompletesOnlyTheExactGeneratedAccount'),
             ('io.silentsuite.sync.ui.AccountActivityRecreationTest','replacementGenerationCannotCompleteThePreviouslyValidatedSetupRoute'),
             ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','oneAccountSwitcherExposesAddRowAndCurrentSemanticsAfterRecreation'),
+            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','replacementBeforeAccountRowClickDoesNotAdoptReplacementGeneration'),
             ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','delayedRemovalFailureSurvivesRecreationAndDuplicateTapStartsOnce'),
             ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','actualTwoAccountSignOutRemovesExactMainAndChildAndActivatesSibling'),
             ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','adapterRefusesToRemoveSameNameReplacementGeneration'),
@@ -459,8 +460,8 @@ jobs:
             expected={pair for pair in canonical if pair[0] in api36_status_routes_classes}
           else:
             raise SystemExit(f'unsupported shard {shard}')
-          expected_sizes={'mixed': 1, 'remaining': 77, 'all': 78, 'account-dashboard': 26, 'first-run-setup': 15, 'status-routes': 37}
-          if len(canonical) != 78 or len(expected) != expected_sizes[shard]:
+          expected_sizes={'mixed': 1, 'remaining': 78, 'all': 79, 'account-dashboard': 27, 'first-run-setup': 15, 'status-routes': 37}
+          if len(canonical) != 79 or len(expected) != expected_sizes[shard]:
             raise SystemExit(f'bad expected ledger size for {shard}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
