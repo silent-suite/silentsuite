@@ -25,14 +25,14 @@ export function RestoreBlockedBanner() {
   const href = `/login?reason=unlock&returnTo=${encodeURIComponent(returnTo)}`
 
   return (
-    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200 md:mx-4">
-      <KeyRound className="h-4 w-4 shrink-0 text-emerald-400" />
+    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-200 md:mx-4">
+      <KeyRound className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
       <span className="flex-1">
         Your data is encrypted and safe on the server. This browser needs to unlock it again.
       </span>
       <Link
         href={href}
-        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 dark:bg-emerald-400 dark:text-emerald-950 dark:hover:bg-emerald-300"
       >
         Unlock now
       </Link>
