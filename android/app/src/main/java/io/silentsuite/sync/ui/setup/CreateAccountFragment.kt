@@ -62,8 +62,10 @@ class CreateAccountFragment : DialogFragment() {
             dismissAllowingStateLoss()
         } else if (attempt is CreationAttempt.Created || attempt is CreationAttempt.Completed) {
             val account = when (attempt) { is CreationAttempt.Created -> attempt.account; is CreationAttempt.Completed -> attempt.account; else -> error("unreachable") }
-            val verifiedId = AccountManager.get(requireContext()).getUserData(account, AccountSettings.KEY_CREATION_ID)
-            if (verifiedId == null) {
+            val expectedId = when (attempt) { is CreationAttempt.Created -> attempt.creationId; is CreationAttempt.Completed -> attempt.creationId; else -> error("unreachable") }
+            val accountManager = AccountManager.get(requireContext())
+            val verifiedId = accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID)
+            if (verifiedId != expectedId) {
                 startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, null))
                 notifyAccountCreationFailed()
                 dismissAllowingStateLoss()
@@ -72,11 +74,12 @@ class CreateAccountFragment : DialogFragment() {
             val kind = if (attempt is CreationAttempt.Completed) AccountCreationCompletionDispatcher.Kind.Dashboard else AccountCreationCompletionDispatcher.Kind.Setup
             val dispatched = AccountCreationCompletionDispatcher(object : AccountCreationCompletionDispatcher.Seams {
                 override fun stageExact(name: String, type: String, id: String) =
-                    (activity as? LoginActivity)?.onAccountCreated(account, id) ?: true
-                override fun openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, verifiedId)) }
-                override fun openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account, verifiedId)) }
+                    accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID) == id &&
+                        ((activity as? LoginActivity)?.onAccountCreated(account, id) ?: true)
+                override fun openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, expectedId)) }
+                override fun openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account, expectedId)) }
                 override fun finish() { activity.setResult(Activity.RESULT_OK); SetupSecretHolder.clearCredentialsAndConfiguration(); activity.finish() }
-            }).dispatch(kind, account.name, account.type, verifiedId)
+            }).dispatch(kind, account.name, account.type, expectedId)
             if (!dispatched) { notifyRecoverableFailure(R.string.setup_account_busy_retry); dismissAllowingStateLoss() }
         } else if (attempt == CreationAttempt.RetryCredentials) {
             // A collision is retryable.  The authenticator flow remains live and therefore
@@ -168,8 +171,9 @@ class CreateAccountFragment : DialogFragment() {
                 )
             })
             return when (val result = coordinator.create(creationId, fields)) {
-                AccountCreationCoordinator.Result.CREATED,
-                AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED -> CreationAttempt.Created(account)
+                AccountCreationCoordinator.Result.CREATED -> CreationAttempt.Created(account, creationId)
+                AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED ->
+                    creationAttemptFromDurableEvidence(account, accountManager, registry, creationId)
                 AccountCreationCoordinator.Result.EXISTS_OR_BUSY,
                 AccountCreationCoordinator.Result.NOT_ADDED,
                 AccountCreationCoordinator.Result.QUARANTINED,
@@ -207,14 +211,16 @@ class CreateAccountFragment : DialogFragment() {
     private fun creationAttemptFromDurableEvidence(
         account: Account,
         manager: AccountManager,
-        registry: AccountCreationRegistry
+        registry: AccountCreationRegistry,
+        expectedCreationId: String? = null,
     ): CreationAttempt {
         var rowObserved = false
         return try {
             val rowPresent = account in manager.getAccountsByType(account.type)
             rowObserved = rowPresent
             val id = if (rowPresent) manager.getUserData(account, AccountSettings.KEY_CREATION_ID) else null
-            val registryOwns = rowPresent && id != null && AccountCreationRegistry.owns(
+            val expectedMatches = expectedCreationId == null || id == expectedCreationId
+            val registryOwns = rowPresent && id != null && expectedMatches && AccountCreationRegistry.owns(
                 registry.get(account.type, account.name), id)
             when (DurableCreationAttemptPolicy.outcome(DurableCreationAttemptPolicy.Evidence(
                 rowPresent, id, registryOwns,
@@ -223,8 +229,8 @@ class CreateAccountFragment : DialogFragment() {
                 DurableCreationAttemptPolicy.Outcome.RetryCredentials -> CreationAttempt.RetryCredentials
                 DurableCreationAttemptPolicy.Outcome.SettingsResolution -> CreationAttempt.SettingsResolution(account)
                 DurableCreationAttemptPolicy.Outcome.Recovery -> CreationAttempt.Recovery(account, requireNotNull(id))
-                DurableCreationAttemptPolicy.Outcome.Created -> CreationAttempt.Created(account)
-                DurableCreationAttemptPolicy.Outcome.Completed -> CreationAttempt.Completed(account)
+                DurableCreationAttemptPolicy.Outcome.Created -> CreationAttempt.Created(account, requireNotNull(id))
+                DurableCreationAttemptPolicy.Outcome.Completed -> CreationAttempt.Completed(account, requireNotNull(id))
             }
         } catch (e: Exception) {
             // The row was observed. An incomplete inspection must never turn it into retry.
@@ -233,8 +239,8 @@ class CreateAccountFragment : DialogFragment() {
     }
 
     sealed class CreationAttempt {
-        data class Created(val account: Account) : CreationAttempt()
-        data class Completed(val account: Account) : CreationAttempt()
+        data class Created(val account: Account, val creationId: String) : CreationAttempt()
+        data class Completed(val account: Account, val creationId: String) : CreationAttempt()
         data class Recovery(val account: Account, val creationId: String) : CreationAttempt()
         data class SettingsResolution(val account: Account) : CreationAttempt()
         object RetryCredentials : CreationAttempt()

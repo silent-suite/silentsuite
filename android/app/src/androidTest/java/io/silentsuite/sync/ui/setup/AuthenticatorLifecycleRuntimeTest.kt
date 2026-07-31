@@ -6,12 +6,18 @@ import android.os.Bundle
 import android.content.Intent
 import androidx.test.core.app.ActivityScenario
 import io.silentsuite.sync.App
+import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.R
+import io.silentsuite.sync.ui.ActiveAccountManager
+import io.silentsuite.sync.utils.AndroidCompat
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.net.URI
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /** Runtime policy coverage; dead binder delivery is intentionally not claimed. */
 @RunWith(AndroidJUnit4::class)
@@ -80,7 +86,83 @@ class AuthenticatorLifecycleRuntimeTest {
                     org.junit.Assert.assertEquals(0, delivery.errors)
                 }
             }
+            creatorGenerationReplacementRoutesToSettingsResolution()
         } finally { LoginActivity.controllerFactory = null }
+    }
+
+    private fun creatorGenerationReplacementRoutesToSettingsResolution() {
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val manager = android.accounts.AccountManager.get(context)
+        val account = Account("creator-race-${System.nanoTime()}@example.invalid", App.accountType)
+        val replacementGeneration = "creator-race-replacement"
+        val registry = AccountCreationRegistry.open(context)
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        val monitor = instrumentation.addMonitor(PostLoginSetupActivity::class.java.name, null, false)
+        var launched: android.app.Activity? = null
+        var ownedGeneration: String? = null
+        try {
+            App.postLoginBootstrapSucceeded = true
+            assertTrue(PostLoginSetupMigration.bootstrap(context))
+            SetupSecretHolder.setPendingConfiguration(BaseConfigurationFinder.Configuration(
+                URI("https://example.invalid/"),
+                account.name,
+                "opaque-test-session",
+                null,
+            ))
+            ActiveAccountManager.afterExactSetCommitForTest = {
+                check(AccountSettings.writeVerified(
+                    manager,
+                    account,
+                    AccountSettings.KEY_CREATION_ID,
+                    replacementGeneration,
+                ))
+            }
+            ActivityScenario.launch<LoginActivity>(Intent(context, LoginActivity::class.java)).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.supportFragmentManager.beginTransaction()
+                        .replace(android.R.id.content, CreateAccountFragment())
+                        .addToBackStack("credentials")
+                        .commit()
+                }
+                launched = instrumentation.waitForMonitorWithTimeout(monitor, 10_000)
+                val resolution = requireNotNull(launched) {
+                    "generation mismatch did not route to PostLoginSetupActivity"
+                }
+                instrumentation.waitForIdleSync()
+                ownedGeneration = registry.get(account.type, account.name)?.creationId
+                org.junit.Assert.assertNotNull(ownedGeneration)
+                org.junit.Assert.assertNotEquals(replacementGeneration, ownedGeneration)
+                assertEquals(
+                    replacementGeneration,
+                    manager.getUserData(account, AccountSettings.KEY_CREATION_ID),
+                )
+                org.junit.Assert.assertNull(ActiveAccountManager.getActiveAccount(context))
+                var renderedTitle = ""
+                instrumentation.runOnMainSync {
+                    renderedTitle = resolution
+                        .findViewById<android.widget.TextView>(R.id.setup_title)
+                        .text.toString()
+                }
+                assertEquals(
+                    context.getString(R.string.post_login_ambiguous_title),
+                    renderedTitle,
+                )
+            }
+        } finally {
+            ActiveAccountManager.afterExactSetCommitForTest = null
+            launched?.finish()
+            instrumentation.removeMonitor(monitor)
+            SetupSecretHolder.clearProcessOnlySecrets()
+            ownedGeneration?.let { registry.clearOwned(account.type, account.name, it) }
+            if (account in manager.getAccountsByType(account.type)) {
+                val removed = CountDownLatch(1)
+                AndroidCompat.removeAccount(manager, account) { removed.countDown() }
+                assertTrue("creator-race account removal timed out", removed.await(10, TimeUnit.SECONDS))
+            }
+            ActiveAccountManager.clearActiveAccount(context)
+            App.postLoginBootstrapSucceeded = previousBootstrap
+        }
     }
     @Test fun staleLoginActivityRestorationUsesObsoletePathBeforeController() {
         var cancel=0; var clear=0; var launch=0; var controllers=0

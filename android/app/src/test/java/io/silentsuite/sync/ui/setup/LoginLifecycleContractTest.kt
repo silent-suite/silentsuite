@@ -82,6 +82,18 @@ class LoginLifecycleContractTest {
         assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.Completed -> CreationAttempt.Completed"))
         assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.SettingsResolution -> CreationAttempt.SettingsResolution"))
         assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.RetryCredentials -> CreationAttempt.RetryCredentials"))
+        assertTrue(source.contains("data class Created(val account: Account, val creationId: String)"))
+        assertTrue(source.contains("data class Completed(val account: Account, val creationId: String)"))
+        assertTrue(coordinatorResultRouting.contains(
+            "AccountCreationCoordinator.Result.CREATED -> CreationAttempt.Created(account, creationId)"
+        ))
+        assertTrue(coordinatorResultRouting.contains(
+            "AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED ->\n" +
+                "                    creationAttemptFromDurableEvidence(account, accountManager, registry, creationId)"
+        ))
+        assertTrue(source.contains("if (verifiedId != expectedId)"))
+        assertTrue(source.contains("openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, expectedId)) }"))
+        assertTrue(source.contains("openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account, expectedId)) }"))
     }
 
     @Test fun loginFailureDialogsPersistOnlyResourceIdentifiers() {
