@@ -108,6 +108,10 @@ function paidSignupRequestBody(callIndex = 0) {
   return JSON.parse(init?.body as string) as Record<string, unknown>
 }
 
+function currentPaidSignupRecoverySecret() {
+  return paidSignupRequestBody(vi.mocked(fetch).mock.calls.length - 1).recoverySecret as string
+}
+
 function persistedPaidSignupIdentities() {
   const raw = sessionStorage.getItem('silentsuite-paid-signup-recovery')
   if (!raw) return []
@@ -254,7 +258,7 @@ describe('useAuthStore', () => {
         cryptoCheckoutUrl: null,
         cryptoInvoiceId: null,
         cryptoInvoiceLookupToken: null,
-        paymentSessionToken: 'signup-session-token',
+        paymentSessionToken: currentPaidSignupRecoverySecret(),
       }),
     } as Response)
 
@@ -274,8 +278,8 @@ describe('useAuthStore', () => {
       requestKey: expect.any(String),
       recoverySecret: expect.any(String),
     })
-    expect(result.paymentSessionToken).toBe('signup-session-token')
-    expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe('signup-session-token')
+    expect(result.paymentSessionToken).toBe(currentPaidSignupRecoverySecret())
+    expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(currentPaidSignupRecoverySecret())
     expect(useAuthStore.getState().pendingSignup?.etebaseAuthToken).toBeUndefined()
   })
 
@@ -284,7 +288,7 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+      json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret() }),
     } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day'))
@@ -306,10 +310,45 @@ describe('useAuthStore', () => {
     } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day'))
-      .rejects.toThrow('missing its recovery token')
+      .rejects.toThrow('invalid recovery token')
 
     expect(persistedPaidSignupIdentities()).toHaveLength(1)
     expect(paidSignupRequestBody().requestKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  })
+
+  it('retains the real recovery identity when a successful response returns a different nonempty token', async () => {
+    useAuthStore.setState({ pendingSignup: { email: 'paid@example.com' } })
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ paymentSessionToken: 'different-nonempty-token', clientSecret: 'seti_complete' }),
+    } as Response)
+
+    await expect(useAuthStore.getState().signup('early_monthly', '30day'))
+      .rejects.toThrow('invalid recovery token')
+
+    expect(persistedPaidSignupIdentities()).toHaveLength(1)
+    expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBeUndefined()
+  })
+
+  it('retains the real Bitcoin recovery identity when the invoice lookup token is mismatched', async () => {
+    useAuthStore.setState({ pendingSignup: { email: 'crypto@example.com' } })
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        paymentSessionToken: currentPaidSignupRecoverySecret(),
+        cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/inv-mismatch',
+        cryptoInvoiceId: 'inv-mismatch',
+        cryptoInvoiceLookupToken: 'different-nonempty-token',
+      }),
+    } as Response)
+
+    await expect(useAuthStore.getState().signup('early_annual', 'crypto_annual'))
+      .rejects.toThrow('invalid invoice recovery token')
+
+    expect(persistedPaidSignupIdentities()).toHaveLength(1)
+    expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBeUndefined()
   })
 
   it('reuses paid-signup recovery identity after ambiguous transport loss and a reload-like store reset', async () => {
@@ -319,7 +358,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Failed to fetch')
@@ -341,10 +380,10 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+      json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
     } as Response)
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       useAuthStore.getState().signup('early_monthly', '30day'),
       useAuthStore.getState().signup('early_monthly', '30day'),
     ])
@@ -353,7 +392,63 @@ describe('useAuthStore', () => {
     const concurrent = paidSignupRequestBody(1)
     expect(concurrent.requestKey).toBe(first.requestKey)
     expect(concurrent.recoverySecret).toBe(first.recoverySecret)
+    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const rejected = results.find((result) => result.status === 'rejected')
+    expect(rejected).toMatchObject({ reason: expect.objectContaining({ message: 'Paid signup request was superseded' }) })
   })
+
+  it.each([
+    ['30day', 'crypto_annual', 'first'],
+    ['30day', 'crypto_annual', 'second'],
+    ['crypto_annual', '30day', 'first'],
+    ['crypto_annual', '30day', 'second'],
+  ] as const)(
+    'publishes only the latest %s → %s attempt when the %s response resolves first',
+    async (firstTrialPath, secondTrialPath, firstResolution) => {
+      useAuthStore.setState({ pendingSignup: { email: 'race@example.com' } })
+      const pendingResponses = new Map<string, { secret: string, resolve: (response: Response) => void }>()
+      vi.mocked(fetch).mockImplementation(async (_url, init) => {
+        const body = JSON.parse(init?.body as string) as { trialPath: string, recoverySecret: string }
+        return await new Promise<Response>((resolve) => {
+          pendingResponses.set(body.trialPath, { secret: body.recoverySecret, resolve })
+        })
+      })
+
+      const first = useAuthStore.getState().signup('early_annual', firstTrialPath)
+      const second = useAuthStore.getState().signup('early_annual', secondTrialPath)
+      const responseFor = (trialPath: string) => {
+        const pendingResponse = pendingResponses.get(trialPath)!
+        return {
+          ok: true,
+          status: 200,
+          json: async () => trialPath === '30day'
+            ? { paymentSessionToken: pendingResponse.secret, clientSecret: `seti_${trialPath}` }
+            : {
+                paymentSessionToken: pendingResponse.secret,
+                cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/inv-race',
+                cryptoInvoiceId: 'inv-race',
+                cryptoInvoiceLookupToken: pendingResponse.secret,
+              },
+        } as Response
+      }
+      const firstPending = pendingResponses.get(firstTrialPath)!
+      const secondPending = pendingResponses.get(secondTrialPath)!
+      if (firstResolution === 'first') {
+        firstPending.resolve(responseFor(firstTrialPath))
+        await Promise.resolve()
+        secondPending.resolve(responseFor(secondTrialPath))
+      } else {
+        secondPending.resolve(responseFor(secondTrialPath))
+        await Promise.resolve()
+        firstPending.resolve(responseFor(firstTrialPath))
+      }
+
+      const results = await Promise.allSettled([first, second])
+      expect(results[0]).toMatchObject({ status: 'rejected', reason: expect.objectContaining({ message: 'Paid signup request was superseded' }) })
+      expect(results[1].status).toBe('fulfilled')
+      expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(secondPending.secret)
+    },
+  )
 
   it('rotates paid-signup recovery identity after a definitive rejection', async () => {
     useAuthStore.setState({ pendingSignup: { email: 'paid@example.com' } })
@@ -366,7 +461,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Invalid signup')
@@ -385,12 +480,12 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
       } as Response)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'recovered-first-session', clientSecret: 'seti_recovered_first' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_recovered_first' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Failed to fetch')
@@ -415,7 +510,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'opt-out-session', clientSecret: 'seti_opt_out' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_opt_out' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Failed to fetch')
@@ -443,7 +538,7 @@ describe('useAuthStore', () => {
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
-          json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+          json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
         } as Response)
 
       await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Retry later')
@@ -468,7 +563,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
       } as Response)
 
     try {
@@ -494,7 +589,7 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+      json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
     } as Response)
 
     try {
@@ -515,7 +610,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'new-session-token', clientSecret: 'seti_new_session' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_new_session' }),
       } as Response)
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Failed to fetch')
     const ambiguous = paidSignupRequestBody(0)
@@ -556,7 +651,7 @@ describe('useAuthStore', () => {
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
-          json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+          json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
         } as Response)
 
       await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Terminal conflict')
@@ -578,7 +673,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Retry later')
@@ -600,10 +695,10 @@ describe('useAuthStore', () => {
         ok: true,
         status: 200,
         json: async () => ({
-          paymentSessionToken: 'crypto-session-token',
+          paymentSessionToken: currentPaidSignupRecoverySecret(),
           cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/inv-123',
           cryptoInvoiceId: 'inv-123',
-          cryptoInvoiceLookupToken: 'lookup-token',
+          cryptoInvoiceLookupToken: currentPaidSignupRecoverySecret(),
         }),
       } as Response)
 
@@ -626,7 +721,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
+        json: async () => ({ paymentSessionToken: currentPaidSignupRecoverySecret(), clientSecret: 'seti_complete' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Temporarily unavailable')

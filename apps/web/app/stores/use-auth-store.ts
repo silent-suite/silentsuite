@@ -34,6 +34,7 @@ interface PendingSignup {
   earlyAdopter?: boolean
   wantsProductUpdates?: boolean
   rememberDevice?: boolean
+  paidSignupAttemptId?: string
   /** Provisioned user data — stored here until the entire signup flow completes. */
   provisionedUser?: {
     id: string
@@ -799,7 +800,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           pending.rememberDevice,
         ),
       )
-      set({ isLoading: true, error: null })
+      const attemptId = crypto.randomUUID()
+      const isActiveAttempt = () => {
+        const current = get().pendingSignup
+        if (!current || current.paidSignupAttemptId !== attemptId) return false
+        const currentScope = paidSignupRecoveryScope(
+          current.email,
+          planId,
+          trialPath,
+          promoCode,
+          current.wantsProductUpdates,
+          current.rememberDevice,
+        )
+        if (currentScope !== recoveryIdentity.scope) return false
+        const currentIdentity = readPaidSignupRecoveryRegistry().identities[recoveryIdentity.scope]
+        return isPaidSignupRecoveryIdentity(currentIdentity, recoveryIdentity.scope)
+          && currentIdentity.requestKey === recoveryIdentity.requestKey
+          && currentIdentity.recoverySecret === recoveryIdentity.recoverySecret
+      }
+      set({
+        pendingSignup: {
+          ...pending,
+          paidSignupAttemptId: attemptId,
+        },
+        isLoading: true,
+        error: null,
+      })
       try {
         const res = await fetch(`${BILLING_API_URL}/auth/signup/payment-session`, {
           method: 'POST',
@@ -818,15 +844,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         })
         if (!res.ok) {
           const errData = await res.json().catch(() => null)
-          if (isDefinitivePaidSignupFailure(res.status, errData)) {
+          if (isActiveAttempt() && isDefinitivePaidSignupFailure(res.status, errData)) {
             clearPaidSignupRecoveryIdentity(recoveryIdentity.requestKey)
           }
           throw new Error(errData?.detail ?? 'Payment setup failed')
         }
         const data = await res.json()
+        if (!isActiveAttempt()) throw new Error('Paid signup request was superseded')
         const paymentSessionToken = data.paymentSessionToken
-        if (typeof paymentSessionToken !== 'string' || paymentSessionToken.trim().length === 0) {
-          throw new Error('Paid signup response is missing its recovery token')
+        if (paymentSessionToken !== recoveryIdentity.recoverySecret) {
+          throw new Error('Paid signup response has an invalid recovery token')
         }
         const clientSecret = (data.clientSecret as string | null) ?? null
         const cryptoCheckoutUrl = (data.cryptoCheckoutUrl as string | null) ?? null
@@ -840,11 +867,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (!completeProviderContinuation) {
           throw new Error('Payment setup returned an incomplete provider continuation')
         }
+        if (trialPath === 'crypto_annual' && cryptoInvoiceLookupToken !== recoveryIdentity.recoverySecret) {
+          throw new Error('Paid signup response has an invalid invoice recovery token')
+        }
+        if (!isActiveAttempt()) throw new Error('Paid signup request was superseded')
         clearPaidSignupRecoveryIdentity(recoveryIdentity.requestKey)
+        const currentPending = get().pendingSignup
+        if (!currentPending || currentPending.paidSignupAttemptId !== attemptId) {
+          throw new Error('Paid signup request was superseded')
+        }
         set({
           pendingSignup: {
-            ...pending,
+            ...currentPending,
             paymentSessionToken,
+            paidSignupAttemptId: undefined,
           },
           isLoading: false,
         })
@@ -857,7 +893,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Payment setup failed'
-        set({ error: message, isLoading: false })
+        if (get().pendingSignup?.paidSignupAttemptId === attemptId) {
+          set({ error: message, isLoading: false })
+        }
         throw err
       }
     }
