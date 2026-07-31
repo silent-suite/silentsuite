@@ -633,6 +633,7 @@
     <string name="post_login_calendar_outcome">Events appear in Android Calendar.</string>
     <string name="post_login_contacts_outcome">Contacts appear in Android Contacts.</string>
     <string name="post_login_tasks_outcome">Tasks appear in Tasks.org or OpenTasks when a compatible app is installed.</string>
+    <string name="post_login_recommended_apps">For recommended local Android apps, see our docs.</string>
     <string name="post_login_permission_privacy">These permissions apply to data on this device. Sync remains end-to-end encrypted.</string>
     <string name="post_login_allow_and_continue">Allow access and continue</string>
     <string name="post_login_no_task_provider">Android has no built-in task provider. Install Tasks.org or OpenTasks later to sync tasks on this device.</string>

@@ -54,6 +54,7 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
     layout = source(RES / "layout/login_credentials_fragment.xml")
     strings = string_resources()
     styles = source(RES / "values/styles.xml")
+    fragment = source(SETUP / "LoginCredentialsFragment.kt")
 
     approved = {
         "login_sign_in_title": "Sign in to SilentSuite",
@@ -104,6 +105,19 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
     assert 'android:fontFamily="monospace"' not in layout
     assert layout.count("<com.google.android.material.button.MaterialButton") == 1
     assert 'android:text="@string/login_sign_in_and_connect"' in layout
+    scroll_content, action_bar = layout.split('android:id="@+id/login_action_bar"', 1)
+    assert 'android:id="@+id/forgot_password"' in scroll_content
+    assert 'android:id="@+id/show_advanced"' in scroll_content
+    assert 'android:id="@+id/advanced_layout"' in scroll_content
+    assert 'android:id="@+id/custom_server"' in scroll_content
+    assert 'android:id="@+id/create_account"' not in scroll_content
+    assert action_bar.index('android:id="@+id/create_account"') < action_bar.index(
+        'android:id="@+id/login"'
+    )
+    assert "R.drawable.ic_chevron_up" in fragment
+    assert "R.drawable.ic_chevron_down" in fragment
+    assert "setCompoundDrawablesRelativeWithIntrinsicBounds" in fragment
+    assert (RES / "drawable/ic_chevron_up.xml").exists()
     manifest = source(MAIN / "AndroidManifest.xml")
     login_decl = manifest.split('android:name=".ui.setup.LoginActivity"', 1)[1].split("</activity>", 1)[0]
     assert 'android:theme="@style/AppTheme.Material3"' in login_decl
@@ -122,7 +136,7 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
         "setup_stepper", "setup_step_connect_node", "setup_step_prepare_node",
         "setup_step_ready_node", "setup_step_connector_one", "setup_step_connector_two",
         "setup_stage_connect", "setup_stage_prepare", "setup_stage_ready",
-        "setup_title", "setup_body", "setup_continue_limited",
+        "setup_title", "setup_body", "setup_recommended_apps", "setup_continue_limited",
         "setup_skip_integrations", "setup_remove_incomplete",
         "setup_retry_inventory", "setup_resolve_ambiguity", "setup_done",
     ):
@@ -149,6 +163,8 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
         "post_login_contacts_outcome": "Contacts appear in Android Contacts.",
         "post_login_tasks_outcome":
             "Tasks appear in Tasks.org or OpenTasks when a compatible app is installed.",
+        "post_login_recommended_apps":
+            "For recommended local Android apps, see our docs.",
         "post_login_permission_privacy":
             "These permissions apply to data on this device. Sync remains end-to-end encrypted.",
         "post_login_allow_and_continue": "Allow access and continue",
@@ -199,6 +215,22 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
     assert "fontScale < 1.5f" in activity
     assert "LinearLayout.VERTICAL" in activity
     assert "configureSetupStepperForFontScale(2f)" in runtime
+    assert "R.id.setup_recommended_apps" in activity
+    assert "Constants.androidAppsDocsUri" in activity
+    assert "WebViewActivity.openUrl" in activity
+    assert "requiredViewId(activity, \"setup_recommended_apps\")" in runtime
+    assert "R.drawable.bg_setup_step_complete" in activity
+    assert "R.drawable.bg_setup_step_error_icon" in activity
+    assert "R.drawable.ic_check_on_primary" not in activity
+    complete_icon = source(RES / "drawable/bg_setup_step_complete.xml")
+    assert 'android:drawable="@drawable/bg_setup_step_current"' in complete_icon
+    assert 'android:drawable="@drawable/ic_check_on_primary"' in complete_icon
+    assert complete_icon.count('android:left="7dp"') == 1
+    assert complete_icon.count('android:top="7dp"') == 1
+    assert complete_icon.count('android:right="7dp"') == 1
+    assert complete_icon.count('android:bottom="7dp"') == 1
+    constants = source(JAVA / "Constants.kt")
+    assert 'appendEncodedPath("user-guide/apps/android")' in constants
     assert "Setup: %1$s" not in strings.values()
     assert not any(value in {state for state in (
         "CREATING", "ACCOUNT_CREATED", "COLLECTIONS", "PERMISSIONS",
@@ -236,7 +268,10 @@ def test_setup_presentation_and_orchestration_are_pure_and_render_has_no_effects
     assert "bg_setup_step_current" in activity
     assert "bg_setup_step_upcoming" in activity
     assert "bg_setup_step_error" in activity
-    assert "ic_check_on_primary" in activity
+    assert "bg_setup_step_complete" in activity
+    assert "bg_setup_step_error_icon" in activity
+    assert "ic_check_on_primary" in source(RES / "drawable/bg_setup_step_complete.xml")
+    assert "ic_error_on_error" in source(RES / "drawable/bg_setup_step_error_icon.xml")
     assert "mutableListOf<String>()" in activity
     for forbidden in (
         "writeSetupState", "writeVerified", "requestSync(",

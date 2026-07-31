@@ -498,6 +498,25 @@ class PostLoginSetupRuntimeTest {
                     assertTrue(activity.findViewById<View>(
                         requiredViewId(activity, "setup_integration_details")
                     ).isShown)
+                    val recommendedApps = activity.findViewById<android.widget.TextView>(
+                        requiredViewId(activity, "setup_recommended_apps")
+                    )
+                    assertEquals(
+                        "For recommended local Android apps, see our docs.",
+                        recommendedApps.text.toString(),
+                    )
+                    assertTrue(recommendedApps.isShown)
+                    assertTrue(recommendedApps.isClickable)
+                    assertTrue(
+                        recommendedApps.minimumHeight >=
+                            (48 * activity.resources.displayMetrics.density).toInt()
+                    )
+                    val completedNode = activity.findViewById<android.widget.TextView>(
+                        requiredViewId(activity, "setup_step_connect_node")
+                    )
+                    org.junit.Assert.assertNull(completedNode.compoundDrawables[0])
+                    org.junit.Assert.assertNull(completedNode.compoundDrawables[1])
+                    org.junit.Assert.assertNotNull(completedNode.background)
                     assertEquals(
                         "Allow access and continue",
                         activity.findViewById<android.widget.Button>(

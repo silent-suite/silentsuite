@@ -27,6 +27,7 @@ import io.silentsuite.sync.resource.LocalTaskList
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.BaseActivity
+import io.silentsuite.sync.ui.WebViewActivity
 import java.util.UUID
 
 /** Resumes a durable setup row. It deliberately accepts no credentials or session extra. */
@@ -114,6 +115,9 @@ class PostLoginSetupActivity : BaseActivity() {
 
         setContentView(R.layout.activity_post_login_setup)
         configureSetupStepperForFontScale(resources.configuration.fontScale)
+        findViewById<View>(R.id.setup_recommended_apps).setOnClickListener {
+            WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)
+        }
         findViewById<Button>(R.id.setup_done).setOnClickListener {
             submit(PostLoginSetupOrchestrator.UserDecision.DONE)
         }
@@ -725,19 +729,13 @@ class PostLoginSetupActivity : BaseActivity() {
             node.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0)
             when {
                 index < currentIndex -> {
-                    node.setBackgroundResource(R.drawable.bg_setup_step_current)
+                    node.setBackgroundResource(R.drawable.bg_setup_step_complete)
                     node.text = ""
-                    node.setCompoundDrawablesWithIntrinsicBounds(
-                        R.drawable.ic_check_on_primary, 0, 0, 0
-                    )
                     node.setTextColor(ContextCompat.getColor(this, R.color.navy900))
                 }
                 index == currentIndex && error -> {
-                    node.setBackgroundResource(R.drawable.bg_setup_step_error)
+                    node.setBackgroundResource(R.drawable.bg_setup_step_error_icon)
                     node.text = ""
-                    node.setCompoundDrawablesWithIntrinsicBounds(
-                        R.drawable.ic_error_on_error, 0, 0, 0
-                    )
                 }
                 index == currentIndex -> {
                     node.setBackgroundResource(R.drawable.bg_setup_step_current)

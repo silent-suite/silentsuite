@@ -166,6 +166,12 @@ class LoginCredentialsFragment : Fragment() {
     }
 
     private fun updateAdvancedDisclosure() {
+        showAdvanced.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                0,
+                0,
+                if (advancedExpanded) R.drawable.ic_chevron_up else R.drawable.ic_chevron_down,
+                0
+        )
         showAdvanced.contentDescription = getString(
                 if (advancedExpanded) R.string.login_custom_server_expanded else R.string.login_custom_server_collapsed
         )

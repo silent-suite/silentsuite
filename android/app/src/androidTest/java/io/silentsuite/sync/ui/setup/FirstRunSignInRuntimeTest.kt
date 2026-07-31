@@ -49,6 +49,9 @@ class FirstRunSignInRuntimeTest {
                     val email = activity.findViewById<EditText>(R.id.user_name)
                     val password = activity.findViewById<EditText>(R.id.login_password)
                     val primary = activity.findViewById<TextView>(R.id.login)
+                    val createAccount = activity.findViewById<TextView>(R.id.create_account)
+                    val customServerDisclosure = activity.findViewById<TextView>(R.id.show_advanced)
+                    val actionBar = activity.findViewById<ViewGroup>(R.id.login_action_bar)
                     val density = activity.resources.displayMetrics.density
                     val scaledDensity = activity.resources.displayMetrics.scaledDensity
 
@@ -62,6 +65,11 @@ class FirstRunSignInRuntimeTest {
                     assertNotEquals(Typeface.MONOSPACE, password.typeface)
                     assertEquals("Sign in and set up sync", primary.text.toString())
                     assertTrue(primary.minimumHeight >= (48 * density).toInt())
+                    assertEquals(actionBar, createAccount.parent)
+                    assertEquals(actionBar, primary.parent)
+                    assertTrue(actionBar.indexOfChild(createAccount) < actionBar.indexOfChild(primary))
+                    assertTrue(customServerDisclosure.compoundDrawablesRelative[2] != null)
+                    assertEquals(0, activity.findViewById<View>(R.id.advanced_layout).height)
 
                     email.setText("first-run-${System.nanoTime()}@example.invalid")
                     password.setText("process-only-fixture")
