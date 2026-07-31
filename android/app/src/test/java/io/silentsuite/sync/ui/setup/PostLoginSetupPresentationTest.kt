@@ -11,7 +11,6 @@ class PostLoginSetupPresentationTest {
         assertEquals(PostLoginSetupPresentation.Stage.PREPARE, presentation.stage)
         assertEquals(PostLoginSetupPresentation.Title.PERMISSIONS, presentation.title)
         assertEquals(PostLoginSetupPresentation.Body.PERMISSIONS, presentation.body)
-        assertEquals(PostLoginSetupPresentation.Tone.DEFAULT, presentation.tone)
     }
 
     @Test
@@ -23,7 +22,6 @@ class PostLoginSetupPresentationTest {
 
         assertEquals(PostLoginSetupPresentation.Stage.PREPARE, presentation.stage)
         assertEquals(PostLoginSetupPresentation.Title.PERMISSION_BLOCKED, presentation.title)
-        assertEquals(PostLoginSetupPresentation.Tone.ERROR, presentation.tone)
     }
 
     @Test

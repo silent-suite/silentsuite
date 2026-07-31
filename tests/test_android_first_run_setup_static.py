@@ -36,6 +36,7 @@ def test_drawer_uses_modern_local_icons_and_exact_generation_row_routing():
     assert "@drawable/ic_check" in row
     assert "<ripple" in source(RES / "drawable/nav_account_row_background.xml")
     assert (RES / "drawable/ic_chevron_down.xml").exists()
+    assert '@color/semantic_on_surface' in source(RES / "drawable/ic_chevron_down.xml")
     assert (RES / "drawable/ic_check.xml").exists()
     assert "ActiveAccountManager.setActiveAccount(this, identity)" in activity
     assert "newIntent(this, acc, identity.creationId)" in activity
@@ -106,6 +107,11 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
 def test_setup_has_approved_stage_surface_stable_ids_and_copy():
     layout = source(RES / "layout/activity_post_login_setup.xml")
     strings = string_resources()
+    styles = source(RES / "values/styles.xml")
+    activity = source(SETUP / "PostLoginSetupActivity.kt")
+    runtime = source(
+        ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/PostLoginSetupRuntimeTest.kt"
+    )
 
     for view_id in (
         "setup_stepper", "setup_step_connect_node", "setup_step_prepare_node",
@@ -167,6 +173,27 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
     assert layout.index("</ScrollView>") < layout.index('android:id="@+id/setup_action_bar"')
     skip = layout.split('android:id="@+id/setup_skip_integrations"', 1)[1].split("/>", 1)[0]
     assert 'style="@style/Widget.AppTheme.Material3.Button.Text"' in skip
+    assert styles.count('<item name="android:textColor">@color/button_secondary_text</item>') >= 2
+    secondary_colors = source(RES / "color/button_secondary_text.xml")
+    assert '@color/semantic_secondary_action' in secondary_colors
+    assert '@color/semantic_disabled' in secondary_colors
+    assert '<color name="semantic_secondary_action">#047857</color>' in source(
+        RES / "values/colors.xml"
+    )
+    assert '@color/teal400' in source(RES / "values-night/colors.xml")
+    assert 'android:maxLines="2"' not in layout
+    for node_id in (
+        "setup_step_connect_node", "setup_step_prepare_node", "setup_step_ready_node",
+    ):
+        node = layout.split(f'android:id="@+id/{node_id}"', 1)[1].split("/>", 1)[0]
+        assert 'android:layout_width="wrap_content"' in node
+        assert 'android:layout_height="wrap_content"' in node
+        assert 'android:minWidth="32dp"' in node
+        assert 'android:minHeight="32dp"' in node
+    assert "internal fun configureSetupStepperForFontScale(fontScale: Float)" in activity
+    assert "fontScale < 1.5f" in activity
+    assert "LinearLayout.VERTICAL" in activity
+    assert "configureSetupStepperForFontScale(2f)" in runtime
     assert "Setup: %1$s" not in strings.values()
     assert not any(value in {state for state in (
         "CREATING", "ACCOUNT_CREATED", "COLLECTIONS", "PERMISSIONS",

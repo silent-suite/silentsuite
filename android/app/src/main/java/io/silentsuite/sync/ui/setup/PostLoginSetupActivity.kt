@@ -8,8 +8,10 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -111,6 +113,7 @@ class PostLoginSetupActivity : BaseActivity() {
         }
 
         setContentView(R.layout.activity_post_login_setup)
+        configureSetupStepperForFontScale(resources.configuration.fontScale)
         findViewById<Button>(R.id.setup_done).setOnClickListener {
             submit(PostLoginSetupOrchestrator.UserDecision.DONE)
         }
@@ -767,6 +770,56 @@ class PostLoginSetupActivity : BaseActivity() {
             currentIndex + 1,
             getString(labelResources[currentIndex]),
         )
+    }
+
+    internal fun configureSetupStepperForFontScale(fontScale: Float) {
+        if (fontScale < 1.5f) return
+
+        val stepper = findViewById<LinearLayout>(R.id.setup_stepper)
+        stepper.orientation = LinearLayout.VERTICAL
+        stepper.gravity = Gravity.NO_GRAVITY
+
+        val density = resources.displayMetrics.density
+        val labelMargin = (12 * density).toInt()
+        val connectorMargin = (15 * density).toInt()
+        val connectorHeight = (16 * density).toInt()
+        val stages = listOf(
+            R.id.setup_step_connect_node to R.id.setup_stage_connect,
+            R.id.setup_step_prepare_node to R.id.setup_stage_prepare,
+            R.id.setup_step_ready_node to R.id.setup_stage_ready,
+        )
+        stages.forEach { (nodeId, labelId) ->
+            val node = findViewById<TextView>(nodeId)
+            val label = findViewById<TextView>(labelId)
+            val stage = node.parent as LinearLayout
+            stage.orientation = LinearLayout.HORIZONTAL
+            stage.gravity = Gravity.CENTER_VERTICAL
+            stage.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            node.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            label.layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f,
+            ).apply { marginStart = labelMargin }
+            label.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            label.maxLines = Int.MAX_VALUE
+            label.ellipsize = null
+        }
+        listOf(R.id.setup_step_connector_one, R.id.setup_step_connector_two).forEach { id ->
+            findViewById<View>(id).layoutParams = LinearLayout.LayoutParams(
+                (2 * density).toInt(),
+                connectorHeight,
+            ).apply {
+                gravity = Gravity.START
+                marginStart = connectorMargin
+            }
+        }
     }
 
     private fun presentationCondition(

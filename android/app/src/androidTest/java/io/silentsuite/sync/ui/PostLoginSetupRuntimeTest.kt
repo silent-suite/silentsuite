@@ -4,6 +4,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.ContentResolver
 import android.os.Bundle
+import android.view.View
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -26,6 +27,7 @@ import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
 import io.silentsuite.sync.utils.AndroidCompat
 import at.bitfire.ical4android.TaskProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.URI
@@ -395,6 +397,44 @@ class PostLoginSetupRuntimeTest {
                             activity.findViewById<View>(requiredViewId(activity, "setup_stepper"))
                                 .contentDescription.toString().startsWith("Setup progress, step ")
                         )
+                        if (index == 0) {
+                            activity.configureSetupStepperForFontScale(2f)
+                            val stepper = activity.findViewById<android.widget.LinearLayout>(
+                                requiredViewId(activity, "setup_stepper")
+                            )
+                            assertEquals(android.widget.LinearLayout.VERTICAL, stepper.orientation)
+                            val labels = listOf(
+                                "setup_stage_connect",
+                                "setup_stage_prepare",
+                                "setup_stage_ready",
+                            ).map { name ->
+                                activity.findViewById<android.widget.TextView>(requiredViewId(activity, name))
+                            }
+                            labels.forEach { label ->
+                                label.setTextSize(
+                                    android.util.TypedValue.COMPLEX_UNIT_PX,
+                                    label.textSize * 2f,
+                                )
+                                assertEquals(Int.MAX_VALUE, label.maxLines)
+                                org.junit.Assert.assertNull(label.ellipsize)
+                            }
+                            val compactWidth =
+                                (320 * activity.resources.displayMetrics.density).toInt()
+                            stepper.measure(
+                                View.MeasureSpec.makeMeasureSpec(
+                                    compactWidth,
+                                    View.MeasureSpec.EXACTLY,
+                                ),
+                                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                            )
+                            stepper.layout(0, 0, compactWidth, stepper.measuredHeight)
+                            labels.forEach { label ->
+                                val textLayout = requireNotNull(label.layout)
+                                repeat(textLayout.lineCount) { line ->
+                                    assertEquals(0, textLayout.getEllipsisCount(line))
+                                }
+                            }
+                        }
                     }
                 }
                 registry.clearOwned(account.type, account.name, creationId)

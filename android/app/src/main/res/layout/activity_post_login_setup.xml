@@ -39,8 +39,10 @@
 
                 <TextView
                     android:id="@+id/setup_step_connect_node"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:minHeight="32dp"
                     android:background="@drawable/bg_setup_step_current"
                     android:gravity="center"
                     android:text="1"
@@ -53,7 +55,6 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/spacing_8"
                     android:gravity="center"
-                    android:maxLines="2"
                     android:text="@string/post_login_stage_connect"
                     android:textAppearance="@style/TextAppearance.Material3.LabelMedium" />
             </LinearLayout>
@@ -79,8 +80,10 @@
 
                 <TextView
                     android:id="@+id/setup_step_prepare_node"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:minHeight="32dp"
                     android:background="@drawable/bg_setup_step_upcoming"
                     android:gravity="center"
                     android:text="2"
@@ -93,7 +96,6 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/spacing_8"
                     android:gravity="center"
-                    android:maxLines="2"
                     android:text="@string/post_login_stage_prepare"
                     android:textAppearance="@style/TextAppearance.Material3.LabelMedium" />
             </LinearLayout>
@@ -119,8 +121,10 @@
 
                 <TextView
                     android:id="@+id/setup_step_ready_node"
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:minHeight="32dp"
                     android:background="@drawable/bg_setup_step_upcoming"
                     android:gravity="center"
                     android:text="3"
@@ -133,7 +137,6 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/spacing_8"
                     android:gravity="center"
-                    android:maxLines="2"
                     android:text="@string/post_login_stage_ready"
                     android:textAppearance="@style/TextAppearance.Material3.LabelMedium" />
             </LinearLayout>
