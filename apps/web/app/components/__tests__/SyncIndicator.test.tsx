@@ -12,9 +12,13 @@ const mockSyncState = {
   partialLoad: false,
   simulateSyncCycle: vi.fn(),
 }
+const mockPreferenceState = { integrity: 'valid' as 'valid' | 'failed' }
 
 vi.mock('@/app/stores/use-sync-store', () => ({
   useSyncStore: (selector: (s: typeof mockSyncState) => unknown) => selector(mockSyncState),
+}))
+vi.mock('@/app/stores/use-preferences-sync-store', () => ({
+  usePreferencesSyncStore: (selector: (s: typeof mockPreferenceState) => unknown) => selector(mockPreferenceState),
 }))
 
 vi.mock('@/app/lib/format-time-ago', () => ({
@@ -29,6 +33,7 @@ describe('SyncIndicator', () => {
     mockSyncState.pendingQueueCount = 0
     mockSyncState.partialLoad = false
     mockSyncState.simulateSyncCycle.mockClear()
+    mockPreferenceState.integrity = 'valid'
     sessionStorage.clear()
   })
 
@@ -97,5 +102,19 @@ describe('SyncIndicator', () => {
     const button = screen.getByRole('button', { name: 'Sync now' })
     fireEvent.click(button)
     expect(mockSyncState.simulateSyncCycle).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a privacy-safe preference warning with the keyboard-accessible retry action', () => {
+    mockPreferenceState.integrity = 'failed'
+    render(<SyncIndicator />)
+
+    const warning = screen.getByRole('status', { name: 'Account preferences could not be verified' })
+    expect(warning).toBeInTheDocument()
+    expect(warning).not.toHaveClass('hidden')
+    expect(screen.getByText('!', { selector: '[aria-hidden="true"]' })).toBeInTheDocument()
+    const retry = screen.getByRole('button', { name: 'Sync now' })
+    retry.focus()
+    expect(retry).toHaveFocus()
+    expect(document.body.textContent).not.toMatch(/item|account-a|24h/i)
   })
 })

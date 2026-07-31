@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { formatTimeAgo } from '@/app/lib/format-time-ago'
 import type { SyncStatus } from '@silentsuite/core'
+import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 
 const dotStyles: Record<SyncStatus, string> = {
   synced: 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.5)]',
@@ -42,6 +43,7 @@ export function SyncIndicator() {
   const simulateSyncCycle = useSyncStore((s) => s.simulateSyncCycle)
   const pendingQueueCount = useSyncStore((s) => s.pendingQueueCount)
   const partialLoad = useSyncStore((s) => s.partialLoad)
+  const preferenceIntegrity = usePreferencesSyncStore((s) => s.integrity)
   const [showTooltip, setShowTooltip] = useState(false)
   const [tooltipText, setTooltipText] = useState('')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -88,6 +90,16 @@ export function SyncIndicator() {
       </div>
 
       {/* Error label */}
+      {preferenceIntegrity === 'failed' && (
+        <span
+          role="status"
+          aria-label="Account preferences could not be verified"
+          className="text-xs text-amber-400"
+        >
+          <span aria-hidden="true" className="md:hidden">!</span>
+          <span className="sr-only md:not-sr-only">Preferences need sync</span>
+        </span>
+      )}
       {isError && (
         <button
           onClick={handleSync}
