@@ -34,6 +34,7 @@ interface PendingSignup {
   earlyAdopter?: boolean
   wantsProductUpdates?: boolean
   rememberDevice?: boolean
+  paidSignupAttemptId?: string
   /** Provisioned user data — stored here until the entire signup flow completes. */
   provisionedUser?: {
     id: string
@@ -123,6 +124,161 @@ const AUTH_RATE_LIMIT_MESSAGE =
   'Too many sign-in attempts. Please wait a few minutes before trying again. Your encrypted data is safe.'
 const AUTH_TEMPORARY_UNAVAILABLE_MESSAGE =
   'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'
+
+const PAID_SIGNUP_RECOVERY_KEY = 'silentsuite-paid-signup-recovery'
+const RECOVERY_SECRET_BYTES = 32
+
+interface PaidSignupRecoveryIdentity {
+  scope: string
+  requestKey: string
+  recoverySecret: string
+}
+
+interface PaidSignupRecoveryRegistry {
+  version: 1
+  identities: Record<string, PaidSignupRecoveryIdentity>
+}
+
+let inMemoryPaidSignupRecoveryRegistry: PaidSignupRecoveryRegistry = { version: 1, identities: {} }
+let paidSignupStorageWriteUnavailable = false
+
+function paidSignupRecoveryScope(
+  email: string,
+  planId: string,
+  trialPath: string,
+  promoCode?: string,
+  wantsProductUpdates?: boolean,
+  rememberDevice?: boolean,
+): string {
+  return JSON.stringify({
+    email: email.trim().toLowerCase(),
+    planId,
+    trialPath,
+    promoCode: promoCode?.trim() || null,
+    wantsProductUpdates: wantsProductUpdates !== false,
+    rememberDevice: rememberDevice === true,
+  })
+}
+
+function isPaidSignupRecoveryIdentity(
+  value: unknown,
+  scope: string,
+): value is PaidSignupRecoveryIdentity {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<PaidSignupRecoveryIdentity>
+  return candidate.scope === scope
+    && typeof candidate.requestKey === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.requestKey)
+    && typeof candidate.recoverySecret === 'string'
+    && /^[A-Za-z0-9_-]{43}$/.test(candidate.recoverySecret)
+}
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = ''
+  for (let index = 0; index < bytes.length; index += 1) {
+    binary += String.fromCharCode(bytes[index])
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function readPaidSignupRecoveryRegistry(): PaidSignupRecoveryRegistry {
+  if (typeof window === 'undefined') return inMemoryPaidSignupRecoveryRegistry
+  try {
+    const raw = sessionStorage.getItem(PAID_SIGNUP_RECOVERY_KEY)
+    if (!raw) {
+      if (paidSignupStorageWriteUnavailable) return inMemoryPaidSignupRecoveryRegistry
+      inMemoryPaidSignupRecoveryRegistry = { version: 1, identities: {} }
+      return inMemoryPaidSignupRecoveryRegistry
+    }
+    // A failed write means persisted data may be stale in either direction:
+    // it may lack a newly created capability or retain one that was cleared.
+    // The complete desired in-memory registry is authoritative until a later
+    // write succeeds.
+    if (paidSignupStorageWriteUnavailable) return inMemoryPaidSignupRecoveryRegistry
+    const parsed = JSON.parse(raw) as Partial<PaidSignupRecoveryRegistry>
+    if (parsed.version !== 1 || !parsed.identities || typeof parsed.identities !== 'object') {
+      sessionStorage.removeItem(PAID_SIGNUP_RECOVERY_KEY)
+      return { version: 1, identities: {} }
+    }
+    const persistedIdentities = Object.fromEntries(
+      Object.entries(parsed.identities).filter(([scope, identity]) => isPaidSignupRecoveryIdentity(identity, scope)),
+    )
+    const identities = persistedIdentities
+    return { version: 1, identities }
+  } catch {
+    return inMemoryPaidSignupRecoveryRegistry
+  }
+}
+
+function writePaidSignupRecoveryRegistry(registry: PaidSignupRecoveryRegistry) {
+  inMemoryPaidSignupRecoveryRegistry = registry
+  if (typeof window === 'undefined') return
+  try {
+    if (Object.keys(registry.identities).length === 0) {
+      sessionStorage.removeItem(PAID_SIGNUP_RECOVERY_KEY)
+    } else {
+      sessionStorage.setItem(PAID_SIGNUP_RECOVERY_KEY, JSON.stringify(registry))
+    }
+    paidSignupStorageWriteUnavailable = false
+  } catch {
+    paidSignupStorageWriteUnavailable = true
+    // The in-memory registry still coordinates retries during this page load.
+  }
+}
+
+function getOrCreatePaidSignupRecoveryIdentity(scope: string): PaidSignupRecoveryIdentity {
+  const registry = readPaidSignupRecoveryRegistry()
+  const stored = registry.identities[scope]
+  if (isPaidSignupRecoveryIdentity(stored, scope)) return stored
+
+  const randomBytes = new Uint8Array(RECOVERY_SECRET_BYTES)
+  crypto.getRandomValues(randomBytes)
+  const identity: PaidSignupRecoveryIdentity = {
+    scope,
+    requestKey: crypto.randomUUID(),
+    recoverySecret: encodeBase64Url(randomBytes),
+  }
+  registry.identities[scope] = identity
+  // Capabilities survive same-tab reloads and scope changes after response
+  // loss, but never receive localStorage's cross-tab or long-lived persistence.
+  writePaidSignupRecoveryRegistry(registry)
+  return identity
+}
+
+function clearPaidSignupRecoveryIdentity(expectedRequestKey?: string) {
+  if (!expectedRequestKey) {
+    writePaidSignupRecoveryRegistry({ version: 1, identities: {} })
+    return
+  }
+  const registry = readPaidSignupRecoveryRegistry()
+  for (const [scope, identity] of Object.entries(registry.identities)) {
+    if (identity.requestKey === expectedRequestKey) delete registry.identities[scope]
+  }
+  writePaidSignupRecoveryRegistry(registry)
+}
+
+const DEFINITIVE_PAID_SIGNUP_CONFLICTS = new Set([
+  'account-exists',
+  'payment-intent-conflict',
+  'payment-already-confirmed',
+])
+
+function paidSignupProblemCode(problem: unknown): string | null {
+  if (!problem || typeof problem !== 'object') return null
+  const candidate = problem as { code?: unknown, type?: unknown }
+  if (typeof candidate.code === 'string') return candidate.code
+  if (typeof candidate.type !== 'string') return null
+  return candidate.type.split('/').filter(Boolean).at(-1) ?? null
+}
+
+function isDefinitivePaidSignupFailure(status: number, problem: unknown): boolean {
+  if (status === 408 || status === 429 || status >= 500) return false
+  if (status === 409) {
+    const code = paidSignupProblemCode(problem)
+    return code !== null && DEFINITIVE_PAID_SIGNUP_CONFLICTS.has(code)
+  }
+  return status >= 400 && status < 500
+}
 
 let hostedActiveTabHeartbeat: number | null = null
 let hostedActiveTabUnloadHooked = false
@@ -439,9 +595,15 @@ async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth') 
     logger.warn(`[auth-store] Failed to clear offline queue during ${reason}:`, err)
   }
 
+  clearPaidSignupRecoveryIdentity()
   if (typeof window !== 'undefined') {
-    sessionStorage.removeItem('silentsuite-signup-in-progress')
-    sessionStorage.removeItem('silentsuite-signup-redirect-state')
+    for (const key of ['silentsuite-signup-in-progress', 'silentsuite-signup-redirect-state']) {
+      try {
+        sessionStorage.removeItem(key)
+      } catch {
+        // Recovery capability clearing above remains authoritative in memory.
+      }
+    }
   }
 
   try {
@@ -628,7 +790,42 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     const isPaidSignupDraft = (trialPath === '30day' || trialPath === 'crypto_annual') && !pending.etebaseAuthToken
     if (isPaidSignupDraft) {
-      set({ isLoading: true, error: null })
+      const recoveryIdentity = getOrCreatePaidSignupRecoveryIdentity(
+        paidSignupRecoveryScope(
+          pending.email,
+          planId,
+          trialPath,
+          promoCode,
+          pending.wantsProductUpdates,
+          pending.rememberDevice,
+        ),
+      )
+      const attemptId = crypto.randomUUID()
+      const isActiveAttempt = () => {
+        const current = get().pendingSignup
+        if (!current || current.paidSignupAttemptId !== attemptId) return false
+        const currentScope = paidSignupRecoveryScope(
+          current.email,
+          planId,
+          trialPath,
+          promoCode,
+          current.wantsProductUpdates,
+          current.rememberDevice,
+        )
+        if (currentScope !== recoveryIdentity.scope) return false
+        const currentIdentity = readPaidSignupRecoveryRegistry().identities[recoveryIdentity.scope]
+        return isPaidSignupRecoveryIdentity(currentIdentity, recoveryIdentity.scope)
+          && currentIdentity.requestKey === recoveryIdentity.requestKey
+          && currentIdentity.recoverySecret === recoveryIdentity.recoverySecret
+      }
+      set({
+        pendingSignup: {
+          ...pending,
+          paidSignupAttemptId: attemptId,
+        },
+        isLoading: true,
+        error: null,
+      })
       try {
         const res = await fetch(`${BILLING_API_URL}/auth/signup/payment-session`, {
           method: 'POST',
@@ -637,36 +834,68 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             email: pending.email,
             planId,
             trialPath,
+            requestKey: recoveryIdentity.requestKey,
+            recoverySecret: recoveryIdentity.recoverySecret,
             ...(promoCode?.trim() ? { promoCode: promoCode.trim() } : {}),
-            wantsProductUpdates: pending.wantsProductUpdates,
+            wantsProductUpdates: pending.wantsProductUpdates !== false,
             rememberDevice: pending.rememberDevice === true,
           }),
           credentials: 'include',
         })
         if (!res.ok) {
           const errData = await res.json().catch(() => null)
+          if (isActiveAttempt() && isDefinitivePaidSignupFailure(res.status, errData)) {
+            clearPaidSignupRecoveryIdentity(recoveryIdentity.requestKey)
+          }
           throw new Error(errData?.detail ?? 'Payment setup failed')
         }
         const data = await res.json()
-        const paymentSessionToken = (data.paymentSessionToken as string | null) ?? null
-        if (!paymentSessionToken) throw new Error('Payment setup did not return a session token')
+        if (!isActiveAttempt()) throw new Error('Paid signup request was superseded')
+        const paymentSessionToken = data.paymentSessionToken
+        if (paymentSessionToken !== recoveryIdentity.recoverySecret) {
+          throw new Error('Paid signup response has an invalid recovery token')
+        }
+        const clientSecret = (data.clientSecret as string | null) ?? null
+        const cryptoCheckoutUrl = (data.cryptoCheckoutUrl as string | null) ?? null
+        const cryptoInvoiceId = (data.cryptoInvoiceId as string | null) ?? null
+        const cryptoInvoiceLookupToken = (data.cryptoInvoiceLookupToken as string | null) ?? null
+        const completeProviderContinuation = trialPath === '30day'
+          ? typeof clientSecret === 'string' && clientSecret.length > 0
+          : typeof cryptoCheckoutUrl === 'string' && cryptoCheckoutUrl.length > 0
+            && typeof cryptoInvoiceId === 'string' && cryptoInvoiceId.length > 0
+            && typeof cryptoInvoiceLookupToken === 'string' && cryptoInvoiceLookupToken.length > 0
+        if (!completeProviderContinuation) {
+          throw new Error('Payment setup returned an incomplete provider continuation')
+        }
+        if (trialPath === 'crypto_annual' && cryptoInvoiceLookupToken !== recoveryIdentity.recoverySecret) {
+          throw new Error('Paid signup response has an invalid invoice recovery token')
+        }
+        if (!isActiveAttempt()) throw new Error('Paid signup request was superseded')
+        clearPaidSignupRecoveryIdentity(recoveryIdentity.requestKey)
+        const currentPending = get().pendingSignup
+        if (!currentPending || currentPending.paidSignupAttemptId !== attemptId) {
+          throw new Error('Paid signup request was superseded')
+        }
         set({
           pendingSignup: {
-            ...pending,
+            ...currentPending,
             paymentSessionToken,
+            paidSignupAttemptId: undefined,
           },
           isLoading: false,
         })
         return {
-          clientSecret: (data.clientSecret as string | null) ?? null,
-          cryptoCheckoutUrl: (data.cryptoCheckoutUrl as string | null) ?? null,
-          cryptoInvoiceId: (data.cryptoInvoiceId as string | null) ?? null,
-          cryptoInvoiceLookupToken: (data.cryptoInvoiceLookupToken as string | null) ?? null,
+          clientSecret,
+          cryptoCheckoutUrl,
+          cryptoInvoiceId,
+          cryptoInvoiceLookupToken,
           paymentSessionToken,
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Payment setup failed'
-        set({ error: message, isLoading: false })
+        if (get().pendingSignup?.paidSignupAttemptId === attemptId) {
+          set({ error: message, isLoading: false })
+        }
         throw err
       }
     }
@@ -774,8 +1003,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return
     }
     // Clear the signup-in-progress flag so restoreSession works normally
+    clearPaidSignupRecoveryIdentity()
     if (typeof window !== 'undefined') {
-      sessionStorage.removeItem('silentsuite-signup-in-progress')
+      try {
+        sessionStorage.removeItem('silentsuite-signup-in-progress')
+      } catch {
+        // Signup completion must not be interrupted by unavailable tab storage.
+      }
     }
     // Sync admin cookie so middleware allows /admin access
     syncAdminCookie(pending.provisionedUser.isAdmin, pending.rememberDevice === true)
