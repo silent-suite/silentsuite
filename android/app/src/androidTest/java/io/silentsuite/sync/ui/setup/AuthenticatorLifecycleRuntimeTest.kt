@@ -140,7 +140,8 @@ class AuthenticatorLifecycleRuntimeTest {
                     replacementGeneration,
                     manager.getUserData(account, AccountSettings.KEY_CREATION_ID),
                 )
-                org.junit.Assert.assertNull(ActiveAccountManager.getActiveAccount(context))
+                assertNoPersistedActiveIdentity(context)
+                assertEquals(account, ActiveAccountManager.getActiveAccount(context))
                 var renderedTitle = ""
                 instrumentation.runOnMainSync {
                     renderedTitle = resolution
@@ -160,8 +161,14 @@ class AuthenticatorLifecycleRuntimeTest {
             ownedGeneration?.let { registry.clearOwned(account.type, account.name, it) }
             if (account in manager.getAccountsByType(account.type)) {
                 val removed = CountDownLatch(1)
-                AndroidCompat.removeAccount(manager, account) { removed.countDown() }
+                var removalSucceeded = false
+                AndroidCompat.removeAccount(manager, account) { success ->
+                    removalSucceeded = success
+                    removed.countDown()
+                }
                 assertTrue("creator-race account removal timed out", removed.await(10, TimeUnit.SECONDS))
+                assertTrue("creator-race account removal failed", removalSucceeded)
+                assertFalse(account in manager.getAccountsByType(account.type))
             }
             ActiveAccountManager.clearActiveAccount(context)
             App.postLoginBootstrapSucceeded = previousBootstrap
@@ -234,7 +241,8 @@ class AuthenticatorLifecycleRuntimeTest {
                     existingGeneration,
                     registry.get(account.type, account.name)?.creationId,
                 )
-                org.junit.Assert.assertNull(ActiveAccountManager.getActiveAccount(context))
+                assertNoPersistedActiveIdentity(context)
+                assertEquals(account, ActiveAccountManager.getActiveAccount(context))
                 var renderedTitle = ""
                 instrumentation.runOnMainSync {
                     renderedTitle = resolution
@@ -251,12 +259,24 @@ class AuthenticatorLifecycleRuntimeTest {
             registry.clearOwned(account.type, account.name, existingGeneration)
             if (account in manager.getAccountsByType(account.type)) {
                 val removed = CountDownLatch(1)
-                AndroidCompat.removeAccount(manager, account) { removed.countDown() }
+                var removalSucceeded = false
+                AndroidCompat.removeAccount(manager, account) { success ->
+                    removalSucceeded = success
+                    removed.countDown()
+                }
                 assertTrue("existing-generation account removal timed out", removed.await(10, TimeUnit.SECONDS))
+                assertTrue("existing-generation account removal failed", removalSucceeded)
+                assertFalse(account in manager.getAccountsByType(account.type))
             }
             ActiveAccountManager.clearActiveAccount(context)
             App.postLoginBootstrapSucceeded = previousBootstrap
         }
+    }
+
+    private fun assertNoPersistedActiveIdentity(context: android.content.Context) {
+        val prefs = context.getSharedPreferences("active_account", android.content.Context.MODE_PRIVATE)
+        org.junit.Assert.assertNull(prefs.getString("account_name", null))
+        org.junit.Assert.assertNull(prefs.getString("creation_id", null))
     }
 
     @Test fun staleLoginActivityRestorationUsesObsoletePathBeforeController() {
