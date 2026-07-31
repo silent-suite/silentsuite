@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useInsertionEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { useEffect, useInsertionEffect, useLayoutEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNextCalendarApp, ScheduleXCalendar } from '@schedule-x/react'
 import {
   createViewWeek,
@@ -447,8 +447,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
   // Capture initial view so useNextCalendarApp config doesn't change on view switch
   const initialViewRef = useRef(VIEW_MAP[effectiveView])
   const initialDateRef = useRef(selectedDate)
-  // Capture time format at mount — Schedule-X locale can't change after init
-  const initialLocaleRef = useRef(timeFormat === '24h' ? 'en-GB' : 'en-US')
+  const scheduleXLocale = timeFormat === '24h' ? 'en-GB' : 'en-US'
+  const initialLocaleRef = useRef(scheduleXLocale)
   // Capture initial timezone for Schedule-X config (changes are pushed via signal below)
   const initialTimezoneRef = useRef(userTz)
   // Capture initial first-day-of-week for Schedule-X config (changes pushed via signal below)
@@ -504,6 +504,18 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
       onClickDate: handleClickDate,
     },
   })
+
+  useLayoutEffect(() => {
+    if (!calendar) return
+    try {
+      const localeSignal = (calendar as any).$app?.config?.locale
+      if (localeSignal && localeSignal.value !== scheduleXLocale) {
+        localeSignal.value = scheduleXLocale
+      }
+    } catch {
+      // Schedule-X private configuration is guarded for the pinned integration.
+    }
+  }, [calendar, scheduleXLocale])
 
   // Push timezone changes to the Schedule-X config signal so the grid re-renders
   // when the user updates their preference in Settings without a full page reload.

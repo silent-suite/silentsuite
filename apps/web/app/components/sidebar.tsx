@@ -21,6 +21,7 @@ import { CalendarListPanel } from '@/app/components/CalendarListPanel'
 import { TaskListPanel } from '@/app/components/TaskListPanel'
 import { ContactListPanel } from '@/app/components/ContactListPanel'
 import { OnboardingChecklist } from '@/app/components/OnboardingChecklist'
+import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 
 const navItems = [
   { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
@@ -33,6 +34,8 @@ export function Sidebar() {
   const { isExpanded, toggle } = useSidebarStore()
   const pathname = usePathname()
   const isAdmin = useAuthStore((s) => s.user?.isAdmin) || isSelfHosted
+  const preferenceStatus = usePreferencesSyncStore((state) => state.status)
+  const preferencesTerminal = preferenceStatus === 'ready' || preferenceStatus === 'unavailable' || preferenceStatus === 'failed'
 
   useEffect(() => {
     initializeSidebar()
@@ -59,7 +62,7 @@ export function Sidebar() {
       {/* Mini calendar (always visible) + context-aware list panel */}
       {isExpanded && (
         <div className="border-t border-b border-[rgb(var(--border))]">
-          <MiniCalendar />
+          {preferencesTerminal && <MiniCalendar />}
           {pathname.startsWith('/calendar') && <CalendarListPanel />}
           {pathname.startsWith('/tasks') && <TaskListPanel />}
           {pathname.startsWith('/contacts') && <ContactListPanel />}
