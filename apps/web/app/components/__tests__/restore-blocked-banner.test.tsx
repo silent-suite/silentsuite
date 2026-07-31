@@ -63,7 +63,9 @@ describe('RestoreBlockedBanner', () => {
     expect(container.firstElementChild).toHaveClass('text-emerald-800', 'dark:text-emerald-200')
     expect(screen.getByRole('link', { name: /unlock now/i })).toHaveClass(
       'bg-emerald-700',
+      'hover:bg-emerald-800',
       'dark:bg-emerald-400',
+      'dark:hover:bg-emerald-300',
     )
   })
 

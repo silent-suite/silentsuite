@@ -26,7 +26,7 @@ export function ReadOnlyBanner() {
       <div className="flex items-center gap-3">
         <Link
           href="/settings/subscription"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
         >
           Choose a plan
           <ExternalLink className="h-3.5 w-3.5" />

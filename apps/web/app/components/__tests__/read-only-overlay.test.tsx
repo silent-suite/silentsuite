@@ -68,6 +68,12 @@ describe('ReadOnlyBanner', () => {
   it('uses contrasting foregrounds in both light and dark modes', () => {
     const { container } = render(<ReadOnlyBanner />)
     expect(container.firstElementChild).toHaveClass('text-amber-800', 'dark:text-amber-200')
+    expect(screen.getByText('Choose a plan').closest('a')).toHaveClass(
+      'bg-amber-700',
+      'hover:bg-amber-800',
+      'dark:bg-amber-400',
+      'dark:hover:bg-amber-300',
+    )
   })
 })
 
@@ -103,5 +109,9 @@ describe('DegradedModeBanner', () => {
   it('uses contrasting foregrounds in both light and dark modes', () => {
     const { container } = render(<DegradedModeBanner />)
     expect(container.firstElementChild).toHaveClass('text-blue-800', 'dark:text-blue-200')
+    expect(screen.getByRole('button', { name: /retry/i })).toHaveClass(
+      'text-blue-700',
+      'dark:text-blue-300',
+    )
   })
 })

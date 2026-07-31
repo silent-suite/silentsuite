@@ -26,7 +26,7 @@ export function PartialLoadBanner() {
         type="button"
         onClick={() => simulateSyncCycle()}
         disabled={disabled}
-        className="rounded-md border border-amber-600/40 px-2.5 py-1 text-xs font-medium text-amber-700 transition-colors hover:border-amber-700 hover:text-amber-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-300/40 dark:text-amber-100 dark:hover:border-amber-200 dark:hover:text-white"
+        className="rounded-md border border-amber-600/40 px-2.5 py-1 text-xs font-medium text-amber-800 transition-colors hover:border-amber-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-300/40 dark:text-amber-100 dark:hover:border-amber-200 dark:hover:text-white"
       >
         Retry sync
       </button>

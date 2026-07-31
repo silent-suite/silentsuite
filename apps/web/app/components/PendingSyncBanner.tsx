@@ -91,14 +91,14 @@ export function PendingSyncBanner() {
           <div className="flex items-center gap-1">
             <button
               onClick={handleRetryFailed}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
             >
               <RefreshCw className="h-3 w-3" />
               Retry
             </button>
             <button
               onClick={handleDiscardFailed}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-500/20 dark:text-red-400"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-800 transition-colors hover:bg-red-500/20 dark:text-red-400"
             >
               <Trash2 className="h-3 w-3" />
               Discard
