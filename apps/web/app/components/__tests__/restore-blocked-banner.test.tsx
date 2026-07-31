@@ -55,6 +55,18 @@ describe('RestoreBlockedBanner', () => {
     expect(link).toHaveAttribute('href', '/login?reason=unlock&returnTo=%2Fcalendar')
   })
 
+  it('uses contrasting foregrounds in both light and dark modes', () => {
+    etebaseState.restoreBlocked = true
+    authState.isAuthenticated = true
+    const { container } = render(<RestoreBlockedBanner />)
+
+    expect(container.firstElementChild).toHaveClass('text-emerald-800', 'dark:text-emerald-200')
+    expect(screen.getByRole('link', { name: /unlock now/i })).toHaveClass(
+      'bg-emerald-700',
+      'dark:bg-emerald-400',
+    )
+  })
+
   it('renders reassuring copy that contains no error/failure/phase wording', () => {
     etebaseState.restoreBlocked = true
     authState.isAuthenticated = true

@@ -64,6 +64,11 @@ describe('ReadOnlyBanner', () => {
     // Should be a banner-style element
     expect(root.className).toContain('rounded-lg')
   })
+
+  it('uses contrasting foregrounds in both light and dark modes', () => {
+    const { container } = render(<ReadOnlyBanner />)
+    expect(container.firstElementChild).toHaveClass('text-amber-800', 'dark:text-amber-200')
+  })
 })
 
 describe('DegradedModeBanner', () => {
@@ -93,5 +98,10 @@ describe('DegradedModeBanner', () => {
     expect(root.className).not.toContain('fixed')
     expect(root.className).not.toContain('inset-0')
     expect(root.className).toContain('rounded-lg')
+  })
+
+  it('uses contrasting foregrounds in both light and dark modes', () => {
+    const { container } = render(<DegradedModeBanner />)
+    expect(container.firstElementChild).toHaveClass('text-blue-800', 'dark:text-blue-200')
   })
 })
