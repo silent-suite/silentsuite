@@ -43,6 +43,11 @@ def test_drawer_uses_modern_local_icons_and_exact_generation_row_routing():
     assert "ExactAccountIdentity(account.type, account.name, creationId)" in activity
     assert "identity.creationId == accountCreationId" in activity
     assert "fun setActiveAccount(context: Context, identity: ExactAccountIdentity)" in active
+    assert "afterExactSetCommitForTest?.invoke()" in active
+    assert "clearIfActive(context, identity.name, identity.creationId)" in active
+    assert "postCommitGenerationRaceFailsClosedAndClearsOnlyTheWrittenIdentity" in source(
+        ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDrawerSignOutRuntimeTest.kt"
+    )
 
 
 def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids():

@@ -124,10 +124,49 @@ class AccountDrawerSignOutRuntimeTest {
                     )
                 }
             }
+            postCommitGenerationRaceFailsClosedAndClearsOnlyTheWrittenIdentity(
+                candidate,
+                "switch-candidate-replacement",
+            )
         } finally {
+            ActiveAccountManager.afterExactSetCommitForTest = null
             candidate.close()
             current.close()
         }
+    }
+
+    private fun postCommitGenerationRaceFailsClosedAndClearsOnlyTheWrittenIdentity(
+        candidate: Fixture,
+        expectedGeneration: String,
+    ) {
+        val racedGeneration = "switch-candidate-raced-after-commit"
+        ActiveAccountManager.afterExactSetCommitForTest = {
+            check(AccountSettings.writeVerified(
+                candidate.manager,
+                candidate.account,
+                AccountSettings.KEY_CREATION_ID,
+                racedGeneration,
+            ))
+        }
+        val selected = ActiveAccountManager.setActiveAccount(
+            candidate.context,
+            ExactAccountIdentity(
+                candidate.account.type,
+                candidate.account.name,
+                expectedGeneration,
+            ),
+        )
+        ActiveAccountManager.afterExactSetCommitForTest = null
+
+        assertFalse(selected)
+        assertNull(ActiveAccountManager.getActiveAccount(candidate.context))
+        assertEquals(
+            racedGeneration,
+            candidate.manager.getUserData(
+                candidate.account,
+                AccountSettings.KEY_CREATION_ID,
+            ),
+        )
     }
 
     @Test fun systemBackClosesDrawerWithoutFinishing() {

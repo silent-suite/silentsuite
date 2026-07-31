@@ -10,6 +10,7 @@ object ActiveAccountManager {
     private const val PREFS = "active_account"
     private const val KEY_NAME = "account_name"
     private const val KEY_CREATION_ID = "creation_id"
+    @JvmField internal var afterExactSetCommitForTest: (() -> Unit)? = null
 
     fun getActiveAccount(context: Context): Account? {
         val accountManager = AccountManager.get(context)
@@ -42,10 +43,20 @@ object ActiveAccountManager {
         if (identity.type != App.accountType || account !in manager.getAccountsByType(App.accountType) ||
             manager.getUserData(account, AccountSettings.KEY_CREATION_ID) != identity.creationId) return false
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return prefs.edit().putString(KEY_NAME, identity.name)
+        val written = prefs.edit().putString(KEY_NAME, identity.name)
             .putString(KEY_CREATION_ID, identity.creationId).commit() &&
             prefs.getString(KEY_NAME, null) == identity.name &&
             prefs.getString(KEY_CREATION_ID, null) == identity.creationId
+        if (!written) return false
+
+        afterExactSetCommitForTest?.invoke()
+        val stillExact = account in manager.getAccountsByType(App.accountType) &&
+            manager.getUserData(account, AccountSettings.KEY_CREATION_ID) == identity.creationId
+        if (!stillExact) {
+            clearIfActive(context, identity.name, identity.creationId)
+            return false
+        }
+        return true
     }
 
     fun clearActiveAccount(context: Context) {
