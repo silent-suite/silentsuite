@@ -44,7 +44,7 @@ class LoginCredentialsFragment : Fragment() {
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val v = inflater.inflate(R.layout.login_credentials_fragment, container, false)
-        advancedExpanded = savedInstanceState?.getBoolean(KEY_ADVANCED_EXPANDED) ?: false
+        advancedExpanded = savedInstanceState?.getBoolean(KEY_ADVANCED_EXPANDED) ?: advancedExpanded
 
         applyLoginActionBarInsets(v.findViewById(R.id.login_action_bar))
 

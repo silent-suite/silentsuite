@@ -118,6 +118,7 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
     assert "R.drawable.ic_chevron_down" in fragment
     assert "setCompoundDrawablesRelativeWithIntrinsicBounds" in fragment
     assert (RES / "drawable/ic_chevron_up.xml").exists()
+    assert "?: advancedExpanded" in fragment
     manifest = source(MAIN / "AndroidManifest.xml")
     login_decl = manifest.split('android:name=".ui.setup.LoginActivity"', 1)[1].split("</activity>", 1)[0]
     assert 'android:theme="@style/AppTheme.Material3"' in login_decl
@@ -231,6 +232,13 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
     assert complete_icon.count('android:bottom="7dp"') == 1
     constants = source(JAVA / "Constants.kt")
     assert 'appendEncodedPath("user-guide/apps/android")' in constants
+    assert "applySetupActionBarInsets(findViewById(R.id.setup_action_bar))" in activity
+    assert "WindowInsetsCompat.Type.systemBars()" in activity
+    assert "basePaddingBottom + systemBars.bottom" in activity
+    blocked_visibility = activity.split(
+        "findViewById<Button>(R.id.setup_continue_limited).visibility", 1
+    )[1].split("findViewById<Button>(R.id.setup_retry_inventory)", 1)[0]
+    assert "condition != PostLoginSetupPresentationCondition.PERMISSION_BLOCKED" in blocked_visibility
     assert "Setup: %1$s" not in strings.values()
     assert not any(value in {state for state in (
         "CREATING", "ACCOUNT_CREATED", "COLLECTIONS", "PERMISSIONS",

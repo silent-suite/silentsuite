@@ -60,6 +60,9 @@ class AuthenticatorLifecycleRuntimeTest {
             ActivityScenario.launch<LoginActivity>(loginIntent).use { scenario ->
                 instrumentation.waitForIdleSync()
                 scenario.onActivity { activity ->
+                    activity.findViewById<android.view.View>(R.id.show_advanced).performClick()
+                    activity.findViewById<android.widget.EditText>(R.id.custom_server)
+                        .setText("https://custom.example.invalid/")
                     activity.supportFragmentManager.beginTransaction()
                         .replace(android.R.id.content, CreateAccountFragment())
                         .addToBackStack("credentials")
@@ -81,6 +84,26 @@ class AuthenticatorLifecycleRuntimeTest {
                     val guard = LoginCredentialsFragment::class.java.getDeclaredField("submissionInProgress")
                     guard.isAccessible = true
                     org.junit.Assert.assertFalse(guard.getBoolean(credentials))
+                    val expanded = LoginCredentialsFragment::class.java.getDeclaredField("advancedExpanded")
+                    expanded.isAccessible = true
+                    org.junit.Assert.assertTrue(expanded.getBoolean(credentials))
+                    assertEquals(
+                        "Custom server settings, expanded",
+                        activity.findViewById<android.view.View>(R.id.show_advanced).contentDescription,
+                    )
+                    assertEquals(
+                        "https://custom.example.invalid/",
+                        activity.findViewById<android.widget.EditText>(R.id.custom_server).text.toString(),
+                    )
+                    activity.findViewById<android.widget.EditText>(R.id.user_name)
+                        .setText("restore@example.invalid")
+                    activity.findViewById<android.widget.EditText>(R.id.login_password)
+                        .setText("process-only-fixture")
+                    val validate = LoginCredentialsFragment::class.java
+                        .getDeclaredMethod("validateLoginData")
+                    validate.isAccessible = true
+                    val restored = validate.invoke(credentials) as LoginCredentials
+                    assertEquals(URI("https://custom.example.invalid/"), restored.uri)
                     org.junit.Assert.assertFalse(activity.isFinishing)
                     org.junit.Assert.assertEquals(1, delivery.continued)
                     org.junit.Assert.assertEquals(0, delivery.errors)

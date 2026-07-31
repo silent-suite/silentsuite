@@ -17,6 +17,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.observe
 import at.bitfire.ical4android.TaskProvider.ProviderName
 import io.silentsuite.sync.AccountSettings
@@ -114,6 +116,7 @@ class PostLoginSetupActivity : BaseActivity() {
         }
 
         setContentView(R.layout.activity_post_login_setup)
+        applySetupActionBarInsets(findViewById(R.id.setup_action_bar))
         configureSetupStepperForFontScale(resources.configuration.fontScale)
         findViewById<View>(R.id.setup_recommended_apps).setOnClickListener {
             WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)
@@ -637,7 +640,8 @@ class PostLoginSetupActivity : BaseActivity() {
             visible(permitsSkip)
         findViewById<Button>(R.id.setup_continue_limited).visibility = visible(
             exact && (
-                permitsContinue ||
+                (permitsContinue &&
+                    condition != PostLoginSetupPresentationCondition.PERMISSION_BLOCKED) ||
                     current == PostLoginSetupState.ACCOUNT_CREATED &&
                     model.syncConfigurationOutcome() ==
                     PostLoginSetupOrchestrator.SyncConfigurationOutcome.FAILED
@@ -692,6 +696,36 @@ class PostLoginSetupActivity : BaseActivity() {
         )
         findViewById<View>(R.id.setup_action_bar).visibility =
             visible(actionButtons.any { it.visibility == View.VISIBLE })
+    }
+
+    private fun applySetupActionBarInsets(actionBar: View) {
+        val basePaddingLeft = actionBar.paddingLeft
+        val basePaddingTop = actionBar.paddingTop
+        val basePaddingRight = actionBar.paddingRight
+        val basePaddingBottom = actionBar.paddingBottom
+
+        ViewCompat.setOnApplyWindowInsetsListener(actionBar) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(
+                basePaddingLeft + systemBars.left,
+                basePaddingTop,
+                basePaddingRight + systemBars.right,
+                basePaddingBottom + systemBars.bottom,
+            )
+            insets
+        }
+        if (ViewCompat.isAttachedToWindow(actionBar)) {
+            ViewCompat.requestApplyInsets(actionBar)
+        } else {
+            actionBar.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(view: View) {
+                    view.removeOnAttachStateChangeListener(this)
+                    ViewCompat.requestApplyInsets(view)
+                }
+
+                override fun onViewDetachedFromWindow(view: View) = Unit
+            })
+        }
     }
 
     private fun renderSetupStepper(presentation: PostLoginSetupPresentation) {

@@ -569,6 +569,18 @@ class PostLoginSetupRuntimeTest {
             })
             launchSetup(context, account, creationId) { activity ->
                 assertEquals("Allow access in Android settings", setupTitle(activity))
+                assertEquals(
+                    View.GONE,
+                    activity.findViewById<View>(
+                        requiredViewId(activity, "setup_continue_limited")
+                    ).visibility,
+                )
+                assertTrue(activity.findViewById<View>(
+                    requiredViewId(activity, "setup_resolve_ambiguity")
+                ).isShown)
+                assertTrue(activity.findViewById<View>(
+                    requiredViewId(activity, "setup_skip_integrations")
+                ).isShown)
             }
 
             installPermissionEvidenceOverride(Bundle().apply {

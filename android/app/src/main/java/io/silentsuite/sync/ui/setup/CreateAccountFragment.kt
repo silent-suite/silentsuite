@@ -20,6 +20,7 @@ import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
 import io.silentsuite.sync.ui.ActiveAccountManager
 import io.silentsuite.sync.ui.AccountActivity
+import io.silentsuite.sync.ui.ExactAccountIdentity
 import java.util.logging.Level
 
 class CreateAccountFragment : DialogFragment() {
@@ -159,7 +160,10 @@ class CreateAccountFragment : DialogFragment() {
                     AccountSettings.writeVerified(accountManager, account, key, value)
                 override fun phase(id: String, phase: AccountCreationRegistry.Phase) = registry.updateOwned(
                     AccountCreationRegistry.Record(accountName, id, phase, System.currentTimeMillis(), App.accountType))
-                override fun activateAndReadBack() = ActiveAccountManager.setActiveAccount(requireContext(), account)
+                override fun activateAndReadBack() = ActiveAccountManager.setActiveAccount(
+                    requireContext(),
+                    ExactAccountIdentity(App.accountType, accountName, creationId),
+                )
                 override fun clear(id: String) = registry.clearOwned(App.accountType, accountName, id)
                 override fun quarantine(id: String) = PostLoginSetupMigration.persistPendingRecovery(
                     writeState = {
