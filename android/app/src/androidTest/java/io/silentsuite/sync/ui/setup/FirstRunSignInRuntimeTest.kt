@@ -54,7 +54,8 @@ class FirstRunSignInRuntimeTest {
         try {
             ActivityScenario.launch<LoginActivity>(Intent(context, LoginActivity::class.java)).use { scenario ->
                 scenario.onActivity { activity ->
-                    activity.onNewIntent(
+                    deliverNewIntent(
+                        activity,
                         Intent(activity, LoginActivity::class.java)
                             .putExtra(LoginActivity.EXTRA_SIGNUP_CONTINUATION_TOKEN, otherToken)
                     )
@@ -64,9 +65,9 @@ class FirstRunSignInRuntimeTest {
                     val owningToken = requireNotNull(callback.getQueryParameter("continuation"))
                     val returned = Intent(activity, LoginActivity::class.java)
                         .putExtra(LoginActivity.EXTRA_SIGNUP_CONTINUATION_TOKEN, owningToken)
-                    activity.onNewIntent(returned)
+                    deliverNewIntent(activity, returned)
                     assertFalse(SignupContinuationRegistry.isValid(owningToken))
-                    activity.onNewIntent(returned)
+                    deliverNewIntent(activity, returned)
                     assertFalse(SignupContinuationRegistry.isValid(owningToken))
                     assertFalse(activity.intent.extras?.keySet().orEmpty().any {
                         it.contains("password", ignoreCase = true) ||
@@ -177,6 +178,13 @@ class FirstRunSignInRuntimeTest {
                 override fun result(result: Bundle) = Unit
                 override fun error(code: Int, message: String) = Unit
             }, null)
+        }
+    }
+
+    private fun deliverNewIntent(activity: LoginActivity, intent: Intent) {
+        LoginActivity::class.java.getDeclaredMethod("onNewIntent", Intent::class.java).apply {
+            isAccessible = true
+            invoke(activity, intent)
         }
     }
 
