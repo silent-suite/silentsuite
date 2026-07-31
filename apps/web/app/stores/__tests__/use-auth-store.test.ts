@@ -297,6 +297,21 @@ describe('useAuthStore', () => {
     expect(persistedPaidSignupIdentities()).toHaveLength(1)
   })
 
+  it('retains paid-signup recovery identity when a successful response has a non-string session token', async () => {
+    useAuthStore.setState({ pendingSignup: { email: 'paid@example.com' } })
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ paymentSessionToken: 123, clientSecret: 'seti_complete' }),
+    } as Response)
+
+    await expect(useAuthStore.getState().signup('early_monthly', '30day'))
+      .rejects.toThrow('missing its recovery token')
+
+    expect(persistedPaidSignupIdentities()).toHaveLength(1)
+    expect(paidSignupRequestBody().requestKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  })
+
   it('reuses paid-signup recovery identity after ambiguous transport loss and a reload-like store reset', async () => {
     useAuthStore.setState({ pendingSignup: { email: 'paid@example.com' } })
     vi.mocked(fetch)

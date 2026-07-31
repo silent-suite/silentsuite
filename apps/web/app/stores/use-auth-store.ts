@@ -824,8 +824,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           throw new Error(errData?.detail ?? 'Payment setup failed')
         }
         const data = await res.json()
-        const paymentSessionToken = (data.paymentSessionToken as string | null) ?? null
-        if (!paymentSessionToken) throw new Error('Payment setup did not return a session token')
+        const paymentSessionToken = data.paymentSessionToken
+        if (typeof paymentSessionToken !== 'string' || paymentSessionToken.trim().length === 0) {
+          throw new Error('Paid signup response is missing its recovery token')
+        }
         const clientSecret = (data.clientSecret as string | null) ?? null
         const cryptoCheckoutUrl = (data.cryptoCheckoutUrl as string | null) ?? null
         const cryptoInvoiceId = (data.cryptoInvoiceId as string | null) ?? null
