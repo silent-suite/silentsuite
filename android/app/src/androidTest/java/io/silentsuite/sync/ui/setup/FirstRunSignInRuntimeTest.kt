@@ -4,6 +4,7 @@ import android.accounts.AccountManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
+import android.graphics.Rect
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -11,6 +12,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.ScrollView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -34,11 +36,10 @@ class FirstRunSignInRuntimeTest {
                 scenario.onActivity { activity ->
                     val root = activity.findViewById<ViewGroup>(android.R.id.content)
                     val brandMark = activity.findViewById<ImageView>(requiredId(activity, "login_brand_mark"))
-                    val title = findText(root, "Sign in to SilentSuite")
+                    val title = findText(root, "Set up SilentSuite")
                     val support = findText(
                         root,
-                        "SilentSuite provides zero-knowledge, end-to-end encrypted sync for your " +
-                            "calendars, contacts, and tasks. Encryption keys stay on this device."
+                        "Sign in with an existing account, or create a new account on the web."
                     )
                     val privacy = findText(
                         root,
@@ -55,6 +56,7 @@ class FirstRunSignInRuntimeTest {
                     val signupHeading = activity.findViewById<TextView>(R.id.login_signup_heading)
                     val signupBody = activity.findViewById<TextView>(R.id.login_signup_body)
                     val signupSection = activity.findViewById<ViewGroup>(R.id.login_signup_section)
+                    val loginScroll = activity.findViewById<ScrollView>(R.id.login_scroll)
                     val createAccount = activity.findViewById<TextView>(R.id.create_account)
                     val customServerDisclosure = activity.findViewById<TextView>(R.id.show_advanced)
                     val actionBar = activity.findViewById<ViewGroup>(R.id.login_action_bar)
@@ -88,8 +90,10 @@ class FirstRunSignInRuntimeTest {
                     assertEquals("Sign in and set up sync", primary.text.toString())
                     assertTrue(primary.minimumHeight >= (48 * density).toInt())
                     assertEquals(actionBar, primary.parent)
-                    assertEquals(actionBar, signupSection.parent)
-                    assertTrue(actionBar.indexOfChild(primary) < actionBar.indexOfChild(signupSection))
+                    assertTrue(isDescendantOf(signupSection, loginScroll))
+                    val signupBounds = Rect()
+                    assertTrue(signupSection.getGlobalVisibleRect(signupBounds))
+                    assertTrue(signupBounds.height() > 0)
                     assertEquals("Create an account on the web", createAccount.text.toString())
                     assertTrue(createAccount.minimumHeight >= (48 * density).toInt())
                     assertTrue(createAccount.isClickable)
@@ -153,6 +157,7 @@ class FirstRunSignInRuntimeTest {
             R.id.login_signup_section,
             R.id.login_signup_heading,
             R.id.login_signup_body,
+            R.id.login_scroll,
             R.id.show_advanced,
             R.id.advanced_layout,
             R.id.custom_server,
@@ -173,7 +178,11 @@ class FirstRunSignInRuntimeTest {
                         "${activity.resources.getResourceEntryName(view.id)}:${view.javaClass.simpleName}"
                     }
                     val root = activity.findViewById<ViewGroup>(android.R.id.content)
-                    findText(root, "Sign in to SilentSuite")
+                    findText(root, "Set up SilentSuite")
+                    findText(
+                        root,
+                        "Sign in with an existing account, or create a new account on the web."
+                    )
                     findText(root, "Sign in and set up sync")
                     findText(root, "Forgot password?")
                     findText(root, "Already have a SilentSuite account?")
@@ -223,5 +232,14 @@ class FirstRunSignInRuntimeTest {
                 yieldAll(descendants(view.getChildAt(index)))
             }
         }
+    }
+
+    private fun isDescendantOf(view: View, ancestor: View): Boolean {
+        var parent = view.parent
+        while (parent is View) {
+            if (parent === ancestor) return true
+            parent = parent.parent
+        }
+        return false
     }
 }

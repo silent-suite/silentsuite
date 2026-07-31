@@ -363,8 +363,8 @@
     <string name="login_finish">Finish</string>
     <string name="login_back">Back</string>
     <string name="login_enter_service_details">Connect Android sync</string>
-    <string name="login_sign_in_title">Sign in to SilentSuite</string>
-    <string name="login_sign_in_supporting_copy">SilentSuite provides zero-knowledge, end-to-end encrypted sync for your calendars, contacts, and tasks. Encryption keys stay on this device.</string>
+    <string name="login_sign_in_title">Set up SilentSuite</string>
+    <string name="login_sign_in_supporting_copy">Sign in with an existing account, or create a new account on the web.</string>
     <string name="login_android_apps_heading">Works with Android apps</string>
     <string name="login_calendar_outcome">Synced events appear in Android Calendar.</string>
     <string name="login_contacts_outcome">Synced contacts appear in Android Contacts.</string>

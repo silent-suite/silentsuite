@@ -57,10 +57,9 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
     fragment = source(SETUP / "LoginCredentialsFragment.kt")
 
     approved = {
-        "login_sign_in_title": "Sign in to SilentSuite",
+        "login_sign_in_title": "Set up SilentSuite",
         "login_sign_in_supporting_copy":
-            "SilentSuite provides zero-knowledge, end-to-end encrypted sync for your calendars, "
-            "contacts, and tasks. Encryption keys stay on this device.",
+            "Sign in with an existing account, or create a new account on the web.",
         "login_android_apps_heading": "Works with Android apps",
         "login_calendar_outcome": "Synced events appear in Android Calendar.",
         "login_contacts_outcome": "Synced contacts appear in Android Contacts.",
@@ -86,7 +85,7 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
         "create_account", "show_advanced", "advanced_layout", "custom_server",
         "login_action_bar", "login", "login_existing_account_heading",
         "login_existing_account_body", "login_signup_heading", "login_signup_body",
-        "login_signup_section",
+        "login_signup_section", "login_scroll",
     }
     for view_id in stable_ids | {
         "login_brand_mark", "login_android_apps", "login_calendar_outcome",
@@ -119,22 +118,26 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
     assert 'android:id="@+id/show_advanced"' in scroll_content
     assert 'android:id="@+id/advanced_layout"' in scroll_content
     assert 'android:id="@+id/custom_server"' in scroll_content
-    assert scroll_content.index('android:id="@+id/login_existing_account_heading"') < (
+    assert scroll_content.index('android:id="@+id/login_signup_section"') < (
+        scroll_content.index('android:id="@+id/login_existing_account_heading"')
+    ) < (
         scroll_content.index('android:id="@+id/user_name"')
     )
     assert scroll_content.index('android:id="@+id/login_existing_account_body"') < (
         scroll_content.index('android:id="@+id/user_name"')
     )
     assert 'android:id="@+id/login_privacy_reassurance"' in scroll_content
-    assert 'android:id="@+id/login_signup_heading"' not in scroll_content
-    assert action_bar.index('android:id="@+id/login"') < action_bar.index(
-        'android:id="@+id/login_signup_section"'
-    ) < action_bar.index('android:id="@+id/login_signup_heading"') < action_bar.index(
+    assert scroll_content.index('android:id="@+id/login_signup_heading"') < scroll_content.index(
         'android:id="@+id/login_signup_body"'
-    ) < action_bar.index('android:id="@+id/create_account"')
-    assert 'style="@style/Widget.AppTheme.Material3.Button.Outlined"' in action_bar.split(
+    ) < scroll_content.index('android:id="@+id/create_account"')
+    assert scroll_content.index('android:id="@+id/login_privacy_reassurance"') < (
+        scroll_content.index('android:id="@+id/login_android_apps"')
+    )
+    assert 'style="@style/Widget.AppTheme.Material3.Button.Outlined"' in scroll_content.split(
         'android:id="@+id/create_account"', 1
     )[1].split("/>", 1)[0]
+    assert 'android:id="@+id/login_signup_section"' not in action_bar
+    assert 'android:id="@+id/login"' in action_bar
     assert "as Button" in fragment.split("R.id.create_account", 1)[1].split("setOnClickListener", 1)[0]
     assert "Intent(Intent.ACTION_VIEW, signupUri)" in fragment
     assert "ViewCompat.setAccessibilityHeading(" in fragment
