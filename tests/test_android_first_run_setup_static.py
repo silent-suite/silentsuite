@@ -50,104 +50,87 @@ def test_drawer_uses_modern_local_icons_and_exact_generation_row_routing():
     )
 
 
-def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids():
-    layout = source(RES / "layout/login_credentials_fragment.xml")
+def test_login_flow_uses_choice_root_and_focused_credentials_destination():
+    choice = source(RES / "layout/account_choice_fragment.xml")
+    credentials = source(RES / "layout/login_credentials_fragment.xml")
+    activity = source(SETUP / "LoginActivity.kt")
+
+    assert choice, "account choice layout must exist"
+    for view_id in (
+        "account_choice_scroll", "account_choice_heading", "account_choice_privacy",
+        "account_choice_calendar", "account_choice_contacts", "account_choice_tasks",
+        "account_choice_sign_in", "account_choice_create_account",
+    ):
+        assert f'android:id="@+id/{view_id}"' in choice
+
+    for forbidden_id in (
+        "user_name", "url_password", "login_password", "forgot_password",
+        "show_advanced", "advanced_layout", "custom_server", "login",
+    ):
+        assert f'android:id="@+id/{forbidden_id}"' not in choice
+
+    for credential_id in (
+        "login_existing_account_heading", "user_name", "url_password", "login_password",
+        "forgot_password", "show_advanced", "advanced_layout", "custom_server", "login",
+    ):
+        assert f'android:id="@+id/{credential_id}"' in credentials
+    for choice_only_id in (
+        "login_brand_mark", "login_signup_section", "create_account", "login_android_apps",
+    ):
+        assert f'android:id="@+id/{choice_only_id}"' not in credentials
+
+    assert 'ACCOUNT_CHOICE_TAG = "account-choice"' in activity
+    assert 'CREDENTIALS_TAG = "credentials"' in activity
+    assert 'CHOICE_TO_CREDENTIALS_BACK_STACK = "choice-to-credentials"' in activity
+    assert "AccountChoiceFragment()" in activity
+    assert "addToBackStack(CHOICE_TO_CREDENTIALS_BACK_STACK)" in activity
+
+
+def test_approved_split_account_entry_copy_typography_and_secret_boundaries():
+    choice = source(RES / "layout/account_choice_fragment.xml")
+    credentials = source(RES / "layout/login_credentials_fragment.xml")
     strings = string_resources()
     styles = source(RES / "values/styles.xml")
-    fragment = source(SETUP / "LoginCredentialsFragment.kt")
+    choice_fragment = source(SETUP / "AccountChoiceFragment.kt")
+    credentials_fragment = source(SETUP / "LoginCredentialsFragment.kt")
 
     approved = {
-        "login_sign_in_title": "Set up SilentSuite",
-        "login_sign_in_supporting_copy":
-            "Sign in with an existing account, or create a new account on the web.",
-        "login_android_apps_heading": "Works with Android apps",
-        "login_calendar_outcome": "Synced events appear in Android Calendar.",
-        "login_contacts_outcome": "Synced contacts appear in Android Contacts.",
-        "login_tasks_outcome": "Synced tasks appear in Tasks.org or OpenTasks when installed.",
-        "login_privacy_reassurance":
-            "Your encryption keys stay on this device.",
+        "account_choice_title": "Sync privately with Android apps",
+        "account_choice_sign_in": "Sign in",
+        "account_choice_calendar": "Android Calendar",
+        "account_choice_contacts": "Android Contacts",
+        "account_choice_tasks": "Tasks.org or OpenTasks",
+        "login_existing_account_heading": "Existing account",
+        "login_privacy_reassurance": "Your encryption keys stay on this device.",
         "login_sign_in_and_connect": "Sign in and set up sync",
         "login_forgot_password": "Forgot password?",
-        "login_existing_account_heading": "Already have a SilentSuite account?",
-        "login_existing_account_body":
-            "Enter the email address and password for your existing account.",
-        "login_signup_heading": "New to SilentSuite?",
-        "login_signup_body":
-            "We’ll open the SilentSuite website. After you create your account, "
-            "you’ll return to this app to finish setup.",
         "login_signup_action": "Create an account on the web",
         "login_toggle_advanced": "Use a custom server",
     }
     assert {name: strings.get(name) for name in approved} == approved
 
-    stable_ids = {
-        "user_name", "url_password", "login_password", "forgot_password",
-        "create_account", "show_advanced", "advanced_layout", "custom_server",
-        "login_action_bar", "login", "login_existing_account_heading",
-        "login_existing_account_body", "login_signup_heading", "login_signup_body",
-        "login_signup_section", "login_scroll",
-    }
-    for view_id in stable_ids | {
-        "login_brand_mark", "login_android_apps", "login_calendar_outcome",
-        "login_contacts_outcome", "login_tasks_outcome",
-    }:
-        assert f'android:id="@+id/{view_id}"' in layout
-
-    assert "<ImageView" in layout
-    brand = layout.split('android:id="@+id/login_brand_mark"', 1)[1].split("/>", 1)[0]
-    assert 'android:src="@drawable/ic_silentsuite_arrows"' in brand
-    assert 'android:contentDescription="@null"' in brand
-    aliases = source(RES / "values/drawables.xml")
-    night_aliases = source(RES / "values-night/drawables.xml")
-    assert '<item name="ic_silentsuite_arrows" type="drawable">@drawable/ic_silentsuite_arrows_on_light</item>' in aliases
-    assert '<item name="ic_silentsuite_arrows" type="drawable">@drawable/ic_silentsuite_arrows_on_navy</item>' in night_aliases
-    assert (RES / "drawable/ic_silentsuite_arrows_on_light.xml").exists()
-    assert (RES / "drawable/ic_silentsuite_arrows_on_navy.xml").exists()
-
     assert '<style name="TextAppearance.AppTheme.FirstRun.Title"' in styles
     assert '<item name="android:textSize">24sp</item>' in styles
     assert '<style name="TextAppearance.AppTheme.FirstRun.Body"' in styles
     assert '<item name="android:textSize">16sp</item>' in styles
-    assert layout.count("@style/TextAppearance.AppTheme.FirstRun.Title") == 1
-    assert layout.count("@style/TextAppearance.AppTheme.FirstRun.Body") >= 5
-    assert 'android:fontFamily="monospace"' not in layout
-    assert layout.count("<com.google.android.material.button.MaterialButton") == 2
-    assert 'android:text="@string/login_sign_in_and_connect"' in layout
-    scroll_content, action_bar = layout.split('android:id="@+id/login_action_bar"', 1)
-    assert 'android:id="@+id/forgot_password"' in scroll_content
-    assert 'android:id="@+id/show_advanced"' in scroll_content
-    assert 'android:id="@+id/advanced_layout"' in scroll_content
-    assert 'android:id="@+id/custom_server"' in scroll_content
-    assert scroll_content.index('android:id="@+id/login_signup_section"') < (
-        scroll_content.index('android:id="@+id/login_existing_account_heading"')
-    ) < (
-        scroll_content.index('android:id="@+id/user_name"')
-    )
-    assert scroll_content.index('android:id="@+id/login_existing_account_body"') < (
-        scroll_content.index('android:id="@+id/user_name"')
-    )
-    assert 'android:id="@+id/login_privacy_reassurance"' in scroll_content
-    assert scroll_content.index('android:id="@+id/login_signup_heading"') < scroll_content.index(
-        'android:id="@+id/login_signup_body"'
-    ) < scroll_content.index('android:id="@+id/create_account"')
-    assert scroll_content.index('android:id="@+id/login_privacy_reassurance"') < (
-        scroll_content.index('android:id="@+id/login_android_apps"')
-    )
-    assert 'style="@style/Widget.AppTheme.Material3.Button.Outlined"' in scroll_content.split(
-        'android:id="@+id/create_account"', 1
+    assert "Widget.Material3.TextInputLayout.OutlinedBox" in styles
+    assert choice.count("<com.google.android.material.button.MaterialButton") == 2
+    assert credentials.count("<com.google.android.material.button.MaterialButton") == 1
+    assert 'style="@style/Widget.AppTheme.Material3.Button.Outlined"' in choice.split(
+        'android:id="@+id/account_choice_create_account"', 1
     )[1].split("/>", 1)[0]
-    assert 'android:id="@+id/login_signup_section"' not in action_bar
-    assert 'android:id="@+id/login"' in action_bar
-    assert "as Button" in fragment.split("R.id.create_account", 1)[1].split("setOnClickListener", 1)[0]
-    assert "Intent(Intent.ACTION_VIEW, signupUri)" in fragment
-    assert "ViewCompat.setAccessibilityHeading(" in fragment
-    assert "R.id.login_existing_account_heading" in fragment
-    assert "R.id.login_signup_heading" in fragment
-    assert "R.drawable.ic_chevron_up" in fragment
-    assert "R.drawable.ic_chevron_down" in fragment
-    assert "setCompoundDrawablesRelativeWithIntrinsicBounds" in fragment
+    assert 'android:id="@+id/login_action_bar"' in credentials
+    assert 'android:id="@+id/login_signup_section"' not in credentials
+    assert 'android:id="@+id/create_account"' not in credentials
+    assert 'android:fontFamily="monospace"' not in credentials
+    assert "requestSignIn" in choice_fragment
+    assert "requestHostedSignup" in choice_fragment
+    assert "issueSignupCallbackUri" not in credentials_fragment
+    assert "Intent(Intent.ACTION_VIEW, signupUri)" not in credentials_fragment
+    assert "R.drawable.ic_chevron_up" in credentials_fragment
+    assert "R.drawable.ic_chevron_down" in credentials_fragment
+    assert "?: advancedExpanded" in credentials_fragment
     assert (RES / "drawable/ic_chevron_up.xml").exists()
-    assert "?: advancedExpanded" in fragment
     manifest = source(MAIN / "AndroidManifest.xml")
     login_decl = manifest.split('android:name=".ui.setup.LoginActivity"', 1)[1].split("</activity>", 1)[0]
     assert 'android:theme="@style/AppTheme.Material3"' in login_decl

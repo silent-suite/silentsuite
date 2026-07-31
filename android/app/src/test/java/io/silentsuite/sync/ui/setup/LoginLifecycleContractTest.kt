@@ -10,21 +10,37 @@ class LoginLifecycleContractTest {
     private val sourceRoot = File("src/main/java/io/silentsuite/sync/ui/setup")
 
     @Test
-    fun invalidSignupReturnStartsANewClearedLoginTask() {
+    fun unknownSignupReturnStartsCleanLoginWithoutClearingOtherTasks() {
         val source = File(sourceRoot, "SignupReturnActivity.kt").readText()
         val fallback = source.substringAfter("} else {").substringBefore("}\n        finish()")
 
-        assertTrue(fallback.contains("Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK"))
+        assertTrue(fallback.contains("Intent.FLAG_ACTIVITY_NEW_TASK"))
+        assertFalse(fallback.contains("FLAG_ACTIVITY_CLEAR_TASK"))
         assertFalse(fallback.contains("FLAG_ACTIVITY_CLEAR_TOP"))
         assertFalse(fallback.contains("FLAG_ACTIVITY_SINGLE_TOP"))
     }
 
     @Test
-    fun validSignupReturnKeepsTheExistingLoginTaskRoute() {
+    fun validSignupReturnUsesTypedExactOwnerRouter() {
         val source = File(sourceRoot, "SignupReturnActivity.kt").readText()
-        val valid = source.substringAfter("if (SignupContinuationRegistry.isValid").substringBefore("} else {")
 
-        assertTrue(valid.contains("Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP"))
+        assertTrue(source.contains("LoginFlowOwnerRegistry.routeSignupToken"))
+        assertTrue(source.contains("SignupRouteResult"))
+        assertFalse(source.contains("Toast.makeText"))
+        assertFalse(source.contains("SignupContinuationRegistry.isValid"))
+    }
+
+    @Test
+    fun loginActivityUsesOneChoiceRootAndNamedCredentialsBackEntry() {
+        val source = File(sourceRoot, "LoginActivity.kt").readText()
+
+        assertTrue(source.contains("ACCOUNT_CHOICE_TAG = \"account-choice\""))
+        assertTrue(source.contains("CREDENTIALS_TAG = \"credentials\""))
+        assertTrue(source.contains("CHOICE_TO_CREDENTIALS_BACK_STACK = \"choice-to-credentials\""))
+        assertTrue(source.contains("AccountChoiceFragment()"))
+        assertTrue(source.contains("addToBackStack(CHOICE_TO_CREDENTIALS_BACK_STACK)"))
+        assertTrue(source.contains("onBackPressedDispatcher"))
+        assertFalse(source.contains("onKeyDown("))
     }
 
     @Test

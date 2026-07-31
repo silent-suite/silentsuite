@@ -7,81 +7,94 @@ import org.junit.Test
 import java.io.File
 
 class LoginMaterial3ContractTest {
-    private val layout = File("src/main/res/layout/login_credentials_fragment.xml").readText()
+    private val choiceLayout = File("src/main/res/layout/account_choice_fragment.xml")
+        .takeIf(File::exists)?.readText().orEmpty()
+    private val credentialsLayout = File("src/main/res/layout/login_credentials_fragment.xml").readText()
     private val strings = File("src/main/res/values/strings.xml").readText()
     private val manifest = File("src/main/AndroidManifest.xml").readText()
     private val menu = File("src/main/res/menu/activity_login.xml").readText()
-    private val fragment = File("src/main/java/io/silentsuite/sync/ui/setup/LoginCredentialsFragment.kt").readText()
+    private val credentialsFragment = File("src/main/java/io/silentsuite/sync/ui/setup/LoginCredentialsFragment.kt").readText()
+    private val choiceFragment = File("src/main/java/io/silentsuite/sync/ui/setup/AccountChoiceFragment.kt")
+        .takeIf(File::exists)?.readText().orEmpty()
     private val styles = File("src/main/res/values/styles.xml").readText()
 
     @Test
-    fun loginActivityAndCombinedCredentialsSurfaceUseMaterial3() {
+    fun loginActivityAndBothFocusedDestinationsUseMaterial3() {
         val loginActivity = manifest.substringAfter("android:name=\".ui.setup.LoginActivity\"")
             .substringBefore("</activity>")
 
         assertTrue(loginActivity.contains("android:theme=\"@style/AppTheme.Material3\""))
         assertTrue(menu.contains("android:icon=\"@drawable/ic_help_light\""))
         assertTrue(menu.contains("app:iconTint=\"@color/semantic_on_surface\""))
-        assertTrue(layout.contains("android:id=\"@+id/login_brand_mark\""))
-        assertTrue(layout.contains("android:src=\"@drawable/ic_silentsuite_arrows\""))
-        assertTrue(layout.contains("@style/TextAppearance.AppTheme.FirstRun.Title"))
-        assertEquals(10, Regex("@style/TextAppearance.AppTheme.FirstRun.Body").findAll(layout).count())
+        assertTrue(choiceLayout.contains("android:id=\"@+id/account_choice_brand_mark\""))
+        assertTrue(choiceLayout.contains("android:src=\"@drawable/ic_silentsuite_arrows\""))
+        assertTrue(choiceLayout.contains("@style/TextAppearance.AppTheme.FirstRun.Title"))
+        assertTrue(credentialsLayout.contains("@style/TextAppearance.AppTheme.FirstRun.Title"))
         assertTrue(styles.contains("<style name=\"TextAppearance.AppTheme.FirstRun.Title\""))
         assertTrue(styles.contains("<item name=\"android:textSize\">24sp</item>"))
         assertTrue(styles.contains("<style name=\"TextAppearance.AppTheme.FirstRun.Body\""))
         assertTrue(styles.contains("<item name=\"android:textSize\">16sp</item>"))
-        assertEquals(3, Regex("@style/Widget.AppTheme.Material3.TextInputLayout").findAll(layout).count())
-        assertTrue(layout.contains("@style/Widget.AppTheme.Material3.Button"))
+        assertEquals(3, Regex("@style/Widget.AppTheme.Material3.TextInputLayout").findAll(credentialsLayout).count())
+        assertTrue(choiceLayout.contains("@style/Widget.AppTheme.Material3.Button"))
+        assertTrue(credentialsLayout.contains("@style/Widget.AppTheme.Material3.Button"))
+        assertTrue(styles.contains("Widget.Material3.TextInputLayout.OutlinedBox"))
     }
 
     @Test
-    fun surfaceClearlySeparatesExistingAccountSignInFromWebsiteSignup() {
-        assertTrue(layout.contains("android:text=\"@string/login_sign_in_title\""))
-        assertTrue(layout.contains("android:text=\"@string/login_sign_in_supporting_copy\""))
-        assertTrue(layout.contains("android:text=\"@string/login_privacy_reassurance\""))
-        assertEquals(2, Regex("<com\\.google\\.android\\.material\\.button\\.MaterialButton").findAll(layout).count())
-        assertTrue(layout.contains("android:text=\"@string/login_sign_in_and_connect\""))
-        assertTrue(layout.indexOf("android:id=\"@+id/login_signup_section\"") < layout.indexOf("android:id=\"@+id/login_existing_account_heading\""))
-        assertTrue(layout.indexOf("android:id=\"@+id/login_existing_account_heading\"") < layout.indexOf("android:id=\"@+id/user_name\""))
-        assertTrue(layout.indexOf("android:id=\"@+id/login_signup_section\"") < layout.indexOf("android:id=\"@+id/login_action_bar\""))
-        assertTrue(strings.contains("<string name=\"login_sign_in_title\">Set up SilentSuite</string>"))
-        assertTrue(strings.contains("<string name=\"login_sign_in_supporting_copy\">Sign in with an existing account, or create a new account on the web.</string>"))
+    fun choiceAndCredentialsExposeOnlyTheirFocusedActionsAndCopy() {
+        assertEquals(2, Regex("<com\\.google\\.android\\.material\\.button\\.MaterialButton").findAll(choiceLayout).count())
+        assertTrue(choiceLayout.contains("android:text=\"@string/account_choice_sign_in\""))
+        assertTrue(choiceLayout.contains("android:text=\"@string/login_signup_action\""))
+        assertTrue(choiceLayout.contains("android:text=\"@string/account_choice_privacy\""))
+        assertTrue(credentialsLayout.contains("android:text=\"@string/login_sign_in_and_connect\""))
+        assertTrue(credentialsLayout.contains("android:text=\"@string/login_privacy_reassurance\""))
+        assertFalse(credentialsLayout.contains("login_signup"))
+        assertFalse(credentialsLayout.contains("create_account"))
+        assertFalse(credentialsLayout.contains("login_android_apps"))
+        assertFalse(choiceLayout.contains("user_name"))
+        assertFalse(choiceLayout.contains("login_password"))
+        assertFalse(choiceLayout.contains("forgot_password"))
+        assertFalse(choiceLayout.contains("custom_server"))
+        assertTrue(strings.contains("<string name=\"account_choice_title\">Sync privately with Android apps</string>"))
+        assertTrue(strings.contains("<string name=\"account_choice_sign_in\">Sign in</string>"))
+        assertTrue(strings.contains("<string name=\"account_choice_calendar\">Android Calendar</string>"))
+        assertTrue(strings.contains("<string name=\"account_choice_contacts\">Android Contacts</string>"))
+        assertTrue(strings.contains("<string name=\"account_choice_tasks\">Tasks.org or OpenTasks</string>"))
         assertTrue(strings.contains("<string name=\"login_sign_in_and_connect\">Sign in and set up sync</string>"))
-        assertTrue(strings.contains("<string name=\"login_android_apps_heading\">Works with Android apps</string>"))
-        assertTrue(strings.contains("<string name=\"login_calendar_outcome\">Synced events appear in Android Calendar.</string>"))
-        assertTrue(strings.contains("<string name=\"login_contacts_outcome\">Synced contacts appear in Android Contacts.</string>"))
-        assertTrue(strings.contains("<string name=\"login_tasks_outcome\">Synced tasks appear in Tasks.org or OpenTasks when installed.</string>"))
         assertTrue(strings.contains("<string name=\"login_privacy_reassurance\">Your encryption keys stay on this device.</string>"))
         assertTrue(strings.contains("<string name=\"login_forgot_password\">Forgot password?</string>"))
         assertTrue(strings.contains("<string name=\"login_toggle_advanced\">Use a custom server</string>"))
-        assertTrue(strings.contains("<string name=\"login_existing_account_heading\">Already have a SilentSuite account?</string>"))
-        assertTrue(strings.contains("<string name=\"login_existing_account_body\">Enter the email address and password for your existing account.</string>"))
-        assertTrue(strings.contains("<string name=\"login_signup_heading\">New to SilentSuite?</string>"))
-        assertTrue(strings.contains("<string name=\"login_signup_body\">We’ll open the SilentSuite website. After you create your account, you’ll return to this app to finish setup.</string>"))
+        assertTrue(strings.contains("<string name=\"login_existing_account_heading\">Existing account</string>"))
         assertTrue(strings.contains("<string name=\"login_signup_action\">Create an account on the web</string>"))
-        assertFalse(layout.contains("@string/login_bridge_sync"))
-        assertFalse(layout.contains("@string/login_bridge_encrypted"))
     }
 
     @Test
-    fun stableBehavioralIdsAndSecretAndDisclosureContractsRemain() {
+    fun stableCredentialIdsAndChoiceAccessibilityContractsRemain() {
         listOf(
-            "user_name", "url_password", "login_password", "forgot_password", "create_account",
+            "user_name", "url_password", "login_password", "forgot_password",
             "show_advanced", "advanced_layout", "custom_server", "login_action_bar", "login",
-            "login_existing_account_heading", "login_existing_account_body", "login_signup_section",
-            "login_signup_heading", "login_signup_body", "login_scroll"
-        ).forEach { id -> assertTrue("Missing stable login ID: $id", layout.contains("android:id=\"@+id/$id\"")) }
+            "login_existing_account_heading", "login_scroll"
+        ).forEach { id -> assertTrue("Missing stable login ID: $id", credentialsLayout.contains("android:id=\"@+id/$id\"")) }
+        listOf(
+            "account_choice_scroll", "account_choice_heading", "account_choice_privacy",
+            "account_choice_calendar", "account_choice_contacts", "account_choice_tasks",
+            "account_choice_sign_in", "account_choice_create_account"
+        ).forEach { id -> assertTrue("Missing account-choice ID: $id", choiceLayout.contains("android:id=\"@+id/$id\"")) }
 
-        assertTrue(layout.contains("android:autofillHints=\"emailAddress\""))
-        assertTrue(layout.contains("android:autofillHints=\"password\""))
-        assertTrue(layout.contains("android:saveEnabled=\"false\""))
-        assertFalse(layout.contains("android:fontFamily=\"monospace\""))
-        assertTrue(layout.contains("android:imeOptions=\"actionDone\""))
-        assertTrue(fragment.contains("setOnEditorActionListener"))
-        assertTrue(fragment.contains("EditorInfo.IME_ACTION_DONE"))
-        assertTrue(fragment.contains("login.performClick()"))
-        assertTrue(fragment.contains("KEY_ADVANCED_EXPANDED"))
-        assertTrue(fragment.contains("applyLoginActionBarInsets"))
-        assertTrue(layout.contains("<net.cachapa.expandablelayout.ExpandableLayout"))
+        assertTrue(credentialsLayout.contains("android:autofillHints=\"emailAddress\""))
+        assertTrue(credentialsLayout.contains("android:autofillHints=\"password\""))
+        assertTrue(credentialsLayout.contains("android:saveEnabled=\"false\""))
+        assertFalse(credentialsLayout.contains("android:fontFamily=\"monospace\""))
+        assertTrue(credentialsLayout.contains("android:imeOptions=\"actionDone\""))
+        assertTrue(credentialsFragment.contains("setOnEditorActionListener"))
+        assertTrue(credentialsFragment.contains("EditorInfo.IME_ACTION_DONE"))
+        assertTrue(credentialsFragment.contains("login.performClick()"))
+        assertTrue(credentialsFragment.contains("KEY_ADVANCED_EXPANDED"))
+        assertTrue(credentialsFragment.contains("applyLoginActionBarInsets"))
+        assertFalse(credentialsFragment.contains("issueSignupCallbackUri"))
+        assertTrue(choiceFragment.contains("ViewCompat.setAccessibilityHeading"))
+        assertTrue(choiceFragment.contains("requestSignIn"))
+        assertTrue(choiceFragment.contains("requestHostedSignup"))
+        assertTrue(credentialsLayout.contains("<net.cachapa.expandablelayout.ExpandableLayout"))
     }
 }
