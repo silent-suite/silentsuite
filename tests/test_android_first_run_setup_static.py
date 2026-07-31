@@ -69,7 +69,14 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
             "Your encryption keys stay on this device.",
         "login_sign_in_and_connect": "Sign in and set up sync",
         "login_forgot_password": "Forgot password?",
-        "login_signup_prompt": "New to SilentSuite? Create an account",
+        "login_existing_account_heading": "Already have a SilentSuite account?",
+        "login_existing_account_body":
+            "Enter the email address and password for your existing account.",
+        "login_signup_heading": "New to SilentSuite?",
+        "login_signup_body":
+            "We’ll open the SilentSuite website. After you create your account, "
+            "you’ll return to this app to finish setup.",
+        "login_signup_action": "Create an account on the web",
         "login_toggle_advanced": "Use a custom server",
     }
     assert {name: strings.get(name) for name in approved} == approved
@@ -77,7 +84,9 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
     stable_ids = {
         "user_name", "url_password", "login_password", "forgot_password",
         "create_account", "show_advanced", "advanced_layout", "custom_server",
-        "login_action_bar", "login",
+        "login_action_bar", "login", "login_existing_account_heading",
+        "login_existing_account_body", "login_signup_heading", "login_signup_body",
+        "login_signup_section",
     }
     for view_id in stable_ids | {
         "login_brand_mark", "login_android_apps", "login_calendar_outcome",
@@ -103,17 +112,34 @@ def test_approved_combined_sign_in_layout_copy_typography_arrows_and_stable_ids(
     assert layout.count("@style/TextAppearance.AppTheme.FirstRun.Title") == 1
     assert layout.count("@style/TextAppearance.AppTheme.FirstRun.Body") >= 5
     assert 'android:fontFamily="monospace"' not in layout
-    assert layout.count("<com.google.android.material.button.MaterialButton") == 1
+    assert layout.count("<com.google.android.material.button.MaterialButton") == 2
     assert 'android:text="@string/login_sign_in_and_connect"' in layout
     scroll_content, action_bar = layout.split('android:id="@+id/login_action_bar"', 1)
     assert 'android:id="@+id/forgot_password"' in scroll_content
     assert 'android:id="@+id/show_advanced"' in scroll_content
     assert 'android:id="@+id/advanced_layout"' in scroll_content
     assert 'android:id="@+id/custom_server"' in scroll_content
-    assert 'android:id="@+id/create_account"' not in scroll_content
-    assert action_bar.index('android:id="@+id/create_account"') < action_bar.index(
-        'android:id="@+id/login"'
+    assert scroll_content.index('android:id="@+id/login_existing_account_heading"') < (
+        scroll_content.index('android:id="@+id/user_name"')
     )
+    assert scroll_content.index('android:id="@+id/login_existing_account_body"') < (
+        scroll_content.index('android:id="@+id/user_name"')
+    )
+    assert 'android:id="@+id/login_privacy_reassurance"' in scroll_content
+    assert 'android:id="@+id/login_signup_heading"' not in scroll_content
+    assert action_bar.index('android:id="@+id/login"') < action_bar.index(
+        'android:id="@+id/login_signup_section"'
+    ) < action_bar.index('android:id="@+id/login_signup_heading"') < action_bar.index(
+        'android:id="@+id/login_signup_body"'
+    ) < action_bar.index('android:id="@+id/create_account"')
+    assert 'style="@style/Widget.AppTheme.Material3.Button.Outlined"' in action_bar.split(
+        'android:id="@+id/create_account"', 1
+    )[1].split("/>", 1)[0]
+    assert "as Button" in fragment.split("R.id.create_account", 1)[1].split("setOnClickListener", 1)[0]
+    assert "Intent(Intent.ACTION_VIEW, signupUri)" in fragment
+    assert "ViewCompat.setAccessibilityHeading(" in fragment
+    assert "R.id.login_existing_account_heading" in fragment
+    assert "R.id.login_signup_heading" in fragment
     assert "R.drawable.ic_chevron_up" in fragment
     assert "R.drawable.ic_chevron_down" in fragment
     assert "setCompoundDrawablesRelativeWithIntrinsicBounds" in fragment

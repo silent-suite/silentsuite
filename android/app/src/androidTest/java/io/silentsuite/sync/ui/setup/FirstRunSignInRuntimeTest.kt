@@ -14,6 +14,7 @@ import android.widget.TextView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.core.view.ViewCompat
 import io.silentsuite.sync.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,6 +50,11 @@ class FirstRunSignInRuntimeTest {
                     val email = activity.findViewById<EditText>(R.id.user_name)
                     val password = activity.findViewById<EditText>(R.id.login_password)
                     val primary = activity.findViewById<TextView>(R.id.login)
+                    val existingHeading = activity.findViewById<TextView>(R.id.login_existing_account_heading)
+                    val existingBody = activity.findViewById<TextView>(R.id.login_existing_account_body)
+                    val signupHeading = activity.findViewById<TextView>(R.id.login_signup_heading)
+                    val signupBody = activity.findViewById<TextView>(R.id.login_signup_body)
+                    val signupSection = activity.findViewById<ViewGroup>(R.id.login_signup_section)
                     val createAccount = activity.findViewById<TextView>(R.id.create_account)
                     val customServerDisclosure = activity.findViewById<TextView>(R.id.show_advanced)
                     val actionBar = activity.findViewById<ViewGroup>(R.id.login_action_bar)
@@ -59,15 +65,34 @@ class FirstRunSignInRuntimeTest {
                     assertTrue(maxOf(brandMark.width, brandMark.minimumWidth) >= (44 * density).toInt())
                     assertTrue(maxOf(brandMark.height, brandMark.minimumHeight) >= (44 * density).toInt())
                     assertEquals(24f, title.textSize / scaledDensity, 0.25f)
-                    listOf(support, privacy, email, password).forEach {
+                    listOf(
+                        support, privacy, existingHeading, existingBody, signupHeading, signupBody,
+                        email, password,
+                    ).forEach {
                         assertEquals(16f, it.textSize / scaledDensity, 0.25f)
                     }
+                    assertEquals("Already have a SilentSuite account?", existingHeading.text.toString())
+                    assertEquals(
+                        "Enter the email address and password for your existing account.",
+                        existingBody.text.toString(),
+                    )
+                    assertEquals("New to SilentSuite?", signupHeading.text.toString())
+                    assertTrue(ViewCompat.isAccessibilityHeading(existingHeading))
+                    assertTrue(ViewCompat.isAccessibilityHeading(signupHeading))
+                    assertEquals(
+                        "We’ll open the SilentSuite website. After you create your account, " +
+                            "you’ll return to this app to finish setup.",
+                        signupBody.text.toString(),
+                    )
                     assertNotEquals(Typeface.MONOSPACE, password.typeface)
                     assertEquals("Sign in and set up sync", primary.text.toString())
                     assertTrue(primary.minimumHeight >= (48 * density).toInt())
-                    assertEquals(actionBar, createAccount.parent)
                     assertEquals(actionBar, primary.parent)
-                    assertTrue(actionBar.indexOfChild(createAccount) < actionBar.indexOfChild(primary))
+                    assertEquals(actionBar, signupSection.parent)
+                    assertTrue(actionBar.indexOfChild(primary) < actionBar.indexOfChild(signupSection))
+                    assertEquals("Create an account on the web", createAccount.text.toString())
+                    assertTrue(createAccount.minimumHeight >= (48 * density).toInt())
+                    assertTrue(createAccount.isClickable)
                     assertTrue(customServerDisclosure.compoundDrawablesRelative[2] != null)
                     assertEquals(0, activity.findViewById<View>(R.id.advanced_layout).height)
 
@@ -121,8 +146,13 @@ class FirstRunSignInRuntimeTest {
             R.id.user_name,
             R.id.url_password,
             R.id.login_password,
+            R.id.login_existing_account_heading,
+            R.id.login_existing_account_body,
             R.id.forgot_password,
             R.id.create_account,
+            R.id.login_signup_section,
+            R.id.login_signup_heading,
+            R.id.login_signup_body,
             R.id.show_advanced,
             R.id.advanced_layout,
             R.id.custom_server,
@@ -146,7 +176,15 @@ class FirstRunSignInRuntimeTest {
                     findText(root, "Sign in to SilentSuite")
                     findText(root, "Sign in and set up sync")
                     findText(root, "Forgot password?")
-                    findText(root, "New to SilentSuite? Create an account")
+                    findText(root, "Already have a SilentSuite account?")
+                    findText(root, "Enter the email address and password for your existing account.")
+                    findText(root, "New to SilentSuite?")
+                    findText(
+                        root,
+                        "We’ll open the SilentSuite website. After you create your account, " +
+                            "you’ll return to this app to finish setup."
+                    )
+                    findText(root, "Create an account on the web")
                     findText(root, "Use a custom server")
                 }
                 if (pass == 0) scenario.recreate()

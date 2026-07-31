@@ -47,6 +47,8 @@ class LoginCredentialsFragment : Fragment() {
         advancedExpanded = savedInstanceState?.getBoolean(KEY_ADVANCED_EXPANDED) ?: advancedExpanded
 
         applyLoginActionBarInsets(v.findViewById(R.id.login_action_bar))
+        ViewCompat.setAccessibilityHeading(v.findViewById(R.id.login_existing_account_heading), true)
+        ViewCompat.setAccessibilityHeading(v.findViewById(R.id.login_signup_heading), true)
 
         editUserName = v.findViewById<TextInputEditText>(R.id.user_name)
         editUrlPassword = v.findViewById<TextInputLayout>(R.id.url_password)
@@ -58,7 +60,7 @@ class LoginCredentialsFragment : Fragment() {
             editUrlPassword.editText?.setText(initialPassword ?: "")
         }
 
-        val createAccount = v.findViewById<View>(R.id.create_account) as TextView
+        val createAccount = v.findViewById<View>(R.id.create_account) as Button
         createAccount.setOnClickListener {
             val callbackUri = (requireActivity() as LoginActivity).issueSignupCallbackUri()
             val signupUri = Constants.webAppUri.buildUpon()

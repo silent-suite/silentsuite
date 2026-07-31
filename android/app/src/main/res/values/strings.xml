@@ -355,7 +355,11 @@
     <string name="login_login">Log In</string>
     <string name="login_sign_in_and_connect">Sign in and set up sync</string>
     <string name="login_signup">Sign Up</string>
-    <string name="login_signup_prompt">New to SilentSuite? Create an account</string>
+    <string name="login_existing_account_heading">Already have a SilentSuite account?</string>
+    <string name="login_existing_account_body">Enter the email address and password for your existing account.</string>
+    <string name="login_signup_heading">New to SilentSuite?</string>
+    <string name="login_signup_body">We’ll open the SilentSuite website. After you create your account, you’ll return to this app to finish setup.</string>
+    <string name="login_signup_action">Create an account on the web</string>
     <string name="login_finish">Finish</string>
     <string name="login_back">Back</string>
     <string name="login_enter_service_details">Connect Android sync</string>
