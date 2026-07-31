@@ -154,7 +154,7 @@ function paidSignupRecoveryScope(
     planId,
     trialPath,
     promoCode: promoCode?.trim() || null,
-    wantsProductUpdates: wantsProductUpdates === true,
+    wantsProductUpdates: wantsProductUpdates !== false,
     rememberDevice: rememberDevice === true,
   })
 }
@@ -811,7 +811,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             requestKey: recoveryIdentity.requestKey,
             recoverySecret: recoveryIdentity.recoverySecret,
             ...(promoCode?.trim() ? { promoCode: promoCode.trim() } : {}),
-            wantsProductUpdates: pending.wantsProductUpdates,
+            wantsProductUpdates: pending.wantsProductUpdates !== false,
             rememberDevice: pending.rememberDevice === true,
           }),
           credentials: 'include',
@@ -826,6 +826,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         const data = await res.json()
         const paymentSessionToken = (data.paymentSessionToken as string | null) ?? null
         if (!paymentSessionToken) throw new Error('Payment setup did not return a session token')
+        const clientSecret = (data.clientSecret as string | null) ?? null
+        const cryptoCheckoutUrl = (data.cryptoCheckoutUrl as string | null) ?? null
+        const cryptoInvoiceId = (data.cryptoInvoiceId as string | null) ?? null
+        const cryptoInvoiceLookupToken = (data.cryptoInvoiceLookupToken as string | null) ?? null
+        const completeProviderContinuation = trialPath === '30day'
+          ? typeof clientSecret === 'string' && clientSecret.length > 0
+          : typeof cryptoCheckoutUrl === 'string' && cryptoCheckoutUrl.length > 0
+            && typeof cryptoInvoiceId === 'string' && cryptoInvoiceId.length > 0
+            && typeof cryptoInvoiceLookupToken === 'string' && cryptoInvoiceLookupToken.length > 0
+        if (!completeProviderContinuation) {
+          throw new Error('Payment setup returned an incomplete provider continuation')
+        }
         clearPaidSignupRecoveryIdentity(recoveryIdentity.requestKey)
         set({
           pendingSignup: {
@@ -835,10 +847,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isLoading: false,
         })
         return {
-          clientSecret: (data.clientSecret as string | null) ?? null,
-          cryptoCheckoutUrl: (data.cryptoCheckoutUrl as string | null) ?? null,
-          cryptoInvoiceId: (data.cryptoInvoiceId as string | null) ?? null,
-          cryptoInvoiceLookupToken: (data.cryptoInvoiceLookupToken as string | null) ?? null,
+          clientSecret,
+          cryptoCheckoutUrl,
+          cryptoInvoiceId,
+          cryptoInvoiceLookupToken,
           paymentSessionToken,
         }
       } catch (err) {

@@ -279,7 +279,7 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().pendingSignup?.etebaseAuthToken).toBeUndefined()
   })
 
-  it('creates a UUID request key and a high-entropy recovery secret for paid signup', async () => {
+  it('retains a UUID request key and high-entropy recovery secret after an incomplete successful response', async () => {
     useAuthStore.setState({ pendingSignup: { email: 'paid@example.com' } })
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: true,
@@ -287,13 +287,14 @@ describe('useAuthStore', () => {
       json: async () => ({ paymentSessionToken: 'signup-session-token' }),
     } as Response)
 
-    await useAuthStore.getState().signup('early_monthly', '30day')
+    await expect(useAuthStore.getState().signup('early_monthly', '30day'))
+      .rejects.toThrow('incomplete provider continuation')
 
     const body = paidSignupRequestBody()
     expect(body.requestKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
     expect(body.recoverySecret).toMatch(/^[A-Za-z0-9_-]{43,}$/)
     expect(body.recoverySecret).not.toBe(body.requestKey)
-    expect(sessionStorage.getItem('silentsuite-paid-signup-recovery')).toBeNull()
+    expect(persistedPaidSignupIdentities()).toHaveLength(1)
   })
 
   it('reuses paid-signup recovery identity after ambiguous transport loss and a reload-like store reset', async () => {
@@ -303,7 +304,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Failed to fetch')
@@ -325,7 +326,7 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+      json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
     } as Response)
 
     await Promise.all([
@@ -350,7 +351,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Invalid signup')
@@ -369,12 +370,12 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
       } as Response)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'recovered-first-session' }),
+        json: async () => ({ paymentSessionToken: 'recovered-first-session', clientSecret: 'seti_recovered_first' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Failed to fetch')
@@ -392,6 +393,28 @@ describe('useAuthStore', () => {
     expect(recovered.recoverySecret).toBe(first.recoverySecret)
   })
 
+  it('does not reuse default marketing opt-in authority for an explicit opt-out retry', async () => {
+    useAuthStore.setState({ pendingSignup: { email: 'preferences@example.com' } })
+    vi.mocked(fetch)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ paymentSessionToken: 'opt-out-session', clientSecret: 'seti_opt_out' }),
+      } as Response)
+
+    await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Failed to fetch')
+    useAuthStore.setState({ pendingSignup: { email: 'preferences@example.com', wantsProductUpdates: false } })
+    await useAuthStore.getState().signup('early_monthly', '30day')
+
+    const defaultOptIn = paidSignupRequestBody(0)
+    const explicitOptOut = paidSignupRequestBody(1)
+    expect(defaultOptIn.wantsProductUpdates).toBe(true)
+    expect(explicitOptOut.wantsProductUpdates).toBe(false)
+    expect(explicitOptOut.requestKey).not.toBe(defaultOptIn.requestKey)
+    expect(explicitOptOut.recoverySecret).not.toBe(defaultOptIn.recoverySecret)
+  })
+
   it.each(['signup-in-progress', 'payment-reconciliation-required', 'bitcoin-invoice-active'])(
     'retains paid-signup recovery identity for ambiguous 409 problem %s',
     async (problemCode) => {
@@ -405,7 +428,7 @@ describe('useAuthStore', () => {
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
-          json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+          json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
         } as Response)
 
       await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Retry later')
@@ -430,7 +453,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
       } as Response)
 
     try {
@@ -456,7 +479,7 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+      json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
     } as Response)
 
     try {
@@ -477,7 +500,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'new-session-token' }),
+        json: async () => ({ paymentSessionToken: 'new-session-token', clientSecret: 'seti_new_session' }),
       } as Response)
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Failed to fetch')
     const ambiguous = paidSignupRequestBody(0)
@@ -518,7 +541,7 @@ describe('useAuthStore', () => {
         .mockResolvedValueOnce({
           ok: true,
           status: 200,
-          json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+          json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
         } as Response)
 
       await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Terminal conflict')
@@ -540,7 +563,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Retry later')
@@ -588,7 +611,7 @@ describe('useAuthStore', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({ paymentSessionToken: 'signup-session-token' }),
+        json: async () => ({ paymentSessionToken: 'signup-session-token', clientSecret: 'seti_complete' }),
       } as Response)
 
     await expect(useAuthStore.getState().signup('early_monthly', '30day')).rejects.toThrow('Temporarily unavailable')
