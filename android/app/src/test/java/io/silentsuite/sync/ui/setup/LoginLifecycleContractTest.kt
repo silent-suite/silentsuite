@@ -70,7 +70,7 @@ class LoginLifecycleContractTest {
                 "AccountCreationCoordinator\\.Result\\.NOT_ADDED,\\s*" +
                 "AccountCreationCoordinator\\.Result\\.QUARANTINED,\\s*" +
                 "AccountCreationCoordinator\\.Result\\.QUARANTINE_FAILED\\s*->\\s*" +
-                "creationAttemptFromDurableEvidence\\(account, accountManager, registry\\)"
+                "creationAttemptFromDurableEvidence\\(account, accountManager, registry, creationId\\)"
         )
         assertTrue(sharedDurableBranch.containsMatchIn(coordinatorResultRouting))
         assertFalse(coordinatorResultRouting.contains("resumableOwnedIncomplete"))
@@ -94,6 +94,11 @@ class LoginLifecycleContractTest {
         assertTrue(source.contains("if (verifiedId != expectedId)"))
         assertTrue(source.contains("openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, expectedId)) }"))
         assertTrue(source.contains("openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account, expectedId)) }"))
+        assertTrue(source.contains("val creationId = java.util.UUID.randomUUID().toString()"))
+        assertTrue(source.contains("createAccount(config.userName, config, creationId)"))
+        assertTrue(source.contains("recoverFromUnexpectedFailure(config.userName, creationId)"))
+        assertTrue(source.contains("expectedCreationId: String,"))
+        assertFalse(source.contains("expectedCreationId: String? = null"))
     }
 
     @Test fun loginFailureDialogsPersistOnlyResourceIdentifiers() {

@@ -46,13 +46,15 @@ class CreateAccountFragment : DialogFragment() {
         }
 
         val activity = requireActivity()
+        val creationId = java.util.UUID.randomUUID().toString()
         val attempt = try {
-            createAccount(config.userName, config)
+            afterCreationIdIssuedForTest?.invoke(creationId)
+            createAccount(config.userName, config, creationId)
         } catch (e: Exception) {
             // A lifecycle callback must never propagate an account-creation exception. The
             // durable evidence determines whether retry is safe; do not retain its message.
             Logger.log.log(Level.SEVERE, "Account creation failed: ${e.javaClass.name}")
-            recoverFromUnexpectedFailure(config.userName)
+            recoverFromUnexpectedFailure(config.userName, creationId)
         }
         if (attempt is CreationAttempt.SettingsResolution) {
             startActivity(PostLoginSetupActivity.newIntent(requireContext(), attempt.account, null)); notifyAccountCreationFailed(); dismissAllowingStateLoss()
@@ -136,13 +138,12 @@ class CreateAccountFragment : DialogFragment() {
     }
 
     @Throws(InvalidAccountException::class)
-    protected fun createAccount(accountName: String, config: Configuration): CreationAttempt {
+    protected fun createAccount(accountName: String, config: Configuration, creationId: String): CreationAttempt {
         synchronized(CREATION_LOCK) {
             if (!App.postLoginBootstrapSucceeded || !PostLoginSetupMigration.isBootstrapped(requireContext())) return CreationAttempt.Failed
             val account = Account(accountName, App.accountType)
             val accountManager = AccountManager.get(context)
             val registry = AccountCreationRegistry.open(requireContext())
-            val creationId = java.util.UUID.randomUUID().toString()
             val fields = listOf(
                 AccountSettings.KEY_URI to config.url?.toString(),
                 AccountSettings.KEY_USERNAME to config.userName,
@@ -178,7 +179,7 @@ class CreateAccountFragment : DialogFragment() {
                 AccountCreationCoordinator.Result.NOT_ADDED,
                 AccountCreationCoordinator.Result.QUARANTINED,
                 AccountCreationCoordinator.Result.QUARANTINE_FAILED ->
-                    creationAttemptFromDurableEvidence(account, accountManager, registry)
+                    creationAttemptFromDurableEvidence(account, accountManager, registry, creationId)
             }
         }
     }
@@ -187,7 +188,7 @@ class CreateAccountFragment : DialogFragment() {
      * Routes all interrupted-creation outcomes from the current durable row and generation
      * evidence. This total router deliberately fails closed once it has observed a row.
      */
-    private fun recoverFromUnexpectedFailure(accountName: String): CreationAttempt {
+    private fun recoverFromUnexpectedFailure(accountName: String, creationId: String): CreationAttempt {
         val account = Account(accountName, App.accountType)
         val manager = AccountManager.get(requireContext())
         var rowObserved = false
@@ -199,7 +200,8 @@ class CreateAccountFragment : DialogFragment() {
                 creationAttemptFromDurableEvidence(
                     account,
                     manager,
-                    AccountCreationRegistry.open(requireContext())
+                    AccountCreationRegistry.open(requireContext()),
+                    creationId,
                 )
         } catch (e: Exception) {
             // Once a row has been observed, incomplete registry/state inspection cannot safely
@@ -212,14 +214,14 @@ class CreateAccountFragment : DialogFragment() {
         account: Account,
         manager: AccountManager,
         registry: AccountCreationRegistry,
-        expectedCreationId: String? = null,
+        expectedCreationId: String,
     ): CreationAttempt {
         var rowObserved = false
         return try {
             val rowPresent = account in manager.getAccountsByType(account.type)
             rowObserved = rowPresent
             val id = if (rowPresent) manager.getUserData(account, AccountSettings.KEY_CREATION_ID) else null
-            val expectedMatches = expectedCreationId == null || id == expectedCreationId
+            val expectedMatches = id == expectedCreationId
             val registryOwns = rowPresent && id != null && expectedMatches && AccountCreationRegistry.owns(
                 registry.get(account.type, account.name), id)
             when (DurableCreationAttemptPolicy.outcome(DurableCreationAttemptPolicy.Evidence(
@@ -250,6 +252,7 @@ class CreateAccountFragment : DialogFragment() {
     companion object {
         private val CREATION_LOCK = Any()
         private const val RETRY_ERROR_TAG = "account_creation_retry_error"
+        @JvmField internal var afterCreationIdIssuedForTest: ((String) -> Unit)? = null
         fun newInstance(config: Configuration): CreateAccountFragment {
             SetupSecretHolder.setPendingConfiguration(config)
             return CreateAccountFragment()

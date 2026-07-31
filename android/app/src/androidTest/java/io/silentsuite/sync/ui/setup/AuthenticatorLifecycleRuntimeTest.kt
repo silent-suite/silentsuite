@@ -45,9 +45,9 @@ class AuthenticatorLifecycleRuntimeTest {
 
     @Test fun recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling() {
         class Fake : AuthenticatorResponseController.Delivery {
-            var continued = 0; var errors = 0
+            var continued = 0; var errors = 0; var results = 0
             override fun continued() { continued++ }
-            override fun result(result: Bundle) = Unit
+            override fun result(result: Bundle) { results++ }
             override fun error(code: Int, message: String) { errors++ }
         }
         val delivery = Fake()
@@ -87,6 +87,9 @@ class AuthenticatorLifecycleRuntimeTest {
                 }
             }
             creatorGenerationReplacementRoutesToSettingsResolution()
+            existingGenerationRoutesToSettingsResolution(injectUnexpectedFailure = false)
+            existingGenerationRoutesToSettingsResolution(injectUnexpectedFailure = true)
+            assertEquals(0, delivery.results)
         } finally { LoginActivity.controllerFactory = null }
     }
 
@@ -164,6 +167,98 @@ class AuthenticatorLifecycleRuntimeTest {
             App.postLoginBootstrapSucceeded = previousBootstrap
         }
     }
+
+    private fun existingGenerationRoutesToSettingsResolution(injectUnexpectedFailure: Boolean) {
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val manager = android.accounts.AccountManager.get(context)
+        val account = Account(
+            "creator-existing-${injectUnexpectedFailure}-${System.nanoTime()}@example.invalid",
+            App.accountType,
+        )
+        val existingGeneration = "creator-existing-generation"
+        val registry = AccountCreationRegistry.open(context)
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        val monitor = instrumentation.addMonitor(PostLoginSetupActivity::class.java.name, null, false)
+        var launched: android.app.Activity? = null
+        try {
+            App.postLoginBootstrapSucceeded = true
+            assertTrue(PostLoginSetupMigration.isBootstrapped(context))
+            assertTrue(manager.addAccountExplicitly(account, null, null))
+            assertTrue(AccountSettings.writeVerified(
+                manager,
+                account,
+                AccountSettings.KEY_CREATION_ID,
+                existingGeneration,
+            ))
+            assertTrue(AccountSettings.writeSetupState(
+                manager,
+                account,
+                PostLoginSetupState.ACCOUNT_CREATED,
+            ))
+            assertTrue(registry.prepare(AccountCreationRegistry.Record(
+                account.name,
+                existingGeneration,
+                AccountCreationRegistry.Phase.CREATING,
+                System.currentTimeMillis(),
+                account.type,
+            )))
+            SetupSecretHolder.setPendingConfiguration(BaseConfigurationFinder.Configuration(
+                URI("https://example.invalid/"),
+                account.name,
+                "opaque-test-session",
+                null,
+            ))
+            if (injectUnexpectedFailure) {
+                CreateAccountFragment.afterCreationIdIssuedForTest = {
+                    throw IllegalStateException("injected creator failure")
+                }
+            }
+            ActivityScenario.launch<LoginActivity>(Intent(context, LoginActivity::class.java)).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.supportFragmentManager.beginTransaction()
+                        .replace(android.R.id.content, CreateAccountFragment())
+                        .addToBackStack("credentials")
+                        .commit()
+                }
+                launched = instrumentation.waitForMonitorWithTimeout(monitor, 10_000)
+                val resolution = requireNotNull(launched) {
+                    "existing generation did not route to PostLoginSetupActivity"
+                }
+                instrumentation.waitForIdleSync()
+                assertEquals(
+                    existingGeneration,
+                    manager.getUserData(account, AccountSettings.KEY_CREATION_ID),
+                )
+                assertEquals(
+                    existingGeneration,
+                    registry.get(account.type, account.name)?.creationId,
+                )
+                org.junit.Assert.assertNull(ActiveAccountManager.getActiveAccount(context))
+                var renderedTitle = ""
+                instrumentation.runOnMainSync {
+                    renderedTitle = resolution
+                        .findViewById<android.widget.TextView>(R.id.setup_title)
+                        .text.toString()
+                }
+                assertEquals(context.getString(R.string.post_login_ambiguous_title), renderedTitle)
+            }
+        } finally {
+            CreateAccountFragment.afterCreationIdIssuedForTest = null
+            launched?.finish()
+            instrumentation.removeMonitor(monitor)
+            SetupSecretHolder.clearProcessOnlySecrets()
+            registry.clearOwned(account.type, account.name, existingGeneration)
+            if (account in manager.getAccountsByType(account.type)) {
+                val removed = CountDownLatch(1)
+                AndroidCompat.removeAccount(manager, account) { removed.countDown() }
+                assertTrue("existing-generation account removal timed out", removed.await(10, TimeUnit.SECONDS))
+            }
+            ActiveAccountManager.clearActiveAccount(context)
+            App.postLoginBootstrapSucceeded = previousBootstrap
+        }
+    }
+
     @Test fun staleLoginActivityRestorationUsesObsoletePathBeforeController() {
         var cancel=0; var clear=0; var launch=0; var controllers=0
         val stale=Bundle().apply { putBoolean(LoginActivity.KEY_WAS_AUTHENTICATOR,true); putString("authenticator_process_epoch","stale"); putString(AuthenticatorResponseController.KEY_ACCOUNT_NAME,"staged") }
