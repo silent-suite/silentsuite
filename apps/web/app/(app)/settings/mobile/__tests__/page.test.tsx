@@ -117,4 +117,19 @@ describe('MobileSettingsPage Android download choices', () => {
     const directApk = screen.getByRole('link', { name: /Direct APK/i })
     expect(directApk.closest('[data-android-managed-channels]')).toBeNull()
   })
+
+  it('keeps active channels keyboard-visible and safe when opening external destinations', () => {
+    render(<MobileSettingsPage />)
+
+    for (const name of ['Google Play', 'Zapstore', 'Obtainium']) {
+      const link = screen.getByRole('link', { name: new RegExp(name, 'i') })
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+      expect(link).toHaveClass('focus-visible:ring-2')
+    }
+
+    expect(screen.getByRole('group', {
+      name: 'F-Droid, on the roadmap. Pending official inclusion',
+    })).toHaveAttribute('aria-disabled', 'true')
+  })
 })
