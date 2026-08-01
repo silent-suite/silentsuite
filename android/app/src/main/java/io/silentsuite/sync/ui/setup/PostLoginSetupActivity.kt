@@ -8,12 +8,17 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.observe
 import at.bitfire.ical4android.TaskProvider.ProviderName
 import io.silentsuite.sync.AccountSettings
@@ -24,6 +29,7 @@ import io.silentsuite.sync.resource.LocalTaskList
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.BaseActivity
+import io.silentsuite.sync.ui.WebViewActivity
 import java.util.UUID
 
 /** Resumes a durable setup row. It deliberately accepts no credentials or session extra. */
@@ -110,6 +116,11 @@ class PostLoginSetupActivity : BaseActivity() {
         }
 
         setContentView(R.layout.activity_post_login_setup)
+        applySetupActionBarInsets(findViewById(R.id.setup_action_bar))
+        configureSetupStepperForFontScale(resources.configuration.fontScale)
+        findViewById<View>(R.id.setup_recommended_apps).setOnClickListener {
+            WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)
+        }
         findViewById<Button>(R.id.setup_done).setOnClickListener {
             submit(PostLoginSetupOrchestrator.UserDecision.DONE)
         }
@@ -594,16 +605,16 @@ class PostLoginSetupActivity : BaseActivity() {
         val noTaskProvider =
             permissions[PostLoginSetupOrchestrator.Integration.TASKS] ==
                 PostLoginSetupOrchestrator.PermissionEvidence.NO_PROVIDER
-        val presentation = presentationFor(current, condition, noTaskProvider)
+        val presentation = presentationFor(current, condition)
 
         findViewById<TextView>(R.id.setup_title).setText(titleResource(presentation.title))
         findViewById<TextView>(R.id.setup_body).setText(bodyResource(presentation.body))
-        findViewById<TextView>(R.id.setup_stage_connect).isSelected =
-            presentation.stage == PostLoginSetupPresentation.Stage.CONNECT
-        findViewById<TextView>(R.id.setup_stage_prepare).isSelected =
-            presentation.stage == PostLoginSetupPresentation.Stage.PREPARE
-        findViewById<TextView>(R.id.setup_stage_ready).isSelected =
-            presentation.stage == PostLoginSetupPresentation.Stage.READY
+        renderSetupStepper(presentation)
+        findViewById<View>(R.id.setup_integration_details).visibility = visible(
+            current == PostLoginSetupState.PERMISSIONS &&
+                condition != PostLoginSetupPresentationCondition.INVENTORY_LOADING &&
+                condition != PostLoginSetupPresentationCondition.INVENTORY_RECOVERY
+        )
 
         val exact = ownership() == PostLoginSetupOrchestrator.Ownership.EXACT
         val permitsContinue = exact && SetupContinuationPolicy.permits(
@@ -616,13 +627,21 @@ class PostLoginSetupActivity : BaseActivity() {
             model.inventoryOutcome,
             SetupContinuationPolicy.Action.SkipIntegrations,
         )
+        findViewById<Button>(R.id.setup_continue_limited).setText(
+            if (current == PostLoginSetupState.PERMISSIONS && permitsContinue) {
+                R.string.post_login_allow_and_continue
+            } else {
+                R.string.post_login_setup_continue
+            }
+        )
         findViewById<Button>(R.id.setup_done).visibility =
             visible(exact && current == PostLoginSetupState.READY)
         findViewById<Button>(R.id.setup_skip_integrations).visibility =
             visible(permitsSkip)
         findViewById<Button>(R.id.setup_continue_limited).visibility = visible(
             exact && (
-                permitsContinue ||
+                (permitsContinue &&
+                    condition != PostLoginSetupPresentationCondition.PERMISSION_BLOCKED) ||
                     current == PostLoginSetupState.ACCOUNT_CREATED &&
                     model.syncConfigurationOutcome() ==
                     PostLoginSetupOrchestrator.SyncConfigurationOutcome.FAILED
@@ -658,7 +677,181 @@ class PostLoginSetupActivity : BaseActivity() {
             noTaskProvider -> getString(R.string.post_login_no_task_provider)
             else -> ""
         }
+        status.setTextColor(ContextCompat.getColor(
+            this,
+            if (condition == PostLoginSetupPresentationCondition.SYNC_CONFIGURATION_FAILED) {
+                R.color.semantic_error
+            } else {
+                R.color.semantic_warning
+            },
+        ))
         status.visibility = visible(status.text.isNotEmpty())
+        val actionButtons = listOf(
+            findViewById<Button>(R.id.setup_continue_limited),
+            findViewById<Button>(R.id.setup_skip_integrations),
+            findViewById<Button>(R.id.setup_remove_incomplete),
+            findViewById<Button>(R.id.setup_retry_inventory),
+            findViewById<Button>(R.id.setup_resolve_ambiguity),
+            findViewById<Button>(R.id.setup_done),
+        )
+        findViewById<View>(R.id.setup_action_bar).visibility =
+            visible(actionButtons.any { it.visibility == View.VISIBLE })
+    }
+
+    private fun applySetupActionBarInsets(actionBar: View) {
+        val basePaddingLeft = actionBar.paddingLeft
+        val basePaddingTop = actionBar.paddingTop
+        val basePaddingRight = actionBar.paddingRight
+        val basePaddingBottom = actionBar.paddingBottom
+
+        ViewCompat.setOnApplyWindowInsetsListener(actionBar) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(
+                basePaddingLeft + systemBars.left,
+                basePaddingTop,
+                basePaddingRight + systemBars.right,
+                basePaddingBottom + systemBars.bottom,
+            )
+            insets
+        }
+        if (ViewCompat.isAttachedToWindow(actionBar)) {
+            ViewCompat.requestApplyInsets(actionBar)
+        } else {
+            actionBar.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(view: View) {
+                    view.removeOnAttachStateChangeListener(this)
+                    ViewCompat.requestApplyInsets(view)
+                }
+
+                override fun onViewDetachedFromWindow(view: View) = Unit
+            })
+        }
+    }
+
+    private fun renderSetupStepper(presentation: PostLoginSetupPresentation) {
+        val stages = listOf(
+            PostLoginSetupPresentation.Stage.CONNECT,
+            PostLoginSetupPresentation.Stage.PREPARE,
+            PostLoginSetupPresentation.Stage.READY,
+        )
+        val nodes = listOf(
+            findViewById<TextView>(R.id.setup_step_connect_node),
+            findViewById<TextView>(R.id.setup_step_prepare_node),
+            findViewById<TextView>(R.id.setup_step_ready_node),
+        )
+        val labels = listOf(
+            findViewById<TextView>(R.id.setup_stage_connect),
+            findViewById<TextView>(R.id.setup_stage_prepare),
+            findViewById<TextView>(R.id.setup_stage_ready),
+        )
+        val labelResources = listOf(
+            R.string.post_login_stage_connect,
+            R.string.post_login_stage_prepare,
+            R.string.post_login_stage_ready,
+        )
+        val currentIndex = stages.indexOf(presentation.stage)
+        val error = presentation.title in setOf(
+            PostLoginSetupPresentation.Title.SYNC_CONFIGURATION_FAILED,
+            PostLoginSetupPresentation.Title.COLLECTIONS_FAILED,
+            PostLoginSetupPresentation.Title.PERMISSION_DENIED,
+            PostLoginSetupPresentation.Title.PERMISSION_BLOCKED,
+            PostLoginSetupPresentation.Title.REMOVAL_FAILED,
+            PostLoginSetupPresentation.Title.AMBIGUOUS,
+        )
+
+        nodes.forEachIndexed { index, node ->
+            node.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0)
+            when {
+                index < currentIndex -> {
+                    node.setBackgroundResource(R.drawable.bg_setup_step_complete)
+                    node.text = ""
+                    node.setTextColor(ContextCompat.getColor(this, R.color.navy900))
+                }
+                index == currentIndex && error -> {
+                    node.setBackgroundResource(R.drawable.bg_setup_step_error_icon)
+                    node.text = ""
+                }
+                index == currentIndex -> {
+                    node.setBackgroundResource(R.drawable.bg_setup_step_current)
+                    node.text = (index + 1).toString()
+                    node.setTextColor(ContextCompat.getColor(this, R.color.navy900))
+                }
+                else -> {
+                    node.setBackgroundResource(R.drawable.bg_setup_step_upcoming)
+                    node.text = (index + 1).toString()
+                    node.setTextColor(ContextCompat.getColor(this, R.color.semantic_on_surface))
+                }
+            }
+            labels[index].isSelected = index == currentIndex
+            labels[index].setTypeface(
+                labels[index].typeface,
+                if (index <= currentIndex) android.graphics.Typeface.BOLD
+                else android.graphics.Typeface.NORMAL,
+            )
+        }
+        findViewById<View>(R.id.setup_step_connector_one).setBackgroundColor(
+            ContextCompat.getColor(this, if (currentIndex > 0)
+                R.color.semantic_primary else R.color.semantic_outline)
+        )
+        findViewById<View>(R.id.setup_step_connector_two).setBackgroundColor(
+            ContextCompat.getColor(this, if (currentIndex > 1)
+                R.color.semantic_primary else R.color.semantic_outline)
+        )
+        findViewById<View>(R.id.setup_stepper).contentDescription = getString(
+            R.string.post_login_stepper_description,
+            currentIndex + 1,
+            getString(labelResources[currentIndex]),
+        )
+    }
+
+    internal fun configureSetupStepperForFontScale(fontScale: Float) {
+        if (fontScale < 1.5f) return
+
+        val stepper = findViewById<LinearLayout>(R.id.setup_stepper)
+        stepper.orientation = LinearLayout.VERTICAL
+        stepper.gravity = Gravity.NO_GRAVITY
+
+        val density = resources.displayMetrics.density
+        val labelMargin = (12 * density).toInt()
+        val connectorMargin = (15 * density).toInt()
+        val connectorHeight = (16 * density).toInt()
+        val stages = listOf(
+            R.id.setup_step_connect_node to R.id.setup_stage_connect,
+            R.id.setup_step_prepare_node to R.id.setup_stage_prepare,
+            R.id.setup_step_ready_node to R.id.setup_stage_ready,
+        )
+        stages.forEach { (nodeId, labelId) ->
+            val node = findViewById<TextView>(nodeId)
+            val label = findViewById<TextView>(labelId)
+            val stage = node.parent as LinearLayout
+            stage.orientation = LinearLayout.HORIZONTAL
+            stage.gravity = Gravity.CENTER_VERTICAL
+            stage.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            node.layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            label.layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f,
+            ).apply { marginStart = labelMargin }
+            label.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            label.maxLines = Int.MAX_VALUE
+            label.ellipsize = null
+        }
+        listOf(R.id.setup_step_connector_one, R.id.setup_step_connector_two).forEach { id ->
+            findViewById<View>(id).layoutParams = LinearLayout.LayoutParams(
+                (2 * density).toInt(),
+                connectorHeight,
+            ).apply {
+                gravity = Gravity.START
+                marginStart = connectorMargin
+            }
+        }
     }
 
     private fun presentationCondition(
@@ -737,7 +930,6 @@ class PostLoginSetupActivity : BaseActivity() {
             R.string.post_login_permission_denied_body
         PostLoginSetupPresentation.Body.PERMISSION_BLOCKED ->
             R.string.post_login_permission_blocked_body
-        PostLoginSetupPresentation.Body.NO_TASK_PROVIDER -> R.string.post_login_no_task_provider
         PostLoginSetupPresentation.Body.INITIAL_SYNC -> R.string.post_login_initial_sync_body
         PostLoginSetupPresentation.Body.READY -> R.string.post_login_ready_body
         PostLoginSetupPresentation.Body.COMPLETE -> R.string.post_login_complete_body
@@ -750,7 +942,7 @@ class PostLoginSetupActivity : BaseActivity() {
     }
 
     private fun readySummary(): String {
-        val limits = mutableListOf(getString(R.string.post_login_setup_ready_requested))
+        val limits = mutableListOf<String>()
         if (!android.content.ContentResolver.getMasterSyncAutomatically()) {
             limits += getString(R.string.post_login_setup_limit_master_sync)
         }

@@ -321,6 +321,7 @@ jobs:
           fi
 
       - name: Run focused launcher and setup recreation contracts
+        id: focused-runtime
         uses: ReactiveCircus/android-emulator-runner@b530d96654c385303d652368551fb075bc2f0b6b # v2.35.0
         with:
           api-level: ${{ matrix.api-level }}
@@ -330,138 +331,95 @@ jobs:
           disable-animations: true
           script: bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"
 
-      - name: Upload focused androidTest reports and results
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ matrix.shard }}-${{ github.sha }}
-          path: |
-            android/app/build/outputs/androidTest-results/connected/
-            android/app/build/reports/androidTests/connected/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Assert focused runtime methods executed
+      - name: Initialize focused runtime producer manifest
         if: always()
         run: |
           python3 - <<'PY'
-          import glob, xml.etree.ElementTree as ET
+          import glob, hashlib, json, pathlib, subprocess
+          output=pathlib.Path('app/build/outputs/androidTest-results/scenarios/producer-manifest.json')
+          output.parent.mkdir(parents=True, exist_ok=True)
+          metadata_candidates=[]
+          for path in pathlib.Path('app/build/outputs/apk').glob('**/output-metadata.json'):
+            try: metadata_candidates.append(json.loads(path.read_text(encoding='utf-8')))
+            except (OSError,ValueError): pass
+          metadata=next((item for item in metadata_candidates if item.get('applicationId') == 'io.silentsuite.android'), {})
+          element=(metadata.get('elements') or [{}])[0]
+          evidence_files=sorted(
+            pathlib.Path(path) for path in
+            glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml',recursive=True)+
+            glob.glob('app/build/outputs/androidTest-results/scenarios/**/*.json',recursive=True)
+            if not path.endswith('producer-manifest.json')
+          )
+          producer={
+            'api': ${{ matrix.api-level }},
+            'applicationId': metadata.get('applicationId',''),
+            'arch': '${{ matrix.arch }}',
+            'assertionOutcome': 'INCOMPLETE',
+            'baseSha': '${{ github.event.pull_request.base.sha || github.event.before || github.sha }}',
+            'checkout': '${{ github.sha }}',
+            'event': '${{ github.event_name }}',
+            'evidenceSha256': {str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in evidence_files},
+            'headSha': '${{ github.event.pull_request.head.sha || github.sha }}',
+            'job': '${{ github.job }}',
+            'ledgerSha256': hashlib.sha256(pathlib.Path('scripts/focused-runtime-ledger-v1.json').read_bytes()).hexdigest(),
+            'parents': subprocess.check_output(['git','show','-s','--format=%P','HEAD'],text=True).strip().split(),
+            'pr': '${{ github.event.pull_request.number || 'NOT_APPLICABLE' }}',
+            'ref': '${{ github.ref }}',
+            'run': '${{ github.run_id }}',
+            'runAttempt': '${{ github.run_attempt }}',
+            'schema': 1,
+            'shard': '${{ matrix.api-level }}:${{ matrix.shard }}',
+            'stepOutcomes': {'junitAssertion':'NOT_RUN','runtime':'${{ steps.focused-runtime.outcome }}'},
+            'tree': subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
+            'versionCode': element.get('versionCode'),
+            'versionName': element.get('versionName'),
+            'workflowSha256': hashlib.sha256(pathlib.Path('../.github/workflows/build-android.yml').read_bytes()).hexdigest(),
+          }
+          output.write_bytes((json.dumps(producer,sort_keys=True,separators=(',',':'))+'\n').encode())
+          PY
+
+      - name: Assert focused runtime methods executed
+        id: focused-assertion
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, hashlib, json, pathlib, subprocess, xml.etree.ElementTree as ET
           from collections import Counter
-          canonical={
-            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','recreationKeepsTheExactAccountRouteAndDeliversModelStateToTheRecreatedUi'),
-            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','readyDoneCompletesOnlyTheExactGeneratedAccount'),
-            ('io.silentsuite.sync.ui.AccountActivityRecreationTest','replacementGenerationCannotCompleteThePreviouslyValidatedSetupRoute'),
-            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','oneAccountSwitcherExposesAddRowAndCurrentSemanticsAfterRecreation'),
-            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','delayedRemovalFailureSurvivesRecreationAndDuplicateTapStartsOnce'),
-            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','actualTwoAccountSignOutRemovesExactMainAndChildAndActivatesSibling'),
-            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','adapterRefusesToRemoveSameNameReplacementGeneration'),
-            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','delayedSuccessfulRemovalAfterRecreationRoutesRetainedSibling'),
-            ('io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest','systemBackClosesDrawerWithoutFinishing'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','retainedLoadRejectsSameNameReplacementBeforePublication'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','initialLoadFailurePublishesTerminalErrorAndRefreshFailureRetainsValidDashboard'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','retainedSurfaceRejectsReplacementBeforePrivateActionsAndRoutes'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','dashboardExportCompletionPreservesExactDashboardAfterRecreation'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','freshContactsGenerationFinishesBeforeChildDispatchOrCompletion'),
-            ('io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest','combinedSignInKeepsPrimaryActionReachableAndSecretsOutOfSavedState'),
-            ('io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest','normalAndAuthenticatorModesUseOneCombinedCredentialSurfaceAcrossRecreation'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','noNetworkDashboardShellRoutesExactAccountAfterReadyDone'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','recoveryRemovalConfirmedRoutesCleanLoginAndPreservesSibling'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionsRecoveryBlocksActionsAndLimitedSkipReachesReady'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','pendingRecoveryRemovalSurvivesRecreationAndCleansExactOwner'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','missingCreationIdShowsSettingsOnlyResolution'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','readOnlyLimitedTasksUseNormalContinueAndReachReady'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','generationMismatchShowsSettingsOnlyAcrossRecreation'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncConfigurationEnablesCoreAuthoritiesWithoutRecovery'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','accountCreatedSyncFailureKeepsExactRowAndOffersContinueRetry'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','everyDurableSetupStateColdRendersApprovedPresentationWithoutRenderSideEffects'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','safeAutoAdvanceIsIdempotentAcrossRecreationAndStopsAtUserDecision'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionGrantDenialBlockedSkipAndNoTaskProviderRemainResumable'),
-            ('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','initialSyncRequestIdSurvivesEveryCrashCutAndClearsAfterReady'),
-            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','controllerLiveResultCancellationDuplicatesAndRestoreAreExactOnce'),
-            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','cleanInstallBootstrapPublishesMarkerAfterReconciliation'),
-            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling'),
-            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','obsoleteCoordinatorCancelsBeforeNormalLaunch'),
-            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','staleLoginActivityRestorationUsesObsoletePathBeforeController'),
-            ('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','sameProcessRotationPolicyPreservesAuthenticator'),
-            ('io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest','explicitCreatingTargetOnlyReceivesProviderConfiguration'),
-            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','contactsAttemptExtraRoundTripsAtProviderBoundary'),
-            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','persistedEvidenceIsExactAccountGenerationScopedAndContainsNoAccountName'),
-            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','v1EvidenceReadsCompatiblyAndV2MutationStaysExactAndPrivate'),
-            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','manualRequestPersistsBeforeDispatchAndMatchingTerminalClearsLifecycle'),
-            ('io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest','requestAndParentChildCorrelationExtrasRoundTripAtAndroidBoundary'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue'),
-            ('io.silentsuite.sync.ui.AccountDashboardRuntimeTest','futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCompletionRecreatesAndReturnsToCallerForExactGeneration'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','encryptionPasswordCancelReturnsToCallerAfterRecreation'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importDispatcherBackPopsNestedStackThenFinishesWithCanceledResult'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importToolbarUpPopsNestedStackThenFinishesWithCanceledResult'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importSystemBackPopsNestedStackThenFinishesWithCanceledResult'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','webViewDispatcherBackConsumesLocalHistoryThenFinishes'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','webViewToolbarUpFinishesInsteadOfTraversingLocalHistory'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','webViewSystemBackConsumesLocalHistoryThenFinishes'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','importCompletionShowsResultAndReturnsToCallerForExactCollection'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCopyRevalidatesGenerationBeforeWritingClipboard'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCopyCompletesAfterRecreationForItsExactGeneration'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','fingerprintCancelAfterRecreationReturnsToExactDashboard'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionCreateLaunchRecreateAndBackPreserveExactRoute'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationsLaunchRecreateAndBackKeepsExactGenerationRoute'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','exactGenerationRoutesLaunchRealActivitiesAndRejectReplacement'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','aboutHelpRemainsReadableAndSelectedAcrossRecreation'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','staleSameNameGenerationRoutesFailClosedBeforeRendering'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionExportCompletionReturnsToExactRenderedCollection'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionViewRendersRecreatesAndReturnsForExactCollection'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionCreateCompletionRendersCreatedCollectionAndPreservesReturn'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionEditCompletionReturnsToUpdatedCollection'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','collectionMembersRenderRemoveAndReturnToExactCollection'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationAcceptCompletionReturnsToCallerForExactGeneration'),
-            ('io.silentsuite.sync.ui.SiblingRoutesRuntimeTest','invitationRejectCompletionUpdatesListAndReturnsForExactGeneration'),
-            ('io.silentsuite.sync.ui.SettingsRuntimeTest','exactAccountSyncSettingAndCategorySurviveRecreationWithoutChangingSibling'),
-            ('io.silentsuite.sync.ui.SettingsRuntimeTest','staleNotificationAndLegacyRoutesRejectReaddedSameNameAcrossProcessStyleRelaunch'),
-            ('io.silentsuite.sync.ui.SettingsRuntimeTest','loggerNotificationRouteKeepsAdvancedExactGenerationAcrossRecreationAndRejectsReplacement'),
-            ('io.silentsuite.sync.ui.SettingsRuntimeTest','retainedSettingsRejectSameNameReplacementBeforeAccountMutation'),
-            ('io.silentsuite.sync.ui.SettingsRuntimeTest','proxyPortPreferenceAcceptsBoundsAndPreservesPriorValueOnInvalidInput'),
-            ('io.silentsuite.sync.ui.SettingsRuntimeTest','twoStoreMigrationRerunsAfterDefaultAliasCommitFailure'),
-            ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationRerunsAfterCanonicalStoreCommitFailureWithoutTouchingAliases'),
-            ('io.silentsuite.sync.ui.SettingsRuntimeTest','migrationMarkerFailureRerunsAndMarkerIsAlwaysLast'),
-          }
-          mixed=next(pair for pair in canonical if pair[1] == 'mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue')
-          api36_account_dashboard_classes={
-            'io.silentsuite.sync.ui.AccountActivityRecreationTest',
-            'io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest',
-            'io.silentsuite.sync.ui.AccountDashboardRuntimeTest',
-            'io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest',
-            'io.silentsuite.sync.utils.TaskProviderHandlingRuntimeTest',
-          }
-          api36_first_run_setup_classes={
-            'io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest',
-            'io.silentsuite.sync.ui.PostLoginSetupRuntimeTest',
-          }
-          api36_status_routes_classes={
-            'io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest',
-            'io.silentsuite.sync.ui.SettingsRuntimeTest',
-            'io.silentsuite.sync.ui.SiblingRoutesRuntimeTest',
-          }
+
+          if '${{ steps.focused-runtime.outcome }}' != 'success':
+            raise SystemExit('focused runtime execution or scenario validation did not succeed')
+
+          ledger_path=pathlib.Path('scripts/focused-runtime-ledger-v1.json')
+          raw=ledger_path.read_bytes()
+          def reject_duplicate_keys(pairs):
+            result={}
+            for key,value in pairs:
+              if key in result: raise SystemExit(f'duplicate ledger key: {key}')
+              result[key]=value
+            return result
+          ledger=json.loads(raw.decode('utf-8'), object_pairs_hook=reject_duplicate_keys)
+          canonical_bytes=(json.dumps(ledger,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n').encode('utf-8')
+          if raw != canonical_bytes: raise SystemExit('focused runtime ledger is not canonical compact sorted UTF-8/LF JSON')
+          if ledger.get('schema') != 1: raise SystemExit('unsupported focused runtime ledger schema')
+          canonical={(class_name,method) for class_name,methods in ledger['classes'].items() for method in methods}
+          mixed={tuple(pair) for pair in ledger['shards']['21:mixed']}
           shard='${{ matrix.shard }}'
-          if shard == 'mixed':
-            expected={mixed}
-          elif shard == 'remaining':
-            expected=canonical-{mixed}
-          elif shard == 'all':
+          api='${{ matrix.api-level }}'
+          key=f'{api}:{shard}'
+          if key == '21:mixed':
+            expected=mixed
+          elif key == '21:remaining':
+            expected=canonical-mixed
+          elif key == '35:all':
             expected=canonical
-          elif shard == 'account-dashboard':
-            expected={pair for pair in canonical if pair[0] in api36_account_dashboard_classes}
-          elif shard == 'first-run-setup':
-            expected={pair for pair in canonical if pair[0] in api36_first_run_setup_classes}
-          elif shard == 'status-routes':
-            expected={pair for pair in canonical if pair[0] in api36_status_routes_classes}
+          elif key in {'36:account-dashboard','36:first-run-setup','36:status-routes'}:
+            owners=set(ledger['shards'][key])
+            expected={pair for pair in canonical if pair[0] in owners}
           else:
-            raise SystemExit(f'unsupported shard {shard}')
-          expected_sizes={'mixed': 1, 'remaining': 77, 'all': 78, 'account-dashboard': 26, 'first-run-setup': 15, 'status-routes': 37}
-          if len(canonical) != 78 or len(expected) != expected_sizes[shard]:
-            raise SystemExit(f'bad expected ledger size for {shard}: canonical={len(canonical)} expected={len(expected)}')
+            raise SystemExit(f'unsupported API/shard {key}')
+          expected_sizes={'21:mixed':1,'21:remaining':80,'35:all':81,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':37}
+          if len(canonical) != 81 or len(expected) != expected_sizes[key]:
+            raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
             root=ET.parse(path).getroot()
@@ -470,12 +428,79 @@ jobs:
               if pair in expected and list(case): raise SystemExit(f'failed {pair}')
           counts=Counter(seen)
           unexpected=set(counts)-expected
-          if unexpected: raise SystemExit(f'unexpected tests for {shard}: {sorted(unexpected)}')
+          if unexpected: raise SystemExit(f'unexpected tests for {key}: {sorted(unexpected)}')
           missing=expected-set(counts)
           if missing: raise SystemExit(f'missing {sorted(missing)}')
           duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}
           if duplicates: raise SystemExit(f'expected test count mismatch {duplicates}')
+          workflow_path=pathlib.Path('../.github/workflows/build-android.yml')
+          metadata_paths=list(pathlib.Path('app/build/outputs/apk').glob('**/output-metadata.json'))
+          if not metadata_paths: raise SystemExit('missing APK output metadata')
+          metadata_candidates=[json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=reject_duplicate_keys) for path in metadata_paths]
+          metadata=next((item for item in metadata_candidates if item.get('applicationId') == 'io.silentsuite.android'), None)
+          if metadata is None: raise SystemExit('missing target application output metadata')
+          element=metadata['elements'][0]
+          evidence_files=sorted(
+            pathlib.Path(path) for path in
+            glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml',recursive=True)+
+            glob.glob('app/build/outputs/androidTest-results/scenarios/**/*.json',recursive=True)
+            if not path.endswith('producer-manifest.json')
+          )
+          evidence_hashes={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in evidence_files}
+          producer={
+            'api': int(api),
+            'applicationId': metadata['applicationId'],
+            'arch': '${{ matrix.arch }}',
+            'assertionOutcome': 'PASS',
+            'baseSha': '${{ github.event.pull_request.base.sha || github.event.before || github.sha }}',
+            'checkout': '${{ github.sha }}',
+            'event': '${{ github.event_name }}',
+            'evidenceSha256': evidence_hashes,
+            'executed': len(expected),
+            'headSha': '${{ github.event.pull_request.head.sha || github.sha }}',
+            'job': '${{ github.job }}',
+            'ledgerSha256': hashlib.sha256(raw).hexdigest(),
+            'parents': subprocess.check_output(['git','show','-s','--format=%P','HEAD'], text=True).strip().split(),
+            'pr': '${{ github.event.pull_request.number || 'NOT_APPLICABLE' }}',
+            'ref': '${{ github.ref }}',
+            'run': '${{ github.run_id }}',
+            'runAttempt': '${{ github.run_attempt }}',
+            'schema': 1,
+            'shard': key,
+            'stepOutcomes': {'junitAssertion':'PASS','runtime':'${{ steps.focused-runtime.outcome }}'},
+            'tree': subprocess.check_output(['git','rev-parse','HEAD^{tree}'], text=True).strip(),
+            'versionCode': element['versionCode'],
+            'versionName': element['versionName'],
+            'workflowSha256': hashlib.sha256(workflow_path.read_bytes()).hexdigest(),
+          }
+          producer_path=pathlib.Path('app/build/outputs/androidTest-results/scenarios/producer-manifest.json')
+          producer_path.parent.mkdir(parents=True, exist_ok=True)
+          producer_path.write_bytes((json.dumps(producer,sort_keys=True,separators=(',',':'))+'\n').encode('utf-8'))
           PY
+
+      - name: Finalize failed focused runtime producer manifest
+        if: always() && steps.focused-assertion.outcome != 'success'
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          path=pathlib.Path('app/build/outputs/androidTest-results/scenarios/producer-manifest.json')
+          producer=json.loads(path.read_text(encoding='utf-8'))
+          producer['assertionOutcome']='FAILED'
+          producer['stepOutcomes']['junitAssertion']='FAILED'
+          path.write_bytes((json.dumps(producer,sort_keys=True,separators=(',',':'))+'\n').encode())
+          PY
+
+      - name: Upload focused androidTest reports and results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            android/app/build/outputs/androidTest-results/connected/
+            android/app/build/outputs/androidTest-results/scenarios/
+            android/app/build/reports/androidTests/connected/
+          if-no-files-found: warn
+          retention-days: 14
 
   # ─────────────────────────────────────────────────────────────────────
   # Release builds — signed, only on version tags.

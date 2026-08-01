@@ -17,6 +17,7 @@ REDUCER = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/account/Accou
 WINDOWS = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/account/SyncLifecycleWindows.kt"
 WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 FOCUSED_RUNTIME_SCRIPT = ROOT / "android/scripts/run-focused-runtime-tests.sh"
+FOCUSED_RUNTIME_LEDGER = ROOT / "android/scripts/focused-runtime-ledger-v1.json"
 FROZEN_V1 = ROOT / "android/app/src/test/java/io/silentsuite/sync/syncadapter/FrozenBaselineV1StatusReader.kt"
 
 
@@ -401,9 +402,14 @@ def test_v2_validation_rejects_impossible_private_lifecycle_records():
     assert "attempt;delimiter" in tests
 
 
-def test_pr2_runtime_methods_appear_once_in_the_exact_workflow_ledger():
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    entries = (
+def test_pr2_runtime_methods_appear_once_in_the_exact_runtime_ledger():
+    ledger = json.loads(FOCUSED_RUNTIME_LEDGER.read_text(encoding="utf-8"))
+    canonical = {
+        (class_name, method)
+        for class_name, methods in ledger["classes"].items()
+        for method in methods
+    }
+    entries = {
         ("io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest",
          "v1EvidenceReadsCompatiblyAndV2MutationStaysExactAndPrivate"),
         ("io.silentsuite.sync.syncadapter.SyncStatusRuntimeTest",
@@ -415,9 +421,13 @@ def test_pr2_runtime_methods_appear_once_in_the_exact_workflow_ledger():
         ("io.silentsuite.sync.ui.AccountDashboardRuntimeTest",
          "futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent"),
         ("io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest",
-         "combinedSignInKeepsPrimaryActionReachableAndSecretsOutOfSavedState"),
+         "accountChoiceAndCredentialNavigationRemainExact"),
         ("io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest",
-         "normalAndAuthenticatorModesUseOneCombinedCredentialSurfaceAcrossRecreation"),
+         "signupReturnClaimsOnlyOwningFlowAndIsIdempotent"),
+        ("io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest",
+         "normalAuthenticatorAndLegacyRestorationUseSafeDestinations"),
+        ("io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest",
+         "accountEntryRemainsAccessibleAcrossConfigurations"),
         ("io.silentsuite.sync.ui.PostLoginSetupRuntimeTest",
          "everyDurableSetupStateColdRendersApprovedPresentationWithoutRenderSideEffects"),
         ("io.silentsuite.sync.ui.PostLoginSetupRuntimeTest",
@@ -426,13 +436,11 @@ def test_pr2_runtime_methods_appear_once_in_the_exact_workflow_ledger():
          "permissionGrantDenialBlockedSkipAndNoTaskProviderRemainResumable"),
         ("io.silentsuite.sync.ui.PostLoginSetupRuntimeTest",
          "initialSyncRequestIdSurvivesEveryCrashCutAndClearsAfterReady"),
-    )
-    for class_name, method_name in entries:
-        entry = f"('{class_name}','{method_name}')"
-        assert workflow.count(entry) == 1
+    }
+    assert entries <= canonical
 
 
-def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results():
+def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining_results():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     job = workflow.split("  account-recreation-runtime:", 1)[1].split(
         "  # ─────────────────────────────────────────────────────────────────────", 1
@@ -442,173 +450,135 @@ def test_fresh_emulator_runtime_shards_are_exact_and_preserve_remaining_results(
     )[1].split("- name: Upload focused androidTest reports and results", 1)[0]
     script = FOCUSED_RUNTIME_SCRIPT.read_text(encoding="utf-8")
     assertion = workflow.split("- name: Assert focused runtime methods executed", 1)[1]
-    dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
 
     assert "timeout-minutes: 60" in job
     assert re.findall(r"^\s+script:\s*(.+)$", step, re.MULTILINE) == [
         'bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"'
     ]
-    rows = re.findall(
-        r"- api-level: (\d+)\n\s+arch: (\S+)\n\s+shard: (\S+)", job
-    )
+    rows = re.findall(r"- api-level: (\d+)\n\s+arch: (\S+)\n\s+shard: (\S+)", job)
     assert rows == [
-        ("21", "x86", "mixed"),
-        ("21", "x86", "remaining"),
-        ("35", "x86_64", "all"),
-        ("36", "x86_64", "account-dashboard"),
-        ("36", "x86_64", "first-run-setup"),
-        ("36", "x86_64", "status-routes"),
+        ("21", "x86", "mixed"), ("21", "x86", "remaining"),
+        ("35", "x86_64", "all"), ("36", "x86_64", "account-dashboard"),
+        ("36", "x86_64", "first-run-setup"), ("36", "x86_64", "status-routes"),
     ]
     assert "name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})" in job
     artifact = re.search(r"^\s+name: (account-recreation-androidTest-.+)$", job, re.MULTILINE).group(1)
     assert artifact == "account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ matrix.shard }}-${{ github.sha }}"
-    assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
-    subprocess.run(["bash", "-n", FOCUSED_RUNTIME_SCRIPT], check=True)
-    subprocess.run(
-        ["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "21" "mixed"'],
-        check=True,
-    )
-    assert 'api_level="${1:?usage: run-focused-runtime-tests.sh API_LEVEL SHARD}"' in script
-    assert 'shard="${2:?usage: run-focused-runtime-tests.sh API_LEVEL SHARD}"' in script
-    assert script.count("app:connectedDebugAndroidTest") == 7
-    assert "mktemp -d" in script
-    assert '${RUNNER_TEMP:-${TMPDIR:-/tmp}}' in script
-    assert "app/build/outputs/androidTest-results/connected/." in script
-    assert "api21-requested" in script
-    assert "api21_batch_" not in script
 
-    assignments = dict(
-        re.findall(r"^(mixed_selector|requested_selector|other76_selectors|focused_classes|api36_account_dashboard_classes|api36_first_run_setup_classes|api36_status_routes_classes)='([^']+)'$", script, re.MULTILINE)
-    )
-    mixed_selectors = assignments["mixed_selector"].split(",")
-    requested_selectors = assignments["requested_selector"].split(",")
-    other76_ordered = assignments["other76_selectors"].split(",")
-    monolithic_ordered = assignments["focused_classes"].split(",")
-    monolithic = set(monolithic_ordered)
-    api36_account_dashboard = assignments["api36_account_dashboard_classes"].split(",")
-    api36_first_run_setup = assignments["api36_first_run_setup_classes"].split(",")
-    api36_status_routes = assignments["api36_status_routes_classes"].split(",")
-    diagnostic = (
-        f"{dashboard}#"
-        "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
-    )
-    mixed = (
-        f"{dashboard}#"
-        "mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue"
-    )
-    dashboard_source = (
-        ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/"
-        "AccountDashboardRuntimeTest.kt"
-    ).read_text(encoding="utf-8")
-    dashboard_methods = set(re.findall(r"@Test\s+fun\s+(\w+)", dashboard_source))
-    expected_other_dashboard = {
-        f"{dashboard}#{method}"
-        for method in dashboard_methods
-        if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
+    raw = FOCUSED_RUNTIME_LEDGER.read_bytes()
+    assert raw.endswith(b"\n") and not raw.endswith(b"\n\n") and b"\r" not in raw
+    ledger = json.loads(raw.decode("utf-8"), object_pairs_hook=lambda pairs: _unique_json_object(pairs))
+    canonical_bytes = (json.dumps(ledger, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    assert raw == canonical_bytes
+    assert ledger["schema"] == 1
+    assert list(ledger["classes"]) == sorted(ledger["classes"])
+    assert all(methods == sorted(methods) and len(methods) == len(set(methods)) for methods in ledger["classes"].values())
+
+    canonical = {
+        (class_name, method)
+        for class_name, methods in ledger["classes"].items()
+        for method in methods
     }
-    assert mixed_selectors == [mixed]
-    assert requested_selectors == [diagnostic]
-    assert set(other76_ordered) == expected_other_dashboard | (monolithic - {dashboard})
-    assert other76_ordered[:8] == [
-        f"{dashboard}#{method}" for method in re.findall(r"@Test\s+fun\s+(\w+)", dashboard_source)
-        if method not in {diagnostic.split("#", 1)[1], mixed.split("#", 1)[1]}
-    ]
-    assert other76_ordered[8:] == [name for name in monolithic_ordered if name != dashboard]
-    assert script.count('"${focused_classes}"') == 1
-    api36_class_shards = [
-        set(api36_account_dashboard),
-        set(api36_first_run_setup),
-        set(api36_status_routes),
-    ]
-    assert all(
-        left.isdisjoint(right)
-        for index, left in enumerate(api36_class_shards)
-        for right in api36_class_shards[index + 1:]
-    )
-    assert set().union(*api36_class_shards) == monolithic
-    assert 'command -v timeout >/dev/null 2>&1' in script
-    assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == ["600", "600", "1500", "2400", "1800", "1800", "1800"]
-    assert 600 < 2700 and 600 + 1500 < 2700 and 2400 < 2700 and 1800 < 2700
-    requested_run = script.index('class="${requested_selector}"')
-    save = script.index("\n  save_requested_results", requested_run)
-    other_run = script.index('class="${other76_selectors}"')
-    assert script.index("trap restore_requested_results EXIT") < requested_run < save < other_run
-    assert "status=$?" in script
-    assert "set +e" in script
-    assert "restore_status=$?" in script
-    assert script.count('if [[ "${status}" -eq 0 && "') >= 3
-    assert script.index("trap - EXIT") < script.index('exit "${status}"')
-
-    assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
-    ledger = re.findall(r"^\s+\('([^']+)','([^']+)'\),$", assertion, re.MULTILINE)
-    assert len(ledger) == 78
-    assert len(set(ledger)) == 78
-    runtime_methods = []
-    for class_name in monolithic:
+    runtime_methods = set()
+    for class_name in ledger["classes"]:
         source = ROOT / "android/app/src/androidTest/java" / Path(*class_name.split(".")).with_suffix(".kt")
-        runtime_methods.extend(
+        runtime_methods.update(
             (class_name, method)
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
-    assert len(runtime_methods) == 78
-    assert set(ledger) == set(runtime_methods)
-    def expand(selectors):
-        return {
-            method
-            for selector in selectors
-            for method in (
-                [selector] if "#" in selector
-                else [f"{name}#{method}" for name, method in runtime_methods if name == selector]
-            )
-        }
-    mixed_expanded = expand(mixed_selectors)
-    remaining_expanded = expand(requested_selectors + other76_ordered)
-    all_expanded = expand(monolithic_ordered)
-    account_dashboard_expanded = expand(api36_account_dashboard)
-    first_run_setup_expanded = expand(api36_first_run_setup)
-    status_routes_expanded = expand(api36_status_routes)
-    workflow_account_dashboard = set(re.findall(
-        r"'([^']+)'",
-        assertion.split("api36_account_dashboard_classes={", 1)[1].split("}", 1)[0],
-    ))
-    workflow_first_run_setup = set(re.findall(
-        r"'([^']+)'",
-        assertion.split("api36_first_run_setup_classes={", 1)[1].split("}", 1)[0],
-    ))
-    workflow_status_routes = set(re.findall(
-        r"'([^']+)'",
-        assertion.split("api36_status_routes_classes={", 1)[1].split("}", 1)[0],
-    ))
-    assert (len(mixed_expanded), len(remaining_expanded), len(all_expanded)) == (1, 77, 78)
-    assert mixed_expanded.isdisjoint(remaining_expanded)
-    assert mixed_expanded | remaining_expanded == all_expanded
-    assert (
-        len(account_dashboard_expanded),
-        len(first_run_setup_expanded),
-        len(status_routes_expanded),
-    ) == (26, 15, 37)
-    api36_method_shards = [
-        account_dashboard_expanded,
-        first_run_setup_expanded,
-        status_routes_expanded,
-    ]
+    assert len(canonical) == 81
+    assert canonical == runtime_methods
+
+    mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
+    api36 = {
+        key: {pair for pair in canonical if pair[0] in set(ledger["shards"][key])}
+        for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes")
+    }
+    assert (len(mixed), len(canonical - mixed), len(canonical)) == (1, 80, 81)
+    assert tuple(len(api36[key]) for key in api36) == (27, 17, 37)
     assert all(
         left.isdisjoint(right)
-        for index, left in enumerate(api36_method_shards)
-        for right in api36_method_shards[index + 1:]
+        for index, left in enumerate(api36.values())
+        for right in list(api36.values())[index + 1:]
     )
-    assert set().union(*api36_method_shards) == all_expanded
-    assert workflow_account_dashboard == set(api36_account_dashboard)
-    assert workflow_first_run_setup == set(api36_first_run_setup)
-    assert workflow_status_routes == set(api36_status_routes)
-    assert "expected_sizes={'mixed': 1, 'remaining': 77, 'all': 78, 'account-dashboard': 26, 'first-run-setup': 15, 'status-routes': 37}" in assertion
-    assert "expected=canonical-{mixed}" in assertion
-    assert "expected={pair for pair in canonical if pair[0] in api36_account_dashboard_classes}" in assertion
-    assert "expected={pair for pair in canonical if pair[0] in api36_first_run_setup_classes}" in assertion
-    assert "expected={pair for pair in canonical if pair[0] in api36_status_routes_classes}" in assertion
-    assert "if pair in expected and list(case)" in assertion
+    assert set().union(*api36.values()) == canonical
+
+    wrappers = {
+        "io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest#accountChoiceAndCredentialNavigationRemainExact",
+        "io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest#signupReturnClaimsOnlyOwningFlowAndIsIdempotent",
+        "io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest#normalAuthenticatorAndLegacyRestorationUseSafeDestinations",
+        "io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest#accountEntryRemainsAccessibleAcrossConfigurations",
+    }
+    assert set(ledger["wrappers"]) == wrappers
+    assert all(ledger["wrappers"][wrapper] == sorted(ledger["wrappers"][wrapper]) for wrapper in wrappers)
+
+    assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    subprocess.run(["bash", "-n", FOCUSED_RUNTIME_SCRIPT], check=True)
+    subprocess.run(["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "21" "mixed"'], check=True)
+    assert script.count("app:connectedDebugAndroidTest") == 7
+    assert "focused-runtime-ledger-v1.json" in script
+    assert "object_pairs_hook=reject_duplicate_keys" in script
+    assert "canonical compact sorted UTF-8/LF JSON" in script
+    assert "other77" not in script
+    assert "remaining_selectors" in script
+    assert "mktemp -d" in script and '${RUNNER_TEMP:-${TMPDIR:-/tmp}}' in script
+    assert "app/build/outputs/androidTest-results/connected/." in script
+    assert "api21-requested" in script and "api21_batch_" not in script
+    assert 'command -v timeout >/dev/null 2>&1' in script
+    assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == [
+        "600", "600", "1500", "2400", "1800", "1800", "1800"
+    ]
+    requested_run = script.index('class="${requested_selector}"')
+    save = script.index("\n  save_requested_results", requested_run)
+    remaining_run = script.index('class="${remaining_selectors}"')
+    assert script.index("trap restore_requested_results EXIT") < requested_run < save < remaining_run
+    assert "status=$?" in script and "set +e" in script and "restore_status=$?" in script
+    assert script.count('if [[ "${status}" -eq 0 && "') >= 3
+    assert script.index("trap - EXIT") < script.index('exit "${status}"')
+    for contract in (
+        "scenarioNonce", "invocationNonce", "helperSet", "pull_and_validate_scenarios",
+        "exec-out", "FocusedRuntimeScenario", "logcat-*.txt", "output-metadata.json",
+        "scenario identity mismatch", "scenario set mismatch",
+    ):
+        assert contract in script
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/FirstRunSignInRuntimeTest.kt").read_text(encoding="utf-8")
+    assert "assertTestStateEmpty()" in runtime
+    assert "recordScenario(helper" in runtime
+    assert 'SCENARIO_LOG_TAG = "FocusedRuntimeScenario"' in runtime
+    assert "android.util.Log.i(SCENARIO_LOG_TAG, serializedEvidence)" in runtime
+    assert all(helper in runtime for helpers in ledger["wrappers"].values() for helper in helpers)
+    for contract in (
+        "duplicate scenario key", "duplicate helper ownership", "remote scenario set mismatch",
+        "scenario platform/version mismatch",
+    ):
+        assert contract in script
+
+    assert "focused-runtime-ledger-v1.json" in assertion
+    assert "object_pairs_hook=reject_duplicate_keys" in assertion
+    assert "canonical={(class_name,method)" in assertion
+    assert "expected_sizes={'21:mixed':1,'21:remaining':80,'35:all':81,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':37}" in assertion
+    assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     assert "unexpected=set(counts)-expected" in assertion
     assert "duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}" in assertion
+    assert "producer-manifest.json" in assertion
+    assert "assertionOutcome': 'PASS'" in assertion
+    assert "ledgerSha256" in assertion and "workflowSha256" in assertion
+    for contract in (
+        "Initialize focused runtime producer manifest", "assertionOutcome': 'INCOMPLETE'",
+        "stepOutcomes", "applicationId", "versionCode", "versionName", "evidenceSha256",
+        "baseSha", "headSha", "runAttempt", "Finalize failed focused runtime producer manifest",
+        "focused runtime execution or scenario validation did not succeed", "NOT_APPLICABLE",
+    ):
+        assert contract in job
+    assert job.index("Assert focused runtime methods executed") < job.index("Upload focused androidTest reports and results")
+
+
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        assert key not in result, f"duplicate JSON key: {key}"
+        result[key] = value
+    return result
 
 
 def test_runtime_ledger_model_fails_closed_for_every_executed_noncanonical_testcase():

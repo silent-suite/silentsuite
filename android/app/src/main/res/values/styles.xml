@@ -128,6 +128,18 @@
         <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
     </style>
 
+    <style name="Widget.AppTheme.Material3.Button.Text" parent="Widget.Material3.Button.TextButton">
+        <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="android:textColor">@color/button_secondary_text</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
+    </style>
+
+    <style name="Widget.AppTheme.Material3.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="android:textColor">@color/button_secondary_text</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
+    </style>
+
     <style name="Widget.AppTheme.Material3.Card" parent="Widget.Material3.CardView.Filled">
         <item name="cardBackgroundColor">@color/semantic_surface</item>
         <item name="cardCornerRadius">@dimen/shape_radius_standard</item>
@@ -141,7 +153,9 @@
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
 
-    <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.FilledBox">
+    <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundColor">@color/semantic_surface</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
         <item name="boxStrokeColor">@color/semantic_outline</item>
         <item name="boxStrokeErrorColor">@color/semantic_error</item>
         <item name="boxStrokeWidthFocused">2dp</item>

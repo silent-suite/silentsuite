@@ -10,21 +10,36 @@ class LoginLifecycleContractTest {
     private val sourceRoot = File("src/main/java/io/silentsuite/sync/ui/setup")
 
     @Test
-    fun invalidSignupReturnStartsANewClearedLoginTask() {
+    fun unknownSignupReturnStartsCleanLoginWithoutClearingOtherTasks() {
         val source = File(sourceRoot, "SignupReturnActivity.kt").readText()
-        val fallback = source.substringAfter("} else {").substringBefore("}\n        finish()")
 
-        assertTrue(fallback.contains("Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK"))
-        assertFalse(fallback.contains("FLAG_ACTIVITY_CLEAR_TOP"))
-        assertFalse(fallback.contains("FLAG_ACTIVITY_SINGLE_TOP"))
+        assertTrue(source.contains("Intent.FLAG_ACTIVITY_NEW_TASK"))
+        assertFalse(source.contains("FLAG_ACTIVITY_CLEAR_TASK"))
+        assertFalse(source.contains("FLAG_ACTIVITY_CLEAR_TOP"))
+        assertFalse(source.contains("FLAG_ACTIVITY_SINGLE_TOP"))
     }
 
     @Test
-    fun validSignupReturnKeepsTheExistingLoginTaskRoute() {
+    fun validSignupReturnUsesTypedExactOwnerRouter() {
         val source = File(sourceRoot, "SignupReturnActivity.kt").readText()
-        val valid = source.substringAfter("if (SignupContinuationRegistry.isValid").substringBefore("} else {")
 
-        assertTrue(valid.contains("Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP"))
+        assertTrue(source.contains("LoginFlowOwnerRegistry.routeSignupToken"))
+        assertTrue(source.contains("SignupRouteResult"))
+        assertFalse(source.contains("Toast.makeText"))
+        assertFalse(source.contains("SignupContinuationRegistry.isValid"))
+    }
+
+    @Test
+    fun loginActivityUsesOneChoiceRootAndNamedCredentialsBackEntry() {
+        val source = File(sourceRoot, "LoginActivity.kt").readText()
+
+        assertTrue(source.contains("ACCOUNT_CHOICE_TAG = \"account-choice\""))
+        assertTrue(source.contains("CREDENTIALS_TAG = \"credentials\""))
+        assertTrue(source.contains("CHOICE_TO_CREDENTIALS_BACK_STACK = \"choice-to-credentials\""))
+        assertTrue(source.contains("AccountChoiceFragment()"))
+        assertTrue(source.contains("addToBackStack(CHOICE_TO_CREDENTIALS_BACK_STACK)"))
+        assertTrue(source.contains("onBackPressedDispatcher"))
+        assertFalse(source.contains("onKeyDown("))
     }
 
     @Test
@@ -32,27 +47,32 @@ class LoginLifecycleContractTest {
         val loginSource = File(sourceRoot, "LoginCredentialsFragment.kt").readText()
         val detectorSource = File(sourceRoot, "DetectConfigurationFragment.kt").readText()
         val createAccountSource = File(sourceRoot, "CreateAccountFragment.kt").readText()
+        val activitySource = File(sourceRoot, "LoginActivity.kt").readText()
 
         assertTrue(loginSource.contains("private var submissionInProgress = false"))
         assertTrue(loginSource.contains("internal fun onSubmissionFailed()"))
         assertTrue(loginSource.contains("if (credentials != null && !submissionInProgress &&"))
-        assertTrue(loginSource.contains("findFragmentByTag(DETECT_CONFIGURATION_TAG) == null"))
-        assertTrue(loginSource.indexOf("submissionInProgress = true") < loginSource.indexOf("DetectConfigurationFragment.newInstance().show"))
+        assertTrue(loginSource.contains("findFragmentByTag(LoginActivity.DETECT_CONFIGURATION_TAG) == null"))
+        assertTrue(loginSource.indexOf("submissionInProgress = true") <
+            loginSource.indexOf("DetectConfigurationFragment.newInstance(SetupSecretHolder.reference(lease))"))
         assertTrue(detectorSource.contains("findFragmentById(android.R.id.content) as? LoginCredentialsFragment"))
         assertTrue(detectorSource.contains("?.onSubmissionFailed()"))
         assertTrue(createAccountSource.contains("private fun notifyAccountCreationFailed()"))
         assertTrue(createAccountSource.contains("fragments.filterIsInstance<LoginCredentialsFragment>()"))
         assertTrue(createAccountSource.contains(".forEach { it.onSubmissionFailed() }"))
-        val missingConfiguration = createAccountSource.substringAfter("if (config == null)").substringBefore("val activity")
+        val missingConfiguration = createAccountSource.substringAfter("if (host == null").substringBefore("performCreation")
         val unexpectedAccountFailure = createAccountSource.substringAfter("catch (e: Exception)").substringBefore("if (attempt is CreationAttempt.SettingsResolution)")
         val retryPresentation = createAccountSource.substringAfter("private fun notifyRecoverableFailure").substringBefore("private fun notifyAccountCreationFailed")
         assertTrue(missingConfiguration.contains("notifyRecoverableFailure"))
         assertTrue(unexpectedAccountFailure.contains("recoverFromUnexpectedFailure"))
         assertFalse(unexpectedAccountFailure.contains("throw e"))
-        assertTrue(retryPresentation.contains("popBackStackImmediate()"))
-        assertTrue(retryPresentation.contains("onSubmissionFailed()"))
-        assertTrue(retryPresentation.contains("RETRY_ERROR_TAG"))
+        assertTrue(retryPresentation.contains("recoverFromAccountCreationFailure"))
+        assertTrue(activitySource.contains("supportFragmentManager.popBackStack()"))
+        assertTrue(activitySource.contains("CREATE_RETRY_ERROR_TAG"))
+        assertTrue(activitySource.contains("f.onSubmissionFailed()"))
         assertFalse(retryPresentation.contains("cancelBeforeAccountCreated"))
+        assertTrue(retryPresentation.contains("SetupSecretHolder::clearCredentialsAndConfiguration"))
+        assertFalse(retryPresentation.contains("SetupSecretHolder::revoke"))
     }
 
     @Test
@@ -70,7 +90,7 @@ class LoginLifecycleContractTest {
                 "AccountCreationCoordinator\\.Result\\.NOT_ADDED,\\s*" +
                 "AccountCreationCoordinator\\.Result\\.QUARANTINED,\\s*" +
                 "AccountCreationCoordinator\\.Result\\.QUARANTINE_FAILED\\s*->\\s*" +
-                "creationAttemptFromDurableEvidence\\(account, accountManager, registry\\)"
+                "creationAttemptFromDurableEvidence\\(account, accountManager, registry, creationId\\)"
         )
         assertTrue(sharedDurableBranch.containsMatchIn(coordinatorResultRouting))
         assertFalse(coordinatorResultRouting.contains("resumableOwnedIncomplete"))
@@ -82,6 +102,28 @@ class LoginLifecycleContractTest {
         assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.Completed -> CreationAttempt.Completed"))
         assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.SettingsResolution -> CreationAttempt.SettingsResolution"))
         assertTrue(durableRouter.contains("DurableCreationAttemptPolicy.Outcome.RetryCredentials -> CreationAttempt.RetryCredentials"))
+        assertTrue(source.contains("data class Created(val account: Account, val creationId: String)"))
+        assertTrue(source.contains("data class Completed(val account: Account, val creationId: String)"))
+        assertTrue(coordinatorResultRouting.contains(
+            "AccountCreationCoordinator.Result.CREATED -> CreationAttempt.Created(account, creationId)"
+        ))
+        assertTrue(coordinatorResultRouting.contains(
+            "AccountCreationCoordinator.Result.ACCOUNT_CREATED_QUARANTINED ->\n" +
+                "                    creationAttemptFromDurableEvidence(account, accountManager, registry, creationId)"
+        ))
+        assertTrue(source.contains("if (verifiedId != expectedId)"))
+        assertTrue(source.contains("openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, expectedId)) }"))
+        assertTrue(source.contains("openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account, expectedId)) }"))
+        assertTrue(source.contains("creationId = if (savedInstanceState == null)"))
+        assertTrue(source.contains("savedInstanceState.getString(KEY_CREATION_ID)?.takeIf"))
+        assertTrue(source.contains("java.util.UUID.fromString(value)"))
+        assertTrue(source.contains("hadStartedBeforeSave &&"))
+        assertTrue(source.contains("outState.putBoolean(KEY_HAD_STARTED, hadStartedBeforeSave)"))
+        assertTrue(source.contains("outState.putString(KEY_CREATION_ID, creationId)"))
+        assertTrue(source.contains("createAccount(config.userName, config, creationId)"))
+        assertTrue(source.contains("recoverFromUnexpectedFailure(config.userName, creationId)"))
+        assertTrue(source.contains("expectedCreationId: String,"))
+        assertFalse(source.contains("expectedCreationId: String? = null"))
     }
 
     @Test fun loginFailureDialogsPersistOnlyResourceIdentifiers() {
@@ -138,7 +180,8 @@ class LoginLifecycleContractTest {
         assertTrue(job.contains("""script: bash android/scripts/run-focused-runtime-tests.sh "${'$'}{{ matrix.api-level }}" "${'$'}{{ matrix.shard }}""""))
         assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
-            "app:connectedDebugAndroidTest", "io.silentsuite.sync.ui.AccountActivityRecreationTest",
+            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 81",
+            "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
             "-PrequireEtebase16Kb=true", "--no-daemon"
         ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))
@@ -182,22 +225,17 @@ class LoginLifecycleContractTest {
 
     @Test
     fun focusedRuntimeExpectedSetIncludesFirstRunAndSetupLifecycleContracts() {
-        val workflow = File("../../.github/workflows/build-android.yml").readText()
-        val expectedSet = workflow.substringAfter("          canonical={")
-            .substringBefore("          mixed=next")
-        val expectedTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling')"
-        val bootstrapTuple = "('io.silentsuite.sync.ui.setup.AuthenticatorLifecycleRuntimeTest','cleanInstallBootstrapPublishesMarkerAfterReconciliation')"
-
-        assertTrue(expectedSet.contains(expectedTuple))
-        assertTrue(expectedSet.contains(bootstrapTuple))
+        val ledger = File("../scripts/focused-runtime-ledger-v1.json").readText()
         listOf(
-            "('io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest','combinedSignInKeepsPrimaryActionReachableAndSecretsOutOfSavedState')",
-            "('io.silentsuite.sync.ui.setup.FirstRunSignInRuntimeTest','normalAndAuthenticatorModesUseOneCombinedCredentialSurfaceAcrossRecreation')",
-            "('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','everyDurableSetupStateColdRendersApprovedPresentationWithoutRenderSideEffects')",
-            "('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','safeAutoAdvanceIsIdempotentAcrossRecreationAndStopsAtUserDecision')",
-            "('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','permissionGrantDenialBlockedSkipAndNoTaskProviderRemainResumable')",
-            "('io.silentsuite.sync.ui.PostLoginSetupRuntimeTest','initialSyncRequestIdSurvivesEveryCrashCutAndClearsAfterReady')",
-        ).forEach { assertTrue(expectedSet.contains(it)) }
+            "recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling",
+            "cleanInstallBootstrapPublishesMarkerAfterReconciliation",
+            "accountChoiceAndCredentialNavigationRemainExact",
+            "signupReturnClaimsOnlyOwningFlowAndIsIdempotent",
+            "normalAuthenticatorAndLegacyRestorationUseSafeDestinations",
+            "accountEntryRemainsAccessibleAcrossConfigurations",
+        ).forEach { assertTrue(ledger.contains("\"$it\"")) }
+        assertFalse(ledger.contains("combinedSignInKeepsPrimaryActionReachableAndSecretsOutOfSavedState"))
+        assertFalse(ledger.contains("normalAndAuthenticatorModesUseOneCombinedCredentialSurfaceAcrossRecreation"))
     }
 
     @Test
@@ -219,40 +257,17 @@ class LoginLifecycleContractTest {
     @Test
     fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
-        val dashboard = "io.silentsuite.sync.ui.AccountDashboardRuntimeTest"
-        val diagnostic = "$dashboard#requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
-        val mixed = "$dashboard#mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue"
-        val mixedSelectors = Regex("""^mixed_selector='([^']+)'$""", RegexOption.MULTILINE)
-            .find(runtimeScript)!!.groupValues[1].split(",")
-        val requestedSelectors = Regex("""^requested_selector='([^']+)'$""", RegexOption.MULTILINE)
-            .find(runtimeScript)!!.groupValues[1].split(",")
-        val other76 = Regex("""^other76_selectors='([^']+)'$""", RegexOption.MULTILINE)
-            .find(runtimeScript)!!.groupValues[1].split(",")
-        val focusedClasses = Regex("""^focused_classes='([^']+)'$""", RegexOption.MULTILINE)
-            .find(runtimeScript)!!.groupValues[1].split(",")
-        val runtimeMethods = focusedClasses.flatMap { className ->
-            val source = File(
-                "src/androidTest/java/${className.replace('.', '/')}.kt"
-            ).readText()
-            Regex("""@Test\s+fun\s+(\w+)""").findAll(source)
-                .map { "$className#${it.groupValues[1]}" }.toList()
-        }
-        fun expand(selectors: List<String>) = selectors.flatMap { selector ->
-            if ("#" in selector) listOf(selector)
-            else runtimeMethods.filter { it.startsWith("$selector#") }
-        }
-        val mixedExpanded = expand(mixedSelectors)
-        val remainingExpanded = expand(requestedSelectors + other76)
-        val allExpanded = expand(focusedClasses)
-
-        assertEquals(listOf(mixed), mixedSelectors)
-        assertEquals(listOf(diagnostic), requestedSelectors)
-        assertEquals(78, runtimeMethods.size)
-        assertEquals(78, runtimeMethods.toSet().size)
-        assertEquals(listOf(1, 77, 78), listOf(mixedExpanded.size, remainingExpanded.size, allExpanded.size))
-        assertTrue(mixedExpanded.toSet().intersect(remainingExpanded.toSet()).isEmpty())
-        assertEquals(allExpanded.toSet(), mixedExpanded.toSet() + remainingExpanded.toSet())
-        assertEquals(runtimeMethods.toSet(), allExpanded.toSet())
+        assertTrue(runtimeScript.contains("focused-runtime-ledger-v1.json"))
+        assertTrue(runtimeScript.contains("if len(tests) != 81 or len(set(tests)) != 81"))
+        listOf(
+            "\"21:mixed\": 1", "\"21:requested\": 1", "\"21:remaining\": 79",
+            "\"35:all\": 81", "\"36:account-dashboard\": 27",
+            "\"36:first-run-setup\": 17", "\"36:status-routes\": 37",
+        ).forEach { assertTrue(runtimeScript.contains(it)) }
+        assertTrue(runtimeScript.contains("remaining_selectors=\"\$(ledger_selectors '21:remaining')\""))
+        assertTrue(runtimeScript.contains("all_selectors=\"\$(ledger_selectors '35:all')\""))
+        assertFalse(runtimeScript.contains("other77_selectors"))
+        assertFalse(runtimeScript.contains("focused_classes="))
         assertEquals(listOf("600", "600", "1500", "2400", "1800", "1800", "1800"),
             Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
                 .findAll(runtimeScript).map { it.groupValues[1] }.toList())
@@ -261,7 +276,7 @@ class LoginLifecycleContractTest {
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""""))
         assertTrue(runtimeScript.indexOf("\n  save_requested_results",
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""")) <
-            runtimeScript.indexOf("""class="${'$'}{other76_selectors}""""))
+            runtimeScript.indexOf("""class="${'$'}{remaining_selectors}""""))
         assertTrue(runtimeScript.contains("connected/api21-requested"))
         assertFalse(runtimeScript.contains("api21_batch_"))
         assertTrue(runtimeScript.contains("""if [[ "${'$'}{status}" -eq 0 && "${'$'}{restore_status}" -ne 0 ]]"""))

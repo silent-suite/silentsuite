@@ -203,7 +203,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         // Save as active account
-        if (!ActiveAccountManager.setActiveAccount(this, account)) {
+        if (!ActiveAccountManager.setActiveAccount(
+                this,
+                ExactAccountIdentity(account.type, account.name, creationId),
+            )) {
             finish()
             return
         }
@@ -371,17 +374,21 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         dropdownArrow?.visibility = if (AccountSwitcherPolicy.canExpand(accounts.size)) View.VISIBLE else View.GONE
         accountHeader?.contentDescription = getString(R.string.account_switcher_description, account.name)
-        fun renderExpansion() {
+        fun renderExpansion(animate: Boolean) {
             accountListContainer?.visibility = if (accountListExpanded) View.VISIBLE else View.GONE
-            dropdownArrow?.rotation = if (accountListExpanded) 180f else 0f
+            val rotation = if (accountListExpanded) 180f else 0f
+            dropdownArrow?.let { arrow ->
+                if (animate) arrow.animate().rotation(rotation).setDuration(150L).start()
+                else arrow.rotation = rotation
+            }
             accountHeader?.let { ViewCompat.setStateDescription(it, getString(if (accountListExpanded)
                 R.string.account_switcher_expanded else R.string.account_switcher_collapsed)) }
         }
         accountHeader?.setOnClickListener {
             accountListExpanded = !accountListExpanded
-            renderExpansion()
+            renderExpansion(animate = true)
         }
-        renderExpansion()
+        renderExpansion(animate = false)
         buildAccountList(accountListContainer, accounts)
 
         // Add account row
@@ -413,8 +420,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val currentIndicator = row.findViewById<View>(R.id.nav_account_current_indicator)
             textView.text = acc.name
             val isCurrent = identity.type == account.type && identity.name == account.name &&
-                identity.creationId == manager.getUserData(account, AccountSettings.KEY_CREATION_ID)
+                identity.creationId == accountCreationId
             row.isSelected = isCurrent
+            textView.setTypeface(textView.typeface, if (isCurrent)
+                android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
             row.contentDescription = getString(R.string.account_switcher_account_description, acc.name)
             ViewCompat.setStateDescription(row, getString(if (isCurrent)
                 R.string.account_switcher_current else R.string.account_switcher_not_current))
@@ -422,9 +431,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
             row.setOnClickListener {
                 if (!isCurrent) {
-                    if (!ActiveAccountManager.setActiveAccount(this, acc)) return@setOnClickListener
+                    if (!ActiveAccountManager.setActiveAccount(this, identity)) return@setOnClickListener
                     // Recreate activity with new account
-                    val intent = newIntent(this, acc)
+                    val intent = newIntent(this, acc, identity.creationId)
                     intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)
                     finish()

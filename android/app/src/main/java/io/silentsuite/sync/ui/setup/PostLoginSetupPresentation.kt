@@ -33,7 +33,6 @@ data class PostLoginSetupPresentation(
         PERMISSIONS,
         PERMISSION_DENIED,
         PERMISSION_BLOCKED,
-        NO_TASK_PROVIDER,
         INITIAL_SYNC,
         READY,
         COMPLETE,
@@ -48,7 +47,6 @@ fun presentationFor(
     state: PostLoginSetupState,
     condition: PostLoginSetupPresentationCondition =
         PostLoginSetupPresentationCondition.DEFAULT,
-    noTaskProvider: Boolean = false,
 ): PostLoginSetupPresentation {
     if (condition == PostLoginSetupPresentationCondition.AMBIGUOUS) {
         return presentation(
@@ -121,11 +119,7 @@ fun presentationFor(
                 presentation(
                     PostLoginSetupPresentation.Stage.PREPARE,
                     PostLoginSetupPresentation.Title.PERMISSIONS,
-                    if (noTaskProvider) {
-                        PostLoginSetupPresentation.Body.NO_TASK_PROVIDER
-                    } else {
-                        PostLoginSetupPresentation.Body.PERMISSIONS
-                    },
+                    PostLoginSetupPresentation.Body.PERMISSIONS,
                 )
         }
         PostLoginSetupState.INITIAL_SYNC ->

@@ -4,6 +4,7 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.ContentResolver
 import android.os.Bundle
+import android.view.View
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -26,6 +27,7 @@ import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
 import io.silentsuite.sync.utils.AndroidCompat
 import at.bitfire.ical4android.TaskProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.URI
@@ -311,9 +313,9 @@ class PostLoginSetupRuntimeTest {
             "Preparing your encrypted collections…",
             "Collections could not be prepared",
             "Checking Android integrations…",
-            "Connect to Android apps",
+            "Show synced data in Android apps",
             "Starting your first sync…",
-            "You're ready",
+            "SilentSuite is ready",
             "Opening sync overview…",
         )
         val states = listOf(
@@ -366,6 +368,10 @@ class PostLoginSetupRuntimeTest {
                 ).use { scenario ->
                     scenario.onActivity { activity ->
                         listOf(
+                            "setup_stepper",
+                            "setup_step_connect_node",
+                            "setup_step_prepare_node",
+                            "setup_step_ready_node",
                             "setup_stage_connect",
                             "setup_stage_prepare",
                             "setup_stage_ready",
@@ -387,6 +393,48 @@ class PostLoginSetupRuntimeTest {
                         org.junit.Assert.assertTrue("Unapproved setup title: $title", title in approvedTitles)
                         org.junit.Assert.assertFalse(states.any { body == it.name })
                         org.junit.Assert.assertFalse(body.startsWith("Setup:"))
+                        org.junit.Assert.assertTrue(
+                            activity.findViewById<View>(requiredViewId(activity, "setup_stepper"))
+                                .contentDescription.toString().startsWith("Setup progress, step ")
+                        )
+                        if (index == 0) {
+                            activity.configureSetupStepperForFontScale(2f)
+                            val stepper = activity.findViewById<android.widget.LinearLayout>(
+                                requiredViewId(activity, "setup_stepper")
+                            )
+                            assertEquals(android.widget.LinearLayout.VERTICAL, stepper.orientation)
+                            val labels = listOf(
+                                "setup_stage_connect",
+                                "setup_stage_prepare",
+                                "setup_stage_ready",
+                            ).map { name ->
+                                activity.findViewById<android.widget.TextView>(requiredViewId(activity, name))
+                            }
+                            labels.forEach { label ->
+                                label.setTextSize(
+                                    android.util.TypedValue.COMPLEX_UNIT_PX,
+                                    label.textSize * 2f,
+                                )
+                                assertEquals(Int.MAX_VALUE, label.maxLines)
+                                org.junit.Assert.assertNull(label.ellipsize)
+                            }
+                            val compactWidth =
+                                (320 * activity.resources.displayMetrics.density).toInt()
+                            stepper.measure(
+                                View.MeasureSpec.makeMeasureSpec(
+                                    compactWidth,
+                                    View.MeasureSpec.EXACTLY,
+                                ),
+                                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                            )
+                            stepper.layout(0, 0, compactWidth, stepper.measuredHeight)
+                            labels.forEach { label ->
+                                val textLayout = requireNotNull(label.layout)
+                                repeat(textLayout.lineCount) { line ->
+                                    assertEquals(0, textLayout.getEllipsisCount(line))
+                                }
+                            }
+                        }
                     }
                 }
                 registry.clearOwned(account.type, account.name, creationId)
@@ -442,9 +490,37 @@ class PostLoginSetupRuntimeTest {
                 assertEquals(null, manager.getUserData(account, INITIAL_SYNC_REQUEST_ID_KEY))
                 scenario.onActivity { activity ->
                     assertEquals(
-                        "Connect to Android apps",
+                        "Show synced data in Android apps",
                         activity.findViewById<android.widget.TextView>(
                             requiredViewId(activity, "setup_title")
+                        ).text.toString(),
+                    )
+                    assertTrue(activity.findViewById<View>(
+                        requiredViewId(activity, "setup_integration_details")
+                    ).isShown)
+                    val recommendedApps = activity.findViewById<android.widget.TextView>(
+                        requiredViewId(activity, "setup_recommended_apps")
+                    )
+                    assertEquals(
+                        "For recommended local Android apps, see our docs.",
+                        recommendedApps.text.toString(),
+                    )
+                    assertTrue(recommendedApps.isShown)
+                    assertTrue(recommendedApps.isClickable)
+                    assertTrue(
+                        recommendedApps.minimumHeight >=
+                            (48 * activity.resources.displayMetrics.density).toInt()
+                    )
+                    val completedNode = activity.findViewById<android.widget.TextView>(
+                        requiredViewId(activity, "setup_step_connect_node")
+                    )
+                    org.junit.Assert.assertNull(completedNode.compoundDrawables[0])
+                    org.junit.Assert.assertNull(completedNode.compoundDrawables[1])
+                    org.junit.Assert.assertNotNull(completedNode.background)
+                    assertEquals(
+                        "Allow access and continue",
+                        activity.findViewById<android.widget.Button>(
+                            requiredViewId(activity, "setup_continue_limited")
                         ).text.toString(),
                     )
                 }
@@ -493,6 +569,18 @@ class PostLoginSetupRuntimeTest {
             })
             launchSetup(context, account, creationId) { activity ->
                 assertEquals("Allow access in Android settings", setupTitle(activity))
+                assertEquals(
+                    View.GONE,
+                    activity.findViewById<View>(
+                        requiredViewId(activity, "setup_continue_limited")
+                    ).visibility,
+                )
+                assertTrue(activity.findViewById<View>(
+                    requiredViewId(activity, "setup_resolve_ambiguity")
+                ).isShown)
+                assertTrue(activity.findViewById<View>(
+                    requiredViewId(activity, "setup_skip_integrations")
+                ).isShown)
             }
 
             installPermissionEvidenceOverride(Bundle().apply {
@@ -505,7 +593,7 @@ class PostLoginSetupRuntimeTest {
             ).use { scenario ->
                 scenario.recreate()
                 scenario.onActivity { activity ->
-                    assertEquals("Connect to Android apps", setupTitle(activity))
+                    assertEquals("Show synced data in Android apps", setupTitle(activity))
                     org.junit.Assert.assertNotEquals("Allow access in Android settings", setupTitle(activity))
                 }
             }
