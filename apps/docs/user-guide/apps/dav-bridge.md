@@ -1,6 +1,6 @@
 # SilentSuite Bridge
 
-SilentSuite Bridge is a local daemon that translates between CalDAV/CardDAV and the Etebase protocol. It runs on your machine and makes SilentSuite compatible with **any** calendar, contacts, or tasks app that supports CalDAV/CardDAV -- including Thunderbird, macOS Calendar, GNOME Calendar, Windows Calendar, Outlook, and more.
+SilentSuite Bridge is a local daemon that translates between CalDAV/CardDAV and the Etebase protocol. It runs on your machine and provides local DAV endpoints for supported desktop integrations, including Thunderbird, Calendar and Contacts on macOS, GNOME Calendar and Evolution, KDE Kontact, and Outlook on Windows.
 
 ## How It Works
 
@@ -111,7 +111,7 @@ silentsuite-bridge --setup-macos-apple-accounts
 Then trust the generated localhost certificate in **Keychain Access** with **Trust > Secure Sockets Layer (SSL)** set to **Always Trust**, restart the bridge, and use the `https://` DAV URLs shown in the dashboard.
 
 ::: warning HTTPS is all-or-nothing for one bridge profile
-Enabling bridge SSL changes the single local DAV listener from HTTP to HTTPS. Existing Thunderbird, DAVx5, Evolution, KDE, or other clients configured with `http://localhost:37358/` must be updated to the dashboard's `https://` URL and may need to trust the same localhost certificate. Running simultaneous HTTP and HTTPS listeners is not part of this bridge mode.
+Enabling bridge SSL changes the single local DAV listener from HTTP to HTTPS. Existing Thunderbird, Evolution, or KDE clients configured with `http://localhost:37358/` must be updated to the dashboard's `https://` URL and may need to trust the same localhost certificate. Running simultaneous HTTP and HTTPS listeners is not part of this bridge mode.
 :::
 
 For detailed Apple setup fields and troubleshooting, see [macOS Calendar & Contacts](./macos.md).
@@ -328,8 +328,5 @@ Once the bridge is running, set up your apps:
 - [macOS Calendar & Contacts](./macos.md)
 - [Windows / Outlook](./windows.md)
 - [GNOME Calendar & Contacts](./gnome.md)
-- [iOS roadmap and current support status](./ios.md)
-- [Android (DAVx5)](./android.md)
 - [GNOME Evolution](./evolution.md) (also supports native Etebase)
 - [KDE Kontact](./kde.md) (also supports native Etebase)
-- [Other CalDAV/CardDAV Apps](./other.md) (em Client, BusyCal, Fantastical, and more)

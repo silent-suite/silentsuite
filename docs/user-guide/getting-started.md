@@ -51,7 +51,7 @@ A certificate mismatch warning while switching install channels is expected and 
 
 ### Desktop (CalDAV / CardDAV via the bridge)
 
-If you'd rather use Thunderbird, Apple Calendar, GNOME Calendar, Evolution, or any other standard CalDAV/CardDAV client, install the **SilentSuite bridge**. It runs a local DAV daemon on `localhost:37358` that translates between your client and the encrypted Etebase backend.
+If you'd rather use a supported desktop client such as Thunderbird, Calendar on macOS, GNOME Calendar, Evolution, KDE Kontact, or Outlook on Windows, install the **SilentSuite bridge**. It runs a local DAV daemon on `localhost:37358` that translates between your client and the encrypted Etebase backend.
 
 Install commands are in **Settings → Desktop** in the web app.
 

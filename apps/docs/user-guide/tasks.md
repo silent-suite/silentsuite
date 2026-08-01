@@ -32,4 +32,4 @@ Tasks are organized into task lists (also called collections). You can create mu
 
 ## Standards
 
-Tasks use the VTODO standard (part of the iCalendar specification). This means they are compatible with other apps that support CalDAV tasks, including [Tasks.org](./apps/tasks-org.md) on Android and desktop apps via the [SilentSuite Bridge](./apps/dav-bridge.md).
+Tasks use the VTODO standard (part of the iCalendar specification). SilentSuite supports [Tasks.org](./apps/tasks-org.md) on Android and documented desktop task clients via the [SilentSuite Bridge](./apps/dav-bridge.md).

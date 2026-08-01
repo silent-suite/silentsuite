@@ -30,6 +30,6 @@ features:
     link: /contributing/dev-setup
   - icon: 🔌
     title: Apps & Integrations
-    details: Set up Android, iOS, desktop apps, Tasks.org, and DAV bridge clients.
+    details: Set up Android, Tasks.org, and supported desktop integrations, or review the iOS roadmap.
     link: /user-guide/apps/
 ---

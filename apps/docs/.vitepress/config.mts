@@ -69,7 +69,6 @@ export default defineConfig({
             { text: 'macOS', link: '/user-guide/apps/macos' },
             { text: 'Windows / Outlook', link: '/user-guide/apps/windows' },
             { text: 'GNOME Calendar', link: '/user-guide/apps/gnome' },
-            { text: 'Other Apps', link: '/user-guide/apps/other' },
           ],
         },
       ],

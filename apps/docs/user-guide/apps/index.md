@@ -41,8 +41,6 @@ On Linux, start with the [Linux desktop bridge guide](./linux-bridge.md) for ins
 | [macOS Calendar & Contacts](./macos.md) | macOS | Yes | Not recorded yet |
 | [Windows / Outlook](./windows.md) | Windows | Yes | Not recorded yet |
 | [GNOME Calendar & Contacts](./gnome.md) | Linux (GNOME) | Yes | Not recorded yet |
-| [Additional desktop CalDAV/CardDAV Apps](./other.md) | Desktop | Yes | Varies by client |
-
 ::: tip
-Additional desktop CalDAV/CardDAV clients may work through the local bridge, but unlisted clients are not guaranteed. iOS is not currently supported. Set up the [SilentSuite Bridge](./dav-bridge.md) first, then use a supported client with `http://localhost:37358/`.
+Use one of the documented desktop clients above with the [SilentSuite Bridge](./dav-bridge.md). Protocol support alone does not establish SilentSuite compatibility. iOS is not currently supported.
 :::

@@ -86,7 +86,6 @@ Always start the bridge and sign in before configuring a desktop app. Copy the a
 - **GNOME Calendar and Contacts:** Add the local DAV account through GNOME Online Accounts using the [GNOME guide](./gnome.md).
 - **Evolution:** Evolution can connect through the bridge, but its native Etebase integration does not require one. See the [Evolution guide](./evolution.md) for both options.
 - **KDE Kontact, KOrganizer, and KAddressBook:** KDE also has native and bridge options. See the [KDE guide](./kde.md).
-- **Other apps:** Use the [generic CalDAV/CardDAV guide](./other.md).
 
 ## Troubleshooting
 

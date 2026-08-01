@@ -1055,9 +1055,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div style="font-size:14px;line-height:2;color:#ccc;">
                 <a href="https://docs.silentsuite.io/user-guide/apps/windows" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Outlook</a> &middot;
                 <a href="https://docs.silentsuite.io/user-guide/apps/thunderbird" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Thunderbird</a> &middot;
-                <a href="https://docs.silentsuite.io/user-guide/apps/macos" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Apple (macOS/iOS)</a> &middot;
+                <a href="https://docs.silentsuite.io/user-guide/apps/macos" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Apple (macOS)</a> &middot;
                 <a href="https://docs.silentsuite.io/user-guide/apps/gnome" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">GNOME Calendar/Contacts</a> &middot;
-                <a href="https://docs.silentsuite.io/user-guide/apps/android" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">DAVx5 (Android)</a> &middot;
                 <a href="https://docs.silentsuite.io/user-guide/apps/evolution" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Evolution</a> &middot;
                 <a href="https://docs.silentsuite.io/user-guide/apps/kde" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">KDE</a>
             </div>
