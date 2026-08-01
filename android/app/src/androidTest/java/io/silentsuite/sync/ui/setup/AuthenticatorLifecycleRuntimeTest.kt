@@ -79,13 +79,18 @@ class AuthenticatorLifecycleRuntimeTest {
                 scenario.onActivity { activity ->
                     activity.supportFragmentManager.executePendingTransactions()
                     org.junit.Assert.assertFalse(activity.isFinishing)
-                    org.junit.Assert.assertNull(
-                        activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREATE_ACCOUNT_TAG),
-                    )
+                    val dismissedCreator = activity.supportFragmentManager
+                        .findFragmentByTag(LoginActivity.CREATE_ACCOUNT_TAG) as CreateAccountFragment
+                    org.junit.Assert.assertFalse(dismissedCreator.isAdded)
+                    org.junit.Assert.assertFalse(dismissedCreator.dialog?.isShowing == true)
                     org.junit.Assert.assertNull(
                         activity.supportFragmentManager.findFragmentByTag("account_creation_retry_error"),
                     )
                     activity.onBackPressedDispatcher.onBackPressed()
+                    activity.supportFragmentManager.executePendingTransactions()
+                    org.junit.Assert.assertNull(
+                        activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREATE_ACCOUNT_TAG),
+                    )
                 }
                 instrumentation.waitForIdleSync()
                 scenario.onActivity { activity ->

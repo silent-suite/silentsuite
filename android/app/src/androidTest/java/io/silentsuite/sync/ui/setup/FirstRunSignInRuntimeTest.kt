@@ -3,7 +3,6 @@ package io.silentsuite.sync.ui.setup
 import android.accounts.AccountManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.graphics.Rect
 import android.os.Bundle
 import android.os.Build
 import android.view.View
@@ -446,6 +445,10 @@ class FirstRunSignInRuntimeTest {
         try {
             ActivityScenario.launch<LoginActivity>(Intent(context, LoginActivity::class.java)).use { scenario ->
                 repeat(2) { pass ->
+                    assertTrue(
+                        "Account-choice actions were not laid out after configuration change",
+                        waitForAccountChoiceActionsLaidOut(scenario),
+                    )
                     scenario.onActivity { activity ->
                         assertVisibleDestination(activity, "AccountChoiceFragment")
                         val root = activity.findViewById<ViewGroup>(android.R.id.content)
@@ -457,9 +460,9 @@ class FirstRunSignInRuntimeTest {
                         listOf(signIn, createAccount).forEach { action ->
                             assertTrue(action.isClickable)
                             assertTrue(action.minimumHeight >= (48 * density).toInt())
-                            val bounds = Rect()
-                            assertTrue(action.getGlobalVisibleRect(bounds))
-                            assertTrue(bounds.height() > 0)
+                            assertTrue(ViewCompat.isLaidOut(action))
+                            assertTrue(action.width > 0)
+                            assertTrue(action.height > 0)
                         }
                         assertTrue(descendants(root).none {
                             it.id in setOf(
@@ -566,6 +569,25 @@ class FirstRunSignInRuntimeTest {
             1,
             visible.count { it.javaClass.simpleName == simpleClassName },
         )
+    }
+
+    private fun waitForAccountChoiceActionsLaidOut(
+        scenario: ActivityScenario<LoginActivity>,
+    ): Boolean {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val deadline = android.os.SystemClock.elapsedRealtime() + 5_000L
+        var laidOut = false
+        while (!laidOut && android.os.SystemClock.elapsedRealtime() < deadline) {
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                laidOut = listOf(
+                    activity.findViewById<View>(R.id.account_choice_sign_in),
+                    activity.findViewById<View>(R.id.account_choice_create_account),
+                ).all { ViewCompat.isLaidOut(it) && it.width > 0 && it.height > 0 }
+            }
+            if (!laidOut) android.os.SystemClock.sleep(25L)
+        }
+        return laidOut
     }
 
     private fun installNoOpAuthenticatorDelivery() {

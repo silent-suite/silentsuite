@@ -20,6 +20,7 @@ import androidx.annotation.VisibleForTesting
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.android.material.snackbar.Snackbar
 import io.silentsuite.sync.App
 import io.silentsuite.sync.BuildConfig
@@ -86,6 +87,10 @@ open class LoginActivity : BaseActivity() {
     private var pendingCreationFailureMessage: Int? = null
     private var accountEntryAdmissionPublished = false
 
+    private val signupResumeObserver = LifecycleEventObserver { _, event ->
+        if (event == Lifecycle.Event.ON_RESUME) processSignupContinuation()
+    }
+
     private val destinationCallbacks = object : FragmentManager.FragmentLifecycleCallbacks() {
         override fun onFragmentResumed(fm: FragmentManager, f: Fragment) {
             if (f is LoginCredentialsFragment) {
@@ -135,7 +140,7 @@ open class LoginActivity : BaseActivity() {
         supportFragmentManager.registerFragmentLifecycleCallbacks(destinationCallbacks, true)
         authenticatorMode = savedInstanceState?.getBoolean(KEY_WAS_AUTHENTICATOR, false) == true ||
             intent.hasExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE)
-        if (AuthenticatorRestorePolicy.mustRestartNormally(
+        if (savedInstanceState != null && AuthenticatorRestorePolicy.mustRestartNormally(
                 authenticatorMode,
                 savedInstanceState?.getString(KEY_PROCESS_EPOCH),
                 App.processEpoch,
@@ -184,6 +189,7 @@ open class LoginActivity : BaseActivity() {
             updateDestinationTitle()
         }
         accountEntryAdmissionPublished = true
+        lifecycle.addObserver(signupResumeObserver)
     }
 
     override fun onPause() {
@@ -194,7 +200,6 @@ open class LoginActivity : BaseActivity() {
     override fun onPostResume() {
         super.onPostResume()
         recoverStalledRestoredCreator()
-        processSignupContinuation()
         pendingCreationFailureMessage?.let {
             if (currentDestination() == Destination.CREATOR) recoverFromAccountCreationFailure(it)
         }
@@ -261,6 +266,7 @@ open class LoginActivity : BaseActivity() {
     }
 
     override fun onDestroy() {
+        lifecycle.removeObserver(signupResumeObserver)
         supportFragmentManager.unregisterFragmentLifecycleCallbacks(destinationCallbacks)
         if (::admission.isInitialized)
             LoginFlowOwnerRegistry.release(this, admission.releaseToken, isChangingConfigurations)

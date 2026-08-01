@@ -118,6 +118,10 @@ def test_account_entry_lifecycle_security_blockers_have_explicit_fail_closed_con
         "private fun acknowledgeSignupDestinationIfReady", 1
     )[0]
     assert processing.count("SignupContinuationRegistry.markHandled") == 1
+    assert "LifecycleEventObserver" in activity
+    assert "event == Lifecycle.Event.ON_RESUME" in activity
+    assert "lifecycle.addObserver(signupResumeObserver)" in activity
+    assert "savedInstanceState != null && AuthenticatorRestorePolicy.mustRestartNormally" in activity
     assert processing.index("operationOwnsPresentation") < processing.index("SignupContinuationRegistry.markHandled")
     assert "isExactMarker" in activity
     assert "KEY_NAV_DESTINATION" in activity
