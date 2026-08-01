@@ -54,7 +54,7 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/user-guide/apps/' },
             { text: 'Android', link: '/user-guide/apps/android' },
-            { text: 'iOS (EteSync)', link: '/user-guide/apps/ios' },
+            { text: 'iOS', link: '/user-guide/apps/ios' },
             { text: 'Tasks.org', link: '/user-guide/apps/tasks-org' },
             { text: 'GNOME Evolution', link: '/user-guide/apps/evolution' },
             { text: 'KDE Kontact', link: '/user-guide/apps/kde' },
