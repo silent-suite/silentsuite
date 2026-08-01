@@ -93,7 +93,8 @@
     <string name="navigation_drawer_calendar">Calendar</string>
     <string name="navigation_drawer_tasks">Tasks</string>
     <string name="navigation_drawer_contacts">Contacts</string>
-    <string name="signup_returned_from_web">Account created. Log in to finish connecting Android sync.</string>
+    <string name="signup_returned_from_web">You’re back in SilentSuite. Sign in to finish setup.</string>
+    <string name="signup_open_failed">Couldn’t open the signup page. Please try again.</string>
 
     <string name="account_list_empty">Welcome to SilentSuite!</string>
     <string name="accounts_global_sync_disabled">System-wide automatic synchronization is disabled</string>
@@ -355,7 +356,13 @@
     <string name="login_login">Log In</string>
     <string name="login_sign_in_and_connect">Sign in and set up sync</string>
     <string name="login_signup">Sign Up</string>
-    <string name="login_existing_account_heading">Already have a SilentSuite account?</string>
+    <string name="account_choice_title">Sync privately with Android apps</string>
+    <string name="account_choice_privacy">Sync is end-to-end encrypted, and your keys stay on this device.</string>
+    <string name="account_choice_sign_in">Sign in</string>
+    <string name="account_choice_calendar">Android Calendar</string>
+    <string name="account_choice_contacts">Android Contacts</string>
+    <string name="account_choice_tasks">Tasks.org or OpenTasks</string>
+    <string name="login_existing_account_heading">Existing account</string>
     <string name="login_existing_account_body">Enter the email address and password for your existing account.</string>
     <string name="login_signup_heading">New to SilentSuite?</string>
     <string name="login_signup_body">We’ll open the SilentSuite website. After you create your account, you’ll return to this app to finish setup.</string>

@@ -38,7 +38,7 @@ def test_android_resources_do_not_reference_tourguide_owned_white():
 
 def test_every_checked_in_android_source_set_uses_lease_scoped_setup_secrets():
     tracked = subprocess.run(
-        ["git", "ls-files", "android/**/src/**"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "android/**/src/**"],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -58,11 +58,118 @@ def test_every_checked_in_android_source_set_uses_lease_scoped_setup_secrets():
     for contract in ("OwnerLease", "LeaseRefV1", "beginOperation", "commitIfCurrent"):
         assert contract in holder
     for legacy_call in (
-        "SetupSecretHolder.setLoginCredentials(",
+        "SetupSecretHolder.setLoginCredentials(credentials)",
         "SetupSecretHolder.getLoginCredentials()",
         "SetupSecretHolder.clearLoginCredentials()",
-        "SetupSecretHolder.setPendingConfiguration(",
+        "SetupSecretHolder.setPendingConfiguration(config)",
         "SetupSecretHolder.getPendingConfiguration()",
         "SetupSecretHolder.clearCredentialsAndConfiguration()",
     ):
         assert legacy_call not in combined
+
+
+def test_account_entry_lifecycle_security_blockers_have_explicit_fail_closed_contracts():
+    setup = ROOT / "android/app/src/main/java/io/silentsuite/sync/ui/setup"
+    activity = (setup / "LoginActivity.kt").read_text(encoding="utf-8")
+    owner = (setup / "LoginFlowOwnerRegistry.kt").read_text(encoding="utf-8")
+    holder = (setup / "SetupSecretHolder.kt").read_text(encoding="utf-8")
+    continuation = (setup / "SignupContinuationRegistry.kt").read_text(encoding="utf-8")
+    detector = (setup / "DetectConfigurationFragment.kt").read_text(encoding="utf-8")
+    creator = (setup / "CreateAccountFragment.kt").read_text(encoding="utf-8")
+    credential_change = (setup / "LoginCredentialsChangeFragment.kt").read_text(encoding="utf-8")
+    signup_return = (setup / "SignupReturnActivity.kt").read_text(encoding="utf-8")
+    first_run_runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/FirstRunSignInRuntimeTest.kt").read_text(encoding="utf-8")
+
+    detector_failure = detector.split("if (data == null || data.isFailed)", 1)[1].split(
+        "dismissAllowingStateLoss()", 1
+    )[0]
+    creator_recovery = creator.split("private fun notifyRecoverableFailure", 1)[1].split(
+        "private fun notifyAccountCreationFailed", 1
+    )[0]
+    assert "clearCredentialsAndConfiguration(currentLease)" in detector_failure
+    assert "revoke(currentLease)" not in detector_failure
+    assert "clearCredentialsAndConfiguration" in creator_recovery
+    assert "SetupSecretHolder::revoke" not in creator_recovery
+
+    for contract in (
+        "REBIND_MILLIS", "rebindDeadline", "retireExpiredRebind", "retireWeakOwner",
+        "cancelAndFinishSupersededOwner", "isExactMarker", "BrowserState",
+    ):
+        assert contract in owner
+    assert owner.index("cancelAndFinishSupersededOwner") < owner.index("owner = fresh")
+    foreground = owner.split("data class ForegroundCommand", 1)[1].split(
+        "/** One process-wide weak LoginActivity owner", 1
+    )[0]
+    assert "EXTRA_SIGNUP_CONTINUATION_TOKEN" not in foreground
+    assert "resetToCleanChoice" in owner
+    assert "if (nextGeneration == Long.MAX_VALUE)" in owner
+    assert "if (nextGeneration == Long.MAX_VALUE)" in holder
+    assert "check(value == null || BuildConfig.DEBUG)" in holder
+    assert "check(BuildConfig.DEBUG)" in holder.split("fun now(): Long", 1)[1].split("object SetupSecretHolder", 1)[0]
+    assert "if (nextGeneration == Long.MAX_VALUE)" in continuation
+
+    assert "FragmentLifecycleCallbacks" in activity
+    assert "onFragmentResumed" in activity
+    acknowledgement = activity.split("private fun acknowledgeSignupDestinationIfReady", 1)[1]
+    assert "Lifecycle.State.RESUMED" in acknowledgement
+    assert "CHOICE_TO_CREDENTIALS_BACK_STACK" in acknowledgement
+    assert "SignupContinuationRegistry.markHandled" in acknowledgement
+    processing = activity.split("private fun processSignupContinuation", 1)[1].split(
+        "private fun acknowledgeSignupDestinationIfReady", 1
+    )[0]
+    assert processing.count("SignupContinuationRegistry.markHandled") == 1
+    assert processing.index("operationOwnsPresentation") < processing.index("SignupContinuationRegistry.markHandled")
+    assert "isExactMarker" in activity
+    assert "KEY_NAV_DESTINATION" in activity
+    assert "getBackStackEntryAt" in activity
+    assert "hasValidRestoredAuthority(admission.lease)" in activity
+    assert "creationId?.let(::isCanonicalCreationId) == true" in creator
+    assert "hadStartedBeforeSave &&" in creator
+    assert "java.util.UUID.fromString(value).toString() == value" in creator
+    assert "savedInstanceState?.getBoolean(KEY_WAS_AUTHENTICATOR, false) == true ||" in activity
+    assert "detector.hasValidRestoredAuthority(admission.lease)" in activity
+    assert "restoredCreator.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)" in activity
+    assert "recoverStalledRestoredCreator()" in activity
+
+    for source in (holder, detector, creator, credential_change):
+        assert "LEASE_REF_VERSION" in source
+    assert "ARG_LEASE_VERSION" in detector
+    assert "ARG_LEASE_VERSION" in creator
+    assert "ARG_LEASE_VERSION" in credential_change
+    assert "kind != SetupSecretHolder.LeaseKind.CREDENTIAL_CHANGE" in credential_change
+    assert "retireUnboundOrRebinding" in credential_change
+    assert "rejectMalformedDetector" not in detector
+    assert "rejectMalformedCreator" in creator
+    malformed_handlers = activity.split("internal fun rejectMalformedCreator", 1)[1].split("internal fun hasPendingAccountCreationFailure", 1)[0]
+    assert malformed_handlers.count("SetupSecretHolder.clearCredentialsAndConfiguration(admission.lease)") == 1
+    assert malformed_handlers.count("fragment.ownsActivePresentation(this, admission.lease)") == 1
+    assert "findFragmentById(android.R.id.content) !== fragment" in malformed_handlers
+    assert "supportFragmentManager.popBackStack()" in malformed_handlers
+    assert "host.beginSetupOperation(admittedLease)" not in detector
+    assert "host.beginSetupOperation(admittedLease)" not in creator
+    assert "isAccountEntryAdmissionPublished" in activity
+    assert "check(BuildConfig.DEBUG)" in activity
+    assert activity.count("check(value == null || BuildConfig.DEBUG)") >= 3
+    assert "obsoleteSeamsFactory?.also { check(BuildConfig.DEBUG) }" in activity
+    assert "controllerFactory?.also { check(BuildConfig.DEBUG) }" in activity
+    assert "afterCreationIdIssuedForTest" in creator
+    assert "check(value == null || BuildConfig.DEBUG)" in creator.split("afterCreationIdIssuedForTest", 1)[1]
+    assert "afterCreationIdIssuedForTest?.also { check(BuildConfig.DEBUG) }" in creator
+    assert "browserLauncherForTest = null" in first_run_runtime
+    assert "SignupReturnActivity::class.java" in first_run_runtime
+    assert "if (executed)" in signup_return
+    assert "testExecutor(result.command)" in signup_return
+    assert "foregroundExecutorForTest = null" in first_run_runtime
+    assert "Tokenless callback did not enter the rebind queue" in first_run_runtime
+    assert "Persistent foreground failure did not recover after its deadline" in first_run_runtime
+    unknown_route = owner.split("val flowId =", 1)[1].split("val exactToken", 1)[0]
+    assert "current?.state == State.REBINDING" in unknown_route
+    assert "SignupRouteResult.QUEUED_REBIND(current.rebindDeadline)" in unknown_route
+    assert "operationOwnsPresentation" in activity
+    assert "completeSignupTransportWithoutGuidance" in activity
+    assert "return Route.ROUTABLE(it.flowId)" in continuation
+    assert "LoginActivity.DETECT_CONFIGURATION_TAG" in first_run_runtime
+    assert "LoginCredentialsChangeFragment().apply" in first_run_runtime
+    for source in (detector, creator, credential_change):
+        assert "beginOperation" in source or "beginSetupOperation" in source
+        assert "commitIfCurrent" in source or "commitSetupOperation" in source

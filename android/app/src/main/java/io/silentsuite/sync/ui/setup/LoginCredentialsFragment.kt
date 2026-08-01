@@ -8,7 +8,7 @@
 
 package io.silentsuite.sync.ui.setup
 
-import android.content.Intent
+
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -18,9 +18,9 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.commit
-import androidx.fragment.app.replace
+
 import androidx.core.view.ViewCompat
+
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.WebViewActivity
@@ -38,8 +38,7 @@ class LoginCredentialsFragment : Fragment() {
     internal lateinit var customServer: EditText
     private var advancedExpanded = false
     private var submissionInProgress = false
-    internal var initialUsername: String? = null
-    internal var initialPassword: String? = null
+
 
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
@@ -48,37 +47,34 @@ class LoginCredentialsFragment : Fragment() {
 
         applyLoginActionBarInsets(v.findViewById(R.id.login_action_bar))
         ViewCompat.setAccessibilityHeading(v.findViewById(R.id.login_existing_account_heading), true)
-        ViewCompat.setAccessibilityHeading(v.findViewById(R.id.login_signup_heading), true)
+
 
         editUserName = v.findViewById<TextInputEditText>(R.id.user_name)
         editUrlPassword = v.findViewById<TextInputLayout>(R.id.url_password)
         showAdvanced = v.findViewById<TextView>(R.id.show_advanced)
         customServer = v.findViewById<TextInputEditText>(R.id.custom_server)
 
-        if (savedInstanceState == null) {
-            editUserName.setText(initialUsername ?: "")
-            editUrlPassword.editText?.setText(initialPassword ?: "")
-        }
-
-        val createAccount = v.findViewById<View>(R.id.create_account) as Button
-        createAccount.setOnClickListener {
-            val callbackUri = (requireActivity() as LoginActivity).issueSignupCallbackUri()
-            val signupUri = Constants.webAppUri.buildUpon()
-                .appendEncodedPath("signup")
-                .appendQueryParameter("return_to", callbackUri.toString())
-                .build()
-            startActivity(Intent(Intent.ACTION_VIEW, signupUri))
-        }
 
         val login = v.findViewById<View>(R.id.login) as Button
         login.setOnClickListener {
             val credentials = validateLoginData()
             if (credentials != null && !submissionInProgress &&
-                parentFragmentManager.findFragmentByTag(DETECT_CONFIGURATION_TAG) == null) {
+                parentFragmentManager.findFragmentByTag(LoginActivity.DETECT_CONFIGURATION_TAG) == null) {
                 // This guard closes the gap before DialogFragment.show() commits its transaction.
                 submissionInProgress = true
-                SetupSecretHolder.setLoginCredentials(credentials)
-                DetectConfigurationFragment.newInstance().show(requireFragmentManager(), DETECT_CONFIGURATION_TAG)
+                val host = activity as? LoginActivity
+                val lease = host?.setupLease()
+                val operation = if (lease != null && host != null) host.beginSetupOperation(lease) else null
+                if (host == null || lease == null || operation == null || !host.commitSetupOperation(
+                        operation,
+                        SetupSecretHolder.CommitKind.HOLDER_MUTATION,
+                        SetupSecretHolder.CommitKind.FRAGMENT_COMMIT,
+                    ) || !SetupSecretHolder.setLoginCredentials(lease, credentials)) {
+                    submissionInProgress = false
+                    return@setOnClickListener
+                }
+                DetectConfigurationFragment.newInstance(SetupSecretHolder.reference(lease))
+                    .show(requireFragmentManager(), LoginActivity.DETECT_CONFIGURATION_TAG)
             }
         }
         editUrlPassword.editText?.setOnEditorActionListener { _, actionId, _ ->
@@ -211,11 +207,6 @@ class LoginCredentialsFragment : Fragment() {
 
     companion object {
         private const val KEY_ADVANCED_EXPANDED = "advancedExpanded"
-        private const val DETECT_CONFIGURATION_TAG = "detect_configuration"
-        fun newInstance(initialUsername: String?, initialPassword: String?): LoginCredentialsFragment =
-            LoginCredentialsFragment().also {
-                it.initialUsername = initialUsername
-                it.initialPassword = initialPassword
-            }
+
     }
 }

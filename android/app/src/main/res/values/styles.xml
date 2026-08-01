@@ -153,7 +153,9 @@
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
 
-    <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.FilledBox">
+    <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundColor">@color/semantic_surface</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
         <item name="boxStrokeColor">@color/semantic_outline</item>
         <item name="boxStrokeErrorColor">@color/semantic_error</item>
         <item name="boxStrokeWidthFocused">2dp</item>

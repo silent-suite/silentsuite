@@ -60,22 +60,30 @@ class AuthenticatorLifecycleRuntimeTest {
             ActivityScenario.launch<LoginActivity>(loginIntent).use { scenario ->
                 instrumentation.waitForIdleSync()
                 scenario.onActivity { activity ->
+                    activity.findViewById<android.view.View>(R.id.account_choice_sign_in).performClick()
+                    activity.supportFragmentManager.executePendingTransactions()
                     activity.findViewById<android.view.View>(R.id.show_advanced).performClick()
                     activity.findViewById<android.widget.EditText>(R.id.custom_server)
                         .setText("https://custom.example.invalid/")
                     activity.supportFragmentManager.beginTransaction()
-                        .replace(android.R.id.content, CreateAccountFragment())
-                        .addToBackStack("credentials")
+                        .replace(
+                            android.R.id.content,
+                            CreateAccountFragment(),
+                            LoginActivity.CREATE_ACCOUNT_TAG,
+                        )
+                        .addToBackStack(LoginActivity.CREDENTIALS_TO_CREATOR_BACK_STACK)
                         .commit()
                 }
                 instrumentation.waitForIdleSync()
                 scenario.onActivity { activity ->
                     org.junit.Assert.assertFalse(activity.isFinishing)
-                    org.junit.Assert.assertTrue(activity.findViewById<android.view.View>(R.id.user_name).isShown)
-                    org.junit.Assert.assertTrue(activity.findViewById<android.view.View>(R.id.url_password).isShown)
-                    org.junit.Assert.assertTrue(activity.findViewById<android.view.View>(R.id.login).isShown)
-                    (activity.supportFragmentManager.findFragmentByTag("account_creation_retry_error") as? androidx.fragment.app.DialogFragment)
-                        ?.dismissAllowingStateLoss()
+                    org.junit.Assert.assertNull(
+                        activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREATE_ACCOUNT_TAG),
+                    )
+                    org.junit.Assert.assertNull(
+                        activity.supportFragmentManager.findFragmentByTag("account_creation_retry_error"),
+                    )
+                    activity.onBackPressedDispatcher.onBackPressed()
                 }
                 instrumentation.waitForIdleSync()
                 scenario.onActivity { activity ->
@@ -130,12 +138,12 @@ class AuthenticatorLifecycleRuntimeTest {
         try {
             App.postLoginBootstrapSucceeded = true
             assertTrue(PostLoginSetupMigration.bootstrap(context))
-            SetupSecretHolder.setPendingConfiguration(BaseConfigurationFinder.Configuration(
+            val pendingConfiguration = BaseConfigurationFinder.Configuration(
                 URI("https://example.invalid/"),
                 account.name,
                 "opaque-test-session",
                 null,
-            ))
+            )
             ActiveAccountManager.afterExactSetCommitForTest = {
                 check(AccountSettings.writeVerified(
                     manager,
@@ -146,9 +154,15 @@ class AuthenticatorLifecycleRuntimeTest {
             }
             ActivityScenario.launch<LoginActivity>(Intent(context, LoginActivity::class.java)).use { scenario ->
                 scenario.onActivity { activity ->
+                    val lease = requireNotNull(activity.setupLease())
+                    assertTrue(SetupSecretHolder.setPendingConfiguration(lease, pendingConfiguration))
                     activity.supportFragmentManager.beginTransaction()
-                        .replace(android.R.id.content, CreateAccountFragment())
-                        .addToBackStack("credentials")
+                        .replace(
+                            android.R.id.content,
+                            CreateAccountFragment.newInstance(SetupSecretHolder.reference(lease)),
+                            LoginActivity.CREATE_ACCOUNT_TAG,
+                        )
+                        .addToBackStack(LoginActivity.CREDENTIALS_TO_CREATOR_BACK_STACK)
                         .commit()
                 }
                 launched = instrumentation.waitForMonitorWithTimeout(monitor, 10_000)
@@ -180,7 +194,7 @@ class AuthenticatorLifecycleRuntimeTest {
             ActiveAccountManager.afterExactSetCommitForTest = null
             launched?.finish()
             instrumentation.removeMonitor(monitor)
-            SetupSecretHolder.clearProcessOnlySecrets()
+            SetupSecretHolder.resetForTests()
             ownedGeneration?.let { registry.clearOwned(account.type, account.name, it) }
             if (account in manager.getAccountsByType(account.type)) {
                 val removed = CountDownLatch(1)
@@ -233,12 +247,12 @@ class AuthenticatorLifecycleRuntimeTest {
                 System.currentTimeMillis(),
                 account.type,
             )))
-            SetupSecretHolder.setPendingConfiguration(BaseConfigurationFinder.Configuration(
+            val pendingConfiguration = BaseConfigurationFinder.Configuration(
                 URI("https://example.invalid/"),
                 account.name,
                 "opaque-test-session",
                 null,
-            ))
+            )
             if (injectUnexpectedFailure) {
                 CreateAccountFragment.afterCreationIdIssuedForTest = {
                     throw IllegalStateException("injected creator failure")
@@ -246,9 +260,15 @@ class AuthenticatorLifecycleRuntimeTest {
             }
             ActivityScenario.launch<LoginActivity>(Intent(context, LoginActivity::class.java)).use { scenario ->
                 scenario.onActivity { activity ->
+                    val lease = requireNotNull(activity.setupLease())
+                    assertTrue(SetupSecretHolder.setPendingConfiguration(lease, pendingConfiguration))
                     activity.supportFragmentManager.beginTransaction()
-                        .replace(android.R.id.content, CreateAccountFragment())
-                        .addToBackStack("credentials")
+                        .replace(
+                            android.R.id.content,
+                            CreateAccountFragment.newInstance(SetupSecretHolder.reference(lease)),
+                            LoginActivity.CREATE_ACCOUNT_TAG,
+                        )
+                        .addToBackStack(LoginActivity.CREDENTIALS_TO_CREATOR_BACK_STACK)
                         .commit()
                 }
                 launched = instrumentation.waitForMonitorWithTimeout(monitor, 10_000)
@@ -278,7 +298,7 @@ class AuthenticatorLifecycleRuntimeTest {
             CreateAccountFragment.afterCreationIdIssuedForTest = null
             launched?.finish()
             instrumentation.removeMonitor(monitor)
-            SetupSecretHolder.clearProcessOnlySecrets()
+            SetupSecretHolder.resetForTests()
             registry.clearOwned(account.type, account.name, existingGeneration)
             if (account in manager.getAccountsByType(account.type)) {
                 val removed = CountDownLatch(1)
@@ -304,11 +324,11 @@ class AuthenticatorLifecycleRuntimeTest {
 
     @Test fun staleLoginActivityRestorationUsesObsoletePathBeforeController() {
         var cancel=0; var clear=0; var launch=0; var controllers=0
-        val stale=Bundle().apply { putBoolean(LoginActivity.KEY_WAS_AUTHENTICATOR,true); putString("authenticator_process_epoch","stale"); putString(AuthenticatorResponseController.KEY_ACCOUNT_NAME,"staged") }
+        val stale=Bundle().apply { putString("authenticator_process_epoch","stale"); putString(AuthenticatorResponseController.KEY_ACCOUNT_NAME,"staged") }
         LoginActivity.obsoleteSeamsFactory={ _,_,_ -> object:ObsoleteAuthenticatorCoordinator.Seams { override fun cancel(){cancel++}; override fun clearSecrets(){clear++}; override fun launchNormalOnce(){launch++} } }
         LoginActivity.controllerFactory={ _,_ -> controllers++; AuthenticatorResponseController(object:AuthenticatorResponseController.Delivery { override fun continued(){}; override fun result(result:Bundle){}; override fun error(code:Int,message:String){} },null) }
         StaleLoginHarnessActivity.restored=stale
-        try { val instrumentation=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation(); val testContext=instrumentation.context; val targetContext=instrumentation.targetContext; val component=android.content.ComponentName(targetContext.packageName,StaleLoginHarnessActivity::class.java.name); assertEquals(targetContext.packageName,component.packageName); org.junit.Assert.assertFalse(component.packageName==testContext.packageName); ActivityScenario.launch<StaleLoginHarnessActivity>(Intent().setComponent(component)).use {}; assertEquals(1,cancel);assertEquals(1,clear);assertEquals(1,launch);assertEquals(0,controllers) }
+        try { val instrumentation=androidx.test.platform.app.InstrumentationRegistry.getInstrumentation(); val testContext=instrumentation.context; val targetContext=instrumentation.targetContext; val component=android.content.ComponentName(targetContext.packageName,StaleLoginHarnessActivity::class.java.name); assertEquals(targetContext.packageName,component.packageName); org.junit.Assert.assertFalse(component.packageName==testContext.packageName); ActivityScenario.launch<StaleLoginHarnessActivity>(Intent().setComponent(component).putExtra(AccountManager.KEY_ACCOUNT_AUTHENTICATOR_RESPONSE,true)).use {}; assertEquals(1,cancel);assertEquals(1,clear);assertEquals(1,launch);assertEquals(0,controllers) }
         finally { LoginActivity.obsoleteSeamsFactory=null;LoginActivity.controllerFactory=null;StaleLoginHarnessActivity.restored=null }
     }
     @Test fun obsoleteCoordinatorCancelsBeforeNormalLaunch() {

@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright © 2013 – 2016 Ricki Hirner (bitfire web engineering).
+  ~ All rights reserved. This program and the accompanying materials
+  ~ are made available under the terms of the GNU Public License v3.0
+  ~ which accompanies this distribution, and is available at
+  ~ http://www.gnu.org/licenses/gpl.html
+  -->
+
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/account_choice_scroll"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipToPadding="false"
+    android:fillViewport="true"
+    android:paddingStart="@dimen/spacing_24"
+    android:paddingTop="@dimen/spacing_24"
+    android:paddingEnd="@dimen/spacing_24"
+    android:paddingBottom="@dimen/spacing_24">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/account_choice_brand_mark"
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="@dimen/spacing_16"
+            android:contentDescription="@null"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_silentsuite_arrows" />
+
+        <TextView
+            android:id="@+id/account_choice_heading"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/account_choice_title"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Title" />
+
+        <TextView
+            android:id="@+id/account_choice_privacy"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_8"
+            android:layout_marginBottom="@dimen/spacing_24"
+            android:text="@string/account_choice_privacy"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+
+        <TextView
+            android:id="@+id/account_choice_calendar"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:drawableStart="@drawable/ic_calendar_outline"
+            android:drawablePadding="@dimen/spacing_12"
+            android:gravity="center_vertical"
+            android:text="@string/account_choice_calendar"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+
+        <TextView
+            android:id="@+id/account_choice_contacts"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:drawableStart="@drawable/ic_contacts_outline"
+            android:drawablePadding="@dimen/spacing_12"
+            android:gravity="center_vertical"
+            android:text="@string/account_choice_contacts"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+
+        <TextView
+            android:id="@+id/account_choice_tasks"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:drawableStart="@drawable/ic_tasks_outline"
+            android:drawablePadding="@dimen/spacing_12"
+            android:gravity="center_vertical"
+            android:text="@string/account_choice_tasks"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/account_choice_sign_in"
+            style="@style/Widget.AppTheme.Material3.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_24"
+            android:minHeight="48dp"
+            android:text="@string/account_choice_sign_in" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/account_choice_create_account"
+            style="@style/Widget.AppTheme.Material3.Button.Outlined"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_12"
+            android:minHeight="48dp"
+            android:text="@string/login_signup_action" />
+    </LinearLayout>
+</ScrollView>

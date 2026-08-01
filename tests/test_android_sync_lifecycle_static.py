@@ -535,6 +535,20 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "status=$?" in script and "set +e" in script and "restore_status=$?" in script
     assert script.count('if [[ "${status}" -eq 0 && "') >= 3
     assert script.index("trap - EXIT") < script.index('exit "${status}"')
+    for contract in (
+        "scenarioNonce", "invocationNonce", "helperSet", "pull_and_validate_scenarios",
+        "exec-out", "scenario identity mismatch", "scenario set mismatch",
+    ):
+        assert contract in script
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/FirstRunSignInRuntimeTest.kt").read_text(encoding="utf-8")
+    assert "assertTestStateEmpty()" in runtime
+    assert "recordScenario(helper" in runtime
+    assert all(helper in runtime for helpers in ledger["wrappers"].values() for helper in helpers)
+    for contract in (
+        "duplicate scenario key", "duplicate helper ownership", "remote scenario set mismatch",
+        "scenario platform/version mismatch",
+    ):
+        assert contract in script
 
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
@@ -543,6 +557,17 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     assert "unexpected=set(counts)-expected" in assertion
     assert "duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}" in assertion
+    assert "producer-manifest.json" in assertion
+    assert "assertionOutcome': 'PASS'" in assertion
+    assert "ledgerSha256" in assertion and "workflowSha256" in assertion
+    for contract in (
+        "Initialize focused runtime producer manifest", "assertionOutcome': 'INCOMPLETE'",
+        "stepOutcomes", "applicationId", "versionCode", "versionName", "evidenceSha256",
+        "baseSha", "headSha", "runAttempt", "Finalize failed focused runtime producer manifest",
+        "focused runtime execution or scenario validation did not succeed", "NOT_APPLICABLE",
+    ):
+        assert contract in job
+    assert job.index("Assert focused runtime methods executed") < job.index("Upload focused androidTest reports and results")
 
 
 def _unique_json_object(pairs):

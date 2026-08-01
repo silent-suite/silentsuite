@@ -25,6 +25,24 @@ import java.util.logging.Level
 
 class CreateAccountFragment : DialogFragment() {
     private var failureRecoveryScheduled = false
+    private var lease: SetupSecretHolder.OwnerLease? = null
+    private var operation: SetupSecretHolder.OperationToken? = null
+    private var started = false
+    private var hadStartedBeforeSave = false
+
+    internal fun ownsActivePresentation(host: LoginActivity, admittedLease: SetupSecretHolder.OwnerLease): Boolean {
+        val currentOperation = operation ?: return false
+        return isAdded && !isRemoving && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
+            lease == admittedLease && host.isSetupOperationCurrent(currentOperation)
+    }
+
+    internal fun hasValidRestoredAuthority(admittedLease: SetupSecretHolder.OwnerLease): Boolean =
+        hadStartedBeforeSave && creationId?.let(::isCanonicalCreationId) == true &&
+            parseLeaseRef()?.let(SetupSecretHolder::resolve) == admittedLease
+
+    private fun isCanonicalCreationId(value: String): Boolean =
+        runCatching { java.util.UUID.fromString(value).toString() == value }.getOrDefault(false)
+    private var creationId: String? = null
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         isCancelable = false
@@ -37,19 +55,70 @@ class CreateAccountFragment : DialogFragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        creationId = if (savedInstanceState == null) {
+            java.util.UUID.randomUUID().toString()
+        } else {
+            savedInstanceState.getString(KEY_CREATION_ID)?.takeIf(::isCanonicalCreationId)
+        }
+        hadStartedBeforeSave = savedInstanceState?.getBoolean(KEY_HAD_STARTED, false) == true
+    }
 
-        val config = SetupSecretHolder.getPendingConfiguration()
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(KEY_CREATION_ID, creationId)
+        outState.putBoolean(KEY_HAD_STARTED, hadStartedBeforeSave)
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (started) return
+        started = true
+        hadStartedBeforeSave = true
+
+        val host = activity as? LoginActivity
+        if (host?.isAccountEntryAdmissionPublished() != true) {
+            dismissAllowingStateLoss()
+            return
+        }
+        if (host?.hasPendingAccountCreationFailure() == true) return
+        val admittedLease = host?.setupLease()
+        lease = parseLeaseRef()?.let(SetupSecretHolder::resolve)
+        operation = if (host != null) lease?.takeIf { it == admittedLease }?.let(host::beginSetupOperation) else null
+        val currentOperation = operation
+        val config = currentOperation?.configuration
+        val exactCreationId = creationId
+        if (host == null || admittedLease == null || currentOperation == null) {
+            Logger.log.warning("Setup configuration expired before account creation")
+            dismissAllowingStateLoss()
+            return
+        }
+        if (exactCreationId == null) {
+            Logger.log.warning("Setup account-creation identity expired")
+            host.rejectMalformedCreator(this)
+            dismissAllowingStateLoss()
+            return
+        }
         if (config == null) {
-            Logger.log.severe("Setup configuration expired before account creation")
+            if (!host.commitSetupOperation(
+                    currentOperation,
+                    SetupSecretHolder.CommitKind.HOLDER_MUTATION,
+                    SetupSecretHolder.CommitKind.FRAGMENT_COMMIT,
+                    SetupSecretHolder.CommitKind.UI_PUBLICATION,
+                    SetupSecretHolder.CommitKind.DISMISSAL,
+                )) return
             notifyRecoverableFailure(R.string.setup_state_expired)
             dismissAllowingStateLoss()
             return
         }
 
-        val activity = requireActivity()
-        val creationId = java.util.UUID.randomUUID().toString()
+        performCreation(host, config, exactCreationId)
+    }
+
+    private fun performCreation(activity: LoginActivity, config: Configuration, creationId: String) {
+        val currentOperation = operation ?: return
         val attempt = try {
-            afterCreationIdIssuedForTest?.invoke(creationId)
+            afterCreationIdIssuedForTest?.also { check(BuildConfig.DEBUG) }?.invoke(creationId)
+            if (!activity.commitSetupOperation(currentOperation, SetupSecretHolder.CommitKind.SETTINGS_WRITE)) return
             createAccount(config.userName, config, creationId)
         } catch (e: Exception) {
             // A lifecycle callback must never propagate an account-creation exception. The
@@ -57,6 +126,14 @@ class CreateAccountFragment : DialogFragment() {
             Logger.log.log(Level.SEVERE, "Account creation failed: ${e.javaClass.name}")
             recoverFromUnexpectedFailure(config.userName, creationId)
         }
+        if (!activity.commitSetupOperation(
+                currentOperation,
+                SetupSecretHolder.CommitKind.HOLDER_MUTATION,
+                SetupSecretHolder.CommitKind.FRAGMENT_COMMIT,
+                SetupSecretHolder.CommitKind.AUTHENTICATOR_RESULT,
+                SetupSecretHolder.CommitKind.UI_PUBLICATION,
+                SetupSecretHolder.CommitKind.DISMISSAL,
+            )) return
         if (attempt is CreationAttempt.SettingsResolution) {
             startActivity(PostLoginSetupActivity.newIntent(requireContext(), attempt.account, null)); notifyAccountCreationFailed(); dismissAllowingStateLoss()
         } else if (attempt is CreationAttempt.Recovery) {
@@ -81,7 +158,7 @@ class CreateAccountFragment : DialogFragment() {
                         ((activity as? LoginActivity)?.onAccountCreated(account, id) ?: true)
                 override fun openSetup() { startActivity(PostLoginSetupActivity.newIntent(requireContext(), account, expectedId)) }
                 override fun openDashboard() { startActivity(AccountActivity.newIntent(requireContext(), account, expectedId)) }
-                override fun finish() { activity.setResult(Activity.RESULT_OK); SetupSecretHolder.clearCredentialsAndConfiguration(); activity.finish() }
+                override fun finish() { activity.setResult(Activity.RESULT_OK); lease?.let(SetupSecretHolder::revoke); activity.finish() }
             }).dispatch(kind, account.name, account.type, expectedId)
             if (!dispatched) { notifyRecoverableFailure(R.string.setup_account_busy_retry); dismissAllowingStateLoss() }
         } else if (attempt == CreationAttempt.RetryCredentials) {
@@ -103,31 +180,14 @@ class CreateAccountFragment : DialogFragment() {
 
     /** Restores the login surface before one bounded, resource-backed failure dialog is shown. */
     private fun notifyRecoverableFailure(messageRes: Int) {
-        SetupSecretHolder.clearCredentialsAndConfiguration()
+        lease?.let(SetupSecretHolder::clearCredentialsAndConfiguration)
         if (failureRecoveryScheduled) return
         failureRecoveryScheduled = true
-        val manager = parentFragmentManager
-        // CreateAccountFragment replaced the credentials fragment and put it on the back stack.
-        // Defer the synchronous pop until this lifecycle transaction is complete; FragmentManager
-        // rejects nested execution from onCreate. The login content is restored before the dialog.
-        val host = activity ?: return
-        host.window.decorView.post {
-            if (host.isFinishing || host.isDestroyed || manager.isStateSaved || manager.isDestroyed) return@post
-            try {
-                manager.popBackStackImmediate()
-                (manager.findFragmentById(android.R.id.content) as? LoginCredentialsFragment)
-                    ?.onSubmissionFailed()
-                if (manager.findFragmentByTag(RETRY_ERROR_TAG) == null)
-                    DetectConfigurationFragment.NothingDetectedFragment.newInstance(messageRes)
-                        .show(manager, RETRY_ERROR_TAG)
-            } catch (e: Exception) {
-                Logger.log.warning("Unable to restore login after account creation failure: ${e.javaClass.name}")
-            }
-        }
+        (activity as? LoginActivity)?.recoverFromAccountCreationFailure(messageRes)
     }
 
     private fun notifyAccountCreationFailed() {
-        SetupSecretHolder.clearCredentialsAndConfiguration()
+        lease?.let(SetupSecretHolder::revoke)
         // LoginCredentialsFragment is retained in FragmentManager's active fragments while
         // this dialog replaces the content and is on the back stack. Reset it directly rather
         // than serializing state through Android saved state or relying on newer Fragment APIs.
@@ -244,6 +304,17 @@ class CreateAccountFragment : DialogFragment() {
         }
     }
 
+    private fun parseLeaseRef(): SetupSecretHolder.LeaseRefV1? {
+        val args = arguments ?: return null
+        if ((args.get(ARG_LEASE_VERSION) as? Int) != SetupSecretHolder.LEASE_REF_VERSION) return null
+        val ownerId = args.getString(ARG_LEASE_OWNER)?.takeIf { it.isNotBlank() } ?: return null
+        val generation = (args.get(ARG_LEASE_GENERATION) as? Long)?.takeIf { it > 0 } ?: return null
+        val kind = runCatching { SetupSecretHolder.LeaseKind.valueOf(args.getString(ARG_LEASE_KIND).orEmpty()) }.getOrNull()
+            ?: return null
+        if (kind != SetupSecretHolder.LeaseKind.LOGIN) return null
+        return SetupSecretHolder.LeaseRefV1(ownerId, generation, kind)
+    }
+
     sealed class CreationAttempt {
         data class Created(val account: Account, val creationId: String) : CreationAttempt()
         data class Completed(val account: Account, val creationId: String) : CreationAttempt()
@@ -255,11 +326,26 @@ class CreateAccountFragment : DialogFragment() {
 
     companion object {
         private val CREATION_LOCK = Any()
-        private const val RETRY_ERROR_TAG = "account_creation_retry_error"
-        @JvmField internal var afterCreationIdIssuedForTest: ((String) -> Unit)? = null
-        fun newInstance(config: Configuration): CreateAccountFragment {
-            SetupSecretHolder.setPendingConfiguration(config)
-            return CreateAccountFragment()
-        }
+
+        private const val ARG_LEASE_VERSION = "lease_ref_version"
+        private const val ARG_LEASE_OWNER = "lease_owner_v1"
+        private const val ARG_LEASE_GENERATION = "lease_generation_v1"
+        private const val ARG_LEASE_KIND = "lease_kind_v1"
+        private const val KEY_CREATION_ID = "account_creation_generation"
+        private const val KEY_HAD_STARTED = "account_creation_had_started"
+        internal var afterCreationIdIssuedForTest: ((String) -> Unit)? = null
+            set(value) {
+                check(value == null || BuildConfig.DEBUG)
+                field = value
+            }
+        fun newInstance(reference: SetupSecretHolder.LeaseRefV1): CreateAccountFragment =
+            CreateAccountFragment().apply {
+                arguments = Bundle(4).apply {
+                    putInt(ARG_LEASE_VERSION, SetupSecretHolder.LEASE_REF_VERSION)
+                    putString(ARG_LEASE_OWNER, reference.ownerId)
+                    putLong(ARG_LEASE_GENERATION, reference.generation)
+                    putString(ARG_LEASE_KIND, reference.kind.name)
+                }
+            }
     }
 }
