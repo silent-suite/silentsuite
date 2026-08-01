@@ -836,10 +836,12 @@ class Collection(BaseCollection):
 
         for item in self.collection.list():
             remote_identity = item.cache_item.remote_uid or str(item.item.uid)
-            href = (
-                hashlib.sha256(remote_identity.encode()).hexdigest()
-                + self.content_suffix
-            )
+            href = item.meta.get("dav_href")
+            if not is_safe_dav_href(href):
+                href = (
+                    hashlib.sha256(remote_identity.encode()).hexdigest()
+                    + self.content_suffix
+                )
             href_mapper = ensure_dav_href(
                 item.cache_item, href, self.content_suffix
             )
@@ -946,6 +948,9 @@ class Collection(BaseCollection):
             if existing is not None:
                 etesync_item = existing.etesync_item
                 etesync_item.content = vobject_item.serialize()
+                item_meta = dict(etesync_item.meta)
+                item_meta["dav_href"] = href
+                etesync_item.meta = item_meta
                 etesync_item.save()
                 event = "Updated item"
             else:
@@ -964,7 +969,10 @@ class Collection(BaseCollection):
                     for mapper in stale_mappers
                 ):
                     raise ValueError("Cannot recreate href with pending deletion")
-                etesync_item = self.collection.create(vobject_item)
+                etesync_item = self.collection.create(
+                    vobject_item,
+                    dav_href=href,
+                )
                 if stale_mappers:
                     # Revive the row that already owns this collection-scoped
                     # href so retained DAV history never loses its identity.

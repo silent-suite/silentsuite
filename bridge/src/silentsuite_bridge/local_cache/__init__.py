@@ -367,7 +367,8 @@ def dav_collection_state_hash(cache_col):
 def is_safe_dav_href(href):
     """Return whether href is one conservative, ASCII-safe DAV path segment."""
     return (
-        bool(href)
+        isinstance(href, str)
+        and bool(href)
         and href not in {".", ".."}
         and len(href) <= 255
         and re.fullmatch(r"[A-Za-z0-9._-]+", href) is not None
@@ -1249,13 +1250,20 @@ class Collection:
             self.cache_col = current_cache
             self.col = current_col
 
-    def create(self, vobject_item):
+    def create(self, vobject_item, *, dav_href=None):
         with db.atomic_connection():
             item_mgr = self.col_mgr.get_item_manager(self.col)
             # Extract UID from the child component (VEVENT, VTODO, VCARD)
             # vobject_item may be a VCALENDAR/VCARD wrapper
             uid = _extract_uid(vobject_item)
             item_meta = {"name": uid, "mtime": get_millis()}
+            if dav_href is not None:
+                if not is_safe_dav_href(dav_href):
+                    raise ValueError("invalid DAV href")
+                # Etebase item metadata is encrypted with the item. Keeping
+                # the client-selected safe href here lets independent Bridge
+                # databases allocate the same DAV identity after sync.
+                item_meta["dav_href"] = dav_href
             item = item_mgr.create(item_meta, vobject_item.serialize().encode())
             cache_item = models.ItemEntity(
                 collection=self.cache_col,

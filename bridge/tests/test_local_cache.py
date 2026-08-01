@@ -446,9 +446,13 @@ class TestCollectionWrapper:
         mock_item_mgr.create.return_value = remote_item
         col = Collection(mock_col_mgr, cache_col)
 
-        created = col.create(vobject.readOne(SAMPLE_VCARD))
+        created = col.create(
+            vobject.readOne(SAMPLE_VCARD),
+            dav_href="shared-contact.vcf",
+        )
 
         assert created.cache_item.remote_uid == "remote-created-1"
+        assert mock_item_mgr.create.call_args.args[0]["dav_href"] == "shared-contact.vcf"
 
     def test_create_and_save_do_not_close_owning_transaction(
         self,
