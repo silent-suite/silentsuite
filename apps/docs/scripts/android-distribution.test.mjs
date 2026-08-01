@@ -61,7 +61,7 @@ const falseIosAvailabilityPatterns = [
   /\bcompatible with \*\*any\*\* calendar, contacts, or tasks app that supports CalDAV\/CardDAV\b/i,
   /\bor any other standard CalDAV\/CardDAV client\b/i,
   /\bany CardDAV client \(/i,
-  /\bany CalDAV client that speaks `VTODO`\b/i,
+  /\bany CalDAV client that speaks `VTODO`/i,
   /\bfor use with any standard PIM client\b/i,
   /\bcompatible with other apps that support CalDAV tasks\b/i,
   /\bConnect using the SilentSuite app or any CalDAV\/CardDAV client\b/i,
@@ -240,6 +240,29 @@ test('current docs and Settings expose iOS only as unsupported roadmap work', ()
   }
   for (const pattern of falseIosAvailabilityPatterns) {
     assert.doesNotMatch(settingsMobile, pattern, 'Settings → Mobile')
+  }
+})
+
+test('compatibility guards reject retired broad Bridge claims', () => {
+  const retiredClaims = [
+    'compatible with **any** calendar, contacts, or tasks app that supports CalDAV/CardDAV',
+    'or any other standard CalDAV/CardDAV client',
+    'any CardDAV client (including mobile clients)',
+    'any CalDAV client that speaks `VTODO`',
+    'for use with any standard PIM client',
+    'compatible with other apps that support CalDAV tasks',
+    'Connect using the SilentSuite app or any CalDAV/CardDAV client',
+    'talk to it like any other DAV server',
+    '[Android (DAVx5)](./android.md)',
+    '[Other CalDAV/CardDAV Apps](./other.md)',
+  ]
+
+  for (const claim of retiredClaims) {
+    assert.equal(
+      falseIosAvailabilityPatterns.some((pattern) => pattern.test(claim)),
+      true,
+      claim,
+    )
   }
 })
 
