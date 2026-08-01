@@ -79,8 +79,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.IOException
-import java.io.OutputStream
 import java.util.logging.Level
 
 class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMenu.OnMenuItemClickListener, Refreshable, NavigationView.OnNavigationItemSelectedListener, SyncStatusObserver {
@@ -596,16 +594,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     // Recheck after the document picker returned and immediately before every
                     // private-cache/content or external-write boundary.
                     if (!exactAccountStillCurrent()) return@withContext false
-                    val outputStream = contentResolver.openOutputStream(uri)
-                        ?: throw IOException("Could not open export destination")
-                    outputStream.use {
-                        if (!exactAccountStillCurrent()) return@withContext false
-                        (exportWriterOverride ?: { context: Context, exact: Account, creationId: String,
-                            exportKind: AndroidExportKind, stream: OutputStream ->
-                            AndroidDataExporter.writeExport(context, exact, creationId, exportKind, stream)
-                        })(this@AccountActivity, account, accountCreationId, kind, it)
-                    }
-                    exactAccountStillCurrent()
+                    val completed = exportWriterOverride?.invoke(
+                        this@AccountActivity, account, accountCreationId, kind, uri
+                    ) ?: AndroidDataExporter.writeExport(
+                        this@AccountActivity, account, accountCreationId, kind, uri
+                    )
+                    AndroidDataExporter.finalizePublishedExport(
+                        committed = completed,
+                        clearDestination = {
+                            AndroidDataExporter.clearExportDestination(this@AccountActivity, uri)
+                        },
+                        exactGenerationStillCurrent = ::exactAccountStillCurrent,
+                    )
                 }
                 .takeIf { it && exactAccountStillCurrent() } ?: return@launch
                 Snackbar.make(findViewById(R.id.coordinator), R.string.export_data_success, Snackbar.LENGTH_LONG).show()
@@ -1628,7 +1628,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         @VisibleForTesting
         @JvmField internal var exportDocumentLauncherOverride: ((Intent) -> Unit)? = null
         @VisibleForTesting
-        @JvmField internal var exportWriterOverride: ((Context, Account, String, AndroidExportKind, OutputStream) -> Unit)? = null
+        @JvmField internal var exportWriterOverride: ((Context, Account, String, AndroidExportKind, Uri) -> Boolean)? = null
         @VisibleForTesting
         @JvmField internal var billingStatusOverride: ((Context, Account, String) -> BillingManager.SubscriptionStatus)? = null
         @VisibleForTesting

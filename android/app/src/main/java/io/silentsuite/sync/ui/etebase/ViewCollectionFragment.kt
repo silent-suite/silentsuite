@@ -23,7 +23,6 @@ import io.silentsuite.sync.utils.TaskProviderHandling
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.IOException
 import java.util.logging.Level
 
 class ViewCollectionFragment : Fragment() {
@@ -283,20 +282,22 @@ class ViewCollectionFragment : Fragment() {
                     if (!identity.validate(applicationContext)) return@withContext false
                     val completed = collectionExportOverride?.invoke(applicationContext, identity, collectionType, itemContents, uri)
                         ?: run {
-                            val outputStream = applicationContext.contentResolver.openOutputStream(uri)
-                                    ?: throw IOException("Could not open export destination")
-                            outputStream.use {
-                                AndroidDataExporter.writeCollectionExport(
-                                    applicationContext,
-                                    identity.account,
-                                    identity.creationId,
-                                    collectionType,
-                                    itemContents,
-                                    it,
-                                )
-                            }
+                            AndroidDataExporter.writeCollectionExport(
+                                applicationContext,
+                                identity.account,
+                                identity.creationId,
+                                collectionType,
+                                itemContents,
+                                uri,
+                            )
                         }
-                    completed && identity.validate(applicationContext)
+                    AndroidDataExporter.finalizePublishedExport(
+                        committed = completed,
+                        clearDestination = {
+                            AndroidDataExporter.clearExportDestination(applicationContext, uri)
+                        },
+                        exactGenerationStillCurrent = { identity.validate(applicationContext) },
+                    )
                 }
                 if (!exported) {
                     activity?.finish()

@@ -3,12 +3,16 @@ package io.silentsuite.sync.dataexport
 import android.content.Context
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.net.Uri
+import android.provider.DocumentsContract
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
+import java.io.File
+import java.io.IOException
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
@@ -69,7 +73,7 @@ object AndroidDataExporter {
         creationId: String,
         collectionType: String,
         itemContents: List<String>,
-        outputStream: OutputStream,
+        destination: Uri,
     ): Boolean {
         require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
         fun exactGenerationStillCurrent() = ExactAccountRouting.validate(
@@ -82,11 +86,14 @@ object AndroidDataExporter {
             else -> itemContents.filter { it.isNotBlank() }.joinToString("\r\n")
         }
         if (!exactGenerationStillCurrent()) return false
-        OutputStreamWriter(outputStream, StandardCharsets.UTF_8).use { writer ->
-            if (!exactGenerationStillCurrent()) return false
-            writer.write(exportData)
+        return stageAndCommit(context, destination, ::exactGenerationStillCurrent) { outputStream ->
+            if (!exactGenerationStillCurrent()) return@stageAndCommit false
+            OutputStreamWriter(outputStream, StandardCharsets.UTF_8).use { writer ->
+                if (!exactGenerationStillCurrent()) return@stageAndCommit false
+                writer.write(exportData)
+            }
+            exactGenerationStillCurrent()
         }
-        return exactGenerationStillCurrent()
     }
 
     fun writeExport(
@@ -94,22 +101,22 @@ object AndroidDataExporter {
         account: Account,
         creationId: String,
         kind: AndroidExportKind,
-        outputStream: OutputStream,
-    ) {
+        destination: Uri,
+    ): Boolean {
         require(creationId.isNotBlank()) { "Creation ID must be nonblank" }
         fun exactGenerationStillCurrent() = ExactAccountRouting.validate(
             account, creationId, App.accountType, AccountManager.get(context)
         ) != null
-        if (!exactGenerationStillCurrent()) return
+        if (!exactGenerationStillCurrent()) return false
         val settings = AccountSettings(context, account)
-        if (!exactGenerationStillCurrent()) return
+        if (!exactGenerationStillCurrent()) return false
         val cache = EtebaseLocalCache.getInstance(context, account.name)
-        if (!exactGenerationStillCurrent()) return
+        if (!exactGenerationStillCurrent()) return false
         val etebase = EtebaseLocalCache.getEtebase(context, HttpClient.sharedClient, settings)
-        if (!exactGenerationStillCurrent()) return
+        if (!exactGenerationStillCurrent()) return false
         val collectionManager = etebase.collectionManager
 
-        if (!exactGenerationStillCurrent()) return
+        if (!exactGenerationStillCurrent()) return false
         val exportData = synchronized(cache) {
             if (!exactGenerationStillCurrent()) return@synchronized null
             when (kind) {
@@ -131,26 +138,133 @@ object AndroidDataExporter {
                 }
             }
         }
-        if (exportData == null || !exactGenerationStillCurrent()) return
+        if (exportData == null || !exactGenerationStillCurrent()) return false
 
-        if (kind == AndroidExportKind.EVERYTHING) {
-            val zipData = exportData as ExportData
-            if (!exactGenerationStillCurrent()) return
-            ZipOutputStream(outputStream).use { zip ->
-                if (!exactGenerationStillCurrent()) return
-                zip.writestr("calendar.ics", zipData.calendar)
-                if (!exactGenerationStillCurrent()) return
-                zip.writestr("tasks.ics", zipData.tasks)
-                if (!exactGenerationStillCurrent()) return
-                zip.writestr("contacts.vcf", zipData.contacts)
+        return stageAndCommit(context, destination, ::exactGenerationStillCurrent) { outputStream ->
+            if (kind == AndroidExportKind.EVERYTHING) {
+                val zipData = exportData as ExportData
+                if (!exactGenerationStillCurrent()) return@stageAndCommit false
+                ZipOutputStream(outputStream).use { zip ->
+                    if (!exactGenerationStillCurrent()) return@stageAndCommit false
+                    zip.writestr("calendar.ics", zipData.calendar)
+                    if (!exactGenerationStillCurrent()) return@stageAndCommit false
+                    zip.writestr("tasks.ics", zipData.tasks)
+                    if (!exactGenerationStillCurrent()) return@stageAndCommit false
+                    zip.writestr("contacts.vcf", zipData.contacts)
+                }
+            } else {
+                if (!exactGenerationStillCurrent()) return@stageAndCommit false
+                OutputStreamWriter(outputStream, StandardCharsets.UTF_8).use { writer ->
+                    if (!exactGenerationStillCurrent()) return@stageAndCommit false
+                    writer.write(exportData as String)
+                }
             }
-        } else {
-            if (!exactGenerationStillCurrent()) return
-            OutputStreamWriter(outputStream, StandardCharsets.UTF_8).use { writer ->
-                if (!exactGenerationStillCurrent()) return
-                writer.write(exportData as String)
+            exactGenerationStillCurrent()
+        }
+    }
+
+    private fun stageAndCommit(
+        context: Context,
+        destination: Uri,
+        exactGenerationStillCurrent: () -> Boolean,
+        writeStage: (OutputStream) -> Boolean,
+    ): Boolean {
+        if (!exactGenerationStillCurrent()) return false
+        val stagedFile = File.createTempFile("silentsuite-export-", ".tmp", context.cacheDir)
+        try {
+            val staged = stagedFile.outputStream().use(writeStage)
+            if (!staged || !exactGenerationStillCurrent()) return false
+            return commitStagedExport(
+                stagedFile = stagedFile,
+                openDestination = {
+                    context.contentResolver.openOutputStream(destination, "wt")
+                        ?: throw IOException("Could not open export destination")
+                },
+                clearDestination = { clearExportDestination(context, destination) },
+                exactGenerationStillCurrent = exactGenerationStillCurrent,
+            )
+        } finally {
+            runCatching { stagedFile.outputStream().use { } }
+            stagedFile.delete()
+        }
+    }
+
+    internal fun commitStagedExport(
+        stagedFile: File,
+        openDestination: () -> OutputStream,
+        clearDestination: () -> Unit,
+        exactGenerationStillCurrent: () -> Boolean,
+    ): Boolean {
+        var committed = false
+        var destinationTouched = false
+        var primaryFailure: Throwable? = null
+        try {
+            if (!exactGenerationStillCurrent()) return false
+            destinationTouched = true
+            openDestination().use { destination ->
+                stagedFile.inputStream().use { source ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        if (!exactGenerationStillCurrent()) return false
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        if (!exactGenerationStillCurrent()) return false
+                        destination.write(buffer, 0, count)
+                        destination.flush()
+                        if (!exactGenerationStillCurrent()) return false
+                    }
+                }
+            }
+            if (!exactGenerationStillCurrent()) return false
+            committed = true
+            return true
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
+        } finally {
+            if (!committed && destinationTouched) {
+                try {
+                    clearDestination()
+                } catch (cleanupFailure: Throwable) {
+                    primaryFailure?.addSuppressed(cleanupFailure) ?: throw cleanupFailure
+                }
             }
         }
+    }
+
+    internal fun finalizePublishedExport(
+        committed: Boolean,
+        clearDestination: () -> Unit,
+        exactGenerationStillCurrent: () -> Boolean,
+    ): Boolean {
+        if (!committed) return false
+        if (exactGenerationStillCurrent()) return true
+        clearDestination()
+        return false
+    }
+
+    internal fun clearExportDestination(context: Context, destination: Uri) {
+        val resolver = context.contentResolver
+        var truncateFailure: Throwable? = null
+        try {
+            val stream = resolver.openOutputStream(destination, "wt")
+                ?: throw IOException("Could not reopen failed export destination")
+            stream.use { }
+            return
+        } catch (failure: Throwable) {
+            truncateFailure = failure
+        }
+
+        try {
+            if (DocumentsContract.isDocumentUri(context, destination) &&
+                DocumentsContract.deleteDocument(resolver, destination)
+            ) {
+                return
+            }
+        } catch (deleteFailure: Throwable) {
+            truncateFailure?.addSuppressed(deleteFailure)
+        }
+        throw IOException("Could not clear failed export destination", truncateFailure)
     }
 
     private data class ExportData(val calendar: String, val tasks: String, val contacts: String)
