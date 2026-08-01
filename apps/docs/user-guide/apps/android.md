@@ -12,6 +12,29 @@ Choose the install channel you want to keep using for updates. Google Play is
 the simplest option for most people, while Obtainium, Zapstore, and direct APK
 downloads keep independent distribution paths available.
 
+<div class="android-channel-grid">
+  <a class="android-channel-button" href="https://play.google.com/store/apps/details?id=io.silentsuite.android" target="_blank" rel="noopener noreferrer">
+    <span class="android-channel-logo"><img src="/channel-icons/google-play.svg" alt="" aria-hidden="true"></span>
+    <span class="android-channel-copy"><strong>Google Play</strong><small>Play-managed install and updates</small></span>
+  </a>
+  <a class="android-channel-button" href="obtainium://add/https://github.com/silent-suite/silentsuite">
+    <span class="android-channel-logo"><img src="/channel-icons/obtainium.svg" alt="" aria-hidden="true"></span>
+    <span class="android-channel-copy"><strong>Add to Obtainium</strong><small>Track signed GitHub releases</small></span>
+  </a>
+  <a class="android-channel-button" href="https://zapstore.dev/apps/io.silentsuite.android" target="_blank" rel="noopener noreferrer">
+    <span class="android-channel-logo"><img src="/channel-icons/zapstore.png" alt="" aria-hidden="true"></span>
+    <span class="android-channel-copy"><strong>Zapstore</strong><small>Independent app-store updates</small></span>
+  </a>
+  <a class="android-channel-button" href="https://github.com/silent-suite/silentsuite/releases/latest" target="_blank" rel="noopener noreferrer">
+    <span class="android-channel-logo"><img src="/channel-icons/github.svg" alt="" aria-hidden="true"></span>
+    <span class="android-channel-copy"><strong>Direct signed APK</strong><small>Latest GitHub release</small></span>
+  </a>
+  <div class="android-channel-button is-pending" role="group" aria-label="F-Droid, on the roadmap, pending official inclusion">
+    <span class="android-channel-logo"><img src="/channel-icons/fdroid.png" alt="" aria-hidden="true"></span>
+    <span class="android-channel-copy"><strong>F-Droid</strong><small>Pending official inclusion</small><span class="android-channel-status">On the roadmap</span></span>
+  </div>
+</div>
+
 ### Option 1: Google Play
 
 [Download SilentSuite from Google Play](https://play.google.com/store/apps/details?id=io.silentsuite.android) if you want Play-managed installation and updates. If you installed SilentSuite from Google Play, keep updating it from Google Play.

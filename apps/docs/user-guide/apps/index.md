@@ -1,6 +1,6 @@
 # Apps & Integrations
 
-SilentSuite is built on the [Etebase protocol](https://www.etebase.com/). You can sync your encrypted data with the supported SilentSuite and third-party apps listed below.
+SilentSuite is built on the [Etebase protocol](https://www.etebase.com/). Today you can sync calendars, contacts, and tasks through the web app, the native Android app, and supported desktop clients.
 
 ## How It Works
 
@@ -12,7 +12,11 @@ The hosted server at `server.silentsuite.io` (or your self-hosted URL) speaks th
 |---|---|---|
 | [SilentSuite Web](https://app.silentsuite.io) | Browser | Contacts, Calendars, Tasks |
 | [SilentSuite for Android](./android.md) | Android | Contacts, Calendars, Tasks |
-| [SilentSuite for iOS](./ios.md) | iOS | In development |
+
+
+## On the Roadmap
+
+- **[iOS](./ios.md):** Coming soon. iOS is not currently supported.
 
 ## Compatible Third-Party Apps
 
@@ -27,7 +31,7 @@ These apps connect directly to `server.silentsuite.io` or your self-hosted serve
 
 ## Via the DAV Bridge
 
-For apps that don't support Etebase natively, the [SilentSuite Bridge](./dav-bridge.md) runs a local CalDAV/CardDAV server on your machine that translates between standard DAV protocols and Etebase. This makes SilentSuite compatible with virtually any calendar/contacts app.
+For apps that don't support Etebase natively, the [SilentSuite Bridge](./dav-bridge.md) runs a local CalDAV/CardDAV server on your machine that translates between standard DAV protocols and Etebase. This makes SilentSuite compatible with the supported desktop calendar and contacts clients listed below.
 
 On Linux, start with the [Linux desktop bridge guide](./linux-bridge.md) for installation, sign-in, auto-start, app connections, troubleshooting, and uninstall instructions.
 
@@ -37,8 +41,8 @@ On Linux, start with the [Linux desktop bridge guide](./linux-bridge.md) for ins
 | [macOS Calendar & Contacts](./macos.md) | macOS | Yes | Not recorded yet |
 | [Windows / Outlook](./windows.md) | Windows | Yes | Not recorded yet |
 | [GNOME Calendar & Contacts](./gnome.md) | Linux (GNOME) | Yes | Not recorded yet |
-| [Other CalDAV/CardDAV Apps](./other.md) | Any | Yes | Not recorded yet |
+| [Additional desktop CalDAV/CardDAV Apps](./other.md) | Desktop | Yes | Varies by client |
 
 ::: tip
-If your app supports CalDAV/CardDAV, it works with SilentSuite through the DAV bridge. Set up the [SilentSuite Bridge](./dav-bridge.md) first, then point your app at `http://localhost:37358/`.
+Additional desktop CalDAV/CardDAV clients may work through the local bridge, but unlisted clients are not guaranteed. iOS is not currently supported. Set up the [SilentSuite Bridge](./dav-bridge.md) first, then use a supported client with `http://localhost:37358/`.
 :::

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
 
@@ -11,11 +11,14 @@ function read(path) {
 }
 
 const hostedAndroid = read(resolve(docsRoot, 'user-guide/apps/android.md'))
+const hostedIos = read(resolve(docsRoot, 'user-guide/apps/ios.md'))
 const hostedFaq = read(resolve(docsRoot, 'user-guide/faq.md'))
 const siblingFaq = read(resolve(repoRoot, 'docs/user-guide/faq.md'))
 const siblingGettingStarted = read(resolve(repoRoot, 'docs/user-guide/getting-started.md'))
 const siblingGuideIndex = read(resolve(repoRoot, 'docs/user-guide/README.md'))
 const rootReadme = read(resolve(repoRoot, 'README.md'))
+const settingsMobile = read(resolve(repoRoot, 'apps/web/app/(app)/settings/mobile/page.tsx'))
+const themeCss = read(resolve(docsRoot, '.vitepress/theme/custom.css'))
 
 function markdownInventory(root) {
   return readdirSync(root, { recursive: true, withFileTypes: true })
@@ -26,7 +29,24 @@ function markdownInventory(root) {
 const inventory = [
   resolve(repoRoot, 'README.md'),
   ...markdownInventory(resolve(docsRoot, 'user-guide')),
-  ...markdownInventory(resolve(repoRoot, 'docs/user-guide')),
+  ...markdownInventory(resolve(repoRoot, 'docs')),
+]
+
+const falseIosAvailabilityPatterns = [
+  /\biOS\s+(?:access|sync)\s+via\s+(?:the\s+)?(?:original\s+)?EteSync\b/i,
+  /\biOS\s+via\s+(?:an?\s+)?EteSync-compatible client\b/i,
+  /\bEteSync(?:'s)? compatible open-source client\b/i,
+  /\bEteSync iOS app\b[^.\n]*\bworks against\b/i,
+  /\bExisting iOS users\b[^.\n]*\bEteSync\b[^.\n]*\bworks\b/i,
+  /\bavailable for Android and iOS\b/i,
+  /\bvirtually any calendar\/contacts app\b/i,
+  /\*\*Desktop:\*\*[^\n]*\bwith any CalDAV\/CardDAV app\b/i,
+  /\bnative apps on every major platform\b/i,
+  /\bworks across all major platforms\b/i,
+  /\bAny app that supports CalDAV or CardDAV can sync\b/i,
+  /\bIf your app supports CalDAV\/CardDAV, it works\b/i,
+  /\bit will most likely work\b/i,
+  /\| DAVx5 \| Android \| Use CalDAV\/CardDAV account setup \|/i,
 ]
 
 const falseFdroidAvailabilityPatterns = [
@@ -163,6 +183,42 @@ function hasFalseFdroidAvailabilityClaim(content) {
 function hasFalseQrTargetClaim(content) {
   return findFalseQrTargetClaim(content) !== undefined
 }
+
+test('hosted Android guide exposes direct logo buttons for every distribution state', () => {
+  const assets = ['google-play.svg', 'obtainium.svg', 'zapstore.png', 'fdroid.png', 'github.svg']
+  for (const asset of assets) {
+    assert.equal(existsSync(resolve(docsRoot, `public/channel-icons/${asset}`)), true, asset)
+    assert.match(hostedAndroid, new RegExp(`/channel-icons/${asset.replace('.', '\\.')}`))
+  }
+
+  assert.match(hostedAndroid, /href="https:\/\/play\.google\.com\/store\/apps\/details\?id=io\.silentsuite\.android"/)
+  assert.match(hostedAndroid, /href="obtainium:\/\/add\/https:\/\/github\.com\/silent-suite\/silentsuite"/)
+  assert.match(hostedAndroid, /href="https:\/\/zapstore\.dev\/apps\/io\.silentsuite\.android"/)
+  assert.match(hostedAndroid, /href="https:\/\/github\.com\/silent-suite\/silentsuite\/releases\/latest"/)
+  assert.match(hostedAndroid, /class="android-channel-button is-pending"[^>]*aria-label="F-Droid, on the roadmap, pending official inclusion"/)
+})
+
+test('channel buttons use theme-appropriate high-contrast focus indicators', () => {
+  assert.match(themeCss, /\.android-channel-button\[href\]:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--vp-c-brand-3\)/s)
+  assert.match(themeCss, /\.dark \.android-channel-button\[href\]:focus-visible\s*\{[^}]*outline-color:\s*var\(--vp-c-brand-1\)/s)
+})
+
+test('current docs and Settings expose iOS only as unsupported roadmap work', () => {
+  assert.match(hostedIos, /On the roadmap, coming soon/)
+  assert.match(hostedIos, /does not currently support iOS/)
+  assert.match(settingsMobile, /On the roadmap, coming soon/)
+  assert.match(settingsMobile, /iOS is not currently supported\./)
+
+  for (const path of inventory) {
+    const content = read(path)
+    for (const pattern of falseIosAvailabilityPatterns) {
+      assert.doesNotMatch(content, pattern, path)
+    }
+  }
+  for (const pattern of falseIosAvailabilityPatterns) {
+    assert.doesNotMatch(settingsMobile, pattern, 'Settings → Mobile')
+  }
+})
 
 test('all Android documentation states that official F-Droid inclusion is pending', () => {
   assert.match(hostedAndroid, /Official F-Droid publication is pending inclusion\./)

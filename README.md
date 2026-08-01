@@ -40,7 +40,7 @@ SilentSuite encrypts calendar events, contacts, and tasks on your device before 
 | **Android** | Sync through Android's calendar, contacts, and task providers |
 | **Desktop** | Local CalDAV/CardDAV Bridge for compatible calendar and address-book apps |
 | **Self-hosting** | Open-source server deployment on infrastructure you control |
-| **iOS** | A native SilentSuite app is in development; EteSync for iOS is not a supported or working SilentSuite client |
+| **iOS** | On the roadmap, coming soon; the native app is in development, and EteSync for iOS is not a supported or working SilentSuite client |
 
 Built on the open [Etebase protocol](https://www.etebase.com/) and the EteSync open-source lineage.
 

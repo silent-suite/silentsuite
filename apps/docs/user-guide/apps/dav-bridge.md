@@ -328,7 +328,7 @@ Once the bridge is running, set up your apps:
 - [macOS Calendar & Contacts](./macos.md)
 - [Windows / Outlook](./windows.md)
 - [GNOME Calendar & Contacts](./gnome.md)
-- [iOS Calendar & Contacts](./ios.md)
+- [iOS roadmap and current support status](./ios.md)
 - [Android (DAVx5)](./android.md)
 - [GNOME Evolution](./evolution.md) (also supports native Etebase)
 - [KDE Kontact](./kde.md) (also supports native Etebase)
