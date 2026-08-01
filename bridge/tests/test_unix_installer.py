@@ -45,7 +45,7 @@ while [ "$#" -gt 0 ]; do
 done
 case "$url" in
     *api.github.com*/releases*)
-        printf '%s\n' '[{"assets":[{"browser_download_url":"https://download.test/silentsuite-bridge-linux-x86_64"}]}]'
+        printf '%s\n' '[' '  "browser_download_url": "https://download.test/silentsuite-bridge-linux-x86_64"' ']'
         ;;
     https://download.test/*)
         case "$url" in
