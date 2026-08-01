@@ -25,14 +25,18 @@ downloads keep independent distribution paths available.
     <span class="android-channel-logo"><img src="/channel-icons/zapstore.png" alt="" aria-hidden="true"></span>
     <span class="android-channel-copy"><strong>Zapstore</strong><small>Independent app-store updates</small></span>
   </a>
-  <a class="android-channel-button" href="https://github.com/silent-suite/silentsuite/releases/latest" target="_blank" rel="noopener noreferrer">
-    <span class="android-channel-logo"><img src="/channel-icons/github.svg" alt="" aria-hidden="true"></span>
-    <span class="android-channel-copy"><strong>Direct signed APK</strong><small>Latest GitHub release</small></span>
-  </a>
   <div class="android-channel-button is-pending" role="group" aria-label="F-Droid, on the roadmap, pending official inclusion">
     <span class="android-channel-logo"><img src="/channel-icons/fdroid.png" alt="" aria-hidden="true"></span>
     <span class="android-channel-copy"><strong>F-Droid</strong><small>Pending official inclusion</small><span class="android-channel-status">On the roadmap</span></span>
   </div>
+</div>
+
+<div class="android-channel-secondary">
+  <span>Prefer a signed APK?</span>
+  <a class="android-channel-secondary-link" href="https://github.com/silent-suite/silentsuite/releases/latest" target="_blank" rel="noopener noreferrer">
+    <span class="android-channel-logo"><img src="/channel-icons/github.svg" alt="" aria-hidden="true"></span>
+    <strong>Direct signed APK</strong>
+  </a>
 </div>
 
 ### Option 1: Google Play

@@ -139,6 +139,58 @@
   opacity: 0.72;
 }
 
+.android-channel-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: -0.75rem 0 2rem;
+  color: var(--vp-c-text-2);
+  font-size: 0.875rem;
+}
+
+.android-channel-secondary-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  color: var(--vp-c-text-1) !important;
+  text-decoration: none !important;
+  background: var(--vp-c-bg-soft);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 0.625rem;
+}
+
+.android-channel-secondary-link:hover {
+  border-color: var(--vp-c-brand-3);
+}
+
+.android-channel-secondary-link:focus-visible {
+  outline: 2px solid var(--vp-c-brand-3);
+  outline-offset: 2px;
+}
+
+.dark .android-channel-secondary-link:hover {
+  border-color: var(--vp-c-brand-1);
+}
+
+.dark .android-channel-secondary-link:focus-visible {
+  outline-color: var(--vp-c-brand-1);
+}
+
+.android-channel-secondary .android-channel-logo {
+  width: 2rem;
+  height: 2rem;
+  flex-basis: 2rem;
+  padding: 0.3rem;
+  border-radius: 0.45rem;
+}
+
+.android-channel-secondary .android-channel-logo img {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
 .android-channel-status {
   display: inline-flex;
   width: fit-content;
