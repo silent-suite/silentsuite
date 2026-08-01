@@ -63,7 +63,7 @@ def test_radicale_bad_put_retains_only_bounded_stage_and_product_origin():
     code = compile(
         "def upload():\n"
         f"    raise ValueError({private_value!r})\n",
-        "/tmp/build/silentsuite_bridge/radicale/storage.py",
+        "silentsuite_bridge/radicale/storage.py",
         "exec",
     )
     exec(code, namespace)

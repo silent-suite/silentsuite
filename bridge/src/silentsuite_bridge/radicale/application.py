@@ -19,7 +19,7 @@ def _safe_exception_diagnostic(exc_info):
     traceback = exc_info[2]
     while traceback is not None:
         filename = str(traceback.tb_frame.f_code.co_filename).replace("\\", "/")
-        marker = "/silentsuite_bridge/"
+        marker = "silentsuite_bridge/"
         if marker in filename:
             relative_path = filename.rsplit(marker, 1)[1]
             function = traceback.tb_frame.f_code.co_name
