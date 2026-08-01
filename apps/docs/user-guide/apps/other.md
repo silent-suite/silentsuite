@@ -1,6 +1,6 @@
-# Other CalDAV/CardDAV Apps
+# Other Desktop CalDAV/CardDAV Apps
 
-Any app that supports CalDAV or CardDAV can sync with SilentSuite through the [SilentSuite Bridge](./dav-bridge.md). This guide covers the general setup process.
+Some desktop apps that support CalDAV or CardDAV can sync with SilentSuite through the local [SilentSuite Bridge](./dav-bridge.md). Compatibility varies by client; the tested clients are listed below. iOS is not currently supported.
 
 ## What You Need
 
@@ -51,14 +51,12 @@ These apps have been tested with SilentSuite through the DAV bridge. For some, w
 | GNOME Evolution | Linux | [Evolution guide](./evolution.md) |
 | KDE Kontact | Linux | [KDE guide](./kde.md) |
 | BusyCal | macOS | Use CalDAV account setup |
-| Fantastical | macOS, iOS | Use CalDAV account setup |
-| DAVx5 | Android | Use CalDAV/CardDAV account setup |
+| Fantastical | macOS | Use CalDAV account setup through the local bridge |
 | Rainlendar | Windows, macOS, Linux | Use CalDAV subscription |
-| Calendars by Readdle | iOS | Use CalDAV account setup |
 | CardBook (Thunderbird add-on) | Linux, macOS, Windows | Use CardDAV remote address book |
 
 ::: tip
-If your app supports CalDAV or CardDAV but is not listed here, it will most likely work. Use the generic steps above.
+An unlisted desktop client may work if it supports a local plain-HTTP CalDAV/CardDAV endpoint, but compatibility is not guaranteed. Use the generic steps above and report compatibility results.
 :::
 
 ## URL Variants

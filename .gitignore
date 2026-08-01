@@ -13,6 +13,7 @@ out/
 # Production builds
 build/
 dist/
+**/.vitepress/.temp/
 
 # Environment files
 .env
