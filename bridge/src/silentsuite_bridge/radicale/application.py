@@ -5,15 +5,15 @@ import re
 
 from radicale.app import Application as RadicaleApplication
 
+from ..privacy_logging import bounded_identifier
+
 
 def _safe_exception_diagnostic(exc_info):
     """Return an exception class and product-owned frame without private values."""
     if not exc_info or not exc_info[0]:
         return "Radicale server request failed"
 
-    exception_class = getattr(exc_info[0], "__name__", "Exception")
-    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", exception_class):
-        exception_class = "Exception"
+    exception_class = bounded_identifier(getattr(exc_info[0], "__name__", None))
 
     product_origin = None
     traceback = exc_info[2]
@@ -24,7 +24,9 @@ def _safe_exception_diagnostic(exc_info):
             relative_path = filename.rsplit(marker, 1)[1]
             function = traceback.tb_frame.f_code.co_name
             if (
-                re.fullmatch(r"[A-Za-z0-9_./-]+", relative_path)
+                len(relative_path) <= 160
+                and len(function) <= 64
+                and re.fullmatch(r"[A-Za-z0-9_./-]+", relative_path)
                 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", function)
             ):
                 product_origin = (

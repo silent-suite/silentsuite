@@ -82,11 +82,12 @@ def test_debug_logging_does_not_enable_peewee_bound_parameter_diagnostics(monkey
 
 def test_bounded_failure_logging_drops_exception_text_and_traceback(caplog):
     private_value = "private.person@example.invalid"
+    private_exception = type("PrivatePerson" + "A" * 300, (RuntimeError,), {})
     logger = logging.getLogger("silentsuite-bridge.test-bounded-failure")
 
     with caplog.at_level(logging.ERROR, logger=logger.name):
         try:
-            raise RuntimeError(private_value)
+            raise private_exception(private_value)
         except RuntimeError as error:
             privacy_logging.log_bounded_failure(
                 logger,
@@ -95,8 +96,9 @@ def test_bounded_failure_logging_drops_exception_text_and_traceback(caplog):
                 error,
             )
 
-    assert caplog.messages == ["Bridge operation failed (RuntimeError)"]
+    assert caplog.messages == ["Bridge operation failed (Exception)"]
     assert private_value not in caplog.text
+    assert len(caplog.messages[0]) < 80
 
 
 def test_check_credentials_allows_no_accounts_when_dashboard_enabled(tmp_path, monkeypatch, capsys):

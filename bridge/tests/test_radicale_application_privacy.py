@@ -90,3 +90,26 @@ def test_radicale_bad_put_retains_only_bounded_stage_and_product_origin():
     assert "upload" in message
     assert private_value not in message
     assert record.exc_info is None
+
+
+def test_radicale_exception_diagnostic_has_explicit_identifier_length_bounds():
+    private_fragment = "PrivatePerson" + "A" * 300
+    exception_class = type(private_fragment, (RuntimeError,), {})
+    namespace = {"exception_class": exception_class}
+    long_function = "private_function_" + "b" * 300
+    code = compile(
+        f"def {long_function}():\n"
+        "    raise exception_class('private-value')\n",
+        "silentsuite_bridge/" + "private_path_" + "c" * 300 + ".py",
+        "exec",
+    )
+    exec(code, namespace)
+
+    try:
+        namespace[long_function]()
+    except RuntimeError:
+        diagnostic = bridge_application._safe_exception_diagnostic(sys.exc_info())
+
+    assert diagnostic == "Radicale server request failed (Exception)"
+    assert private_fragment not in diagnostic
+    assert len(diagnostic) < 80
