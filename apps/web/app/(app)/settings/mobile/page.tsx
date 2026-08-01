@@ -116,7 +116,7 @@ export default function MobileSettingsPage() {
             className={`${channelCardClass} w-full flex-col justify-center text-center transition-colors hover:border-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:hover:border-emerald-300 dark:focus-visible:ring-emerald-300`}
             aria-label="Open Android installation options"
           >
-            <span className="flex h-40 w-40 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-2">
+            <span className="flex h-40 w-40 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-[7px]">
               <QRCodeSVG
                 value={INSTALL_DOCS_URL}
                 size={144}
