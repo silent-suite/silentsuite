@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from silentsuite_bridge import __main__ as bridge_main
-from silentsuite_bridge import config
+from silentsuite_bridge import config, privacy_logging
 from silentsuite_bridge.radicale.application import Application as BridgeApplication
 
 
@@ -78,6 +78,25 @@ def test_debug_logging_does_not_enable_peewee_bound_parameter_diagnostics(monkey
     bridge_main.configure_logging()
 
     assert peewee_logger.level >= logging.WARNING
+
+
+def test_bounded_failure_logging_drops_exception_text_and_traceback(caplog):
+    private_value = "private.person@example.invalid"
+    logger = logging.getLogger("silentsuite-bridge.test-bounded-failure")
+
+    with caplog.at_level(logging.ERROR, logger=logger.name):
+        try:
+            raise RuntimeError(private_value)
+        except RuntimeError as error:
+            privacy_logging.log_bounded_failure(
+                logger,
+                logging.ERROR,
+                "Bridge operation failed",
+                error,
+            )
+
+    assert caplog.messages == ["Bridge operation failed (RuntimeError)"]
+    assert private_value not in caplog.text
 
 
 def test_check_credentials_allows_no_accounts_when_dashboard_enabled(tmp_path, monkeypatch, capsys):

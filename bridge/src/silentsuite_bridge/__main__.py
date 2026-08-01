@@ -16,6 +16,7 @@ import tempfile
 import threading
 
 from . import __version__, config
+from .privacy_logging import log_bounded_failure
 
 logger = logging.getLogger("silentsuite-bridge")
 
@@ -570,8 +571,8 @@ def run_server():
         _serve_radicale_with_bridge_application(configuration)
     except KeyboardInterrupt:
         logger.info("Bridge stopped by user")
-    except Exception:
-        logger.exception("Bridge crashed")
+    except Exception as exc:
+        log_bounded_failure(logger, logging.ERROR, "Bridge crashed", exc)
         if tray:
             tray.update_state("error", "Bridge crashed")
         sys.exit(1)
@@ -669,7 +670,12 @@ def main():
         config.validate_ssl_config()
         validate_radicale_ssl_schema()
     except RuntimeError as exc:
-        logger.error("%s", exc)
+        log_bounded_failure(
+            logger,
+            logging.ERROR,
+            "Bridge configuration is invalid",
+            exc,
+        )
         sys.exit(1)
 
     config.ensure_data_dir()

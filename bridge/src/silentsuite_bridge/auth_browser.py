@@ -12,8 +12,8 @@ For MVP, the auth page is served by the bridge itself.
 In the future, this will redirect to app.silentsuite.io/bridge-auth.
 """
 
-import html as html_mod
 import hmac
+import html as html_mod
 import http.server
 import json
 import logging
@@ -28,6 +28,7 @@ from etebase import Account, Client
 
 from . import config
 from .accounts import store_authenticated_account
+from .privacy_logging import log_bounded_failure
 
 logger = logging.getLogger("silentsuite-bridge.auth")
 
@@ -680,7 +681,12 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 return
             except AuthenticationError as exc:
                 error_msg = str(exc)
-                logger.warning("Auth failed: %s", error_msg)
+                log_bounded_failure(
+                    logger,
+                    logging.WARNING,
+                    "Authentication failed",
+                    exc,
+                )
                 self._json_response(401, {
                     "success": False,
                     "error": error_msg,

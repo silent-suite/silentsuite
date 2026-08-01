@@ -62,8 +62,7 @@ def _systemd_service_path():
 def _check_result(result, action):
     """Print a warning if a subprocess returned non-zero."""
     if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace").strip() if result.stderr else ""
-        logger.warning("%s failed (exit %d): %s", action, result.returncode, stderr)
+        logger.warning("%s failed (exit %d)", action, result.returncode)
         print(f"  Warning: {action} exited with code {result.returncode}")
 
 
