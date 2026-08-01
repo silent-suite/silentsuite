@@ -1561,6 +1561,12 @@ def test_pulled_item_replaces_provisional_mapper_with_encrypted_shared_href(
         content=cache_item,
         href=local_cache_module.opaque_dav_href("remote-event", ".ics"),
     )
+    models.DavSyncToken.create(
+        collection=cache_col,
+        token="existing-token",
+        revision=0,
+        created_at=1,
+    )
     item = MagicMock(
         uid="remote-event",
         meta={"name": "event-name", "dav_href": "shared-event.ics"},
@@ -1579,6 +1585,54 @@ def test_pulled_item_replaces_provisional_mapper_with_encrypted_shared_href(
     ) is True
 
     assert HrefMapper.get(content=cache_item).href == "shared-event.ics"
+    assert models.DavSyncToken.select().where(
+        models.DavSyncToken.collection == cache_col
+    ).count() == 0
+
+
+def test_shared_href_collision_owner_is_independent_of_pull_order(mem_db, user):
+    def pull_in_order(collection_uid, remote_uids):
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid=collection_uid,
+            eb_col=collection_uid.encode(),
+        )
+        etebase = Etebase.__new__(Etebase)
+        item_mgr = MagicMock()
+        item_mgr.cache_save.side_effect = lambda item: item.uid.encode()
+        for remote_uid in remote_uids:
+            item = MagicMock(
+                uid=remote_uid,
+                meta={
+                    "name": f"name-{remote_uid}",
+                    "dav_href": "shared-event.ics",
+                },
+                deleted=False,
+                etag=f"etag-{remote_uid}",
+            )
+            assert etebase._apply_pulled_item(
+                cache_col,
+                MagicMock(collection_type="etebase.vevent"),
+                item_mgr,
+                item,
+            ) is True
+        return {
+            mapper.content.remote_uid: mapper.href
+            for mapper in (
+                HrefMapper.select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(ItemEntity.collection == cache_col)
+            )
+        }
+
+    forward = pull_in_order("calendar-forward", ["remote-a", "remote-b"])
+    reverse = pull_in_order("calendar-reverse", ["remote-b", "remote-a"])
+
+    assert forward == reverse
+    assert forward == {
+        "remote-a": "shared-event.ics",
+        "remote-b": local_cache_module.opaque_dav_href("remote-b", ".ics"),
+    }
 
 
 def test_pulled_item_hash_is_captured_under_immediate_writer_lock(

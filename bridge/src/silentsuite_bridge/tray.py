@@ -22,6 +22,8 @@ import sys
 import threading
 import webbrowser
 
+from .privacy_logging import bounded_exception_class
+
 try:
     # pystray may fail to import if no display is available
     import pystray
@@ -197,7 +199,7 @@ class BridgeTray:
                         continue
                 logger.warning("No clipboard tool found (xclip, xsel, or wl-copy)")
         except Exception as e:
-            logger.warning("Failed to copy to clipboard (%s)", e.__class__.__name__)
+            logger.warning("Failed to copy to clipboard (%s)", bounded_exception_class(e))
 
     def _reauthenticate(self):
         """Open browser auth flow for re-authentication."""
@@ -213,7 +215,7 @@ class BridgeTray:
             except Exception as e:
                 logger.error(
                     "Failed to complete re-authentication (%s)",
-                    e.__class__.__name__,
+                    bounded_exception_class(e),
                 )
 
         try:
@@ -221,7 +223,7 @@ class BridgeTray:
         except Exception as e:
             logger.error(
                 "Failed to start re-authentication (%s)",
-                e.__class__.__name__,
+                bounded_exception_class(e),
             )
 
     def update_state(self, state, error=None):

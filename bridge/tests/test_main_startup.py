@@ -5,6 +5,7 @@ import sys
 import threading
 from contextlib import contextmanager
 from importlib.metadata import version
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -101,6 +102,19 @@ def test_bounded_failure_logging_drops_exception_text_and_traceback(caplog):
     assert caplog.messages == ["Bridge operation failed (Exception)"]
     assert private_value not in caplog.text
     assert len(caplog.messages[0]) < 80
+
+
+def test_product_logging_call_sites_use_the_bounded_exception_helper():
+    package_root = Path(bridge_main.__file__).parent
+    violations = []
+    for source_path in package_root.rglob("*.py"):
+        if source_path.name == "privacy_logging.py":
+            continue
+        for line_number, line in enumerate(source_path.read_text().splitlines(), 1):
+            if ".__class__.__name__" in line:
+                violations.append(f"{source_path.relative_to(package_root)}:{line_number}")
+
+    assert violations == []
 
 
 def test_check_credentials_allows_no_accounts_when_dashboard_enabled(tmp_path, monkeypatch, capsys):

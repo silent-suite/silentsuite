@@ -44,6 +44,7 @@ from ..local_cache.models import (
     HrefMapper,
     ItemEntity,
 )
+from ..privacy_logging import bounded_exception_class
 from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
@@ -390,7 +391,7 @@ class SyncThread(threading.Thread):
                     logger.info("Stopped account sync discarded its late result")
                 else:
                     state = "failed"
-                    error_code = e.__class__.__name__
+                    error_code = bounded_exception_class(e)
                     logger.warning(
                         "Sync failed for configured account (%s)",
                         error_code,
@@ -1305,7 +1306,7 @@ class Storage(BaseStorage):
         except Exception as exc:
             logger.warning(
                 "Sync failed for configured account; continuing with local cache (%s)",
-                exc.__class__.__name__,
+                bounded_exception_class(exc),
             )
 
         session_options = (

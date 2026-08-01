@@ -21,6 +21,7 @@ import peewee as pw
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
 
 from .. import config
+from ..privacy_logging import bounded_exception_class
 from . import db, models
 
 logger = logging.getLogger("silentsuite-bridge.cache")
@@ -968,6 +969,36 @@ class Etebase:
                 if has_shared_href
                 else opaque_dav_href(item.uid, suffix)
             )
+            mapper_replaced = False
+            if has_shared_href:
+                conflict_mapper = (
+                    models.HrefMapper.select(models.HrefMapper)
+                    .join(models.ItemEntity)
+                    .where(
+                        (models.HrefMapper.href == shared_href)
+                        & (models.ItemEntity.collection == cache_col)
+                        & (models.HrefMapper.content != cache_item)
+                    )
+                    .first()
+                )
+                if conflict_mapper is not None:
+                    conflict_item = conflict_mapper.content
+                    current_identity = str(cache_item.remote_uid or cache_item.uid)
+                    conflict_identity = str(
+                        conflict_item.remote_uid or conflict_item.uid
+                    )
+                    if current_identity < conflict_identity:
+                        old_conflict_href = conflict_mapper.href
+                        conflict_mapper = ensure_dav_href(
+                            conflict_item,
+                            opaque_dav_href(conflict_identity, suffix),
+                            suffix,
+                            replace_existing=True,
+                        )
+                        mapper_replaced = conflict_mapper.href != old_conflict_href
+                    else:
+                        preferred_href = opaque_dav_href(current_identity, suffix)
+            old_href = href_mapper.href if href_mapper is not None else None
             if href_mapper is None and not item.deleted:
                 href_mapper = ensure_dav_href(
                     cache_item,
@@ -981,6 +1012,15 @@ class Etebase:
                     suffix,
                     replace_existing=has_shared_href and not item.deleted,
                 )
+            mapper_replaced = mapper_replaced or (
+                href_mapper is not None
+                and old_href is not None
+                and href_mapper.href != old_href
+            )
+            if mapper_replaced:
+                models.DavSyncToken.delete().where(
+                    models.DavSyncToken.collection == cache_col
+                ).execute()
             if href_mapper is not None:
                 record_dav_change(
                     cache_col,
@@ -1016,7 +1056,7 @@ class Etebase:
                 unresolved.save(only=[models.DavUnresolvedItem.attempts])
                 logger.warning(
                     "Deferred unresolved DAV item after cache-load failure (%s)",
-                    exc.__class__.__name__,
+                    bounded_exception_class(exc),
                 )
                 continue
             if unresolved.local_item_id is not None:

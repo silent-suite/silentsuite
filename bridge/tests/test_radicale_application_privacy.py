@@ -24,19 +24,25 @@ def test_radicale_filter_redacts_packaged_relative_app_diagnostics():
 
 
 def test_radicale_server_startup_record_keeps_bounded_operational_meaning():
-    record = logging.LogRecord(
-        name="radicale",
-        level=logging.INFO,
-        pathname="radicale/server.py",
-        lineno=277,
-        msg="Starting Radicale",
-        args=(),
-        exc_info=None,
-    )
+    for template, expected in (
+        ("Starting Radicale", "Starting Radicale"),
+        ("Radicale server ready", "Radicale server ready"),
+        ("Stopping Radicale", "Stopping Radicale"),
+        ("Listening on %r%s", "Radicale listener started"),
+    ):
+        record = logging.LogRecord(
+            name="radicale",
+            level=logging.INFO,
+            pathname="radicale/server.py",
+            lineno=277,
+            msg=template,
+            args=("private-listener", " with SSL") if "%" in template else (),
+            exc_info=None,
+        )
 
-    bridge_application._DavDiagnosticRedactionFilter().filter(record)
+        bridge_application._DavDiagnosticRedactionFilter().filter(record)
 
-    assert record.getMessage() == "Starting Radicale"
+        assert record.getMessage() == expected
 
 
 def test_radicale_server_failure_retains_only_bounded_product_origin():

@@ -22,6 +22,7 @@ from collections import deque
 from radicale.web import BaseWeb
 
 from .. import config
+from ..privacy_logging import bounded_exception_class
 from ..radicale.creds import Credentials
 
 logger = logging.getLogger("silentsuite-bridge.web")
@@ -359,7 +360,7 @@ def _handle_account_login(environ):
     except AuthenticationError as exc:
         logger.warning(
             "Dashboard account sign-in failed (%s)",
-            exc.__class__.__name__,
+            bounded_exception_class(exc),
         )
         return _json_response(401, {"error": str(exc)})
     except ValueError:
@@ -377,7 +378,7 @@ def _handle_account_login(environ):
         message = "Account added, but sync could not start automatically. Restart the bridge if sync does not begin."
         logger.warning(
             "Dashboard account sync refresh failed after sign-in (%s)",
-            exc.__class__.__name__,
+            bounded_exception_class(exc),
         )
         log_sync_event("error", "Account sign-in succeeded, but sync did not start automatically")
 
@@ -494,7 +495,7 @@ def _account_fingerprint(creds, username):
     except Exception as exc:
         logger.warning(
             "Failed to compute bridge account fingerprint (%s)",
-            exc.__class__.__name__,
+            bounded_exception_class(exc),
         )
         return None
 
@@ -1386,7 +1387,10 @@ class Web(BaseWeb):
                     json.dumps(result, indent=2).encode(),
                 )
             except Exception as e:
-                logger.warning("Dashboard dump failed: %s", e.__class__.__name__)
+                logger.warning(
+                    "Dashboard dump failed (%s)",
+                    bounded_exception_class(e),
+                )
                 return (
                     500,
                     {"Content-Type": "application/json"},

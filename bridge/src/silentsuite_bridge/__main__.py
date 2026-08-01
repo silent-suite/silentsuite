@@ -16,7 +16,7 @@ import tempfile
 import threading
 
 from . import __version__, config
-from .privacy_logging import log_bounded_failure
+from .privacy_logging import bounded_exception_class, log_bounded_failure
 
 logger = logging.getLogger("silentsuite-bridge")
 
@@ -185,7 +185,7 @@ def start_tray():
         tray.run_detached()
         return tray
     except Exception as e:
-        logger.warning("Failed to start system tray (%s)", e.__class__.__name__)
+        logger.warning("Failed to start system tray (%s)", bounded_exception_class(e))
         return None
 
 
@@ -250,7 +250,7 @@ def _initial_status_check():
                     collections["tasks"],
                 )
         except Exception as e:
-            error_code = e.__class__.__name__
+            error_code = bounded_exception_class(e)
             logger.warning(
                 "Initial status check failed for a configured account (%s)",
                 error_code,

@@ -11,6 +11,7 @@ import logging
 from radicale import pathutils
 from radicale.rights.owner_only import Rights as OwnerOnlyRights
 
+from ..privacy_logging import bounded_exception_class
 from .etesync_cache import etesync_for_user
 
 logger = logging.getLogger("silentsuite-bridge.rights")
@@ -41,7 +42,7 @@ class Rights(OwnerOnlyRights):
             # owner-only answer and let storage/server code decide.
             logger.debug(
                 "Could not resolve collection permissions (%s)",
-                exc.__class__.__name__,
+                bounded_exception_class(exc),
             )
             return permissions
 

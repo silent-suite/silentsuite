@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from . import config
 from .local_cache import clear_cached_user
+from .privacy_logging import bounded_exception_class
 from .radicale.creds import CREDENTIALS_LOCK, Credentials
 from .radicale.etesync_cache import account_maintenance, forget_etesync_user
 from .radicale.storage import stop_sync_thread
@@ -59,7 +60,7 @@ def _schedule_deferred_cache_cleanup(username, *, creds_path=None):
                 except Exception as exc:
                     logger.warning(
                         "Deferred cache cleanup failed (%s); retrying",
-                        exc.__class__.__name__,
+                        bounded_exception_class(exc),
                     )
                     time.sleep(1)
         finally:
@@ -89,7 +90,7 @@ def resume_pending_cache_cleanups(*, credentials=None):
         except Exception as exc:
             logger.warning(
                 "Startup cache cleanup failed (%s); deferring",
-                exc.__class__.__name__,
+                bounded_exception_class(exc),
             )
             deferred.append(username)
     for username in deferred:
@@ -242,7 +243,7 @@ def remove_account(
                 except Exception as exc:
                     logger.warning(
                         "Immediate cache cleanup failed (%s); deferring",
-                        exc.__class__.__name__,
+                        bounded_exception_class(exc),
                     )
                     cache_cleared = False
                     cache_cleanup = "deferred"
