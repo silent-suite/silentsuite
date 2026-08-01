@@ -595,6 +595,7 @@ jobs:
           umask 077
           BUNDLETOOL_PASSWORD_FILE="$RUNNER_TEMP/keystore/bundletool-password"
           printf '%s' "$KSTOREPWD" > "$BUNDLETOOL_PASSWORD_FILE"
+          unset KSTOREPWD
           java -jar "$RUNNER_TEMP/bundletool.jar" build-apks \
             --bundle app/build/outputs/bundle/release/app-release.aab \
             --output build/privacy-evidence/signed-release.apks \

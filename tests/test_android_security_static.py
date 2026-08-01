@@ -39,14 +39,24 @@ def test_android_resources_do_not_reference_tourguide_owned_white():
 
 def test_bundletool_uses_a_private_temporary_password_file():
     workflow = ANDROID_BUILD_WORKFLOW.read_text(encoding="utf-8")
+    release_step = workflow.split(
+        "      - name: Capture release dependency graph and generate signed-release splits\n",
+        1,
+    )[1].split("\n      - name:", 1)[0]
 
-    assert "--ks-pass=env:" not in workflow
-    assert "--key-pass=env:" not in workflow
-    assert "umask 077" in workflow
-    assert 'BUNDLETOOL_PASSWORD_FILE="$RUNNER_TEMP/keystore/bundletool-password"' in workflow
-    assert 'printf \'%s\' "$KSTOREPWD" > "$BUNDLETOOL_PASSWORD_FILE"' in workflow
-    assert '--ks-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in workflow
-    assert '--key-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in workflow
+    assert "--ks-pass=env:" not in release_step
+    assert "--key-pass=env:" not in release_step
+    assert "umask 077" in release_step
+    assert 'BUNDLETOOL_PASSWORD_FILE="$RUNNER_TEMP/keystore/bundletool-password"' in release_step
+    assert 'printf \'%s\' "$KSTOREPWD" > "$BUNDLETOOL_PASSWORD_FILE"' in release_step
+    assert "unset KSTOREPWD" in release_step
+    assert '--ks-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in release_step
+    assert '--key-pass="file:$BUNDLETOOL_PASSWORD_FILE"' in release_step
+    assert release_step.index(
+        'printf \'%s\' "$KSTOREPWD" > "$BUNDLETOOL_PASSWORD_FILE"'
+    ) < release_step.index("unset KSTOREPWD") < release_step.index(
+        'java -jar "$RUNNER_TEMP/bundletool.jar" build-apks'
+    )
 
 
 def test_android_build_runs_for_dev_and_main_pull_requests():
