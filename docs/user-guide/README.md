@@ -1,6 +1,6 @@
 # User Guide
 
-How to use SilentSuite — your end-to-end encrypted sync for calendar, contacts, and tasks. Everything in this guide is grounded in what's actually shipped in [v0.1.0-beta](https://github.com/silent-suite/silentsuite/releases/tag/v0.1.0-beta).
+How to use SilentSuite: your end-to-end encrypted sync for calendar, contacts, and tasks. Everything in this guide is grounded in the current beta. See the [latest release](https://github.com/silent-suite/silentsuite/releases/latest) for version-specific details.
 
 ---
 
@@ -32,6 +32,6 @@ Your Device          SilentSuite Server          Your Other Device
 ## Where to Use SilentSuite
 
 - **Web** — [app.silentsuite.io](https://app.silentsuite.io) (offline-first PWA, installable to any desktop or mobile home screen)
-- **Android** — signed APK, sideloadable. QR-code download in *Settings → Mobile* once you're signed in
+- **Android:** Install through Google Play, Obtainium, Zapstore, or a signed APK from GitHub Releases. In *Settings → Mobile*, the QR code opens the [Android installation guide](https://docs.silentsuite.io/user-guide/apps/android), and a separate link opens the latest signed APK. Official F-Droid inclusion is pending.
 - **Desktop (CalDAV / CardDAV)** — the SilentSuite bridge runs a local DAV daemon for Thunderbird, Apple Calendar, Evolution, GNOME Calendar, etc. Install commands in *Settings → Desktop*
 - **iOS** — no native app yet; the [EteSync iOS app](https://www.etesync.com/) works against your silentsuite.io or self-hosted account in the meantime

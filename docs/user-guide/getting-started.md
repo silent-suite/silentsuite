@@ -38,14 +38,14 @@ Open [app.silentsuite.io](https://app.silentsuite.io/login) on the second device
 Install SilentSuite from the channel you want to keep using for updates:
 
 - **Google Play** - use the Play listing if you installed from Play or want Play-managed updates.
-- **GitHub Releases / Zapstore / F-Droid** - use these direct APK channels if you prefer sideloading or open app-store distribution. In **Settings → Mobile** there is a QR code that links to the latest signed APK on GitHub Releases.
+- **Obtainium / Zapstore / GitHub Releases** - use these independent channels if you prefer GitHub-managed updates, open app-store distribution, or a direct APK. In **Settings → Mobile**, the QR code opens the [Android installation guide](https://docs.silentsuite.io/user-guide/apps/android), while the separate APK link opens the latest GitHub Release. Official F-Droid inclusion is pending.
 
-Android only allows an app update when the installed app and the update APK are signed with the same certificate. If you installed from Google Play, update through Google Play. If you installed from GitHub Releases, Zapstore, or F-Droid, update through that same direct APK channel. Switching between Google Play and direct APK channels may require uninstalling and reinstalling the app.
+Android only allows an app update when the installed app and the update APK are signed with the same certificate. If you installed from Google Play, update through Google Play. If you installed from GitHub Releases or Zapstore, update through that same developer-signed APK channel. When official F-Droid distribution becomes available, keep F-Droid installations on that channel. Switching between Google Play and developer-signed APK channels may require uninstalling and reinstalling the app.
 
 SilentSuite's known Android signing certificate SHA-256 hashes are:
 
 - **Google Play app signing certificate:** `2e10d9ef90276e755bddf086391d7e0c933589c6d36e4e43fae59a7babcb8a49`
-- **Direct APK release certificate for GitHub Releases, Zapstore, and reproducible/developer-signed F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
+- **Developer-signed release certificate for GitHub Releases, Zapstore, and future reproducible F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
 
 A certificate mismatch warning while switching install channels is expected and does not by itself indicate a compromised build. The Android app supports a custom server URL in advanced settings if you self-host.
 
