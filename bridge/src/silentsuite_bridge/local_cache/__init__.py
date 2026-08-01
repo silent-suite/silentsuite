@@ -410,6 +410,7 @@ def ensure_dav_href(
 
         def ownership_key(item):
             return (
+                0 if item.deleted else 1,
                 identity(item),
                 str(item.remote_uid or ""),
                 str(item.uid or ""),

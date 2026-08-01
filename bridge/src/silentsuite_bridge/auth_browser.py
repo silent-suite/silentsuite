@@ -742,6 +742,13 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             self.server.auth_complete.set()
 
 
+class BoundedAuthHTTPServer(http.server.HTTPServer):
+    """Suppress request/parser tracebacks and attacker-controlled values."""
+
+    def handle_error(self, request, client_address):
+        logger.error("Auth server request failed")
+
+
 def _find_free_port():
     """Find a random free port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -760,7 +767,7 @@ def browser_login(running_bridge=False):
     config.ensure_data_dir()
 
     port = _find_free_port()
-    server = http.server.HTTPServer(("127.0.0.1", port), AuthCallbackHandler)
+    server = BoundedAuthHTTPServer(("127.0.0.1", port), AuthCallbackHandler)
     server.auth_complete = threading.Event()
     server.authenticated_email = None
     server.authenticated_server_url = config.ETEBASE_SERVER_URL

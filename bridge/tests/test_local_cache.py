@@ -1824,6 +1824,57 @@ def test_equal_normalized_identities_do_not_use_local_row_order(mem_db, user):
     )
 
 
+def test_retained_tombstone_keeps_href_ownership_across_insertion_order(
+    mem_db,
+    user,
+):
+    shared_href = "retained-tombstone.ics"
+
+    def allocate(collection_uid, tombstone_first):
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid=collection_uid,
+            eb_col=collection_uid.encode(),
+        )
+        specs = {
+            "tombstone": {
+                "uid": "z-tombstone",
+                "remote_uid": "z-tombstone",
+                "eb_item": b"deleted-cache",
+                "deleted": True,
+            },
+            "live": {
+                "uid": "a-live",
+                "remote_uid": "a-live",
+                "eb_item": b"live-cache",
+                "deleted": False,
+            },
+        }
+        first_kind = "tombstone" if tombstone_first else "live"
+        second_kind = "live" if tombstone_first else "tombstone"
+        first = ItemEntity.create(collection=cache_col, **specs[first_kind])
+        HrefMapper.create(content=first, href=shared_href)
+        second = ItemEntity.create(collection=cache_col, **specs[second_kind])
+        local_cache_module.ensure_dav_href(second, shared_href, ".ics")
+        return {
+            row.content.remote_uid: row.href
+            for row in (
+                HrefMapper.select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(ItemEntity.collection == cache_col)
+            )
+        }
+
+    tombstone_first = allocate("tombstone-order-one", True)
+    live_first = allocate("tombstone-order-two", False)
+
+    assert tombstone_first == live_first
+    assert tombstone_first["z-tombstone"] == shared_href
+    assert tombstone_first["a-live"] == local_cache_module.opaque_dav_href(
+        "a-live", ".ics"
+    )
+
+
 def test_pulled_item_hash_is_captured_under_immediate_writer_lock(
     mem_db, user, monkeypatch,
 ):

@@ -3,6 +3,7 @@
 import http.server
 import json
 import logging
+import socket
 import threading
 import urllib.error
 import urllib.parse
@@ -13,7 +14,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from silentsuite_bridge import auth_browser
-from silentsuite_bridge.auth_browser import AUTH_PAGE_HTML, AuthCallbackHandler, browser_login
+from silentsuite_bridge.auth_browser import (
+    AUTH_PAGE_HTML,
+    AuthCallbackHandler,
+    BoundedAuthHTTPServer,
+    browser_login,
+)
 
 
 def _post_auth(server, fields):
@@ -41,11 +47,42 @@ def _get_auth_path(server, path):
 
 
 def _serve_one_auth_request(csrf_token="expected-token"):
-    server = http.server.HTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
+    server = BoundedAuthHTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
     server.csrf_token = csrf_token
     thread = threading.Thread(target=server.handle_request)
     thread.start()
     return server, thread
+
+
+def test_auth_server_malformed_request_does_not_emit_traceback_or_header_value(
+    caplog,
+    capsys,
+):
+    private_value = "private-content-length-canary"
+    server, thread = _serve_one_auth_request()
+    try:
+        with caplog.at_level(logging.ERROR, logger=auth_browser.logger.name):
+            with socket.create_connection(server.server_address, timeout=5) as client:
+                client.sendall(
+                    (
+                        "POST /auth HTTP/1.1\r\n"
+                        "Host: 127.0.0.1\r\n"
+                        f"Content-Length: {private_value}\r\n"
+                        "Connection: close\r\n\r\n"
+                    ).encode()
+                )
+                client.shutdown(socket.SHUT_WR)
+                client.recv(4096)
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    captured = capsys.readouterr()
+    assert "Auth server request failed" in caplog.text
+    assert private_value not in caplog.text
+    assert private_value not in captured.out
+    assert private_value not in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_auth_page_contains_csrf_field():
@@ -261,7 +298,7 @@ def test_browser_login_completion_does_not_print_account_or_server_values(capsys
     with (
         patch("silentsuite_bridge.auth_browser.config.ensure_data_dir"),
         patch("silentsuite_bridge.auth_browser.config.SSL_ENABLED", True),
-        patch("silentsuite_bridge.auth_browser.http.server.HTTPServer", return_value=server),
+        patch("silentsuite_bridge.auth_browser.BoundedAuthHTTPServer", return_value=server),
         patch("silentsuite_bridge.auth_browser.threading.Event", return_value=event),
         patch("silentsuite_bridge.auth_browser.threading.Thread"),
         patch("silentsuite_bridge.auth_browser.webbrowser.open"),
