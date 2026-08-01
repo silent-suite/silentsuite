@@ -132,8 +132,8 @@ class FirstRunSignInRuntimeTest {
                         activity.supportFragmentManager.executePendingTransactions()
                         callbackHandled =
                             !activity.intent.hasExtra(LoginActivity.EXTRA_SIGNUP_CONTINUATION_TOKEN) &&
-                                activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREDENTIALS_TAG)
-                                    is LoginCredentialsFragment
+                                (activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREDENTIALS_TAG)
+                                    is LoginCredentialsFragment)
                     }
                     if (!callbackHandled) android.os.SystemClock.sleep(25L)
                 }
