@@ -28,4 +28,8 @@ features:
     title: Contributing
     details: Set up a development environment, understand the architecture, and contribute to SilentSuite.
     link: /contributing/dev-setup
+  - icon: 🔌
+    title: Apps & Integrations
+    details: Set up Android, iOS, desktop apps, Tasks.org, and DAV bridge clients.
+    link: /user-guide/apps/
 ---
