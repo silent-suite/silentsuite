@@ -683,13 +683,18 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             try:
                 result = authenticate_and_store_account(email, password, server_url)
             except ValueError as exc:
+                log_bounded_failure(
+                    logger,
+                    logging.WARNING,
+                    "Authentication request was rejected",
+                    exc,
+                )
                 self._json_response(400, {
                     "success": False,
-                    "error": str(exc),
+                    "error": "Invalid authentication request.",
                 })
                 return
             except AuthenticationError as exc:
-                error_msg = str(exc)
                 log_bounded_failure(
                     logger,
                     logging.WARNING,
@@ -698,7 +703,19 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
                 )
                 self._json_response(401, {
                     "success": False,
-                    "error": error_msg,
+                    "error": "Invalid email or password.",
+                })
+                return
+            except Exception as exc:
+                log_bounded_failure(
+                    logger,
+                    logging.ERROR,
+                    "Authentication persistence failed",
+                    exc,
+                )
+                self._json_response(500, {
+                    "success": False,
+                    "error": "Authentication could not be completed.",
                 })
                 return
 

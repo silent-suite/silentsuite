@@ -52,12 +52,16 @@ def manual_login():
     print("Authentication successful!")
     print("Saving credentials...")
 
-    store_authenticated_account(
-        username,
-        password,
-        etebase.save(None),
-        config.ETEBASE_SERVER_URL,
-    )
+    try:
+        store_authenticated_account(
+            username,
+            password,
+            etebase.save(None),
+            config.ETEBASE_SERVER_URL,
+        )
+    except Exception:
+        print("Error: Could not save the authenticated account.")
+        sys.exit(1)
 
     print()
     print("Account saved! Existing accounts were left unchanged.")

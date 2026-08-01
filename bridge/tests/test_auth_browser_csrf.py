@@ -157,6 +157,45 @@ def test_auth_success_redirect_does_not_include_email_query():
     assert payload == {"success": True, "redirect": "/success"}
 
 
+def test_auth_persistence_failure_does_not_retain_exception_values(
+    caplog,
+    capsys,
+):
+    private_value = "/private/person/credentials.json?token=secret"
+    server, thread = _serve_one_auth_request()
+    etebase = MagicMock()
+    etebase.save.return_value = "stored-session"
+    try:
+        with (
+            patch("silentsuite_bridge.auth_browser.Account.login", return_value=etebase),
+            patch(
+                "silentsuite_bridge.auth_browser.store_authenticated_account",
+                side_effect=RuntimeError(private_value),
+            ),
+            caplog.at_level(logging.ERROR, logger=auth_browser.logger.name),
+        ):
+            status, payload = _post_auth(server, {
+                "email": "alice@example.com",
+                "password": "secret",
+                "server_url": "https://server.silentsuite.io",
+                "csrf_token": "expected-token",
+            })
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    captured = capsys.readouterr()
+    assert status == 500
+    assert payload == {
+        "success": False,
+        "error": "Authentication could not be completed.",
+    }
+    assert private_value not in caplog.text
+    assert private_value not in captured.out
+    assert private_value not in captured.err
+    assert all(record.exc_info is None for record in caplog.records)
+
+
 def test_success_page_requires_completed_authentication():
     server = http.server.HTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
     server.csrf_token = "expected-token"

@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from silentsuite_bridge import auth_cli, config
 
 
@@ -51,3 +53,28 @@ def test_manual_login_does_not_print_provider_exception(monkeypatch, capsys):
     assert "Error: Authentication failed." in output
     assert private_value not in output
     assert "alice@example.com" not in output
+
+
+def test_manual_login_does_not_print_persistence_exception(monkeypatch, capsys):
+    private_value = "/private/person/credentials.json?token=secret"
+    etebase = SimpleNamespace(save=lambda _unused: "stored-session")
+    monkeypatch.setattr(config, "ensure_data_dir", lambda: None)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "alice@example.com")
+    monkeypatch.setattr(auth_cli.getpass, "getpass", lambda _prompt: "secret")
+    monkeypatch.setattr(auth_cli, "Client", lambda *_args: object())
+    monkeypatch.setattr(auth_cli.Account, "login", lambda *_args: etebase)
+    monkeypatch.setattr(
+        auth_cli,
+        "store_authenticated_account",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError(private_value)),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        auth_cli.manual_login()
+
+    output = capsys.readouterr()
+    assert raised.value.code == 1
+    assert "Error: Could not save the authenticated account." in output.out
+    assert private_value not in output.out
+    assert private_value not in output.err
+    assert "alice@example.com" not in output.out
