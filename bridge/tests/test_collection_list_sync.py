@@ -5,7 +5,13 @@ from unittest.mock import MagicMock
 import pytest
 from playhouse.sqlite_ext import SqliteExtDatabase
 
-from silentsuite_bridge.local_cache import Etebase, SessionSuperseded, db, models
+from silentsuite_bridge.local_cache import (
+    Collection,
+    Etebase,
+    SessionSuperseded,
+    db,
+    models,
+)
 
 
 def _database(path):
@@ -251,3 +257,72 @@ def test_removed_membership_preserves_pending_item_and_marks_collection_dirty(
     assert models.ItemEntity.get_by_id(pending_item.id).dirty is True
     assert models.HrefMapper.get_by_id(pending_item.id).href == "pending-contact.vcf"
     assert ("IMMEDIATE", False) in lock_types
+
+
+def test_full_sync_snapshots_collection_list_before_nested_connection_phases(tmp_path):
+    database = _database(tmp_path / "full-sync-connection-lifecycle.sqlite")
+    user = models.User.create(username="books@example.test")
+    manager = MagicMock()
+    remote_collections = {}
+    for uid in ("calendar-a", "calendar-b"):
+        remote = _remote_collection(uid, stoken=f"{uid}-stoken", name=uid)
+        envelope = uid.encode()
+        remote_collections[envelope] = remote
+        models.CollectionEntity.create(
+            local_user=user,
+            uid=uid,
+            eb_col=envelope,
+        )
+    manager.cache_load.side_effect = remote_collections.__getitem__
+    service = _service(database, user, manager)
+    service.sync_collection_list = MagicMock()
+    pushed = []
+    pulled = []
+
+    def push_collection(uid):
+        with db.database_proxy.connection_context():
+            models.CollectionEntity.get(local_user=user, uid=uid)
+            pushed.append(uid)
+
+    def pull_collection(uid):
+        with db.database_proxy.connection_context():
+            models.CollectionEntity.get(local_user=user, uid=uid)
+            pulled.append(uid)
+
+    service.push_collection = push_collection
+    service.pull_collection = pull_collection
+
+    service.sync()
+
+    assert pushed == ["calendar-a", "calendar-b"]
+    assert pulled == ["calendar-a", "calendar-b"]
+
+
+def test_collection_item_iteration_does_not_leak_transaction_to_consumer(tmp_path):
+    database = _database(tmp_path / "collection-item-list-lifecycle.sqlite")
+    user = models.User.create(username="books@example.test")
+    cache_collection = models.CollectionEntity.create(
+        local_user=user,
+        uid="calendar-a",
+        eb_col=b"collection-envelope",
+    )
+    models.ItemEntity.create(
+        collection=cache_collection,
+        uid="event-a",
+        eb_item=b"item-envelope",
+    )
+    remote_collection = _remote_collection(
+        "calendar-a", stoken="calendar-a-stoken", name="calendar-a"
+    )
+    item_manager = MagicMock()
+    item_manager.cache_load.return_value = MagicMock(
+        uid="remote-event-a",
+        meta={"name": "event-a"},
+    )
+    manager = MagicMock()
+    manager.cache_load.return_value = remote_collection
+    manager.get_item_manager.return_value = item_manager
+    collection = Collection(manager, cache_collection)
+
+    for _item in collection.list():
+        assert database.in_transaction() is False

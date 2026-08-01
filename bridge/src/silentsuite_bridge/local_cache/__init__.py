@@ -1174,10 +1174,11 @@ class Etebase:
     def list(self):
         with db.database_proxy:
             col_mgr = self.etebase.get_collection_manager()
-            for cache_obj in self.user.collections.where(
-                ~models.CollectionEntity.deleted
-            ):
-                yield Collection(col_mgr, cache_obj)
+            cache_objects = list(
+                self.user.collections.where(~models.CollectionEntity.deleted)
+            )
+            collections = [Collection(col_mgr, cache_obj) for cache_obj in cache_objects]
+        return collections
 
     def get(self, uid):
         with db.database_proxy:
@@ -1297,10 +1298,11 @@ class Collection:
     def list(self):
         with db.database_proxy:
             item_mgr = self.col_mgr.get_item_manager(self.col)
-            for cache_item in self.cache_col.items.where(
-                ~models.ItemEntity.deleted
-            ):
-                yield Item(item_mgr, cache_item)
+            cache_items = list(
+                self.cache_col.items.where(~models.ItemEntity.deleted)
+            )
+            items = [Item(item_mgr, cache_item) for cache_item in cache_items]
+        return items
 
 
 class Item:
