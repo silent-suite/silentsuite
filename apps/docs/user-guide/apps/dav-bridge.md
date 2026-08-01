@@ -29,6 +29,10 @@ The bridge exposes every SilentSuite calendar, task list, and address book as it
 
 ## Install
 
+### Linux
+
+Follow the [Linux desktop bridge guide](./linux-bridge.md) for the stable installer, first-time setup, systemd auto-start, troubleshooting, and uninstall instructions.
+
 ### Windows
 
 Download the current Windows bridge binary directly:
