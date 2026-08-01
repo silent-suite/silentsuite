@@ -52,30 +52,39 @@
         <TextView
             android:id="@+id/account_choice_calendar"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="wrap_content"
             android:drawableStart="@drawable/ic_calendar_outline"
             android:drawablePadding="@dimen/spacing_12"
             android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:paddingTop="@dimen/spacing_8"
+            android:paddingBottom="@dimen/spacing_8"
             android:text="@string/account_choice_calendar"
             android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
 
         <TextView
             android:id="@+id/account_choice_contacts"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="wrap_content"
             android:drawableStart="@drawable/ic_contacts_outline"
             android:drawablePadding="@dimen/spacing_12"
             android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:paddingTop="@dimen/spacing_8"
+            android:paddingBottom="@dimen/spacing_8"
             android:text="@string/account_choice_contacts"
             android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
 
         <TextView
             android:id="@+id/account_choice_tasks"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="wrap_content"
             android:drawableStart="@drawable/ic_tasks_outline"
             android:drawablePadding="@dimen/spacing_12"
             android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:paddingTop="@dimen/spacing_8"
+            android:paddingBottom="@dimen/spacing_8"
             android:text="@string/account_choice_tasks"
             android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
 

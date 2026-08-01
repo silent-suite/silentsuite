@@ -125,44 +125,83 @@ for wrapper, helpers in ledger["wrappers"].items():
         if helper in expected: raise SystemExit(f"duplicate helper ownership: {helper}")
         expected[helper]=wrapper
 out=pathlib.Path(output)
-listing_result=subprocess.run(
-    ["adb","exec-out","run-as","io.silentsuite.android","ls",f"files/focused-runtime/{nonce}"],
-    check=False, capture_output=True, text=True,
-)
-if listing_result.returncode != 0 and expected:
-    raise SystemExit(f"missing remote scenario directory: {listing_result.stderr.strip()}")
-listing=listing_result.stdout.splitlines() if listing_result.returncode == 0 else []
-remote_files={name.strip() for name in listing if name.strip()}
-expected_files={f"{helper}.json" for helper in expected}
-if remote_files != expected_files:
-    raise SystemExit(f"remote scenario set mismatch: {sorted(remote_files)} != {sorted(expected_files)}")
-package_dump=subprocess.run(
-    ["adb","shell","dumpsys","package","io.silentsuite.android"],
-    check=True, capture_output=True, text=True,
-).stdout
-version_code=re.search(r"\bversionCode=(\d+)\b", package_dump)
-version_name=re.search(r"\bversionName=([^\s]+)", package_dump)
-if version_code is None or version_name is None: raise SystemExit("missing installed package version identity")
 def reject_duplicate_keys(pairs):
     result={}
     for key, value in pairs:
         if key in result: raise SystemExit(f"duplicate scenario key: {key}")
         result[key]=value
     return result
+expected_files={f"{helper}.json" for helper in expected}
+package_path=subprocess.run(
+    ["adb","shell","pm","path","io.silentsuite.android"],
+    check=False, capture_output=True, text=True,
+)
+use_run_as=bool(expected_files) and package_path.returncode == 0 and any(
+    line.startswith("package:") for line in package_path.stdout.splitlines()
+)
+if use_run_as:
+    listing_result=subprocess.run(
+        ["adb","exec-out","run-as","io.silentsuite.android","ls",f"files/focused-runtime/{nonce}"],
+        check=False, capture_output=True, text=True,
+    )
+    if listing_result.returncode != 0 and expected:
+        raise SystemExit(f"missing remote scenario directory: {listing_result.stderr.strip()}")
+    listing=listing_result.stdout.splitlines() if listing_result.returncode == 0 else []
+    remote_files={name.strip() for name in listing if name.strip()}
+    if remote_files != expected_files:
+        raise SystemExit(f"remote scenario set mismatch: {sorted(remote_files)} != {sorted(expected_files)}")
+    package_dump=subprocess.run(
+        ["adb","shell","dumpsys","package","io.silentsuite.android"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    version_code_match=re.search(r"\bversionCode=(\d+)\b", package_dump)
+    version_name_match=re.search(r"\bversionName=([^\s]+)", package_dump)
+    if version_code_match is None or version_name_match is None:
+        raise SystemExit("missing installed package version identity")
+    version_code=int(version_code_match.group(1))
+    version_name=version_name_match.group(1)
+else:
+    records={}
+    marker=re.compile(r"\bI\s+FocusedRuntimeScenario:\s+(\{.*\})\s*$")
+    for log_path in pathlib.Path("app/build/outputs/androidTest-results/connected").glob("**/logcat-*.txt"):
+        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            match=marker.search(line)
+            if match is None: continue
+            payload=match.group(1)
+            data=json.loads(payload, object_pairs_hook=reject_duplicate_keys)
+            if data.get("invocationNonce") != nonce: continue
+            helper_set=data.get("helperSet")
+            if not isinstance(helper_set, list) or len(helper_set) != 1: raise SystemExit("bad logged scenario helper set")
+            filename=f"{helper_set[0]}.json"
+            if filename in records: raise SystemExit(f"duplicate logged scenario record: {filename}")
+            records[filename]=(payload+"\n").encode("utf-8")
+    if set(records) != expected_files:
+        raise SystemExit(f"remote scenario set mismatch: {sorted(records)} != {sorted(expected_files)}")
+    for filename, payload in records.items():
+        (out/filename).write_bytes(payload)
+    metadata=[]
+    for metadata_path in pathlib.Path("app/build/outputs/apk").glob("**/output-metadata.json"):
+        item=json.loads(metadata_path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicate_keys)
+        if item.get("applicationId") == "io.silentsuite.android": metadata.append(item)
+    if not metadata: raise SystemExit("missing target application output metadata")
+    element=metadata[0]["elements"][0]
+    version_code=int(element["versionCode"])
+    version_name=element["versionName"]
 for helper, wrapper in sorted(expected.items()):
     if not re.fullmatch(r"[A-Za-z0-9._-]+", helper): raise SystemExit(f"bad helper basename: {helper}")
     target=out/f"{helper}.json"
-    command=["adb","exec-out","run-as","io.silentsuite.android","cat",f"files/focused-runtime/{nonce}/{helper}.json"]
-    result=subprocess.run(command, check=True, capture_output=True)
-    target.write_bytes(result.stdout)
-    data=json.loads(result.stdout.decode("utf-8"), object_pairs_hook=reject_duplicate_keys)
+    if use_run_as:
+        command=["adb","exec-out","run-as","io.silentsuite.android","cat",f"files/focused-runtime/{nonce}/{helper}.json"]
+        result=subprocess.run(command, check=True, capture_output=True)
+        target.write_bytes(result.stdout)
+    data=json.loads(target.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicate_keys)
     required={"api","attempt","checkout","helperSet","invocationNonce","job","package","run","shard","versionCode","versionName","wrapper"}
     if set(data) != required: raise SystemExit(f"bad scenario keys for {helper}: {sorted(data)}")
     if data["invocationNonce"] != nonce or data["run"] != run or data["attempt"] != attempt or data["job"] != job or data["checkout"] != checkout:
         raise SystemExit(f"scenario identity mismatch for {helper}")
     if data["shard"] != mode or data["package"] != "io.silentsuite.android" or data["helperSet"] != [helper] or data["wrapper"] != wrapper:
         raise SystemExit(f"scenario ownership mismatch for {helper}")
-    if data["api"] != int(mode.split(":", 1)[0]) or data["versionCode"] != int(version_code.group(1)) or data["versionName"] != version_name.group(1):
+    if data["api"] != int(mode.split(":", 1)[0]) or data["versionCode"] != version_code or data["versionName"] != version_name:
         raise SystemExit(f"scenario platform/version mismatch for {helper}")
 actual={p.stem for p in out.glob("*.json")}
 if actual != set(expected): raise SystemExit(f"scenario set mismatch: {sorted(actual)} != {sorted(expected)}")

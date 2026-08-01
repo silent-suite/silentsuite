@@ -124,6 +124,20 @@ class FirstRunSignInRuntimeTest {
                 assertTrue("Signup callback Activity did not finish", firstReturn!!.isFinishing)
                 assertTrue("Failed foreground delivery was not retried", foregroundAttempts >= 2)
                 SignupReturnActivity.foregroundExecutorForTest = null
+                val handledDeadline = android.os.SystemClock.elapsedRealtime() + 5_000L
+                var callbackHandled = false
+                while (!callbackHandled && android.os.SystemClock.elapsedRealtime() < handledDeadline) {
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity { activity ->
+                        activity.supportFragmentManager.executePendingTransactions()
+                        callbackHandled =
+                            !activity.intent.hasExtra(LoginActivity.EXTRA_SIGNUP_CONTINUATION_TOKEN) &&
+                                activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREDENTIALS_TAG)
+                                    is LoginCredentialsFragment
+                    }
+                    if (!callbackHandled) android.os.SystemClock.sleep(25L)
+                }
+                assertTrue("Owning callback was not acknowledged by the resumed credentials destination", callbackHandled)
                 scenario.onActivity { activity ->
                     activity.supportFragmentManager.executePendingTransactions()
                     assertEquals(ownerFlow, callbackOwnerFlow(activity))
@@ -260,33 +274,6 @@ class FirstRunSignInRuntimeTest {
         try {
             val firstOwner = Any()
             val replacementOwner = Any()
-            val restoredCreatorLease = SetupSecretHolder.issue(SetupSecretHolder.LeaseKind.LOGIN)
-            val restoredCreatorReference = requireNotNull(SetupSecretHolder.reference(restoredCreatorLease))
-            val missingIdentityCreator = CreateAccountFragment.newInstance(restoredCreatorReference)
-            missingIdentityCreator.onCreate(Bundle())
-            assertFalse(missingIdentityCreator.hasValidRestoredAuthority(restoredCreatorLease))
-            val explicitNullIdentityCreator = CreateAccountFragment.newInstance(restoredCreatorReference)
-            explicitNullIdentityCreator.onCreate(Bundle().apply {
-                putString("account_creation_generation", null)
-            })
-            assertFalse(explicitNullIdentityCreator.hasValidRestoredAuthority(restoredCreatorLease))
-            val malformedIdentityCreator = CreateAccountFragment.newInstance(restoredCreatorReference)
-            malformedIdentityCreator.onCreate(Bundle().apply {
-                putString("account_creation_generation", "not-a-creation-uuid")
-            })
-            assertFalse(malformedIdentityCreator.hasValidRestoredAuthority(restoredCreatorLease))
-            val noncanonicalIdentityCreator = CreateAccountFragment.newInstance(restoredCreatorReference)
-            noncanonicalIdentityCreator.onCreate(Bundle().apply {
-                putString("account_creation_generation", "1-1-1-1-1")
-            })
-            assertFalse(noncanonicalIdentityCreator.hasValidRestoredAuthority(restoredCreatorLease))
-            val validIdentityCreator = CreateAccountFragment.newInstance(restoredCreatorReference)
-            validIdentityCreator.onCreate(Bundle().apply {
-                putString("account_creation_generation", java.util.UUID.randomUUID().toString())
-                putBoolean("account_creation_had_started", true)
-            })
-            assertTrue(validIdentityCreator.hasValidRestoredAuthority(restoredCreatorLease))
-            SetupSecretHolder.revoke(restoredCreatorLease)
             val changeLease = SetupSecretHolder.issue(
                 SetupSecretHolder.LeaseKind.CREDENTIAL_CHANGE,
                 bound = false,
@@ -426,16 +413,18 @@ class FirstRunSignInRuntimeTest {
                         putString("login_navigation_destination", "CREATOR")
                     }
                     assertFalse(navigationValidator.invoke(activity, restoredNavigation) as Boolean)
+                    val hadStartedField = CreateAccountFragment::class.java
+                        .getDeclaredField("hadStartedBeforeSave")
+                        .apply { isAccessible = true }
+                    hadStartedField.setBoolean(creator, true)
                     creationIdField.set(creator, null)
                     assertFalse(navigationValidator.invoke(activity, restoredNavigation) as Boolean)
                     creationIdField.set(creator, "1-1-1-1-1")
                     assertFalse(navigationValidator.invoke(activity, restoredNavigation) as Boolean)
+                    creationIdField.set(creator, "not-a-creation-uuid")
+                    assertFalse(navigationValidator.invoke(activity, restoredNavigation) as Boolean)
                     assertTrue(SetupSecretHolder.compareOperation(operationBeforeInvalidRestore))
-                    val hadStartedField = CreateAccountFragment::class.java
-                        .getDeclaredField("hadStartedBeforeSave")
-                        .apply { isAccessible = true }
                     creationIdField.set(creator, java.util.UUID.randomUUID().toString())
-                    hadStartedField.setBoolean(creator, true)
                     assertTrue(navigationValidator.invoke(activity, restoredNavigation) as Boolean)
                     assertTrue(activity.recoverStalledRestoredCreator())
                     assertVisibleDestination(activity, "AccountChoiceFragment")
@@ -547,8 +536,10 @@ class FirstRunSignInRuntimeTest {
         val target = File(directory, "$helper.json")
         val temporary = File(directory, ".$helper.${UUID.randomUUID()}.tmp")
         check(temporary.createNewFile())
-        temporary.writeText(evidence.toString() + "\n", Charsets.UTF_8)
+        val serializedEvidence = evidence.toString()
+        temporary.writeText(serializedEvidence + "\n", Charsets.UTF_8)
         check(!target.exists() && temporary.renameTo(target))
+        android.util.Log.i(SCENARIO_LOG_TAG, serializedEvidence)
     }
 
     private fun destinationFingerprint(intent: Intent): List<String> {
@@ -615,5 +606,9 @@ class FirstRunSignInRuntimeTest {
                 yieldAll(descendants(view.getChildAt(index)))
             }
         }
+    }
+
+    companion object {
+        private const val SCENARIO_LOG_TAG = "FocusedRuntimeScenario"
     }
 }

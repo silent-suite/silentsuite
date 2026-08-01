@@ -537,12 +537,15 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert script.index("trap - EXIT") < script.index('exit "${status}"')
     for contract in (
         "scenarioNonce", "invocationNonce", "helperSet", "pull_and_validate_scenarios",
-        "exec-out", "scenario identity mismatch", "scenario set mismatch",
+        "exec-out", "FocusedRuntimeScenario", "logcat-*.txt", "output-metadata.json",
+        "scenario identity mismatch", "scenario set mismatch",
     ):
         assert contract in script
     runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/FirstRunSignInRuntimeTest.kt").read_text(encoding="utf-8")
     assert "assertTestStateEmpty()" in runtime
     assert "recordScenario(helper" in runtime
+    assert 'SCENARIO_LOG_TAG = "FocusedRuntimeScenario"' in runtime
+    assert "android.util.Log.i(SCENARIO_LOG_TAG, serializedEvidence)" in runtime
     assert all(helper in runtime for helpers in ledger["wrappers"].values() for helper in helpers)
     for contract in (
         "duplicate scenario key", "duplicate helper ownership", "remote scenario set mismatch",

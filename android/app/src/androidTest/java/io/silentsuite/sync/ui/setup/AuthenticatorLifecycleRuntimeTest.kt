@@ -77,6 +77,7 @@ class AuthenticatorLifecycleRuntimeTest {
                 }
                 instrumentation.waitForIdleSync()
                 scenario.onActivity { activity ->
+                    activity.supportFragmentManager.executePendingTransactions()
                     org.junit.Assert.assertFalse(activity.isFinishing)
                     org.junit.Assert.assertNull(
                         activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREATE_ACCOUNT_TAG),

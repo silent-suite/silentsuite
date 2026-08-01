@@ -97,9 +97,9 @@ def test_approved_split_account_entry_copy_typography_and_secret_boundaries():
     approved = {
         "account_choice_title": "Sync privately with Android apps",
         "account_choice_sign_in": "Sign in",
-        "account_choice_calendar": "Android Calendar",
-        "account_choice_contacts": "Android Contacts",
-        "account_choice_tasks": "Tasks.org or OpenTasks",
+        "account_choice_calendar": "Synced events appear in compatible calendar apps on this device.",
+        "account_choice_contacts": "Synced contacts appear in compatible contacts apps on this device.",
+        "account_choice_tasks": "Synced tasks appear in Tasks.org or OpenTasks when installed.",
         "login_existing_account_heading": "Existing account",
         "login_privacy_reassurance": "Your encryption keys stay on this device.",
         "login_sign_in_and_connect": "Sign in and set up sync",
@@ -115,6 +115,10 @@ def test_approved_split_account_entry_copy_typography_and_secret_boundaries():
     assert '<item name="android:textSize">16sp</item>' in styles
     assert "Widget.Material3.TextInputLayout.OutlinedBox" in styles
     assert choice.count("<com.google.android.material.button.MaterialButton") == 2
+    for view_id in ("account_choice_calendar", "account_choice_contacts", "account_choice_tasks"):
+        outcome = choice.split(f'android:id="@+id/{view_id}"', 1)[1].split("/>", 1)[0]
+        assert 'android:layout_height="wrap_content"' in outcome
+        assert 'android:minHeight="48dp"' in outcome
     assert credentials.count("<com.google.android.material.button.MaterialButton") == 1
     assert 'style="@style/Widget.AppTheme.Material3.Button.Outlined"' in choice.split(
         'android:id="@+id/account_choice_create_account"', 1
