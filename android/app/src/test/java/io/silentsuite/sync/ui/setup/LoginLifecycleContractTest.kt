@@ -180,7 +180,7 @@ class LoginLifecycleContractTest {
         assertTrue(job.contains("""script: bash android/scripts/run-focused-runtime-tests.sh "${'$'}{{ matrix.api-level }}" "${'$'}{{ matrix.shard }}""""))
         assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
-            "app:connectedDebugAndroidTest", "io.silentsuite.sync.ui.AccountActivityRecreationTest",
+            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 81",
             "-PrequireEtebase16Kb=true", "--no-daemon"
         ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
         assertTrue(job.contains("if: always()") && job.contains("retention-days: 14"))

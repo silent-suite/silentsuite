@@ -2,6 +2,7 @@ package io.silentsuite.sync.ui.setup
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.os.Bundle
 import android.content.Intent
 import androidx.test.core.app.ActivityScenario
