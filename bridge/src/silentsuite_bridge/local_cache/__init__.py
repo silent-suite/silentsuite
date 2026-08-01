@@ -408,8 +408,8 @@ def ensure_dav_href(
         def identity(item):
             return str(item.remote_uid or item.uid)
 
-        def conflict_for(item, href):
-            return (
+        def conflicts_for(item, href):
+            return list(
                 models.HrefMapper.select(models.HrefMapper)
                 .join(models.ItemEntity)
                 .where(
@@ -417,7 +417,7 @@ def ensure_dav_href(
                     & (models.ItemEntity.collection == item.collection_id)
                     & (models.HrefMapper.content != item.id)
                 )
-                .first()
+                .order_by(models.ItemEntity.remote_uid, models.ItemEntity.uid)
             )
 
         def fallback_candidates(item):
@@ -439,27 +439,70 @@ def ensure_dav_href(
                 ).execute()
             return target_mapper
 
-        def assign(target_item, target_mapper, href, excluded):
-            conflict_mapper = conflict_for(target_item, href)
-            if conflict_mapper is None:
-                return persist(target_item, target_mapper, href)
-            if strict:
-                raise ValueError("DAV href already exists")
-
-            conflict_item = conflict_mapper.content
-            if identity(target_item) < identity(conflict_item):
-                relocate(conflict_item, conflict_mapper, excluded | {href})
-                return persist(target_item, target_mapper, href)
-            return relocate(target_item, target_mapper, excluded | {href})
-
-        def relocate(target_item, target_mapper, excluded):
+        def next_fallback(target_item, excluded):
             for fallback in fallback_candidates(target_item):
                 if fallback in excluded:
                     continue
-                return assign(target_item, target_mapper, fallback, excluded)
+                return fallback
             raise AssertionError("unreachable DAV href allocation")
 
-        return assign(cache_item, mapper, candidate, set())
+        # Resolve collision chains with an explicit stack. A recursive allocator
+        # lets attacker-controlled encrypted href metadata exhaust Python's call
+        # stack; this loop is bounded by the number of collection items and
+        # resolves every retained/legacy claimant, not only the first row.
+        item_count = models.ItemEntity.select().where(
+            models.ItemEntity.collection == cache_item.collection_id
+        ).count()
+        max_steps = max(32, item_count * 8)
+        steps = 0
+        stack = [("assign", cache_item, mapper, candidate, frozenset())]
+        while stack:
+            steps += 1
+            if steps > max_steps:
+                raise RuntimeError("DAV href allocation did not converge")
+            operation, target_item, target_mapper, href, excluded = stack.pop()
+            if operation == "persist":
+                persist(target_item, target_mapper, href)
+                continue
+
+            conflict_mappers = conflicts_for(target_item, href)
+            if not conflict_mappers:
+                persist(target_item, target_mapper, href)
+                continue
+            if strict:
+                raise ValueError("DAV href already exists")
+
+            claimants = [(target_item, target_mapper)] + [
+                (conflict_mapper.content, conflict_mapper)
+                for conflict_mapper in conflict_mappers
+            ]
+            winner_item, winner_mapper = min(
+                claimants,
+                key=lambda claimant: (identity(claimant[0]), claimant[0].id),
+            )
+            losers = sorted(
+                (
+                    claimant
+                    for claimant in claimants
+                    if claimant[0].id != winner_item.id
+                ),
+                key=lambda claimant: (identity(claimant[0]), claimant[0].id),
+                reverse=True,
+            )
+            stack.append(("persist", winner_item, winner_mapper, href, excluded))
+            for loser_item, loser_mapper in losers:
+                loser_excluded = excluded | {href}
+                stack.append(
+                    (
+                        "assign",
+                        loser_item,
+                        loser_mapper,
+                        next_fallback(loser_item, loser_excluded),
+                        loser_excluded,
+                    )
+                )
+
+        return models.HrefMapper.get(models.HrefMapper.content == cache_item)
 
 
 def record_dav_change(

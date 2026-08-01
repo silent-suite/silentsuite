@@ -1686,6 +1686,99 @@ def test_shared_href_collision_with_opaque_fallback_is_replica_deterministic(
     }
 
 
+def test_href_allocator_handles_long_collision_chain_without_recursion(
+    mem_db,
+    user,
+):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="long-collision-chain",
+        eb_col=b"collection-cache",
+    )
+    initial_href = local_cache_module.opaque_dav_href("0001", ".ics")
+    for index in range(1, 1101):
+        identity = f"{index:04d}"
+        item = ItemEntity.create(
+            collection=cache_col,
+            uid=f"item-{identity}",
+            remote_uid=identity,
+            eb_item=identity.encode(),
+        )
+        if index == 1:
+            href = initial_href
+        elif index == 2:
+            href = local_cache_module.opaque_dav_href("0001:1", ".ics")
+        else:
+            href = local_cache_module.opaque_dav_href(f"{index - 1:04d}", ".ics")
+        HrefMapper.create(content=item, href=href)
+
+    target = ItemEntity.create(
+        collection=cache_col,
+        uid="item-0000",
+        remote_uid="0000",
+        eb_item=b"0000",
+    )
+
+    mapper = local_cache_module.ensure_dav_href(
+        target,
+        initial_href,
+        ".ics",
+    )
+
+    hrefs = [
+        row.href
+        for row in (
+            HrefMapper.select(HrefMapper)
+            .join(ItemEntity)
+            .where(ItemEntity.collection == cache_col)
+        )
+    ]
+    assert mapper.href == initial_href
+    assert len(hrefs) == 1101
+    assert len(set(hrefs)) == 1101
+
+
+def test_href_allocator_resolves_all_legacy_claimants_for_one_href(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="multiway-collision",
+        eb_col=b"collection-cache",
+    )
+    shared_href = "shared-event.ics"
+    for identity in ("remote-b", "remote-c", "remote-d"):
+        item = ItemEntity.create(
+            collection=cache_col,
+            uid=f"item-{identity}",
+            remote_uid=identity,
+            eb_item=identity.encode(),
+        )
+        HrefMapper.create(content=item, href=shared_href)
+    target = ItemEntity.create(
+        collection=cache_col,
+        uid="item-remote-a",
+        remote_uid="remote-a",
+        eb_item=b"remote-a",
+    )
+
+    mapper = local_cache_module.ensure_dav_href(
+        target,
+        shared_href,
+        ".ics",
+    )
+
+    mappings = {
+        row.content.remote_uid: row.href
+        for row in (
+            HrefMapper.select(HrefMapper, ItemEntity)
+            .join(ItemEntity)
+            .where(ItemEntity.collection == cache_col)
+        )
+    }
+    assert mapper.href == shared_href
+    assert mappings["remote-a"] == shared_href
+    assert len(set(mappings.values())) == 4
+
+
 def test_pulled_item_hash_is_captured_under_immediate_writer_lock(
     mem_db, user, monkeypatch,
 ):
