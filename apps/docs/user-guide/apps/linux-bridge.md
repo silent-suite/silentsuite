@@ -16,7 +16,7 @@ The installer supports Linux on x86_64 and ARM64. Run the stable installer in a 
 curl -fsSL https://silentsuite.io/bridge/install.sh | sh
 ```
 
-The installer downloads the current bridge release, verifies its checksum when `sha256sum` or `shasum` is available, installs it at `~/.local/bin/silentsuite-bridge`, and configures a systemd user service.
+The installer downloads the current bridge release, attempts checksum verification when both a checksum tool and the release checksum are available, installs it at `~/.local/bin/silentsuite-bridge`, and configures a systemd user service. If you require manual verification, download the binary and its `.sha256` file from GitHub Releases and compare them before running it.
 
 If your current shell cannot find the command immediately, open a new terminal or run:
 
@@ -33,13 +33,19 @@ Do not install from scripts on the `dev` branch. They may contain unreleased cha
 
 ## Start and Sign In
 
-Start the bridge:
+The installer enables and starts the systemd user service automatically. Confirm it is running:
+
+```bash
+systemctl --user status silentsuite-bridge.service
+```
+
+If you downloaded the binary manually instead, or intentionally stopped the service, you can run the bridge in the foreground with:
 
 ```bash
 silentsuite-bridge
 ```
 
-It opens the local dashboard at:
+Do not run a second foreground copy while the systemd service is active. Open the local dashboard at:
 
 ```text
 http://localhost:37358/
