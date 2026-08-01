@@ -144,6 +144,67 @@ def test_database_call_sites_do_not_use_connection_owning_proxy_context():
     assert violations == []
 
 
+def test_startup_logs_do_not_retain_configured_urls_hosts_or_paths(
+    monkeypatch,
+    caplog,
+):
+    private_values = (
+        "https://user:private-token@example.invalid/private?account=person",
+        "/private/person/data-directory",
+        "private-host.example.invalid:5232",
+    )
+    monkeypatch.setattr(config, "ETEBASE_SERVER_URL", private_values[0])
+    monkeypatch.setattr(config, "DATA_DIR", private_values[1])
+    monkeypatch.setattr(config, "SERVER_HOSTS", private_values[2])
+    monkeypatch.setattr(config, "is_remote_bind_configured", lambda: False)
+    monkeypatch.setattr(config, "dav_scheme", lambda: "http")
+    monkeypatch.setattr(bridge_main, "build_radicale_configuration", lambda: object())
+    monkeypatch.setattr(bridge_main, "_start_sync_threads", lambda: None)
+    monkeypatch.setattr(
+        bridge_main,
+        "_serve_radicale_with_bridge_application",
+        MagicMock(side_effect=KeyboardInterrupt),
+    )
+    monkeypatch.setattr(sys, "argv", ["silentsuite-bridge", "--no-tray"])
+
+    with caplog.at_level(logging.INFO, logger=bridge_main.logger.name):
+        bridge_main.run_server()
+
+    for private_value in private_values:
+        assert private_value not in caplog.text
+    assert "Etebase server configured" in caplog.text
+    assert "Bridge data directory configured" in caplog.text
+
+
+def test_key_permission_failure_log_does_not_retain_path(monkeypatch, caplog):
+    private_path = "/private/person/account-key.pem"
+    monkeypatch.setattr(
+        bridge_main.os,
+        "chmod",
+        MagicMock(side_effect=OSError("private failure")),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=bridge_main.logger.name):
+        bridge_main._harden_key_permissions(private_path)
+
+    assert private_path not in caplog.text
+    assert "private failure" not in caplog.text
+
+
+def test_corrupt_credentials_log_does_not_retain_path(tmp_path, caplog):
+    from silentsuite_bridge.radicale.creds import Credentials
+
+    private_path = tmp_path / "private-person-account.json"
+    private_path.write_text("{")
+
+    with caplog.at_level(logging.WARNING, logger="silentsuite-bridge.creds"):
+        credentials = Credentials(str(private_path))
+
+    assert credentials.content == {"users": {}}
+    assert str(private_path) not in caplog.text
+    assert "private-person-account.json" not in caplog.text
+
+
 def test_check_credentials_allows_no_accounts_when_dashboard_enabled(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")

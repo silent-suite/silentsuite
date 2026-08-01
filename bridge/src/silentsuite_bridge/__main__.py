@@ -398,7 +398,7 @@ def _harden_key_permissions(key_path: str) -> None:
     try:
         os.chmod(key_path, 0o600)
     except OSError:
-        logger.debug("Could not chmod key file %s to 0600", key_path)
+        logger.debug("Could not harden generated key-file permissions")
 
 
 def _cert_and_key_readable(cert_path: str, key_path: str) -> bool:
@@ -546,9 +546,8 @@ def run_server():
     configuration = build_radicale_configuration()
 
     logger.info(
-        "SilentSuite Bridge v%s starting on %s",
+        "SilentSuite Bridge v%s starting",
         __version__,
-        config.SERVER_HOSTS,
     )
     if config.is_remote_bind_configured():
         if config.SSL_ENABLED:
@@ -563,10 +562,10 @@ def run_server():
                 "DAV traffic is plaintext HTTP unless protected by your own proxy/VPN."
             )
         logger.warning("Bridge dashboard disabled while remote bind is configured.")
-    logger.info("Etebase server: %s", config.ETEBASE_SERVER_URL)
-    logger.info("Data directory: %s", config.DATA_DIR)
+    logger.info("Etebase server configured")
+    logger.info("Bridge data directory configured")
     logger.info("CalDAV/CardDAV scheme: %s", config.dav_scheme())
-    logger.info("CalDAV/CardDAV host(s): %s", config.SERVER_HOSTS)
+    logger.info("CalDAV/CardDAV listener configured")
 
     # Start account workers without blocking DAV/dashboard startup on provider I/O.
     _start_sync_threads()

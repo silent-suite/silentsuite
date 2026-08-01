@@ -47,8 +47,7 @@ class Credentials:
                         self.content = json.load(f)
                     except json.JSONDecodeError:
                         logger.warning(
-                            "Corrupted credentials file %s — resetting",
-                            self.filename,
+                            "Corrupted credentials file; resetting",
                         )
                         self.content = {"users": {}}
             self.last_mtime = mtime
