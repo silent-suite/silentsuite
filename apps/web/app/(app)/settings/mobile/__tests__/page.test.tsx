@@ -77,6 +77,7 @@ describe('MobileSettingsPage Android download choices', () => {
     const qr = screen.getByTestId('android-download-qr')
     expect(qr).toHaveAttribute('data-value', 'https://docs.silentsuite.io/user-guide/apps/android')
     expect(qr).toHaveAttribute('data-size', '144')
+    expect(qr.parentElement).toHaveClass('h-40', 'w-40', 'p-[7px]')
     expect(qr.closest('[data-android-download-qr]')).toHaveClass(
       'hidden',
       'lg:flex',
