@@ -86,10 +86,10 @@ EXPECTED_SECRET_STEP_SHA256 = {
     "Decode release keystore": "44c1231395b5f7347980a05fa641b0e7d866451e10ddb88958e61459f649ffba",
     "Build signed release APK and AAB": "07a1049b765ab5e0005e943a165dd5399b83741fc38cc91fa7919bd360873d94",
     "Capture release dependency graph and generate signed-release splits": (
-        "0df837fe9af54e6cfb08d657238cd5eec036757c69e7dd216e76bc5904411652"
+        "69ded7eab4c4ff48deff2da950aacf8e627da05373ffa507f358fbcc986a7a6a"
     ),
 }
-EXPECTED_RELEASE_JOB_SHA256 = "2f77c370952a2819564dda7ad18d8ab83e7d55c787126dd41f32bb074c612e84"
+EXPECTED_RELEASE_JOB_SHA256 = "32b3bd8d5584e1049e4c56003bfe56be379c3204fca8f223a1c19b2e0b3c5402"
 ALLOWED_RELEASE_JOB_KEYS = {
     "name",
     "needs",
