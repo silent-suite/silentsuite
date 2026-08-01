@@ -1779,6 +1779,51 @@ def test_href_allocator_resolves_all_legacy_claimants_for_one_href(mem_db, user)
     assert len(set(mappings.values())) == 4
 
 
+def test_equal_normalized_identities_do_not_use_local_row_order(mem_db, user):
+    shared_href = "shared-event.ics"
+
+    def allocate(collection_uid, first_kind):
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid=collection_uid,
+            eb_col=collection_uid.encode(),
+        )
+        specs = {
+            "legacy": {
+                "uid": "shared-identity",
+                "remote_uid": None,
+                "eb_item": b"legacy-cache",
+            },
+            "remote": {
+                "uid": "different-cache-uid",
+                "remote_uid": "shared-identity",
+                "eb_item": b"remote-cache",
+            },
+        }
+        first = ItemEntity.create(collection=cache_col, **specs[first_kind])
+        HrefMapper.create(content=first, href=shared_href)
+        second_kind = "remote" if first_kind == "legacy" else "legacy"
+        second = ItemEntity.create(collection=cache_col, **specs[second_kind])
+        local_cache_module.ensure_dav_href(second, shared_href, ".ics")
+        return {
+            (row.content.remote_uid, row.content.uid): row.href
+            for row in (
+                HrefMapper.select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(ItemEntity.collection == cache_col)
+            )
+        }
+
+    legacy_first = allocate("identity-order-one", "legacy")
+    remote_first = allocate("identity-order-two", "remote")
+
+    assert legacy_first == remote_first
+    assert legacy_first[(None, "shared-identity")] == shared_href
+    assert legacy_first[("shared-identity", "different-cache-uid")] == (
+        local_cache_module.opaque_dav_href("shared-identity", ".ics")
+    )
+
+
 def test_pulled_item_hash_is_captured_under_immediate_writer_lock(
     mem_db, user, monkeypatch,
 ):

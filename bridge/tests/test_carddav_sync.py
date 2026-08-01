@@ -191,6 +191,31 @@ def test_unledgered_cache_mutation_invalidates_retained_token(mem_db, user):
     assert list(hrefs) == ["contact-1.vcf"]
 
 
+def test_mapper_replacement_invalidates_token_and_full_inventory_drops_old_href(
+    mem_db,
+    user,
+):
+    collection = _carddav_collection(mem_db, user)
+    old_token, initial_hrefs = collection.sync(None)
+    cache_item = ItemEntity.get(uid="contact-1")
+
+    assert list(initial_hrefs) == ["contact-1.vcf"]
+    local_cache_module.ensure_dav_href(
+        cache_item,
+        "shared-contact.vcf",
+        ".vcf",
+        replace_existing=True,
+    )
+
+    with pytest.raises(ValueError, match="unknown sync token"):
+        collection.sync(old_token)
+    replacement_token, replacement_hrefs = collection.sync(None)
+
+    assert replacement_token != old_token
+    assert list(replacement_hrefs) == ["shared-contact.vcf"]
+    assert "contact-1.vcf" not in replacement_hrefs
+
+
 def test_later_ledger_change_cannot_hide_prior_unledgered_mutation(mem_db, user):
     collection = _carddav_collection(mem_db, user)
     old_token, _ = collection.sync(None)

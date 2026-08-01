@@ -408,6 +408,13 @@ def ensure_dav_href(
         def identity(item):
             return str(item.remote_uid or item.uid)
 
+        def ownership_key(item):
+            return (
+                identity(item),
+                str(item.remote_uid or ""),
+                str(item.uid or ""),
+            )
+
         def conflicts_for(item, href):
             return list(
                 models.HrefMapper.select(models.HrefMapper)
@@ -478,7 +485,7 @@ def ensure_dav_href(
             ]
             winner_item, winner_mapper = min(
                 claimants,
-                key=lambda claimant: (identity(claimant[0]), claimant[0].id),
+                key=lambda claimant: ownership_key(claimant[0]),
             )
             losers = sorted(
                 (
@@ -486,7 +493,7 @@ def ensure_dav_href(
                     for claimant in claimants
                     if claimant[0].id != winner_item.id
                 ),
-                key=lambda claimant: (identity(claimant[0]), claimant[0].id),
+                key=lambda claimant: ownership_key(claimant[0]),
                 reverse=True,
             )
             stack.append(("persist", winner_item, winner_mapper, href, excluded))
