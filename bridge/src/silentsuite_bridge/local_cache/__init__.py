@@ -21,6 +21,7 @@ import peewee as pw
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
 
 from .. import config
+from ..privacy_logging import bounded_exception_class
 from . import db, models
 
 logger = logging.getLogger("silentsuite-bridge.cache")
@@ -367,7 +368,8 @@ def dav_collection_state_hash(cache_col):
 def is_safe_dav_href(href):
     """Return whether href is one conservative, ASCII-safe DAV path segment."""
     return (
-        bool(href)
+        isinstance(href, str)
+        and bool(href)
         and href not in {".", ".."}
         and len(href) <= 255
         and re.fullmatch(r"[A-Za-z0-9._-]+", href) is not None
@@ -399,38 +401,116 @@ def ensure_dav_href(
             if strict:
                 raise ValueError("invalid DAV href")
             candidate = opaque_dav_href(
-                f"{cache_item.collection_id}:{cache_item.remote_uid or cache_item.uid}",
+                cache_item.remote_uid or cache_item.uid,
                 suffix,
             )
 
-        def has_conflict(href):
+        def identity(item):
+            return str(item.remote_uid or item.uid)
+
+        def ownership_key(item):
             return (
-                models.HrefMapper.select()
+                0 if item.deleted else 1,
+                identity(item),
+                str(item.remote_uid or ""),
+                str(item.uid or ""),
+            )
+
+        def conflicts_for(item, href):
+            return list(
+                models.HrefMapper.select(models.HrefMapper)
                 .join(models.ItemEntity)
                 .where(
                     (models.HrefMapper.href == href)
-                    & (models.ItemEntity.collection == cache_item.collection_id)
-                    & (models.HrefMapper.content != cache_item.id)
+                    & (models.ItemEntity.collection == item.collection_id)
+                    & (models.HrefMapper.content != item.id)
                 )
-                .exists()
+                .order_by(models.ItemEntity.remote_uid, models.ItemEntity.uid)
             )
 
-        if strict and has_conflict(candidate):
-            raise ValueError("DAV href already exists")
-        counter = 0
-        while has_conflict(candidate):
-            counter += 1
-            candidate = opaque_dav_href(
-                f"{cache_item.collection_id}:{cache_item.remote_uid or cache_item.uid}:{counter}",
-                suffix,
-            )
+        def fallback_candidates(item):
+            item_identity = identity(item)
+            yield opaque_dav_href(item_identity, suffix)
+            counter = 1
+            while True:
+                yield opaque_dav_href(f"{item_identity}:{counter}", suffix)
+                counter += 1
 
-        if mapper is None:
-            mapper = models.HrefMapper.create(content=cache_item, href=candidate)
-        elif mapper.href != candidate:
-            mapper.href = candidate
-            mapper.save(only=[models.HrefMapper.href])
-        return mapper
+        def persist(target_item, target_mapper, href):
+            if target_mapper is None:
+                return models.HrefMapper.create(content=target_item, href=href)
+            if target_mapper.href != href:
+                target_mapper.href = href
+                target_mapper.save(only=[models.HrefMapper.href])
+                models.DavSyncToken.delete().where(
+                    models.DavSyncToken.collection == target_item.collection_id
+                ).execute()
+            return target_mapper
+
+        def next_fallback(target_item, excluded):
+            for fallback in fallback_candidates(target_item):
+                if fallback in excluded:
+                    continue
+                return fallback
+            raise AssertionError("unreachable DAV href allocation")
+
+        # Resolve collision chains with an explicit stack. A recursive allocator
+        # lets attacker-controlled encrypted href metadata exhaust Python's call
+        # stack; this loop is bounded by the number of collection items and
+        # resolves every retained/legacy claimant, not only the first row.
+        item_count = models.ItemEntity.select().where(
+            models.ItemEntity.collection == cache_item.collection_id
+        ).count()
+        max_steps = max(32, item_count * 8)
+        steps = 0
+        stack = [("assign", cache_item, mapper, candidate, frozenset())]
+        while stack:
+            steps += 1
+            if steps > max_steps:
+                raise RuntimeError("DAV href allocation did not converge")
+            operation, target_item, target_mapper, href, excluded = stack.pop()
+            if operation == "persist":
+                persist(target_item, target_mapper, href)
+                continue
+
+            conflict_mappers = conflicts_for(target_item, href)
+            if not conflict_mappers:
+                persist(target_item, target_mapper, href)
+                continue
+            if strict:
+                raise ValueError("DAV href already exists")
+
+            claimants = [(target_item, target_mapper)] + [
+                (conflict_mapper.content, conflict_mapper)
+                for conflict_mapper in conflict_mappers
+            ]
+            winner_item, winner_mapper = min(
+                claimants,
+                key=lambda claimant: ownership_key(claimant[0]),
+            )
+            losers = sorted(
+                (
+                    claimant
+                    for claimant in claimants
+                    if claimant[0].id != winner_item.id
+                ),
+                key=lambda claimant: ownership_key(claimant[0]),
+                reverse=True,
+            )
+            stack.append(("persist", winner_item, winner_mapper, href, excluded))
+            for loser_item, loser_mapper in losers:
+                loser_excluded = excluded | {href}
+                stack.append(
+                    (
+                        "assign",
+                        loser_item,
+                        loser_mapper,
+                        next_fallback(loser_item, loser_excluded),
+                        loser_excluded,
+                    )
+                )
+
+        return models.HrefMapper.get(models.HrefMapper.content == cache_item)
 
 
 def record_dav_change(
@@ -531,7 +611,7 @@ class Etebase:
             if database is None:
                 raise RuntimeError("Local cache is not initialized")
             self._database = database
-            with db.database_proxy:
+            with db.atomic_connection():
                 self.user = models.User.get(username=self.username)
         else:
             self._init_db(db_path)
@@ -544,7 +624,7 @@ class Etebase:
         db.database_proxy.initialize(database)
 
         with _private_umask():
-            with db.database_proxy:
+            with db.atomic_connection():
                 self._init_db_tables(database)
                 self.user, created = models.User.get_or_create(username=self.username)
                 if hasattr(self, "etebase"):
@@ -955,25 +1035,41 @@ class Etebase:
             href_mapper = models.HrefMapper.get_or_none(
                 models.HrefMapper.content == cache_item
             )
+            suffix = (
+                ".vcf"
+                if col.collection_type == "etebase.vcard"
+                else ".ics"
+            )
+            shared_href = meta.get("dav_href")
+            has_shared_href = is_safe_dav_href(shared_href)
+            preferred_href = (
+                shared_href
+                if has_shared_href
+                else opaque_dav_href(item.uid, suffix)
+            )
+            old_href = href_mapper.href if href_mapper is not None else None
             if href_mapper is None and not item.deleted:
-                suffix = (
-                    ".vcf"
-                    if col.collection_type == "etebase.vcard"
-                    else ".ics"
-                )
-                href_stem = hashlib.sha256(item.uid.encode()).hexdigest()
                 href_mapper = ensure_dav_href(
-                    cache_item, f"{href_stem}{suffix}", suffix
+                    cache_item,
+                    preferred_href,
+                    suffix,
                 )
             elif href_mapper is not None:
-                suffix = (
-                    ".vcf"
-                    if col.collection_type == "etebase.vcard"
-                    else ".ics"
-                )
                 href_mapper = ensure_dav_href(
-                    cache_item, href_mapper.href, suffix
+                    cache_item,
+                    preferred_href if not item.deleted else href_mapper.href,
+                    suffix,
+                    replace_existing=has_shared_href and not item.deleted,
                 )
+            mapper_replaced = (
+                href_mapper is not None
+                and old_href is not None
+                and href_mapper.href != old_href
+            )
+            if mapper_replaced:
+                models.DavSyncToken.delete().where(
+                    models.DavSyncToken.collection == cache_col
+                ).execute()
             if href_mapper is not None:
                 record_dav_change(
                     cache_col,
@@ -1009,7 +1105,7 @@ class Etebase:
                 unresolved.save(only=[models.DavUnresolvedItem.attempts])
                 logger.warning(
                     "Deferred unresolved DAV item after cache-load failure (%s)",
-                    exc.__class__.__name__,
+                    bounded_exception_class(exc),
                 )
                 continue
             if unresolved.local_item_id is not None:
@@ -1119,7 +1215,7 @@ class Etebase:
         )
 
     def collection_is_dirty(self, uid):
-        with db.database_proxy:
+        with db.atomic_connection():
             cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
             changed = list(self._collection_dirty_get(cache_col))
             return len(changed) > 0
@@ -1172,7 +1268,7 @@ class Etebase:
     # --- CRUD operations ---
 
     def list(self):
-        with db.database_proxy:
+        with db.atomic_connection():
             col_mgr = self.etebase.get_collection_manager()
             cache_objects = list(
                 self.user.collections.where(~models.CollectionEntity.deleted)
@@ -1181,7 +1277,7 @@ class Etebase:
         return collections
 
     def get(self, uid):
-        with db.database_proxy:
+        with db.atomic_connection():
             col_mgr = self.etebase.get_collection_manager()
             try:
                 return Collection(
@@ -1249,13 +1345,20 @@ class Collection:
             self.cache_col = current_cache
             self.col = current_col
 
-    def create(self, vobject_item):
-        with db.database_proxy:
+    def create(self, vobject_item, *, dav_href=None):
+        with db.atomic_connection():
             item_mgr = self.col_mgr.get_item_manager(self.col)
             # Extract UID from the child component (VEVENT, VTODO, VCARD)
             # vobject_item may be a VCALENDAR/VCARD wrapper
             uid = _extract_uid(vobject_item)
             item_meta = {"name": uid, "mtime": get_millis()}
+            if dav_href is not None:
+                if not is_safe_dav_href(dav_href):
+                    raise ValueError("invalid DAV href")
+                # Etebase item metadata is encrypted with the item. Keeping
+                # the client-selected safe href here lets independent Bridge
+                # databases allocate the same DAV identity after sync.
+                item_meta["dav_href"] = dav_href
             item = item_mgr.create(item_meta, vobject_item.serialize().encode())
             cache_item = models.ItemEntity(
                 collection=self.cache_col,
@@ -1268,7 +1371,7 @@ class Collection:
             return Item(item_mgr, cache_item)
 
     def get(self, uid):
-        with db.database_proxy:
+        with db.atomic_connection():
             item_mgr = self.col_mgr.get_item_manager(self.col)
             try:
                 return Item(
@@ -1296,7 +1399,7 @@ class Collection:
             self.cache_col = current_cache
 
     def list(self):
-        with db.database_proxy:
+        with db.atomic_connection():
             item_mgr = self.col_mgr.get_item_manager(self.col)
             cache_items = list(
                 self.cache_col.items.where(~models.ItemEntity.deleted)
@@ -1346,7 +1449,7 @@ class Item:
         item_meta = self.meta
         item_meta["mtime"] = get_millis()
         self.meta = item_meta
-        with db.database_proxy:
+        with db.atomic_connection():
             self.cache_item.eb_item = self.item_mgr.cache_save(self.item)
             self.cache_item.dirty = True
             self.cache_item.save()

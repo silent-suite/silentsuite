@@ -16,6 +16,7 @@ import tempfile
 import threading
 
 from . import __version__, config
+from .privacy_logging import bounded_exception_class, log_bounded_failure
 
 logger = logging.getLogger("silentsuite-bridge")
 
@@ -44,6 +45,20 @@ def configure_logging():
         format=log_format,
         handlers=handlers,
     )
+
+    # Dependency DEBUG records can include SQL parameters, URLs, headers,
+    # account identifiers, sync tokens, and DAV metadata. They must not inherit
+    # the Bridge's opt-in product DEBUG level.
+    dependency_log_level = logging.CRITICAL + 1
+    for logger_name in (
+        "peewee",
+        "etebase",
+        "requests",
+        "urllib3",
+        "httpx",
+        "httpcore",
+    ):
+        logging.getLogger(logger_name).setLevel(dependency_log_level)
 
 
 def build_radicale_configuration():
@@ -171,7 +186,7 @@ def start_tray():
         tray.run_detached()
         return tray
     except Exception as e:
-        logger.warning("Failed to start system tray (%s)", e.__class__.__name__)
+        logger.warning("Failed to start system tray (%s)", bounded_exception_class(e))
         return None
 
 
@@ -236,7 +251,7 @@ def _initial_status_check():
                     collections["tasks"],
                 )
         except Exception as e:
-            error_code = e.__class__.__name__
+            error_code = bounded_exception_class(e)
             logger.warning(
                 "Initial status check failed for a configured account (%s)",
                 error_code,
@@ -383,7 +398,7 @@ def _harden_key_permissions(key_path: str) -> None:
     try:
         os.chmod(key_path, 0o600)
     except OSError:
-        logger.debug("Could not chmod key file %s to 0600", key_path)
+        logger.debug("Could not harden generated key-file permissions")
 
 
 def _cert_and_key_readable(cert_path: str, key_path: str) -> bool:
@@ -531,9 +546,8 @@ def run_server():
     configuration = build_radicale_configuration()
 
     logger.info(
-        "SilentSuite Bridge v%s starting on %s",
+        "SilentSuite Bridge v%s starting",
         __version__,
-        config.SERVER_HOSTS,
     )
     if config.is_remote_bind_configured():
         if config.SSL_ENABLED:
@@ -548,10 +562,10 @@ def run_server():
                 "DAV traffic is plaintext HTTP unless protected by your own proxy/VPN."
             )
         logger.warning("Bridge dashboard disabled while remote bind is configured.")
-    logger.info("Etebase server: %s", config.ETEBASE_SERVER_URL)
-    logger.info("Data directory: %s", config.DATA_DIR)
+    logger.info("Etebase server configured")
+    logger.info("Bridge data directory configured")
     logger.info("CalDAV/CardDAV scheme: %s", config.dav_scheme())
-    logger.info("CalDAV/CardDAV host(s): %s", config.SERVER_HOSTS)
+    logger.info("CalDAV/CardDAV listener configured")
 
     # Start account workers without blocking DAV/dashboard startup on provider I/O.
     _start_sync_threads()
@@ -565,8 +579,8 @@ def run_server():
         _serve_radicale_with_bridge_application(configuration)
     except KeyboardInterrupt:
         logger.info("Bridge stopped by user")
-    except Exception:
-        logger.exception("Bridge crashed")
+    except Exception as exc:
+        log_bounded_failure(logger, logging.ERROR, "Bridge crashed", exc)
         if tray:
             tray.update_state("error", "Bridge crashed")
         sys.exit(1)
@@ -664,7 +678,12 @@ def main():
         config.validate_ssl_config()
         validate_radicale_ssl_schema()
     except RuntimeError as exc:
-        logger.error("%s", exc)
+        log_bounded_failure(
+            logger,
+            logging.ERROR,
+            "Bridge configuration is invalid",
+            exc,
+        )
         sys.exit(1)
 
     config.ensure_data_dir()

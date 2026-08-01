@@ -2,6 +2,8 @@
 
 import http.server
 import json
+import logging
+import socket
 import threading
 import urllib.error
 import urllib.parse
@@ -12,7 +14,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from silentsuite_bridge import auth_browser
-from silentsuite_bridge.auth_browser import AUTH_PAGE_HTML, AuthCallbackHandler, browser_login
+from silentsuite_bridge.auth_browser import (
+    AUTH_PAGE_HTML,
+    AuthCallbackHandler,
+    BoundedAuthHTTPServer,
+    browser_login,
+)
 
 
 def _post_auth(server, fields):
@@ -40,11 +47,42 @@ def _get_auth_path(server, path):
 
 
 def _serve_one_auth_request(csrf_token="expected-token"):
-    server = http.server.HTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
+    server = BoundedAuthHTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
     server.csrf_token = csrf_token
     thread = threading.Thread(target=server.handle_request)
     thread.start()
     return server, thread
+
+
+def test_auth_server_malformed_request_does_not_emit_traceback_or_header_value(
+    caplog,
+    capsys,
+):
+    private_value = "private-content-length-canary"
+    server, thread = _serve_one_auth_request()
+    try:
+        with caplog.at_level(logging.ERROR, logger=auth_browser.logger.name):
+            with socket.create_connection(server.server_address, timeout=5) as client:
+                client.sendall(
+                    (
+                        "POST /auth HTTP/1.1\r\n"
+                        "Host: 127.0.0.1\r\n"
+                        f"Content-Length: {private_value}\r\n"
+                        "Connection: close\r\n\r\n"
+                    ).encode()
+                )
+                client.shutdown(socket.SHUT_WR)
+                client.recv(4096)
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    captured = capsys.readouterr()
+    assert "Auth server request failed" in caplog.text
+    assert private_value not in caplog.text
+    assert private_value not in captured.out
+    assert private_value not in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_auth_page_contains_csrf_field():
@@ -57,6 +95,22 @@ def test_auth_csrf_validation_requires_matching_token():
     assert AuthCallbackHandler._valid_csrf("", "expected") is False
     assert AuthCallbackHandler._valid_csrf("wrong", "expected") is False
     assert AuthCallbackHandler._valid_csrf("expected", "") is False
+
+
+def test_auth_request_logging_does_not_retain_request_target(caplog):
+    private_target = "/auth?private.person@example.invalid"
+    server, thread = _serve_one_auth_request()
+    try:
+        with caplog.at_level(logging.DEBUG, logger=auth_browser.logger.name):
+            status, _ = _get_auth_path(server, private_target)
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 200
+    assert private_target not in caplog.text
+    assert "private.person@example.invalid" not in caplog.text
+    assert "Auth server request completed (method=GET status=200)" in caplog.text
 
 
 def test_auth_post_rejects_wrong_csrf_before_login():
@@ -140,6 +194,45 @@ def test_auth_success_redirect_does_not_include_email_query():
     assert payload == {"success": True, "redirect": "/success"}
 
 
+def test_auth_persistence_failure_does_not_retain_exception_values(
+    caplog,
+    capsys,
+):
+    private_value = "/private/person/credentials.json?token=secret"
+    server, thread = _serve_one_auth_request()
+    etebase = MagicMock()
+    etebase.save.return_value = "stored-session"
+    try:
+        with (
+            patch("silentsuite_bridge.auth_browser.Account.login", return_value=etebase),
+            patch(
+                "silentsuite_bridge.auth_browser.store_authenticated_account",
+                side_effect=RuntimeError(private_value),
+            ),
+            caplog.at_level(logging.ERROR, logger=auth_browser.logger.name),
+        ):
+            status, payload = _post_auth(server, {
+                "email": "alice@example.com",
+                "password": "secret",
+                "server_url": "https://server.silentsuite.io",
+                "csrf_token": "expected-token",
+            })
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    captured = capsys.readouterr()
+    assert status == 500
+    assert payload == {
+        "success": False,
+        "error": "Authentication could not be completed.",
+    }
+    assert private_value not in caplog.text
+    assert private_value not in captured.out
+    assert private_value not in captured.err
+    assert all(record.exc_info is None for record in caplog.records)
+
+
 def test_success_page_requires_completed_authentication():
     server = http.server.HTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
     server.csrf_token = "expected-token"
@@ -192,20 +285,20 @@ def test_success_page_uses_https_bridge_urls_when_ssl_enabled():
     assert "http://127.0.0.1:37358/" not in body
 
 
-def test_browser_login_completion_prints_https_bridge_urls(capsys):
+def test_browser_login_completion_does_not_print_account_or_server_values(capsys):
     server = MagicMock()
     event = MagicMock()
 
     def complete_auth(*_args, **_kwargs):
         server.authenticated_email = "alice@example.com"
-        server.authenticated_server_url = "https://server.silentsuite.io"
+        server.authenticated_server_url = "https://private-server.example.invalid"
         return True
 
     event.wait.side_effect = complete_auth
     with (
         patch("silentsuite_bridge.auth_browser.config.ensure_data_dir"),
         patch("silentsuite_bridge.auth_browser.config.SSL_ENABLED", True),
-        patch("silentsuite_bridge.auth_browser.http.server.HTTPServer", return_value=server),
+        patch("silentsuite_bridge.auth_browser.BoundedAuthHTTPServer", return_value=server),
         patch("silentsuite_bridge.auth_browser.threading.Event", return_value=event),
         patch("silentsuite_bridge.auth_browser.threading.Thread"),
         patch("silentsuite_bridge.auth_browser.webbrowser.open"),
@@ -214,8 +307,10 @@ def test_browser_login_completion_prints_https_bridge_urls(capsys):
         assert browser_login(running_bridge=True) == "alice@example.com"
 
     output = capsys.readouterr().out
-    assert "Dashboard will be available at: https://127.0.0.1:37358/" in output
-    assert "CalDAV/CardDAV URL for your apps: https://127.0.0.1:37358/alice@example.com/" in output
+    assert "Dashboard will be available on the configured local listener." in output
+    assert "CalDAV/CardDAV account configured." in output
+    assert "alice@example.com" not in output
+    assert "https://private-server.example.invalid" not in output
 
 
 def test_rejected_server_replacement_does_not_change_process_default(monkeypatch):

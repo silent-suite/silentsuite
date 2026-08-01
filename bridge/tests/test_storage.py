@@ -209,6 +209,20 @@ class TestFavoriteCardDavRoundTrip:
         assert created.etag == '"etag-new"'
         assert "X-SILENTSUITE-FAVORITE:1" in created.serialize()
         assert HrefMapper.get_by_id(new_cache_item.id).href == "new-name.vcf"
+        assert cached_collection.create.call_args.kwargs == {"dav_href": "new-name.vcf"}
+
+    def test_list_prefers_encrypted_shared_href_metadata(self, mem_db, user):
+        collection, cached_collection, item = self._collection(
+            mem_db,
+            user,
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fav-1\r\n"
+            "FN:Favorite\r\nEND:VCARD",
+        )
+        HrefMapper.delete().where(HrefMapper.content == item.cache_item).execute()
+        item.meta = {"dav_href": "shared-contact.vcf"}
+        cached_collection.list.return_value = [item]
+
+        assert list(collection._list()) == ["shared-contact.vcf"]
 
     def test_recreate_at_tombstone_href_revives_owned_mapping(self, mem_db, user):
         collection, cached_collection, _ = self._collection(
@@ -231,7 +245,8 @@ class TestFavoriteCardDavRoundTrip:
         new_item.etag = "etag-restored"
         new_item.meta = {"mtime": 1700000000000}
 
-        def create(_vobject_item):
+        def create(_vobject_item, *, dav_href=None):
+            assert dav_href == "restored.vcf"
             new_item.cache_item = ItemEntity(
                 collection=cached_collection.cache_col,
                 uid="restored-contact",

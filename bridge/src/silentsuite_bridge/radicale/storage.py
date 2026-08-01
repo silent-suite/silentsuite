@@ -44,6 +44,7 @@ from ..local_cache.models import (
     HrefMapper,
     ItemEntity,
 )
+from ..privacy_logging import bounded_exception_class
 from ..web import log_sync_event, update_status
 from .etesync_cache import etesync_for_user, forget_etesync_user
 
@@ -390,7 +391,7 @@ class SyncThread(threading.Thread):
                     logger.info("Stopped account sync discarded its late result")
                 else:
                     state = "failed"
-                    error_code = e.__class__.__name__
+                    error_code = bounded_exception_class(e)
                     logger.warning(
                         "Sync failed for configured account (%s)",
                         error_code,
@@ -836,10 +837,12 @@ class Collection(BaseCollection):
 
         for item in self.collection.list():
             remote_identity = item.cache_item.remote_uid or str(item.item.uid)
-            href = (
-                hashlib.sha256(remote_identity.encode()).hexdigest()
-                + self.content_suffix
-            )
+            href = item.meta.get("dav_href")
+            if not is_safe_dav_href(href):
+                href = (
+                    hashlib.sha256(remote_identity.encode()).hexdigest()
+                    + self.content_suffix
+                )
             href_mapper = ensure_dav_href(
                 item.cache_item, href, self.content_suffix
             )
@@ -946,6 +949,9 @@ class Collection(BaseCollection):
             if existing is not None:
                 etesync_item = existing.etesync_item
                 etesync_item.content = vobject_item.serialize()
+                item_meta = dict(etesync_item.meta)
+                item_meta["dav_href"] = href
+                etesync_item.meta = item_meta
                 etesync_item.save()
                 event = "Updated item"
             else:
@@ -964,7 +970,10 @@ class Collection(BaseCollection):
                     for mapper in stale_mappers
                 ):
                     raise ValueError("Cannot recreate href with pending deletion")
-                etesync_item = self.collection.create(vobject_item)
+                etesync_item = self.collection.create(
+                    vobject_item,
+                    dav_href=href,
+                )
                 if stale_mappers:
                     # Revive the row that already owns this collection-scoped
                     # href so retained DAV history never loses its identity.
@@ -1247,7 +1256,7 @@ class Storage(BaseStorage):
 
         # Cache it locally
         from ..local_cache import db, models
-        with db.database_proxy:
+        with db.atomic_connection():
             cache_col = models.CollectionEntity(
                 local_user=self.etesync.user,
                 uid=col.uid,
@@ -1297,7 +1306,7 @@ class Storage(BaseStorage):
         except Exception as exc:
             logger.warning(
                 "Sync failed for configured account; continuing with local cache (%s)",
-                exc.__class__.__name__,
+                bounded_exception_class(exc),
             )
 
         session_options = (

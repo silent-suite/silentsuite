@@ -12,8 +12,8 @@ For MVP, the auth page is served by the bridge itself.
 In the future, this will redirect to app.silentsuite.io/bridge-auth.
 """
 
-import html as html_mod
 import hmac
+import html as html_mod
 import http.server
 import json
 import logging
@@ -28,6 +28,7 @@ from etebase import Account, Client
 
 from . import config
 from .accounts import store_authenticated_account
+from .privacy_logging import log_bounded_failure
 
 logger = logging.getLogger("silentsuite-bridge.auth")
 
@@ -610,8 +611,17 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
     def _valid_csrf(provided, expected):
         return bool(provided) and bool(expected) and hmac.compare_digest(provided, expected)
 
+    def log_request(self, code="-", size="-"):
+        method = self.command if self.command in {"GET", "POST"} else "OTHER"
+        status = code if isinstance(code, int) else "unknown"
+        logger.debug(
+            "Auth server request completed (method=%s status=%s)",
+            method,
+            status,
+        )
+
     def log_message(self, format, *args):
-        logger.debug("Auth server: %s", format % args)
+        logger.debug("Auth server diagnostic suppressed")
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/auth"):
@@ -673,17 +683,39 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             try:
                 result = authenticate_and_store_account(email, password, server_url)
             except ValueError as exc:
+                log_bounded_failure(
+                    logger,
+                    logging.WARNING,
+                    "Authentication request was rejected",
+                    exc,
+                )
                 self._json_response(400, {
                     "success": False,
-                    "error": str(exc),
+                    "error": "Invalid authentication request.",
                 })
                 return
             except AuthenticationError as exc:
-                error_msg = str(exc)
-                logger.warning("Auth failed: %s", error_msg)
+                log_bounded_failure(
+                    logger,
+                    logging.WARNING,
+                    "Authentication failed",
+                    exc,
+                )
                 self._json_response(401, {
                     "success": False,
-                    "error": error_msg,
+                    "error": "Invalid email or password.",
+                })
+                return
+            except Exception as exc:
+                log_bounded_failure(
+                    logger,
+                    logging.ERROR,
+                    "Authentication persistence failed",
+                    exc,
+                )
+                self._json_response(500, {
+                    "success": False,
+                    "error": "Authentication could not be completed.",
                 })
                 return
 
@@ -710,6 +742,13 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             self.server.auth_complete.set()
 
 
+class BoundedAuthHTTPServer(http.server.HTTPServer):
+    """Suppress request/parser tracebacks and attacker-controlled values."""
+
+    def handle_error(self, request, client_address):
+        logger.error("Auth server request failed")
+
+
 def _find_free_port():
     """Find a random free port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -728,7 +767,7 @@ def browser_login(running_bridge=False):
     config.ensure_data_dir()
 
     port = _find_free_port()
-    server = http.server.HTTPServer(("127.0.0.1", port), AuthCallbackHandler)
+    server = BoundedAuthHTTPServer(("127.0.0.1", port), AuthCallbackHandler)
     server.auth_complete = threading.Event()
     server.authenticated_email = None
     server.authenticated_server_url = config.ETEBASE_SERVER_URL
@@ -765,21 +804,18 @@ def browser_login(running_bridge=False):
 
     email = server.authenticated_email
     if email:
-        used_server = server.authenticated_server_url
-        base_url = f"{config.local_base_url()}/{email}/"
         if running_bridge:
             print(f"\n  Login successful! The bridge is already running.")
         else:
             print(f"\n  Login successful! Now start the bridge daemon:")
             print(f"    ./silentsuite-bridge")
         print()
-        print(f"  Etebase server: {used_server}")
+        print("  Etebase server configured.")
         if config.is_dashboard_enabled():
-            dashboard_url = f"{config.local_base_url()}/"
-            print(f"  Dashboard will be available at: {dashboard_url}")
+            print("  Dashboard will be available on the configured local listener.")
         else:
             print("  Dashboard is disabled for remote bridge binds.")
-        print(f"  CalDAV/CardDAV URL for your apps: {base_url}")
+        print("  CalDAV/CardDAV account configured.")
         print(f"\n  Full setup guides: https://docs.silentsuite.io/user-guide/apps/dav-bridge\n")
 
     return email

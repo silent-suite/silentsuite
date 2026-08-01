@@ -446,9 +446,73 @@ class TestCollectionWrapper:
         mock_item_mgr.create.return_value = remote_item
         col = Collection(mock_col_mgr, cache_col)
 
-        created = col.create(vobject.readOne(SAMPLE_VCARD))
+        created = col.create(
+            vobject.readOne(SAMPLE_VCARD),
+            dav_href="shared-contact.vcf",
+        )
 
         assert created.cache_item.remote_uid == "remote-created-1"
+        assert mock_item_mgr.create.call_args.args[0]["dav_href"] == "shared-contact.vcf"
+
+    def test_create_and_save_do_not_close_owning_transaction(
+        self,
+        mem_db,
+        user,
+        mock_item_mgr,
+    ):
+        mock_col = _make_mock_collection("col-1", "etebase.vevent")
+        mock_col_mgr = MagicMock()
+        mock_col_mgr.cache_load.return_value = mock_col
+        mock_col_mgr.get_item_manager.return_value = mock_item_mgr
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid="col-1",
+            eb_col=b"\x00" * 8,
+        )
+        remote_item = _make_mock_item(
+            "remote-created-1",
+            SAMPLE_VCALENDAR_VEVENT,
+        )
+        mock_item_mgr.create.return_value = remote_item
+        col = Collection(mock_col_mgr, cache_col)
+
+        with db.database_proxy.atomic("IMMEDIATE"):
+            created = col.create(vobject.readOne(SAMPLE_VCALENDAR_VEVENT))
+            created.save()
+
+            assert db.database_proxy.in_transaction()
+            assert ItemEntity.select().where(
+                ItemEntity.remote_uid == "remote-created-1"
+            ).exists()
+
+    def test_atomic_connection_rolls_back_nested_failure_and_preserves_owner(
+        self,
+        mem_db,
+        user,
+    ):
+        with mem_db.atomic("IMMEDIATE"):
+            CollectionEntity.create(
+                local_user=user,
+                uid="outer-survives",
+                eb_col=b"outer",
+            )
+
+            with pytest.raises(RuntimeError, match="inner failure"):
+                with db.atomic_connection():
+                    CollectionEntity.create(
+                        local_user=user,
+                        uid="inner-rolls-back",
+                        eb_col=b"inner",
+                    )
+                    raise RuntimeError("inner failure")
+
+            assert mem_db.in_transaction()
+            assert CollectionEntity.select().where(
+                CollectionEntity.uid == "outer-survives"
+            ).exists()
+            assert not CollectionEntity.select().where(
+                CollectionEntity.uid == "inner-rolls-back"
+            ).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1476,6 +1540,339 @@ def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):
     assert cache_item.uid == "urn:uuid:contact/with/slashes"
     assert mapper.href.endswith(".vcf")
     assert "/" not in mapper.href
+
+
+def test_pulled_item_replaces_provisional_mapper_with_encrypted_shared_href(
+    mem_db,
+    user,
+):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="calendar",
+        eb_col=b"collection-cache",
+    )
+    cache_item = ItemEntity.create(
+        collection=cache_col,
+        uid="event-name",
+        remote_uid="remote-event",
+        eb_item=b"old-envelope",
+    )
+    HrefMapper.create(
+        content=cache_item,
+        href=local_cache_module.opaque_dav_href("remote-event", ".ics"),
+    )
+    models.DavSyncToken.create(
+        collection=cache_col,
+        token="existing-token",
+        revision=0,
+        created_at=1,
+    )
+    item = MagicMock(
+        uid="remote-event",
+        meta={"name": "event-name", "dav_href": "shared-event.ics"},
+        deleted=False,
+        etag="shared-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"shared-envelope"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(
+        cache_col,
+        MagicMock(collection_type="etebase.vevent"),
+        item_mgr,
+        item,
+    ) is True
+
+    assert HrefMapper.get(content=cache_item).href == "shared-event.ics"
+    assert models.DavSyncToken.select().where(
+        models.DavSyncToken.collection == cache_col
+    ).count() == 0
+
+
+def test_shared_href_collision_owner_is_independent_of_pull_order(mem_db, user):
+    def pull_in_order(collection_uid, remote_uids):
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid=collection_uid,
+            eb_col=collection_uid.encode(),
+        )
+        etebase = Etebase.__new__(Etebase)
+        item_mgr = MagicMock()
+        item_mgr.cache_save.side_effect = lambda item: item.uid.encode()
+        for remote_uid in remote_uids:
+            item = MagicMock(
+                uid=remote_uid,
+                meta={
+                    "name": f"name-{remote_uid}",
+                    "dav_href": "shared-event.ics",
+                },
+                deleted=False,
+                etag=f"etag-{remote_uid}",
+            )
+            assert etebase._apply_pulled_item(
+                cache_col,
+                MagicMock(collection_type="etebase.vevent"),
+                item_mgr,
+                item,
+            ) is True
+        return {
+            mapper.content.remote_uid: mapper.href
+            for mapper in (
+                HrefMapper.select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(ItemEntity.collection == cache_col)
+            )
+        }
+
+    forward = pull_in_order("calendar-forward", ["remote-a", "remote-b"])
+    reverse = pull_in_order("calendar-reverse", ["remote-b", "remote-a"])
+
+    assert forward == reverse
+    assert forward == {
+        "remote-a": "shared-event.ics",
+        "remote-b": local_cache_module.opaque_dav_href("remote-b", ".ics"),
+    }
+
+
+def test_shared_href_collision_with_opaque_fallback_is_replica_deterministic(
+    mem_db,
+    user,
+):
+    opaque_b = local_cache_module.opaque_dav_href("remote-b", ".ics")
+    specs = {
+        "remote-a": {"name": "name-a", "dav_href": opaque_b},
+        "remote-b": {"name": "name-b"},
+    }
+
+    def pull_in_order(collection_uid, remote_uids):
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid=collection_uid,
+            eb_col=collection_uid.encode(),
+        )
+        etebase = Etebase.__new__(Etebase)
+        item_mgr = MagicMock()
+        item_mgr.cache_save.side_effect = lambda item: item.uid.encode()
+        for remote_uid in remote_uids:
+            item = MagicMock(
+                uid=remote_uid,
+                meta=specs[remote_uid],
+                deleted=False,
+                etag=f"etag-{remote_uid}",
+            )
+            assert etebase._apply_pulled_item(
+                cache_col,
+                MagicMock(collection_type="etebase.vevent"),
+                item_mgr,
+                item,
+            ) is True
+        return {
+            mapper.content.remote_uid: mapper.href
+            for mapper in (
+                HrefMapper.select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(ItemEntity.collection == cache_col)
+            )
+        }
+
+    forward = pull_in_order("fallback-forward", ["remote-a", "remote-b"])
+    reverse = pull_in_order("fallback-reverse", ["remote-b", "remote-a"])
+
+    assert forward == reverse
+    assert forward == {
+        "remote-a": opaque_b,
+        "remote-b": local_cache_module.opaque_dav_href("remote-b:1", ".ics"),
+    }
+
+
+def test_href_allocator_handles_long_collision_chain_without_recursion(
+    mem_db,
+    user,
+):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="long-collision-chain",
+        eb_col=b"collection-cache",
+    )
+    initial_href = local_cache_module.opaque_dav_href("0001", ".ics")
+    for index in range(1, 1101):
+        identity = f"{index:04d}"
+        item = ItemEntity.create(
+            collection=cache_col,
+            uid=f"item-{identity}",
+            remote_uid=identity,
+            eb_item=identity.encode(),
+        )
+        if index == 1:
+            href = initial_href
+        elif index == 2:
+            href = local_cache_module.opaque_dav_href("0001:1", ".ics")
+        else:
+            href = local_cache_module.opaque_dav_href(f"{index - 1:04d}", ".ics")
+        HrefMapper.create(content=item, href=href)
+
+    target = ItemEntity.create(
+        collection=cache_col,
+        uid="item-0000",
+        remote_uid="0000",
+        eb_item=b"0000",
+    )
+
+    mapper = local_cache_module.ensure_dav_href(
+        target,
+        initial_href,
+        ".ics",
+    )
+
+    hrefs = [
+        row.href
+        for row in (
+            HrefMapper.select(HrefMapper)
+            .join(ItemEntity)
+            .where(ItemEntity.collection == cache_col)
+        )
+    ]
+    assert mapper.href == initial_href
+    assert len(hrefs) == 1101
+    assert len(set(hrefs)) == 1101
+
+
+def test_href_allocator_resolves_all_legacy_claimants_for_one_href(mem_db, user):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="multiway-collision",
+        eb_col=b"collection-cache",
+    )
+    shared_href = "shared-event.ics"
+    for identity in ("remote-b", "remote-c", "remote-d"):
+        item = ItemEntity.create(
+            collection=cache_col,
+            uid=f"item-{identity}",
+            remote_uid=identity,
+            eb_item=identity.encode(),
+        )
+        HrefMapper.create(content=item, href=shared_href)
+    target = ItemEntity.create(
+        collection=cache_col,
+        uid="item-remote-a",
+        remote_uid="remote-a",
+        eb_item=b"remote-a",
+    )
+
+    mapper = local_cache_module.ensure_dav_href(
+        target,
+        shared_href,
+        ".ics",
+    )
+
+    mappings = {
+        row.content.remote_uid: row.href
+        for row in (
+            HrefMapper.select(HrefMapper, ItemEntity)
+            .join(ItemEntity)
+            .where(ItemEntity.collection == cache_col)
+        )
+    }
+    assert mapper.href == shared_href
+    assert mappings["remote-a"] == shared_href
+    assert len(set(mappings.values())) == 4
+
+
+def test_equal_normalized_identities_do_not_use_local_row_order(mem_db, user):
+    shared_href = "shared-event.ics"
+
+    def allocate(collection_uid, first_kind):
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid=collection_uid,
+            eb_col=collection_uid.encode(),
+        )
+        specs = {
+            "legacy": {
+                "uid": "shared-identity",
+                "remote_uid": None,
+                "eb_item": b"legacy-cache",
+            },
+            "remote": {
+                "uid": "different-cache-uid",
+                "remote_uid": "shared-identity",
+                "eb_item": b"remote-cache",
+            },
+        }
+        first = ItemEntity.create(collection=cache_col, **specs[first_kind])
+        HrefMapper.create(content=first, href=shared_href)
+        second_kind = "remote" if first_kind == "legacy" else "legacy"
+        second = ItemEntity.create(collection=cache_col, **specs[second_kind])
+        local_cache_module.ensure_dav_href(second, shared_href, ".ics")
+        return {
+            (row.content.remote_uid, row.content.uid): row.href
+            for row in (
+                HrefMapper.select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(ItemEntity.collection == cache_col)
+            )
+        }
+
+    legacy_first = allocate("identity-order-one", "legacy")
+    remote_first = allocate("identity-order-two", "remote")
+
+    assert legacy_first == remote_first
+    assert legacy_first[(None, "shared-identity")] == shared_href
+    assert legacy_first[("shared-identity", "different-cache-uid")] == (
+        local_cache_module.opaque_dav_href("shared-identity", ".ics")
+    )
+
+
+def test_retained_tombstone_keeps_href_ownership_across_insertion_order(
+    mem_db,
+    user,
+):
+    shared_href = "retained-tombstone.ics"
+
+    def allocate(collection_uid, tombstone_first):
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid=collection_uid,
+            eb_col=collection_uid.encode(),
+        )
+        specs = {
+            "tombstone": {
+                "uid": "z-tombstone",
+                "remote_uid": "z-tombstone",
+                "eb_item": b"deleted-cache",
+                "deleted": True,
+            },
+            "live": {
+                "uid": "a-live",
+                "remote_uid": "a-live",
+                "eb_item": b"live-cache",
+                "deleted": False,
+            },
+        }
+        first_kind = "tombstone" if tombstone_first else "live"
+        second_kind = "live" if tombstone_first else "tombstone"
+        first = ItemEntity.create(collection=cache_col, **specs[first_kind])
+        HrefMapper.create(content=first, href=shared_href)
+        second = ItemEntity.create(collection=cache_col, **specs[second_kind])
+        local_cache_module.ensure_dav_href(second, shared_href, ".ics")
+        return {
+            row.content.remote_uid: row.href
+            for row in (
+                HrefMapper.select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(ItemEntity.collection == cache_col)
+            )
+        }
+
+    tombstone_first = allocate("tombstone-order-one", True)
+    live_first = allocate("tombstone-order-two", False)
+
+    assert tombstone_first == live_first
+    assert tombstone_first["z-tombstone"] == shared_href
+    assert tombstone_first["a-live"] == local_cache_module.opaque_dav_href(
+        "a-live", ".ics"
+    )
 
 
 def test_pulled_item_hash_is_captured_under_immediate_writer_lock(

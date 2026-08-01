@@ -181,7 +181,7 @@ def test_radicale_filter_redacts_exception_free_server_diagnostics():
 
     bridge_application._DavDiagnosticRedactionFilter().filter(record)
 
-    assert record.msg == "Radicale server request failed"
+    assert record.msg == "Radicale server failure"
     assert record.args == ()
 
 
@@ -200,7 +200,7 @@ def test_radicale_filter_redacts_server_request_exception():
 
     bridge_application._DavDiagnosticRedactionFilter().filter(record)
 
-    assert record.msg == "Radicale server request failed"
+    assert record.msg == "Radicale server request failed (RuntimeError)"
     assert record.args == ()
     assert record.exc_info is None
     assert private_value not in record.getMessage()
