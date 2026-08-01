@@ -84,11 +84,15 @@ class FirstRunSignInRuntimeTest {
         var passed = false
         installNoOpAuthenticatorDelivery()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val returnMonitor = instrumentation.addMonitor(SignupReturnActivity::class.java.name, null, false)
+        val returnMonitors = mutableListOf<android.app.Instrumentation.ActivityMonitor>()
+        fun monitorSignupReturn() = instrumentation
+            .addMonitor(SignupReturnActivity::class.java.name, null, false)
+            .also(returnMonitors::add)
         val otherFlow = "other-${System.nanoTime()}"
         val otherToken = SignupContinuationRegistry.issue(otherFlow)
         try {
             ActivityScenario.launch<LoginActivity>(Intent(context, LoginActivity::class.java)).use { scenario ->
+                val firstReturnMonitor = monitorSignupReturn()
                 lateinit var callback: android.net.Uri
                 lateinit var owningToken: String
                 lateinit var ownerFlow: String
@@ -117,7 +121,7 @@ class FirstRunSignInRuntimeTest {
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK),
                     )
                 }
-                val firstReturn = instrumentation.waitForMonitorWithTimeout(returnMonitor, 5_000L)
+                val firstReturn = instrumentation.waitForMonitorWithTimeout(firstReturnMonitor, 5_000L)
                 assertTrue("Signup callback Activity did not launch", firstReturn is SignupReturnActivity)
                 instrumentation.waitForIdleSync()
                 assertTrue("Signup callback Activity did not finish", firstReturn!!.isFinishing)
@@ -137,6 +141,7 @@ class FirstRunSignInRuntimeTest {
                     if (!callbackHandled) android.os.SystemClock.sleep(25L)
                 }
                 assertTrue("Owning callback was not acknowledged by the resumed credentials destination", callbackHandled)
+                val replayMonitor = monitorSignupReturn()
                 scenario.onActivity { activity ->
                     activity.supportFragmentManager.executePendingTransactions()
                     assertEquals(ownerFlow, callbackOwnerFlow(activity))
@@ -149,7 +154,7 @@ class FirstRunSignInRuntimeTest {
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK),
                     )
                 }
-                val replayReturn = instrumentation.waitForMonitorWithTimeout(returnMonitor, 5_000L)
+                val replayReturn = instrumentation.waitForMonitorWithTimeout(replayMonitor, 5_000L)
                 assertTrue("Signup replay Activity did not launch", replayReturn is SignupReturnActivity)
                 instrumentation.waitForIdleSync()
                 assertTrue("Signup replay Activity did not finish", replayReturn!!.isFinishing)
@@ -174,6 +179,7 @@ class FirstRunSignInRuntimeTest {
                         changingConfigurations = true,
                     )
                 }
+                val rebindMonitor = monitorSignupReturn()
                 context.startActivity(
                     Intent(
                         Intent.ACTION_VIEW,
@@ -182,7 +188,7 @@ class FirstRunSignInRuntimeTest {
                         SignupReturnActivity::class.java,
                     ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK),
                 )
-                val rebindReturn = instrumentation.waitForMonitorWithTimeout(returnMonitor, 5_000L)
+                val rebindReturn = instrumentation.waitForMonitorWithTimeout(rebindMonitor, 5_000L)
                 assertTrue("Tokenless callback did not enter the rebind queue", rebindReturn is SignupReturnActivity)
                 assertFalse("Rebind-queued callback finished before replacement admission", rebindReturn!!.isFinishing)
                 scenario.onActivity { activity ->
@@ -202,6 +208,7 @@ class FirstRunSignInRuntimeTest {
             var deadlineRecoveryMonitor: android.app.Instrumentation.ActivityMonitor? = null
             var deadlineRecovery: android.app.Activity? = null
             try {
+                val failedReturnMonitor = monitorSignupReturn()
                 ActivityScenario.launch<LoginActivity>(Intent(context, LoginActivity::class.java)).use { scenario ->
                     scenario.onActivity { activity ->
                         deadlineRecoveryMonitor = instrumentation.addMonitor(LoginActivity::class.java.name, null, false)
@@ -215,7 +222,7 @@ class FirstRunSignInRuntimeTest {
                             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK),
                         )
                     }
-                    val failedReturn = instrumentation.waitForMonitorWithTimeout(returnMonitor, 5_000L)
+                    val failedReturn = instrumentation.waitForMonitorWithTimeout(failedReturnMonitor, 5_000L)
                     assertTrue("Persistent foreground-failure callback did not launch", failedReturn is SignupReturnActivity)
                     deadlineRecovery = instrumentation.waitForMonitorWithTimeout(
                         requireNotNull(deadlineRecoveryMonitor),
@@ -258,7 +265,7 @@ class FirstRunSignInRuntimeTest {
             }
             passed = true
         } finally {
-            instrumentation.removeMonitor(returnMonitor)
+            returnMonitors.forEach(instrumentation::removeMonitor)
             SignupContinuationRegistry.remove(otherFlow)
             finishScenario("signup-owner-claim-replay", passed)
         }
