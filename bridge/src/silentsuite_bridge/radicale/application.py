@@ -10,7 +10,7 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
 
     def filter(self, record):
         template = str(record.msg)
-        normalized_path = str(record.pathname).replace("\\", "/")
+        normalized_path = "/" + str(record.pathname).replace("\\", "/").lstrip("/")
         if "/radicale/server.py" in normalized_path:
             record.msg = "Radicale server request failed"
             record.args = ()
