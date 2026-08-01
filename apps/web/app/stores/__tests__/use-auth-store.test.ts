@@ -56,16 +56,21 @@ vi.mock('@/app/lib/secure-storage', () => ({
 
 // Mock etebase-auth (dynamically imported by login)
 vi.mock('@/app/lib/etebase-auth', () => ({
+  etebaseSignUp: vi.fn().mockResolvedValue({
+    authToken: 'mock-auth-token',
+    savedSession: 'mock-saved-session',
+  }),
   etebaseLogIn: vi.fn().mockResolvedValue({
     authToken: 'mock-auth-token',
     savedSession: 'mock-saved-session',
   }),
+  issueBillingLinkProof: vi.fn().mockResolvedValue('mock-link-proof-value-with-at-least-43-characters'),
 }))
 
 // Mock self-hosted checks
 vi.mock('@/app/lib/self-hosted', () => ({
   isSelfHosted: false,
-  isCustomServer: () => false,
+  isCustomServer: (serverUrl?: string) => Boolean(serverUrl && serverUrl !== 'https://server.silentsuite.io'),
 }))
 
 // Mock etebase store (used by logout)
@@ -158,6 +163,13 @@ describe('useAuthStore', () => {
     expect(state.user).not.toBeNull()
     expect(state.user!.email).toBe('test@example.com')
     expect(state.isLoading).toBe(false)
+    const [, init] = vi.mocked(fetch).mock.calls[0]
+    expect(JSON.parse(init?.body as string)).toEqual({
+      etebaseLinkProof: 'mock-link-proof-value-with-at-least-43-characters',
+      rememberDevice: false,
+    })
+    expect(init?.body).not.toContain('authToken')
+    expect(init?.body).not.toContain('savedSession')
   })
 
   it('unlockEtebaseSession restores only the local session for the signed-in account', async () => {
@@ -187,11 +199,51 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().error).toMatch(/already signed in/i)
   })
 
+  it('keeps custom-server signup and finalization out of hosted Billing', async () => {
+    const customServerUrl = 'https://sync.example.test'
+    const { issueBillingLinkProof } = await import('@/app/lib/etebase-auth')
+    vi.mocked(issueBillingLinkProof).mockClear()
+
+    useAuthStore.getState().prepareSignupDraft('custom@example.com', false)
+    await useAuthStore.getState().createEtebaseAccount(
+      'custom@example.com',
+      'password123',
+      customServerUrl,
+    )
+    const result = await useAuthStore.getState().signup('early_monthly', '7day')
+
+    expect(result).toEqual({
+      clientSecret: null,
+      cryptoCheckoutUrl: null,
+      cryptoInvoiceId: null,
+      cryptoInvoiceLookupToken: null,
+      paymentSessionToken: null,
+    })
+    expect(fetch).not.toHaveBeenCalled()
+    expect(issueBillingLinkProof).not.toHaveBeenCalled()
+    expect(localStorage.getItem('silentsuite-server-url')).toBe(customServerUrl)
+    expect(useAuthStore.getState().pendingSignup).toMatchObject({
+      serverUrl: customServerUrl,
+      provisionedUser: { id: 'self-hosted', planId: 'self-hosted', isAdmin: true },
+    })
+
+    useAuthStore.setState({
+      pendingSignup: {
+        ...useAuthStore.getState().pendingSignup!,
+        paymentSessionToken: 'must-not-be-sent',
+      },
+    })
+    await expect(useAuthStore.getState().finalizePaidSignup())
+      .rejects.toThrow('Paid signup is not available for custom servers')
+    expect(fetch).not.toHaveBeenCalled()
+    expect(issueBillingLinkProof).not.toHaveBeenCalled()
+  })
+
   it('signup sends a trimmed promo code when provided', async () => {
+    secureStore.etebase_session = 'mock-saved-session'
     useAuthStore.setState({
       pendingSignup: {
         email: 'promo@example.com',
-        etebaseAuthToken: 'etebase-token',
         wantsProductUpdates: true,
       },
     })
@@ -208,7 +260,7 @@ describe('useAuthStore', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
-          etebaseSessionToken: 'etebase-token',
+          etebaseLinkProof: 'mock-link-proof-value-with-at-least-43-characters',
           planId: 'early_monthly',
           trialPath: '30day',
           promoCode: 'beta196',
@@ -220,10 +272,10 @@ describe('useAuthStore', () => {
   })
 
   it('signup omits an empty promo code', async () => {
+    secureStore.etebase_session = 'mock-saved-session'
     useAuthStore.setState({
       pendingSignup: {
         email: 'promo@example.com',
-        etebaseAuthToken: 'etebase-token',
       },
     })
 
@@ -236,7 +288,7 @@ describe('useAuthStore', () => {
 
     const [, init] = vi.mocked(fetch).mock.calls[0]
     expect(JSON.parse(init?.body as string)).toEqual({
-      etebaseSessionToken: 'etebase-token',
+      etebaseLinkProof: 'mock-link-proof-value-with-at-least-43-characters',
       planId: 'early_monthly',
       trialPath: '30day',
       rememberDevice: false,
@@ -280,7 +332,7 @@ describe('useAuthStore', () => {
     })
     expect(result.paymentSessionToken).toBe(currentPaidSignupRecoverySecret())
     expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(currentPaidSignupRecoverySecret())
-    expect(useAuthStore.getState().pendingSignup?.etebaseAuthToken).toBeUndefined()
+    expect(JSON.stringify(useAuthStore.getState().pendingSignup)).not.toContain('etebaseAuthToken')
   })
 
   it('retains a UUID request key and high-entropy recovery secret after an incomplete successful response', async () => {
@@ -416,6 +468,7 @@ describe('useAuthStore', () => {
 
       const first = useAuthStore.getState().signup('early_annual', firstTrialPath)
       const second = useAuthStore.getState().signup('early_annual', secondTrialPath)
+      await vi.waitFor(() => expect(pendingResponses.size).toBe(2))
       const responseFor = (trialPath: string) => {
         const pendingResponse = pendingResponses.get(trialPath)!
         return {
@@ -761,7 +814,6 @@ describe('useAuthStore', () => {
     useAuthStore.setState({
       pendingSignup: {
         email: 'old@example.com',
-        etebaseAuthToken: 'old-etebase-token',
         paymentSessionToken: 'old-payment-token',
       },
     })
@@ -776,10 +828,10 @@ describe('useAuthStore', () => {
   })
 
   it('finalizes a paid signup payment session after Etebase signup completes', async () => {
+    secureStore.etebase_session = 'mock-saved-session'
     useAuthStore.setState({
       pendingSignup: {
         email: 'paid@example.com',
-        etebaseAuthToken: 'etebase-token',
         paymentSessionToken: 'payment-session-token',
       },
     })
@@ -809,7 +861,7 @@ describe('useAuthStore', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
-          etebaseSessionToken: 'etebase-token',
+          etebaseLinkProof: 'mock-link-proof-value-with-at-least-43-characters',
           paymentSessionToken: 'payment-session-token',
         }),
       }),
@@ -827,7 +879,6 @@ describe('useAuthStore', () => {
     useAuthStore.setState({
       pendingSignup: {
         email: 'paid@example.com',
-        etebaseAuthToken: 'etebase-token',
       },
     })
 
@@ -836,10 +887,10 @@ describe('useAuthStore', () => {
   })
 
   it('signup returns crypto checkout details without authenticating', async () => {
+    secureStore.etebase_session = 'mock-saved-session'
     useAuthStore.setState({
       pendingSignup: {
         email: 'crypto@example.com',
-        etebaseAuthToken: 'etebase-token',
       },
     })
 
@@ -1083,7 +1134,6 @@ describe('useAuthStore', () => {
       useAuthStore.setState({
         pendingSignup: {
           email: 'new@user.com',
-          etebaseAuthToken: 'tok',
           provisionedUser: { id: 'new-1', planId: 'pro', isAdmin: false },
           provisionedSubscriptionStatus: 'trialing',
         },
@@ -1703,7 +1753,7 @@ describe('useAuthStore', () => {
   describe('signup redirect state storage', () => {
     const pending = {
       email: 'user@example.com',
-      etebaseAuthToken: 'auth-token-abc',
+      paymentSessionToken: 'payment-session-token',
     }
 
     it('saves redirect state to sessionStorage, not localStorage', () => {

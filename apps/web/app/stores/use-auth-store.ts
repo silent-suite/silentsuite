@@ -29,7 +29,7 @@ export interface User {
 
 interface PendingSignup {
   email: string
-  etebaseAuthToken?: string
+  serverUrl?: string
   paymentSessionToken?: string
   earlyAdopter?: boolean
   wantsProductUpdates?: boolean
@@ -95,7 +95,7 @@ interface AuthState {
    * Persist pendingSignup + billing interval to sessionStorage so the signup
    * flow survives a full-page Stripe 3DS redirect. sessionStorage is scoped to
    * the tab and cleared on close, which is a tighter blast radius than
-   * localStorage for the etebaseAuthToken this blob carries. The data is also
+   * localStorage. The data is also
    * cleared on first read and rejected if older than 2 hours.
    */
   saveSignupStateForRedirect: (selectedInterval: 'monthly' | 'annual') => void
@@ -705,9 +705,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         // Recover legacy abandoned signups where Etebase was created before payment.
         authResult = await etebaseLogIn(email, password, serverUrl)
       }
-      const { authToken, savedSession } = authResult
+      const { savedSession } = authResult
       if (!isSelfHosted && !isCustomServer(serverUrl)) clearHostedValidationMarkers()
       await secureSet('etebase_session', savedSession)
+      if (isCustomServer(serverUrl) && serverUrl) {
+        localStorage.setItem('silentsuite-server-url', serverUrl)
+      }
 
       let earlyAdopter = false
       if (!isSelfHosted && !isCustomServer(serverUrl)) {
@@ -732,7 +735,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const pending = get().pendingSignup
       const reusablePending = pending?.email.toLowerCase() === email.toLowerCase() ? pending : null
       set({
-        pendingSignup: { ...(reusablePending ?? {}), email, etebaseAuthToken: authToken, earlyAdopter },
+        pendingSignup: { ...(reusablePending ?? {}), email, serverUrl, earlyAdopter },
         isLoading: false,
       })
     } catch (err) {
@@ -753,12 +756,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signup: async (planId: string, trialPath: string, promoCode?: string) => {
-    if (isSelfHosted || planId === 'self-hosted') {
-      const pending = get().pendingSignup
-      if (!pending) throw new Error('No pending signup')
+    const pending = get().pendingSignup
+    if (!pending) throw new Error('No pending signup')
+    const isLocalServerSignup = isSelfHosted || isCustomServer(pending.serverUrl) || planId === 'self-hosted'
+    if (isLocalServerSignup) {
 
       // Self-hosted: if user opted in, subscribe to newsletter on the SilentSuite API
-      if (pending.wantsProductUpdates) {
+      if (isSelfHosted && pending.wantsProductUpdates) {
         try {
           const res = await fetch(`${BILLING_API_URL}/newsletter/subscribe`, {
             method: 'POST',
@@ -784,11 +788,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return { clientSecret: null, cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null, paymentSessionToken: null }
     }
 
-    const pending = get().pendingSignup
-    if (!pending?.email) {
+    if (!pending.email) {
       throw new Error('No pending signup')
     }
-    const isPaidSignupDraft = (trialPath === '30day' || trialPath === 'crypto_annual') && !pending.etebaseAuthToken
+    const savedEtebaseSession = await secureGet('etebase_session')
+    const isPaidSignupDraft = (trialPath === '30day' || trialPath === 'crypto_annual') && !savedEtebaseSession
     if (isPaidSignupDraft) {
       const recoveryIdentity = getOrCreatePaidSignupRecoveryIdentity(
         paidSignupRecoveryScope(
@@ -900,17 +904,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     }
 
-    if (!pending.etebaseAuthToken) {
+    if (!savedEtebaseSession) {
       throw new Error('No Etebase session. Please start signup again.')
     }
     set({ isLoading: true, error: null })
 
     try {
+      const { issueBillingLinkProof } = await import('@/app/lib/etebase-auth')
+      const etebaseLinkProof = await issueBillingLinkProof(savedEtebaseSession)
       const res = await fetch(`${BILLING_API_URL}/auth/provision`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({
-          etebaseSessionToken: pending.etebaseAuthToken,
+          etebaseLinkProof,
           planId,
           trialPath,
           ...(promoCode?.trim() ? { promoCode: promoCode.trim() } : {}),
@@ -953,16 +959,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   finalizePaidSignup: async () => {
     const pending = get().pendingSignup
-    if (!pending?.etebaseAuthToken || !pending.paymentSessionToken) {
+    if (isCustomServer(pending?.serverUrl)) {
+      throw new Error('Paid signup is not available for custom servers.')
+    }
+    const savedEtebaseSession = await secureGet('etebase_session')
+    if (!pending || !savedEtebaseSession || !pending.paymentSessionToken) {
       throw new Error('No completed payment session. Please start signup again.')
     }
     set({ isLoading: true, error: null })
     try {
+      const { issueBillingLinkProof } = await import('@/app/lib/etebase-auth')
+      const etebaseLinkProof = await issueBillingLinkProof(savedEtebaseSession)
       const res = await fetch(`${BILLING_API_URL}/auth/signup/finalize-payment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
         body: JSON.stringify({
-          etebaseSessionToken: pending.etebaseAuthToken,
+          etebaseLinkProof,
           paymentSessionToken: pending.paymentSessionToken,
         }),
         credentials: 'include',
@@ -1013,7 +1025,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
     // Sync admin cookie so middleware allows /admin access
     syncAdminCookie(pending.provisionedUser.isAdmin, pending.rememberDevice === true)
-    if (!isSelfHosted) markHostedValidation(pending.provisionedUser.id, pending.rememberDevice === true)
+    if (!isSelfHosted && !isCustomServer(pending.serverUrl)) {
+      markHostedValidation(pending.provisionedUser.id, pending.rememberDevice === true)
+    }
     set({
       user: {
         id: pending.provisionedUser.id,
@@ -1035,7 +1049,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
-      const { authToken, savedSession } = await etebaseLogIn(email, password, serverUrl)
+      const { savedSession } = await etebaseLogIn(email, password, serverUrl)
       // A successful Etebase login may be an account switch in the same browser
       // profile. The offline queue can contain item UIDs/collection UIDs and,
       // in future encrypted-cache mode, mutation content. Clear it after the
@@ -1075,10 +1089,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // Logging in to the default server — clear any stale self-hosted URL
       localStorage.removeItem('silentsuite-server-url')
 
+      const { issueBillingLinkProof } = await import('@/app/lib/etebase-auth')
+      const etebaseLinkProof = await issueBillingLinkProof(savedSession, serverUrl)
       const res = await fetch(`${BILLING_API_URL}/auth/token-exchange`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-        body: JSON.stringify({ etebaseSessionToken: authToken, rememberDevice: rememberDevice === true }),
+        body: JSON.stringify({ etebaseLinkProof, rememberDevice: rememberDevice === true }),
         credentials: 'include',
       })
 
@@ -1452,7 +1468,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       sessionStorage.removeItem('silentsuite-signup-redirect-state')
       const data = JSON.parse(raw) as RedirectSignupState
       // Basic shape validation — guard against corrupted or tampered storage data
-      if (!data.pendingSignup?.email || (!data.pendingSignup?.etebaseAuthToken && !data.pendingSignup?.paymentSessionToken)) {
+      if (!data.pendingSignup?.email || !data.pendingSignup?.paymentSessionToken) {
         logger.warn('[auth-store] Redirect signup state is malformed, discarding')
         return null
       }

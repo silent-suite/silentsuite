@@ -12,7 +12,10 @@ on:
 
 concurrency:
   group: deploy-server-production
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/silent-suite/silentsuite-server
 
 jobs:
   build-and-push:
@@ -22,10 +25,23 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Assert this is the live main commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]; then
+            echo "Refusing deploy: workflow commit is not the live main head"
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -38,14 +54,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push server image
+        id: build
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: Dockerfile.server
           push: true
-          tags: |
-            ghcr.io/silent-suite/silentsuite-server:latest
-            ghcr.io/silent-suite/silentsuite-server:${{ github.sha }}
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          build-args: VCS_REF=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -54,19 +70,104 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-and-push
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Re-assert live main immediately before deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]; then
+            echo "Refusing deploy: workflow commit is no longer the live main head"
+            exit 1
+          fi
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DEPLOY_SHA: ${{ github.sha }}
+          IMAGE_DIGEST: ${{ needs.build-and-push.outputs.image-digest }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: IMAGE_NAME,DEPLOY_SHA,IMAGE_DIGEST
           script: |
-            docker pull ghcr.io/silent-suite/silentsuite-server:latest
+            bash -se <<'BASH'
+            set -euo pipefail
+            if ! echo "${DEPLOY_SHA:-}" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "Deploy configuration error: DEPLOY_SHA is not an immutable commit SHA"
+              exit 1
+            fi
+            if ! echo "${IMAGE_DIGEST:-}" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "Deploy configuration error: IMAGE_DIGEST is not immutable"
+              exit 1
+            fi
             cd ~/etebase
-            docker compose up -d --force-recreate silentsuite-server
+            PREVIOUS_CONTAINER=$(docker compose ps -q silentsuite-server)
+            PREVIOUS_IMAGE_ID=$(docker inspect "$PREVIOUS_CONTAINER" --format '{{.Image}}')
+            if ! echo "$PREVIOUS_IMAGE_ID" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              echo "Deploy configuration error: running server image identity is unavailable"
+              exit 1
+            fi
+            DEPLOY_OVERRIDE=$(mktemp)
+            ROLLBACK_OVERRIDE=$(mktemp)
+            cleanup() { rm -f "$DEPLOY_OVERRIDE" "$ROLLBACK_OVERRIDE"; }
+            trap cleanup EXIT
+            docker pull "${IMAGE_NAME}@${IMAGE_DIGEST}"
+            PULLED_REVISION=$(docker inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+            if [ "$PULLED_REVISION" != "$DEPLOY_SHA" ]; then
+              echo "Deploy integrity error: image revision label does not match live main"
+              exit 1
+            fi
+            docker tag "$PREVIOUS_IMAGE_ID" "${IMAGE_NAME}:rollback-${DEPLOY_SHA}"
+            cat > "$DEPLOY_OVERRIDE" <<EOF
+            services:
+              silentsuite-server:
+                image: ${IMAGE_NAME}@${IMAGE_DIGEST}
+            EOF
+            cat > "$ROLLBACK_OVERRIDE" <<EOF
+            services:
+              silentsuite-server:
+                image: ${IMAGE_NAME}:rollback-${DEPLOY_SHA}
+            EOF
+            docker compose -f docker-compose.yml -f "$DEPLOY_OVERRIDE" run --rm --no-deps silentsuite-server python manage.py migrate --noinput
+            wait_for_server() {
+              for i in 1 2 3 4 5 6; do
+                curl -sf https://server.silentsuite.io/ >/dev/null && return 0
+                sleep 10
+              done
+              return 1
+            }
+            rollback() {
+              failure_status=$?
+              trap - ERR
+              set +e
+              echo "Server deploy failed; restoring the previously running image"
+              docker compose -f docker-compose.yml -f "$ROLLBACK_OVERRIDE" up -d --force-recreate --no-deps --no-build silentsuite-server
+              ROLLED_BACK_ID=$(docker inspect "$(docker compose ps -q silentsuite-server)" --format '{{.Image}}' 2>/dev/null || echo "")
+              [ "$ROLLED_BACK_ID" = "$PREVIOUS_IMAGE_ID" ] && wait_for_server || echo "Automatic server rollback failed; operator intervention is required"
+              exit "$failure_status"
+            }
+            trap rollback ERR
+            docker compose -f docker-compose.yml -f "$DEPLOY_OVERRIDE" up -d --force-recreate --no-deps --no-build silentsuite-server
+            PULLED_IMAGE_ID=$(docker inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{.Id}}')
+            RUNNING_CONTAINER=$(docker compose ps -q silentsuite-server)
+            RUNNING_IMAGE_ID=$(docker inspect "$RUNNING_CONTAINER" --format '{{.Image}}')
+            RUNNING_REVISION=$(docker inspect "$RUNNING_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+            [ "$RUNNING_IMAGE_ID" = "$PULLED_IMAGE_ID" ]
+            [ "$RUNNING_REVISION" = "$DEPLOY_SHA" ]
+            wait_for_server
+            trap - ERR
             echo "SilentSuite server deployed successfully"
+            BASH
 
       - name: Post-deploy health check
         run: |
