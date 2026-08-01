@@ -2,6 +2,7 @@
 
 import http.server
 import json
+import logging
 import threading
 import urllib.error
 import urllib.parse
@@ -57,6 +58,22 @@ def test_auth_csrf_validation_requires_matching_token():
     assert AuthCallbackHandler._valid_csrf("", "expected") is False
     assert AuthCallbackHandler._valid_csrf("wrong", "expected") is False
     assert AuthCallbackHandler._valid_csrf("expected", "") is False
+
+
+def test_auth_request_logging_does_not_retain_request_target(caplog):
+    private_target = "/auth?private.person@example.invalid"
+    server, thread = _serve_one_auth_request()
+    try:
+        with caplog.at_level(logging.DEBUG, logger=auth_browser.logger.name):
+            status, _ = _get_auth_path(server, private_target)
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 200
+    assert private_target not in caplog.text
+    assert "private.person@example.invalid" not in caplog.text
+    assert "Auth server request completed (method=GET status=200)" in caplog.text
 
 
 def test_auth_post_rejects_wrong_csrf_before_login():

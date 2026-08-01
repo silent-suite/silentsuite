@@ -1359,7 +1359,7 @@ class Web(BaseWeb):
                 return _csrf_error()
             from ..local_cache import db, models
             try:
-                with db.database_proxy:
+                with db.atomic_connection():
                     result = {"collections": []}
                     for col in models.CollectionEntity.select():
                         items = col.items

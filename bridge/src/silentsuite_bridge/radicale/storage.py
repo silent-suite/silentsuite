@@ -1256,7 +1256,7 @@ class Storage(BaseStorage):
 
         # Cache it locally
         from ..local_cache import db, models
-        with db.database_proxy:
+        with db.atomic_connection():
             cache_col = models.CollectionEntity(
                 local_user=self.etesync.user,
                 uid=col.uid,

@@ -611,8 +611,17 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
     def _valid_csrf(provided, expected):
         return bool(provided) and bool(expected) and hmac.compare_digest(provided, expected)
 
+    def log_request(self, code="-", size="-"):
+        method = self.command if self.command in {"GET", "POST"} else "OTHER"
+        status = code if isinstance(code, int) else "unknown"
+        logger.debug(
+            "Auth server request completed (method=%s status=%s)",
+            method,
+            status,
+        )
+
     def log_message(self, format, *args):
-        logger.debug("Auth server: %s", format % args)
+        logger.debug("Auth server diagnostic suppressed")
 
     def do_GET(self):
         if self.path == "/" or self.path.startswith("/auth"):

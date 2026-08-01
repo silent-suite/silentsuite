@@ -80,7 +80,23 @@ def test_debug_logging_does_not_enable_sensitive_dependency_diagnostics(monkeypa
 
     bridge_main.configure_logging()
 
-    assert all(logger.level >= logging.WARNING for logger in dependency_loggers)
+    assert all(logger.level > logging.CRITICAL for logger in dependency_loggers)
+    captured = []
+    handler = logging.Handler()
+    handler.emit = captured.append
+    try:
+        for logger in dependency_loggers:
+            logger.addHandler(handler)
+            logger.warning(
+                "Retrying private URL %s after %r",
+                "/private.person@example.invalid",
+                RuntimeError("private-token"),
+            )
+            logger.removeHandler(handler)
+    finally:
+        for logger in dependency_loggers:
+            logger.removeHandler(handler)
+    assert captured == []
 
 
 def test_bounded_failure_logging_drops_exception_text_and_traceback(caplog):
@@ -112,6 +128,17 @@ def test_product_logging_call_sites_use_the_bounded_exception_helper():
             continue
         for line_number, line in enumerate(source_path.read_text().splitlines(), 1):
             if ".__class__.__name__" in line:
+                violations.append(f"{source_path.relative_to(package_root)}:{line_number}")
+
+    assert violations == []
+
+
+def test_database_call_sites_do_not_use_connection_owning_proxy_context():
+    package_root = Path(bridge_main.__file__).parent
+    violations = []
+    for source_path in package_root.rglob("*.py"):
+        for line_number, line in enumerate(source_path.read_text().splitlines(), 1):
+            if "with db.database_proxy:" in line:
                 violations.append(f"{source_path.relative_to(package_root)}:{line_number}")
 
     assert violations == []

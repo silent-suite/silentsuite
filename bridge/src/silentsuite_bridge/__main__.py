@@ -49,6 +49,7 @@ def configure_logging():
     # Dependency DEBUG records can include SQL parameters, URLs, headers,
     # account identifiers, sync tokens, and DAV metadata. They must not inherit
     # the Bridge's opt-in product DEBUG level.
+    dependency_log_level = logging.CRITICAL + 1
     for logger_name in (
         "peewee",
         "etebase",
@@ -57,7 +58,7 @@ def configure_logging():
         "httpx",
         "httpcore",
     ):
-        logging.getLogger(logger_name).setLevel(max(log_level, logging.WARNING))
+        logging.getLogger(logger_name).setLevel(dependency_log_level)
 
 
 def build_radicale_configuration():
