@@ -93,6 +93,7 @@ if adb shell pm path io.silentsuite.android >/dev/null 2>&1; then
   adb shell run-as io.silentsuite.android rm -rf "files/focused-runtime/${scenario_nonce}"
 fi
 scenario_args=(
+  "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true"
   "-Pandroid.testInstrumentationRunnerArguments.scenarioNonce=${scenario_nonce}"
   "-Pandroid.testInstrumentationRunnerArguments.scenarioRun=${GITHUB_RUN_ID:-local}"
   "-Pandroid.testInstrumentationRunnerArguments.scenarioAttempt=${GITHUB_RUN_ATTEMPT:-0}"
