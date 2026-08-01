@@ -39,6 +39,14 @@ const requiredContracts = new Map([
   ['apps/docs/.vitepress/theme/public-analytics.mts', ['Hosted App Click', 'Android Download Click', 'github_release', 'repository']],
   ['apps/docs/.vitepress/theme/index.mts', ['__SILENTSUITE_DOCS_ANALYTICS_ENDPOINT__', 'window.location.hostname', 'classifyDocsOutboundEvent']],
   ['apps/web/next.config.js', ['Content-Security-Policy', 'signupConnectSources', 'hostedConnectSources']],
+  ['apps/web/app/(auth)/signup/signup-analytics.tsx', [
+    "enabled === 'true'",
+    "location.hostname === 'app.silentsuite.io'",
+    "location.protocol === 'https:'",
+  ]],
+  ['Dockerfile.web', ['ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
+  ['.github/workflows/deploy-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true']],
+  ['.github/workflows/preview-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
   ['.github/workflows/ci.yml', ['pnpm run check:public-analytics']],
 ])
 for (const [relativePath, snippets] of requiredContracts) {
