@@ -195,6 +195,8 @@ test('hosted Android guide exposes direct logo buttons for every distribution st
   assert.match(hostedAndroid, /href="obtainium:\/\/add\/https:\/\/github\.com\/silent-suite\/silentsuite"/)
   assert.match(hostedAndroid, /href="https:\/\/zapstore\.dev\/apps\/io\.silentsuite\.android"/)
   assert.match(hostedAndroid, /href="https:\/\/github\.com\/silent-suite\/silentsuite\/releases\/latest"/)
+  assert.doesNotMatch(hostedAndroid, /class="android-channel-button"[^>]*href="https:\/\/github\.com\/silent-suite\/silentsuite\/releases\/latest"/)
+  assert.match(hostedAndroid, /class="android-channel-secondary-link"[^>]*href="https:\/\/github\.com\/silent-suite\/silentsuite\/releases\/latest"/)
   assert.match(hostedAndroid, /class="android-channel-button is-pending"[^>]*aria-label="F-Droid, on the roadmap, pending official inclusion"/)
 })
 
