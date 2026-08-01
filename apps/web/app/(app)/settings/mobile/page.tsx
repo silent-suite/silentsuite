@@ -18,16 +18,16 @@ const activeChannels = [
     logo: '/channel-icons/google-play.svg',
   },
   {
-    name: 'Obtainium',
-    detail: 'Receive updates from GitHub Releases',
-    href: INSTALL_DOCS_URL,
-    logo: '/channel-icons/obtainium.svg',
-  },
-  {
     name: 'Zapstore',
     detail: 'Open app store; releases may arrive later',
     href: ZAPSTORE_URL,
     logo: '/channel-icons/zapstore.png',
+  },
+  {
+    name: 'Obtainium',
+    detail: 'Receive updates from GitHub Releases',
+    href: INSTALL_DOCS_URL,
+    logo: '/channel-icons/obtainium.svg',
   },
 ]
 
@@ -46,17 +46,29 @@ export default function MobileSettingsPage() {
         </p>
       </div>
 
-      <div data-android-managed-channels className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch">
+      <div
+        data-android-managed-channels
+        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,0.9fr)] lg:grid-rows-2 lg:items-stretch"
+      >
         {activeChannels.map(({ name, detail, href, logo }) => (
           <a
             key={name}
+            data-android-channel={name}
             href={href}
             target="_blank"
             rel="noopener noreferrer"
             className={`${channelCardClass} group transition-colors hover:border-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:hover:border-emerald-300 dark:focus-visible:ring-emerald-300`}
           >
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-2">
-              <Image src={logo} alt="" aria-hidden="true" width={28} height={28} className="h-7 w-7 object-contain" />
+              <Image
+                src={logo}
+                alt=""
+                aria-hidden="true"
+                width={28}
+                height={28}
+                unoptimized={logo.endsWith('.png')}
+                className="h-7 w-7 object-contain"
+              />
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold text-[rgb(var(--foreground))]">{name}</span>
@@ -67,13 +79,22 @@ export default function MobileSettingsPage() {
         ))}
 
         <div
+          data-android-channel="F-Droid"
           role="group"
           aria-disabled="true"
           aria-label="F-Droid, on the roadmap. Pending official inclusion"
           className={channelCardClass}
         >
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-2 opacity-75">
-            <Image src="/channel-icons/fdroid.png" alt="" aria-hidden="true" width={28} height={28} className="h-7 w-7 object-contain" />
+            <Image
+              src="/channel-icons/fdroid.png"
+              alt=""
+              aria-hidden="true"
+              width={28}
+              height={28}
+              unoptimized
+              className="h-7 w-7 object-contain"
+            />
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-2">
@@ -84,24 +105,27 @@ export default function MobileSettingsPage() {
           </span>
         </div>
 
-        <div data-android-download-qr className="hidden md:flex">
+        <div
+          data-android-download-qr
+          className="hidden lg:col-start-3 lg:row-start-1 lg:row-span-2 lg:flex"
+        >
           <a
             href={INSTALL_DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className={`${channelCardClass} w-full transition-colors hover:border-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:hover:border-emerald-300 dark:focus-visible:ring-emerald-300`}
+            className={`${channelCardClass} w-full flex-col justify-center text-center transition-colors hover:border-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:hover:border-emerald-300 dark:focus-visible:ring-emerald-300`}
             aria-label="Open Android installation options"
           >
-            <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-1.5">
+            <span className="flex h-40 w-40 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-2">
               <QRCodeSVG
                 value={INSTALL_DOCS_URL}
-                size={52}
+                size={144}
                 level="M"
                 marginSize={0}
                 aria-label="QR code linking to Android installation options"
               />
             </span>
-            <span className="min-w-0 text-left">
+            <span className="min-w-0 text-center">
               <span className="block text-sm font-semibold text-[rgb(var(--foreground))]">Installing elsewhere?</span>
               <span className="mt-1 block text-xs leading-relaxed text-[rgb(var(--muted))]">Scan for every option.</span>
             </span>
