@@ -67,7 +67,20 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
         template = str(record.msg)
         normalized_path = "/" + str(record.pathname).replace("\\", "/").lstrip("/")
         if "/radicale/server.py" in normalized_path:
-            record.msg = _safe_exception_diagnostic(record.exc_info)
+            if template in {
+                "Starting Radicale",
+                "Radicale server ready",
+                "Stopping Radicale",
+            }:
+                record.msg = template
+            elif template.startswith("Listening on "):
+                record.msg = "Radicale listener started"
+            elif record.exc_info or "during request" in template:
+                record.msg = _safe_exception_diagnostic(record.exc_info)
+            elif record.levelno >= logging.ERROR:
+                record.msg = "Radicale server failure"
+            else:
+                record.msg = "Radicale server diagnostic suppressed"
             record.args = ()
             record.exc_info = None
             record.exc_text = None

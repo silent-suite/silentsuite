@@ -956,24 +956,30 @@ class Etebase:
             href_mapper = models.HrefMapper.get_or_none(
                 models.HrefMapper.content == cache_item
             )
+            suffix = (
+                ".vcf"
+                if col.collection_type == "etebase.vcard"
+                else ".ics"
+            )
+            shared_href = meta.get("dav_href")
+            has_shared_href = is_safe_dav_href(shared_href)
+            preferred_href = (
+                shared_href
+                if has_shared_href
+                else opaque_dav_href(item.uid, suffix)
+            )
             if href_mapper is None and not item.deleted:
-                suffix = (
-                    ".vcf"
-                    if col.collection_type == "etebase.vcard"
-                    else ".ics"
-                )
-                href_stem = hashlib.sha256(item.uid.encode()).hexdigest()
                 href_mapper = ensure_dav_href(
-                    cache_item, f"{href_stem}{suffix}", suffix
+                    cache_item,
+                    preferred_href,
+                    suffix,
                 )
             elif href_mapper is not None:
-                suffix = (
-                    ".vcf"
-                    if col.collection_type == "etebase.vcard"
-                    else ".ics"
-                )
                 href_mapper = ensure_dav_href(
-                    cache_item, href_mapper.href, suffix
+                    cache_item,
+                    preferred_href if not item.deleted else href_mapper.href,
+                    suffix,
+                    replace_existing=has_shared_href and not item.deleted,
                 )
             if href_mapper is not None:
                 record_dav_change(

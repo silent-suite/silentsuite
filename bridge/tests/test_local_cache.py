@@ -1513,6 +1513,45 @@ def test_pulled_carddav_item_uses_single_segment_opaque_href(mem_db, user):
     assert "/" not in mapper.href
 
 
+def test_pulled_item_replaces_provisional_mapper_with_encrypted_shared_href(
+    mem_db,
+    user,
+):
+    cache_col = CollectionEntity.create(
+        local_user=user,
+        uid="calendar",
+        eb_col=b"collection-cache",
+    )
+    cache_item = ItemEntity.create(
+        collection=cache_col,
+        uid="event-name",
+        remote_uid="remote-event",
+        eb_item=b"old-envelope",
+    )
+    HrefMapper.create(
+        content=cache_item,
+        href=local_cache_module.opaque_dav_href("remote-event", ".ics"),
+    )
+    item = MagicMock(
+        uid="remote-event",
+        meta={"name": "event-name", "dav_href": "shared-event.ics"},
+        deleted=False,
+        etag="shared-etag",
+    )
+    item_mgr = MagicMock()
+    item_mgr.cache_save.return_value = b"shared-envelope"
+    etebase = Etebase.__new__(Etebase)
+
+    assert etebase._apply_pulled_item(
+        cache_col,
+        MagicMock(collection_type="etebase.vevent"),
+        item_mgr,
+        item,
+    ) is True
+
+    assert HrefMapper.get(content=cache_item).href == "shared-event.ics"
+
+
 def test_pulled_item_hash_is_captured_under_immediate_writer_lock(
     mem_db, user, monkeypatch,
 ):

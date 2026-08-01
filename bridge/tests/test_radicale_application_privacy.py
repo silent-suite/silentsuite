@@ -23,6 +23,22 @@ def test_radicale_filter_redacts_packaged_relative_app_diagnostics():
     assert private_identifier not in record.getMessage()
 
 
+def test_radicale_server_startup_record_keeps_bounded_operational_meaning():
+    record = logging.LogRecord(
+        name="radicale",
+        level=logging.INFO,
+        pathname="radicale/server.py",
+        lineno=277,
+        msg="Starting Radicale",
+        args=(),
+        exc_info=None,
+    )
+
+    bridge_application._DavDiagnosticRedactionFilter().filter(record)
+
+    assert record.getMessage() == "Starting Radicale"
+
+
 def test_radicale_server_failure_retains_only_bounded_product_origin():
     private_value = "private-calendar-item@example.invalid"
     namespace = {}
