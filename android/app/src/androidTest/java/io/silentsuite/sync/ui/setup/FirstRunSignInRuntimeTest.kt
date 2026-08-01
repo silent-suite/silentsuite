@@ -223,14 +223,36 @@ class FirstRunSignInRuntimeTest {
                         )
                     }
                     val failedReturn = instrumentation.waitForMonitorWithTimeout(failedReturnMonitor, 5_000L)
-                    assertTrue("Persistent foreground-failure callback did not launch", failedReturn is SignupReturnActivity)
-                    deadlineRecovery = instrumentation.waitForMonitorWithTimeout(
-                        requireNotNull(deadlineRecoveryMonitor),
-                        5_000L,
-                    )
-                    assertTrue("Persistent foreground failure did not recover after its deadline", deadlineRecovery is LoginActivity)
-                    assertTrue("Deadline-recovered callback did not finish", failedReturn!!.isFinishing)
-                    instrumentation.runOnMainSync { deadlineRecovery?.finish() }
+                    try {
+                        assertTrue("Persistent foreground-failure callback did not launch", failedReturn is SignupReturnActivity)
+                        deadlineRecovery = instrumentation.waitForMonitorWithTimeout(
+                            requireNotNull(deadlineRecoveryMonitor),
+                            5_000L,
+                        )
+                        try {
+                            assertTrue(
+                                "Persistent foreground failure did not recover after its deadline",
+                                deadlineRecovery is LoginActivity,
+                            )
+                            assertTrue("Deadline-recovered callback did not finish", failedReturn!!.isFinishing)
+                        } finally {
+                            deadlineRecovery?.let {
+                                finishAndAwaitDestroyed(
+                                    instrumentation,
+                                    it,
+                                    "Deadline-recovered login did not finish before scenario cleanup",
+                                )
+                            }
+                        }
+                    } finally {
+                        failedReturn?.let {
+                            finishAndAwaitDestroyed(
+                                instrumentation,
+                                it,
+                                "Persistent foreground-failure callback did not finish before scenario cleanup",
+                            )
+                        }
+                    }
                 }
             } finally {
                 SignupReturnActivity.foregroundExecutorForTest = null
@@ -487,6 +509,19 @@ class FirstRunSignInRuntimeTest {
         } finally {
             finishScenario("choice-accessibility-recreation", passed)
         }
+    }
+
+    private fun finishAndAwaitDestroyed(
+        instrumentation: android.app.Instrumentation,
+        activity: android.app.Activity,
+        failureMessage: String,
+    ) {
+        instrumentation.runOnMainSync { activity.finish() }
+        val deadline = android.os.SystemClock.elapsedRealtime() + 5_000L
+        while (!activity.isDestroyed && android.os.SystemClock.elapsedRealtime() < deadline) {
+            android.os.SystemClock.sleep(25L)
+        }
+        assertTrue(failureMessage, activity.isDestroyed)
     }
 
     private fun startScenario() {

@@ -176,26 +176,34 @@ class AuthenticatorLifecycleRuntimeTest {
                 val resolution = requireNotNull(launched) {
                     "generation mismatch did not route to PostLoginSetupActivity"
                 }
-                instrumentation.waitForIdleSync()
-                ownedGeneration = registry.get(account.type, account.name)?.creationId
-                org.junit.Assert.assertNotNull(ownedGeneration)
-                org.junit.Assert.assertNotEquals(replacementGeneration, ownedGeneration)
-                assertEquals(
-                    replacementGeneration,
-                    manager.getUserData(account, AccountSettings.KEY_CREATION_ID),
-                )
-                assertNoPersistedActiveIdentity(context)
-                assertEquals(account, ActiveAccountManager.getActiveAccount(context))
-                var renderedTitle = ""
-                instrumentation.runOnMainSync {
-                    renderedTitle = resolution
-                        .findViewById<android.widget.TextView>(R.id.setup_title)
-                        .text.toString()
+                try {
+                    instrumentation.waitForIdleSync()
+                    ownedGeneration = registry.get(account.type, account.name)?.creationId
+                    org.junit.Assert.assertNotNull(ownedGeneration)
+                    org.junit.Assert.assertNotEquals(replacementGeneration, ownedGeneration)
+                    assertEquals(
+                        replacementGeneration,
+                        manager.getUserData(account, AccountSettings.KEY_CREATION_ID),
+                    )
+                    assertNoPersistedActiveIdentity(context)
+                    assertEquals(account, ActiveAccountManager.getActiveAccount(context))
+                    var renderedTitle = ""
+                    instrumentation.runOnMainSync {
+                        renderedTitle = resolution
+                            .findViewById<android.widget.TextView>(R.id.setup_title)
+                            .text.toString()
+                    }
+                    assertEquals(
+                        context.getString(R.string.post_login_ambiguous_title),
+                        renderedTitle,
+                    )
+                } finally {
+                    finishAndAwaitDestroyed(
+                        instrumentation,
+                        resolution,
+                        "generation-mismatch resolution did not finish before login cleanup",
+                    )
                 }
-                assertEquals(
-                    context.getString(R.string.post_login_ambiguous_title),
-                    renderedTitle,
-                )
             }
         } finally {
             ActiveAccountManager.afterExactSetCommitForTest = null
@@ -282,24 +290,32 @@ class AuthenticatorLifecycleRuntimeTest {
                 val resolution = requireNotNull(launched) {
                     "existing generation did not route to PostLoginSetupActivity"
                 }
-                instrumentation.waitForIdleSync()
-                assertEquals(
-                    existingGeneration,
-                    manager.getUserData(account, AccountSettings.KEY_CREATION_ID),
-                )
-                assertEquals(
-                    existingGeneration,
-                    registry.get(account.type, account.name)?.creationId,
-                )
-                assertNoPersistedActiveIdentity(context)
-                assertEquals(account, ActiveAccountManager.getActiveAccount(context))
-                var renderedTitle = ""
-                instrumentation.runOnMainSync {
-                    renderedTitle = resolution
-                        .findViewById<android.widget.TextView>(R.id.setup_title)
-                        .text.toString()
+                try {
+                    instrumentation.waitForIdleSync()
+                    assertEquals(
+                        existingGeneration,
+                        manager.getUserData(account, AccountSettings.KEY_CREATION_ID),
+                    )
+                    assertEquals(
+                        existingGeneration,
+                        registry.get(account.type, account.name)?.creationId,
+                    )
+                    assertNoPersistedActiveIdentity(context)
+                    assertEquals(account, ActiveAccountManager.getActiveAccount(context))
+                    var renderedTitle = ""
+                    instrumentation.runOnMainSync {
+                        renderedTitle = resolution
+                            .findViewById<android.widget.TextView>(R.id.setup_title)
+                            .text.toString()
+                    }
+                    assertEquals(context.getString(R.string.post_login_ambiguous_title), renderedTitle)
+                } finally {
+                    finishAndAwaitDestroyed(
+                        instrumentation,
+                        resolution,
+                        "existing-generation resolution did not finish before login cleanup",
+                    )
                 }
-                assertEquals(context.getString(R.string.post_login_ambiguous_title), renderedTitle)
             }
         } finally {
             CreateAccountFragment.afterCreationIdIssuedForTest = null
@@ -321,6 +337,19 @@ class AuthenticatorLifecycleRuntimeTest {
             ActiveAccountManager.clearActiveAccount(context)
             App.postLoginBootstrapSucceeded = previousBootstrap
         }
+    }
+
+    private fun finishAndAwaitDestroyed(
+        instrumentation: android.app.Instrumentation,
+        activity: android.app.Activity,
+        failureMessage: String,
+    ) {
+        instrumentation.runOnMainSync { activity.finish() }
+        val deadline = android.os.SystemClock.elapsedRealtime() + 5_000L
+        while (!activity.isDestroyed && android.os.SystemClock.elapsedRealtime() < deadline) {
+            android.os.SystemClock.sleep(25L)
+        }
+        assertTrue(failureMessage, activity.isDestroyed)
     }
 
     private fun assertNoPersistedActiveIdentity(context: android.content.Context) {
