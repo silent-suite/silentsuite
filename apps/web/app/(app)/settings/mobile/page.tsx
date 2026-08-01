@@ -29,12 +29,6 @@ const activeChannels = [
     href: ZAPSTORE_URL,
     logo: '/channel-icons/zapstore.png',
   },
-  {
-    name: 'Direct APK',
-    detail: 'Download the latest signed GitHub release',
-    href: RELEASES_URL,
-    logo: '/channel-icons/github.svg',
-  },
 ]
 
 const channelCardClass = 'flex min-h-28 items-center gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4'
@@ -52,7 +46,7 @@ export default function MobileSettingsPage() {
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch">
+      <div data-android-managed-channels className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:items-stretch">
         {activeChannels.map(({ name, detail, href, logo }) => (
           <a
             key={name}
@@ -115,7 +109,20 @@ export default function MobileSettingsPage() {
         </div>
       </div>
 
-      <p className="text-sm text-[rgb(var(--muted))]">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-[rgb(var(--muted))]">
+        <span>Prefer a signed APK?</span>
+        <a
+          href={RELEASES_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group inline-flex items-center gap-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 font-medium text-[rgb(var(--foreground))] transition-colors hover:border-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:hover:border-emerald-300 dark:focus-visible:ring-emerald-300"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-md border border-[rgb(var(--border))] bg-white p-1">
+            <Image src="/channel-icons/github.svg" alt="" aria-hidden="true" width={20} height={20} className="h-5 w-5 object-contain" />
+          </span>
+          Direct APK
+          <ExternalLink className="h-3.5 w-3.5 text-[rgb(var(--muted))] group-hover:text-emerald-700 dark:group-hover:text-emerald-300" aria-hidden="true" />
+        </a>
         <a
           href={INSTALL_DOCS_URL}
           target="_blank"
@@ -124,7 +131,7 @@ export default function MobileSettingsPage() {
         >
           Installation help
         </a>
-      </p>
+      </div>
 
       {/* Supported platforms */}
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-3">

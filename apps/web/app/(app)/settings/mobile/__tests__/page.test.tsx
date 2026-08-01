@@ -42,10 +42,13 @@ describe('MobileSettingsPage Android download choices', () => {
     })).toBeInTheDocument()
     expect(screen.getByText('Soon')).toBeInTheDocument()
     expect(screen.getByText(/Pending official inclusion/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Direct APK/i })).toHaveAttribute(
+    const directApk = screen.getByRole('link', { name: /Direct APK/i })
+    expect(directApk).toHaveAttribute(
       'href',
       'https://github.com/silent-suite/silentsuite/releases/latest',
     )
+    expect(directApk).not.toHaveClass('min-h-28')
+    expect(directApk.closest('[data-android-managed-channels]')).toBeNull()
 
     for (const src of [
       '/channel-icons/google-play.svg',
