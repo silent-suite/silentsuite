@@ -1635,6 +1635,57 @@ def test_shared_href_collision_owner_is_independent_of_pull_order(mem_db, user):
     }
 
 
+def test_shared_href_collision_with_opaque_fallback_is_replica_deterministic(
+    mem_db,
+    user,
+):
+    opaque_b = local_cache_module.opaque_dav_href("remote-b", ".ics")
+    specs = {
+        "remote-a": {"name": "name-a", "dav_href": opaque_b},
+        "remote-b": {"name": "name-b"},
+    }
+
+    def pull_in_order(collection_uid, remote_uids):
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid=collection_uid,
+            eb_col=collection_uid.encode(),
+        )
+        etebase = Etebase.__new__(Etebase)
+        item_mgr = MagicMock()
+        item_mgr.cache_save.side_effect = lambda item: item.uid.encode()
+        for remote_uid in remote_uids:
+            item = MagicMock(
+                uid=remote_uid,
+                meta=specs[remote_uid],
+                deleted=False,
+                etag=f"etag-{remote_uid}",
+            )
+            assert etebase._apply_pulled_item(
+                cache_col,
+                MagicMock(collection_type="etebase.vevent"),
+                item_mgr,
+                item,
+            ) is True
+        return {
+            mapper.content.remote_uid: mapper.href
+            for mapper in (
+                HrefMapper.select(HrefMapper, ItemEntity)
+                .join(ItemEntity)
+                .where(ItemEntity.collection == cache_col)
+            )
+        }
+
+    forward = pull_in_order("fallback-forward", ["remote-a", "remote-b"])
+    reverse = pull_in_order("fallback-reverse", ["remote-b", "remote-a"])
+
+    assert forward == reverse
+    assert forward == {
+        "remote-a": opaque_b,
+        "remote-b": local_cache_module.opaque_dav_href("remote-b:1", ".ics"),
+    }
+
+
 def test_pulled_item_hash_is_captured_under_immediate_writer_lock(
     mem_db, user, monkeypatch,
 ):

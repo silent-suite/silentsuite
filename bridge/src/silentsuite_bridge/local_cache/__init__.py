@@ -401,38 +401,65 @@ def ensure_dav_href(
             if strict:
                 raise ValueError("invalid DAV href")
             candidate = opaque_dav_href(
-                f"{cache_item.collection_id}:{cache_item.remote_uid or cache_item.uid}",
+                cache_item.remote_uid or cache_item.uid,
                 suffix,
             )
 
-        def has_conflict(href):
+        def identity(item):
+            return str(item.remote_uid or item.uid)
+
+        def conflict_for(item, href):
             return (
-                models.HrefMapper.select()
+                models.HrefMapper.select(models.HrefMapper)
                 .join(models.ItemEntity)
                 .where(
                     (models.HrefMapper.href == href)
-                    & (models.ItemEntity.collection == cache_item.collection_id)
-                    & (models.HrefMapper.content != cache_item.id)
+                    & (models.ItemEntity.collection == item.collection_id)
+                    & (models.HrefMapper.content != item.id)
                 )
-                .exists()
+                .first()
             )
 
-        if strict and has_conflict(candidate):
-            raise ValueError("DAV href already exists")
-        counter = 0
-        while has_conflict(candidate):
-            counter += 1
-            candidate = opaque_dav_href(
-                f"{cache_item.collection_id}:{cache_item.remote_uid or cache_item.uid}:{counter}",
-                suffix,
-            )
+        def fallback_candidates(item):
+            item_identity = identity(item)
+            yield opaque_dav_href(item_identity, suffix)
+            counter = 1
+            while True:
+                yield opaque_dav_href(f"{item_identity}:{counter}", suffix)
+                counter += 1
 
-        if mapper is None:
-            mapper = models.HrefMapper.create(content=cache_item, href=candidate)
-        elif mapper.href != candidate:
-            mapper.href = candidate
-            mapper.save(only=[models.HrefMapper.href])
-        return mapper
+        def persist(target_item, target_mapper, href):
+            if target_mapper is None:
+                return models.HrefMapper.create(content=target_item, href=href)
+            if target_mapper.href != href:
+                target_mapper.href = href
+                target_mapper.save(only=[models.HrefMapper.href])
+                models.DavSyncToken.delete().where(
+                    models.DavSyncToken.collection == target_item.collection_id
+                ).execute()
+            return target_mapper
+
+        def assign(target_item, target_mapper, href, excluded):
+            conflict_mapper = conflict_for(target_item, href)
+            if conflict_mapper is None:
+                return persist(target_item, target_mapper, href)
+            if strict:
+                raise ValueError("DAV href already exists")
+
+            conflict_item = conflict_mapper.content
+            if identity(target_item) < identity(conflict_item):
+                relocate(conflict_item, conflict_mapper, excluded | {href})
+                return persist(target_item, target_mapper, href)
+            return relocate(target_item, target_mapper, excluded | {href})
+
+        def relocate(target_item, target_mapper, excluded):
+            for fallback in fallback_candidates(target_item):
+                if fallback in excluded:
+                    continue
+                return assign(target_item, target_mapper, fallback, excluded)
+            raise AssertionError("unreachable DAV href allocation")
+
+        return assign(cache_item, mapper, candidate, set())
 
 
 def record_dav_change(
@@ -969,35 +996,6 @@ class Etebase:
                 if has_shared_href
                 else opaque_dav_href(item.uid, suffix)
             )
-            mapper_replaced = False
-            if has_shared_href:
-                conflict_mapper = (
-                    models.HrefMapper.select(models.HrefMapper)
-                    .join(models.ItemEntity)
-                    .where(
-                        (models.HrefMapper.href == shared_href)
-                        & (models.ItemEntity.collection == cache_col)
-                        & (models.HrefMapper.content != cache_item)
-                    )
-                    .first()
-                )
-                if conflict_mapper is not None:
-                    conflict_item = conflict_mapper.content
-                    current_identity = str(cache_item.remote_uid or cache_item.uid)
-                    conflict_identity = str(
-                        conflict_item.remote_uid or conflict_item.uid
-                    )
-                    if current_identity < conflict_identity:
-                        old_conflict_href = conflict_mapper.href
-                        conflict_mapper = ensure_dav_href(
-                            conflict_item,
-                            opaque_dav_href(conflict_identity, suffix),
-                            suffix,
-                            replace_existing=True,
-                        )
-                        mapper_replaced = conflict_mapper.href != old_conflict_href
-                    else:
-                        preferred_href = opaque_dav_href(current_identity, suffix)
             old_href = href_mapper.href if href_mapper is not None else None
             if href_mapper is None and not item.deleted:
                 href_mapper = ensure_dav_href(
@@ -1012,7 +1010,7 @@ class Etebase:
                     suffix,
                     replace_existing=has_shared_href and not item.deleted,
                 )
-            mapper_replaced = mapper_replaced or (
+            mapper_replaced = (
                 href_mapper is not None
                 and old_href is not None
                 and href_mapper.href != old_href
