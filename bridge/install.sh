@@ -152,13 +152,7 @@ install_binary() {
     EXPECTED_HASH=$(awk -v expected_name="$ASSET_NAME" '
         {
             lines += 1
-            if (
-                NF == 2
-                && length($1) == 64
-                && $1 ~ /^[0-9A-Fa-f]+$/
-                && $2 == expected_name
-                && $0 == $1 "  " expected_name
-            ) hash = tolower($1)
+            if (NF == 2 && length($1) == 64 && $1 ~ /^[0-9A-Fa-f]+$/ && $2 == expected_name && $0 == $1 "  " expected_name) hash = tolower($1)
             else invalid = 1
         }
         END {
