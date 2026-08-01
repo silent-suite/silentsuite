@@ -129,6 +129,15 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
             record.args = ()
             record.exc_info = None
             record.exc_text = None
+        else:
+            record.msg = (
+                "Radicale failure"
+                if record.levelno >= logging.WARNING
+                else "Radicale diagnostic suppressed"
+            )
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
         return True
 
 

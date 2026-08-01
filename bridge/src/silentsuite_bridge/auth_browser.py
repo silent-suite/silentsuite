@@ -780,21 +780,18 @@ def browser_login(running_bridge=False):
 
     email = server.authenticated_email
     if email:
-        used_server = server.authenticated_server_url
-        base_url = f"{config.local_base_url()}/{email}/"
         if running_bridge:
             print(f"\n  Login successful! The bridge is already running.")
         else:
             print(f"\n  Login successful! Now start the bridge daemon:")
             print(f"    ./silentsuite-bridge")
         print()
-        print(f"  Etebase server: {used_server}")
+        print("  Etebase server configured.")
         if config.is_dashboard_enabled():
-            dashboard_url = f"{config.local_base_url()}/"
-            print(f"  Dashboard will be available at: {dashboard_url}")
+            print("  Dashboard will be available on the configured local listener.")
         else:
             print("  Dashboard is disabled for remote bridge binds.")
-        print(f"  CalDAV/CardDAV URL for your apps: {base_url}")
+        print("  CalDAV/CardDAV account configured.")
         print(f"\n  Full setup guides: https://docs.silentsuite.io/user-guide/apps/dav-bridge\n")
 
     return email

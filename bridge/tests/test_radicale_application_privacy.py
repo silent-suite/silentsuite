@@ -23,6 +23,30 @@ def test_radicale_filter_redacts_packaged_relative_app_diagnostics():
     assert private_identifier not in record.getMessage()
 
 
+def test_radicale_filter_redacts_non_app_exception_and_traceback():
+    private_identifier = "https://user:token@example.invalid/private/person"
+    try:
+        raise RuntimeError(private_identifier)
+    except RuntimeError:
+        record = logging.LogRecord(
+            name="radicale",
+            level=logging.WARNING,
+            pathname="radicale/log.py",
+            lineno=156,
+            msg="An exception occurred: %s",
+            args=(private_identifier,),
+            exc_info=sys.exc_info(),
+        )
+
+    bridge_application._DavDiagnosticRedactionFilter().filter(record)
+
+    assert record.getMessage() == "Radicale failure"
+    assert private_identifier not in record.getMessage()
+    assert record.args == ()
+    assert record.exc_info is None
+    assert record.exc_text is None
+
+
 def test_radicale_server_startup_record_keeps_bounded_operational_meaning():
     for template, expected in (
         ("Starting Radicale", "Starting Radicale"),

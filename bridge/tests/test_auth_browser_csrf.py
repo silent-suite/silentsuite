@@ -209,13 +209,13 @@ def test_success_page_uses_https_bridge_urls_when_ssl_enabled():
     assert "http://127.0.0.1:37358/" not in body
 
 
-def test_browser_login_completion_prints_https_bridge_urls(capsys):
+def test_browser_login_completion_does_not_print_account_or_server_values(capsys):
     server = MagicMock()
     event = MagicMock()
 
     def complete_auth(*_args, **_kwargs):
         server.authenticated_email = "alice@example.com"
-        server.authenticated_server_url = "https://server.silentsuite.io"
+        server.authenticated_server_url = "https://private-server.example.invalid"
         return True
 
     event.wait.side_effect = complete_auth
@@ -231,8 +231,10 @@ def test_browser_login_completion_prints_https_bridge_urls(capsys):
         assert browser_login(running_bridge=True) == "alice@example.com"
 
     output = capsys.readouterr().out
-    assert "Dashboard will be available at: https://127.0.0.1:37358/" in output
-    assert "CalDAV/CardDAV URL for your apps: https://127.0.0.1:37358/alice@example.com/" in output
+    assert "Dashboard will be available on the configured local listener." in output
+    assert "CalDAV/CardDAV account configured." in output
+    assert "alice@example.com" not in output
+    assert "https://private-server.example.invalid" not in output
 
 
 def test_rejected_server_replacement_does_not_change_process_default(monkeypatch):
