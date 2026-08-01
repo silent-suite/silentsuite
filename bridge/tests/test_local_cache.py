@@ -485,6 +485,35 @@ class TestCollectionWrapper:
                 ItemEntity.remote_uid == "remote-created-1"
             ).exists()
 
+    def test_atomic_connection_rolls_back_nested_failure_and_preserves_owner(
+        self,
+        mem_db,
+        user,
+    ):
+        with mem_db.atomic("IMMEDIATE"):
+            CollectionEntity.create(
+                local_user=user,
+                uid="outer-survives",
+                eb_col=b"outer",
+            )
+
+            with pytest.raises(RuntimeError, match="inner failure"):
+                with db.atomic_connection():
+                    CollectionEntity.create(
+                        local_user=user,
+                        uid="inner-rolls-back",
+                        eb_col=b"inner",
+                    )
+                    raise RuntimeError("inner failure")
+
+            assert mem_db.in_transaction()
+            assert CollectionEntity.select().where(
+                CollectionEntity.uid == "outer-survives"
+            ).exists()
+            assert not CollectionEntity.select().where(
+                CollectionEntity.uid == "inner-rolls-back"
+            ).exists()
+
 
 # ---------------------------------------------------------------------------
 # Item wrapper

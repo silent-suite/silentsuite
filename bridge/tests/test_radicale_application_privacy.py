@@ -129,3 +129,30 @@ def test_radicale_exception_diagnostic_has_explicit_identifier_length_bounds():
     assert diagnostic == "Radicale server request failed (Exception)"
     assert private_fragment not in diagnostic
     assert len(diagnostic) < 80
+
+
+def test_radicale_diagnostics_have_an_explicit_aggregate_output_bound():
+    exception_class = type("E" * 64, (RuntimeError,), {})
+    namespace = {"exception_class": exception_class}
+    function = "f" * 64
+    code = compile(
+        f"def {function}():\n"
+        "    raise exception_class('private-value')\n",
+        "silentsuite_bridge/" + "p" * 157 + ".py",
+        "exec",
+    )
+    exec(code, namespace)
+
+    try:
+        namespace[function]()
+    except RuntimeError:
+        exc_info = sys.exc_info()
+
+    server_diagnostic = bridge_application._safe_exception_diagnostic(exc_info)
+    put_diagnostic = bridge_application._safe_put_diagnostic(
+        "Bad PUT request on %r (upload): %s",
+        exc_info,
+    )
+
+    assert len(server_diagnostic) <= 320
+    assert len(put_diagnostic) <= 320

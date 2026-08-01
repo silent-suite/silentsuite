@@ -7,6 +7,8 @@ from radicale.app import Application as RadicaleApplication
 
 from ..privacy_logging import bounded_identifier
 
+_MAX_DIAGNOSTIC_LENGTH = 320
+
 
 def _safe_exception_diagnostic(exc_info):
     """Return an exception class and product-owned frame without private values."""
@@ -35,10 +37,12 @@ def _safe_exception_diagnostic(exc_info):
         traceback = traceback.tb_next
 
     if product_origin:
-        return (
+        diagnostic = (
             "Radicale server request failed "
             f"({exception_class} at {product_origin})"
         )
+        if len(diagnostic) <= _MAX_DIAGNOSTIC_LENGTH:
+            return diagnostic
     return f"Radicale server request failed ({exception_class})"
 
 
@@ -57,7 +61,10 @@ def _safe_put_diagnostic(template, exc_info):
             break
     exception_diagnostic = _safe_exception_diagnostic(exc_info)
     suffix = exception_diagnostic.removeprefix("Radicale server request failed")
-    return f"Radicale PUT rejected during {stage}{suffix}"
+    diagnostic = f"Radicale PUT rejected during {stage}{suffix}"
+    if len(diagnostic) <= _MAX_DIAGNOSTIC_LENGTH:
+        return diagnostic
+    return f"Radicale PUT rejected during {stage}"
 
 
 class _DavDiagnosticRedactionFilter(logging.Filter):

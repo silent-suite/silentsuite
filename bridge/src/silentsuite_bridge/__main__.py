@@ -46,10 +46,18 @@ def configure_logging():
         handlers=handlers,
     )
 
-    # Peewee DEBUG records include bound SQL parameters. Those parameters can
-    # contain configured account identifiers, sync tokens, and DAV metadata,
-    # so they must never inherit the bridge's opt-in DEBUG level.
-    logging.getLogger("peewee").setLevel(max(log_level, logging.WARNING))
+    # Dependency DEBUG records can include SQL parameters, URLs, headers,
+    # account identifiers, sync tokens, and DAV metadata. They must not inherit
+    # the Bridge's opt-in product DEBUG level.
+    for logger_name in (
+        "peewee",
+        "etebase",
+        "requests",
+        "urllib3",
+        "httpx",
+        "httpcore",
+    ):
+        logging.getLogger(logger_name).setLevel(max(log_level, logging.WARNING))
 
 
 def build_radicale_configuration():

@@ -67,17 +67,19 @@ def test_radicale_runtime_is_pinned_to_the_server_adapter_contract():
     assert version("Radicale") == "3.2.3"
 
 
-def test_debug_logging_does_not_enable_peewee_bound_parameter_diagnostics(monkeypatch):
-    """SQL DEBUG records include usernames, sync tokens, and other bound values."""
-    peewee_logger = logging.getLogger("peewee")
+def test_debug_logging_does_not_enable_sensitive_dependency_diagnostics(monkeypatch):
+    """Dependency DEBUG records can include SQL, URLs, headers, and bound values."""
+    logger_names = ("peewee", "etebase", "requests", "urllib3", "httpx", "httpcore")
+    dependency_loggers = [logging.getLogger(name) for name in logger_names]
     monkeypatch.setattr(config, "LOG_LEVEL", "DEBUG")
     monkeypatch.setattr(config, "LOG_FILE", None)
     monkeypatch.setattr(logging, "basicConfig", MagicMock())
-    monkeypatch.setattr(peewee_logger, "level", logging.DEBUG)
+    for logger in dependency_loggers:
+        monkeypatch.setattr(logger, "level", logging.DEBUG)
 
     bridge_main.configure_logging()
 
-    assert peewee_logger.level >= logging.WARNING
+    assert all(logger.level >= logging.WARNING for logger in dependency_loggers)
 
 
 def test_bounded_failure_logging_drops_exception_text_and_traceback(caplog):
