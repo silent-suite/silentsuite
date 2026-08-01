@@ -45,6 +45,11 @@ def configure_logging():
         handlers=handlers,
     )
 
+    # Peewee DEBUG records include bound SQL parameters. Those parameters can
+    # contain configured account identifiers, sync tokens, and DAV metadata,
+    # so they must never inherit the bridge's opt-in DEBUG level.
+    logging.getLogger("peewee").setLevel(max(log_level, logging.WARNING))
+
 
 def build_radicale_configuration():
     """Build Radicale configuration for the bridge.

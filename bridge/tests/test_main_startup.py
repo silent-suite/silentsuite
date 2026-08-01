@@ -67,6 +67,19 @@ def test_radicale_runtime_is_pinned_to_the_server_adapter_contract():
     assert version("Radicale") == "3.2.3"
 
 
+def test_debug_logging_does_not_enable_peewee_bound_parameter_diagnostics(monkeypatch):
+    """SQL DEBUG records include usernames, sync tokens, and other bound values."""
+    peewee_logger = logging.getLogger("peewee")
+    monkeypatch.setattr(config, "LOG_LEVEL", "DEBUG")
+    monkeypatch.setattr(config, "LOG_FILE", None)
+    monkeypatch.setattr(logging, "basicConfig", MagicMock())
+    monkeypatch.setattr(peewee_logger, "level", logging.DEBUG)
+
+    bridge_main.configure_logging()
+
+    assert peewee_logger.level >= logging.WARNING
+
+
 def test_check_credentials_allows_no_accounts_when_dashboard_enabled(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
