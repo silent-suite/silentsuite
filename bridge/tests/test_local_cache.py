@@ -450,6 +450,37 @@ class TestCollectionWrapper:
 
         assert created.cache_item.remote_uid == "remote-created-1"
 
+    def test_create_and_save_do_not_close_owning_transaction(
+        self,
+        mem_db,
+        user,
+        mock_item_mgr,
+    ):
+        mock_col = _make_mock_collection("col-1", "etebase.vevent")
+        mock_col_mgr = MagicMock()
+        mock_col_mgr.cache_load.return_value = mock_col
+        mock_col_mgr.get_item_manager.return_value = mock_item_mgr
+        cache_col = CollectionEntity.create(
+            local_user=user,
+            uid="col-1",
+            eb_col=b"\x00" * 8,
+        )
+        remote_item = _make_mock_item(
+            "remote-created-1",
+            SAMPLE_VCALENDAR_VEVENT,
+        )
+        mock_item_mgr.create.return_value = remote_item
+        col = Collection(mock_col_mgr, cache_col)
+
+        with db.database_proxy.atomic("IMMEDIATE"):
+            created = col.create(vobject.readOne(SAMPLE_VCALENDAR_VEVENT))
+            created.save()
+
+            assert db.database_proxy.in_transaction()
+            assert ItemEntity.select().where(
+                ItemEntity.remote_uid == "remote-created-1"
+            ).exists()
+
 
 # ---------------------------------------------------------------------------
 # Item wrapper

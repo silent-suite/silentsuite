@@ -531,7 +531,7 @@ class Etebase:
             if database is None:
                 raise RuntimeError("Local cache is not initialized")
             self._database = database
-            with db.database_proxy:
+            with db.atomic_connection():
                 self.user = models.User.get(username=self.username)
         else:
             self._init_db(db_path)
@@ -544,7 +544,7 @@ class Etebase:
         db.database_proxy.initialize(database)
 
         with _private_umask():
-            with db.database_proxy:
+            with db.atomic_connection():
                 self._init_db_tables(database)
                 self.user, created = models.User.get_or_create(username=self.username)
                 if hasattr(self, "etebase"):
@@ -1119,7 +1119,7 @@ class Etebase:
         )
 
     def collection_is_dirty(self, uid):
-        with db.database_proxy:
+        with db.atomic_connection():
             cache_col = models.CollectionEntity.get(local_user=self.user, uid=uid)
             changed = list(self._collection_dirty_get(cache_col))
             return len(changed) > 0
@@ -1172,7 +1172,7 @@ class Etebase:
     # --- CRUD operations ---
 
     def list(self):
-        with db.database_proxy:
+        with db.atomic_connection():
             col_mgr = self.etebase.get_collection_manager()
             cache_objects = list(
                 self.user.collections.where(~models.CollectionEntity.deleted)
@@ -1181,7 +1181,7 @@ class Etebase:
         return collections
 
     def get(self, uid):
-        with db.database_proxy:
+        with db.atomic_connection():
             col_mgr = self.etebase.get_collection_manager()
             try:
                 return Collection(
@@ -1250,7 +1250,7 @@ class Collection:
             self.col = current_col
 
     def create(self, vobject_item):
-        with db.database_proxy:
+        with db.atomic_connection():
             item_mgr = self.col_mgr.get_item_manager(self.col)
             # Extract UID from the child component (VEVENT, VTODO, VCARD)
             # vobject_item may be a VCALENDAR/VCARD wrapper
@@ -1268,7 +1268,7 @@ class Collection:
             return Item(item_mgr, cache_item)
 
     def get(self, uid):
-        with db.database_proxy:
+        with db.atomic_connection():
             item_mgr = self.col_mgr.get_item_manager(self.col)
             try:
                 return Item(
@@ -1296,7 +1296,7 @@ class Collection:
             self.cache_col = current_cache
 
     def list(self):
-        with db.database_proxy:
+        with db.atomic_connection():
             item_mgr = self.col_mgr.get_item_manager(self.col)
             cache_items = list(
                 self.cache_col.items.where(~models.ItemEntity.deleted)
@@ -1346,7 +1346,7 @@ class Item:
         item_meta = self.meta
         item_meta["mtime"] = get_millis()
         self.meta = item_meta
-        with db.database_proxy:
+        with db.atomic_connection():
             self.cache_item.eb_item = self.item_mgr.cache_save(self.item)
             self.cache_item.dirty = True
             self.cache_item.save()
