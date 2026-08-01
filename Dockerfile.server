@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r /requirements.txt
 # --- Production stage ---
 FROM python:3.12-alpine
 
+ARG VCS_REF
+LABEL org.opencontainers.image.revision=$VCS_REF
+
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PYTHONUNBUFFERED=1
 

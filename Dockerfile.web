@@ -48,6 +48,9 @@ FROM node:22-alpine AS runner
 
 WORKDIR /app
 
+ARG VCS_REF
+LABEL org.opencontainers.image.revision=$VCS_REF
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
