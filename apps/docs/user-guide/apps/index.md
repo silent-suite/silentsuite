@@ -1,6 +1,6 @@
 # Apps & Integrations
 
-SilentSuite is built on the [Etebase protocol](https://www.etebase.com/), which means your encrypted data works with a growing ecosystem of compatible apps. You can sync your calendar, contacts, and tasks with native apps on every major platform.
+SilentSuite is built on the [Etebase protocol](https://www.etebase.com/). You can sync your encrypted data with the supported SilentSuite and third-party apps listed below.
 
 ## How It Works
 
@@ -12,6 +12,7 @@ The hosted server at `server.silentsuite.io` (or your self-hosted URL) speaks th
 |---|---|---|
 | [SilentSuite Web](https://app.silentsuite.io) | Browser | Contacts, Calendars, Tasks |
 | [SilentSuite for Android](./android.md) | Android | Contacts, Calendars, Tasks |
+| [SilentSuite for iOS](./ios.md) | iOS | In development |
 
 ## Compatible Third-Party Apps
 
@@ -19,7 +20,6 @@ These apps connect directly to `server.silentsuite.io` or your self-hosted serve
 
 | App | Platform | Syncs |
 |---|---|---|
-| [EteSync for iOS](./ios.md) (third-party) | iOS | Contacts, Calendars, Reminders |
 | [Tasks.org](./tasks-org.md) | Android | Tasks |
 | [GNOME Evolution](./evolution.md) | Linux (GNOME) | Contacts, Calendars, Tasks |
 | [GNOME Calendar, Contacts & To Do](./evolution.md) | Linux (GNOME) | Contacts, Calendars, Tasks |

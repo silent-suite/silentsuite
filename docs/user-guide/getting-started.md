@@ -59,7 +59,7 @@ Install commands are in **Settings → Desktop** in the web app.
 
 ### iOS
 
-There's no SilentSuite iOS app yet (on the roadmap). In the meantime, the [EteSync iOS app](https://www.etesync.com/) speaks the same Etebase protocol and works against your silentsuite.io or self-hosted account.
+A native SilentSuite iOS app is in development. EteSync for iOS is not a supported or working SilentSuite client. You can use the SilentSuite web app in an iOS browser, but it does not sync with native iOS Calendar, Contacts, or Reminders.
 
 ## 4. Confirm Sync Works
 
