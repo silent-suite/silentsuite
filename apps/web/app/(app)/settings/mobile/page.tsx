@@ -1,85 +1,129 @@
 'use client'
 
-import { Smartphone, ExternalLink, Monitor } from 'lucide-react'
+import { Download, ExternalLink, Monitor, PackageCheck, RefreshCw, Store } from 'lucide-react'
 import Link from 'next/link'
 import { QRCodeSVG } from 'qrcode.react'
 
 const INSTALL_DOCS_URL = 'https://docs.silentsuite.io/user-guide/apps/android'
+const GOOGLE_PLAY_URL = 'https://play.google.com/store/apps/details?id=io.silentsuite.android'
+const ZAPSTORE_URL = 'https://zapstore.dev/apps/io.silentsuite.android'
 const RELEASES_URL = 'https://github.com/silent-suite/silentsuite/releases/latest'
+
+const activeChannels = [
+  {
+    name: 'Google Play',
+    detail: 'Install and update through Google Play',
+    href: GOOGLE_PLAY_URL,
+    icon: PackageCheck,
+  },
+  {
+    name: 'Obtainium',
+    detail: 'Receive updates from GitHub Releases',
+    href: INSTALL_DOCS_URL,
+    icon: RefreshCw,
+  },
+  {
+    name: 'Zapstore',
+    detail: 'Open app store; releases may arrive later',
+    href: ZAPSTORE_URL,
+    icon: Store,
+  },
+]
 
 export default function MobileSettingsPage() {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
         <h2 className="text-base font-semibold text-[rgb(var(--foreground))]">
-          Connect Mobile
+          Get SilentSuite for Android
         </h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Access your encrypted calendar, tasks, and contacts on your phone.
+          Choose how you install and receive updates. Every option uses
+          SilentSuite&apos;s encrypted sync model, but release timing may differ by channel.
         </p>
       </div>
 
-      {/* QR Code section */}
-      <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6">
-        <div className="flex flex-col items-center gap-4">
-          <div className="flex h-48 w-48 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-3">
-            <QRCodeSVG
-              value={INSTALL_DOCS_URL}
-              size={168}
-              level="M"
-              marginSize={0}
-              aria-label="QR code linking to the Android install guide"
-            />
-          </div>
-          <p className="text-sm text-[rgb(var(--foreground))] font-medium">
-            Scan with your phone camera
-          </p>
-          <p className="text-xs text-[rgb(var(--muted))] text-center">
-            The QR code opens the install guide with options for Obtainium (auto-updates) or a direct APK download.
-          </p>
-          <a
-            href={RELEASES_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-[rgb(var(--primary))] hover:underline"
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_13rem] md:items-center">
+        <div className="grid gap-3 sm:grid-cols-2">
+          {activeChannels.map(({ name, detail, href, icon: Icon }) => (
+            <a
+              key={name}
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group flex min-h-28 items-center gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 transition-colors hover:border-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:hover:border-emerald-300 dark:focus-visible:ring-emerald-300"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-700 text-white dark:bg-emerald-400 dark:text-slate-950">
+                <Icon className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-[rgb(var(--foreground))]">{name}</span>
+                <span className="mt-1 block text-xs leading-relaxed text-[rgb(var(--muted))]">{detail}</span>
+              </span>
+              <ExternalLink className="h-4 w-4 shrink-0 text-[rgb(var(--muted))] group-hover:text-emerald-700 dark:group-hover:text-emerald-300" aria-hidden="true" />
+            </a>
+          ))}
+
+          <div
+            role="group"
+            aria-disabled="true"
+            aria-label="F-Droid, soon. Pending official inclusion"
+            className="flex min-h-28 items-center gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4"
           >
-            Or jump straight to GitHub Releases
-          </a>
-        </div>
-      </div>
-
-      {/* Manual setup */}
-      <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-4">
-        <div className="flex items-center gap-3">
-          <Smartphone className="h-5 w-5 text-[rgb(var(--primary))]" />
-          <div>
-            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Manual setup</p>
-            <p className="text-xs text-[rgb(var(--muted))]">
-              Follow the documentation to set up the mobile app manually
-            </p>
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] text-[rgb(var(--muted))]">
+              <Download className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold text-[rgb(var(--muted))]">F-Droid</span>
+                <span className="rounded-full bg-[rgb(var(--border))] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--foreground))]">Soon</span>
+              </span>
+              <span className="mt-1 block text-xs leading-relaxed text-[rgb(var(--muted))]">Pending official inclusion</span>
+            </span>
           </div>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div data-android-download-qr className="hidden md:block">
           <a
             href={INSTALL_DOCS_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-lg bg-[rgb(var(--primary))] px-4 py-2.5 text-sm font-medium text-white hover:bg-[rgb(var(--primary-hover))] transition-colors"
+            className="block rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 text-center transition-colors hover:border-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:hover:border-emerald-300 dark:focus-visible:ring-emerald-300"
+            aria-label="Open Android installation options"
           >
-            <ExternalLink className="h-4 w-4" />
-            View setup instructions
-          </a>
-          <a
-            href="https://docs.silentsuite.io"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-2 rounded-lg border border-[rgb(var(--border))] px-4 py-2.5 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors"
-          >
-            Read the full documentation
+            <span className="mx-auto flex w-fit rounded-lg bg-white p-2">
+              <QRCodeSVG
+                value={INSTALL_DOCS_URL}
+                size={144}
+                level="M"
+                marginSize={0}
+                aria-label="QR code linking to Android installation options"
+              />
+            </span>
+            <span className="mt-3 block text-xs font-medium text-[rgb(var(--foreground))]">Scan for every option</span>
           </a>
         </div>
       </div>
+
+      <p className="text-sm text-[rgb(var(--muted))]">
+        <span className="font-medium text-[rgb(var(--foreground))]">Prefer a manual install?</span>{' '}
+        <a
+          href={RELEASES_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-medium text-emerald-700 hover:underline dark:text-emerald-300"
+        >
+          Download the signed APK from GitHub Releases.
+        </a>{' '}
+        <a
+          href={INSTALL_DOCS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="whitespace-nowrap text-[rgb(var(--foreground))] hover:underline"
+        >
+          Installation help
+        </a>
+      </p>
 
       {/* Supported platforms */}
       <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 space-y-3">
@@ -87,7 +131,7 @@ export default function MobileSettingsPage() {
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-3 text-center">
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">Android</p>
-            <p className="text-xs text-[rgb(var(--primary))]">Available now</p>
+            <p className="text-xs font-medium text-emerald-700 dark:text-emerald-300">Available now</p>
           </div>
           <div className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-3 text-left space-y-1">
             <p className="text-sm font-medium text-[rgb(var(--foreground))] text-center">iOS</p>
