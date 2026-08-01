@@ -490,7 +490,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
             </details>
 
             <details>
-                <summary>Apple Calendar &amp; Contacts (macOS + iOS)</summary>
+                <summary>Apple Calendar &amp; Contacts (macOS)</summary>
                 <div class="guide-content">
                     <strong>macOS:</strong>
                     <ol>
@@ -501,18 +501,7 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                         <li>Click <strong>Sign In</strong>. macOS Calendar will discover your calendars automatically.</li>
                         <li>To add contacts: repeat steps 1-2 but choose <strong>CardDAV Account</strong> and enter the same server URL and credentials.</li>
                     </ol>
-                    <strong>iOS / iPadOS:</strong>
-                    <ol>
-                        <li>Go to <strong>Settings &gt; Calendar &gt; Accounts &gt; Add Account &gt; Other</strong>.</li>
-                        <li>Tap <strong>Add CalDAV Account</strong>.</li>
-                        <li>Enter the server URL: <code>BRIDGE_URL</code>, your account email, and password.</li>
-                        <li>Tap <strong>Next</strong> to verify and save.</li>
-                        <li>For contacts: go back to <strong>Other</strong> and tap <strong>Add CardDAV Account</strong> with the same details.</li>
-                    </ol>
-                    <p><em>Note: Your iOS device needs network access to your bridge host (e.g. via Tailscale or LAN).</em></p>
                     <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/macos" target="_blank" rel="noopener">Full macOS guide &#8594;</a>
-                    &nbsp;
-                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/ios" target="_blank" rel="noopener">Full iOS guide &#8594;</a>
                 </div>
             </details>
 
@@ -532,23 +521,6 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                 </div>
             </details>
 
-            <details>
-                <summary>DAVx&#8309; (Android)</summary>
-                <div class="guide-content">
-                    <ol>
-                        <li>Install <strong>DAVx&#8309;</strong> from <a href="https://f-droid.org/packages/at.bitfire.davdroid/" target="_blank" rel="noopener" style="color:#4ade80;">F-Droid</a> or <a href="https://play.google.com/store/apps/details?id=at.bitfire.davdroid" target="_blank" rel="noopener" style="color:#4ade80;">Google Play</a>.</li>
-                        <li>Open DAVx&#8309; and tap the <strong>+</strong> button to add a new account.</li>
-                        <li>Select <strong>Login with URL and user name</strong>.</li>
-                        <li>Enter the base URL: <code>BRIDGE_URL</code></li>
-                        <li>Enter your <strong>account email</strong> as the user name and your <strong>password</strong>.</li>
-                        <li>Tap <strong>Login</strong>. DAVx&#8309; will discover your calendars, tasks, and address books.</li>
-                        <li>Select the collections you want to sync and tap the sync icon.</li>
-                        <li>Your data will now appear in your Android Calendar, Contacts, and Tasks apps.</li>
-                    </ol>
-                    <p><em>Note: Your Android device needs network access to your bridge host (e.g. via Tailscale or LAN).</em></p>
-                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/android" target="_blank" rel="noopener">Full Android guide &#8594;</a>
-                </div>
-            </details>
 
             <details>
                 <summary>Evolution</summary>
@@ -565,20 +537,6 @@ SUCCESS_PAGE_HTML = """<!DOCTYPE html>
                 </div>
             </details>
 
-            <details>
-                <summary>Other CalDAV/CardDAV App</summary>
-                <div class="guide-content">
-                    <p>Any app that supports the <strong>CalDAV</strong> or <strong>CardDAV</strong> protocol can connect to SilentSuite Bridge. You will need:</p>
-                    <ol>
-                        <li><strong>Server URL:</strong> <code>BRIDGE_URL</code></li>
-                        <li><strong>Username:</strong> your account email address (<code>USER_EMAIL</code>)</li>
-                        <li><strong>Password:</strong> your account password</li>
-                    </ol>
-                    <p style="margin-top:8px;">Most apps have an <strong>"Add CalDAV account"</strong>, <strong>"Add internet calendar"</strong>, or <strong>"Add WebDAV account"</strong> option in their settings. Enter the details above and the app will auto-discover your calendars, contacts, and tasks.</p>
-                    <p style="margin-top:8px;"><em>If the app asks for separate CalDAV and CardDAV URLs, use the same URL for both &mdash; the bridge handles discovery automatically.</em></p>
-                    <a class="doc-link" href="https://docs.silentsuite.io/user-guide/apps/dav-bridge" target="_blank" rel="noopener">Full documentation &#8594;</a>
-                </div>
-            </details>
         </div>
 
         <div class="docs-link">

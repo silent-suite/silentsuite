@@ -18,7 +18,17 @@ const siblingGettingStarted = read(resolve(repoRoot, 'docs/user-guide/getting-st
 const siblingGuideIndex = read(resolve(repoRoot, 'docs/user-guide/README.md'))
 const rootReadme = read(resolve(repoRoot, 'README.md'))
 const settingsMobile = read(resolve(repoRoot, 'apps/web/app/(app)/settings/mobile/page.tsx'))
+const settingsDesktop = read(resolve(repoRoot, 'apps/web/app/(app)/settings/desktop/page.tsx'))
 const themeCss = read(resolve(docsRoot, '.vitepress/theme/custom.css'))
+const bridgeAuthBrowser = read(resolve(repoRoot, 'bridge/src/silentsuite_bridge/auth_browser.py'))
+const bridgeDashboard = read(resolve(repoRoot, 'bridge/src/silentsuite_bridge/web/__init__.py'))
+const bridgePackage = read(resolve(repoRoot, 'bridge/src/silentsuite_bridge/__init__.py'))
+const dockerSuccess = read(resolve(repoRoot, 'docker/etebase/success.html'))
+const selfHostSuccess = read(resolve(repoRoot, 'self-host/success.html'))
+const docsConfig = read(resolve(docsRoot, '.vitepress/config.mts'))
+const appsIndex = read(resolve(docsRoot, 'user-guide/apps/index.md'))
+const linuxBridge = read(resolve(docsRoot, 'user-guide/apps/linux-bridge.md'))
+const windowsGuide = read(resolve(docsRoot, 'user-guide/apps/windows.md'))
 
 function markdownInventory(root) {
   return readdirSync(root, { recursive: true, withFileTypes: true })
@@ -28,6 +38,7 @@ function markdownInventory(root) {
 
 const inventory = [
   resolve(repoRoot, 'README.md'),
+  resolve(repoRoot, 'bridge/README.md'),
   ...markdownInventory(resolve(docsRoot, 'user-guide')),
   ...markdownInventory(resolve(repoRoot, 'docs')),
 ]
@@ -47,6 +58,16 @@ const falseIosAvailabilityPatterns = [
   /\bIf your app supports CalDAV\/CardDAV, it works\b/i,
   /\bit will most likely work\b/i,
   /\| DAVx5 \| Android \| Use CalDAV\/CardDAV account setup \|/i,
+  /\bcompatible with \*\*any\*\* calendar, contacts, or tasks app that supports CalDAV\/CardDAV\b/i,
+  /\bor any other standard CalDAV\/CardDAV client\b/i,
+  /\bany CardDAV client \(/i,
+  /\bany CalDAV client that speaks `VTODO`\b/i,
+  /\bfor use with any standard PIM client\b/i,
+  /\bcompatible with other apps that support CalDAV tasks\b/i,
+  /\bConnect using the SilentSuite app or any CalDAV\/CardDAV client\b/i,
+  /\btalk to it like any other DAV server\b/i,
+  /\[Android \(DAVx5\)\]\(\.\/android\.md\)/i,
+  /\[Other CalDAV\/CardDAV Apps\]\(\.\/other\.md\)/i,
 ]
 
 const falseFdroidAvailabilityPatterns = [
@@ -220,6 +241,32 @@ test('current docs and Settings expose iOS only as unsupported roadmap work', ()
   for (const pattern of falseIosAvailabilityPatterns) {
     assert.doesNotMatch(settingsMobile, pattern, 'Settings → Mobile')
   }
+})
+
+test('Bridge runtime guidance is limited to supported desktop integrations', () => {
+  for (const source of [
+    bridgeAuthBrowser,
+    bridgeDashboard,
+    bridgePackage,
+    settingsDesktop,
+    dockerSuccess,
+    selfHostSuccess,
+  ]) {
+    assert.doesNotMatch(source, /iOS|iPadOS|DAVx(?:5|&#8309;).*Android/i)
+    assert.doesNotMatch(source, /Any app that supports|any standard (?:PIM|CalDAV\/CardDAV) client|any CalDAV\/CardDAV client|Most apps have an/i)
+  }
+
+  assert.match(bridgeAuthBrowser, /Apple Calendar &amp; Contacts \(macOS\)/)
+  assert.match(bridgeDashboard, /Apple \(macOS\)/)
+  assert.match(bridgePackage, /supported desktop integrations/)
+  assert.match(settingsDesktop, /supported desktop clients/)
+  assert.match(dockerSuccess, /supported desktop client through the local bridge/)
+  assert.match(selfHostSuccess, /supported desktop client through the local bridge/)
+  assert.equal(existsSync(resolve(docsRoot, 'user-guide/apps/other.md')), false)
+  assert.doesNotMatch(docsConfig, /user-guide\/apps\/other/)
+  assert.doesNotMatch(appsIndex, /Additional desktop CalDAV\/CardDAV Apps|\.\/other\.md/)
+  assert.doesNotMatch(linuxBridge, /generic CalDAV\/CardDAV guide|\.\/other\.md/)
+  assert.doesNotMatch(windowsGuide, /em Client|Windows Calendar|other Windows apps/)
 })
 
 test('all Android documentation states that official F-Droid inclusion is pending', () => {
