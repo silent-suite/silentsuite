@@ -33,6 +33,7 @@ def installer_path(tmp_path: Path, *, verifier: str | None) -> Path:
     executable(
         fake_bin / "curl",
         """#!/bin/sh
+raw_args=$*
 url=''
 out=''
 while [ "$#" -gt 0 ]; do
@@ -55,7 +56,7 @@ case "$url" in
             *) printf '%s' "$BINARY_BODY" > "$out" ;;
         esac
         ;;
-    *) printf 'unexpected test URL: %s\n' "$url" >&2; exit 22 ;;
+    *) printf 'unexpected test URL: %s (args: %s)\n' "$url" "$raw_args" >&2; exit 22 ;;
 esac
 exit 0
 """,
