@@ -40,6 +40,24 @@ def _safe_exception_diagnostic(exc_info):
     return f"Radicale server request failed ({exception_class})"
 
 
+def _safe_put_diagnostic(template, exc_info):
+    """Classify a fixed Radicale PUT stage without retaining request values."""
+    stage = "processing"
+    for candidate in (
+        "read_request_body",
+        "read_components",
+        "prepare",
+        "create_collection",
+        "upload",
+    ):
+        if f"({candidate})" in template:
+            stage = candidate
+            break
+    exception_diagnostic = _safe_exception_diagnostic(exc_info)
+    suffix = exception_diagnostic.removeprefix("Radicale server request failed")
+    return f"Radicale PUT rejected during {stage}{suffix}"
+
+
 class _DavDiagnosticRedactionFilter(logging.Filter):
     """Remove DAV payloads, identifiers, tokens, and exception chains."""
 
@@ -53,6 +71,14 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
             record.exc_text = None
         elif "/radicale/item/" in normalized_path:
             record.msg = "Radicale item diagnostic suppressed"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        elif (
+            "/radicale/app/put.py" in normalized_path
+            and template.startswith("Bad PUT request")
+        ):
+            record.msg = _safe_put_diagnostic(template, record.exc_info)
             record.args = ()
             record.exc_info = None
             record.exc_text = None
