@@ -16,6 +16,7 @@ type WorkflowJob = {
   environment?: string
   env?: Record<string, string>
   needs?: string
+  permissions?: Record<string, string>
   steps?: WorkflowStep[]
 }
 
@@ -40,6 +41,21 @@ function parseWorkflow(source: string): ParsedWorkflow {
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
+}
+
+const jobContracts: Record<string, Record<string, { steps: string; permissions: string }>> = {
+  'deploy-web.yml': {
+    'build-and-push': { steps: 'e23e2195d21717e71fe08e47d202b446f858488f65ebbeee6c7dd7abd459fb46', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
+    deploy: { steps: '72639f5529b592052a55c819853c08d009e3d092c8808ce733a7c64640b7e3ef', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+  },
+  'deploy-server.yml': {
+    'build-and-push': { steps: '009b1bf33803af9b5210638ee074a4006a4ab332557750e68caab4fa21219a9d', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
+    deploy: { steps: '6090d6b72f83ef78d8ea0039a19a11f424b8410540b05c3d826a082172e9b82b', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+  },
+  'deploy-docs.yml': {
+    build: { steps: 'bc49bcc31e40e8c2c8564e68efe2dfc09a400c0c0de8bcec9155fadad5760e49', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '9324d75996bca253594b92ebbc089d60d833dc39f94853c377ad0be5f9610a2a', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
+  },
 }
 
 function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string, expectedRunSha256: string) {
@@ -123,6 +139,8 @@ describe('production deployment workflow integrity', () => {
     expect(source).not.toMatch(/^  push:/m)
     for (const [index, jobName] of jobNames.entries()) {
       const job = parsed.jobs[jobName]
+      expect(sha256(JSON.stringify(job.steps ?? []))).toBe(jobContracts[name][jobName].steps)
+      expect(sha256(JSON.stringify(job.permissions ?? {}))).toBe(jobContracts[name][jobName].permissions)
       const authorizationName = jobName === 'deploy'
         ? name === 'deploy-docs.yml' ? 'Re-assert owner approval immediately before deployment' : 'Re-assert live main immediately before deployment'
         : name === 'deploy-docs.yml' ? 'Verify exact owner-approved live main commit for build' : 'Assert this is the live main commit'
