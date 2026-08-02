@@ -7,6 +7,25 @@ function workflow(name: string): string {
 }
 
 describe('production deployment workflow integrity', () => {
+  it.each([
+    ['deploy-web.yml', 'web-production', 'WEB_DEPLOY_APPROVED_SHA'],
+    ['deploy-server.yml', 'server-production', 'SERVER_DEPLOY_APPROVED_SHA'],
+    ['deploy-docs.yml', 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA'],
+  ])('%s requires continuing exact-SHA owner approval', (name, environment, approvalVariable) => {
+    const source = workflow(name)
+
+    expect(source).toContain('workflow_dispatch:')
+    expect(source).toContain('expected_sha:')
+    expect(source).not.toMatch(/^  push:/m)
+    expect(source.match(new RegExp(`environment: ${environment}`, 'g'))).toHaveLength(2)
+    expect(source.split(`${approvalVariable}: \${{ vars.${approvalVariable} }}`).length - 1).toBe(2)
+    expect(source.split(`[ "$${approvalVariable}" != "$EXPECTED_SHA" ]`).length - 1).toBe(2)
+    expect(source.match(/ref: \$\{\{ inputs\.expected_sha \}\}/g)).toHaveLength(2)
+    expect(source.match(/LIVE_MAIN_SHA=\$\(git rev-parse origin\/main\)/g)).toHaveLength(2)
+    expect(source.match(/\[ "\$GITHUB_SHA" != "\$LIVE_MAIN_SHA" \]/g)).toHaveLength(2)
+    expect(source.match(/\[ "\$EXPECTED_SHA" != "\$LIVE_MAIN_SHA" \]/g)).toHaveLength(2)
+  })
+
   it.each(['deploy-web.yml', 'deploy-server.yml'])('%s deploys only an exact live-main image', (name) => {
     const source = workflow(name)
 
@@ -21,6 +40,16 @@ describe('production deployment workflow integrity', () => {
     expect(source).not.toMatch(/silentsuite-(?:web|server):latest/)
   })
 
+  it.each(['deploy-web.yml', 'deploy-server.yml'])('%s reauthorizes as the final step before SSH mutation', (name) => {
+    const source = workflow(name)
+    const reauthorization = source.indexOf('name: Re-assert live main immediately before deployment')
+    const mutation = source.indexOf('name: Deploy via SSH')
+
+    expect(reauthorization).toBeGreaterThan(-1)
+    expect(mutation).toBeGreaterThan(reauthorization)
+    expect(source.slice(reauthorization, mutation)).not.toContain('\n      - name:')
+  })
+
   it('blocks the web cutover until Billing proves the non-bearer handoff is ready', () => {
     const source = workflow('deploy-web.yml')
     const gate = source.indexOf('https://api.silentsuite.io/health/link-proof')
@@ -28,6 +57,23 @@ describe('production deployment workflow integrity', () => {
 
     expect(gate).toBeGreaterThan(-1)
     expect(deploy).toBeGreaterThan(gate)
+  })
+
+  it('builds docs once and deploys the admitted artifact after reauthorization', () => {
+    const source = workflow('deploy-docs.yml')
+    const deployJob = source.slice(source.indexOf('\n  deploy:'))
+    const reauthorization = deployJob.indexOf('name: Re-assert owner approval immediately before deployment')
+    const mutation = deployJob.indexOf('name: Deploy to production Worker')
+    const mutationStep = deployJob.lastIndexOf('\n      - name:', mutation)
+
+    expect(source).toContain('needs: build')
+    expect(source).toContain('name: docs-production-${{ inputs.expected_sha }}')
+    expect(source).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
+    expect(source).toContain('actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093')
+    expect(deployJob).not.toContain('pnpm run build')
+    expect(reauthorization).toBeGreaterThan(-1)
+    expect(mutationStep).toBeGreaterThan(reauthorization)
+    expect(deployJob.slice(reauthorization, mutationStep)).not.toContain('\n      - name:')
   })
 
   it('runs server migrations from the exact image before replacing the server', () => {
