@@ -28,7 +28,14 @@ function workflow(name: string): string {
 function parseWorkflow(source: string): ParsedWorkflow {
   const document = parseDocument(source, { uniqueKeys: true })
   if (document.errors.length) throw new Error(document.errors.map((error) => error.message).join('\n'))
-  return document.toJS() as ParsedWorkflow
+  const workflow = document.toJS() as ParsedWorkflow
+  const rejectMergeKeys = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return
+    if (Object.prototype.hasOwnProperty.call(value, '<<')) throw new Error('YAML merge keys are not supported')
+    for (const child of Object.values(value)) rejectMergeKeys(child)
+  }
+  rejectMergeKeys(workflow)
+  return workflow
 }
 
 function sha256(value: string): string {
@@ -109,6 +116,7 @@ describe('production deployment workflow integrity', () => {
     const source = workflow(name)
     const parsed = parseWorkflow(source)
     const jobNames = name === 'deploy-docs.yml' ? ['build', 'deploy'] : ['build-and-push', 'deploy']
+    expect(Object.keys(parsed.jobs).sort()).toEqual([...jobNames].sort())
 
     expect(source).toContain('workflow_dispatch:')
     expect(source).toContain('expected_sha:')
@@ -137,13 +145,14 @@ describe('production deployment workflow integrity', () => {
   })
 
   it.each(['deploy-web.yml', 'deploy-server.yml'])('%s reauthorizes as the final step before SSH mutation', (name) => {
-    const deploy = jobBlock(workflow(name), 'deploy')
-    const reauthorization = deploy.indexOf('      - name: Re-assert live main immediately before deployment')
-    const mutation = deploy.indexOf('      - name: Deploy via SSH')
+    const parsed = parseWorkflow(workflow(name))
+    const steps = parsed.jobs.deploy.steps ?? []
+    const reauthorization = steps.findIndex((step) => step.name === 'Re-assert live main immediately before deployment')
+    const mutation = steps.findIndex((step) => step.name === 'Deploy via SSH' && step.uses?.startsWith('appleboy/ssh-action@'))
+    const mutationActions = Object.values(parsed.jobs).flatMap((job) => job.steps ?? []).filter((step) => step.uses?.startsWith('appleboy/ssh-action@'))
 
-    expect(reauthorization).toBeGreaterThan(-1)
-    expect(mutation).toBeGreaterThan(reauthorization)
-    expect(deploy.slice(reauthorization + 1, mutation)).not.toMatch(/^      - /m)
+    expect(mutationActions).toHaveLength(1)
+    expect(mutation).toBe(reauthorization + 1)
   })
 
   it('blocks the web cutover until Billing proves the non-bearer handoff is ready', () => {
@@ -159,8 +168,12 @@ describe('production deployment workflow integrity', () => {
     const source = workflow('deploy-docs.yml')
     const buildJob = jobBlock(source, 'build')
     const deployJob = jobBlock(source, 'deploy')
-    const reauthorization = deployJob.indexOf('      - name: Re-assert owner approval immediately before deployment')
-    const mutation = deployJob.indexOf('      - name: Deploy to production Worker')
+    const parsed = parseWorkflow(source)
+    const deploySteps = parsed.jobs.deploy.steps ?? []
+    const downloadIndex = deploySteps.findIndex((step) => step.name === 'Download and verify admitted docs artifact')
+    const reauthorization = deploySteps.findIndex((step) => step.name === 'Re-assert owner approval immediately before deployment')
+    const mutation = deploySteps.findIndex((step) => step.name === 'Deploy to production Worker' && step.uses?.startsWith('cloudflare/wrangler-action@'))
+    const mutationActions = Object.values(parsed.jobs).flatMap((job) => job.steps ?? []).filter((step) => step.uses?.startsWith('cloudflare/wrangler-action@'))
 
     expect(source).toContain('needs: build')
     expect(source).toContain('name: docs-production-${{ inputs.expected_sha }}')
@@ -173,14 +186,14 @@ describe('production deployment workflow integrity', () => {
     expect(deployJob).toContain('actions/artifacts/$ARTIFACT_ID/zip')
     expect(deployJob).toContain('ACTUAL_ARTIFACT_DIGEST=$(sha256sum')
     expect(deployJob).toContain('test "$ACTUAL_ARTIFACT_DIGEST" = "$EXPECTED_ARTIFACT_DIGEST"')
-    const parsedDeploy = parseWorkflow(source).jobs.deploy
-    const download = parsedDeploy.steps?.find((step) => step.name === 'Download and verify admitted docs artifact')
+    const download = deploySteps[downloadIndex]
     expect(sha256(download?.run ?? '')).toBe('3839d4770098d4b1a20435631a3c1c628aed3648b5f1678f94fc965f949052eb')
     expect(deployJob).not.toContain('actions/download-artifact@')
     expect(deployJob).not.toContain('pnpm run build')
-    expect(reauthorization).toBeGreaterThan(-1)
-    expect(mutation).toBeGreaterThan(reauthorization)
-    expect(deployJob.slice(reauthorization + 1, mutation)).not.toMatch(/^      - /m)
+    expect(mutationActions).toHaveLength(1)
+    expect(downloadIndex).toBeGreaterThan(-1)
+    expect(downloadIndex).toBeLessThan(reauthorization)
+    expect(mutation).toBe(reauthorization + 1)
   })
 
   it('runs server migrations from the exact image before replacing the server', () => {
