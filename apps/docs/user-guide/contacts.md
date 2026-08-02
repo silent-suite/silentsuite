@@ -37,4 +37,4 @@ You can import contacts from vCard (`.vcf`) and CSV files. This makes it straigh
 
 Export your contacts at any time. Your data belongs to you, and you can take it with you.
 
-SilentSuite uses the private `X-SILENTSUITE-FAVORITE` vCard extension. The Bridge preserves received extensions, but favorite is not standardized across CardDAV. Generic CardDAV clients, Thunderbird, DAVx5, Google CardDAV, and Apple Contacts/Phone have no promised compatible favorite UI, and complete-card writers may remove unknown extensions.
+SilentSuite uses the private `X-SILENTSUITE-FAVORITE` vCard extension. The Bridge preserves received extensions, but favorite is not standardized across CardDAV. Generic CardDAV clients have no promised compatible favorite UI, and complete-card writers may remove unknown extensions.

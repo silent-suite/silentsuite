@@ -79,4 +79,28 @@ class SetupSecretSerializationTest {
         }
     }
 
+    @Test
+    fun setupSecretsAreLeaseScopedAndDeadPendingSessionStorageIsRemoved() {
+        val holder = File(sourceRoot, "io/silentsuite/sync/ui/setup/SetupSecretHolder.kt").readText()
+        val setupSources = File(sourceRoot, "io/silentsuite/sync/ui/setup")
+            .walkTopDown().filter { it.isFile && it.extension == "kt" }
+            .associate { it.name to it.readText() }
+
+        listOf(
+            "OwnerLease", "LeaseRefV1", "UNBOUND", "BOUND", "REBINDING", "RETIRED",
+            "beginOperation", "commitIfCurrent", "revoke",
+        ).forEach { contract -> assertTrue("Missing lease contract: $contract", holder.contains(contract)) }
+        listOf("pending" + "Sessions", "setPending" + "Session", "consumePending" + "Session").forEach { deadApi ->
+            assertFalse("Dead secret storage must be removed: $deadApi", holder.contains(deadApi))
+        }
+        listOf(
+            "setLoginCredentials(credentials)", "getLoginCredentials()", "clearLoginCredentials()",
+            "setPendingConfiguration(config)", "getPendingConfiguration()",
+            "clearCredentialsAndConfiguration()", "clearProcessOnlySecrets()",
+        ).forEach { legacy ->
+            assertFalse("Unscoped holder call must be removed from setup sources: $legacy",
+                setupSources.values.any { it.contains("SetupSecretHolder.$legacy") })
+        }
+    }
+
 }

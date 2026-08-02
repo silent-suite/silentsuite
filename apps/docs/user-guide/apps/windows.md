@@ -1,6 +1,6 @@
-# Windows Calendar & Outlook
+# Windows / Outlook
 
-Sync SilentSuite with Microsoft Outlook, Windows Calendar, or other Windows apps through the [SilentSuite Bridge](./dav-bridge.md).
+Sync SilentSuite with Microsoft Outlook through the [SilentSuite Bridge](./dav-bridge.md).
 
 ## Prerequisites
 
@@ -46,39 +46,6 @@ Outlook does not support CalDAV natively. The free, open-source [CalDav Synchron
 
 Click **Synchronize now** in the CalDav Synchronizer ribbon tab, or wait for the automatic sync interval (default: 30 minutes). You can adjust the interval in each profile's settings.
 
-## em Client
-
-[em Client](https://www.emclient.com/) is a Windows email, calendar, and contacts app with built-in CalDAV/CardDAV support. The free version supports up to two email accounts.
-
-1. Open em Client and go to **Menu > Accounts**.
-2. Click **+** (Add Account).
-3. Select **Calendar** (or **Contacts**) > **CalDAV** (or **CardDAV**).
-4. Enter:
-   - **Server URL**: `http://localhost:37358/your@email.com/`
-   - **Username**: your account email
-   - **Password**: your account password
-5. Click **Next**. em Client will discover your calendars and contacts.
-6. Click **Finish**.
-
-## Windows Calendar & Mail App
-
-The built-in Windows Calendar app has limited CalDAV support. It requires a workaround to add a CalDAV account.
-
-1. Open **Calendar** (or **Mail**).
-2. Go to **Settings** (gear icon) > **Manage Accounts** > **Add account**.
-3. Select **iCloud** (Windows does not have a generic CalDAV option, so we use iCloud as a starting point).
-4. Enter:
-   - **Email**: your account email
-   - **Password**: your account password
-5. Windows will fail to connect to iCloud. When it shows the manual configuration:
-   - **Calendar server (CalDAV)**: `http://localhost:37358/`
-   - **Contacts server (CardDAV)**: `http://localhost:37358/`
-6. Click **Sign In**.
-
-::: warning
-The Windows Calendar DAV client has known bugs with local connections. If it does not work, we recommend using Outlook with CalDav Synchronizer or em Client instead.
-:::
-
 ## Running the Bridge at Startup
 
 To run the SilentSuite Bridge automatically on Windows startup, see the [DAV bridge guide](./dav-bridge.md#auto-start) for auto-start configuration.
@@ -91,13 +58,6 @@ To run the SilentSuite Bridge automatically on Windows startup, see the [DAV bri
 2. Check for error messages in the sync log.
 3. Make sure the bridge is running: open `http://localhost:37358/` in your browser.
 4. Verify the DAV URL includes your email: `http://localhost:37358/your@email.com/`.
-
-### Windows Calendar won't connect
-
-Windows 10/11 has bugs with local CalDAV connections. Try:
-
-- Using `http://127.0.0.1:37358/` instead of `http://localhost:37358/`.
-- Switching to Outlook with CalDav Synchronizer or em Client for a more reliable experience.
 
 ### Password rejected
 

@@ -70,8 +70,8 @@ export function PendingSyncBanner() {
   return (
     <div className="mx-3 mt-2 space-y-2 md:mx-4">
       {/* Main pending/failed banner */}
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-        <CloudOff className="h-4 w-4 shrink-0 text-amber-400" />
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+        <CloudOff className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
 
         <span className="flex-1">
           {pendingCount > 0 && (
@@ -81,7 +81,7 @@ export function PendingSyncBanner() {
           )}
           {pendingCount > 0 && failedCount > 0 && <span className="mx-1">&middot;</span>}
           {failedCount > 0 && (
-            <span className="text-red-400">
+            <span className="text-red-700 dark:text-red-400">
               {failedCount} failed
             </span>
           )}
@@ -91,14 +91,14 @@ export function PendingSyncBanner() {
           <div className="flex items-center gap-1">
             <button
               onClick={handleRetryFailed}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
             >
               <RefreshCw className="h-3 w-3" />
               Retry
             </button>
             <button
               onClick={handleDiscardFailed}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/20"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-red-800 transition-colors hover:bg-red-500/20 dark:text-red-400"
             >
               <Trash2 className="h-3 w-3" />
               Discard
@@ -109,16 +109,16 @@ export function PendingSyncBanner() {
 
       {/* Stale queue warning */}
       {hasStaleEntries && (
-        <div className="flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-sm text-orange-200">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-orange-400" />
+        <div className="flex items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-sm text-orange-800 dark:text-orange-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-400" />
           <span>Some changes have been pending for over 24 hours. Please check your internet connection.</span>
         </div>
       )}
 
       {/* Queue size limit warning */}
       {isQueueNearLimit && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+        <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-800 dark:text-red-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
           <span>Offline queue is full ({MAX_QUEUE_SIZE} changes). Connect to the internet to sync your changes.</span>
         </div>
       )}

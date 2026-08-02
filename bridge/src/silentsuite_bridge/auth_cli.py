@@ -26,7 +26,7 @@ def manual_login():
 
     print("SilentSuite Bridge — Manual Login")
     print("=" * 40)
-    print(f"Server: {config.ETEBASE_SERVER_URL}")
+    print("Server configured.")
     print()
 
     username = input("Email: ").strip()
@@ -45,25 +45,28 @@ def manual_login():
     try:
         client = Client("silentsuite-bridge", config.ETEBASE_SERVER_URL)
         etebase = Account.login(client, username, password)
-    except Exception as e:
-        print(f"Error: Authentication failed: {e}")
+    except Exception:
+        print("Error: Authentication failed.")
         sys.exit(1)
 
     print("Authentication successful!")
     print("Saving credentials...")
 
-    result = store_authenticated_account(
-        username,
-        password,
-        etebase.save(None),
-        config.ETEBASE_SERVER_URL,
-    )
+    try:
+        store_authenticated_account(
+            username,
+            password,
+            etebase.save(None),
+            config.ETEBASE_SERVER_URL,
+        )
+    except Exception:
+        print("Error: Could not save the authenticated account.")
+        sys.exit(1)
 
     print()
     print("Account saved! Existing accounts were left unchanged.")
-    print(f"Etebase server: {config.ETEBASE_SERVER_URL}")
-    print(f"CalDAV/CardDAV URL: {config.local_base_url()}/{result.username}/")
-    print(f"Username: {result.username}")
+    print("Etebase server configured.")
+    print("CalDAV/CardDAV account configured.")
     print("Password: (your account password)")
     print()
     print("Start the bridge with: silentsuite-bridge")

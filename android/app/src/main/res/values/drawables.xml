@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="ic_silentsuite_arrows" type="drawable">@drawable/ic_silentsuite_arrows_on_light</item>
+</resources>

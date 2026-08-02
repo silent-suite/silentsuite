@@ -1,21 +1,289 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
-    android:padding="24dp" android:gravity="center_vertical">
-    <TextView android:id="@+id/setup_title" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="@string/post_login_setup_title" android:textAppearance="?attr/textAppearanceHeadlineSmall" />
-    <TextView android:id="@+id/setup_status" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="16dp" android:accessibilityLiveRegion="polite" />
-    <Button android:id="@+id/setup_continue_limited" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="24dp" android:text="@string/post_login_setup_continue" />
-    <Button android:id="@+id/setup_skip_integrations" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="8dp" android:text="@string/post_login_setup_skip_integrations" />
-    <Button android:id="@+id/setup_remove_incomplete" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="8dp" android:text="@string/post_login_setup_remove_incomplete" />
-    <Button android:id="@+id/setup_retry_inventory" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="8dp" android:text="@string/post_login_setup_retry_inventory" />
-    <Button android:id="@+id/setup_resolve_ambiguity" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="8dp" android:text="@string/post_login_setup_resolve_ambiguity" />
-    <Button android:id="@+id/setup_done" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_marginTop="8dp" android:text="@string/post_login_setup_done" />
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:fillViewport="true">
+
+    <LinearLayout
+        android:id="@+id/setup_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/spacing_24"
+        android:paddingTop="@dimen/spacing_24"
+        android:paddingEnd="@dimen/spacing_24"
+        android:paddingBottom="@dimen/spacing_24">
+
+        <LinearLayout
+            android:id="@+id/setup_stepper"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
+            android:importantForAccessibility="yes"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center_horizontal"
+                android:importantForAccessibility="noHideDescendants"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/setup_step_connect_node"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:minHeight="32dp"
+                    android:background="@drawable/bg_setup_step_current"
+                    android:gravity="center"
+                    android:text="1"
+                    android:textColor="@color/navy900"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/setup_stage_connect"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/spacing_8"
+                    android:gravity="center"
+                    android:text="@string/post_login_stage_connect"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelMedium" />
+            </LinearLayout>
+
+            <View
+                android:id="@+id/setup_step_connector_one"
+                android:layout_width="0dp"
+                android:layout_height="2dp"
+                android:layout_gravity="top"
+                android:layout_marginStart="@dimen/spacing_8"
+                android:layout_marginTop="15dp"
+                android:layout_marginEnd="@dimen/spacing_8"
+                android:layout_weight="0.35"
+                android:background="@color/semantic_outline" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center_horizontal"
+                android:importantForAccessibility="noHideDescendants"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/setup_step_prepare_node"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:minHeight="32dp"
+                    android:background="@drawable/bg_setup_step_upcoming"
+                    android:gravity="center"
+                    android:text="2"
+                    android:textColor="@color/semantic_on_surface"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/setup_stage_prepare"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/spacing_8"
+                    android:gravity="center"
+                    android:text="@string/post_login_stage_prepare"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelMedium" />
+            </LinearLayout>
+
+            <View
+                android:id="@+id/setup_step_connector_two"
+                android:layout_width="0dp"
+                android:layout_height="2dp"
+                android:layout_gravity="top"
+                android:layout_marginStart="@dimen/spacing_8"
+                android:layout_marginTop="15dp"
+                android:layout_marginEnd="@dimen/spacing_8"
+                android:layout_weight="0.35"
+                android:background="@color/semantic_outline" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center_horizontal"
+                android:importantForAccessibility="noHideDescendants"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/setup_step_ready_node"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="32dp"
+                    android:minHeight="32dp"
+                    android:background="@drawable/bg_setup_step_upcoming"
+                    android:gravity="center"
+                    android:text="3"
+                    android:textColor="@color/semantic_on_surface"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/setup_stage_ready"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/spacing_8"
+                    android:gravity="center"
+                    android:text="@string/post_login_stage_ready"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelMedium" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/setup_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_32"
+            android:accessibilityLiveRegion="polite"
+            android:text="@string/post_login_creating_title"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Title" />
+
+        <TextView
+            android:id="@+id/setup_body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_8"
+            android:text="@string/post_login_creating_body"
+            android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+
+        <LinearLayout
+            android:id="@+id/setup_integration_details"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_16"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:drawableStart="@drawable/ic_calendar_outline"
+                android:drawablePadding="@dimen/spacing_12"
+                android:gravity="center_vertical"
+                android:text="@string/post_login_calendar_outcome"
+                android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_8"
+                android:drawableStart="@drawable/ic_contacts_outline"
+                android:drawablePadding="@dimen/spacing_12"
+                android:gravity="center_vertical"
+                android:text="@string/post_login_contacts_outcome"
+                android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_8"
+                android:drawableStart="@drawable/ic_tasks_outline"
+                android:drawablePadding="@dimen/spacing_12"
+                android:gravity="center_vertical"
+                android:text="@string/post_login_tasks_outcome"
+                android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+
+            <TextView
+                android:id="@+id/setup_recommended_apps"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_8"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:minHeight="48dp"
+                android:text="@string/post_login_recommended_apps"
+                android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body"
+                android:textColor="@color/semantic_secondary_action" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_16"
+                android:text="@string/post_login_permission_privacy"
+                android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/setup_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_12"
+            android:accessibilityLiveRegion="polite"
+            android:textAppearance="@style/TextAppearance.AppTheme.Material3.Status"
+            android:visibility="gone" />
+
+    </LinearLayout>
+    </ScrollView>
+
+    <LinearLayout
+        android:id="@+id/setup_action_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/semantic_surface"
+        android:elevation="@dimen/elevation_raised"
+        android:orientation="vertical"
+        android:padding="@dimen/spacing_16">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/setup_continue_limited"
+            style="@style/Widget.AppTheme.Material3.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/post_login_setup_continue" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/setup_skip_integrations"
+            style="@style/Widget.AppTheme.Material3.Button.Text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_4"
+            android:text="@string/post_login_skip_for_now" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/setup_remove_incomplete"
+            style="@style/Widget.AppTheme.Material3.Button.Outlined"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_8"
+            android:text="@string/post_login_setup_remove_incomplete" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/setup_retry_inventory"
+            style="@style/Widget.AppTheme.Material3.Button.Outlined"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_8"
+            android:text="@string/post_login_setup_retry_inventory" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/setup_resolve_ambiguity"
+            style="@style/Widget.AppTheme.Material3.Button.Outlined"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_8"
+            android:text="@string/post_login_setup_resolve_ambiguity" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/setup_done"
+            style="@style/Widget.AppTheme.Material3.Button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/spacing_8"
+            android:text="@string/post_login_setup_done" />
+    </LinearLayout>
 </LinearLayout>

@@ -42,7 +42,7 @@ open class BaseActivity : AppCompatActivity() {
         }
 
         // Navy system bars require light clock/battery/connectivity icons. Explicitly
-        // clear light-system-bar flags so Android 15 / targetSdk 35 edge-to-edge
+        // clear light-system-bar flags so Android 15+ edge-to-edge
         // defaults or theme inheritance cannot leave dark icons on a dark bar.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             window.clearLightStatusBar()

@@ -126,6 +126,13 @@ public class StoreScreenshotsTest {
         targetContext.startActivity(intent);
         device.wait(Until.hasObject(By.pkg(PACKAGE).depth(0)), LAUNCH_TIMEOUT);
         SystemClock.sleep(2000);
+        UiObject2 signIn = device.findObject(By.res(PACKAGE, "account_choice_sign_in"));
+        if (signIn == null) {
+            throw new AssertionError("Account-choice Sign in action was not available");
+        }
+        signIn.click();
+        device.wait(Until.hasObject(By.res(PACKAGE, "user_name")), LAUNCH_TIMEOUT);
+        SystemClock.sleep(500);
     }
 
     private void capture(String name) {
@@ -354,15 +361,9 @@ public class StoreScreenshotsTest {
      */
     @Test
     public void test02_login_selfhost() {
-        // From welcome, advance to login
-        tapText("Get Started");
-        sleep(1000);
-        // If not on login, try Add account
+        launchLogin();
         UiObject2 emailField = device.wait(Until.findObject(By.res(PACKAGE, "user_name")), NAV_TIMEOUT);
-        if (emailField == null) {
-            tapText("Add account");
-            sleep(1500);
-        }
+        if (emailField == null) throw new AssertionError("Focused sign-in form was not available");
 
         // Expand the Custom server toggle to show the self-host field
         UiObject2 advanced = device.wait(Until.findObject(By.res(PACKAGE, "show_advanced")), NAV_TIMEOUT);

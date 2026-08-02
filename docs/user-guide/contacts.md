@@ -39,11 +39,11 @@ Both are built from your locally decrypted data.
 
 ## Bridge / CardDAV clients
 
-With the [desktop bridge](./getting-started.md#desktop-caldav--carddav-via-the-bridge) installed, any CardDAV client (Thunderbird, Apple Contacts, GNOME Contacts, Evolution) can read and write the same contacts through `localhost:37358`.
+With the [desktop bridge](./getting-started.md#desktop-caldav--carddav-via-the-bridge) installed, supported desktop CardDAV clients such as Thunderbird, Contacts on macOS, GNOME Contacts, and Evolution can read and write the same contacts through `localhost:37358`.
 
 Multiple address books are supported. Each address book is a separate encrypted collection and appears as its own CardDAV collection in compatible clients.
 
-The Bridge preserves `X-SILENTSUITE-FAVORITE` when a client sends it, but favorite is not a standard CardDAV field. Generic CardDAV clients, Thunderbird, DAVx5, Google CardDAV, and Apple Contacts/Phone do not have a promised compatible favorite UI. Clients that rewrite a complete card may strip unknown extensions.
+The Bridge preserves `X-SILENTSUITE-FAVORITE` when a client sends it, but favorite is not a standard CardDAV field. Generic CardDAV clients do not have a promised compatible favorite UI, and clients that rewrite a complete card may strip unknown extensions.
 
 ## Sharing
 

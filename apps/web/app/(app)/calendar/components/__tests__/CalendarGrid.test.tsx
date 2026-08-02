@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { StrictMode } from 'react'
+import { StrictMode, useSyncExternalStore } from 'react'
 import type { CalendarEvent } from '@silentsuite/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CalendarGrid } from '../CalendarGrid'
@@ -11,6 +11,10 @@ const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'),
 }
 
 const mocks = vi.hoisted(() => {
+  const preferenceListeners = new Set<() => void>()
+  const localeListeners = new Set<() => void>()
+  const localeAssignments: string[] = []
+  let localeValue = 'en-GB'
   const calendarState = {
     currentView: 'week' as const,
     currentDate: new Date('2026-07-13T12:00:00.000Z'),
@@ -29,6 +33,14 @@ const mocks = vi.hoisted(() => {
   const calendar = {
     $app: {
       config: {
+        locale: {
+          get value() { return localeValue },
+          set value(value: string) {
+            localeAssignments.push(value)
+            localeValue = value
+            localeListeners.forEach((listener) => listener())
+          },
+        },
         timezone: { value: 'UTC' },
         firstDayOfWeek: { value: 1 },
         dayBoundaries: { value: { start: 700, end: 2300 } },
@@ -46,6 +58,11 @@ const mocks = vi.hoisted(() => {
     calendar,
     calendarState,
     preferencesState,
+    preferenceListeners,
+    localeListeners,
+    localeAssignments,
+    getLocale: () => localeValue,
+    setLocale: (value: string) => { localeValue = value },
     latestConfig: undefined as Record<string, any> | undefined,
     setEvents: vi.fn(),
     requestAnimationFrame: vi.fn(),
@@ -69,8 +86,18 @@ vi.mock('@schedule-x/react', () => ({
     mocks.latestConfig = config
     return mocks.calendar
   },
-  ScheduleXCalendar: () => (
+  ScheduleXCalendar: () => {
+    const locale = useSyncExternalStore(
+      (listener) => { mocks.localeListeners.add(listener); return () => mocks.localeListeners.delete(listener) },
+      mocks.getLocale,
+      mocks.getLocale,
+    )
+    const is24h = locale === 'en-GB'
+    return (
     <div className="sx-react-calendar-wrapper" data-testid="schedule-x">
+      <output aria-label={is24h ? '13/07/2026, 18:30' : '7/13/2026, 6:30 PM'}>
+        {is24h ? '18:30 · 13/07/2026' : '6:30 PM · 7/13/2026'}
+      </output>
       <div className="sx__week-grid" data-testid="time-grid">
         <div className="sx__time-grid-day" data-testid="day-column">
           <div
@@ -82,7 +109,8 @@ vi.mock('@schedule-x/react', () => ({
         </div>
       </div>
     </div>
-  ),
+    )
+  },
 }))
 
 vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'light' }) }))
@@ -98,7 +126,11 @@ vi.mock('@/app/stores/use-calendar-store', () => {
 })
 
 vi.mock('@/app/stores/use-preferences-store', () => {
-  const usePreferencesStore = (selector: (state: typeof mocks.preferencesState) => unknown) => selector(mocks.preferencesState)
+  const usePreferencesStore = (selector: (state: typeof mocks.preferencesState) => unknown) => useSyncExternalStore(
+    (listener) => { mocks.preferenceListeners.add(listener); return () => mocks.preferenceListeners.delete(listener) },
+    () => selector(mocks.preferencesState),
+    () => selector(mocks.preferencesState),
+  )
   usePreferencesStore.getState = () => mocks.preferencesState
   return { usePreferencesStore }
 })
@@ -150,6 +182,9 @@ beforeEach(() => {
   mocks.calendarState.currentView = 'week'
   mocks.calendarState.currentDate = new Date('2026-07-13T12:00:00.000Z')
   mocks.preferencesState.defaultTimezone = 'UTC'
+  mocks.preferencesState.timeFormat = '24h'
+  mocks.setLocale('en-GB')
+  mocks.localeAssignments.length = 0
   mocks.calendar.$app.config.dayBoundaries.value = { start: 700, end: 2300 }
   mocks.calendar.$app.config.weekOptions.value = { gridHeight: 900 }
   vi.stubGlobal('ResizeObserver', class {
@@ -188,6 +223,46 @@ function renderGestureHarness(projected: boolean) {
 }
 
 describe('CalendarGrid timed-event integration', () => {
+  it('updates mounted Schedule-X visible date and time output when synced time format changes', async () => {
+    render(<CalendarGrid events={[]} />)
+    expect(screen.getByText('18:30 · 13/07/2026')).toBeInTheDocument()
+
+    act(() => {
+      mocks.preferencesState.timeFormat = '12h'
+      mocks.preferenceListeners.forEach((listener) => listener())
+    })
+
+    expect(await screen.findByText('6:30 PM · 7/13/2026')).toBeInTheDocument()
+    expect(screen.getByLabelText('7/13/2026, 6:30 PM')).toBeInTheDocument()
+  })
+
+  it('updates mounted output from 12-hour back to 24-hour without remounting', async () => {
+    mocks.preferencesState.timeFormat = '12h'
+    mocks.setLocale('en-US')
+    const { container } = render(<CalendarGrid events={[]} />)
+    const instance = container.firstElementChild
+
+    act(() => {
+      mocks.preferencesState.timeFormat = '24h'
+      mocks.preferenceListeners.forEach((listener) => listener())
+    })
+
+    expect(await screen.findByText('18:30 · 13/07/2026')).toBeInTheDocument()
+    expect(container.firstElementChild).toBe(instance)
+  })
+
+  it('does not assign an equal locale during unrelated rerenders', () => {
+    const { rerender } = render(<CalendarGrid events={[]} />)
+    rerender(<CalendarGrid events={[]} />)
+    expect(mocks.localeAssignments).toEqual([])
+  })
+
+  it('fails safely when the pinned locale signal is absent at effect time', () => {
+    const locale = mocks.calendar.$app.config.locale
+    ;(mocks.calendar.$app.config as any).locale = undefined
+    expect(() => render(<CalendarGrid events={[]} />)).not.toThrow()
+    mocks.calendar.$app.config.locale = locale
+  })
   it('pins the Schedule-X versions whose private classifier behavior is relied on', () => {
     expect(packageJson.dependencies['@schedule-x/calendar']).toBe('4.3.1')
     expect(packageJson.dependencies['@schedule-x/events-service']).toBe('4.3.1')

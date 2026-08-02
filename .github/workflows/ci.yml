@@ -42,6 +42,8 @@ jobs:
           pnpm --filter @silentsuite/web build
           SILENTSUITE_HOSTED_DOCS_ANALYTICS=1 pnpm --filter @silentsuite/docs exec vitepress build --outDir .vitepress/dist-hosted
           pnpm --filter @silentsuite/docs exec vitepress build --outDir .vitepress/dist-self
+      - name: Test Android distribution documentation
+        run: pnpm --filter @silentsuite/docs test:android-distribution
       - name: Enforce source and bundle analytics boundary
         run: pnpm run check:public-analytics
 

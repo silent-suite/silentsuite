@@ -8,10 +8,10 @@ A privacy-focused, end-to-end encrypted sync service for calendar, contacts, and
 
 ### What's available right now?
 
-The v0.1.0-beta release covers:
+The current beta covers:
 
 - **Web app** at [app.silentsuite.io](https://app.silentsuite.io) — calendar, contacts, tasks, import/export, settings, admin
-- **Android** — Google Play plus signed APK channels such as GitHub Releases, Zapstore, and F-Droid
+- **Android** — Google Play, Obtainium, Zapstore, and signed APKs from GitHub Releases. Official F-Droid inclusion is pending.
 - **Desktop bridge** — CalDAV/CardDAV bridge for Thunderbird, Apple Calendar, Evolution, etc., on Linux / macOS / Windows
 - **Self-hosting** — two-container Docker stack (PostgreSQL + SilentSuite server)
 
@@ -21,7 +21,7 @@ See the [v0.1.0-beta release notes](https://github.com/silent-suite/silentsuite/
 
 On the roadmap, not yet shipped:
 
-- Native iOS app (the [EteSync iOS app](https://www.etesync.com/) works against your account in the meantime — same Etebase protocol)
+- Native iOS app — on the roadmap, coming soon, and in development; EteSync for iOS is not a supported or working SilentSuite client
 - OAuth-based one-click import from Google / iCloud
 - Push notifications
 - Multiple collections per account ([#88](https://github.com/silent-suite/silentsuite/issues/88))
@@ -72,22 +72,22 @@ No — an account belongs to a single server. Pick one when you sign up. To migr
 Use the same channel for install and updates:
 
 - **Google Play** - recommended if you installed from Play and want Play-managed updates.
-- **GitHub Releases / Zapstore / F-Droid** - direct APK channels for sideloading and open app-store distribution. To get the direct APK, sign in to [app.silentsuite.io](https://app.silentsuite.io) on a device with a screen, open *Settings → Mobile*, and either scan the QR code or use the direct download link to the latest GitHub Release.
+- **Obtainium / Zapstore / GitHub Releases** - independent channels for open app-store installation, GitHub-managed updates, or direct APK downloads. In *Settings → Mobile*, the QR code opens the [Android installation guide](https://docs.silentsuite.io/user-guide/apps/android), while the separate APK link opens the latest GitHub Release. Official F-Droid inclusion is pending.
 
 ### Why do I see a certificate mismatch when switching Android install channels?
 
-Android only allows an app update when the installed app and the update APK are signed with the same certificate. Google Play uses Play App Signing, so the APK installed from Play can have a different certificate than the direct APK published through GitHub Releases, Zapstore, or F-Droid.
+Android only allows an app update when the installed app and the update APK are signed with the same certificate. Google Play uses Play App Signing, so the APK installed from Play can have a different certificate than the developer-signed APK distributed through GitHub Releases, Zapstore, or a future F-Droid build.
 
 SilentSuite's known Android signing certificate SHA-256 hashes are:
 
 - **Google Play app signing certificate:** `2e10d9ef90276e755bddf086391d7e0c933589c6d36e4e43fae59a7babcb8a49`
-- **Direct APK release certificate for GitHub Releases, Zapstore, and reproducible/developer-signed F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
+- **Developer-signed release certificate for GitHub Releases, Zapstore, and future reproducible F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
 
 If you installed from Google Play, update through Google Play. If you installed from a direct APK channel, update through that same channel. Switching channels may require uninstalling and reinstalling the app. A mismatch warning in that situation is expected and does not by itself indicate a compromised build.
 
 ### How does the desktop bridge work?
 
-It runs a tiny CalDAV/CardDAV daemon bound to `localhost:37358`. Standard PIM clients (Thunderbird, Apple Calendar, Evolution, etc.) talk to it like any other DAV server. The bridge handles encryption/decryption against your silentsuite.io or self-hosted account; plaintext stays inside `localhost`.
+It runs a tiny CalDAV/CardDAV daemon bound to `localhost:37358`. Supported desktop clients such as Thunderbird, Calendar on macOS, and Evolution connect to that local endpoint. The bridge handles encryption/decryption against your silentsuite.io or self-hosted account; plaintext stays inside `localhost`.
 
 Install commands are in *Settings → Desktop* in the web app.
 

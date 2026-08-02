@@ -18,15 +18,15 @@ export function ReadOnlyBanner() {
       : 'Your subscription has ended.'
 
   return (
-    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200 md:mx-4">
-      <Lock className="h-4 w-4 shrink-0 text-amber-400" />
+    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200 md:mx-4">
+      <Lock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
       <span className="flex-1">
         {title} Your data is safe and read-only.
       </span>
       <div className="flex items-center gap-3">
         <Link
           href="/settings/subscription"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-amber-800 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 dark:bg-amber-400 dark:text-amber-950 dark:hover:bg-amber-300"
         >
           Choose a plan
           <ExternalLink className="h-3.5 w-3.5" />
@@ -60,15 +60,15 @@ export function DegradedModeBanner() {
   }
 
   return (
-    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-200 md:mx-4">
-      <WifiOff className="h-4 w-4 shrink-0 text-blue-400" />
+    <div className="mx-3 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-800 dark:text-blue-200 md:mx-4">
+      <WifiOff className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
       <span className="flex-1">
         Billing service temporarily unavailable. Your data is safe.
       </span>
       <button
         onClick={handleRetry}
         disabled={isRetrying}
-        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-500/20 disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-500/20 disabled:opacity-50 dark:text-blue-300"
       >
         <RefreshCw className={`h-3 w-3 ${isRetrying ? 'animate-spin' : ''}`} />
         {isRetrying ? 'Retrying…' : 'Retry'}
