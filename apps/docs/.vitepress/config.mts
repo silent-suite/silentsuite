@@ -54,7 +54,7 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/user-guide/apps/' },
             { text: 'Android', link: '/user-guide/apps/android' },
-            { text: 'iOS (EteSync)', link: '/user-guide/apps/ios' },
+            { text: 'iOS (Roadmap)', link: '/user-guide/apps/ios' },
             { text: 'Tasks.org', link: '/user-guide/apps/tasks-org' },
             { text: 'GNOME Evolution', link: '/user-guide/apps/evolution' },
             { text: 'KDE Kontact', link: '/user-guide/apps/kde' },
@@ -64,11 +64,11 @@ export default defineConfig({
           text: 'DAV Bridge Apps',
           items: [
             { text: 'DAV Bridge Setup', link: '/user-guide/apps/dav-bridge' },
+            { text: 'Linux', link: '/user-guide/apps/linux-bridge' },
             { text: 'Thunderbird', link: '/user-guide/apps/thunderbird' },
             { text: 'macOS', link: '/user-guide/apps/macos' },
             { text: 'Windows / Outlook', link: '/user-guide/apps/windows' },
             { text: 'GNOME Calendar', link: '/user-guide/apps/gnome' },
-            { text: 'Other Apps', link: '/user-guide/apps/other' },
           ],
         },
       ],

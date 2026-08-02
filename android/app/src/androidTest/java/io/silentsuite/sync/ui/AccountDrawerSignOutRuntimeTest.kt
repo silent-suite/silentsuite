@@ -14,6 +14,8 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
+import androidx.lifecycle.Lifecycle
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
@@ -33,7 +35,6 @@ class AccountDrawerSignOutRuntimeTest {
     private fun waitUntil(description: String, timeoutMillis: Long = 10_000, predicate: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + timeoutMillis
         while (SystemClock.uptimeMillis() < deadline) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             if (predicate()) return
             SystemClock.sleep(25)
         }
@@ -62,6 +63,132 @@ class AccountDrawerSignOutRuntimeTest {
                     assertEquals(activity.getString(R.string.account_switcher_expanded),
                         ViewCompat.getStateDescription(header)?.toString())
                 }
+            }
+        }
+    }
+
+    @Test fun replacementBeforeAccountRowClickDoesNotAdoptReplacementGeneration() {
+        val current = Fixture("switch-current")
+        val candidate = Fixture("switch-candidate")
+        try {
+            val currentIdentity = ExactAccountIdentity(
+                current.account.type,
+                current.account.name,
+                current.creationId,
+            )
+            assertTrue(ActiveAccountManager.setActiveAccount(current.context, currentIdentity))
+            val capturedIdentity = ExactAccountIdentity(
+                candidate.account.type,
+                candidate.account.name,
+                candidate.creationId,
+            )
+            ActivityScenario.launch<AccountActivity>(
+                AccountActivity.newIntent(current.context, current.account, current.creationId)
+            ).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                        .openDrawer(GravityCompat.START, false)
+                    activity.findViewById<View>(R.id.nav_account_header).performClick()
+                    assertTrue(activity.findViewById<View>(
+                        AccountActivity.accountRowViewId(capturedIdentity)
+                    ).isShown)
+                }
+
+                removeAccountAndWait(candidate.manager, candidate.account)
+                val replacementGeneration = "switch-candidate-replacement"
+                val replacementData = Bundle().apply {
+                    putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
+                }
+                assertTrue(candidate.manager.addAccountExplicitly(
+                    candidate.account,
+                    null,
+                    replacementData,
+                ))
+
+                scenario.onActivity { activity ->
+                    activity.findViewById<View>(
+                        AccountActivity.accountRowViewId(capturedIdentity)
+                    ).performClick()
+                    assertFalse(activity.isFinishing)
+                    assertEquals(current.account, ActiveAccountManager.getActiveAccount(current.context))
+                    assertEquals(
+                        current.creationId,
+                        activity.intent.getStringExtra(AccountActivity.EXTRA_CREATION_ID),
+                    )
+                    assertEquals(
+                        replacementGeneration,
+                        candidate.manager.getUserData(
+                            candidate.account,
+                            AccountSettings.KEY_CREATION_ID,
+                        ),
+                    )
+                }
+            }
+            postCommitGenerationRaceFailsClosedAndClearsOnlyTheWrittenIdentity(
+                candidate,
+                "switch-candidate-replacement",
+            )
+        } finally {
+            ActiveAccountManager.afterExactSetCommitForTest = null
+            candidate.close()
+            current.close()
+        }
+    }
+
+    private fun postCommitGenerationRaceFailsClosedAndClearsOnlyTheWrittenIdentity(
+        candidate: Fixture,
+        expectedGeneration: String,
+    ) {
+        val racedGeneration = "switch-candidate-raced-after-commit"
+        ActiveAccountManager.afterExactSetCommitForTest = {
+            check(AccountSettings.writeVerified(
+                candidate.manager,
+                candidate.account,
+                AccountSettings.KEY_CREATION_ID,
+                racedGeneration,
+            ))
+        }
+        val selected = ActiveAccountManager.setActiveAccount(
+            candidate.context,
+            ExactAccountIdentity(
+                candidate.account.type,
+                candidate.account.name,
+                expectedGeneration,
+            ),
+        )
+        ActiveAccountManager.afterExactSetCommitForTest = null
+
+        assertFalse(selected)
+        assertNull(ActiveAccountManager.getActiveAccount(candidate.context))
+        assertEquals(
+            racedGeneration,
+            candidate.manager.getUserData(
+                candidate.account,
+                AccountSettings.KEY_CREATION_ID,
+            ),
+        )
+    }
+
+    @Test fun systemBackClosesDrawerWithoutFinishing() {
+        val fixture = Fixture("system-back-drawer")
+        fixture.use { account ->
+            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(fixture.context, account)).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                        .openDrawer(GravityCompat.START, false)
+                    assertTrue(activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                        .isDrawerOpen(GravityCompat.START))
+                }
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
+                waitUntil("drawer to close after system Back") {
+                    var closed = false
+                    scenario.onActivity { activity ->
+                        closed = !activity.isFinishing && !activity.findViewById<DrawerLayout>(R.id.drawer_layout)
+                            .isDrawerOpen(GravityCompat.START)
+                    }
+                    closed
+                }
+                assertEquals(Lifecycle.State.RESUMED, scenario.state)
             }
         }
     }
@@ -104,7 +231,7 @@ class AccountDrawerSignOutRuntimeTest {
         check(target.manager.addAccountExplicitly(
             child,
             null,
-            LocalAddressBook.initialUserData(target.account, "https://example.invalid/address-book"),
+            LocalAddressBook.initialUserData(target.account, SyncStatusStore(target.context).identity(target.account), "https://example.invalid/address-book"),
         ))
         try {
             assertTrue(ActiveAccountManager.setActiveAccount(target.context, target.account))
@@ -160,7 +287,8 @@ class AccountDrawerSignOutRuntimeTest {
             adapter = retainedAdapter
             removeAccountAndWait(fixture.manager, fixture.account)
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            val replacementGeneration = "replacement-generation"
+            val replacementGeneration = "replacement-successor-generation"
+            assertNotEquals(fixture.creationId, replacementGeneration)
             val replacementData = Bundle().apply {
                 putString(AccountSettings.KEY_CREATION_ID, replacementGeneration)
             }

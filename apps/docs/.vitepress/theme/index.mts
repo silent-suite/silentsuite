@@ -1,5 +1,7 @@
 import DefaultTheme from 'vitepress/theme'
+import type { EnhanceAppContext } from 'vitepress'
 import { defineComponent, h, onMounted, onUnmounted } from 'vue'
+import AppLogoStrip from './components/AppLogoStrip.vue'
 import { classifyDocsOutboundEvent } from './public-analytics.mts'
 import './custom.css'
 
@@ -27,6 +29,10 @@ function sendDocsEvent(event: ReturnType<typeof classifyDocsOutboundEvent>) {
 
 export default {
   ...DefaultTheme,
+  enhanceApp(context: EnhanceAppContext) {
+    DefaultTheme.enhanceApp?.(context)
+    context.app.component('AppLogoStrip', AppLogoStrip)
+  },
   Layout: defineComponent({
     setup() {
       const handleClick = (event: MouseEvent) => {

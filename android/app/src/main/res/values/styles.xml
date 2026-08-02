@@ -111,12 +111,32 @@
         <item name="android:textColor">@color/semantic_on_surface</item>
     </style>
 
+    <style name="TextAppearance.AppTheme.FirstRun.Title" parent="TextAppearance.AppTheme.Material3.Title">
+        <item name="android:textSize">24sp</item>
+    </style>
+
+    <style name="TextAppearance.AppTheme.FirstRun.Body" parent="TextAppearance.AppTheme.Material3.Body">
+        <item name="android:textSize">16sp</item>
+    </style>
+
     <style name="ShapeAppearance.AppTheme.Material3.Standard" parent="ShapeAppearance.Material3.Corner.Medium">
         <item name="cornerSize">@dimen/shape_radius_standard</item>
     </style>
 
     <style name="Widget.AppTheme.Material3.Button" parent="Widget.Material3.Button">
         <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
+    </style>
+
+    <style name="Widget.AppTheme.Material3.Button.Text" parent="Widget.Material3.Button.TextButton">
+        <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="android:textColor">@color/button_secondary_text</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
+    </style>
+
+    <style name="Widget.AppTheme.Material3.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:minHeight">@dimen/touch_target_min</item>
+        <item name="android:textColor">@color/button_secondary_text</item>
         <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
     </style>
 
@@ -133,7 +153,9 @@
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
 
-    <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.FilledBox">
+    <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundColor">@color/semantic_surface</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
         <item name="boxStrokeColor">@color/semantic_outline</item>
         <item name="boxStrokeErrorColor">@color/semantic_error</item>
         <item name="boxStrokeWidthFocused">2dp</item>

@@ -21,6 +21,8 @@
     <color name="semantic_on_surface">#17212E</color>
     <color name="semantic_outline">#5B6878</color>
     <color name="semantic_primary">@color/teal600</color>
+    <color name="semantic_secondary_action">#047857</color>
+    <color name="nav_account_selected_background">#1F10B981</color>
     <color name="semantic_success">#15803D</color>
     <color name="semantic_warning">#B45309</color>
     <color name="semantic_error">#B91C1C</color>

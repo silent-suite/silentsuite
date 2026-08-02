@@ -17,6 +17,7 @@ import { EventDialog } from './components/EventDialog'
 import { FloatingAddButton } from './components/FloatingAddButton'
 import { resolveUserTimezone } from '@/app/lib/tz'
 import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
+import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 
 /** Snap a Date to the nearest 30-minute boundary */
 function snapTo30Min(date: Date): Date {
@@ -137,7 +138,7 @@ interface CreateDialogState {
   allDay: boolean
 }
 
-export default function CalendarPage() {
+function CalendarPageBody() {
   const t = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())
   const events = useCalendarStore((s) => s.events)
@@ -563,4 +564,16 @@ export default function CalendarPage() {
       />
     </div>
   )
+}
+
+export default function CalendarPage() {
+  const preferenceStatus = usePreferencesSyncStore((state) => state.status)
+  const accountKey = useAuthStore((state) => state.user?.email ?? 'no-account')
+  const preferencesTerminal = preferenceStatus === 'ready' || preferenceStatus === 'unavailable' || preferenceStatus === 'failed'
+
+  if (!preferencesTerminal) {
+    return <div className="flex h-full flex-col"><CalendarSkeleton /></div>
+  }
+
+  return <CalendarPageBody key={accountKey} />
 }

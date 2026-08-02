@@ -5,6 +5,8 @@
     <color name="semantic_on_surface">#F0F3F7</color>
     <color name="semantic_outline">#AAB5C4</color>
     <color name="semantic_primary">@color/teal400</color>
+    <color name="semantic_secondary_action">@color/teal400</color>
+    <color name="nav_account_selected_background">#2934D399</color>
     <color name="semantic_success">#4ADE80</color>
     <color name="semantic_warning">#FBBF24</color>
     <color name="semantic_error">#FCA5A5</color>

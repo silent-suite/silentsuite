@@ -17,7 +17,12 @@
 
 set -e
 
-cleanup() { rm -f "$TMP_FILE"; }
+TMP_FILE=""
+TMP_CHECKSUM=""
+cleanup() {
+    [ -z "$TMP_FILE" ] || rm -f "$TMP_FILE"
+    [ -z "$TMP_CHECKSUM" ] || rm -f "$TMP_CHECKSUM"
+}
 trap cleanup EXIT
 
 # --- Configuration ---
@@ -122,33 +127,50 @@ install_binary() {
         wget -qO "$TMP_FILE" "$DOWNLOAD_URL"
     fi
 
-    # Verify checksum if available
+    # Verification is mandatory. Never install a binary when the verifier or
+    # release sidecar is unavailable, ambiguous, malformed, or mismatched.
     CHECKSUM_URL="${DOWNLOAD_URL}.sha256"
     if command -v sha256sum >/dev/null 2>&1; then
         SHA256CMD="sha256sum"
     elif command -v shasum >/dev/null 2>&1; then
         SHA256CMD="shasum -a 256"
     else
-        SHA256CMD=""
+        error "No supported SHA-256 verifier found. Install sha256sum or shasum and retry."
     fi
 
-    if [ -n "$SHA256CMD" ]; then
-        if command -v curl >/dev/null 2>&1; then
-            EXPECTED_HASH=$(curl -fsSL "$CHECKSUM_URL" 2>/dev/null | awk '{print $1}' || true)
-        else
-            EXPECTED_HASH=$(wget -qO- "$CHECKSUM_URL" 2>/dev/null | awk '{print $1}' || true)
-        fi
-        if [ -n "$EXPECTED_HASH" ]; then
-            ACTUAL_HASH=$($SHA256CMD "$TMP_FILE" | awk '{print $1}')
-            if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
-                rm -f "$TMP_FILE"
-                error "Checksum mismatch! Download may be corrupted."
-            fi
-            info "Checksum verified"
-        fi
+    TMP_CHECKSUM=$(mktemp)
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$CHECKSUM_URL" -o "$TMP_CHECKSUM" || error "Could not download the release checksum; refusing to install an unverified binary."
+    else
+        wget -qO "$TMP_CHECKSUM" "$CHECKSUM_URL" || error "Could not download the release checksum; refusing to install an unverified binary."
     fi
+
+    if [ "$(tail -c 1 "$TMP_CHECKSUM" | wc -l | tr -d '[:space:]')" != "1" ]; then
+        error "Invalid checksum content; expected a newline-terminated checksum line."
+    fi
+
+    EXPECTED_HASH=$(awk -v expected_name="$ASSET_NAME" '
+        {
+            lines += 1
+            if (NF == 2 && length($1) == 64 && $1 ~ /^[0-9A-Fa-f]+$/ && $2 == expected_name && $0 == $1 "  " expected_name) hash = tolower($1)
+            else invalid = 1
+        }
+        END {
+            if (lines == 1 && !invalid && hash != "") print hash
+        }
+    ' "$TMP_CHECKSUM")
+    if [ -z "$EXPECTED_HASH" ]; then
+        error "Invalid checksum content; expected one SHA-256 checksum line."
+    fi
+
+    ACTUAL_HASH=$($SHA256CMD "$TMP_FILE" | awk 'NR == 1 { print tolower($1) }')
+    if [ -z "$ACTUAL_HASH" ] || [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
+        error "Checksum mismatch! Download may be corrupted."
+    fi
+    info "Checksum verified"
 
     mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
+    TMP_FILE=""
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 
     # macOS: remove quarantine flag so Gatekeeper doesn't block the binary

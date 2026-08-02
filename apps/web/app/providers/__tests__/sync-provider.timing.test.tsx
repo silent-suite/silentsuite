@@ -1,5 +1,5 @@
 import { render, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SyncProvider } from '../sync-provider'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
@@ -76,6 +76,14 @@ const etebaseMock = vi.hoisted(() => {
 const taskStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.push('syncTasks')) }))
 const contactStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.push('syncContacts')) }))
 const calendarStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.push('syncCalendar')) }))
+const preferencesSyncMock = vi.hoisted(() => ({
+  operationGeneration: 7,
+  beginRemoteRead: vi.fn(() => 11),
+  initialize: vi.fn(async () => {}),
+  loadFromRemote: vi.fn(async () => {}),
+  recordRemoteReadFailure: vi.fn(),
+  destroy: vi.fn(),
+}))
 
 const cacheMock = vi.hoisted(() => ({
   getItemsByType: vi.fn(async (type: string) => {
@@ -159,7 +167,7 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({
 
 vi.mock('@/app/stores/use-preferences-sync-store', () => ({
   usePreferencesSyncStore: {
-    getState: () => ({ initialize: vi.fn(async () => {}), loadFromRemote: vi.fn(async () => {}), destroy: vi.fn() }),
+    getState: () => preferencesSyncMock,
   },
 }))
 
@@ -204,6 +212,29 @@ describe('SyncProvider timing instrumentation', () => {
     timingMock.logSyncTiming.mockImplementation(() => {})
     timingMock.markSyncTimingStart.mockReturnValue(100)
     timingMock.nowMs.mockReturnValue(100)
+  })
+
+  it('publishes provider-owned preference refresher failures for the captured operation', async () => {
+    etebaseMock.state.refreshCollection.mockRejectedValueOnce(new Error('transport details'))
+    renderProvider()
+    await waitFor(() => expect(etebaseMock.getSyncChangeHandler()).not.toBeNull())
+
+    await etebaseMock.getSyncChangeHandler()?.({
+      collectionType: 'silentsuite.preferences',
+      collectionUid: 'preferences',
+      itemUids: [],
+      changeType: 'update',
+    })
+
+    expect(preferencesSyncMock.recordRemoteReadFailure).toHaveBeenCalledWith(expect.any(Number), 7, 11)
+    expect(preferencesSyncMock.loadFromRemote).not.toHaveBeenCalled()
+  })
+
+  it('does not reset preference readiness during React Strict Mode effect replay', async () => {
+    render(<StrictMode><SyncProvider><div>child</div></SyncProvider></StrictMode>)
+
+    await waitFor(() => expect(preferencesSyncMock.initialize).toHaveBeenCalledTimes(1))
+    expect(preferencesSyncMock.destroy).not.toHaveBeenCalled()
   })
 
   it('loads each domain into its store as the domain callback fires (calendar first)', async () => {

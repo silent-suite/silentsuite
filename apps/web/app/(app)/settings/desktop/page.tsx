@@ -13,8 +13,8 @@ export default function DesktopSettingsPage() {
           Desktop bridge
         </h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Install the SilentSuite bridge to use SilentSuite from Thunderbird, Apple Calendar,
-          GNOME Calendar, Evolution, or any standard CalDAV/CardDAV client.
+          Install the SilentSuite bridge to use SilentSuite from supported desktop clients such as
+          Thunderbird, Calendar on macOS, GNOME Calendar, Evolution, KDE Kontact, or Outlook on Windows.
         </p>
       </div>
 

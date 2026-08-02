@@ -78,6 +78,22 @@ describe('PartialLoadBanner', () => {
     expect(syncState.simulateSyncCycle).toHaveBeenCalledTimes(1)
   })
 
+  it('uses contrasting foregrounds in both light and dark modes', () => {
+    authState.isAuthenticated = true
+    syncState.partialLoad = true
+
+    render(<PartialLoadBanner />)
+
+    expect(screen.getByText(/Some of your data could not be loaded/i)).toHaveClass(
+      'text-amber-800',
+      'dark:text-amber-100',
+    )
+    expect(screen.getByRole('button', { name: /retry sync/i })).toHaveClass(
+      'text-amber-800',
+      'dark:text-amber-100',
+    )
+  })
+
   it('disables retry while syncing or offline', () => {
     authState.isAuthenticated = true
     syncState.partialLoad = true

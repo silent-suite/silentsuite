@@ -43,7 +43,9 @@ const storeMock = vi.hoisted(() => ({
   },
   authState: {
     canWrite: vi.fn(() => true),
+    user: { email: 'account-a@example.test' },
   },
+  preferencesSyncState: { status: 'ready' as 'idle' | 'loading' | 'ready' | 'unavailable' | 'failed' },
 }))
 
 vi.mock('@/app/stores/use-calendar-store', () => ({
@@ -56,6 +58,10 @@ vi.mock('@/app/stores/use-calendar-list-store', () => ({
 
 vi.mock('@/app/stores/use-auth-store', () => ({
   useAuthStore: (selector: (state: typeof storeMock.authState) => unknown) => selector(storeMock.authState),
+}))
+
+vi.mock('@/app/stores/use-preferences-sync-store', () => ({
+  usePreferencesSyncStore: (selector: (state: typeof storeMock.preferencesSyncState) => unknown) => selector(storeMock.preferencesSyncState),
 }))
 
 vi.mock('@/app/stores/use-preferences-store', () => ({
@@ -117,6 +123,7 @@ function resetCalendarMocks() {
   storeMock.calendarState.setSearchQuery.mockReset()
   storeMock.authState.canWrite.mockReturnValue(true)
   timingMock.logCalendarPaintTiming.mockReset()
+  storeMock.preferencesSyncState.status = 'ready'
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0))
   vi.stubGlobal('cancelAnimationFrame', (handle: number) => window.clearTimeout(handle))
 }
@@ -133,6 +140,31 @@ describe('CalendarPage calendar visibility', () => {
       { id: 'visible-cal', name: 'Visible', color: '#10b981', visible: true },
       { id: 'hidden-cal', name: 'Hidden', color: '#ef4444', visible: false },
     ]
+  })
+
+  it('mounts only the calendar skeleton while preference hydration is pending', () => {
+    storeMock.preferencesSyncState.status = 'loading'
+    renderWithIntl(<CalendarPage />)
+
+    expect(screen.queryByTestId('desktop-grid')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-agenda')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New event' })).not.toBeInTheDocument()
+    expect(document.querySelector('.skeleton-shimmer')).toBeInTheDocument()
+  })
+
+  it('resets account-local calendar body state across idle before the next account is ready', () => {
+    const rendered = renderWithIntl(<CalendarPage />)
+    fireEvent.click(screen.getByRole('button', { name: manageCalendars }))
+    expect(screen.getByTestId('collection-sheet')).toBeInTheDocument()
+
+    storeMock.preferencesSyncState.status = 'idle'
+    rendered.rerender(<CalendarPage />)
+    expect(screen.queryByTestId('collection-sheet')).not.toBeInTheDocument()
+
+    storeMock.authState.user.email = 'account-b@example.test'
+    storeMock.preferencesSyncState.status = 'ready'
+    rendered.rerender(<CalendarPage />)
+    expect(screen.queryByTestId('collection-sheet')).not.toBeInTheDocument()
   })
 
   it('keeps hidden calendar events out of desktop grid and mobile agenda', () => {
