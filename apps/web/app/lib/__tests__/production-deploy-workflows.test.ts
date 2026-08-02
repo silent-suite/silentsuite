@@ -118,6 +118,7 @@ function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVari
 }
 
 const deployRunbook = readFileSync(resolve(process.cwd(), '../../runbooks/production-deploy.md'), 'utf8')
+const billingLinkRollout = readFileSync(resolve(process.cwd(), '../../docs/operator-billing-link-proof-rollout.md'), 'utf8')
 
 function jobBlock(source: string, name: string): string {
   const lines = source.replace(/\r\n/g, '\n').split('\n')
@@ -161,6 +162,13 @@ describe('production deployment workflow integrity', () => {
     expect(deployRunbook).toContain('deployment branch policy that permits only `main`')
     expect(deployRunbook).toContain('Do not set an approval variable or dispatch any production workflow until this verification succeeds')
     expect(deployRunbook).toContain('all three component environments exist with a custom `main`-only deployment branch policy')
+  })
+
+  it('keeps the Billing verifier through the previous-image rollback window', () => {
+    expect(billingLinkRollout).toContain('0025_retain_etebase_session_verifier.sql')
+    expect(billingLinkRollout).toContain('rollback-eligible Billing image')
+    expect(billingLinkRollout).toContain('later reviewed contract release')
+    expect(billingLinkRollout).not.toContain('0025_remove_etebase_session_verifier.sql')
   })
 
   it.each([
