@@ -6,8 +6,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PostLoginSetupStateTest {
-    @Test fun `codec accepts supported states and rejects unknown`() {
-        assertEquals(PostLoginSetupState.READY, PostLoginSetupState.decode("READY", bootstrapped = true))
+    @Test fun `codec round trips the exact durable state ledger and fails closed`() {
+        assertEquals(
+            listOf(
+                "CREATING", "ACCOUNT_CREATED", "COLLECTIONS", "PERMISSIONS",
+                "INITIAL_SYNC", "READY", "COMPLETE", "RECOVERY_REQUIRED",
+            ),
+            PostLoginSetupState.values().map { it.name },
+        )
+        PostLoginSetupState.values().forEach {
+            assertEquals(it, PostLoginSetupState.decode(it.name, bootstrapped = true))
+        }
         assertEquals(PostLoginSetupState.RECOVERY_REQUIRED, PostLoginSetupState.decode("future", bootstrapped = true))
         assertEquals(null, PostLoginSetupState.decode(null, bootstrapped = false))
         assertEquals(PostLoginSetupState.RECOVERY_REQUIRED, PostLoginSetupState.decode(null, bootstrapped = true))
@@ -24,8 +33,10 @@ class PostLoginSetupStateTest {
         assertTrue(PostLoginSetupState.COMPLETE.isComplete)
     }
 
-    @Test fun `initial sync is requested before the non blocking ready transition`() {
+    @Test fun `explicit lifecycle events remain forward only`() {
         assertEquals(PostLoginSetupState.PERMISSIONS, PostLoginSetupState.COLLECTIONS.afterCollections())
+        assertEquals(PostLoginSetupState.INITIAL_SYNC,
+            PostLoginSetupState.PERMISSIONS.continueWithCurrentIntegrations())
         assertEquals(PostLoginSetupState.READY, PostLoginSetupState.INITIAL_SYNC.afterInitialSyncRequested())
         assertEquals(PostLoginSetupState.READY, PostLoginSetupState.READY.afterInitialSyncRequested())
     }

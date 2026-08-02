@@ -20,12 +20,14 @@ import android.provider.ContactsContract.Groups
 import android.provider.ContactsContract.RawContacts
 import at.bitfire.vcard4android.*
 import com.etebase.client.CollectionAccessLevel
+import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.syncadapter.putSyncMainIdentity
 
 import java.io.FileNotFoundException
 import java.util.*
@@ -46,15 +48,22 @@ class LocalAddressBook(
     companion object {
         val USER_DATA_MAIN_ACCOUNT_TYPE = "real_account_type"
         val USER_DATA_MAIN_ACCOUNT_NAME = "real_account_name"
+        val USER_DATA_MAIN_ACCOUNT_IDENTITY = "real_account_identity"
         val USER_DATA_URL = "url"
         const val USER_DATA_READ_ONLY = "read_only"
+        const val USER_DATA_CREATION_ID = "sync_status_child_creation_id"
+        private val CHILD_ID_LOCK = Any()
 
         fun create(context: Context, provider: ContentProviderClient, mainAccount: Account, cachedCollection: CachedCollection): LocalAddressBook {
             val col = cachedCollection.col
             val accountManager = AccountManager.get(context)
 
             val account = Account(accountName(mainAccount, cachedCollection), App.addressBookAccountType)
-            val userData = initialUserData(mainAccount, col.uid)
+            accountManager.getUserData(mainAccount, AccountSettings.KEY_CREATION_ID)
+                ?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("Main account has no creation ID")
+            val statusStore = SyncStatusStore(context)
+            val userData = initialUserData(mainAccount, statusStore.identity(mainAccount), col.uid)
             Logger.log.info("Creating local address book")
             if (!accountManager.addAccountExplicitly(account, null, userData))
                 throw IllegalStateException("Couldn't create address book account")
@@ -120,11 +129,17 @@ class LocalAddressBook(
             return "${displayName} (${mainAccount.name} ${col.uid.substring(0, 2)})"
         }
 
-        fun initialUserData(mainAccount: Account, url: String): Bundle {
-            val bundle = Bundle(3)
+        fun initialUserData(mainAccount: Account, mainIdentity: SyncStatusStore.MainIdentity, url: String,
+            childCreationId: String = UUID.randomUUID().toString()): Bundle {
+            val storageKey = mainIdentity.storageKey
+            require(SyncStatusStore.identityFromStorageKey(storageKey) != null) { "Main account identity must be SHA-256" }
+            require(childCreationId.isNotBlank())
+            val bundle = Bundle(5)
             bundle.putString(USER_DATA_MAIN_ACCOUNT_NAME, mainAccount.name)
             bundle.putString(USER_DATA_MAIN_ACCOUNT_TYPE, mainAccount.type)
+            bundle.putString(USER_DATA_MAIN_ACCOUNT_IDENTITY, storageKey)
             bundle.putString(USER_DATA_URL, url)
+            bundle.putString(USER_DATA_CREATION_ID, childCreationId)
             return bundle
         }
     }
@@ -152,8 +167,14 @@ class LocalAddressBook(
         }
         set(newMainAccount) {
             AccountManager.get(context).let { accountManager ->
+                accountManager.getUserData(newMainAccount, AccountSettings.KEY_CREATION_ID)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException("Main account has no creation ID")
+                val mainIdentity = SyncStatusStore(context).identity(newMainAccount)
+                require(SyncStatusStore.identityFromStorageKey(mainIdentity.storageKey) != null)
                 accountManager.setUserData(account, USER_DATA_MAIN_ACCOUNT_NAME, newMainAccount.name)
                 accountManager.setUserData(account, USER_DATA_MAIN_ACCOUNT_TYPE, newMainAccount.type)
+                accountManager.setUserData(account, USER_DATA_MAIN_ACCOUNT_IDENTITY, mainIdentity.storageKey)
             }
 
             _mainAccount = newMainAccount
@@ -168,7 +189,22 @@ class LocalAddressBook(
         get() = AccountManager.get(context).getUserData(account, USER_DATA_READ_ONLY) != null
         set(readOnly) = AccountManager.get(context).setUserData(account, USER_DATA_READ_ONLY, if (readOnly) "1" else null)
 
+    internal fun ensureLifecycleCreationId(): String = synchronized(CHILD_ID_LOCK) {
+        val accountManager = AccountManager.get(context)
+        val existing = accountManager.getUserData(account, USER_DATA_CREATION_ID)
+            ?.takeIf { runCatching { SyncStatusStore(context).childIdentity(account, it) }.isSuccess }
+        if (existing != null) return@synchronized existing
+
+        val generated = UUID.randomUUID().toString()
+        accountManager.setUserData(account, USER_DATA_CREATION_ID, generated)
+        check(accountManager.getUserData(account, USER_DATA_CREATION_ID) == generated) {
+            "Couldn't persist address book lifecycle generation"
+        }
+        generated
+    }
+
     fun update(cachedCollection: CachedCollection) {
+        ensureLifecycleCreationId()
         val col = cachedCollection.col
         val newAccountName = accountName(mainAccount, cachedCollection)
 
@@ -202,14 +238,34 @@ class LocalAddressBook(
         val accountManager = AccountManager.get(context)
         val main = mainAccount
         val child = account
+        val statusStore = SyncStatusStore(context)
+        runCatching { ensureLifecycleCreationId() }
+        val capturedChildIdentity = statusStore.childIdentity(child)
+        val capturedIdentity = SyncStatusStore.identityFromStorageKey(
+            accountManager.getUserData(child, USER_DATA_MAIN_ACCOUNT_IDENTITY))
         val recordConfirmedRemoval = {
-            val recorded = runCatching { SyncStatusStore(context).recordContactsChildRemoved(main, child) }.getOrDefault(false)
-            if (!recorded) {
-                val extras = Bundle().apply {
-                    putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)
-                    putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+            // Legacy children have no trustworthy child generation: delete them without
+            // attaching evidence, then refresh only a still-current captured parent generation.
+            if (capturedIdentity != null) {
+                // The platform callback may run after a same-name main account has been replaced.
+                val mainGenerationStillCurrent = {
+                    accountManager.getAccountsByType(main.type).any { candidate ->
+                        candidate == main &&
+                            !accountManager.getUserData(candidate, AccountSettings.KEY_CREATION_ID).isNullOrBlank() &&
+                            statusStore.identity(candidate) == capturedIdentity
+                    }
                 }
-                ContentResolver.requestSync(main, context.getString(R.string.address_books_authority), extras)
+                val recorded = if (capturedChildIdentity != null) runCatching {
+                    statusStore.recordContactsChildRemoved(capturedIdentity, capturedChildIdentity)
+                }.getOrDefault(false) else false
+                if (!recorded && mainGenerationStillCurrent()) {
+                    val extras = Bundle().apply {
+                        putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)
+                        putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                        putSyncMainIdentity(this, capturedIdentity)
+                    }
+                    ContentResolver.requestSync(main, context.getString(R.string.address_books_authority), extras)
+                }
             }
             Unit
         }

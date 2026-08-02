@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.view.*
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
 import androidx.fragment.app.Fragment
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
@@ -28,6 +29,12 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
         supportActionBar!!.setDisplayHomeAsUpEnabled(true)
 
         title = getString(R.string.import_dialog_title)
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                popBackStack()
+            }
+        })
 
         val extras = requireNotNull(intent.extras) { "ImportActivity requires intent extras" }
         account = requireNotNull(extras.getParcelable(EXTRA_ACCOUNT)) { "ImportActivity requires EXTRA_ACCOUNT" }
@@ -95,14 +102,6 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
             return true
         }
         return false
-    }
-
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            popBackStack()
-            return true
-        }
-        return super.onKeyDown(keyCode, event)
     }
 
     override fun cancel() {

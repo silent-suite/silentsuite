@@ -22,6 +22,8 @@ import sys
 import threading
 import webbrowser
 
+from .privacy_logging import bounded_exception_class
+
 try:
     # pystray may fail to import if no display is available
     import pystray
@@ -197,7 +199,7 @@ class BridgeTray:
                         continue
                 logger.warning("No clipboard tool found (xclip, xsel, or wl-copy)")
         except Exception as e:
-            logger.warning("Failed to copy to clipboard: %s", e)
+            logger.warning("Failed to copy to clipboard (%s)", bounded_exception_class(e))
 
     def _reauthenticate(self):
         """Open browser auth flow for re-authentication."""
@@ -209,14 +211,20 @@ class BridgeTray:
                 email = browser_login(running_bridge=True)
                 if email:
                     refresh_sync_thread(email)
-                    logger.info("Account added or re-authenticated from tray: %s", email)
+                    logger.info("Account added or re-authenticated from tray")
             except Exception as e:
-                logger.error("Failed to complete re-authentication: %s", e)
+                logger.error(
+                    "Failed to complete re-authentication (%s)",
+                    bounded_exception_class(e),
+                )
 
         try:
             threading.Thread(target=run_login, daemon=True).start()
         except Exception as e:
-            logger.error("Failed to start re-authentication: %s", e)
+            logger.error(
+                "Failed to start re-authentication (%s)",
+                bounded_exception_class(e),
+            )
 
     def update_state(self, state, error=None):
         """Update the tray icon state."""

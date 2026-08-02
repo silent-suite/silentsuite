@@ -40,7 +40,6 @@ SilentSuite is a pnpm monorepo managed by Turborepo:
 ```
 silentsuite/
   apps/
-    landing/         # Landing page and blog (Next.js)
     web/             # Main web application (Next.js)
     docs/            # Documentation (you are here)
   android/           # Kotlin Android sync adapter

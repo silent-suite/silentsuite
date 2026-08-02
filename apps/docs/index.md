@@ -28,4 +28,19 @@ features:
     title: Contributing
     details: Set up a development environment, understand the architecture, and contribute to SilentSuite.
     link: /contributing/dev-setup
+  - icon: 🔌
+    title: Apps & Integrations
+    details: Set up Android, Tasks.org, and supported desktop integrations, or review the iOS roadmap.
+    link: /user-guide/apps/
 ---
+
+## Use the Apps You Know
+
+Keep your encrypted SilentSuite data on the devices and in the apps that fit your workflow. Open an app's official site below, or follow the [Apps & Integrations setup guides](/user-guide/apps/).
+
+<AppLogoStrip />
+
+<p class="app-logo-note">
+  App names and logos identify their respective products and do not imply endorsement or partnership.
+  <a href="/app-logo-notices">Sources, licenses, and trademark notices</a>.
+</p>

@@ -27,12 +27,15 @@ import hashlib
 import hmac as hmac_mod
 import os
 import secrets as secrets_mod
+import threading
 from unittest.mock import MagicMock
 
 import pytest
 
+from silentsuite_bridge import accounts as accounts_module
 from silentsuite_bridge import config
 from silentsuite_bridge.accounts import store_authenticated_account
+from silentsuite_bridge.radicale import auth as auth_module
 from silentsuite_bridge.radicale.auth import Auth
 from silentsuite_bridge.radicale.creds import Credentials
 
@@ -268,3 +271,124 @@ class TestEndToEndAuthSetup:
         assert creds.get_etebase("alice@example.com") == "alice-session"
         assert auth.login("alice@example.com", PASSWORD) == "alice@example.com"
         assert auth.login("bob@example.com", PASSWORD) == "bob@example.com"
+
+
+def test_password_rotation_during_pbkdf2_rejects_stale_authentication(
+    creds_file, monkeypatch,
+):
+    _seed_pbkdf2_user(creds_file)
+    auth = Auth(_radicale_config_stub())
+    original_pbkdf2 = hashlib.pbkdf2_hmac
+    rotated = False
+
+    def rotate_during_hash(name, password, salt, iterations):
+        nonlocal rotated
+        result = original_pbkdf2(name, password, salt, iterations)
+        if not rotated:
+            rotated = True
+            replacement_salt = os.urandom(32)
+            replacement_hash = original_pbkdf2(
+                "sha256",
+                b"replacement-password",
+                replacement_salt,
+                600000,
+            ).hex()
+            replacement = Credentials(filename=creds_file)
+            replacement.set_etebase(
+                USERNAME,
+                "replacement-session",
+                "https://test.silentsuite.io",
+            )
+            replacement.set_password_salt(USERNAME, replacement_salt.hex())
+            replacement.set_password_hash(USERNAME, replacement_hash)
+            replacement.save()
+        return result
+
+    monkeypatch.setattr(
+        auth_module.hashlib,
+        "pbkdf2_hmac",
+        rotate_during_hash,
+    )
+
+    assert auth.login(USERNAME, PASSWORD) == ""
+
+
+def test_password_rotation_during_legacy_upgrade_is_not_overwritten(
+    creds_file, monkeypatch,
+):
+    _seed_legacy_sha256_user(creds_file)
+    auth = Auth(_radicale_config_stub())
+    original_pbkdf2 = hashlib.pbkdf2_hmac
+
+    def rotate_during_upgrade(name, password, salt, iterations):
+        result = original_pbkdf2(name, password, salt, iterations)
+        replacement_salt = os.urandom(32)
+        replacement = Credentials(filename=creds_file)
+        replacement.set_etebase(
+            USERNAME,
+            "replacement-session",
+            "https://test.silentsuite.io",
+        )
+        replacement.set_password_salt(USERNAME, replacement_salt.hex())
+        replacement.set_password_hash(
+            USERNAME,
+            original_pbkdf2(
+                "sha256",
+                b"replacement-password",
+                replacement_salt,
+                600000,
+            ).hex(),
+        )
+        replacement.save()
+        return result
+
+    monkeypatch.setattr(
+        auth_module.hashlib,
+        "pbkdf2_hmac",
+        rotate_during_upgrade,
+    )
+
+    assert auth.login(USERNAME, PASSWORD) == ""
+    persisted = Credentials(filename=creds_file)
+    assert persisted.get_etebase(USERNAME) == "replacement-session"
+
+
+def test_password_rotation_cannot_commit_after_final_check_before_auth_returns(
+    creds_file, monkeypatch,
+):
+    _seed_pbkdf2_user(creds_file)
+    auth = Auth(_radicale_config_stub())
+    monkeypatch.setattr(
+        accounts_module,
+        "_password_hash",
+        lambda _password: ("00", "11"),
+    )
+    original_compare = hmac_mod.compare_digest
+    rotation_started = threading.Event()
+    rotation_completed = threading.Event()
+    rotation_thread = None
+
+    def compare_while_rotation_waits(left, right):
+        nonlocal rotation_thread
+
+        def rotate():
+            rotation_started.set()
+            store_authenticated_account(
+                USERNAME,
+                "replacement-password",
+                "replacement-session",
+                "https://test.silentsuite.io",
+            )
+            rotation_completed.set()
+
+        rotation_thread = threading.Thread(target=rotate)
+        rotation_thread.start()
+        assert rotation_started.wait(1)
+        assert not rotation_completed.wait(0.05)
+        return original_compare(left, right)
+
+    monkeypatch.setattr(auth_module.hmac, "compare_digest", compare_while_rotation_waits)
+
+    assert auth.login(USERNAME, PASSWORD) == USERNAME
+    rotation_thread.join(2)
+    assert rotation_completed.is_set()

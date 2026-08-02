@@ -12,6 +12,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+import hashlib
 import typing as t
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from django.core.validators import RegexValidator
 from django.db import models, transaction
 from django.db.models import Max, Value as Val
 from django.db.models.functions import Coalesce, Greatest
+from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.utils.functional import cached_property
 
@@ -148,6 +150,27 @@ class Stoken(models.Model):
     )
 
     objects: models.manager.BaseManager["Stoken"]
+
+
+class BillingLinkProof(models.Model):
+    """One-time, opaque link from an authenticated Etebase account to Billing.
+
+    The bearer value is deliberately never stored.  A SHA-256 digest is enough
+    for lookup because the value has 256 bits of entropy.
+    """
+
+    proof_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    audience = models.CharField(max_length=32, default="billing")
+    expires_at = models.DateTimeField(db_index=True)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    @staticmethod
+    def digest(proof: str) -> str:
+        return hashlib.sha256(proof.encode("utf-8")).hexdigest()
+
+    def is_usable(self) -> bool:
+        return self.audience == "billing" and self.consumed_at is None and self.expires_at > timezone.now()
 
 
 class CollectionItemRevision(models.Model):

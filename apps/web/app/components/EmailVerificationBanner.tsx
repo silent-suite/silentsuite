@@ -127,7 +127,7 @@ export function EmailVerificationBanner() {
   return (
     <div className="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-800 dark:text-amber-200">
       <div role="alert" className="flex items-center gap-3">
-        <MailWarning className="w-4 h-4 text-amber-400 shrink-0" />
+        <MailWarning className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0" />
         <span className="flex-1 text-xs">
           {changeSuccess
             ? changeSuccess
@@ -139,7 +139,7 @@ export function EmailVerificationBanner() {
           <button
             onClick={handleResend}
             disabled={resending}
-            className="shrink-0 text-xs font-medium text-amber-400 hover:text-amber-300 underline underline-offset-2 disabled:opacity-50"
+            className="shrink-0 text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900 disabled:opacity-50 dark:text-amber-300 dark:hover:text-amber-200"
           >
             {resending ? (
               <Loader2 className="w-3 h-3 animate-spin" />
@@ -154,7 +154,7 @@ export function EmailVerificationBanner() {
             setError(null)
             setChangeSuccess(null)
           }}
-          className="shrink-0 text-xs font-medium text-amber-400 hover:text-amber-300 underline underline-offset-2"
+          className="shrink-0 text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
         >
           Change email
         </button>
@@ -200,14 +200,14 @@ export function EmailVerificationBanner() {
             <button
               type="button"
               onClick={() => setShowChangeEmail(false)}
-              className="text-xs font-medium text-amber-700 underline underline-offset-2 hover:text-amber-600 dark:text-amber-300 dark:hover:text-amber-200"
+              className="text-xs font-medium text-amber-800 underline underline-offset-2 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-200"
             >
               Cancel
             </button>
           </div>
         </form>
       )}
-      {error && <p className="mt-2 text-xs text-red-500 dark:text-red-400">{error}</p>}
+      {error && <p className="mt-2 text-xs text-red-700 dark:text-red-400">{error}</p>}
     </div>
   )
 }

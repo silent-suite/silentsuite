@@ -62,8 +62,7 @@ def _systemd_service_path():
 def _check_result(result, action):
     """Print a warning if a subprocess returned non-zero."""
     if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace").strip() if result.stderr else ""
-        logger.warning("%s failed (exit %d): %s", action, result.returncode, stderr)
+        logger.warning("%s failed (exit %d)", action, result.returncode)
         print(f"  Warning: {action} exited with code {result.returncode}")
 
 
@@ -79,7 +78,7 @@ def install_autostart_linux():
     with open(service_path, "w") as f:
         f.write(content)
 
-    logger.info("Installed systemd service: %s", service_path)
+    logger.info("Installed systemd service")
 
     # Enable and start the service
     r = subprocess.run(
@@ -144,7 +143,7 @@ def remove_autostart_linux():
             ["systemctl", "--user", "daemon-reload"],
             check=False, capture_output=True,
         )
-        logger.info("Removed systemd service: %s", service_path)
+        logger.info("Removed systemd service")
         print("Auto-start removed.")
     else:
         print("Auto-start was not installed.")
@@ -196,7 +195,7 @@ def install_autostart_macos():
     with open(plist_path, "w") as f:
         f.write(content)
 
-    logger.info("Installed launchd agent: %s", plist_path)
+    logger.info("Installed launchd agent")
 
     r = subprocess.run(
         ["launchctl", "load", plist_path],
@@ -219,7 +218,7 @@ def remove_autostart_macos():
             check=False, capture_output=True,
         )
         os.remove(plist_path)
-        logger.info("Removed launchd agent: %s", plist_path)
+        logger.info("Removed launchd agent")
         print("Auto-start removed.")
     else:
         print("Auto-start was not installed.")

@@ -39,7 +39,7 @@ Use **Settings → Import → Manage imported data** to clear a task list's task
 
 ## Bridge / DAV clients
 
-With the [desktop bridge](./getting-started.md#desktop-caldav--carddav-via-the-bridge) installed, any CalDAV client that speaks `VTODO` can read and write the same tasks through `localhost:37358`.
+With the [desktop bridge](./getting-started.md#desktop-caldav--carddav-via-the-bridge) installed, supported desktop task clients with `VTODO` support can read and write the same tasks through `localhost:37358`.
 
 Multiple task lists are supported. Each list is a separate encrypted collection and appears as its own task collection in compatible DAV clients.
 

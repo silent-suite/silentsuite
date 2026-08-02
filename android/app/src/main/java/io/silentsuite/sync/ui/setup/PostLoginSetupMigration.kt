@@ -10,6 +10,7 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.ui.ActiveAccountManager
+import io.silentsuite.sync.ui.ExactAccountIdentity
 import java.net.URI
 import java.util.UUID
 
@@ -176,7 +177,10 @@ object PostLoginSetupMigration {
             if (state in setOf(PostLoginSetupState.ACCOUNT_CREATED, PostLoginSetupState.COLLECTIONS,
                     PostLoginSetupState.PERMISSIONS, PostLoginSetupState.INITIAL_SYNC,
                     PostLoginSetupState.READY, PostLoginSetupState.COMPLETE)) {
-                if (!ActiveAccountManager.setActiveAccount(context, account) ||
+                if (!ActiveAccountManager.setActiveAccount(
+                        context,
+                        ExactAccountIdentity(record.accountType, record.accountName, record.creationId)
+                    ) ||
                     !registry.clearOwned(record.accountType, record.accountName, record.creationId)) return false
             } else {
                 // API 21 removal is asynchronous. Keep exact-owned partial rows quarantined

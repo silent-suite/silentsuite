@@ -3,18 +3,206 @@
 import logging
 import sys
 import threading
+from contextlib import contextmanager
 from importlib.metadata import version
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from silentsuite_bridge import __main__ as bridge_main
-from silentsuite_bridge import config
+from silentsuite_bridge import config, privacy_logging
 from silentsuite_bridge.radicale.application import Application as BridgeApplication
+
+
+def test_startup_does_not_delete_cache_for_logged_out_accounts(monkeypatch):
+    from silentsuite_bridge import local_cache, web
+    from silentsuite_bridge.radicale import creds, storage
+
+    credentials = MagicMock()
+    credentials.list_users.return_value = []
+    monkeypatch.setattr(creds, "Credentials", lambda: credentials)
+    monkeypatch.setattr(
+        local_cache,
+        "clear_unconfigured_cached_users",
+        MagicMock(side_effect=AssertionError("startup must retain logged-out cache")),
+    )
+    monkeypatch.setattr(storage, "start_sync_thread", MagicMock())
+    monkeypatch.setattr(web, "update_status", MagicMock())
+
+    bridge_main._start_sync_threads()
+
+
+def test_initial_status_check_reports_partial_account_failure(monkeypatch):
+    from silentsuite_bridge import web
+    from silentsuite_bridge.radicale import creds, etesync_cache
+
+    credentials = MagicMock()
+    credentials.list_users.return_value = ["good@example.com", "bad@example.com"]
+    monkeypatch.setattr(creds, "Credentials", lambda: credentials)
+
+    @contextmanager
+    def account_session(user):
+        if user == "bad@example.com":
+            raise RuntimeError("failed")
+        etesync = MagicMock()
+        etesync.list.return_value = []
+        yield etesync, False
+
+    monkeypatch.setattr(etesync_cache, "etesync_for_user", account_session)
+    update_status = MagicMock()
+    monkeypatch.setattr(web, "update_status", update_status)
+    monkeypatch.setattr(web, "log_sync_event", MagicMock())
+
+    bridge_main._initial_status_check()
+
+    assert any(
+        call.args == ("error",)
+        and call.kwargs.get("scope") == "all configured accounts"
+        and "1 account" in call.kwargs.get("error", "")
+        for call in update_status.call_args_list
+    )
 
 
 def test_radicale_runtime_is_pinned_to_the_server_adapter_contract():
     assert version("Radicale") == "3.2.3"
+
+
+def test_debug_logging_does_not_enable_sensitive_dependency_diagnostics(monkeypatch):
+    """Dependency DEBUG records can include SQL, URLs, headers, and bound values."""
+    logger_names = ("peewee", "etebase", "requests", "urllib3", "httpx", "httpcore")
+    dependency_loggers = [logging.getLogger(name) for name in logger_names]
+    monkeypatch.setattr(config, "LOG_LEVEL", "DEBUG")
+    monkeypatch.setattr(config, "LOG_FILE", None)
+    monkeypatch.setattr(logging, "basicConfig", MagicMock())
+    for logger in dependency_loggers:
+        monkeypatch.setattr(logger, "level", logging.DEBUG)
+
+    bridge_main.configure_logging()
+
+    assert all(logger.level > logging.CRITICAL for logger in dependency_loggers)
+    captured = []
+    handler = logging.Handler()
+    handler.emit = captured.append
+    try:
+        for logger in dependency_loggers:
+            logger.addHandler(handler)
+            logger.warning(
+                "Retrying private URL %s after %r",
+                "/private.person@example.invalid",
+                RuntimeError("private-token"),
+            )
+            logger.removeHandler(handler)
+    finally:
+        for logger in dependency_loggers:
+            logger.removeHandler(handler)
+    assert captured == []
+
+
+def test_bounded_failure_logging_drops_exception_text_and_traceback(caplog):
+    private_value = "private.person@example.invalid"
+    private_exception = type("PrivatePerson" + "A" * 300, (RuntimeError,), {})
+    logger = logging.getLogger("silentsuite-bridge.test-bounded-failure")
+
+    with caplog.at_level(logging.ERROR, logger=logger.name):
+        try:
+            raise private_exception(private_value)
+        except RuntimeError as error:
+            privacy_logging.log_bounded_failure(
+                logger,
+                logging.ERROR,
+                "Bridge operation failed",
+                error,
+            )
+
+    assert caplog.messages == ["Bridge operation failed (Exception)"]
+    assert private_value not in caplog.text
+    assert len(caplog.messages[0]) < 80
+
+
+def test_product_logging_call_sites_use_the_bounded_exception_helper():
+    package_root = Path(bridge_main.__file__).parent
+    violations = []
+    for source_path in package_root.rglob("*.py"):
+        if source_path.name == "privacy_logging.py":
+            continue
+        for line_number, line in enumerate(source_path.read_text().splitlines(), 1):
+            if ".__class__.__name__" in line:
+                violations.append(f"{source_path.relative_to(package_root)}:{line_number}")
+
+    assert violations == []
+
+
+def test_database_call_sites_do_not_use_connection_owning_proxy_context():
+    package_root = Path(bridge_main.__file__).parent
+    violations = []
+    for source_path in package_root.rglob("*.py"):
+        for line_number, line in enumerate(source_path.read_text().splitlines(), 1):
+            if "with db.database_proxy:" in line:
+                violations.append(f"{source_path.relative_to(package_root)}:{line_number}")
+
+    assert violations == []
+
+
+def test_startup_logs_do_not_retain_configured_urls_hosts_or_paths(
+    monkeypatch,
+    caplog,
+):
+    private_values = (
+        "https://user:private-token@example.invalid/private?account=person",
+        "/private/person/data-directory",
+        "private-host.example.invalid:5232",
+    )
+    monkeypatch.setattr(config, "ETEBASE_SERVER_URL", private_values[0])
+    monkeypatch.setattr(config, "DATA_DIR", private_values[1])
+    monkeypatch.setattr(config, "SERVER_HOSTS", private_values[2])
+    monkeypatch.setattr(config, "is_remote_bind_configured", lambda: False)
+    monkeypatch.setattr(config, "dav_scheme", lambda: "http")
+    monkeypatch.setattr(bridge_main, "build_radicale_configuration", lambda: object())
+    monkeypatch.setattr(bridge_main, "_start_sync_threads", lambda: None)
+    monkeypatch.setattr(
+        bridge_main,
+        "_serve_radicale_with_bridge_application",
+        MagicMock(side_effect=KeyboardInterrupt),
+    )
+    monkeypatch.setattr(sys, "argv", ["silentsuite-bridge", "--no-tray"])
+
+    with caplog.at_level(logging.INFO, logger=bridge_main.logger.name):
+        bridge_main.run_server()
+
+    for private_value in private_values:
+        assert private_value not in caplog.text
+    assert "Etebase server configured" in caplog.text
+    assert "Bridge data directory configured" in caplog.text
+
+
+def test_key_permission_failure_log_does_not_retain_path(monkeypatch, caplog):
+    private_path = "/private/person/account-key.pem"
+    monkeypatch.setattr(
+        bridge_main.os,
+        "chmod",
+        MagicMock(side_effect=OSError("private failure")),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=bridge_main.logger.name):
+        bridge_main._harden_key_permissions(private_path)
+
+    assert private_path not in caplog.text
+    assert "private failure" not in caplog.text
+
+
+def test_corrupt_credentials_log_does_not_retain_path(tmp_path, caplog):
+    from silentsuite_bridge.radicale.creds import Credentials
+
+    private_path = tmp_path / "private-person-account.json"
+    private_path.write_text("{")
+
+    with caplog.at_level(logging.WARNING, logger="silentsuite-bridge.creds"):
+        credentials = Credentials(str(private_path))
+
+    assert credentials.content == {"users": {}}
+    assert str(private_path) not in caplog.text
+    assert "private-person-account.json" not in caplog.text
 
 
 def test_check_credentials_allows_no_accounts_when_dashboard_enabled(tmp_path, monkeypatch, capsys):
@@ -40,6 +228,25 @@ def test_check_credentials_blocks_no_accounts_when_dashboard_disabled(tmp_path, 
     assert "dashboard is disabled" in output
     assert "--login" in output
     assert "--manual-login" in output
+
+
+def test_headless_zero_account_startup_resumes_cleanup_before_exit(monkeypatch):
+    from silentsuite_bridge import accounts
+
+    calls = []
+    monkeypatch.setattr(
+        accounts,
+        "resume_pending_cache_cleanups",
+        lambda: calls.append("resume"),
+    )
+    monkeypatch.setattr(
+        bridge_main,
+        "check_credentials",
+        lambda open_browser=True: calls.append("check") or False,
+    )
+
+    assert bridge_main._prepare_server_start(open_browser=False) is False
+    assert calls == ["resume", "check"]
 
 
 def test_check_credentials_prints_https_dashboard_url_when_ssl_enabled(tmp_path, monkeypatch, capsys):
