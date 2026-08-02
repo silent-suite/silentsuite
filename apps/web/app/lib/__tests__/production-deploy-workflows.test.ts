@@ -6,24 +6,46 @@ function workflow(name: string): string {
   return readFileSync(resolve(process.cwd(), `../../.github/workflows/${name}`), 'utf8')
 }
 
+const deployRunbook = readFileSync(resolve(process.cwd(), '../../runbooks/production-deploy.md'), 'utf8')
+
+function jobBlock(source: string, name: string): string {
+  const lines = source.replace(/\r\n/g, '\n').split('\n')
+  const start = lines.findIndex((line) => line === `  ${name}:`)
+  if (start === -1) throw new Error(`Missing job: ${name}`)
+  const relativeEnd = lines.slice(start + 1).findIndex((line) => /^  [A-Za-z0-9_-]+:$/.test(line))
+  const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd
+  return lines.slice(start, end).filter((line) => !/^\s*#/.test(line)).join('\n')
+}
+
 describe('production deployment workflow integrity', () => {
+  it('documents repository approval variables and the actual revocation boundary', () => {
+    expect(deployRunbook).toContain("component's repository approval variable")
+    expect(deployRunbook).toContain('do not configure a same-named environment variable')
+    expect(deployRunbook).toContain('Approval is not dynamically reloaded after a deployment job has started')
+    expect(deployRunbook).not.toContain("component's protected-environment approval variable")
+  })
+
   it.each([
     ['deploy-web.yml', 'web-production', 'WEB_DEPLOY_APPROVED_SHA'],
     ['deploy-server.yml', 'server-production', 'SERVER_DEPLOY_APPROVED_SHA'],
     ['deploy-docs.yml', 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA'],
   ])('%s requires continuing exact-SHA owner approval', (name, environment, approvalVariable) => {
     const source = workflow(name)
+    const jobNames = name === 'deploy-docs.yml' ? ['build', 'deploy'] : ['build-and-push', 'deploy']
 
     expect(source).toContain('workflow_dispatch:')
     expect(source).toContain('expected_sha:')
     expect(source).not.toMatch(/^  push:/m)
-    expect(source.match(new RegExp(`environment: ${environment}`, 'g'))).toHaveLength(2)
-    expect(source.split(`${approvalVariable}: \${{ vars.${approvalVariable} }}`).length - 1).toBe(2)
-    expect(source.split(`[ "$${approvalVariable}" != "$EXPECTED_SHA" ]`).length - 1).toBe(2)
-    expect(source.match(/ref: \$\{\{ inputs\.expected_sha \}\}/g)).toHaveLength(2)
-    expect(source.match(/LIVE_MAIN_SHA=\$\(git rev-parse origin\/main\)/g)).toHaveLength(2)
-    expect(source.match(/\[ "\$GITHUB_SHA" != "\$LIVE_MAIN_SHA" \]/g)).toHaveLength(2)
-    expect(source.match(/\[ "\$EXPECTED_SHA" != "\$LIVE_MAIN_SHA" \]/g)).toHaveLength(2)
+    for (const jobName of jobNames) {
+      const job = jobBlock(source, jobName)
+      expect(job).toContain(`environment: ${environment}`)
+      expect(job).toContain(`${approvalVariable}: \${{ vars.${approvalVariable} }}`)
+      expect(job).toContain(`[ "$${approvalVariable}" != "$EXPECTED_SHA" ]`)
+      expect(job).toContain('ref: ${{ inputs.expected_sha }}')
+      expect(job).toContain('LIVE_MAIN_SHA=$(git rev-parse origin/main)')
+      expect(job).toContain('[ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]')
+      expect(job).toContain('[ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ]')
+    }
   })
 
   it.each(['deploy-web.yml', 'deploy-server.yml'])('%s deploys only an exact live-main image', (name) => {
@@ -41,13 +63,13 @@ describe('production deployment workflow integrity', () => {
   })
 
   it.each(['deploy-web.yml', 'deploy-server.yml'])('%s reauthorizes as the final step before SSH mutation', (name) => {
-    const source = workflow(name)
-    const reauthorization = source.indexOf('name: Re-assert live main immediately before deployment')
-    const mutation = source.indexOf('name: Deploy via SSH')
+    const deploy = jobBlock(workflow(name), 'deploy')
+    const reauthorization = deploy.indexOf('      - name: Re-assert live main immediately before deployment')
+    const mutation = deploy.indexOf('      - name: Deploy via SSH')
 
     expect(reauthorization).toBeGreaterThan(-1)
     expect(mutation).toBeGreaterThan(reauthorization)
-    expect(source.slice(reauthorization, mutation)).not.toContain('\n      - name:')
+    expect(deploy.slice(reauthorization + 1, mutation)).not.toMatch(/^      - /m)
   })
 
   it('blocks the web cutover until Billing proves the non-bearer handoff is ready', () => {
@@ -61,19 +83,27 @@ describe('production deployment workflow integrity', () => {
 
   it('builds docs once and deploys the admitted artifact after reauthorization', () => {
     const source = workflow('deploy-docs.yml')
-    const deployJob = source.slice(source.indexOf('\n  deploy:'))
-    const reauthorization = deployJob.indexOf('name: Re-assert owner approval immediately before deployment')
-    const mutation = deployJob.indexOf('name: Deploy to production Worker')
-    const mutationStep = deployJob.lastIndexOf('\n      - name:', mutation)
+    const buildJob = jobBlock(source, 'build')
+    const deployJob = jobBlock(source, 'deploy')
+    const reauthorization = deployJob.indexOf('      - name: Re-assert owner approval immediately before deployment')
+    const mutation = deployJob.indexOf('      - name: Deploy to production Worker')
 
     expect(source).toContain('needs: build')
     expect(source).toContain('name: docs-production-${{ inputs.expected_sha }}')
-    expect(source).toContain('actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02')
-    expect(source).toContain('actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093')
+    expect(buildJob).toContain('id: upload')
+    expect(buildJob).toContain('artifact-id: ${{ steps.upload.outputs.artifact-id }}')
+    expect(buildJob).toContain('artifact-digest: ${{ steps.upload.outputs.artifact-digest }}')
+    expect(deployJob).toContain('actions: read')
+    expect(deployJob).toContain('ARTIFACT_ID: ${{ needs.build.outputs.artifact-id }}')
+    expect(deployJob).toContain('EXPECTED_ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact-digest }}')
+    expect(deployJob).toContain('actions/artifacts/$ARTIFACT_ID/zip')
+    expect(deployJob).toContain('ACTUAL_ARTIFACT_DIGEST=$(sha256sum')
+    expect(deployJob).toContain('test "$ACTUAL_ARTIFACT_DIGEST" = "$EXPECTED_ARTIFACT_DIGEST"')
+    expect(deployJob).not.toContain('actions/download-artifact@')
     expect(deployJob).not.toContain('pnpm run build')
     expect(reauthorization).toBeGreaterThan(-1)
-    expect(mutationStep).toBeGreaterThan(reauthorization)
-    expect(deployJob.slice(reauthorization, mutationStep)).not.toContain('\n      - name:')
+    expect(mutation).toBeGreaterThan(reauthorization)
+    expect(deployJob.slice(reauthorization + 1, mutation)).not.toMatch(/^      - /m)
   })
 
   it('runs server migrations from the exact image before replacing the server', () => {
