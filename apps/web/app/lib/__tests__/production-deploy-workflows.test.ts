@@ -58,6 +58,12 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
   },
 }
 
+const workflowContracts: Record<string, string> = {
+  'deploy-web.yml': '3f87487c3d4398cdf5ee851f3497304f1e81221cfb3b51aa53a7f4bb9caa6e5b',
+  'deploy-server.yml': 'dc161a23735e1c16f6920d3dd34203cbdcf73cc190d42d41e902d1e3e72e54d9',
+  'deploy-docs.yml': '083c229f0bb65953a44da47e01f13d870fe85b5df16489c36515d90177e00b62',
+}
+
 function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string, expectedRunSha256: string) {
   const steps = job.steps ?? []
   expect(job.if).toBe(
@@ -128,9 +134,10 @@ describe('production deployment workflow integrity', () => {
     ['deploy-web.yml', 'web-production', 'WEB_DEPLOY_APPROVED_SHA', ['e6ba5b37eecde3082c3ec47f85d3885591e769998348d31fde7ca520d9e9413d', 'cfc63a1210b969831bc73107aec443b5238a2a8feae86a1f01eadeeec969ce15']],
     ['deploy-server.yml', 'server-production', 'SERVER_DEPLOY_APPROVED_SHA', ['a42b337d7f795fd005cecaa0b450e8ed98ae71906b1541c0c5576fc7ddcd10b5', '9876fb19ad6579b278cb6d8aa8fbc6b011995d1b336ce80e6b0ab1d1fffbe0f4']],
     ['deploy-docs.yml', 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA', ['02f41b250b6256a39c271cde53df98c87759b77ad38987af6d92dee96814d77b', '34fd2be0097b650297047c7c918ec462bc6d5d77f17a3320dab5bd8eeaab309b']],
-  ])('%s requires continuing exact-SHA owner approval', (name, environment, approvalVariable, runDigests) => {
+  ])('%s is manual-only and binds every protected job to one reviewed SHA', (name, environment, approvalVariable, runDigests) => {
     const source = workflow(name)
     const parsed = parseWorkflow(source)
+    expect(sha256(JSON.stringify(parsed))).toBe(workflowContracts[name])
     const jobNames = name === 'deploy-docs.yml' ? ['build', 'deploy'] : ['build-and-push', 'deploy']
     expect(Object.keys(parsed.jobs).sort()).toEqual([...jobNames].sort())
 
