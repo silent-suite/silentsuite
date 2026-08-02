@@ -1,25 +1,56 @@
 name: Deploy Docs (production)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'apps/docs/**'
-      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed live main commit to build and deploy
+        required: true
+        type: string
 
 concurrency:
   group: deploy-docs-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.DOCS_DEPLOY_APPROVED_SHA == inputs.expected_sha
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: docs-production
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    env:
+      DOCS_DEPLOY_APPROVED_SHA: ${{ vars.DOCS_DEPLOY_APPROVED_SHA }}
 
     steps:
-      - name: Checkout
+      - name: Checkout exact approved commit for build
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact owner-approved live main commit for build
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DOCS_DEPLOY_APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$DOCS_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing docs build: commit is not the exact owner-approved live main head"
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -40,6 +71,78 @@ jobs:
         run: pnpm run build --filter=@silentsuite/docs
         env:
           SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'
+
+      - name: Upload admitted docs artifact
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docs-production-${{ inputs.expected_sha }}
+          path: apps/docs/.vitepress/dist
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.DOCS_DEPLOY_APPROVED_SHA == inputs.expected_sha
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: docs-production
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DOCS_DEPLOY_APPROVED_SHA: ${{ vars.DOCS_DEPLOY_APPROVED_SHA }}
+
+    steps:
+      - name: Checkout exact approved commit for deployment
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+
+      - name: Download and verify admitted docs artifact
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact-id }}
+          EXPECTED_ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact-digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
+          [[ "$EXPECTED_ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          ARTIFACT_ZIP=$(mktemp "$RUNNER_TEMP/docs-production.XXXXXX.zip")
+          trap 'rm -f "$ARTIFACT_ZIP"' EXIT
+          curl --fail --location --silent --show-error \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            --output "$ARTIFACT_ZIP"
+          ACTUAL_ARTIFACT_DIGEST=$(sha256sum "$ARTIFACT_ZIP" | cut -d' ' -f1)
+          test "$ACTUAL_ARTIFACT_DIGEST" = "$EXPECTED_ARTIFACT_DIGEST"
+          rm -rf apps/docs/.vitepress/dist
+          mkdir -p apps/docs/.vitepress/dist
+          unzip -q "$ARTIFACT_ZIP" -d apps/docs/.vitepress/dist
+
+      - name: Re-assert owner approval immediately before deployment
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DOCS_DEPLOY_APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$DOCS_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing docs deploy: commit is no longer the exact owner-approved live main head"
+            exit 1
+          fi
 
       - name: Deploy to production Worker
         uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3

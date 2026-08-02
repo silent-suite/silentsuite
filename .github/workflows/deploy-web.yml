@@ -1,15 +1,12 @@
 name: Deploy Web App (production)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'apps/web/**'
-      - 'packages/**'
-      - 'Dockerfile.web'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed live main commit to publish and deploy
+        required: true
+        type: string
 
 concurrency:
   group: deploy-web-production
@@ -20,27 +17,42 @@ env:
 
 jobs:
   build-and-push:
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.WEB_DEPLOY_APPROVED_SHA == inputs.expected_sha
     name: Build & Push to GHCR
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: web-production
     permissions:
       contents: read
       packages: write
     outputs:
       image-digest: ${{ steps.build.outputs.digest }}
+    env:
+      WEB_DEPLOY_APPROVED_SHA: ${{ vars.WEB_DEPLOY_APPROVED_SHA }}
 
     steps:
-      - name: Checkout
+      - name: Checkout exact approved commit for publication
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
 
       - name: Assert this is the live main commit
         shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WEB_DEPLOY_APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           LIVE_MAIN_SHA=$(git rev-parse origin/main)
-          if [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]; then
-            echo "Refusing deploy: workflow commit is not the live main head"
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$WEB_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing web publication: commit is not the exact owner-approved live main head"
             exit 1
           fi
 
@@ -76,27 +88,41 @@ jobs:
     name: Deploy to VPS
     runs-on: ubuntu-latest
     needs: build-and-push
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.WEB_DEPLOY_APPROVED_SHA == inputs.expected_sha
+    environment: web-production
     permissions:
       contents: read
+    env:
+      WEB_DEPLOY_APPROVED_SHA: ${{ vars.WEB_DEPLOY_APPROVED_SHA }}
 
     steps:
-      - name: Checkout
+      - name: Checkout exact approved commit for deployment
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Re-assert live main immediately before deployment
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          LIVE_MAIN_SHA=$(git rev-parse origin/main)
-          if [ "$GITHUB_REF" != "refs/heads/main" ] || [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]; then
-            echo "Refusing deploy: workflow commit is no longer the live main head"
-            exit 1
-          fi
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
 
       - name: Require the non-bearer Billing handoff before web cutover
         run: curl --fail --silent --show-error https://api.silentsuite.io/health/link-proof
+
+      - name: Re-assert live main immediately before deployment
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WEB_DEPLOY_APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$WEB_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing web deploy: commit is no longer the exact owner-approved live main head"
+            exit 1
+          fi
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
