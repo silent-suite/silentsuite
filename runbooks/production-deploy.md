@@ -21,7 +21,7 @@ Before the first dispatch, a repository owner must:
 3. Configure a deployment branch policy that permits only `main`.
 4. Verify the live environment API response and deployment-branch-policy list for each environment. Do not set an approval variable or dispatch any production workflow until this verification succeeds.
 
-Read-only verification on 2026-08-02 found that none of the three component environments existed. The existing `production` environment had no protection rules or deployment branch policy and is not an acceptable substitute. Update this status only after a separately authorized configuration change and independent verification.
+Live verification on 2026-08-02 confirms that all three component environments exist with a custom `main`-only deployment branch policy. The existing unprotected `production` environment remains unused and is not an acceptable substitute. Re-verify the environment and branch-policy APIs before each production rollout rather than relying on this historical checkpoint.
 
 For each component:
 
@@ -39,6 +39,8 @@ Clearing or changing approval after the build and before the deployment job star
 - Web and Server deploy the immutable digest produced by the admitted build job and verify the OCI revision label against the exact SHA.
 - Docs builds once and uploads the exact VitePress output as a one-day workflow artifact. The build job passes the artifact ID and archive SHA-256; the deployment job downloads that exact archive through the GitHub API, fails closed on a digest mismatch, and deploys the extracted bytes without rebuilding.
 - Web and Server retain their previous-image capture, health verification, and automatic rollback behavior.
+
+Server migrations run with Compose interactive stdin and TTY attachment explicitly disabled. The SSH action supplies the deployment script through stdin; an interactive `docker compose run` can otherwise consume the remaining script, exit successfully after migration, and skip container replacement and running-image verification.
 
 ## Rollback
 

@@ -165,7 +165,7 @@ jobs:
               silentsuite-server:
                 image: ${IMAGE_NAME}:rollback-${DEPLOY_SHA}
             EOF
-            docker compose -f docker-compose.yml -f "$DEPLOY_OVERRIDE" run --rm --no-deps silentsuite-server python manage.py migrate --noinput
+            docker compose -f docker-compose.yml -f "$DEPLOY_OVERRIDE" run --rm --no-deps --interactive=false -T silentsuite-server python manage.py migrate --noinput
             wait_for_server() {
               for i in 1 2 3 4 5 6; do
                 curl -sf https://server.silentsuite.io/ >/dev/null && return 0

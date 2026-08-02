@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { spawn } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { parseDocument } from 'yaml'
 
@@ -43,6 +45,37 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
 
+function executeStreamingDeployScript(migrationCommand: string): Promise<string> {
+  const directory = mkdtempSync(join(tmpdir(), 'silentsuite-compose-stdin-'))
+  const docker = join(directory, 'docker')
+  writeFileSync(docker, `#!/bin/sh
+case " $* " in
+  *" --interactive=false "*) exit 0 ;;
+  *) cat >/dev/null ;;
+esac
+`)
+  chmodSync(docker, 0o700)
+
+  return new Promise((resolveOutput, reject) => {
+    const child = spawn('bash', ['-se'], {
+      env: { ...process.env, PATH: `${directory}:${process.env.PATH ?? ''}` },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString() })
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString() })
+    child.on('error', reject)
+    child.on('close', (status) => {
+      rmSync(directory, { recursive: true, force: true })
+      if (status === 0) resolveOutput(stdout)
+      else reject(new Error(`streaming deploy fixture failed (${status}): ${stderr}`))
+    })
+    child.stdin.write(`docker compose ${migrationCommand}\n`)
+    setTimeout(() => child.stdin.end("printf '__AFTER_MIGRATION__\\n'\n"), 25)
+  })
+}
+
 const jobContracts: Record<string, Record<string, { steps: string; permissions: string }>> = {
   'deploy-web.yml': {
     'build-and-push': { steps: 'e23e2195d21717e71fe08e47d202b446f858488f65ebbeee6c7dd7abd459fb46', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
@@ -50,7 +83,7 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
   },
   'deploy-server.yml': {
     'build-and-push': { steps: '009b1bf33803af9b5210638ee074a4006a4ab332557750e68caab4fa21219a9d', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: '6090d6b72f83ef78d8ea0039a19a11f424b8410540b05c3d826a082172e9b82b', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '4a6af78622256751915bc0d4bcbc5c03a63f40ab1db8388885441f62b19b4625', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-docs.yml': {
     build: { steps: 'bc49bcc31e40e8c2c8564e68efe2dfc09a400c0c0de8bcec9155fadad5760e49', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
@@ -60,7 +93,7 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
 
 const workflowContracts: Record<string, string> = {
   'deploy-web.yml': '3f87487c3d4398cdf5ee851f3497304f1e81221cfb3b51aa53a7f4bb9caa6e5b',
-  'deploy-server.yml': 'dc161a23735e1c16f6920d3dd34203cbdcf73cc190d42d41e902d1e3e72e54d9',
+  'deploy-server.yml': 'ac36934537cbc324464fffe593e0e9b6c7e86b61ca592540bb1568771745c565',
   'deploy-docs.yml': '083c229f0bb65953a44da47e01f13d870fe85b5df16489c36515d90177e00b62',
 }
 
@@ -127,7 +160,7 @@ describe('production deployment workflow integrity', () => {
     expect(deployRunbook).toContain('auto-create it without protection rules')
     expect(deployRunbook).toContain('deployment branch policy that permits only `main`')
     expect(deployRunbook).toContain('Do not set an approval variable or dispatch any production workflow until this verification succeeds')
-    expect(deployRunbook).toContain('none of the three component environments existed')
+    expect(deployRunbook).toContain('all three component environments exist with a custom `main`-only deployment branch policy')
   })
 
   it.each([
@@ -221,13 +254,18 @@ describe('production deployment workflow integrity', () => {
     expect(mutation).toBe(reauthorization + 1)
   })
 
-  it('runs server migrations from the exact image before replacing the server', () => {
+  it('runs server migrations from the exact image before replacing the server', async () => {
     const source = workflow('deploy-server.yml')
-    const migration = source.indexOf('run --rm --no-deps silentsuite-server python manage.py migrate --noinput')
+    const migrationCommand = 'run --rm --no-deps --interactive=false -T silentsuite-server python manage.py migrate --noinput'
+    const migration = source.indexOf(migrationCommand)
     const replacement = source.indexOf('up -d --force-recreate --no-deps --no-build silentsuite-server')
 
+    expect(source).toContain(migrationCommand)
+    expect(source).not.toContain('run --rm --no-deps silentsuite-server python manage.py migrate --noinput')
     expect(migration).toBeGreaterThan(-1)
     expect(replacement).toBeGreaterThan(migration)
+    await expect(executeStreamingDeployScript(migrationCommand)).resolves.toContain('__AFTER_MIGRATION__')
+    await expect(executeStreamingDeployScript(migrationCommand.replace('--interactive=false -T ', ''))).resolves.not.toContain('__AFTER_MIGRATION__')
   })
 
   it.each([
