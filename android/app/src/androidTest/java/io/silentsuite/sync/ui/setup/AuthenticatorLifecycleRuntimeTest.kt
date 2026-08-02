@@ -98,9 +98,10 @@ class AuthenticatorLifecycleRuntimeTest {
                             activity.supportFragmentManager.executePendingTransactions()
                             val retry = activity.supportFragmentManager
                                 .findFragmentByTag(LoginActivity.CREATE_RETRY_ERROR_TAG)
+                            val credentials = activity.supportFragmentManager
+                                .findFragmentById(android.R.id.content)
                             recoveryReady =
-                                activity.supportFragmentManager.findFragmentById(android.R.id.content)
-                                    is LoginCredentialsFragment &&
+                                credentials is LoginCredentialsFragment &&
                                     retry is androidx.fragment.app.DialogFragment &&
                                     retry.dialog?.isShowing == true
                         }
