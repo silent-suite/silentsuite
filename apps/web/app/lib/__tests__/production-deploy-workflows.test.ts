@@ -155,7 +155,10 @@ describe('production deployment workflow integrity', () => {
   it('documents repository approval variables and the actual revocation boundary', () => {
     expect(deployRunbook).toContain("component's repository approval variable")
     expect(deployRunbook).toContain('do not configure a same-named environment variable')
-    expect(deployRunbook).toContain('Approval is not dynamically reloaded after a deployment job has started')
+    expect(deployRunbook).toContain('snapshotted when the workflow run is queued')
+    expect(deployRunbook).toContain('does not revoke jobs in an already queued run')
+    expect(deployRunbook).not.toContain('fresh repository-variable snapshot')
+    expect(deployRunbook).not.toContain('between the build and deployment jobs')
     expect(deployRunbook).not.toContain("component's protected-environment approval variable")
     expect(deployRunbook).toContain('Production dispatch is operationally blocked until all three component environments')
     expect(deployRunbook).toContain('auto-create it without protection rules')
