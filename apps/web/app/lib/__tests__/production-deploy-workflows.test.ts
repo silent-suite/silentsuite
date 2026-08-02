@@ -8,47 +8,24 @@ function workflow(name: string): string {
 
 const deployRunbook = readFileSync(resolve(process.cwd(), '../../runbooks/production-deploy.md'), 'utf8')
 
-function stripYamlComment(line: string): string {
-  let inSingleQuote = false
-  let inDoubleQuote = false
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index]
-    if (character === "'" && !inDoubleQuote) {
-      if (inSingleQuote && line[index + 1] === "'") {
-        index += 1
-      } else {
-        inSingleQuote = !inSingleQuote
-      }
-    } else if (character === '"' && !inSingleQuote) {
-      let backslashes = 0
-      for (let previous = index - 1; previous >= 0 && line[previous] === '\\'; previous -= 1) backslashes += 1
-      if (backslashes % 2 === 0) inDoubleQuote = !inDoubleQuote
-    } else if (character === '#' && !inSingleQuote && !inDoubleQuote && (index === 0 || /\s/.test(line[index - 1]))) {
-      return line.slice(0, index).trimEnd()
-    }
-  }
-  return line
-}
-
 function jobBlock(source: string, name: string): string {
   const lines = source.replace(/\r\n/g, '\n').split('\n')
   const start = lines.findIndex((line) => line === `  ${name}:`)
   if (start === -1) throw new Error(`Missing job: ${name}`)
   const relativeEnd = lines.slice(start + 1).findIndex((line) => /^  [A-Za-z0-9_-]+:$/.test(line))
   const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd
-  return lines.slice(start, end).map(stripYamlComment).filter((line) => line.trim().length > 0).join('\n')
+  return lines.slice(start, end).join('\n')
 }
 
 describe('production deployment workflow integrity', () => {
-  it('strips inline YAML comments without stripping quoted hashes', () => {
-    expect(stripYamlComment('    timeout-minutes: 10 # fake authorization')).toBe('    timeout-minutes: 10')
-    expect(stripYamlComment('    value: "kept # literal" # removed')).toBe('    value: "kept # literal"')
-    expect(stripYamlComment(String.raw`    value: "kept \\\" # literal" # removed`)).toBe(
-      String.raw`    value: "kept \\\" # literal"`,
-    )
-    expect(stripYamlComment(String.raw`    name: "deploy\\\\" # removed`)).toBe(
-      String.raw`    name: "deploy\\\\"`,
-    )
+  it('plain-scalar comment decoys cannot satisfy exact structural lines', () => {
+    const source = workflow('deploy-web.yml')
+      .replace('    environment: web-production', "    name: Owner's build # environment: web-production")
+      .replace('      WEB_DEPLOY_APPROVED_SHA: ${{ vars.WEB_DEPLOY_APPROVED_SHA }}', '    name: Release 12" image # WEB_DEPLOY_APPROVED_SHA: ${{ vars.WEB_DEPLOY_APPROVED_SHA }}')
+    const lines = jobBlock(source, 'build-and-push').split('\n')
+
+    expect(lines).not.toContain('    environment: web-production')
+    expect(lines).not.toContain('      WEB_DEPLOY_APPROVED_SHA: ${{ vars.WEB_DEPLOY_APPROVED_SHA }}')
   })
 
   it('documents repository approval variables and the actual revocation boundary', () => {
@@ -76,16 +53,17 @@ describe('production deployment workflow integrity', () => {
     expect(source).not.toMatch(/^  push:/m)
     for (const jobName of jobNames) {
       const job = jobBlock(source, jobName)
-      expect(job.split('\n').filter((line) => /^    if:/.test(line))).toEqual([
+      const lines = job.split('\n')
+      expect(lines.filter((line) => /^    if:/.test(line))).toEqual([
         `    if: github.ref == 'refs/heads/main' && vars.${approvalVariable} == inputs.expected_sha`,
       ])
-      expect(job).toContain(`environment: ${environment}`)
-      expect(job).toContain(`${approvalVariable}: \${{ vars.${approvalVariable} }}`)
-      expect(job).toContain(`[ "$${approvalVariable}" != "$EXPECTED_SHA" ]`)
-      expect(job).toContain('ref: ${{ inputs.expected_sha }}')
-      expect(job).toContain('LIVE_MAIN_SHA=$(git rev-parse origin/main)')
-      expect(job).toContain('[ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]')
-      expect(job).toContain('[ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ]')
+      expect(lines).toContain(`    environment: ${environment}`)
+      expect(lines).toContain(`      ${approvalVariable}: \${{ vars.${approvalVariable} }}`)
+      expect(lines).toContain(`             [ "$${approvalVariable}" != "$EXPECTED_SHA" ]; then`)
+      expect(lines).toContain('          ref: ${{ inputs.expected_sha }}')
+      expect(lines).toContain('          LIVE_MAIN_SHA=$(git rev-parse origin/main)')
+      expect(lines).toContain('             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||')
+      expect(lines).toContain('             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||')
     }
   })
 
