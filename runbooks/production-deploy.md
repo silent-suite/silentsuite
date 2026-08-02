@@ -28,8 +28,8 @@ For each component:
 1. Confirm the reviewed promotion commit is still the live head of `main` and required checks are green.
 2. Set that component's repository approval variable to the exact 40-character live `main` SHA. The protected environment is a separate admission boundary; do not configure a same-named environment variable. Never use a branch, tag, shortened SHA, or mutable image tag.
 3. Manually dispatch the component workflow from `main` with `expected_sha` equal to the same exact SHA.
-4. The publication/build job independently enters the protected environment, evaluates the repository approval variable for that job, and checks checkout HEAD, workflow SHA, live `main`, `expected_sha`, and the owner-approved SHA before publishing an image or artifact.
-5. The deployment job enters the protected environment separately and evaluates a fresh repository-variable snapshot after the build finishes. It repeats the exact identity checks as its final step before the VPS or Cloudflare mutation.
+4. The publication/build job has an Actions-level admission predicate requiring its repository approval variable to equal `expected_sha`, so shell control flow cannot bypass owner approval. It independently enters the protected environment and checks checkout HEAD, workflow SHA, live `main`, `expected_sha`, and the owner-approved SHA before publishing an image or artifact.
+5. The deployment job has the same Actions-level admission predicate and enters the protected environment separately, evaluating a fresh repository-variable snapshot after the build finishes. It repeats the exact identity and approval checks as its final shell step before the VPS or Cloudflare mutation as defense in depth.
 6. Clear the approval variable after the authorized run reaches a terminal state.
 
 Clearing or changing approval after the build and before the deployment job starts makes deployment fail closed. Approval is not dynamically reloaded after a deployment job has started, so do not claim or rely on mid-job revocation. Do not cancel a mutation job as a substitute for rollback.

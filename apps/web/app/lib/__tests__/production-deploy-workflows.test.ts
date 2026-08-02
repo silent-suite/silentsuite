@@ -68,6 +68,9 @@ describe('production deployment workflow integrity', () => {
     expect(source).not.toMatch(/^  push:/m)
     for (const jobName of jobNames) {
       const job = jobBlock(source, jobName)
+      expect(job.split('\n').filter((line) => /^    if:/.test(line))).toEqual([
+        `    if: github.ref == 'refs/heads/main' && vars.${approvalVariable} == inputs.expected_sha`,
+      ])
       expect(job).toContain(`environment: ${environment}`)
       expect(job).toContain(`${approvalVariable}: \${{ vars.${approvalVariable} }}`)
       expect(job).toContain(`[ "$${approvalVariable}" != "$EXPECTED_SHA" ]`)
