@@ -108,9 +108,13 @@ def test_account_entry_lifecycle_security_blockers_have_explicit_fail_closed_con
     continuation = (setup / "SignupContinuationRegistry.kt").read_text(encoding="utf-8")
     detector = (setup / "DetectConfigurationFragment.kt").read_text(encoding="utf-8")
     creator = (setup / "CreateAccountFragment.kt").read_text(encoding="utf-8")
+    credentials_layout = (
+        ROOT / "android/app/src/main/res/layout/login_credentials_fragment.xml"
+    ).read_text(encoding="utf-8")
     credential_change = (setup / "LoginCredentialsChangeFragment.kt").read_text(encoding="utf-8")
     signup_return = (setup / "SignupReturnActivity.kt").read_text(encoding="utf-8")
     first_run_runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/FirstRunSignInRuntimeTest.kt").read_text(encoding="utf-8")
+    authenticator_runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/AuthenticatorLifecycleRuntimeTest.kt").read_text(encoding="utf-8")
 
     detector_failure = detector.split("if (data == null || data.isFailed)", 1)[1].split(
         "dismissAllowingStateLoss()", 1
@@ -140,6 +144,10 @@ def test_account_entry_lifecycle_security_blockers_have_explicit_fail_closed_con
     assert "check(BuildConfig.DEBUG)" in holder.split("fun now(): Long", 1)[1].split("object SetupSecretHolder", 1)[0]
     assert "if (nextGeneration == Long.MAX_VALUE)" in continuation
 
+    password_view = credentials_layout.split('android:id="@+id/login_password"', 1)[1].split(
+        "/>", 1
+    )[0]
+    assert 'android:saveEnabled="false"' in password_view
     assert "FragmentLifecycleCallbacks" in activity
     assert "onFragmentResumed" in activity
     acknowledgement = activity.split("private fun acknowledgeSignupDestinationIfReady", 1)[1]
@@ -198,6 +206,31 @@ def test_account_entry_lifecycle_security_blockers_have_explicit_fail_closed_con
     assert "foregroundExecutorForTest = null" in first_run_runtime
     assert "Tokenless callback did not enter the rebind queue" in first_run_runtime
     assert "Persistent foreground failure did not recover after its deadline" in first_run_runtime
+    rebind_runtime = first_run_runtime.split("val frozenNow = SetupElapsedClock.now()", 1)[1].split(
+        "var deadlineRecoveryMonitor", 1
+    )[0]
+    assert "SetupElapsedClock.nowForTest = { frozenNow }" in rebind_runtime
+    assert rebind_runtime.index("LoginFlowOwnerRegistry.release") < rebind_runtime.index(
+        "LoginFlowOwnerRegistry.admit"
+    )
+    assert rebind_runtime.index("finishAndAwaitDestroyed") < rebind_runtime.index(
+        "SetupElapsedClock.nowForTest = null"
+    )
+    finish_scenario = first_run_runtime.split("private fun finishScenario", 1)[1].split(
+        "private fun assertTestStateEmpty", 1
+    )[0]
+    assert "SetupElapsedClock.nowForTest = null" in finish_scenario
+    recoverable_runtime = authenticator_runtime.split(
+        "fun recoverableCreationFailureRestoresCredentialsWithoutFinishingOrCancelling", 1
+    )[1].split("private fun creatorGenerationReplacementRoutesToSettingsResolution", 1)[0]
+    assert "CreateAccountFragment.newInstance(SetupSecretHolder.reference(lease))" in recoverable_runtime
+    assert "CreateAccountFragment()," not in recoverable_runtime
+    assert "Valid creator failure did not restore credentials with a bounded retry dialog" in recoverable_runtime
+    assert "SetupSecretHolder.getLoginCredentials(lease)" in recoverable_runtime
+    assert "assertNull(validate.invoke(credentials))" in recoverable_runtime
+    assert recoverable_runtime.index("assertEquals(0, delivery.errors)") < recoverable_runtime.index(
+        "finishAndAwaitDestroyed"
+    )
     unknown_route = owner.split("val flowId =", 1)[1].split("val exactToken", 1)[0]
     assert "current?.state == State.REBINDING" in unknown_route
     assert "SignupRouteResult.QUEUED_REBIND(current.rebindDeadline)" in unknown_route
