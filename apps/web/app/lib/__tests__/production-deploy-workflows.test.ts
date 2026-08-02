@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseDocument } from 'yaml'
@@ -30,7 +31,11 @@ function parseWorkflow(source: string): ParsedWorkflow {
   return document.toJS() as ParsedWorkflow
 }
 
-function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string) {
+function sha256(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
+function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string, expectedRunSha256: string) {
   const steps = job.steps ?? []
   expect(job.if).toBe(
     `github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.${approvalVariable} == inputs.expected_sha`,
@@ -43,6 +48,7 @@ function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVari
   const authorizationSteps = steps.filter((step) => step.name === authorizationName)
   expect(authorizationSteps).toHaveLength(1)
   const run = authorizationSteps[0].run ?? ''
+  expect(sha256(run)).toBe(expectedRunSha256)
   expect(run).toContain(`[ "$${approvalVariable}" != "$EXPECTED_SHA" ]`)
   expect(run).toContain('LIVE_MAIN_SHA=$(git rev-parse origin/main)')
   expect(run).toContain('[ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]')
@@ -67,7 +73,7 @@ describe('production deployment workflow integrity', () => {
       .replace('          ref: ${{ inputs.expected_sha }}', '          ref: refs/heads/attacker')
       .replace('        run: |\n          set -euo pipefail', '        run: exit 0\n\n      - name: Harmless heredoc decoy\n        run: |\n          ref: ${{ inputs.expected_sha }}\n          set -euo pipefail')
     const job = parseWorkflow(mutated).jobs['build-and-push']
-    expect(() => expectAuthorizedJob(job, 'web-production', 'WEB_DEPLOY_APPROVED_SHA', 'Assert this is the live main commit')).toThrow()
+    expect(() => expectAuthorizedJob(job, 'web-production', 'WEB_DEPLOY_APPROVED_SHA', 'Assert this is the live main commit', 'e6ba5b37eecde3082c3ec47f85d3885591e769998348d31fde7ca520d9e9413d')).toThrow()
 
     const duplicate = source.replace('    environment: web-production', '    environment: web-production\n    environment: attacker')
     expect(() => parseWorkflow(duplicate)).toThrow()
@@ -96,10 +102,10 @@ describe('production deployment workflow integrity', () => {
   })
 
   it.each([
-    ['deploy-web.yml', 'web-production', 'WEB_DEPLOY_APPROVED_SHA'],
-    ['deploy-server.yml', 'server-production', 'SERVER_DEPLOY_APPROVED_SHA'],
-    ['deploy-docs.yml', 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA'],
-  ])('%s requires continuing exact-SHA owner approval', (name, environment, approvalVariable) => {
+    ['deploy-web.yml', 'web-production', 'WEB_DEPLOY_APPROVED_SHA', ['e6ba5b37eecde3082c3ec47f85d3885591e769998348d31fde7ca520d9e9413d', 'cfc63a1210b969831bc73107aec443b5238a2a8feae86a1f01eadeeec969ce15']],
+    ['deploy-server.yml', 'server-production', 'SERVER_DEPLOY_APPROVED_SHA', ['a42b337d7f795fd005cecaa0b450e8ed98ae71906b1541c0c5576fc7ddcd10b5', '9876fb19ad6579b278cb6d8aa8fbc6b011995d1b336ce80e6b0ab1d1fffbe0f4']],
+    ['deploy-docs.yml', 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA', ['02f41b250b6256a39c271cde53df98c87759b77ad38987af6d92dee96814d77b', '34fd2be0097b650297047c7c918ec462bc6d5d77f17a3320dab5bd8eeaab309b']],
+  ])('%s requires continuing exact-SHA owner approval', (name, environment, approvalVariable, runDigests) => {
     const source = workflow(name)
     const parsed = parseWorkflow(source)
     const jobNames = name === 'deploy-docs.yml' ? ['build', 'deploy'] : ['build-and-push', 'deploy']
@@ -107,12 +113,12 @@ describe('production deployment workflow integrity', () => {
     expect(source).toContain('workflow_dispatch:')
     expect(source).toContain('expected_sha:')
     expect(source).not.toMatch(/^  push:/m)
-    for (const jobName of jobNames) {
+    for (const [index, jobName] of jobNames.entries()) {
       const job = parsed.jobs[jobName]
       const authorizationName = jobName === 'deploy'
         ? name === 'deploy-docs.yml' ? 'Re-assert owner approval immediately before deployment' : 'Re-assert live main immediately before deployment'
         : name === 'deploy-docs.yml' ? 'Verify exact owner-approved live main commit for build' : 'Assert this is the live main commit'
-      expectAuthorizedJob(job, environment, approvalVariable, authorizationName)
+      expectAuthorizedJob(job, environment, approvalVariable, authorizationName, runDigests[index])
     }
   })
 
@@ -167,6 +173,9 @@ describe('production deployment workflow integrity', () => {
     expect(deployJob).toContain('actions/artifacts/$ARTIFACT_ID/zip')
     expect(deployJob).toContain('ACTUAL_ARTIFACT_DIGEST=$(sha256sum')
     expect(deployJob).toContain('test "$ACTUAL_ARTIFACT_DIGEST" = "$EXPECTED_ARTIFACT_DIGEST"')
+    const parsedDeploy = parseWorkflow(source).jobs.deploy
+    const download = parsedDeploy.steps?.find((step) => step.name === 'Download and verify admitted docs artifact')
+    expect(sha256(download?.run ?? '')).toBe('3839d4770098d4b1a20435631a3c1c628aed3648b5f1678f94fc965f949052eb')
     expect(deployJob).not.toContain('actions/download-artifact@')
     expect(deployJob).not.toContain('pnpm run build')
     expect(reauthorization).toBeGreaterThan(-1)
