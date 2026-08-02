@@ -19,8 +19,10 @@ function stripYamlComment(line: string): string {
       } else {
         inSingleQuote = !inSingleQuote
       }
-    } else if (character === '"' && !inSingleQuote && line[index - 1] !== '\\') {
-      inDoubleQuote = !inDoubleQuote
+    } else if (character === '"' && !inSingleQuote) {
+      let backslashes = 0
+      for (let previous = index - 1; previous >= 0 && line[previous] === '\\'; previous -= 1) backslashes += 1
+      if (backslashes % 2 === 0) inDoubleQuote = !inDoubleQuote
     } else if (character === '#' && !inSingleQuote && !inDoubleQuote && (index === 0 || /\s/.test(line[index - 1]))) {
       return line.slice(0, index).trimEnd()
     }
@@ -41,6 +43,12 @@ describe('production deployment workflow integrity', () => {
   it('strips inline YAML comments without stripping quoted hashes', () => {
     expect(stripYamlComment('    timeout-minutes: 10 # fake authorization')).toBe('    timeout-minutes: 10')
     expect(stripYamlComment('    value: "kept # literal" # removed')).toBe('    value: "kept # literal"')
+    expect(stripYamlComment(String.raw`    value: "kept \\\" # literal" # removed`)).toBe(
+      String.raw`    value: "kept \\\" # literal"`,
+    )
+    expect(stripYamlComment(String.raw`    name: "deploy\\\\" # removed`)).toBe(
+      String.raw`    name: "deploy\\\\"`,
+    )
   })
 
   it('documents repository approval variables and the actual revocation boundary', () => {
