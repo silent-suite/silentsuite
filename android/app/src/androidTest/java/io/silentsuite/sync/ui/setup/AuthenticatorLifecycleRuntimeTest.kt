@@ -134,13 +134,20 @@ class AuthenticatorLifecycleRuntimeTest {
                             "https://custom.example.invalid/",
                             activity.findViewById<android.widget.EditText>(R.id.custom_server).text.toString(),
                         )
+                        assertEquals(
+                            "restore@example.invalid",
+                            activity.findViewById<android.widget.EditText>(R.id.user_name).text.toString(),
+                        )
+                        assertEquals(
+                            "",
+                            activity.findViewById<android.widget.EditText>(R.id.login_password).text.toString(),
+                        )
+                        val lease = requireNotNull(activity.setupLease())
+                        org.junit.Assert.assertNull(SetupSecretHolder.getLoginCredentials(lease))
                         val validate = LoginCredentialsFragment::class.java
                             .getDeclaredMethod("validateLoginData")
                         validate.isAccessible = true
-                        val restored = validate.invoke(credentials) as LoginCredentials
-                        assertEquals(URI("https://custom.example.invalid/"), restored.uri)
-                        assertEquals("restore@example.invalid", restored.userName)
-                        assertEquals("process-only-fixture", restored.password)
+                        org.junit.Assert.assertNull(validate.invoke(credentials))
                         org.junit.Assert.assertFalse(activity.isFinishing)
                         org.junit.Assert.assertEquals(1, delivery.continued)
                         org.junit.Assert.assertEquals(0, delivery.errors)

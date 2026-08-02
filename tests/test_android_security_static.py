@@ -108,6 +108,9 @@ def test_account_entry_lifecycle_security_blockers_have_explicit_fail_closed_con
     continuation = (setup / "SignupContinuationRegistry.kt").read_text(encoding="utf-8")
     detector = (setup / "DetectConfigurationFragment.kt").read_text(encoding="utf-8")
     creator = (setup / "CreateAccountFragment.kt").read_text(encoding="utf-8")
+    credentials_layout = (
+        ROOT / "android/app/src/main/res/layout/login_credentials_fragment.xml"
+    ).read_text(encoding="utf-8")
     credential_change = (setup / "LoginCredentialsChangeFragment.kt").read_text(encoding="utf-8")
     signup_return = (setup / "SignupReturnActivity.kt").read_text(encoding="utf-8")
     first_run_runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/FirstRunSignInRuntimeTest.kt").read_text(encoding="utf-8")
@@ -141,6 +144,10 @@ def test_account_entry_lifecycle_security_blockers_have_explicit_fail_closed_con
     assert "check(BuildConfig.DEBUG)" in holder.split("fun now(): Long", 1)[1].split("object SetupSecretHolder", 1)[0]
     assert "if (nextGeneration == Long.MAX_VALUE)" in continuation
 
+    password_view = credentials_layout.split('android:id="@+id/login_password"', 1)[1].split(
+        "/>", 1
+    )[0]
+    assert 'android:saveEnabled="false"' in password_view
     assert "FragmentLifecycleCallbacks" in activity
     assert "onFragmentResumed" in activity
     acknowledgement = activity.split("private fun acknowledgeSignupDestinationIfReady", 1)[1]
@@ -219,6 +226,8 @@ def test_account_entry_lifecycle_security_blockers_have_explicit_fail_closed_con
     assert "CreateAccountFragment.newInstance(SetupSecretHolder.reference(lease))" in recoverable_runtime
     assert "CreateAccountFragment()," not in recoverable_runtime
     assert "Valid creator failure did not restore credentials with a bounded retry dialog" in recoverable_runtime
+    assert "SetupSecretHolder.getLoginCredentials(lease)" in recoverable_runtime
+    assert "assertNull(validate.invoke(credentials))" in recoverable_runtime
     assert recoverable_runtime.index("assertEquals(0, delivery.errors)") < recoverable_runtime.index(
         "finishAndAwaitDestroyed"
     )
