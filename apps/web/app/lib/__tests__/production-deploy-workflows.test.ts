@@ -8,21 +8,51 @@ function workflow(name: string): string {
 
 const deployRunbook = readFileSync(resolve(process.cwd(), '../../runbooks/production-deploy.md'), 'utf8')
 
+function stripYamlComment(line: string): string {
+  let inSingleQuote = false
+  let inDoubleQuote = false
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index]
+    if (character === "'" && !inDoubleQuote) {
+      if (inSingleQuote && line[index + 1] === "'") {
+        index += 1
+      } else {
+        inSingleQuote = !inSingleQuote
+      }
+    } else if (character === '"' && !inSingleQuote && line[index - 1] !== '\\') {
+      inDoubleQuote = !inDoubleQuote
+    } else if (character === '#' && !inSingleQuote && !inDoubleQuote && (index === 0 || /\s/.test(line[index - 1]))) {
+      return line.slice(0, index).trimEnd()
+    }
+  }
+  return line
+}
+
 function jobBlock(source: string, name: string): string {
   const lines = source.replace(/\r\n/g, '\n').split('\n')
   const start = lines.findIndex((line) => line === `  ${name}:`)
   if (start === -1) throw new Error(`Missing job: ${name}`)
   const relativeEnd = lines.slice(start + 1).findIndex((line) => /^  [A-Za-z0-9_-]+:$/.test(line))
   const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd
-  return lines.slice(start, end).filter((line) => !/^\s*#/.test(line)).join('\n')
+  return lines.slice(start, end).map(stripYamlComment).filter((line) => line.trim().length > 0).join('\n')
 }
 
 describe('production deployment workflow integrity', () => {
+  it('strips inline YAML comments without stripping quoted hashes', () => {
+    expect(stripYamlComment('    timeout-minutes: 10 # fake authorization')).toBe('    timeout-minutes: 10')
+    expect(stripYamlComment('    value: "kept # literal" # removed')).toBe('    value: "kept # literal"')
+  })
+
   it('documents repository approval variables and the actual revocation boundary', () => {
     expect(deployRunbook).toContain("component's repository approval variable")
     expect(deployRunbook).toContain('do not configure a same-named environment variable')
     expect(deployRunbook).toContain('Approval is not dynamically reloaded after a deployment job has started')
     expect(deployRunbook).not.toContain("component's protected-environment approval variable")
+    expect(deployRunbook).toContain('Production dispatch is operationally blocked until all three component environments')
+    expect(deployRunbook).toContain('auto-create it without protection rules')
+    expect(deployRunbook).toContain('deployment branch policy that permits only `main`')
+    expect(deployRunbook).toContain('Do not set an approval variable or dispatch any production workflow until this verification succeeds')
+    expect(deployRunbook).toContain('none of the three component environments existed')
   })
 
   it.each([

@@ -4,11 +4,24 @@ Promotion to `main` does not authorize or start a production deployment. Web, Se
 
 ## Component authorization
 
-| Component | Workflow | Protected environment | Approval variable |
+| Component | Workflow | Required pre-created protected environment | Repository approval variable |
 |---|---|---|---|
 | Web | `Deploy Web App (production)` | `web-production` | `WEB_DEPLOY_APPROVED_SHA` |
 | Server | `Deploy SilentSuite Server (production)` | `server-production` | `SERVER_DEPLOY_APPROVED_SHA` |
 | Docs | `Deploy Docs (production)` | `docs-production` | `DOCS_DEPLOY_APPROVED_SHA` |
+
+### One-time environment prerequisite
+
+Production dispatch is operationally blocked until all three component environments above have been explicitly created and their live settings verified. Referencing a missing environment from a workflow can auto-create it without protection rules; that auto-created state is forbidden and does not satisfy this runbook.
+
+Before the first dispatch, a repository owner must:
+
+1. Create `web-production`, `server-production`, and `docs-production` in repository Settings.
+2. Configure each environment's intended required reviewers/protection rules.
+3. Configure a deployment branch policy that permits only `main`.
+4. Verify the live environment API response and deployment-branch-policy list for each environment. Do not set an approval variable or dispatch any production workflow until this verification succeeds.
+
+Read-only verification on 2026-08-02 found that none of the three component environments existed. The existing `production` environment had no protection rules or deployment branch policy and is not an acceptable substitute. Update this status only after a separately authorized configuration change and independent verification.
 
 For each component:
 
