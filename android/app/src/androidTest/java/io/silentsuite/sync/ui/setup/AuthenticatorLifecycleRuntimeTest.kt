@@ -59,69 +59,99 @@ class AuthenticatorLifecycleRuntimeTest {
             val loginIntent = Intent(targetContext, LoginActivity::class.java)
             assertEquals(targetContext.packageName, loginIntent.component?.packageName)
             ActivityScenario.launch<LoginActivity>(loginIntent).use { scenario ->
-                instrumentation.waitForIdleSync()
-                scenario.onActivity { activity ->
-                    activity.findViewById<android.view.View>(R.id.account_choice_sign_in).performClick()
-                    activity.supportFragmentManager.executePendingTransactions()
-                    activity.findViewById<android.view.View>(R.id.show_advanced).performClick()
-                    activity.findViewById<android.widget.EditText>(R.id.custom_server)
-                        .setText("https://custom.example.invalid/")
-                    activity.supportFragmentManager.beginTransaction()
-                        .replace(
-                            android.R.id.content,
-                            CreateAccountFragment(),
-                            LoginActivity.CREATE_ACCOUNT_TAG,
+                var loginActivity: LoginActivity? = null
+                try {
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity { activity ->
+                        loginActivity = activity
+                        activity.findViewById<android.view.View>(R.id.account_choice_sign_in).performClick()
+                        activity.supportFragmentManager.executePendingTransactions()
+                        activity.findViewById<android.view.View>(R.id.show_advanced).performClick()
+                        activity.findViewById<android.widget.EditText>(R.id.custom_server)
+                            .setText("https://custom.example.invalid/")
+                        activity.findViewById<android.widget.EditText>(R.id.user_name)
+                            .setText("restore@example.invalid")
+                        activity.findViewById<android.widget.EditText>(R.id.login_password)
+                            .setText("process-only-fixture")
+                        val credentials = activity.supportFragmentManager
+                            .findFragmentById(android.R.id.content) as LoginCredentialsFragment
+                        val validate = LoginCredentialsFragment::class.java
+                            .getDeclaredMethod("validateLoginData").apply { isAccessible = true }
+                        val staged = validate.invoke(credentials) as LoginCredentials
+                        val lease = requireNotNull(activity.setupLease())
+                        assertTrue(SetupSecretHolder.setLoginCredentials(lease, staged))
+                        activity.supportFragmentManager.beginTransaction()
+                            .replace(
+                                android.R.id.content,
+                                CreateAccountFragment.newInstance(SetupSecretHolder.reference(lease)),
+                                LoginActivity.CREATE_ACCOUNT_TAG,
+                            )
+                            .addToBackStack(LoginActivity.CREDENTIALS_TO_CREATOR_BACK_STACK)
+                            .commit()
+                    }
+                    instrumentation.waitForIdleSync()
+                    val recoveryDeadline = android.os.SystemClock.elapsedRealtime() + 5_000L
+                    var recoveryReady = false
+                    while (!recoveryReady && android.os.SystemClock.elapsedRealtime() < recoveryDeadline) {
+                        instrumentation.waitForIdleSync()
+                        scenario.onActivity { activity ->
+                            activity.supportFragmentManager.executePendingTransactions()
+                            val retry = activity.supportFragmentManager
+                                .findFragmentByTag(LoginActivity.CREATE_RETRY_ERROR_TAG)
+                            recoveryReady =
+                                activity.supportFragmentManager.findFragmentById(android.R.id.content)
+                                    is LoginCredentialsFragment &&
+                                    retry is androidx.fragment.app.DialogFragment &&
+                                    retry.dialog?.isShowing == true
+                        }
+                        if (!recoveryReady) android.os.SystemClock.sleep(25L)
+                    }
+                    assertTrue("Valid creator failure did not restore credentials with a bounded retry dialog", recoveryReady)
+                    scenario.onActivity { activity ->
+                        org.junit.Assert.assertFalse(activity.isFinishing)
+                        org.junit.Assert.assertNull(
+                            activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREATE_ACCOUNT_TAG),
                         )
-                        .addToBackStack(LoginActivity.CREDENTIALS_TO_CREATOR_BACK_STACK)
-                        .commit()
-                }
-                instrumentation.waitForIdleSync()
-                scenario.onActivity { activity ->
-                    activity.supportFragmentManager.executePendingTransactions()
-                    org.junit.Assert.assertFalse(activity.isFinishing)
-                    val dismissedCreator = activity.supportFragmentManager
-                        .findFragmentByTag(LoginActivity.CREATE_ACCOUNT_TAG) as CreateAccountFragment
-                    org.junit.Assert.assertFalse(dismissedCreator.isAdded)
-                    org.junit.Assert.assertFalse(dismissedCreator.dialog?.isShowing == true)
-                    org.junit.Assert.assertNull(
-                        activity.supportFragmentManager.findFragmentByTag("account_creation_retry_error"),
-                    )
-                    activity.onBackPressedDispatcher.onBackPressed()
-                    activity.supportFragmentManager.executePendingTransactions()
-                    org.junit.Assert.assertNull(
-                        activity.supportFragmentManager.findFragmentByTag(LoginActivity.CREATE_ACCOUNT_TAG),
-                    )
-                }
-                instrumentation.waitForIdleSync()
-                scenario.onActivity { activity ->
-                    val credentials = activity.supportFragmentManager
-                        .findFragmentById(android.R.id.content) as LoginCredentialsFragment
-                    val guard = LoginCredentialsFragment::class.java.getDeclaredField("submissionInProgress")
-                    guard.isAccessible = true
-                    org.junit.Assert.assertFalse(guard.getBoolean(credentials))
-                    val expanded = LoginCredentialsFragment::class.java.getDeclaredField("advancedExpanded")
-                    expanded.isAccessible = true
-                    org.junit.Assert.assertTrue(expanded.getBoolean(credentials))
-                    assertEquals(
-                        "Custom server settings, expanded",
-                        activity.findViewById<android.view.View>(R.id.show_advanced).contentDescription,
-                    )
-                    assertEquals(
-                        "https://custom.example.invalid/",
-                        activity.findViewById<android.widget.EditText>(R.id.custom_server).text.toString(),
-                    )
-                    activity.findViewById<android.widget.EditText>(R.id.user_name)
-                        .setText("restore@example.invalid")
-                    activity.findViewById<android.widget.EditText>(R.id.login_password)
-                        .setText("process-only-fixture")
-                    val validate = LoginCredentialsFragment::class.java
-                        .getDeclaredMethod("validateLoginData")
-                    validate.isAccessible = true
-                    val restored = validate.invoke(credentials) as LoginCredentials
-                    assertEquals(URI("https://custom.example.invalid/"), restored.uri)
-                    org.junit.Assert.assertFalse(activity.isFinishing)
-                    org.junit.Assert.assertEquals(1, delivery.continued)
-                    org.junit.Assert.assertEquals(0, delivery.errors)
+                        val retry = activity.supportFragmentManager
+                            .findFragmentByTag(LoginActivity.CREATE_RETRY_ERROR_TAG) as androidx.fragment.app.DialogFragment
+                        org.junit.Assert.assertTrue(retry.dialog?.isShowing == true)
+                        retry.dismissAllowingStateLoss()
+                        activity.supportFragmentManager.executePendingTransactions()
+                        val credentials = activity.supportFragmentManager
+                            .findFragmentById(android.R.id.content) as LoginCredentialsFragment
+                        val guard = LoginCredentialsFragment::class.java.getDeclaredField("submissionInProgress")
+                        guard.isAccessible = true
+                        org.junit.Assert.assertFalse(guard.getBoolean(credentials))
+                        val expanded = LoginCredentialsFragment::class.java.getDeclaredField("advancedExpanded")
+                        expanded.isAccessible = true
+                        org.junit.Assert.assertTrue(expanded.getBoolean(credentials))
+                        assertEquals(
+                            "Custom server settings, expanded",
+                            activity.findViewById<android.view.View>(R.id.show_advanced).contentDescription,
+                        )
+                        assertEquals(
+                            "https://custom.example.invalid/",
+                            activity.findViewById<android.widget.EditText>(R.id.custom_server).text.toString(),
+                        )
+                        val validate = LoginCredentialsFragment::class.java
+                            .getDeclaredMethod("validateLoginData")
+                        validate.isAccessible = true
+                        val restored = validate.invoke(credentials) as LoginCredentials
+                        assertEquals(URI("https://custom.example.invalid/"), restored.uri)
+                        assertEquals("restore@example.invalid", restored.userName)
+                        assertEquals("process-only-fixture", restored.password)
+                        org.junit.Assert.assertFalse(activity.isFinishing)
+                        org.junit.Assert.assertEquals(1, delivery.continued)
+                        org.junit.Assert.assertEquals(0, delivery.errors)
+                    }
+                } finally {
+                    loginActivity?.let {
+                        finishAndAwaitDestroyed(
+                            instrumentation,
+                            it,
+                            "Recoverable-creation login did not finish before scenario cleanup",
+                        )
+                    }
                 }
             }
             creatorGenerationReplacementRoutesToSettingsResolution()

@@ -167,42 +167,61 @@ class FirstRunSignInRuntimeTest {
                     })
                 }
 
-                lateinit var releasedAdmission: LoginFlowOwnerRegistry.Admission
-                val admissionField = LoginActivity::class.java.getDeclaredField("admission").apply {
-                    isAccessible = true
-                }
-                scenario.onActivity { activity ->
-                    releasedAdmission = admissionField.get(activity) as LoginFlowOwnerRegistry.Admission
-                    LoginFlowOwnerRegistry.release(
-                        activity,
-                        releasedAdmission.releaseToken,
-                        changingConfigurations = true,
+                val frozenNow = SetupElapsedClock.now()
+                SetupElapsedClock.nowForTest = { frozenNow }
+                var rebindReturn: SignupReturnActivity? = null
+                try {
+                    lateinit var releasedAdmission: LoginFlowOwnerRegistry.Admission
+                    val admissionField = LoginActivity::class.java.getDeclaredField("admission").apply {
+                        isAccessible = true
+                    }
+                    scenario.onActivity { activity ->
+                        releasedAdmission = admissionField.get(activity) as LoginFlowOwnerRegistry.Admission
+                        LoginFlowOwnerRegistry.release(
+                            activity,
+                            releasedAdmission.releaseToken,
+                            changingConfigurations = true,
+                        )
+                    }
+                    val rebindMonitor = monitorSignupReturn()
+                    context.startActivity(
+                        Intent(
+                            Intent.ACTION_VIEW,
+                            android.net.Uri.parse("silentsuite://signup-complete"),
+                            context,
+                            SignupReturnActivity::class.java,
+                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK),
                     )
+                    val monitoredReturn = instrumentation.waitForMonitorWithTimeout(rebindMonitor, 5_000L)
+                    assertTrue("Tokenless callback did not enter the rebind queue", monitoredReturn is SignupReturnActivity)
+                    val callback = monitoredReturn as SignupReturnActivity
+                    rebindReturn = callback
+                    assertFalse("Rebind-queued callback finished before replacement admission", callback.isFinishing)
+                    scenario.onActivity { activity ->
+                        val rebound = LoginFlowOwnerRegistry.admit(
+                            activity,
+                            releasedAdmission.flowId,
+                            releasedAdmission.generation,
+                        )
+                        admissionField.set(activity, rebound)
+                    }
+                    val rebindFinishDeadline = android.os.SystemClock.elapsedRealtime() + 5_000L
+                    while (!callback.isFinishing && android.os.SystemClock.elapsedRealtime() < rebindFinishDeadline)
+                        android.os.SystemClock.sleep(50L)
+                    assertTrue("Rebind-queued callback did not finish after replacement admission", callback.isFinishing)
+                } finally {
+                    try {
+                        rebindReturn?.let {
+                            finishAndAwaitDestroyed(
+                                instrumentation,
+                                it,
+                                "Rebind callback did not finish before elapsed-clock restoration",
+                            )
+                        }
+                    } finally {
+                        SetupElapsedClock.nowForTest = null
+                    }
                 }
-                val rebindMonitor = monitorSignupReturn()
-                context.startActivity(
-                    Intent(
-                        Intent.ACTION_VIEW,
-                        android.net.Uri.parse("silentsuite://signup-complete"),
-                        context,
-                        SignupReturnActivity::class.java,
-                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK),
-                )
-                val rebindReturn = instrumentation.waitForMonitorWithTimeout(rebindMonitor, 5_000L)
-                assertTrue("Tokenless callback did not enter the rebind queue", rebindReturn is SignupReturnActivity)
-                assertFalse("Rebind-queued callback finished before replacement admission", rebindReturn!!.isFinishing)
-                scenario.onActivity { activity ->
-                    val rebound = LoginFlowOwnerRegistry.admit(
-                        activity,
-                        releasedAdmission.flowId,
-                        releasedAdmission.generation,
-                    )
-                    admissionField.set(activity, rebound)
-                }
-                val rebindFinishDeadline = android.os.SystemClock.elapsedRealtime() + 5_000L
-                while (!rebindReturn.isFinishing && android.os.SystemClock.elapsedRealtime() < rebindFinishDeadline)
-                    android.os.SystemClock.sleep(50L)
-                assertTrue("Rebind-queued callback did not finish after replacement admission", rebindReturn.isFinishing)
             }
 
             var deadlineRecoveryMonitor: android.app.Instrumentation.ActivityMonitor? = null
@@ -532,6 +551,7 @@ class FirstRunSignInRuntimeTest {
         LoginActivity.controllerFactory = null
         LoginActivity.browserLauncherForTest = null
         SignupReturnActivity.foregroundExecutorForTest = null
+        SetupElapsedClock.nowForTest = null
         LoginFlowOwnerRegistry.resetForTests()
         SignupContinuationRegistry.resetForTests()
         SetupSecretHolder.resetForTests()
