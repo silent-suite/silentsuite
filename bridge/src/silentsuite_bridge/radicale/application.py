@@ -1,6 +1,153 @@
 """Narrow Radicale application compatibility adapters."""
 
+import logging
+import re
+
 from radicale.app import Application as RadicaleApplication
+
+from ..privacy_logging import bounded_identifier
+
+_MAX_DIAGNOSTIC_LENGTH = 320
+
+
+def _safe_exception_diagnostic(exc_info):
+    """Return an exception class and product-owned frame without private values."""
+    if not exc_info or not exc_info[0]:
+        return "Radicale server request failed"
+
+    exception_class = bounded_identifier(getattr(exc_info[0], "__name__", None))
+
+    product_origin = None
+    traceback = exc_info[2]
+    while traceback is not None:
+        filename = str(traceback.tb_frame.f_code.co_filename).replace("\\", "/")
+        marker = "silentsuite_bridge/"
+        if marker in filename:
+            relative_path = filename.rsplit(marker, 1)[1]
+            function = traceback.tb_frame.f_code.co_name
+            if (
+                len(relative_path) <= 160
+                and len(function) <= 64
+                and re.fullmatch(r"[A-Za-z0-9_./-]+", relative_path)
+                and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", function)
+            ):
+                product_origin = (
+                    f"{relative_path}:{traceback.tb_lineno} in {function}"
+                )
+        traceback = traceback.tb_next
+
+    if product_origin:
+        diagnostic = (
+            "Radicale server request failed "
+            f"({exception_class} at {product_origin})"
+        )
+        if len(diagnostic) <= _MAX_DIAGNOSTIC_LENGTH:
+            return diagnostic
+    return f"Radicale server request failed ({exception_class})"
+
+
+def _safe_put_diagnostic(template, exc_info):
+    """Classify a fixed Radicale PUT stage without retaining request values."""
+    stage = "processing"
+    for candidate in (
+        "read_request_body",
+        "read_components",
+        "prepare",
+        "create_collection",
+        "upload",
+    ):
+        if f"({candidate})" in template:
+            stage = candidate
+            break
+    exception_diagnostic = _safe_exception_diagnostic(exc_info)
+    suffix = exception_diagnostic.removeprefix("Radicale server request failed")
+    diagnostic = f"Radicale PUT rejected during {stage}{suffix}"
+    if len(diagnostic) <= _MAX_DIAGNOSTIC_LENGTH:
+        return diagnostic
+    return f"Radicale PUT rejected during {stage}"
+
+
+class _DavDiagnosticRedactionFilter(logging.Filter):
+    """Remove DAV payloads, identifiers, tokens, and exception chains."""
+
+    def filter(self, record):
+        template = str(record.msg)
+        normalized_path = "/" + str(record.pathname).replace("\\", "/").lstrip("/")
+        if "/radicale/server.py" in normalized_path:
+            if template in {
+                "Starting Radicale",
+                "Radicale server ready",
+                "Stopping Radicale",
+            }:
+                record.msg = template
+            elif template.startswith("Listening on "):
+                record.msg = "Radicale listener started"
+            elif record.exc_info or "during request" in template:
+                record.msg = _safe_exception_diagnostic(record.exc_info)
+            elif record.levelno >= logging.ERROR:
+                record.msg = "Radicale server failure"
+            else:
+                record.msg = "Radicale server diagnostic suppressed"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        elif "/radicale/item/" in normalized_path:
+            record.msg = "Radicale item diagnostic suppressed"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        elif (
+            "/radicale/app/put.py" in normalized_path
+            and template.startswith("Bad PUT request")
+        ):
+            record.msg = _safe_put_diagnostic(template, record.exc_info)
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        elif (
+            "/radicale/app/" in normalized_path
+            and "/silentsuite_bridge/" not in normalized_path
+        ):
+            record.msg = (
+                "Radicale request was rejected"
+                if record.levelno >= logging.WARNING
+                else "Radicale diagnostic suppressed"
+            )
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        elif template.startswith(("Request content (", "Response content (")):
+            record.msg = "DAV XML diagnostic content suppressed"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        elif template.startswith("Client provided sync token:"):
+            record.msg = "Client provided a sync token"
+            record.args = ()
+        elif template.startswith("Client provided invalid sync token"):
+            record.msg = "Client provided an invalid sync token"
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        else:
+            record.msg = (
+                "Radicale failure"
+                if record.levelno >= logging.WARNING
+                else "Radicale diagnostic suppressed"
+            )
+            record.args = ()
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+
+for _logger_name in (
+    "radicale",
+    "radicale.app",
+    "radicale.item",
+    "radicale.server",
+):
+    logging.getLogger(_logger_name).addFilter(_DavDiagnosticRedactionFilter())
 
 
 def canonical_principal_alias_path(path: str, user: str) -> str:

@@ -16,6 +16,7 @@ import tempfile
 import threading
 
 from . import __version__, config
+from .privacy_logging import bounded_exception_class, log_bounded_failure
 
 logger = logging.getLogger("silentsuite-bridge")
 
@@ -44,6 +45,20 @@ def configure_logging():
         format=log_format,
         handlers=handlers,
     )
+
+    # Dependency DEBUG records can include SQL parameters, URLs, headers,
+    # account identifiers, sync tokens, and DAV metadata. They must not inherit
+    # the Bridge's opt-in product DEBUG level.
+    dependency_log_level = logging.CRITICAL + 1
+    for logger_name in (
+        "peewee",
+        "etebase",
+        "requests",
+        "urllib3",
+        "httpx",
+        "httpcore",
+    ):
+        logging.getLogger(logger_name).setLevel(dependency_log_level)
 
 
 def build_radicale_configuration():
@@ -171,7 +186,7 @@ def start_tray():
         tray.run_detached()
         return tray
     except Exception as e:
-        logger.warning("Failed to start system tray: %s", e)
+        logger.warning("Failed to start system tray (%s)", bounded_exception_class(e))
         return None
 
 
@@ -179,11 +194,22 @@ def _start_sync_threads():
     """Start a SyncThread for each configured user at boot."""
     from .radicale.creds import Credentials
     from .radicale.storage import start_sync_thread
+    from .web import update_status
 
     creds = Credentials()
     users = creds.list_users()
     for user in users:
+        update_status("syncing", account=user)
+    for user in users:
         start_sync_thread(user)
+
+
+def _prepare_server_start(open_browser=True):
+    """Resume durable maintenance before credential-based early exits."""
+    from .accounts import resume_pending_cache_cleanups
+
+    resume_pending_cache_cleanups()
+    return check_credentials(open_browser=open_browser)
 
 
 def _initial_status_check():
@@ -225,21 +251,31 @@ def _initial_status_check():
                     collections["tasks"],
                 )
         except Exception as e:
-            logger.warning("Initial status check failed for a configured account: %s", e)
-            errors.append(str(e))
-            log_sync_event("error", f"Initial sync failed for an account: {e}")
+            error_code = bounded_exception_class(e)
+            logger.warning(
+                "Initial status check failed for a configured account (%s)",
+                error_code,
+            )
+            errors.append(error_code)
+            log_sync_event("error", "Initial sync failed for a configured account")
 
-    if synced:
+    if synced and not errors:
         update_status(
             "connected",
             collections=totals,
             scope="all configured accounts",
         )
-        if errors:
-            log_sync_event(
-                "error",
-                f"Initial sync skipped {len(errors)} account(s)",
-            )
+    elif synced and errors:
+        update_status(
+            "error",
+            error=f"Initial sync failed for {len(errors)} account(s)",
+            collections=totals,
+            scope="all configured accounts",
+        )
+        log_sync_event(
+            "error",
+            f"Initial sync skipped {len(errors)} account(s)",
+        )
     elif errors:
         update_status("error", error=f"Initial status check failed for {len(errors)} account(s)")
     else:
@@ -362,7 +398,7 @@ def _harden_key_permissions(key_path: str) -> None:
     try:
         os.chmod(key_path, 0o600)
     except OSError:
-        logger.debug("Could not chmod key file %s to 0600", key_path)
+        logger.debug("Could not harden generated key-file permissions")
 
 
 def _cert_and_key_readable(cert_path: str, key_path: str) -> bool:
@@ -510,9 +546,8 @@ def run_server():
     configuration = build_radicale_configuration()
 
     logger.info(
-        "SilentSuite Bridge v%s starting on %s",
+        "SilentSuite Bridge v%s starting",
         __version__,
-        config.SERVER_HOSTS,
     )
     if config.is_remote_bind_configured():
         if config.SSL_ENABLED:
@@ -527,15 +562,12 @@ def run_server():
                 "DAV traffic is plaintext HTTP unless protected by your own proxy/VPN."
             )
         logger.warning("Bridge dashboard disabled while remote bind is configured.")
-    logger.info("Etebase server: %s", config.ETEBASE_SERVER_URL)
-    logger.info("Data directory: %s", config.DATA_DIR)
+    logger.info("Etebase server configured")
+    logger.info("Bridge data directory configured")
     logger.info("CalDAV/CardDAV scheme: %s", config.dav_scheme())
-    logger.info("CalDAV/CardDAV host(s): %s", config.SERVER_HOSTS)
+    logger.info("CalDAV/CardDAV listener configured")
 
-    # Run initial sync so dashboard shows correct status immediately
-    _initial_status_check()
-
-    # Start periodic SyncThread for all configured users
+    # Start account workers without blocking DAV/dashboard startup on provider I/O.
     _start_sync_threads()
 
     # Start system tray (non-blocking)
@@ -547,8 +579,8 @@ def run_server():
         _serve_radicale_with_bridge_application(configuration)
     except KeyboardInterrupt:
         logger.info("Bridge stopped by user")
-    except Exception:
-        logger.exception("Bridge crashed")
+    except Exception as exc:
+        log_bounded_failure(logger, logging.ERROR, "Bridge crashed", exc)
         if tray:
             tray.update_state("error", "Bridge crashed")
         sys.exit(1)
@@ -646,7 +678,12 @@ def main():
         config.validate_ssl_config()
         validate_radicale_ssl_schema()
     except RuntimeError as exc:
-        logger.error("%s", exc)
+        log_bounded_failure(
+            logger,
+            logging.ERROR,
+            "Bridge configuration is invalid",
+            exc,
+        )
         sys.exit(1)
 
     config.ensure_data_dir()
@@ -698,7 +735,15 @@ def main():
 
         result = remove_account(sys.argv[idx + 1])
         if result.existed:
-            print(f"Removed {result.username}. Credentials and local cache were deleted.")
+            if result.cache_cleanup == "deferred":
+                print(
+                    f"Removed {result.username}. Credentials were deleted; local cache "
+                    "cleanup is deferred until the active sync exits."
+                )
+            elif result.cache_cleared:
+                print(f"Removed {result.username}. Credentials and local cache were deleted.")
+            else:
+                print(f"Removed {result.username}. Credentials were deleted; no cache rows were found.")
             if not result.sync_stopped:
                 print("Warning: sync thread is still shutting down; no duplicate will be started.")
         else:
@@ -733,8 +778,8 @@ def main():
         remove_autostart()
         sys.exit(0)
 
-    # Check credentials exist
-    if not check_credentials():
+    # Resume durable cleanup before checking whether account state allows startup.
+    if not _prepare_server_start():
         sys.exit(1)
 
     # Start the server

@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",
-    "preview": "vitepress preview"
+    "preview": "vitepress preview",
+    "test:android-distribution": "node --test scripts/android-distribution.test.mjs"
   },
   "devDependencies": {
     "vitepress": "^1.6.3",

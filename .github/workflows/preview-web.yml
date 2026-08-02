@@ -53,6 +53,7 @@ jobs:
             NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
             NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
+            NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
           cache-from: type=gha
 
       - name: Comment on PR
@@ -124,6 +125,7 @@ jobs:
             NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
+            NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

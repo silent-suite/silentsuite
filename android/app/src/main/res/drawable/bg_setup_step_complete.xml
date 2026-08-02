@@ -1,0 +1,9 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/bg_setup_step_current" />
+    <item
+        android:left="7dp"
+        android:top="7dp"
+        android:right="7dp"
+        android:bottom="7dp"
+        android:drawable="@drawable/ic_check_on_primary" />
+</layer-list>

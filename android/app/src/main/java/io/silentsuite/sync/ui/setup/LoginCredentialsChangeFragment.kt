@@ -25,9 +25,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 class LoginCredentialsChangeFragment : DialogFragment() {
     private lateinit var account: Account
+    private var lease: SetupSecretHolder.OwnerLease? = null
+    private var bindingToken: SetupSecretHolder.BindingToken? = null
+    private var operation: SetupSecretHolder.OperationToken? = null
+    private var started = false
+    private val instanceNonce = UUID.randomUUID().toString()
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         isCancelable = false
@@ -40,22 +46,40 @@ class LoginCredentialsChangeFragment : DialogFragment() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         account = requireArguments().getParcelable(ARG_ACCOUNT)!!
+    }
 
-        if (savedInstanceState == null) {
-            val credentials = SetupSecretHolder.getLoginCredentials()
-            if (credentials == null) {
-                Logger.log.warning("Updated login credentials expired before configuration detection")
-                SetupSecretHolder.clearProcessOnlySecrets()
-                parentFragmentManager.beginTransaction()
-                        .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(R.string.setup_state_expired), null)
-                        .commitAllowingStateLoss()
-                dismissAllowingStateLoss()
-            } else {
-                findConfiguration(credentials)
-            }
+    override fun onStart() {
+        super.onStart()
+        if (started) return
+        started = true
+
+        lease = parseLeaseRef()?.let(SetupSecretHolder::resolve)
+        bindingToken = lease?.let { SetupSecretHolder.bind(it, this, instanceNonce) }
+        operation = lease?.let(SetupSecretHolder::beginOperation)
+        val credentials = operation?.credentials
+        if (bindingToken == null || credentials == null) {
+            Logger.log.warning("Updated login credentials expired before configuration detection")
+            if (bindingToken == null)
+                lease?.let(SetupSecretHolder::retireUnboundOrRebinding)
+            else
+                bindingToken?.let { SetupSecretHolder.releaseBinding(it, this, changingConfigurations = false) }
+            bindingToken = null
+            parentFragmentManager.beginTransaction()
+                    .add(DetectConfigurationFragment.NothingDetectedFragment.newInstance(R.string.setup_state_expired), null)
+                    .commitAllowingStateLoss()
+            dismissAllowingStateLoss()
+        } else {
+            findConfiguration(credentials)
         }
+    }
+
+    override fun onDestroy() {
+        bindingToken?.let {
+            SetupSecretHolder.releaseBinding(it, this, activity?.isChangingConfigurations == true)
+        }
+        bindingToken = null
+        super.onDestroy()
     }
 
     private fun findConfiguration(credentials: LoginCredentials) {
@@ -74,6 +98,18 @@ class LoginCredentialsChangeFragment : DialogFragment() {
     }
 
     private fun onLoadFinished(data: Configuration?) {
+        val currentLease = lease
+        val currentBinding = bindingToken
+        val currentOperation = operation
+        if (currentLease == null || currentBinding == null || currentOperation == null ||
+            !SetupSecretHolder.compareBinding(currentBinding, this) ||
+            !SetupSecretHolder.compareOperation(currentOperation)) return
+        if (!listOf(
+                SetupSecretHolder.CommitKind.SETTINGS_WRITE,
+                SetupSecretHolder.CommitKind.HOLDER_MUTATION,
+                SetupSecretHolder.CommitKind.UI_PUBLICATION,
+                SetupSecretHolder.CommitKind.DISMISSAL,
+            ).all { SetupSecretHolder.commitIfCurrent(currentOperation, it) }) return
         if (data != null) {
             if (data.isFailed)
             // no service found: show error message
@@ -87,7 +123,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
                     settings = AccountSettings(requireActivity(), account)
                 } catch (e: InvalidAccountException) {
                     Logger.log.info("Account is invalid or doesn't exist (anymore): ${e.javaClass.name}")
-                    SetupSecretHolder.clearProcessOnlySecrets()
+                    lease?.let(SetupSecretHolder::revoke)
                     requireActivity().finish()
                     return
                 }
@@ -108,7 +144,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
                 .commitAllowingStateLoss()
         }
 
-        SetupSecretHolder.clearProcessOnlySecrets()
+        SetupSecretHolder.revoke(currentLease)
         dismissAllowingStateLoss()
     }
 
@@ -116,6 +152,18 @@ class LoginCredentialsChangeFragment : DialogFragment() {
         LoginFailureMessagePolicy.Message.Authentication -> R.string.login_wrong_username_or_password
         LoginFailureMessagePolicy.Message.Connection -> R.string.login_connection_error
         LoginFailureMessagePolicy.Message.Generic -> R.string.login_error_generic
+    }
+
+    private fun parseLeaseRef(): SetupSecretHolder.LeaseRefV1? {
+        val args = arguments ?: return null
+        if ((args.get(ARG_LEASE_VERSION) as? Int) != SetupSecretHolder.LEASE_REF_VERSION) return null
+        val ownerId = args.getString(ARG_LEASE_OWNER)?.takeIf { it.isNotBlank() } ?: return null
+        val generation = (args.get(ARG_LEASE_GENERATION) as? Long)?.takeIf { it > 0 } ?: return null
+        val kind = runCatching {
+            SetupSecretHolder.LeaseKind.valueOf(args.getString(ARG_LEASE_KIND).orEmpty())
+        }.getOrNull() ?: return null
+        if (kind != SetupSecretHolder.LeaseKind.CREDENTIAL_CHANGE) return null
+        return SetupSecretHolder.LeaseRefV1(ownerId, generation, kind)
     }
 
 
@@ -150,12 +198,25 @@ class LoginCredentialsChangeFragment : DialogFragment() {
 
     companion object {
         protected val ARG_ACCOUNT = "account"
+        private const val ARG_LEASE_VERSION = "lease_ref_version"
+        private const val ARG_LEASE_OWNER = "lease_owner_v1"
+        private const val ARG_LEASE_GENERATION = "lease_generation_v1"
+        private const val ARG_LEASE_KIND = "lease_kind_v1"
 
         fun newInstance(account: Account, credentials: LoginCredentials): LoginCredentialsChangeFragment {
-            SetupSecretHolder.setLoginCredentials(credentials)
+            val lease = SetupSecretHolder.issue(
+                SetupSecretHolder.LeaseKind.CREDENTIAL_CHANGE,
+                credentials,
+                bound = false,
+            )
+            val reference = SetupSecretHolder.reference(lease)
             val frag = LoginCredentialsChangeFragment()
-            val args = Bundle(1)
+            val args = Bundle(5)
             args.putParcelable(ARG_ACCOUNT, account)
+            args.putInt(ARG_LEASE_VERSION, SetupSecretHolder.LEASE_REF_VERSION)
+            args.putString(ARG_LEASE_OWNER, reference.ownerId)
+            args.putLong(ARG_LEASE_GENERATION, reference.generation)
+            args.putString(ARG_LEASE_KIND, reference.kind.name)
             frag.arguments = args
             return frag
         }

@@ -2,6 +2,7 @@
 
 import io
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from radicale.app import Application
@@ -12,6 +13,7 @@ from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import accounts, config
 from silentsuite_bridge.accounts import AccountOperationResult
 from silentsuite_bridge.auth_browser import AuthenticatedAccount, AuthenticationError
+from silentsuite_bridge.local_cache.models import CollectionEntity, ItemEntity
 from silentsuite_bridge.radicale import storage
 from silentsuite_bridge.radicale.creds import Credentials
 from silentsuite_bridge.web import (
@@ -122,6 +124,7 @@ def test_render_dashboard_lists_each_configured_account(tmp_path, monkeypatch):
     assert "2 calendars, 1 contacts, 0 tasks" in html
     assert "window.SILENTSUITE_DASHBOARD_CSRF" in html
     assert "X-SilentSuite-CSRF" in html
+
     assert "Add / Re-authenticate Account" in html
     assert "Add or re-authenticate an account" in html
     assert 'class="login-panel hidden"' in html
@@ -165,6 +168,20 @@ def test_update_status_aggregates_background_sync_counts(tmp_path, monkeypatch):
 
     html = _render_dashboard()
     assert "3 calendars, 3 contacts, 1 tasks" in html
+
+
+def test_successful_account_does_not_clear_another_account_failure():
+    _reset_status()
+
+    update_status("error", error="SyncFailure", account="failed@example.com")
+    update_status(
+        "connected",
+        collections={"calendars": 1, "contacts": 0, "tasks": 0},
+        account="healthy@example.com",
+    )
+
+    assert _bridge_status["state"] == "error"
+    assert _bridge_status["error"] == "One or more configured accounts failed to sync"
 
 
 def test_render_dashboard_uses_https_urls_when_ssl_enabled(tmp_path, monkeypatch):
@@ -244,6 +261,18 @@ def test_add_account_button_bound_via_add_event_listener(tmp_path, monkeypatch):
     assert "window.SILENTSUITE_DASHBOARD_CSRF = {{CSRF_TOKEN}}" not in html
 
 
+def test_dashboard_sync_script_checks_status_and_polls_request(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+
+    html = _render_dashboard()
+
+    assert "if (!r.ok)" in html
+    assert "data.request_id" in html
+    assert "encodeURIComponent(requestId)" in html
+    assert "data.state === 'succeeded'" in html
+    assert "data.state === 'failed' || data.state === 'timed_out'" in html
+
+
 def test_forget_account_status_removes_one_accounts_counts():
     _reset_status()
     update_status(
@@ -287,6 +316,38 @@ def test_dump_api_requires_csrf_when_enabled(monkeypatch):
     assert status == 403
     assert headers["Content-Type"] == "application/json"
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
+
+
+def test_dump_api_redacts_identifiers_and_remote_tokens(mem_db, user, monkeypatch):
+    monkeypatch.setattr(config, "DASHBOARD_DUMP_ENABLED", True)
+    collection = CollectionEntity.create(
+        local_user=user,
+        uid="private-address-book",
+        stoken="private-remote-stoken",
+        local_stoken="private-local-stoken",
+        eb_col=b"collection-cache",
+    )
+    ItemEntity.create(
+        collection=collection,
+        uid="private-contact-uid",
+        eb_item=b"item-cache",
+        dirty=True,
+    )
+    environ = _get_environ()
+    environ["HTTP_X_SILENTSUITE_CSRF"] = _dashboard_csrf_token
+    web = Web.__new__(Web)
+
+    status, _, body = web.get(environ, "", "/.web/api/dump", None)
+
+    assert status == 200
+    text = body.decode()
+    assert "private-address-book" not in text
+    assert "private-contact-uid" not in text
+    assert "private-remote-stoken" not in text
+    assert "private-local-stoken" not in text
+    assert '"uid"' not in text
+    assert '"stoken"' not in text
+    assert '"local_stoken"' not in text
 
 
 def test_root_route_serves_dashboard(tmp_path, monkeypatch):
@@ -385,7 +446,20 @@ def test_dashboard_post_requires_csrf_token():
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
 
 
-def test_dashboard_sync_post_accepts_valid_csrf_token():
+def test_dashboard_sync_post_returns_request_id_without_waiting(monkeypatch):
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: ["account@example.com"])
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.force_sync.return_value = 7
+    thread.generation_status.return_value = {
+        "generation": 7,
+        "state": "pending",
+        "started_at": None,
+        "completed_at": None,
+        "error_code": None,
+    }
+    monkeypatch.setattr(storage, "_sync_threads", {"account@example.com": thread})
     web = Web.__new__(Web)
 
     status, headers, body = web.post(
@@ -395,9 +469,249 @@ def test_dashboard_sync_post_accepts_valid_csrf_token():
         None,
     )
 
+    assert status == 202
+    assert headers["Content-Type"] == "application/json"
+    payload = json.loads(body)
+    assert payload["ok"] is True
+    assert payload["state"] == "pending"
+    assert payload["request_id"]
+    thread.force_sync.assert_called_once()
+    assert thread.force_sync.call_args.kwargs["deadline"] == payload["deadline"]
+    thread.wait_for_sync.assert_not_called()
+
+
+def test_dashboard_sync_post_fails_when_no_live_worker(monkeypatch):
+    web_module._sync_requests.clear()
+    thread = MagicMock()
+    thread.is_alive.return_value = False
+    monkeypatch.setattr(storage, "_sync_threads", {"account@example.com": thread})
+    web = Web.__new__(Web)
+
+    status, headers, body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+
+    assert status == 503
+    assert headers["Content-Type"] == "application/json"
+    assert json.loads(body) == {
+        "ok": False,
+        "error": "No sync workers available",
+    }
+
+
+def test_dashboard_sync_request_reports_generation_completion(monkeypatch):
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: ["account@example.com"])
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.force_sync.return_value = 7
+    thread.generation_status.return_value = {
+        "generation": 7,
+        "state": "succeeded",
+        "started_at": 100.0,
+        "completed_at": 101.0,
+        "error_code": None,
+    }
+    monkeypatch.setattr(storage, "_sync_threads", {"account@example.com": thread})
+    web = Web.__new__(Web)
+    _, _, post_body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+    request_id = json.loads(post_body)["request_id"]
+
+    status, headers, body = web.get(
+        _get_environ(),
+        "",
+        f"/.web/api/sync/{request_id}",
+        None,
+    )
+
     assert status == 200
     assert headers["Content-Type"] == "application/json"
-    assert json.loads(body) == {"ok": True}
+    payload = json.loads(body)
+    assert payload["request_id"] == request_id
+    assert payload["state"] == "succeeded"
+    assert payload["accounts"] == {
+        "total": 1,
+        "pending": 0,
+        "running": 0,
+        "succeeded": 1,
+        "failed": 0,
+        "timed_out": 0,
+    }
+    assert "account@example.com" not in body.decode()
+
+
+def test_dashboard_sync_waits_for_all_configured_accounts(monkeypatch):
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(
+        accounts,
+        "list_accounts",
+        lambda: ["live@example.com", "missing@example.com"],
+    )
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.force_sync.return_value = 4
+    thread.generation_status.return_value = {
+        "generation": 4,
+        "state": "running",
+        "started_at": 100.0,
+        "completed_at": None,
+        "error_code": None,
+    }
+    monkeypatch.setattr(storage, "_sync_threads", {"live@example.com": thread})
+    web = Web.__new__(Web)
+
+    _, _, first_body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+    first = json.loads(first_body)
+    assert first["state"] == "running"
+    assert first["accounts"]["failed"] == 1
+
+    _, _, duplicate_body = web.post(
+        _post_environ(csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/sync",
+        None,
+    )
+    assert json.loads(duplicate_body)["request_id"] == first["request_id"]
+
+    thread.generation_status.return_value = {
+        "generation": 4,
+        "state": "succeeded",
+        "started_at": 100.0,
+        "completed_at": 101.0,
+        "error_code": None,
+    }
+    _, _, final_body = web.get(
+        _get_environ(),
+        "",
+        f"/.web/api/sync/{first['request_id']}",
+        None,
+    )
+    final = json.loads(final_body)
+    assert final["state"] == "partial_failure"
+    assert final["accounts"]["succeeded"] == 1
+    assert final["accounts"]["failed"] == 1
+
+
+def test_abandoned_completed_request_survives_generation_history_pruning():
+    web_module._sync_requests.clear()
+    thread = storage.SyncThread("account@example.com")
+    generation = thread.force_sync(deadline=1000.0)
+    handle = thread.generation_handle(generation)
+    request_id = "request-id"
+    web_module._sync_requests[request_id] = {
+        "requested_at": 900.0,
+        "deadline": 1000.0,
+        "targets": [{
+            "thread": thread,
+            "generation": generation,
+            "status_handle": handle,
+        }],
+        "signature": ((id(thread), generation),),
+        "terminal_result": None,
+        "terminal_at": None,
+    }
+    thread._complete_generation(generation, "succeeded", 950.0)
+
+    for _ in range(105):
+        later_generation = thread.force_sync()
+        thread._begin_generation()
+        thread._complete_generation(later_generation, "succeeded", 951.0)
+    assert thread.generation_status(generation) is None
+
+    web_module._prune_sync_requests(1001.0)
+
+    result = web_module._sync_requests[request_id]["terminal_result"]
+    assert result["state"] == "succeeded"
+    assert result["accounts"]["succeeded"] == 1
+
+
+def test_concurrent_poll_cannot_regress_or_evict_published_terminal_result(monkeypatch):
+    web_module._sync_requests.clear()
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    request_id = "request-id"
+    terminal = {
+        "request_id": request_id,
+        "state": "succeeded",
+        "requested_at": 1.0,
+        "deadline": 31.0,
+        "accounts": {
+            "total": 1,
+            "pending": 0,
+            "running": 0,
+            "succeeded": 1,
+            "failed": 0,
+            "timed_out": 0,
+        },
+    }
+    web_module._sync_requests[request_id] = {
+        "requested_at": 1.0,
+        "deadline": 31.0,
+        "targets": [{
+            "thread": thread,
+            "generation": 1,
+            "status_handle": None,
+        }],
+        "signature": ((id(thread), 1),),
+        "terminal_result": None,
+        "terminal_at": None,
+    }
+
+    def publish_terminal_during_poll(_generation):
+        web_module._sync_requests[request_id]["terminal_result"] = terminal
+        web_module._sync_requests[request_id]["terminal_at"] = 2.0
+        monkeypatch.setattr(web_module, "_sync_request_retention", 0)
+        web_module._prune_sync_requests(3.0)
+        return {"state": "pending"}
+
+    thread.generation_status.side_effect = publish_terminal_during_poll
+
+    assert web_module._sync_request_status(request_id) == terminal
+    assert request_id in web_module._sync_requests
+    assert web_module._sync_request_status(request_id) == terminal
+
+
+def test_expired_poll_lease_reinserts_terminal_result():
+    web_module._sync_requests.clear()
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    request_id = "expired-lease-request"
+    web_module._sync_requests[request_id] = {
+        "requested_at": 1.0,
+        "deadline": 31.0,
+        "targets": [{
+            "thread": thread,
+            "generation": 1,
+            "status_handle": None,
+        }],
+        "signature": ((id(thread), 1),),
+        "terminal_result": None,
+        "terminal_at": None,
+    }
+
+    def expire_during_poll(_generation):
+        web_module._sync_requests.pop(request_id, None)
+        return {"state": "succeeded"}
+
+    thread.generation_status.side_effect = expire_during_poll
+
+    result = web_module._sync_request_status(request_id)
+    assert result["state"] == "succeeded"
+    assert request_id in web_module._sync_requests
+    assert web_module._sync_request_status(request_id)["state"] == "succeeded"
 
 
 def test_dashboard_sync_post_rejects_wrong_csrf_token():

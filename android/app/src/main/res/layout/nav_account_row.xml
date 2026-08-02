@@ -4,7 +4,7 @@
     android:id="@+id/nav_account_row"
     android:layout_width="match_parent"
     android:layout_height="@dimen/touch_target_min"
-    android:background="?android:attr/selectableItemBackground"
+    android:background="@drawable/nav_account_row_background"
     android:clickable="true"
     android:focusable="true"
     android:gravity="center_vertical"
@@ -28,7 +28,7 @@
         android:layout_width="24dp"
         android:layout_height="24dp"
         android:importantForAccessibility="no"
-        android:src="@android:drawable/checkbox_on_background"
+        android:src="@drawable/ic_check"
         android:visibility="invisible"
         tools:ignore="ContentDescription" />
 </LinearLayout>

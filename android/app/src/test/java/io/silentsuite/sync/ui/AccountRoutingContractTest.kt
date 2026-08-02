@@ -36,7 +36,9 @@ class AccountRoutingContractTest {
         assertTrue(legacySettings.contains("AppSettingsActivity.newIntent("))
         assertTrue(legacySettings.contains("AppSettingsActivity.EXTRA_CREATION_ID"))
         assertTrue(notification.contains("detailsIntent.putExtras(extras)"))
-        assertTrue(setup.contains("AccountActivity.newIntent(this, account, creationId)"))
+        assertTrue(setup.contains("val exact = exactAccount() ?: return true"))
+        assertTrue(setup.contains("AccountActivity.newIntent(this, exact, creationId)"))
+        assertFalse(setup.contains("AccountActivity.newIntent(this, account, creationId)"))
     }
 
     @Test

@@ -2,7 +2,7 @@
 
 Connects to server.silentsuite.io via the Etebase protocol,
 decrypts/encrypts data locally, and exposes CalDAV/CardDAV
-endpoints on localhost for use with any standard PIM client.
+endpoints on localhost for supported desktop integrations.
 
 License: AGPL-3.0-only
 """

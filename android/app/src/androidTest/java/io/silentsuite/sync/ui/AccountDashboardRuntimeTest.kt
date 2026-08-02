@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
@@ -23,6 +25,7 @@ import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.etebase.CollectionActivity
+import io.silentsuite.sync.ui.account.SyncLifecycleWindows
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.utils.AndroidCompat
 import java.net.URI
@@ -30,6 +33,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -38,6 +42,214 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AccountDashboardRuntimeTest {
+    @Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention() {
+        val phase = AtomicInteger(0)
+        AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
+            SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)
+        withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR)).also {
+                    it.pending = phase.get() == 1
+                    it.refreshing = phase.get() == 2
+                }
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { context, account, scenario ->
+            val overallText = AtomicReference<String>("")
+            val caldavText = AtomicReference<String>("")
+            scenario.onActivity { activity ->
+                fun observe(viewId: Int, observed: AtomicReference<String>) {
+                    val view = activity.findViewById<TextView>(viewId)
+                    observed.set(view.text.toString())
+                    view.addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                        override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                            observed.set(text?.toString().orEmpty())
+                        }
+                        override fun afterTextChanged(text: Editable?) = Unit
+                    })
+                }
+                observe(R.id.dashboard_overall_status, overallText)
+                observe(R.id.caldav_status, caldavText)
+            }
+            val store = SyncStatusStore(context)
+            val now = System.currentTimeMillis()
+            assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.TASKS), "old-pending", 1))
+            assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, "old-active", 1, null))
+            assertTrue(store.expireStale(account, SyncStatusStore.Service.TASKS, now,
+                platformActive = false, platformPending = true, interruptionAfterMillis = 1))
+            assertTrue(store.expireStale(account, SyncStatusStore.Service.CONTACTS, now,
+                platformActive = true, platformPending = false, interruptionAfterMillis = 1))
+            assertEquals("old-pending", store.status(account, SyncStatusStore.Service.TASKS).activeRequestId)
+            assertEquals("old-active", store.status(account, SyncStatusStore.Service.CONTACTS).activeAttemptId)
+            // The assertions above prove platform-authoritative stale retention. Clear that
+            // independent fixture before verifying the dashboard's Calendar phase projection.
+            assertTrue(store.clear(account))
+            assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.CALENDAR), "runtime-request", now))
+            scenario.onActivity { it.refresh() }
+            val requested = context.getString(R.string.dashboard_status_requested)
+            assertEquals(requested, waitForObservedText(overallText, requested))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
+            phase.set(1)
+            scenario.onActivity { it.refresh() }
+            val queued = context.getString(R.string.dashboard_status_queued)
+            assertEquals(queued, waitForObservedText(overallText, queued))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
+            phase.set(2)
+            scenario.onActivity { it.refresh() }
+            val syncing = context.getString(R.string.dashboard_status_syncing)
+            assertEquals(syncing, waitForObservedText(overallText, syncing))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
+            assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CALENDAR, "runtime-attempt", now + 1, "runtime-request"))
+            phase.set(3)
+            scenario.onActivity { it.refresh() }
+            val settling = context.getString(R.string.dashboard_status_settling)
+            assertEquals(settling, waitForObservedText(overallText, settling))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
+            assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, "runtime-attempt", now + 2))
+            scenario.onActivity { it.refresh() }
+            val synced = context.getString(R.string.dashboard_status_synced)
+            assertEquals(synced, waitForObservedText(caldavText, synced))
+            assertFalse(overallText.get().contains("Needs attention", ignoreCase = true))
+        }
+    }
+
+    @Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion() {
+        withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { context, account, scenario ->
+            val child = Account("runtime-pending-child", "child")
+            val store = SyncStatusStore(context)
+            val startedAt = System.currentTimeMillis()
+            val attemptId = "runtime-pending-parent"
+            assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, attemptId, startedAt, null))
+            val started = store.attachContactsChildren(store.identity(account), attemptId,
+                setOf(store.childIdentity(child, "runtime-pending-child-generation")), startedAt)
+            assertTrue(started is SyncStatusStore.ContactsStart.Started)
+            scenario.onActivity { it.refresh() }
+            waitForText(scenario, R.id.carddav_status) {
+                it == context.getString(R.string.dashboard_status_settling)
+            }
+        }
+    }
+
+    @Test fun mixedActiveAndSiblingActionableOrTransientIssuesKeepCurrentHeadlineAndSecondaryIssue() {
+        val calendarRefreshing = AtomicBoolean(false)
+        withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                    .also { it.refreshing = calendarRefreshing.get() }
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { context, account, scenario ->
+            val overallText = AtomicReference<String>("")
+            val caldavText = AtomicReference<String>("")
+            val carddavText = AtomicReference<String>("")
+            val dashboardActivity = AtomicReference<AccountActivity>()
+            scenario.onActivity { activity ->
+                dashboardActivity.set(activity)
+                fun observe(viewId: Int, observed: AtomicReference<String>) {
+                    val view = activity.findViewById<TextView>(viewId)
+                    observed.set(view.text.toString())
+                    view.addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                        override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                            observed.set(text?.toString().orEmpty())
+                        }
+                        override fun afterTextChanged(text: Editable?) = Unit
+                    })
+                }
+                observe(R.id.dashboard_overall_status, overallText)
+                observe(R.id.caldav_status, caldavText)
+                observe(R.id.carddav_status, carddavText)
+            }
+            calendarRefreshing.set(true)
+            val store = SyncStatusStore(context)
+            val mainIdentity = store.identity(account)
+            val categories = listOf(
+                SyncStatusStore.FailureCategory.PERMISSION to R.string.dashboard_status_permission_needed,
+                SyncStatusStore.FailureCategory.INTERRUPTED to R.string.dashboard_status_interrupted,
+                SyncStatusStore.FailureCategory.NETWORK to R.string.dashboard_status_network,
+                SyncStatusStore.FailureCategory.PROVIDER to R.string.dashboard_status_provider,
+                SyncStatusStore.FailureCategory.STORAGE to R.string.dashboard_status_storage,
+            )
+            categories.forEachIndexed { index, (category, label) ->
+                val child = Account("runtime-contacts-child-$index", "child")
+                val childIdentity = store.childIdentity(child, "runtime-contacts-child-generation-$index")
+                val attemptId = "runtime-contacts-parent-$index"
+                val startedAt = System.currentTimeMillis()
+                assertTrue(store.beginAttempt(account, SyncStatusStore.Service.CONTACTS, attemptId, startedAt, null))
+                val attempt = store.attachContactsChildren(mainIdentity, attemptId, setOf(childIdentity), startedAt)
+                    as SyncStatusStore.ContactsStart.Started
+                if (category == SyncStatusStore.FailureCategory.INTERRUPTED) {
+                    assertTrue(store.failContactsParent(account, attempt.attemptId, category))
+                } else {
+                    assertEquals(SyncStatusStore.ChildWrite.RECORDED, store.recordContactsChild(mainIdentity, attempt.attemptId,
+                        childIdentity, SyncStatusStore.ChildResult.FAILURE, category, System.currentTimeMillis()))
+                }
+                val activity = dashboardActivity.get()
+                activity.runOnUiThread { activity.refresh() }
+                val syncing = context.getString(R.string.dashboard_status_syncing)
+                val issue = context.getString(label)
+                assertEquals(syncing, waitForObservedText(overallText, syncing))
+                assertEquals(syncing, waitForObservedText(caldavText, syncing))
+                assertEquals(issue, waitForObservedText(carddavText, issue))
+                assertEquals(syncing, overallText.get())
+                assertEquals(syncing, caldavText.get())
+                assertEquals(issue, carddavText.get())
+            }
+            calendarRefreshing.set(false)
+            val activity = dashboardActivity.get()
+            activity.runOnUiThread { activity.refresh() }
+            val inactive = context.getString(R.string.dashboard_status_never_synced)
+            assertEquals(inactive, waitForObservedText(caldavText, inactive))
+        }
+    }
+
+    @Test fun futureLifecycleRebasesAndNearestDeadlineExpiresWithoutAnotherPlatformEvent() {
+        AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
+            io.silentsuite.sync.ui.account.SyncLifecycleWindows(interruptionAfterMillis = 1_000)
+        try {
+            withDashboardAccount(beforeLaunch = { context, account ->
+                val store = SyncStatusStore(context)
+                val now = System.currentTimeMillis()
+                assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.CALENDAR), "future-request", now + 10_000))
+            }) { context, account, scenario ->
+                // Production maintenance rebases before its ordinary loader, owns the nearest
+                // deadline, and expires durable evidence without refresh or a platform event.
+                scenario.onActivity { assertTrue(it.hasDeliveredAccountInfo) }
+                val rebased = SyncStatusStore(context).status(account, SyncStatusStore.Service.CALENDAR)
+                assertTrue(rebased.requestedAt != null && rebased.requestedAt!! <= System.currentTimeMillis())
+                assertFalse(rebased.lastFailureCategory == SyncStatusStore.FailureCategory.INTERRUPTED)
+                waitUntil("ViewModel no-event interruption") {
+                    SyncStatusStore(context).status(account, SyncStatusStore.Service.CALENDAR)
+                        .lastFailureCategory == SyncStatusStore.FailureCategory.INTERRUPTED
+                }
+                waitForText(scenario, R.id.caldav_status) {
+                    it == context.getString(R.string.dashboard_status_interrupted)
+                }
+                waitForText(scenario, R.id.dashboard_overall_status) {
+                    it == context.getString(R.string.dashboard_status_task_app_needed)
+                }
+                scenario.onActivity { activity ->
+                    assertEquals(context.getString(R.string.dashboard_install_task_app),
+                        activity.findViewById<TextView>(R.id.dashboard_context_action).text.toString())
+                }
+            }
+        } finally {
+            AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride = null
+        }
+    }
+
     private val generation = "dashboard-generation"
     private val launchedCollectionIntents = mutableListOf<Intent>()
     private val syncRequests = mutableListOf<Pair<Account, String?>>()
@@ -48,7 +260,7 @@ class AccountDashboardRuntimeTest {
             var deliveryCount = 0
             scenario.onActivity { activity ->
                 assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
-                assertEquals("Never synced", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
+                assertEquals("First sync pending", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
                 assertFalse(activity.findViewById<View>(R.id.subscription_card).isShown)
                 deliveryCount = activity.accountInfoDeliveryCount
                 activity.refresh()
@@ -62,9 +274,9 @@ class AccountDashboardRuntimeTest {
             val store = SyncStatusStore(context)
             assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, 100))
             scenario.onActivity { it.refresh() }
-            waitForText(scenario, R.id.caldav_status) { it.startsWith("Synced") }
+            waitForText(scenario, R.id.caldav_status) { it == "Up to date" }
             scenario.onActivity { activity ->
-                assertTrue(activity.findViewById<TextView>(R.id.caldav_status).text.toString().startsWith("Synced"))
+                assertEquals("Up to date", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
                 assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
                     ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
             }
@@ -72,9 +284,9 @@ class AccountDashboardRuntimeTest {
             assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
                 SyncStatusStore.FailureCategory.NETWORK, 200))
             scenario.onActivity { it.refresh() }
-            waitForText(scenario, R.id.caldav_status) { it == "Needs attention" }
+            waitForText(scenario, R.id.caldav_status) { it == context.getString(R.string.dashboard_status_network) }
             scenario.onActivity { activity ->
-                assertEquals("Needs attention", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
+                assertEquals(activity.getString(R.string.dashboard_status_network), activity.findViewById<TextView>(R.id.caldav_status).text.toString())
                 assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
                     ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
             }
@@ -85,7 +297,7 @@ class AccountDashboardRuntimeTest {
                 assertEquals(account.name, activity.title.toString())
                 assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
                 assertEquals(generation, activity.intent.getStringExtra(AccountActivity.EXTRA_CREATION_ID))
-                assertEquals("Needs attention", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
+                assertEquals(activity.getString(R.string.dashboard_status_network), activity.findViewById<TextView>(R.id.caldav_status).text.toString())
                 assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE,
                     ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
             }
@@ -254,13 +466,13 @@ class AccountDashboardRuntimeTest {
             waitForModel(scenario)
             var deliveriesBefore = 0
             scenario.onActivity { activity ->
-                assertEquals("Needs attention", activity.findViewById<TextView>(R.id.dashboard_overall_status).text.toString())
+                assertEquals(activity.getString(R.string.dashboard_status_storage), activity.findViewById<TextView>(R.id.dashboard_overall_status).text.toString())
                 fail.set(false)
                 deliveriesBefore = activity.accountInfoDeliveryCount
                 activity.refresh()
             }
             waitForDeliveryAfter(scenario, deliveriesBefore)
-            waitForText(scenario, R.id.caldav_status) { it == "Never synced" }
+            waitForText(scenario, R.id.caldav_status) { it == "First sync pending" }
             val attemptsBeforeFailure = loadAttempts.get()
             scenario.onActivity { activity ->
                 fail.set(true)
@@ -270,7 +482,7 @@ class AccountDashboardRuntimeTest {
                 loadAttempts.get() > attemptsBeforeFailure
             }
             scenario.onActivity { activity ->
-                assertEquals("Never synced", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
+                assertEquals("First sync pending", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
             }
         }
     }
@@ -349,15 +561,19 @@ class AccountDashboardRuntimeTest {
                         navigation.menu.findItem(R.id.nav_invitations)))
                     activity.reloadSubscriptionStatusForTesting()
                 }
-                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-                assertTrue("stale Activity read a replacement fingerprint", fingerprints.isEmpty())
-                assertTrue("stale Activity launched a replacement route", routes.isEmpty())
-                assertTrue("stale Activity opened an export document", exportDocuments.isEmpty())
-                assertEquals("stale Activity wrote replacement export data", 0, exports)
-                assertEquals("stale Activity read replacement billing state", 0, billingReads)
-                assertEquals("stale Activity requested runtime permissions", 0, permissionRequests)
-                assertEquals("stale Activity launched permission remediation", 0, permissionRemediations)
-                assertEquals("stale Activity enabled global sync", 0, masterSyncEnables)
+                repeat(20) {
+                    android.os.SystemClock.sleep(25)
+                    scenario.onActivity {
+                        assertTrue("stale Activity read a replacement fingerprint", fingerprints.isEmpty())
+                        assertTrue("stale Activity launched a replacement route", routes.isEmpty())
+                        assertTrue("stale Activity opened an export document", exportDocuments.isEmpty())
+                        assertEquals("stale Activity wrote replacement export data", 0, exports)
+                        assertEquals("stale Activity read replacement billing state", 0, billingReads)
+                        assertEquals("stale Activity requested runtime permissions", 0, permissionRequests)
+                        assertEquals("stale Activity launched permission remediation", 0, permissionRemediations)
+                        assertEquals("stale Activity enabled global sync", 0, masterSyncEnables)
+                    }
+                }
             } finally {
                 AccountActivity.fingerprintLoaderOverride = null
                 AccountActivity.accountRouteLauncherOverride = null
@@ -417,6 +633,7 @@ class AccountDashboardRuntimeTest {
 
     private fun withDashboardAccount(
         loaderOverride: ((Context, Account, String) -> AccountActivity.AccountInfo)? = null,
+        beforeLaunch: ((Context, Account) -> Unit)? = null,
         block: (android.content.Context, Account, ActivityScenario<AccountActivity>) -> Unit,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -439,7 +656,7 @@ class AccountDashboardRuntimeTest {
         AccountActivity.syncRequestOverride = { _, exact ->
             syncRequests += exact to manager.getUserData(exact, AccountSettings.KEY_CREATION_ID)
         }
-        AccountActivity.AccountInfoViewModel.accountLoaderOverride = loaderOverride ?: { loaderContext, exact, creationId ->
+        val defaultLoader: (Context, Account, String) -> AccountActivity.AccountInfo = { loaderContext, exact, creationId ->
             check(exact == account)
             check(creationId == generation)
             val store = SyncStatusStore(loaderContext)
@@ -449,6 +666,8 @@ class AccountDashboardRuntimeTest {
                 taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
             }
         }
+        AccountActivity.AccountInfoViewModel.accountLoaderOverride = loaderOverride ?: defaultLoader
+        beforeLaunch?.invoke(context, account)
         try {
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { scenario ->
                 waitForModel(scenario)
@@ -456,6 +675,8 @@ class AccountDashboardRuntimeTest {
             }
         } finally {
             AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
+            AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride = null
+            AccountActivity.AccountInfoViewModel.lifecycleNowOverride = null
             AccountActivity.collectionIntentLauncherOverride = null
             AccountActivity.syncRequestOverride = null
             AccountActivity.syncActiveOverride = null
@@ -500,7 +721,6 @@ class AccountDashboardRuntimeTest {
 
     private fun waitForRetainedGenerationInvalidation(scenario: ActivityScenario<AccountActivity>) {
         repeat(100) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var observed = false
             scenario.onActivity { observed = it.hasObservedRetainedGenerationInvalidation() }
             if (observed) return
@@ -511,7 +731,6 @@ class AccountDashboardRuntimeTest {
 
     private fun assertNoAdditionalDelivery(scenario: ActivityScenario<AccountActivity>, deliveriesBefore: Int) {
         repeat(20) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var deliveries = deliveriesBefore
             scenario.onActivity { deliveries = it.accountInfoDeliveryCount }
             assertEquals("replacement generation published dashboard data", deliveriesBefore, deliveries)
@@ -534,7 +753,6 @@ class AccountDashboardRuntimeTest {
 
     private fun waitForModel(scenario: ActivityScenario<AccountActivity>) {
         repeat(50) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var delivered = false
             scenario.onActivity { delivered = it.hasDeliveredAccountInfo }
             if (delivered) return
@@ -545,7 +763,6 @@ class AccountDashboardRuntimeTest {
 
     private fun waitForDeliveryAfter(scenario: ActivityScenario<AccountActivity>, previous: Int) {
         repeat(200) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             var count = previous
             scenario.onActivity { count = it.accountInfoDeliveryCount }
             if (count > previous) return
@@ -557,22 +774,52 @@ class AccountDashboardRuntimeTest {
     private fun waitUntil(description: String, timeoutMillis: Long = 10_000, predicate: () -> Boolean) {
         val deadline = android.os.SystemClock.uptimeMillis() + timeoutMillis
         while (android.os.SystemClock.uptimeMillis() < deadline) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             if (predicate()) return
             android.os.SystemClock.sleep(50)
         }
         throw AssertionError("Timed out waiting for $description")
     }
 
+    private fun waitForObservedText(
+        observed: AtomicReference<String>,
+        expected: String,
+        timeoutMillis: Long = 10_000,
+    ): String {
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+        while (System.nanoTime() < deadlineNanos) {
+            val text = observed.get()
+            if (text == expected) return text
+            android.os.SystemClock.sleep(50)
+        }
+        throw AssertionError("Dashboard text did not reach expected state; last observed text=${observed.get()}")
+    }
+
     private fun waitForText(scenario: ActivityScenario<AccountActivity>, viewId: Int, predicate: (String) -> Boolean) {
-        repeat(200) {
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            var text = ""
-            scenario.onActivity { text = it.findViewById<TextView>(viewId).text.toString() }
-            if (predicate(text)) return
+        val observed = AtomicReference<String>("")
+        scenario.onActivity {
+            val view = it.findViewById<TextView>(viewId)
+            observed.set(view.text.toString())
+            view.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                    observed.set(text?.toString().orEmpty())
+                }
+                override fun afterTextChanged(text: Editable?) = Unit
+            })
+        }
+        val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (System.nanoTime() < deadlineNanos) {
+            if (predicate(observed.get())) return
             android.os.SystemClock.sleep(50)
         }
         throw AssertionError("Dashboard text did not reach expected state")
+    }
+
+    private fun assertNoGenericAttention(scenario: ActivityScenario<AccountActivity>) {
+        scenario.onActivity {
+            assertFalse(it.findViewById<TextView>(R.id.dashboard_overall_status).text.toString()
+                .contains("Needs attention", ignoreCase = true))
+        }
     }
 
     private fun grantCorePermissions(context: android.content.Context) {

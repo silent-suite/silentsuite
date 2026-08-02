@@ -10,10 +10,22 @@ import json
 import logging
 import os
 import tempfile
+import threading
+from functools import wraps
 
 from .. import config
 
 logger = logging.getLogger("silentsuite-bridge.creds")
+CREDENTIALS_LOCK = threading.RLock()
+
+
+def credentials_locked(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        with CREDENTIALS_LOCK:
+            return function(*args, **kwargs)
+
+    return locked
 
 
 class Credentials:
@@ -35,8 +47,7 @@ class Credentials:
                         self.content = json.load(f)
                     except json.JSONDecodeError:
                         logger.warning(
-                            "Corrupted credentials file %s — resetting",
-                            self.filename,
+                            "Corrupted credentials file; resetting",
                         )
                         self.content = {"users": {}}
             self.last_mtime = mtime
@@ -122,6 +133,23 @@ class Credentials:
         """Remove a user's credentials."""
         users = self.content.get("users", {})
         users.pop(username, None)
+
+    def mark_cache_cleanup(self, username):
+        """Persist cache deletion intent independently of account credentials."""
+        pending = self.content.setdefault("pendingCacheCleanup", [])
+        if username not in pending:
+            pending.append(username)
+
+    def clear_cache_cleanup(self, username):
+        """Clear a completed cache deletion intent."""
+        pending = self.content.get("pendingCacheCleanup", [])
+        self.content["pendingCacheCleanup"] = [
+            candidate for candidate in pending if candidate != username
+        ]
+
+    def list_cache_cleanups(self):
+        """List accounts whose local cache still requires deletion."""
+        return list(self.content.get("pendingCacheCleanup", []))
 
     def list_users(self):
         """List all stored usernames."""

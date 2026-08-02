@@ -1,6 +1,13 @@
 # Apps & Integrations
 
-SilentSuite is built on the [Etebase protocol](https://www.etebase.com/), which means your encrypted data works with a growing ecosystem of compatible apps. You can sync your calendar, contacts, and tasks with native apps on every major platform.
+SilentSuite is built on the [Etebase protocol](https://www.etebase.com/). Today you can sync calendars, contacts, and tasks through the web app, the native Android app, and supported desktop clients.
+
+<AppLogoStrip compact />
+
+<p class="app-logo-note">
+  Logos link to each app's official site. App names and logos identify their respective products and do not imply endorsement or partnership.
+  <a href="/app-logo-notices">Sources, licenses, and trademark notices</a>.
+</p>
 
 ## How It Works
 
@@ -8,35 +15,38 @@ The hosted server at `server.silentsuite.io` (or your self-hosted URL) speaks th
 
 ## SilentSuite Apps
 
-| App | Platform | Syncs |
-|---|---|---|
-| [SilentSuite Web](https://app.silentsuite.io) | Browser | Contacts, Calendars, Tasks |
-| [SilentSuite for Android](./android.md) | Android | Contacts, Calendars, Tasks |
+| App | Official site | Platform | Syncs |
+|---|---|---|---|
+| <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite Web](https://app.silentsuite.io) | [app.silentsuite.io](https://app.silentsuite.io) | Browser | Contacts, Calendars, Tasks |
+| <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite for Android](./android.md) | [silentsuite.io](https://silentsuite.io/) | Android | Contacts, Calendars, Tasks |
+
+## On the Roadmap
+
+- **[iOS](./ios.md):** Coming soon. iOS is not currently supported.
 
 ## Compatible Third-Party Apps
 
 These apps connect directly to `server.silentsuite.io` or your self-hosted server with full end-to-end encryption. No bridge needed.
 
-| App | Platform | Syncs |
-|---|---|---|
-| [EteSync for iOS](./ios.md) (third-party) | iOS | Contacts, Calendars, Reminders |
-| [Tasks.org](./tasks-org.md) | Android | Tasks |
-| [GNOME Evolution](./evolution.md) | Linux (GNOME) | Contacts, Calendars, Tasks |
-| [GNOME Calendar, Contacts & To Do](./evolution.md) | Linux (GNOME) | Contacts, Calendars, Tasks |
-| [KDE Kontact](./kde.md) | Linux (KDE) | Contacts, Calendars, Tasks |
+| App | Official site | Platform | Syncs |
+|---|---|---|---|
+| <img class="app-table-logo" src="/app-logos/tasks-org.svg" alt="" width="28" height="28"> [Tasks.org](./tasks-org.md) | [tasks.org](https://tasks.org/) | Android | Tasks |
+| <img class="app-table-logo" src="/app-logos/evolution.svg" alt="" width="28" height="28"> [GNOME Evolution](./evolution.md) | [GNOME Evolution](https://help.gnome.org/evolution/index.html) | Linux (GNOME) | Contacts, Calendars, Tasks |
+| <img class="app-table-logo" src="/app-logos/gnome-calendar.svg" alt="" width="28" height="28"> <img class="app-table-logo" src="/app-logos/gnome-contacts.svg" alt="" width="28" height="28"> [GNOME Calendar, Contacts & To Do](./evolution.md) | [Calendar](https://apps.gnome.org/Calendar/) · [Contacts](https://apps.gnome.org/Contacts/) · [To Do archive](https://wiki.gnome.org/Apps/Todo) | Linux (GNOME) | Contacts, Calendars, Tasks |
+| <img class="app-table-logo" src="/app-logos/kontact.svg" alt="" width="28" height="28"> [KDE Kontact](./kde.md) | [kontact.kde.org](https://kontact.kde.org/) | Linux (KDE) | Contacts, Calendars, Tasks |
 
 ## Via the DAV Bridge
 
-For apps that don't support Etebase natively, the [SilentSuite Bridge](./dav-bridge.md) runs a local CalDAV/CardDAV server on your machine that translates between standard DAV protocols and Etebase. This makes SilentSuite compatible with virtually any calendar/contacts app.
+For apps that don't support Etebase natively, the [SilentSuite Bridge](./dav-bridge.md) runs a local CalDAV/CardDAV server on your machine that translates between standard DAV protocols and Etebase. This makes SilentSuite compatible with the supported desktop calendar and contacts clients listed below.
 
-| App | Platform | Needs DAV Bridge | Tested app version |
-|---|---|---|---|
-| [Thunderbird](./thunderbird.md) | Linux, macOS, Windows | Yes | Not recorded yet |
-| [macOS Calendar & Contacts](./macos.md) | macOS | Yes | Not recorded yet |
-| [Windows / Outlook](./windows.md) | Windows | Yes | Not recorded yet |
-| [GNOME Calendar & Contacts](./gnome.md) | Linux (GNOME) | Yes | Not recorded yet |
-| [Other CalDAV/CardDAV Apps](./other.md) | Any | Yes | Not recorded yet |
+On Linux, start with the [Linux desktop bridge guide](./linux-bridge.md) for installation, sign-in, auto-start, app connections, troubleshooting, and uninstall instructions.
 
+| App | Official site | Platform | Needs DAV Bridge | Tested app version |
+|---|---|---|---|---|
+| <img class="app-table-logo" src="/app-logos/thunderbird.png" alt="" width="28" height="28"> [Thunderbird](./thunderbird.md) | [thunderbird.net](https://www.thunderbird.net/) | Linux, macOS, Windows | Yes | Not recorded yet |
+| <img class="app-table-logo" src="/app-logos/apple-calendar.png" alt="" width="28" height="28"> <img class="app-table-logo" src="/app-logos/apple-contacts.png" alt="" width="28" height="28"> [macOS Calendar & Contacts](./macos.md) | [Calendar](https://support.apple.com/guide/calendar/welcome/mac) · [Contacts](https://support.apple.com/guide/contacts/welcome/mac) | macOS | Yes | Not recorded yet |
+| <img class="app-table-logo" src="/app-logos/outlook.svg" alt="" width="28" height="28"> [Windows / Outlook](./windows.md) | [Outlook for Windows](https://www.microsoft.com/en-us/microsoft-365/outlook/outlook-for-windows) | Windows | Yes | Not recorded yet |
+| <img class="app-table-logo" src="/app-logos/gnome-calendar.svg" alt="" width="28" height="28"> <img class="app-table-logo" src="/app-logos/gnome-contacts.svg" alt="" width="28" height="28"> [GNOME Calendar & Contacts](./gnome.md) | [Calendar](https://apps.gnome.org/Calendar/) · [Contacts](https://apps.gnome.org/Contacts/) | Linux (GNOME) | Yes | Not recorded yet |
 ::: tip
-If your app supports CalDAV/CardDAV, it works with SilentSuite through the DAV bridge. Set up the [SilentSuite Bridge](./dav-bridge.md) first, then point your app at `http://localhost:37358/`.
+Use one of the documented desktop clients above with the [SilentSuite Bridge](./dav-bridge.md). Protocol support alone does not establish SilentSuite compatibility. iOS is not currently supported.
 :::

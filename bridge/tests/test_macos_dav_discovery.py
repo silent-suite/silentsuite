@@ -128,7 +128,7 @@ def _application(tmp_path, monkeypatch, application_class=Application):
     context.__exit__.return_value = False
     monkeypatch.setattr(
         "silentsuite_bridge.radicale.storage.etesync_for_user",
-        lambda _user: context,
+        lambda _user, **_kwargs: context,
     )
     return application_class(bridge_main.build_radicale_configuration())
 
@@ -409,7 +409,9 @@ def test_same_account_alias_depth_zero_avoids_backend_and_depth_one_matches_cano
     assert _response_hrefs(alias[2]) == _response_hrefs(canonical[2])
     assert alias_accessor_calls == canonical_accessor_calls
     assert start_sync_thread.call_args_list == [((USERNAME,), {})]
-    assert etesync_for_user.call_args_list == [((USERNAME,), {})]
+    assert etesync_for_user.call_args_list == [
+        ((USERNAME,), {"exclusive": False})
+    ]
     assert etesync.list.call_args_list == [()]
 
 

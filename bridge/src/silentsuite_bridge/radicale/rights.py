@@ -11,6 +11,7 @@ import logging
 from radicale import pathutils
 from radicale.rights.owner_only import Rights as OwnerOnlyRights
 
+from ..privacy_logging import bounded_exception_class
 from .etesync_cache import etesync_for_user
 
 logger = logging.getLogger("silentsuite-bridge.rights")
@@ -34,20 +35,19 @@ class Rights(OwnerOnlyRights):
 
         collection_uid = parts[1]
         try:
-            with etesync_for_user(user) as (etesync, _):
+            with etesync_for_user(user, exclusive=False) as (etesync, _):
                 collection = etesync.get(collection_uid)
         except Exception as exc:
             # Missing collections include legitimate creates. Preserve the base
             # owner-only answer and let storage/server code decide.
             logger.debug(
-                "Could not resolve collection permissions for %s: %s",
-                collection_uid[:8],
-                exc.__class__.__name__,
+                "Could not resolve collection permissions (%s)",
+                bounded_exception_class(exc),
             )
             return permissions
 
         if getattr(collection, "read_only", False):
-            logger.debug("Granting read-only DAV access to shared collection %s", collection_uid[:8])
+            logger.debug("Granting read-only DAV access to shared collection")
             return permissions.replace("w", "")
 
         return permissions

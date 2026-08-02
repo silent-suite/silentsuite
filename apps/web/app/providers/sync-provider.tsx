@@ -402,13 +402,18 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             logger.warn('[sync-provider] Label suggestions refresh failed', getSafeErrorDetails(err))
           }
         } else if (collectionType === 'silentsuite.preferences') {
+          const preferenceStore = usePreferencesSyncStore.getState()
+          const preferenceGeneration = preferenceStore.operationGeneration
+          const preferenceReadGeneration = preferenceStore.beginRemoteRead(accountEpoch, preferenceGeneration)
+          if (preferenceReadGeneration === null) return
           try {
             const preferenceItems = await refresher('preferences', event.collectionUid)
             assertCurrentAccountEpoch(accountEpoch)
-            await usePreferencesSyncStore.getState().loadFromRemote(preferenceItems)
+            await preferenceStore.loadFromRemote(preferenceItems, accountEpoch, preferenceGeneration, preferenceReadGeneration)
             assertCurrentAccountEpoch(accountEpoch)
           } catch (err) {
             if (err instanceof AccountBoundaryChangedError) return
+            preferenceStore.recordRemoteReadFailure(accountEpoch, preferenceGeneration, preferenceReadGeneration)
             logger.warn('[sync-provider] Preferences refresh failed', getSafeErrorDetails(err))
           }
         }
@@ -437,7 +442,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     return () => {
       if (unsubChange) unsubChange()
       if (unsubStatus) unsubStatus()
-      usePreferencesSyncStore.getState().destroy()
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
