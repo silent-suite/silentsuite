@@ -1,9 +1,52 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { parseDocument } from 'yaml'
+
+type WorkflowStep = {
+  name?: string
+  uses?: string
+  with?: Record<string, string>
+  run?: string
+}
+
+type WorkflowJob = {
+  if?: string
+  environment?: string
+  env?: Record<string, string>
+  needs?: string
+  steps?: WorkflowStep[]
+}
+
+type ParsedWorkflow = { jobs: Record<string, WorkflowJob> }
 
 function workflow(name: string): string {
   return readFileSync(resolve(process.cwd(), `../../.github/workflows/${name}`), 'utf8')
+}
+
+function parseWorkflow(source: string): ParsedWorkflow {
+  const document = parseDocument(source, { uniqueKeys: true })
+  if (document.errors.length) throw new Error(document.errors.map((error) => error.message).join('\n'))
+  return document.toJS() as ParsedWorkflow
+}
+
+function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string) {
+  const steps = job.steps ?? []
+  expect(job.if).toBe(
+    `github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.${approvalVariable} == inputs.expected_sha`,
+  )
+  expect(job.environment).toBe(environment)
+  expect(job.env?.[approvalVariable]).toBe(`\${{ vars.${approvalVariable} }}`)
+  const checkouts = steps.filter((step) => step.uses?.startsWith('actions/checkout@'))
+  expect(checkouts).toHaveLength(1)
+  expect(checkouts[0].with?.ref).toBe('${{ inputs.expected_sha }}')
+  const authorizationSteps = steps.filter((step) => step.name === authorizationName)
+  expect(authorizationSteps).toHaveLength(1)
+  const run = authorizationSteps[0].run ?? ''
+  expect(run).toContain(`[ "$${approvalVariable}" != "$EXPECTED_SHA" ]`)
+  expect(run).toContain('LIVE_MAIN_SHA=$(git rev-parse origin/main)')
+  expect(run).toContain('[ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]')
+  expect(run).toContain('[ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ]')
 }
 
 const deployRunbook = readFileSync(resolve(process.cwd(), '../../runbooks/production-deploy.md'), 'utf8')
@@ -18,6 +61,18 @@ function jobBlock(source: string, name: string): string {
 }
 
 describe('production deployment workflow integrity', () => {
+  it('strict AST rejects attacker checkout, no-op authorization, heredoc decoys, and duplicate keys', () => {
+    const source = workflow('deploy-web.yml')
+    const mutated = source
+      .replace('          ref: ${{ inputs.expected_sha }}', '          ref: refs/heads/attacker')
+      .replace('        run: |\n          set -euo pipefail', '        run: exit 0\n\n      - name: Harmless heredoc decoy\n        run: |\n          ref: ${{ inputs.expected_sha }}\n          set -euo pipefail')
+    const job = parseWorkflow(mutated).jobs['build-and-push']
+    expect(() => expectAuthorizedJob(job, 'web-production', 'WEB_DEPLOY_APPROVED_SHA', 'Assert this is the live main commit')).toThrow()
+
+    const duplicate = source.replace('    environment: web-production', '    environment: web-production\n    environment: attacker')
+    expect(() => parseWorkflow(duplicate)).toThrow()
+  })
+
   it('plain-scalar comment decoys cannot satisfy exact structural lines', () => {
     const source = workflow('deploy-web.yml')
       .replace('    environment: web-production', "    name: Owner's build # environment: web-production")
@@ -46,24 +101,18 @@ describe('production deployment workflow integrity', () => {
     ['deploy-docs.yml', 'docs-production', 'DOCS_DEPLOY_APPROVED_SHA'],
   ])('%s requires continuing exact-SHA owner approval', (name, environment, approvalVariable) => {
     const source = workflow(name)
+    const parsed = parseWorkflow(source)
     const jobNames = name === 'deploy-docs.yml' ? ['build', 'deploy'] : ['build-and-push', 'deploy']
 
     expect(source).toContain('workflow_dispatch:')
     expect(source).toContain('expected_sha:')
     expect(source).not.toMatch(/^  push:/m)
     for (const jobName of jobNames) {
-      const job = jobBlock(source, jobName)
-      const lines = job.split('\n')
-      expect(lines.filter((line) => /^    if:/.test(line))).toEqual([
-        `    if: github.ref == 'refs/heads/main' && vars.${approvalVariable} == inputs.expected_sha`,
-      ])
-      expect(lines).toContain(`    environment: ${environment}`)
-      expect(lines).toContain(`      ${approvalVariable}: \${{ vars.${approvalVariable} }}`)
-      expect(lines).toContain(`             [ "$${approvalVariable}" != "$EXPECTED_SHA" ]; then`)
-      expect(lines).toContain('          ref: ${{ inputs.expected_sha }}')
-      expect(lines).toContain('          LIVE_MAIN_SHA=$(git rev-parse origin/main)')
-      expect(lines).toContain('             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||')
-      expect(lines).toContain('             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||')
+      const job = parsed.jobs[jobName]
+      const authorizationName = jobName === 'deploy'
+        ? name === 'deploy-docs.yml' ? 'Re-assert owner approval immediately before deployment' : 'Re-assert live main immediately before deployment'
+        : name === 'deploy-docs.yml' ? 'Verify exact owner-approved live main commit for build' : 'Assert this is the live main commit'
+      expectAuthorizedJob(job, environment, approvalVariable, authorizationName)
     }
   })
 
