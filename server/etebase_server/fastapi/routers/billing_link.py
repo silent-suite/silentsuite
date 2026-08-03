@@ -19,6 +19,7 @@ from ..utils import BaseModel
 
 billing_link_router = APIRouter()
 PROOF_TTL_SECONDS = 120
+PROOF_ISSUE_INTERVAL_SECONDS = 1
 PROOF_ISSUE_LOCKS = tuple(Lock() for _ in range(64))
 PROOF_CONSUME_LOCKS = tuple(Lock() for _ in range(64))
 
@@ -50,17 +51,17 @@ def issue_proof(user: UserType = Depends(get_authenticated_user)):
     with PROOF_ISSUE_LOCKS[user.pk % len(PROOF_ISSUE_LOCKS)]:
         with transaction.atomic():
             UserType.objects.select_for_update().only("pk").get(pk=user.pk)
-            outstanding = BillingLinkProof.objects.filter(
-                user=user,
-                audience="billing",
-                consumed_at__isnull=True,
-                expires_at__gt=issued_at,
+            prior = BillingLinkProof.objects.filter(user=user, audience="billing").order_by("-expires_at").first()
+            retry_boundary = issued_at + timedelta(
+                seconds=PROOF_TTL_SECONDS - PROOF_ISSUE_INTERVAL_SECONDS,
             )
-            if outstanding.exists():
-                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
-            BillingLinkProof.objects.filter(
-                user=user, audience="billing", consumed_at__isnull=True, expires_at__lte=issued_at
-            ).delete()
+            if prior and prior.expires_at > retry_boundary:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Too many requests",
+                    headers={"Retry-After": str(PROOF_ISSUE_INTERVAL_SECONDS)},
+                )
+            BillingLinkProof.objects.filter(user=user, audience="billing").delete()
             BillingLinkProof.objects.create(
                 proof_hash=BillingLinkProof.digest(proof), user=user, audience="billing",
                 expires_at=issued_at + timedelta(seconds=PROOF_TTL_SECONDS),

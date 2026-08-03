@@ -106,6 +106,29 @@ def test_concurrent_issue_has_exactly_one_winner_and_one_outstanding_proof(user_
     assert BillingLinkProof.objects.filter(user=user, consumed_at__isnull=True).count() == 1
 
 
+def test_consumed_reissue_is_rate_bounded_and_replaces_prior_metadata(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    proof = issue_proof(client)
+    assert consume(client, proof).status_code == 200
+
+    blocked = client.post("/api/v1/billing/link-proof/")
+    assert blocked.status_code == 429
+    assert blocked.headers["retry-after"] == "1"
+
+    for _ in range(4):
+        BillingLinkProof.objects.filter(user=user, audience="billing").update(
+            expires_at=timezone.now() + timedelta(seconds=118),
+        )
+        replacement = client.post("/api/v1/billing/link-proof/")
+        assert replacement.status_code == 200
+        assert BillingLinkProof.objects.filter(user=user, audience="billing").count() == 1
+        assert consume(client, replacement.json()["etebaseLinkProof"]).status_code == 200
+
+    assert BillingLinkProof.objects.filter(user=user, audience="billing").count() == 1
+
+
 def test_consume_requires_correct_machine_key_without_burning_proof(user_factory, monkeypatch):
     monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
     user = user_factory(username="proof-user", email="proof@example.com")

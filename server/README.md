@@ -67,8 +67,10 @@ For production, use a reverse proxy (nginx) with TLS in front of uvicorn.
 ### Billing link-proof cleanup
 
 Billing link proofs are usable for 120 seconds. Each account is limited to one
-outstanding proof; repeated issuance is rejected until that proof is consumed
-or expires. Consumed or expired metadata has a five-minute retention threshold.
+Billing proof row and at most one issuance per second; after that interval a new
+proof replaces the prior row whether it was consumed or still outstanding. The
+web retries issuance once after a lost response or rate-limit response. Consumed
+or expired metadata has a five-minute retention threshold.
 Production operators must run the explicit cleanup command at least every five
 minutes; with that schedule, terminal proof metadata is retained for less than
 ten minutes:
