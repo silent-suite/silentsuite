@@ -23,6 +23,12 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ColorParityRuntimeTest {
+    private fun setNightModeOnMainThread(mode: Int) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync { AppCompatDelegate.setDefaultNightMode(mode) }
+        instrumentation.waitForIdleSync()
+    }
+
     private fun waitForAbout(scenario: ActivityScenario<AboutActivity>) {
         repeat(40) {
             var ready = false
@@ -52,20 +58,20 @@ class ColorParityRuntimeTest {
     @Test fun dayNightRolesRecreateDeterministically() {
         val prior = AppCompatDelegate.getDefaultNightMode()
         try {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
             about { scenario ->
                 scenario.onActivity { assertRole(it, ContextCompat.getColor(it, R.color.semantic_background), "#FCFDFF") }
-                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
                 scenario.recreate()
                 waitForAbout(scenario)
                 scenario.onActivity { assertRole(it, ContextCompat.getColor(it, R.color.semantic_background), "#0A1018") }
-                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
                 scenario.recreate()
                 waitForAbout(scenario)
                 scenario.onActivity { assertRole(it, ContextCompat.getColor(it, R.color.semantic_background), "#FCFDFF") }
             }
         } finally {
-            AppCompatDelegate.setDefaultNightMode(prior)
+            setNightModeOnMainThread(prior)
         }
     }
 
@@ -106,36 +112,40 @@ class ColorParityRuntimeTest {
         assertEquals(ContextCompat.getColor(activity, R.color.semantic_system_bar), (navigationScrim.background as ColorDrawable).color)
     }
 
-    @Test fun systemBarProtectionMatchesApiAndInsets() = about { scenario ->
-        scenario.onActivity { activity ->
-            if (Build.VERSION.SDK_INT >= 35) {
-                assertEquals(Color.TRANSPARENT, activity.window.statusBarColor)
-                assertEquals(Color.TRANSPARENT, activity.window.navigationBarColor)
-                assertScrimBounds(activity)
-            } else {
-                val expected = ContextCompat.getColor(activity, R.color.semantic_system_bar)
-                assertEquals(expected, activity.window.statusBarColor)
-                assertEquals(expected, activity.window.navigationBarColor)
+    @Test fun systemBarProtectionMatchesApiAndInsets() {
+        about { scenario ->
+            scenario.onActivity { activity ->
+                if (Build.VERSION.SDK_INT >= 35) {
+                    assertEquals(Color.TRANSPARENT, activity.window.statusBarColor)
+                    assertEquals(Color.TRANSPARENT, activity.window.navigationBarColor)
+                    assertScrimBounds(activity)
+                } else {
+                    val expected = ContextCompat.getColor(activity, R.color.semantic_system_bar)
+                    assertEquals(expected, activity.window.statusBarColor)
+                    assertEquals(expected, activity.window.navigationBarColor)
+                }
             }
         }
     }
 
-    @Test fun repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent() = about { scenario ->
-        var before: Rect? = null
-        scenario.onActivity { activity ->
-            before = activity.findViewById<View>(android.R.id.content).bounds()
-            ViewCompat.requestApplyInsets(activity.window.decorView)
-        }
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-        scenario.recreate()
-        waitForAbout(scenario)
-        scenario.onActivity { activity ->
-            assertEquals(before, activity.findViewById<View>(android.R.id.content).bounds())
-            if (Build.VERSION.SDK_INT >= 35) {
-                val decor = activity.window.decorView
-                assertScrimBounds(activity)
-                assertEquals(1, countTagged(decor, BaseActivity.STATUS_BAR_SCRIM_TAG))
-                assertEquals(1, countTagged(decor, BaseActivity.NAVIGATION_BAR_SCRIM_TAG))
+    @Test fun repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent() {
+        about { scenario ->
+            var before: Rect? = null
+            scenario.onActivity { activity ->
+                before = activity.findViewById<View>(android.R.id.content).bounds()
+                ViewCompat.requestApplyInsets(activity.window.decorView)
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.recreate()
+            waitForAbout(scenario)
+            scenario.onActivity { activity ->
+                assertEquals(before, activity.findViewById<View>(android.R.id.content).bounds())
+                if (Build.VERSION.SDK_INT >= 35) {
+                    val decor = activity.window.decorView
+                    assertScrimBounds(activity)
+                    assertEquals(1, countTagged(decor, BaseActivity.STATUS_BAR_SCRIM_TAG))
+                    assertEquals(1, countTagged(decor, BaseActivity.NAVIGATION_BAR_SCRIM_TAG))
+                }
             }
         }
     }

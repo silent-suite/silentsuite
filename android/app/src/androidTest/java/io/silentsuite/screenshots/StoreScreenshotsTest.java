@@ -538,34 +538,40 @@ public class StoreScreenshotsTest {
      * Credential-free parity evidence for the retained Material 3 and legacy
      * routes. This is intentionally separately selectable from store captures.
      */
+    private static void setNightModeOnMainThread(int mode) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                () -> AppCompatDelegate.setDefaultNightMode(mode));
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+    }
+
     @Test
     public void testParityEvidence() {
         int prior = AppCompatDelegate.getDefaultNightMode();
         Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
         try {
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO);
             try (ActivityScenario<io.silentsuite.sync.ui.AboutActivity> scenario =
                          ActivityScenario.launch(io.silentsuite.sync.ui.AboutActivity.class)) {
                 waitForAbout(scenario);
                 capture("parity-m3-about-light");
-                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES);
                 scenario.recreate();
                 waitForAbout(scenario);
                 capture("parity-m3-about-dark");
             }
 
-            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO);
             try (ActivityScenario<io.silentsuite.sync.ui.AppSettingsActivity> scenario =
                          ActivityScenario.launch(io.silentsuite.sync.ui.AppSettingsActivity.Companion.newIntent(targetContext))) {
                 waitForGlobalSettings(scenario);
                 capture("parity-legacy-app-settings-light");
-                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES);
                 scenario.recreate();
                 waitForGlobalSettings(scenario);
                 capture("parity-legacy-app-settings-dark");
             }
         } finally {
-            AppCompatDelegate.setDefaultNightMode(prior);
+            setNightModeOnMainThread(prior);
         }
     }
 }

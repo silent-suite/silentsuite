@@ -424,7 +424,10 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
         "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent",
     ):
         assert f"@Test fun {method}" in runtime
+    assert "fun systemBarProtectionMatchesApiAndInsets() =" not in runtime
+    assert "fun repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent() =" not in runtime
     assert "AppCompatDelegate.setDefaultNightMode" in runtime
+    assert "runOnMainSync { AppCompatDelegate.setDefaultNightMode(mode) }" in runtime
     assert "scenario.recreate()" in runtime
     assert "STATUS_BAR_SCRIM_TAG" in runtime and "NAVIGATION_BAR_SCRIM_TAG" in runtime
     for token in (
@@ -445,13 +448,14 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     ):
         assert f'{ready}(scenario);\n                capture("{light}");' in parity_body
         dark_route = (
-            "AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);\n"
+            "setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES);\n"
             "                scenario.recreate();\n"
             f"                {ready}(scenario);\n"
             f'                capture("{dark}");'
         )
         assert dark_route in parity_body
-    assert parity_body.count("AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);") == 2
+    assert parity_body.count("setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO);") == 2
+    assert "runOnMainSync" in screenshots
 
     workflow = source(".github/workflows/build-android.yml")
     parity_job = yaml.safe_load(workflow)["jobs"]["color-parity-evidence"]
@@ -504,12 +508,13 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     assert 'navigation_mode="$3"' in focused_script
     assert 'if [[ -n "$navigation_mode" ]]; then' in focused_script
     for command in (
-        "adb shell cmd overlay enable com.android.internal.systemui.navbar.gestural",
-        "adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton",
+        "adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.gestural",
+        "adb shell cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton",
         "adb shell settings get secure navigation_mode",
     ):
         assert command in focused_script
         assert focused_script.index(command) < focused_script.index(runner)
+    assert "for _ in {1..10}; do" in focused_script
     assert focused_script.rstrip().endswith(runner)
     assert all(step.get("name") != "Configure required system navigation mode" for step in focused_job["steps"])
     assert "expected_sizes={'21:mixed':1,'21:remaining':83,'35:all':84,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':40}" in workflow
