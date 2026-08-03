@@ -4,6 +4,7 @@ from hashlib import sha256
 from pathlib import Path
 import json
 import re
+import subprocess
 import xml.etree.ElementTree as ET
 import yaml
 
@@ -181,7 +182,7 @@ def test_web_roles_and_android_semantics_are_exact_in_day_and_night():
 
 def test_material3_used_roles_and_closed_aliases_are_explicit():
     required = {
-        "android:colorBackground": "semantic_background", "colorBackground": "semantic_background",
+        "android:colorBackground": "semantic_background",
         "colorOnBackground": "semantic_on_surface", "colorSurface": "semantic_surface",
         "colorOnSurface": "semantic_on_surface", "colorSurfaceVariant": "semantic_surface_variant",
         "colorOnSurfaceVariant": "semantic_on_surface_variant", "colorOutline": "semantic_outline",
@@ -197,6 +198,7 @@ def test_material3_used_roles_and_closed_aliases_are_explicit():
     for qualifier in ("values", "values-night"):
         for theme in ("AppTheme.Material3", "AppTheme.Material3.NoActionBar"):
             actual = styles(qualifier)[theme]
+            assert "colorBackground" not in actual
             for attr, role in required.items():
                 assert actual.get(attr) == f"@color/{role}", (qualifier, theme, attr, actual.get(attr))
             assert actual.get("materialAlertDialogTheme") == "@style/AppTheme.Dialog.Alert"
@@ -440,7 +442,9 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     parity_job = yaml.safe_load(workflow)["jobs"]["color-parity-evidence"]
     parity_step = next(step for step in parity_job["steps"] if step.get("id") == "parity-evidence")
     parity_script = parity_step["with"]["script"]
-    assert parity_script.startswith("set -euo pipefail\n")
+    assert parity_script.startswith("set -eu\n")
+    assert "pipefail" not in parity_script
+    subprocess.run(["/usr/bin/dash", "-n"], input=parity_script, text=True, check=True)
     assert 'remote_evidence_dir="/sdcard/Download/SilentSuiteColorParityEvidence"' in parity_script
     assert 'local_evidence_dir="build/color-parity-evidence"' in parity_script
     cleanup = 'adb shell rm -rf "$remote_evidence_dir"'
@@ -475,6 +479,9 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     runner = 'bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"'
 
     assert focused_step["uses"].startswith("ReactiveCircus/android-emulator-runner@")
+    assert focused_script.startswith("set -eu\n")
+    assert "pipefail" not in focused_script
+    subprocess.run(["/usr/bin/dash", "-n"], input=focused_script, text=True, check=True)
     assert 'navigation_mode="${{ matrix.navigation-mode }}"' in focused_script
     assert 'if [ -n "$navigation_mode" ]; then' in focused_script
     for command in (

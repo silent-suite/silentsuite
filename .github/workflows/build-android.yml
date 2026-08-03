@@ -332,7 +332,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             navigation_mode="${{ matrix.navigation-mode }}"
             if [ -n "$navigation_mode" ]; then
               case "$navigation_mode" in
@@ -569,7 +569,7 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             cd android
             remote_evidence_dir="/sdcard/Download/SilentSuiteColorParityEvidence"
             local_evidence_dir="build/color-parity-evidence"

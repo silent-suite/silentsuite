@@ -32,7 +32,6 @@
 
     <style name="AppTheme.Material3" parent="Theme.Material3.DayNight">
         <item name="android:colorBackground">@color/semantic_background</item>
-        <item name="colorBackground">@color/semantic_background</item>
         <item name="colorOnBackground">@color/semantic_on_surface</item>
         <item name="colorSurface">@color/semantic_surface</item>
         <item name="colorOnSurface">@color/semantic_on_surface</item>
@@ -63,7 +62,6 @@
 
     <style name="AppTheme.Material3.NoActionBar" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:colorBackground">@color/semantic_background</item>
-        <item name="colorBackground">@color/semantic_background</item>
         <item name="colorOnBackground">@color/semantic_on_surface</item>
         <item name="colorSurface">@color/semantic_surface</item>
         <item name="colorOnSurface">@color/semantic_on_surface</item>
