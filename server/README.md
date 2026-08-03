@@ -64,6 +64,23 @@ uvicorn etebase_server.asgi:application --host 0.0.0.0 --port 8000
 
 For production, use a reverse proxy (nginx) with TLS in front of uvicorn.
 
+### Billing link-proof cleanup
+
+Billing link proofs are usable for 120 seconds. Each account is limited to one
+outstanding proof; repeated issuance is rejected until that proof is consumed
+or expires. Consumed or expired metadata has a five-minute retention threshold.
+Production operators must run the explicit cleanup command at least every five
+minutes; with that schedule, terminal proof metadata is retained for less than
+ten minutes:
+
+```bash
+*/5 * * * * cd /path/to/silentsuite/server && .venv/bin/python manage.py cleanup_billing_link_proofs
+```
+
+Container deployments can invoke the same management command through their
+server container. The command is idempotent and reports the number of rows it
+deleted.
+
 ## Configuration
 
 Copy `etebase-server.ini.example` to `etebase-server.ini` and configure:

@@ -3,6 +3,7 @@ import hmac
 import os
 import secrets
 from datetime import timedelta
+from threading import Lock
 
 from django.db import transaction
 from django.utils import timezone
@@ -18,6 +19,7 @@ from ..utils import BaseModel
 
 billing_link_router = APIRouter()
 PROOF_TTL_SECONDS = 120
+PROOF_ISSUE_LOCKS = tuple(Lock() for _ in range(64))
 
 
 class ProofOut(BaseModel):
@@ -41,10 +43,27 @@ def forbidden() -> None:
 @django_db_cleanup_decorator
 def issue_proof(user: UserType = Depends(get_authenticated_user)):
     proof = secrets.token_urlsafe(32)
-    BillingLinkProof.objects.create(
-        proof_hash=BillingLinkProof.digest(proof), user=user, audience="billing",
-        expires_at=timezone.now() + timedelta(seconds=PROOF_TTL_SECONDS),
-    )
+    issued_at = timezone.now()
+    # A fixed stripe handles same-process concurrency even on databases without
+    # row locking. The account row remains the cross-process production lock.
+    with PROOF_ISSUE_LOCKS[user.pk % len(PROOF_ISSUE_LOCKS)]:
+        with transaction.atomic():
+            UserType.objects.select_for_update().only("pk").get(pk=user.pk)
+            outstanding = BillingLinkProof.objects.filter(
+                user=user,
+                audience="billing",
+                consumed_at__isnull=True,
+                expires_at__gt=issued_at,
+            )
+            if outstanding.exists():
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
+            BillingLinkProof.objects.filter(
+                user=user, audience="billing", consumed_at__isnull=True, expires_at__lte=issued_at
+            ).delete()
+            BillingLinkProof.objects.create(
+                proof_hash=BillingLinkProof.digest(proof), user=user, audience="billing",
+                expires_at=issued_at + timedelta(seconds=PROOF_TTL_SECONDS),
+            )
     return ProofOut(etebaseLinkProof=proof)
 
 
