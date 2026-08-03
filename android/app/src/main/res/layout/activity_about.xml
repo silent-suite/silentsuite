@@ -33,7 +33,7 @@
             app:tabIndicatorColor="@color/semantic_primary"
             app:tabMode="scrollable"
             app:tabRippleColor="@color/semantic_outline"
-            app:tabTextColor="@android:color/white" />
+            app:tabTextColor="@color/semantic_on_system_bar" />
     </com.google.android.material.appbar.AppBarLayout>
 
     <androidx.viewpager.widget.ViewPager

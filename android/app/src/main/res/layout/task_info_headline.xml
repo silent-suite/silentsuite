@@ -18,7 +18,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_weight="1"
-    android:background="@color/orange400"
+    android:background="@color/semantic_primary"
     android:orientation="vertical"
     android:paddingBottom="16dip"
     android:paddingLeft="16dip"
@@ -38,7 +38,7 @@
             android:layout_height="wrap_content"
             android:layout_weight=".8"
             android:autoLink="all"
-            android:textColor="@color/white"
+            android:textColor="@color/semantic_on_primary"
             android:textIsSelectable="true"
             android:textSize="24sp"
             android:textStyle="bold" />
@@ -55,7 +55,7 @@
         android:layout_marginTop="4dip"
         android:ellipsize="end"
         android:singleLine="false"
-        android:textColor="@color/white"
+        android:textColor="@color/semantic_on_primary"
         android:textIsSelectable="true"
         android:textSize="14sp" />
 

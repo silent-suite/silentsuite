@@ -104,7 +104,7 @@ def test_semantic_light_and_dark_roles_have_parity_and_preserve_navy_emerald_bra
         "semantic_success",
         "semantic_warning",
         "semantic_error",
-        "semantic_disabled",
+        "semantic_disabled_content",
         "semantic_focus",
         "semantic_system_bar",
     }
@@ -115,8 +115,8 @@ def test_semantic_light_and_dark_roles_have_parity_and_preserve_navy_emerald_bra
     assert light["navy900"].upper() == "#0A1018"
     assert light["teal400"].upper() == "#34D399"
     assert light["teal500"].upper() == "#10B981"
-    assert light["semantic_system_bar"] == "@color/navy900"
-    assert dark["semantic_system_bar"] == "@color/navy900"
+    assert light["semantic_system_bar"] == "#0A1018"
+    assert dark["semantic_system_bar"] == "#0A1018"
 
 
 def test_incremental_material3_themes_use_semantic_roles_and_readable_navy_system_bars():
@@ -132,7 +132,7 @@ def test_incremental_material3_themes_use_semantic_roles_and_readable_navy_syste
                 "colorSurface": "@color/semantic_surface",
                 "colorOnSurface": "@color/semantic_on_surface",
                 "colorPrimary": "@color/semantic_primary",
-                "colorOnPrimary": "@color/navy900",
+                "colorOnPrimary": "@color/semantic_on_primary",
                 "android:statusBarColor": "@color/semantic_system_bar",
                 "android:navigationBarColor": "@color/semantic_system_bar",
             }.items():

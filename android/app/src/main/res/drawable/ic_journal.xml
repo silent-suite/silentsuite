@@ -6,7 +6,7 @@
     android:viewportHeight="1792">
 
     <path
-        android:fillColor="#fff"
+        android:fillColor="@color/semantic_inverse_on_surface"
         android:pathData="M1703 478q40 57 18 129l-275 906q-19 64-76.5 107.5t-122.5 43.5h-923q-77
 0-148.5-53.5t-99.5-131.5q-24-67-2-127 0-4 3-27t4-37q1-8-3-21.5t-3-19.5q2-11
 8-21t16.5-23.5 16.5-23.5q23-38 45-91.5t30-91.5q3-10 0.5-30t-0.5-28q3-11

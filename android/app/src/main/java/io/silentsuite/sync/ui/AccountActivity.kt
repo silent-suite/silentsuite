@@ -248,7 +248,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         swipeRefreshLayout = findViewById(R.id.account_swipe_refresh)
         swipeRefreshLayout?.apply {
             setColorSchemeResources(
-                    R.color.teal400, R.color.teal500, R.color.teal600, R.color.teal700)
+                    R.color.semantic_primary, R.color.semantic_secondary_action, R.color.semantic_success, R.color.semantic_focus)
             setOnRefreshListener { onAccountSwipeRefresh() }
         }
 

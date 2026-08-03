@@ -67,7 +67,7 @@
                 android:layout_width="@dimen/touch_target_min"
                 android:layout_height="@dimen/touch_target_min"
                 android:layout_marginEnd="@dimen/spacing_8"
-                android:background="@color/orangeA700"
+                android:background="@color/semantic_primary"
                 android:contentDescription="@string/create_collection_choose_color"
                 android:focusable="true"
                 android:minHeight="@dimen/touch_target_min"

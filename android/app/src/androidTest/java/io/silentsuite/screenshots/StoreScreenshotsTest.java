@@ -35,7 +35,10 @@ import android.content.Intent;
 import android.widget.EditText;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.view.View;
 
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.test.core.app.ActivityScenario;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.FixMethodOrder;
@@ -229,6 +232,40 @@ public class StoreScreenshotsTest {
 
     private void sleep(long ms) {
         SystemClock.sleep(ms);
+    }
+
+    private static void waitForAbout(ActivityScenario<io.silentsuite.sync.ui.AboutActivity> scenario) {
+        for (int attempt = 0; attempt < 40; attempt++) {
+            final boolean[] ready = {false};
+            scenario.onActivity(activity -> {
+                androidx.viewpager.widget.ViewPager pager = activity.findViewById(io.silentsuite.sync.R.id.viewpager);
+                ready[0] = pager != null && pager.isAttachedToWindow() && pager.isShown()
+                        && pager.getAdapter() != null && pager.getAdapter().getCount() > 0;
+            });
+            if (ready[0]) return;
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            SystemClock.sleep(50);
+        }
+        throw new AssertionError("AboutActivity viewpager was not attached, shown, and populated");
+    }
+
+    private static void waitForGlobalSettings(ActivityScenario<io.silentsuite.sync.ui.AppSettingsActivity> scenario) {
+        for (int attempt = 0; attempt < 40; attempt++) {
+            final boolean[] ready = {false};
+            scenario.onActivity(activity -> {
+                View content = activity.findViewById(android.R.id.content);
+                androidx.fragment.app.Fragment fragment = activity.getSupportFragmentManager()
+                        .findFragmentById(android.R.id.content);
+                ready[0] = content != null && content.isAttachedToWindow() && content.isShown()
+                        && fragment instanceof io.silentsuite.sync.ui.AppSettingsActivity.HomeFragment
+                        && ((io.silentsuite.sync.ui.AppSettingsActivity.HomeFragment) fragment)
+                                .findPreference("settings_category_appearance") != null;
+            });
+            if (ready[0]) return;
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            SystemClock.sleep(50);
+        }
+        throw new AssertionError("global AppSettingsActivity HomeFragment was not ready");
     }
 
     private boolean tapText(String text) {
@@ -495,5 +532,40 @@ public class StoreScreenshotsTest {
         tapText("Import");
         sleep(2000);
         capture("8-import");
+    }
+
+    /**
+     * Credential-free parity evidence for the retained Material 3 and legacy
+     * routes. This is intentionally separately selectable from store captures.
+     */
+    @Test
+    public void testParityEvidence() {
+        int prior = AppCompatDelegate.getDefaultNightMode();
+        Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        try {
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+            try (ActivityScenario<io.silentsuite.sync.ui.AboutActivity> scenario =
+                         ActivityScenario.launch(io.silentsuite.sync.ui.AboutActivity.class)) {
+                waitForAbout(scenario);
+                capture("parity-m3-about-light");
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                scenario.recreate();
+                waitForAbout(scenario);
+                capture("parity-m3-about-dark");
+            }
+
+            AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
+            try (ActivityScenario<io.silentsuite.sync.ui.AppSettingsActivity> scenario =
+                         ActivityScenario.launch(io.silentsuite.sync.ui.AppSettingsActivity.Companion.newIntent(targetContext))) {
+                waitForGlobalSettings(scenario);
+                capture("parity-legacy-app-settings-light");
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                scenario.recreate();
+                waitForGlobalSettings(scenario);
+                capture("parity-legacy-app-settings-dark");
+            }
+        } finally {
+            AppCompatDelegate.setDefaultNightMode(prior);
+        }
     }
 }

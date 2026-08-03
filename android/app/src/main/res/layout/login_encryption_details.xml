@@ -43,6 +43,7 @@
                 android:layout_height="wrap_content"
                 app:passwordToggleEnabled="true"
                 app:boxStrokeColor="@color/login_input_stroke"
+                app:boxStrokeErrorColor="@color/semantic_error"
                 app:boxStrokeWidth="1dp"
                 app:boxStrokeWidthFocused="2dp">
                 <com.google.android.material.textfield.TextInputEditText
