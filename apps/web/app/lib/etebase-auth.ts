@@ -10,13 +10,32 @@ export async function issueBillingLinkProof(savedSession: string, serverUrl?: st
   const { restoreSession } = await import('@silentsuite/core')
   const account = await restoreSession(serverUrl || ETEBASE_SERVER_URL, savedSession)
   const authToken = (account as any).authToken as string
-  const response = await fetch(`${(serverUrl || ETEBASE_SERVER_URL).replace(/\/$/, '')}/api/v1/billing/link-proof/`, {
-    method: 'POST', headers: { Authorization: `Token ${authToken}` },
-  })
-  if (!response.ok) throw new Error('Could not establish billing identity')
-  const value = await response.json() as { etebaseLinkProof?: unknown }
-  if (typeof value.etebaseLinkProof !== 'string') throw new Error('Could not establish billing identity')
-  return value.etebaseLinkProof
+  const endpoint = `${(serverUrl || ETEBASE_SERVER_URL).replace(/\/$/, '')}/api/v1/billing/link-proof/`
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let response: Response
+    try {
+      response = await fetch(endpoint, {
+        method: 'POST', headers: { Authorization: 'Token ' + authToken },
+      })
+    } catch {
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000))
+        continue
+      }
+      throw new Error('Could not establish billing identity')
+    }
+    if (response.status === 429 && attempt === 0) {
+      const requestedDelay = Number.parseInt(response.headers.get('Retry-After') ?? '1', 10)
+      const retrySeconds = Number.isFinite(requestedDelay) ? Math.min(Math.max(requestedDelay, 1), 2) : 1
+      await new Promise((resolve) => setTimeout(resolve, retrySeconds * 1_000))
+      continue
+    }
+    if (!response.ok) throw new Error('Could not establish billing identity')
+    const value = await response.json() as { etebaseLinkProof?: unknown }
+    if (typeof value.etebaseLinkProof !== 'string') throw new Error('Could not establish billing identity')
+    return value.etebaseLinkProof
+  }
+  throw new Error('Could not establish billing identity')
 }
 
 export async function etebaseSignUp(
