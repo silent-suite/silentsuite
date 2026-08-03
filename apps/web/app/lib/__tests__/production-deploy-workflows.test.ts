@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -78,23 +78,85 @@ esac
 
 const jobContracts: Record<string, Record<string, { steps: string; permissions: string }>> = {
   'deploy-web.yml': {
-    'build-and-push': { steps: 'e23e2195d21717e71fe08e47d202b446f858488f65ebbeee6c7dd7abd459fb46', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: '72639f5529b592052a55c819853c08d009e3d092c8808ce733a7c64640b7e3ef', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    'build-and-push': { steps: '986d2e9862eb81e1d9b3abc028158b3880435f19b52fbb6fc40ba37bdd406733', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
+    deploy: { steps: '27e085d4e9108ff2e06b8ae1b4b616794c8c7fd3fac65c1a47277cb7717ef828', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-server.yml': {
-    'build-and-push': { steps: '009b1bf33803af9b5210638ee074a4006a4ab332557750e68caab4fa21219a9d', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: '4a6af78622256751915bc0d4bcbc5c03a63f40ab1db8388885441f62b19b4625', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    'build-and-push': { steps: 'eaaaecf8738fd3b7d25bfb6f383709911df7c00da94dff1cca81014fdb254a62', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
+    deploy: { steps: 'bbd0c9a9415d24b319bf53201011b78485a5a22674d36336b252fa770e19cf4c', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-docs.yml': {
-    build: { steps: 'bc49bcc31e40e8c2c8564e68efe2dfc09a400c0c0de8bcec9155fadad5760e49', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
-    deploy: { steps: '9324d75996bca253594b92ebbc089d60d833dc39f94853c377ad0be5f9610a2a', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
+    build: { steps: '91656156d61547951a0d50b9c710a6356288443ac53c935b12c050c730a9215f', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '3637fc52acda8299a45cbc10b550f22c958b66ad938757f1c8ea13b8a1f87abb', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
   },
 }
 
 const workflowContracts: Record<string, string> = {
-  'deploy-web.yml': '3f87487c3d4398cdf5ee851f3497304f1e81221cfb3b51aa53a7f4bb9caa6e5b',
-  'deploy-server.yml': 'ac36934537cbc324464fffe593e0e9b6c7e86b61ca592540bb1568771745c565',
-  'deploy-docs.yml': '083c229f0bb65953a44da47e01f13d870fe85b5df16489c36515d90177e00b62',
+  'deploy-web.yml': '67fe57e851cfa98a1736c623e070ddb3dc61bbc88f1b05f0f2b32cf8306ee74a',
+  'deploy-server.yml': 'ee8015b23a29d0faa6b0ecb0371f049ae9189c37fe4c80591f82f0e844193312',
+  'deploy-docs.yml': 'd9f4bbecc94008729bf0d6b3ddc43ace09c420d6959a67263a4c1fd732ecec27',
+}
+
+const approvedNode24ActionPins: Record<string, string> = {
+  'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
+  'pnpm/action-setup': '0977fd99725f1db4007ccb2928dbb4e90d06cc86',
+  'actions/setup-python': '5fda3b95a4ea91299a34e894583c3862153e4b97',
+  'actions/setup-java': 'b6effb05e454b25005698d916606bdc6ffcbf961',
+  'actions/cache': '55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
+  'ReactiveCircus/android-emulator-runner': 'a421e43855164a8197daf9d8d40fe71c6996bb0d',
+  'softprops/action-gh-release': '3d0d9888cb7fd7b750713d6e236d1fcb99157228',
+  'actions/github-script': '3a2844b7e9c422d3c10d287c895573f7108da1b3',
+  'cloudflare/wrangler-action': 'ebbaa1584979971c8614a24965b4405ff95890e0',
+  'docker/setup-qemu-action': '96fe6ef7f33517b61c61be40b68a1882f3264fb8',
+  'android-actions/setup-android': '40fd30fb8d7440372e1316f5d1809ec01dcd3699',
+  'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
+  'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+  'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
+  'docker/setup-buildx-action': 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
+  'docker/login-action': 'dbcb813823bdd20940b903addbd779551569679f',
+  'docker/build-push-action': '53b7df96c91f9c12dcc8a07bcb9ccacbed38856a',
+}
+
+function node24PinViolations(root: string): string[] {
+  const seen = new Set<string>()
+  const violations: string[] = []
+
+  for (const relativeDirectory of ['.github/workflows', 'android/.github/workflows']) {
+    const directory = join(root, relativeDirectory)
+    for (const name of readdirSync(directory).filter((entry) => /\.ya?ml$/.test(entry))) {
+      const relativePath = `${relativeDirectory}/${name}`
+      let parsed: ParsedWorkflow
+      try {
+        parsed = parseWorkflow(readFileSync(join(directory, name), 'utf8'))
+      } catch (error) {
+        violations.push(`${relativePath}: invalid workflow YAML: ${String(error)}`)
+        continue
+      }
+
+      for (const job of Object.values(parsed.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          if (typeof step.uses !== 'string') continue
+          const separator = step.uses.lastIndexOf('@')
+          const action = separator === -1 ? step.uses : step.uses.slice(0, separator)
+          const canonicalAction = Object.keys(approvedNode24ActionPins)
+            .find((approved) => approved.toLocaleLowerCase('en-US') === action.toLocaleLowerCase('en-US'))
+          if (!canonicalAction) continue
+          seen.add(canonicalAction)
+          const expected = `${canonicalAction}@${approvedNode24ActionPins[canonicalAction]}`
+          if (step.uses !== expected) {
+            violations.push(
+              `${relativePath}: governed action must use exact immutable pin ${expected}; found ${step.uses}`,
+            )
+          }
+        }
+      }
+    }
+  }
+
+  for (const action of Object.keys(approvedNode24ActionPins)) {
+    if (!seen.has(action)) violations.push(`missing governed action: ${action}`)
+  }
+  return violations
 }
 
 function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string, expectedRunSha256: string) {
@@ -130,6 +192,37 @@ function jobBlock(source: string, name: string): string {
 }
 
 describe('production deployment workflow integrity', () => {
+  it('pins migrated JavaScript actions to approved immutable Node 24 releases', () => {
+    expect(node24PinViolations(resolve(process.cwd(), '../..'))).toEqual([])
+  })
+
+  it.each([
+    ['bare step uses key', '.github/workflows/bypass.yml', 'jobs:\n  bypass:\n    steps:\n      - uses: actions/checkout@v7\n', 'actions/checkout@v7'],
+    ['quoted value and spaced key', '.github/workflows/bypass.yml', 'jobs:\n  bypass:\n    steps:\n      - uses : "actions/checkout@v7"\n', 'actions/checkout@v7'],
+    ['action identity case variant', '.github/workflows/bypass.yml', "jobs:\n  bypass:\n    steps:\n      - uses: 'Actions/Checkout@v7'\n", 'Actions/Checkout@v7'],
+    ['Android sibling workflow', 'android/.github/workflows/bypass.yml', 'jobs:\n  bypass:\n    steps:\n      - uses: actions/checkout@v7\n', 'actions/checkout@v7'],
+  ])('rejects mutable governed actions written as %s', (_label, relativePath, source, actualUses) => {
+    const root = mkdtempSync(join(tmpdir(), 'silentsuite-action-pins-'))
+    try {
+      for (const directory of ['.github/workflows', 'android/.github/workflows']) {
+        mkdirSync(join(root, directory), { recursive: true })
+      }
+      for (const [action, pin] of Object.entries(approvedNode24ActionPins)) {
+        writeFileSync(
+          join(root, '.github/workflows', `${action.replaceAll('/', '-')}.yml`),
+          `jobs:\n  control:\n    steps:\n      - name: unchanged control\n        uses: ${action}@${pin}\n`,
+        )
+      }
+      writeFileSync(join(root, relativePath), source)
+
+      expect(node24PinViolations(root)).toContain(
+        `${relativePath}: governed action must use exact immutable pin actions/checkout@${approvedNode24ActionPins['actions/checkout']}; found ${actualUses}`,
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('strict AST rejects attacker checkout, no-op authorization, heredoc decoys, and duplicate keys', () => {
     const source = workflow('deploy-web.yml')
     const mutated = source
@@ -171,6 +264,11 @@ describe('production deployment workflow integrity', () => {
     expect(billingLinkRollout).toContain('0025_retain_etebase_session_verifier.sql')
     expect(billingLinkRollout).toContain('rollback-eligible Billing image')
     expect(billingLinkRollout).toContain('later reviewed contract release')
+    expect(billingLinkRollout).toContain('At least 48 hours of clean post-cutover production soak')
+    expect(billingLinkRollout).toContain('owner explicitly closes the previous-image rollback window')
+    expect(billingLinkRollout).toContain('declares the prior Billing image non-restorable')
+    expect(billingLinkRollout).toContain('silent-suite/silentsuite#621')
+    expect(billingLinkRollout).toContain('If any condition is missing, preserve the rollback-compatible code and verifier')
     expect(billingLinkRollout).not.toContain('0025_remove_etebase_session_verifier.sql')
   })
 

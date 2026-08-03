@@ -34,8 +34,8 @@ UNSAFE_SECRET_EXPRESSION = re.compile(
     r"\bsecrets\s*\[|\bsecrets\s*\.\s*\*|\btojson\s*\(\s*secrets\s*\)",
     re.IGNORECASE,
 )
-CHECKOUT_ACTION = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
-SETUP_PYTHON_ACTION = "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+SETUP_PYTHON_ACTION = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97"
 EXPECTED_POLICY_JOB: dict[str, Any] = {
     "name": "Enforce Android signing boundary",
     "runs-on": "ubuntu-latest",
@@ -89,7 +89,7 @@ EXPECTED_SECRET_STEP_SHA256 = {
         "69ded7eab4c4ff48deff2da950aacf8e627da05373ffa507f358fbcc986a7a6a"
     ),
 }
-EXPECTED_RELEASE_JOB_SHA256 = "32b3bd8d5584e1049e4c56003bfe56be379c3204fca8f223a1c19b2e0b3c5402"
+EXPECTED_RELEASE_JOB_SHA256 = "9f46c62e36525f08aa18d073564ca6867ad1b4d4d332089abf22528249c2c242"
 ALLOWED_RELEASE_JOB_KEYS = {
     "name",
     "needs",

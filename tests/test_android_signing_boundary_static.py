@@ -761,8 +761,8 @@ def test_release_secret_cannot_move_into_action_input(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate_last(
         workflow,
-        "      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Set up JDK 17\n",
-        "      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n        with:\n          token: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}\n\n      - name: Set up JDK 17\n",
+        "      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n\n      - name: Set up JDK 17\n",
+        "      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          token: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}\n\n      - name: Set up JDK 17\n",
     )
 
     assert_rejected(run_checker(root), "references signing secrets outside reviewed step environments")
@@ -773,8 +773,8 @@ def test_release_job_cannot_invoke_local_action(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Set up JDK 17\n",
-        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4\n\n      - name: Local release action\n        uses: ./malicious-action\n\n      - name: Set up JDK 17\n",
+        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n\n      - name: Set up JDK 17\n",
+        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n\n      - name: Local release action\n        uses: ./malicious-action\n\n      - name: Set up JDK 17\n",
     )
 
     assert_rejected(run_checker(root), "build-release must not invoke local actions")
@@ -785,11 +785,11 @@ def test_mutable_action_in_root_workflow_is_rejected(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
-        "actions/checkout@v4",
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "actions/checkout@v7",
     )
 
-    assert_rejected(run_checker(root), "action must be pinned to a full commit SHA: actions/checkout@v4")
+    assert_rejected(run_checker(root), "action must be pinned to a full commit SHA: actions/checkout@v7")
 
 
 def test_mutable_action_in_android_sibling_workflow_is_rejected(tmp_path: Path) -> None:
@@ -797,8 +797,8 @@ def test_mutable_action_in_android_sibling_workflow_is_rejected(tmp_path: Path) 
     workflow = root / SIBLING_WORKFLOW
     mutate(
         workflow,
-        "android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407",
-        "android-actions/setup-android@v3",
+        "android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699",
+        "android-actions/setup-android@v4",
     )
 
     assert_rejected(
