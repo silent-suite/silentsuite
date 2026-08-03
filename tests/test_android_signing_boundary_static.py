@@ -797,8 +797,8 @@ def test_mutable_action_in_android_sibling_workflow_is_rejected(tmp_path: Path) 
     workflow = root / SIBLING_WORKFLOW
     mutate(
         workflow,
-        "android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407",
-        "android-actions/setup-android@v3",
+        "android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699",
+        "android-actions/setup-android@v4",
     )
 
     assert_rejected(

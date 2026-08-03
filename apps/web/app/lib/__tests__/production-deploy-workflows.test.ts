@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -86,25 +86,77 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
     deploy: { steps: 'bbd0c9a9415d24b319bf53201011b78485a5a22674d36336b252fa770e19cf4c', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-docs.yml': {
-    build: { steps: '90a5bed17b51f0b60748163cd3d53b9d86c0088f0b2e5904db0a69cb370bd7a9', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
-    deploy: { steps: '9663c351621aa2b85d3afb464e9630039a802f1799205610c2e3e3285ba09c08', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
+    build: { steps: '91656156d61547951a0d50b9c710a6356288443ac53c935b12c050c730a9215f', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '3637fc52acda8299a45cbc10b550f22c958b66ad938757f1c8ea13b8a1f87abb', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
   },
 }
 
 const workflowContracts: Record<string, string> = {
   'deploy-web.yml': '67fe57e851cfa98a1736c623e070ddb3dc61bbc88f1b05f0f2b32cf8306ee74a',
   'deploy-server.yml': 'ee8015b23a29d0faa6b0ecb0371f049ae9189c37fe4c80591f82f0e844193312',
-  'deploy-docs.yml': '7f768623b8e654b10da26f18e63c5ca021df3e33e24d3e8ceef31611e71c8ed9',
+  'deploy-docs.yml': 'd9f4bbecc94008729bf0d6b3ddc43ace09c420d6959a67263a4c1fd732ecec27',
 }
 
 const approvedNode24ActionPins: Record<string, string> = {
   'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
+  'pnpm/action-setup': '0977fd99725f1db4007ccb2928dbb4e90d06cc86',
+  'actions/setup-python': '5fda3b95a4ea91299a34e894583c3862153e4b97',
+  'actions/setup-java': 'b6effb05e454b25005698d916606bdc6ffcbf961',
+  'actions/cache': '55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
+  'ReactiveCircus/android-emulator-runner': 'a421e43855164a8197daf9d8d40fe71c6996bb0d',
+  'softprops/action-gh-release': '3d0d9888cb7fd7b750713d6e236d1fcb99157228',
+  'actions/github-script': '3a2844b7e9c422d3c10d287c895573f7108da1b3',
+  'cloudflare/wrangler-action': 'ebbaa1584979971c8614a24965b4405ff95890e0',
+  'docker/setup-qemu-action': '96fe6ef7f33517b61c61be40b68a1882f3264fb8',
+  'android-actions/setup-android': '40fd30fb8d7440372e1316f5d1809ec01dcd3699',
   'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
   'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
   'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
   'docker/setup-buildx-action': 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
   'docker/login-action': 'dbcb813823bdd20940b903addbd779551569679f',
   'docker/build-push-action': '53b7df96c91f9c12dcc8a07bcb9ccacbed38856a',
+}
+
+function node24PinViolations(root: string): string[] {
+  const seen = new Set<string>()
+  const violations: string[] = []
+
+  for (const relativeDirectory of ['.github/workflows', 'android/.github/workflows']) {
+    const directory = join(root, relativeDirectory)
+    for (const name of readdirSync(directory).filter((entry) => /\.ya?ml$/.test(entry))) {
+      const relativePath = `${relativeDirectory}/${name}`
+      let parsed: ParsedWorkflow
+      try {
+        parsed = parseWorkflow(readFileSync(join(directory, name), 'utf8'))
+      } catch (error) {
+        violations.push(`${relativePath}: invalid workflow YAML: ${String(error)}`)
+        continue
+      }
+
+      for (const job of Object.values(parsed.jobs ?? {})) {
+        for (const step of job.steps ?? []) {
+          if (typeof step.uses !== 'string') continue
+          const separator = step.uses.lastIndexOf('@')
+          const action = separator === -1 ? step.uses : step.uses.slice(0, separator)
+          const canonicalAction = Object.keys(approvedNode24ActionPins)
+            .find((approved) => approved.toLocaleLowerCase('en-US') === action.toLocaleLowerCase('en-US'))
+          if (!canonicalAction) continue
+          seen.add(canonicalAction)
+          const expected = `${canonicalAction}@${approvedNode24ActionPins[canonicalAction]}`
+          if (step.uses !== expected) {
+            violations.push(
+              `${relativePath}: governed action must use exact immutable pin ${expected}; found ${step.uses}`,
+            )
+          }
+        }
+      }
+    }
+  }
+
+  for (const action of Object.keys(approvedNode24ActionPins)) {
+    if (!seen.has(action)) violations.push(`missing governed action: ${action}`)
+  }
+  return violations
 }
 
 function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string, expectedRunSha256: string) {
@@ -141,23 +193,34 @@ function jobBlock(source: string, name: string): string {
 
 describe('production deployment workflow integrity', () => {
   it('pins migrated JavaScript actions to approved immutable Node 24 releases', () => {
-    const directory = resolve(process.cwd(), '../../.github/workflows')
-    const seen = new Set<string>()
+    expect(node24PinViolations(resolve(process.cwd(), '../..'))).toEqual([])
+  })
 
-    for (const name of readdirSync(directory).filter((entry) => /\.ya?ml$/.test(entry))) {
-      const source = readFileSync(join(directory, name), 'utf8')
-      for (const match of source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)) {
-        const uses = match[1]
-        const separator = uses.lastIndexOf('@')
-        const action = separator === -1 ? uses : uses.slice(0, separator)
-        const approved = approvedNode24ActionPins[action]
-        if (!approved) continue
-        seen.add(action)
-        expect(uses, `${name}: ${action}`).toBe(`${action}@${approved}`)
+  it.each([
+    ['bare step uses key', '.github/workflows/bypass.yml', 'jobs:\n  bypass:\n    steps:\n      - uses: actions/checkout@v7\n', 'actions/checkout@v7'],
+    ['quoted value and spaced key', '.github/workflows/bypass.yml', 'jobs:\n  bypass:\n    steps:\n      - uses : "actions/checkout@v7"\n', 'actions/checkout@v7'],
+    ['action identity case variant', '.github/workflows/bypass.yml', "jobs:\n  bypass:\n    steps:\n      - uses: 'Actions/Checkout@v7'\n", 'Actions/Checkout@v7'],
+    ['Android sibling workflow', 'android/.github/workflows/bypass.yml', 'jobs:\n  bypass:\n    steps:\n      - uses: actions/checkout@v7\n', 'actions/checkout@v7'],
+  ])('rejects mutable governed actions written as %s', (_label, relativePath, source, actualUses) => {
+    const root = mkdtempSync(join(tmpdir(), 'silentsuite-action-pins-'))
+    try {
+      for (const directory of ['.github/workflows', 'android/.github/workflows']) {
+        mkdirSync(join(root, directory), { recursive: true })
       }
-    }
+      for (const [action, pin] of Object.entries(approvedNode24ActionPins)) {
+        writeFileSync(
+          join(root, '.github/workflows', `${action.replaceAll('/', '-')}.yml`),
+          `jobs:\n  control:\n    steps:\n      - name: unchanged control\n        uses: ${action}@${pin}\n`,
+        )
+      }
+      writeFileSync(join(root, relativePath), source)
 
-    expect([...seen].sort()).toEqual(Object.keys(approvedNode24ActionPins).sort())
+      expect(node24PinViolations(root)).toContain(
+        `${relativePath}: governed action must use exact immutable pin actions/checkout@${approvedNode24ActionPins['actions/checkout']}; found ${actualUses}`,
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('strict AST rejects attacker checkout, no-op authorization, heredoc decoys, and duplicate keys', () => {
