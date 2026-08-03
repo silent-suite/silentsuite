@@ -2,7 +2,7 @@
  * SilentSuite store screenshot capture test.
  *
  * Drives the app through the 8 screens used for Google Play store screenshots
- * and saves raw screencaps to /sdcard/SilentSuiteScreenshots/. The CI workflow
+ * and saves raw screencaps to /sdcard/Download/SilentSuiteScreenshots/. The CI workflow
  * pulls these and composites branded marketing frames.
  *
  * If test account credentials are provided via instrumentation arguments
@@ -77,26 +77,43 @@ public class StoreScreenshotsTest {
     private static String testPassword;
     private static boolean loggedIn = false;
 
+    private static String requireSafeScreenshotDir(String value) {
+        if (DEFAULT_CAPTURE_DIR.equals(value)) {
+            return value;
+        }
+        String parityPrefix = "/sdcard/Android/data/" + PACKAGE + "/files/color-parity-evidence/";
+        if (!value.startsWith(parityPrefix)) {
+            throw new IllegalArgumentException("Unsupported screenshot directory");
+        }
+        String nonce = value.substring(parityPrefix.length());
+        if (!nonce.matches("[A-Za-z0-9._-]+") || ".".equals(nonce) || "..".equals(nonce)) {
+            throw new IllegalArgumentException("Invalid screenshot evidence nonce");
+        }
+        return value;
+    }
+
     @BeforeClass
     public static void setUp() {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
 
         // Read instrumentation arguments (passed by CI).
         Bundle args = InstrumentationRegistry.getArguments();
-        String screenshotDir = args.getString("screenshotDir", DEFAULT_CAPTURE_DIR);
+        String screenshotDir = requireSafeScreenshotDir(
+                args.getString("screenshotDir", DEFAULT_CAPTURE_DIR));
         captureDir = new File(screenshotDir);
 
-        // Create the directory both through shell (works on scoped storage paths)
-        // and File.mkdirs() (works for app-owned paths). UiDevice.takeScreenshot
-        // fails with ENOENT if the parent directory is missing.
-        try {
-            InstrumentationRegistry.getInstrumentation()
-                    .getUiAutomation()
-                    .executeShellCommand("mkdir -p " + screenshotDir);
-        } catch (Exception ignored) {
+        // Only the exact legacy shared directory reaches the shell. Parity evidence
+        // uses its validated app-owned path and File.mkdirs().
+        if (DEFAULT_CAPTURE_DIR.equals(screenshotDir)) {
+            try {
+                InstrumentationRegistry.getInstrumentation()
+                        .getUiAutomation()
+                        .executeShellCommand("mkdir -p " + DEFAULT_CAPTURE_DIR);
+            } catch (Exception ignored) {
+            }
         }
-        if (!captureDir.exists()) {
-            captureDir.mkdirs();
+        if (!captureDir.exists() && !captureDir.mkdirs()) {
+            throw new AssertionError("Failed to create screenshot directory");
         }
 
         testEmail = cleanArg(args.getString("testEmail", null));

@@ -24,6 +24,8 @@
     <color name="semantic_outline_variant">#DCE3EB</color>
     <color name="semantic_primary">#10B981</color>
     <color name="semantic_secondary_action">#059669</color>
+    <!-- Android accessibility exception for normal-sized text actions on light surfaces. -->
+    <color name="semantic_action_text">#047857</color>
     <color name="semantic_on_primary">#0A1018</color>
     <color name="semantic_primary_container">#D1FAE5</color>
     <color name="semantic_on_primary_container">#064E3B</color>

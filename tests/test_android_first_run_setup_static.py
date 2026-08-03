@@ -213,7 +213,7 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
     assert 'style="@style/Widget.AppTheme.Material3.Button.Text"' in skip
     assert styles.count('<item name="android:textColor">@color/button_secondary_text</item>') >= 2
     secondary_colors = source(RES / "color/button_secondary_text.xml")
-    assert '@color/semantic_secondary_action' in secondary_colors
+    assert '@color/semantic_action_text' in secondary_colors
     assert '@color/semantic_disabled' in secondary_colors
     assert '<color name="semantic_secondary_action">#059669</color>' in source(
         RES / "values/colors.xml"

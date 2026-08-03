@@ -14,9 +14,15 @@
     <style name="AppTheme.Dialog.Alert" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
         <item name="colorAccent">@color/semantic_secondary_action</item>
         <item name="colorPrimary">@color/semantic_primary</item>
+        <item name="colorOnPrimary">@color/semantic_on_primary</item>
         <item name="colorSecondary">@color/semantic_secondary_action</item>
+        <item name="colorOnSecondary">@color/semantic_on_secondary</item>
         <item name="colorSurface">@color/semantic_surface</item>
         <item name="colorOnSurface">@color/semantic_on_surface</item>
+        <item name="colorError">@color/semantic_error</item>
+        <item name="colorOnError">@color/semantic_on_error</item>
+        <item name="colorErrorContainer">@color/semantic_error_container</item>
+        <item name="colorOnErrorContainer">@color/semantic_on_error_container</item>
         <item name="shapeAppearanceOverlay">@style/AppTheme.ShapeAppearance.Dialog</item>
         <item name="buttonBarButtonStyle">@style/AppTheme.Dialog.Button</item>
     </style>
@@ -27,7 +33,7 @@
     </style>
 
     <style name="AppTheme.Dialog.Button" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
-        <item name="android:textColor">@color/semantic_secondary_action</item>
+        <item name="android:textColor">@color/button_secondary_text</item>
         <item name="android:textAllCaps">true</item>
     </style>
 

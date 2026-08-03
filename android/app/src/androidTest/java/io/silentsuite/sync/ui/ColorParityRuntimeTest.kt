@@ -50,25 +50,99 @@ class ColorParityRuntimeTest {
         }
     }
 
-    private fun assertRole(activity: AboutActivity, color: Int, expected: String) {
-        assertEquals(Color.parseColor(expected), color)
+    private fun assertRoles(activity: AboutActivity, expected: Array<Pair<Int, String>>) {
+        expected.forEach { (resource, color) ->
+            assertEquals(color, Color.parseColor(color), ContextCompat.getColor(activity, resource))
+        }
         assertNotNull(activity.findViewById<ViewPager>(R.id.viewpager).adapter)
     }
+
+    private val dayRoles = arrayOf(
+        R.color.semantic_background to "#FCFDFF",
+        R.color.semantic_surface to "#F3F5F9",
+        R.color.semantic_on_surface to "#111B27",
+        R.color.semantic_on_surface_variant to "#475569",
+        R.color.semantic_outline to "#C8D2DE",
+        R.color.semantic_surface_variant to "#E7EBF0",
+        R.color.semantic_outline_variant to "#DCE3EB",
+        R.color.semantic_primary to "#10B981",
+        R.color.semantic_secondary_action to "#059669",
+        R.color.semantic_action_text to "#047857",
+        R.color.semantic_on_primary to "#0A1018",
+        R.color.semantic_primary_container to "#D1FAE5",
+        R.color.semantic_on_primary_container to "#064E3B",
+        R.color.semantic_on_secondary to "#FFFFFF",
+        R.color.semantic_secondary_container to "#D1FAE5",
+        R.color.semantic_on_secondary_container to "#064E3B",
+        R.color.semantic_success to "#047857",
+        R.color.semantic_on_success to "#FFFFFF",
+        R.color.semantic_warning to "#B45309",
+        R.color.semantic_on_warning to "#FFFFFF",
+        R.color.semantic_error to "#B91C1C",
+        R.color.semantic_on_error to "#FFFFFF",
+        R.color.semantic_error_container to "#FEE2E2",
+        R.color.semantic_on_error_container to "#7F1D1D",
+        R.color.semantic_focus to "#047857",
+        R.color.semantic_selected_container to "#1F10B981",
+        R.color.semantic_disabled_content to "#A3A7AD",
+        R.color.semantic_disabled_container to "#E0E2E5",
+        R.color.semantic_inverse_surface to "#1B2838",
+        R.color.semantic_inverse_on_surface to "#FFFFFF",
+        R.color.semantic_inverse_primary to "#34D399",
+        R.color.semantic_system_bar to "#0A1018",
+        R.color.semantic_on_system_bar to "#FFFFFF",
+    )
+
+    private val nightRoles = arrayOf(
+        R.color.semantic_background to "#0A1018",
+        R.color.semantic_surface to "#111B27",
+        R.color.semantic_on_surface to "#D9DFE8",
+        R.color.semantic_on_surface_variant to "#A3B3C9",
+        R.color.semantic_outline to "#253549",
+        R.color.semantic_surface_variant to "#1B2838",
+        R.color.semantic_outline_variant to "#35465A",
+        R.color.semantic_primary to "#34D399",
+        R.color.semantic_secondary_action to "#10B981",
+        R.color.semantic_action_text to "#34D399",
+        R.color.semantic_on_primary to "#0A1018",
+        R.color.semantic_primary_container to "#064E3B",
+        R.color.semantic_on_primary_container to "#D1FAE5",
+        R.color.semantic_on_secondary to "#0A1018",
+        R.color.semantic_secondary_container to "#064E3B",
+        R.color.semantic_on_secondary_container to "#D1FAE5",
+        R.color.semantic_success to "#34D399",
+        R.color.semantic_on_success to "#0A1018",
+        R.color.semantic_warning to "#FBBF24",
+        R.color.semantic_on_warning to "#0A1018",
+        R.color.semantic_error to "#FCA5A5",
+        R.color.semantic_on_error to "#0A1018",
+        R.color.semantic_error_container to "#7F1D1D",
+        R.color.semantic_on_error_container to "#FEE2E2",
+        R.color.semantic_focus to "#10B981",
+        R.color.semantic_selected_container to "#2934D399",
+        R.color.semantic_disabled_content to "#595F67",
+        R.color.semantic_disabled_container to "#232931",
+        R.color.semantic_inverse_surface to "#D9DFE8",
+        R.color.semantic_inverse_on_surface to "#111B27",
+        R.color.semantic_inverse_primary to "#059669",
+        R.color.semantic_system_bar to "#0A1018",
+        R.color.semantic_on_system_bar to "#FFFFFF",
+    )
 
     @Test fun dayNightRolesRecreateDeterministically() {
         val prior = AppCompatDelegate.getDefaultNightMode()
         try {
             setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
             about { scenario ->
-                scenario.onActivity { assertRole(it, ContextCompat.getColor(it, R.color.semantic_background), "#FCFDFF") }
+                scenario.onActivity { assertRoles(it, dayRoles) }
                 setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
                 scenario.recreate()
                 waitForAbout(scenario)
-                scenario.onActivity { assertRole(it, ContextCompat.getColor(it, R.color.semantic_background), "#0A1018") }
+                scenario.onActivity { assertRoles(it, nightRoles) }
                 setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
                 scenario.recreate()
                 waitForAbout(scenario)
-                scenario.onActivity { assertRole(it, ContextCompat.getColor(it, R.color.semantic_background), "#FCFDFF") }
+                scenario.onActivity { assertRoles(it, dayRoles) }
             }
         } finally {
             setNightModeOnMainThread(prior)

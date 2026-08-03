@@ -81,6 +81,6 @@
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:importantForAccessibility="no"
-        tools:background="@color/green700" />
+        tools:background="@color/semantic_secondary_action" />
 
 </LinearLayout>

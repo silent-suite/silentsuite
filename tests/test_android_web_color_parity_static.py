@@ -41,6 +41,7 @@ MATERIAL_SUPPORTING_ROLES = {
     "semantic_primary_container": ("#D1FAE5", "#064E3B"),
     "semantic_on_primary_container": ("#064E3B", "#D1FAE5"),
     "semantic_secondary_action": ("#059669", "#10B981"),
+    "semantic_action_text": ("#047857", "#34D399"),
     "semantic_on_secondary": ("#FFFFFF", "#0A1018"),
     "semantic_secondary_container": ("#D1FAE5", "#064E3B"),
     "semantic_on_secondary_container": ("#064E3B", "#D1FAE5"),
@@ -70,8 +71,9 @@ IMMUTABLE_HASHES = {
     "values/ic_launcher_background.xml": "06eaa9032eea6ea92c0110c66cf58c748b723899d5b9037d559a7119b6fd01a5",
 }
 HASH_LOCKED_XML = frozenset(IMMUTABLE_HASHES)
-HEX_LITERAL = re.compile(r"#[0-9A-Fa-f]{3,8}\b")
+HEX_VALUE = re.compile(r"^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
 COLOR_REFERENCE = re.compile(r"^@color/([A-Za-z0-9_]+)$")
+THEME_COLOR_REFERENCE = re.compile(r"^\?(?:android:)?attr/[A-Za-z0-9_]+$")
 RAW_PALETTE = frozenset({
     "navy900", "navy800", "navy700", "navy600", "navy100",
     "teal500", "teal400", "teal600", "teal700", "grey200", "grey700",
@@ -80,7 +82,7 @@ RAW_PALETTE = frozenset({
 SEMANTIC_RESOURCES = frozenset({
     "semantic_background", "semantic_surface", "semantic_on_surface",
     "semantic_on_surface_variant", "semantic_outline", "semantic_surface_variant",
-    "semantic_outline_variant", "semantic_primary", "semantic_secondary_action",
+    "semantic_outline_variant", "semantic_primary", "semantic_secondary_action", "semantic_action_text",
     "semantic_on_primary", "semantic_primary_container", "semantic_on_primary_container",
     "semantic_on_secondary", "semantic_secondary_container", "semantic_on_secondary_container",
     "semantic_success", "semantic_on_success", "semantic_warning", "semantic_on_warning",
@@ -173,6 +175,15 @@ def contrast_ratio(foreground: str, background: str) -> float:
     return (lighter + 0.05) / (darker + 0.05)
 
 
+def valid_color_slot_value(value: str) -> bool:
+    return bool(
+        COLOR_REFERENCE.fullmatch(value)
+        or value == "@android:color/transparent"
+        or THEME_COLOR_REFERENCE.fullmatch(value)
+        or (HEX_VALUE.fullmatch(value) and value.upper() != "#00000000")
+    )
+
+
 def test_web_roles_and_android_semantics_are_exact_in_day_and_night():
     web = WEB.read_text(encoding="utf-8")
     for value in {value for pair in WEB_ROLES.values() for value in pair}:
@@ -211,6 +222,17 @@ def test_material3_used_roles_and_closed_aliases_are_explicit():
     for qualifier in ("values", "values-night"):
         declared = colors(qualifier)
         assert {name: declared.get(name) for name in ALIASES} == {name: f"@COLOR/{role.upper()}" for name, role in ALIASES.items()}
+        dialog = resource_styles(qualifier)["AppTheme.Dialog.Alert"]
+        for attr, role in {
+            "colorOnPrimary": "semantic_on_primary",
+            "colorOnSecondary": "semantic_on_secondary",
+            "colorError": "semantic_error",
+            "colorOnError": "semantic_on_error",
+            "colorErrorContainer": "semantic_error_container",
+            "colorOnErrorContainer": "semantic_on_error_container",
+        }.items():
+            assert dialog.get(attr) == f"@color/{role}", (qualifier, attr, dialog.get(attr))
+        assert resource_styles(qualifier)["AppTheme.Dialog.Button"]["android:textColor"] == "@color/button_secondary_text"
     resources = "\n".join(path.read_text(encoding="utf-8") for path in RES.rglob("*.xml"))
     assert "colorInverseSurface" not in resources
     assert "colorInverseOnSurface" not in resources
@@ -265,8 +287,30 @@ def test_every_android_resource_xml_obeys_the_closed_color_contract():
 
     day_names = set(colors("values"))
     night_names = set(colors("values-night"))
+    file_color_names = {
+        path.stem
+        for directory in (RES / "color", RES / "color-night")
+        if directory.exists()
+        for path in directory.glob("*.xml")
+    }
+    declared_color_names = {
+        element.attrib["name"]
+        for path in xml_files()
+        for element in ET.parse(path).getroot().iter()
+        if local_name(element.tag) == "color" and "name" in element.attrib
+    }
+    available_color_names = day_names | night_names | file_color_names | declared_color_names
     assert day_names == RAW_PALETTE | SEMANTIC_RESOURCES | set(ALIASES)
     assert night_names == SEMANTIC_RESOURCES | set(ALIASES)
+    for malformed in (
+        "@color/semantic_primary/extra",
+        "@color /semantic_primary",
+        "@android:color/not_real",
+        "garbage",
+        "#123456789",
+        "#00000000",
+    ):
+        assert not valid_color_slot_value(malformed), malformed
 
     for path in xml_files():
         relative = path.relative_to(RES).as_posix()
@@ -277,17 +321,33 @@ def test_every_android_resource_xml_obeys_the_closed_color_contract():
                 values.append(("text", element.text.strip()))
             for attribute, value in values:
                 where = location(path, element, attribute, value)
-                assert not (HEX_LITERAL.search(value) and relative not in allowed_hex_files), where
+                if "#" in value:
+                    assert HEX_VALUE.fullmatch(value), where
+                    assert relative in allowed_hex_files, where
+                    assert value.upper() != "#00000000", where
                 assert value.lower() not in {"@android:color/white", "@android:color/black"}, where
                 assert not value.startswith("/semantic_"), where
                 assert not value.startswith("@color@color/"), where
+
+                reference = COLOR_REFERENCE.fullmatch(value)
+                if value.startswith("@color"):
+                    assert reference is not None, where
+                    assert reference.group(1) in available_color_names, where
+                if value.startswith("@android:color"):
+                    assert value == "@android:color/transparent", where
+                if local_name(element.tag) == "color" and attribute == "text":
+                    assert HEX_VALUE.fullmatch(value) or reference is not None, where
+                slot = local_name(attribute)
+                if local_name(element.tag) == "item" and attribute == "text":
+                    slot = element.attrib.get("name", "")
+                if "color" in slot.lower() or "tint" in slot.lower():
+                    assert valid_color_slot_value(value), where
 
                 if value == "@android:color/transparent":
                     key = (relative, local_name(element.tag), attribute)
                     assert key in TRANSPARENT_ALLOWLIST, where
                     found_transparent.add(key)
 
-                reference = COLOR_REFERENCE.fullmatch(value)
                 if reference:
                     name = reference.group(1)
                     assert not (name in RAW_PALETTE and relative not in LOGO_VECTORS), where
@@ -328,6 +388,11 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
         for background in ("semantic_background", "semantic_surface"):
             ratio = contrast_ratio(declared["semantic_focus"], declared[background])
             assert ratio >= 3, (qualifier, "semantic_focus", background, ratio)
+            action_ratio = contrast_ratio(declared["semantic_action_text"], declared[background])
+            assert action_ratio >= 4.5, (qualifier, "semantic_action_text", background, action_ratio)
+
+    for selector in ("buttontext.xml", "button_secondary_text.xml"):
+        assert "@color/semantic_action_text" in source(f"android/app/src/main/res/color/{selector}")
 
     # Disabled content and fills intentionally preserve the reviewed disabled-state exception.
     assert set(DISABLED_CONTRAST_EXCEPTIONS) == {"semantic_disabled_content", "semantic_disabled_container"}
@@ -429,6 +494,9 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     assert "AppCompatDelegate.setDefaultNightMode" in runtime
     assert "runOnMainSync { AppCompatDelegate.setDefaultNightMode(mode) }" in runtime
     assert "scenario.recreate()" in runtime
+    assert "assertRoles(it, dayRoles)" in runtime and "assertRoles(it, nightRoles)" in runtime
+    for role in SEMANTIC_RESOURCES:
+        assert runtime.count(f"R.color.{role}") >= 2, role
     assert "STATUS_BAR_SCRIM_TAG" in runtime and "NAVIGATION_BAR_SCRIM_TAG" in runtime
     for token in (
         "private fun expectedScrimBounds", "insets.left > 0", "insets.right > 0",
@@ -438,6 +506,11 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
         assert token in runtime
 
     screenshots = source("android/app/src/androidTest/java/io/silentsuite/screenshots/StoreScreenshotsTest.java")
+    assert "requireSafeScreenshotDir" in screenshots
+    assert 'nonce.matches("[A-Za-z0-9._-]+")' in screenshots
+    assert '".".equals(nonce)' in screenshots and '"..".equals(nonce)' in screenshots
+    assert 'executeShellCommand("mkdir -p " + screenshotDir)' not in screenshots
+    assert 'executeShellCommand("mkdir -p " + DEFAULT_CAPTURE_DIR)' in screenshots
     parity_body = java_method_body(screenshots, "public void testParityEvidence()")
     assert "AppSettingsActivity.Companion.newIntent(targetContext)" in parity_body
     assert "settings_category_appearance" in screenshots

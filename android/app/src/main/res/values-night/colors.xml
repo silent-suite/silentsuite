@@ -9,6 +9,7 @@
     <color name="semantic_outline_variant">#35465A</color>
     <color name="semantic_primary">#34D399</color>
     <color name="semantic_secondary_action">#10B981</color>
+    <color name="semantic_action_text">#34D399</color>
     <color name="semantic_on_primary">#0A1018</color>
     <color name="semantic_primary_container">#064E3B</color>
     <color name="semantic_on_primary_container">#D1FAE5</color>
