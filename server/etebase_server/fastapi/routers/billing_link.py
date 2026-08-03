@@ -20,6 +20,7 @@ from ..utils import BaseModel
 billing_link_router = APIRouter()
 PROOF_TTL_SECONDS = 120
 PROOF_ISSUE_LOCKS = tuple(Lock() for _ in range(64))
+PROOF_CONSUME_LOCKS = tuple(Lock() for _ in range(64))
 
 
 class ProofOut(BaseModel):
@@ -75,20 +76,22 @@ def consume_proof(payload: ConsumeIn, x_etebase_billing_key: str | None = Header
         forbidden()
     digest = BillingLinkProof.digest(payload.etebaseLinkProof)
     consumed_at = timezone.now()
-    with transaction.atomic():
-        claimed = BillingLinkProof.objects.filter(
-            proof_hash=digest,
-            audience="billing",
-            consumed_at__isnull=True,
-            expires_at__gt=consumed_at,
-        ).update(consumed_at=consumed_at)
-        if claimed != 1:
-            forbidden()
-        try:
-            proof = BillingLinkProof.objects.select_related("user").get(proof_hash=digest)
-        except BillingLinkProof.DoesNotExist:
-            forbidden()
-        return IdentityOut(username=proof.user.username, email=proof.user.email)
+    stripe = int(digest[:16], 16) % len(PROOF_CONSUME_LOCKS)
+    with PROOF_CONSUME_LOCKS[stripe]:
+        with transaction.atomic():
+            claimed = BillingLinkProof.objects.filter(
+                proof_hash=digest,
+                audience="billing",
+                consumed_at__isnull=True,
+                expires_at__gt=consumed_at,
+            ).update(consumed_at=consumed_at)
+            if claimed != 1:
+                forbidden()
+            try:
+                proof = BillingLinkProof.objects.select_related("user").get(proof_hash=digest)
+            except BillingLinkProof.DoesNotExist:
+                forbidden()
+            return IdentityOut(username=proof.user.username, email=proof.user.email)
 
 
 @billing_link_router.get("/link-proof/ready/")
