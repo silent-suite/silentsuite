@@ -19,6 +19,7 @@ mkdir -p "$local_evidence_dir"
 
 set +e
 ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true \
+  -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
   -Pandroid.testInstrumentationRunnerArguments.class=io.silentsuite.screenshots.StoreScreenshotsTest#testParityEvidence \
   -Pandroid.testInstrumentationRunnerArguments.screenshotDir="$remote_evidence_dir"
 instrumentation_status=$?

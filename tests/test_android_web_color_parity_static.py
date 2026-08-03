@@ -473,6 +473,7 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     instrumentation = "./gradlew app:connectedDebugAndroidTest"
     assert "adb shell rm -rf" not in parity_script
     assert parity_script.count("set +e") == 1
+    assert "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true" in parity_script
     assert parity_script.index("set +e") < parity_script.index(instrumentation)
     assert parity_script.index("instrumentation_status=$?") > parity_script.index(instrumentation)
     assert parity_script.index("set -e\n", parity_script.index("instrumentation_status=$?")) > parity_script.index("instrumentation_status=$?")
