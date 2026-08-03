@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -78,23 +78,33 @@ esac
 
 const jobContracts: Record<string, Record<string, { steps: string; permissions: string }>> = {
   'deploy-web.yml': {
-    'build-and-push': { steps: 'e23e2195d21717e71fe08e47d202b446f858488f65ebbeee6c7dd7abd459fb46', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: '72639f5529b592052a55c819853c08d009e3d092c8808ce733a7c64640b7e3ef', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    'build-and-push': { steps: '986d2e9862eb81e1d9b3abc028158b3880435f19b52fbb6fc40ba37bdd406733', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
+    deploy: { steps: '27e085d4e9108ff2e06b8ae1b4b616794c8c7fd3fac65c1a47277cb7717ef828', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-server.yml': {
-    'build-and-push': { steps: '009b1bf33803af9b5210638ee074a4006a4ab332557750e68caab4fa21219a9d', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: '4a6af78622256751915bc0d4bcbc5c03a63f40ab1db8388885441f62b19b4625', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    'build-and-push': { steps: 'eaaaecf8738fd3b7d25bfb6f383709911df7c00da94dff1cca81014fdb254a62', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
+    deploy: { steps: 'bbd0c9a9415d24b319bf53201011b78485a5a22674d36336b252fa770e19cf4c', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-docs.yml': {
-    build: { steps: 'bc49bcc31e40e8c2c8564e68efe2dfc09a400c0c0de8bcec9155fadad5760e49', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
-    deploy: { steps: '9324d75996bca253594b92ebbc089d60d833dc39f94853c377ad0be5f9610a2a', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
+    build: { steps: '90a5bed17b51f0b60748163cd3d53b9d86c0088f0b2e5904db0a69cb370bd7a9', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '9663c351621aa2b85d3afb464e9630039a802f1799205610c2e3e3285ba09c08', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
   },
 }
 
 const workflowContracts: Record<string, string> = {
-  'deploy-web.yml': '3f87487c3d4398cdf5ee851f3497304f1e81221cfb3b51aa53a7f4bb9caa6e5b',
-  'deploy-server.yml': 'ac36934537cbc324464fffe593e0e9b6c7e86b61ca592540bb1568771745c565',
-  'deploy-docs.yml': '083c229f0bb65953a44da47e01f13d870fe85b5df16489c36515d90177e00b62',
+  'deploy-web.yml': '67fe57e851cfa98a1736c623e070ddb3dc61bbc88f1b05f0f2b32cf8306ee74a',
+  'deploy-server.yml': 'ee8015b23a29d0faa6b0ecb0371f049ae9189c37fe4c80591f82f0e844193312',
+  'deploy-docs.yml': '7f768623b8e654b10da26f18e63c5ca021df3e33e24d3e8ceef31611e71c8ed9',
+}
+
+const approvedNode24ActionPins: Record<string, string> = {
+  'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
+  'actions/setup-node': '820762786026740c76f36085b0efc47a31fe5020',
+  'actions/upload-artifact': '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
+  'actions/download-artifact': '3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
+  'docker/setup-buildx-action': 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
+  'docker/login-action': 'dbcb813823bdd20940b903addbd779551569679f',
+  'docker/build-push-action': '53b7df96c91f9c12dcc8a07bcb9ccacbed38856a',
 }
 
 function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string, expectedRunSha256: string) {
@@ -130,6 +140,26 @@ function jobBlock(source: string, name: string): string {
 }
 
 describe('production deployment workflow integrity', () => {
+  it('pins migrated JavaScript actions to approved immutable Node 24 releases', () => {
+    const directory = resolve(process.cwd(), '../../.github/workflows')
+    const seen = new Set<string>()
+
+    for (const name of readdirSync(directory).filter((entry) => /\.ya?ml$/.test(entry))) {
+      const source = readFileSync(join(directory, name), 'utf8')
+      for (const match of source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)) {
+        const uses = match[1]
+        const separator = uses.lastIndexOf('@')
+        const action = separator === -1 ? uses : uses.slice(0, separator)
+        const approved = approvedNode24ActionPins[action]
+        if (!approved) continue
+        seen.add(action)
+        expect(uses, `${name}: ${action}`).toBe(`${action}@${approved}`)
+      }
+    }
+
+    expect([...seen].sort()).toEqual(Object.keys(approvedNode24ActionPins).sort())
+  })
+
   it('strict AST rejects attacker checkout, no-op authorization, heredoc decoys, and duplicate keys', () => {
     const source = workflow('deploy-web.yml')
     const mutated = source
@@ -171,6 +201,11 @@ describe('production deployment workflow integrity', () => {
     expect(billingLinkRollout).toContain('0025_retain_etebase_session_verifier.sql')
     expect(billingLinkRollout).toContain('rollback-eligible Billing image')
     expect(billingLinkRollout).toContain('later reviewed contract release')
+    expect(billingLinkRollout).toContain('At least 48 hours of clean post-cutover production soak')
+    expect(billingLinkRollout).toContain('owner explicitly closes the previous-image rollback window')
+    expect(billingLinkRollout).toContain('declares the prior Billing image non-restorable')
+    expect(billingLinkRollout).toContain('silent-suite/silentsuite#621')
+    expect(billingLinkRollout).toContain('If any condition is missing, preserve the rollback-compatible code and verifier')
     expect(billingLinkRollout).not.toContain('0025_remove_etebase_session_verifier.sql')
   })
 
