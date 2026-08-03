@@ -20,8 +20,7 @@ from ..utils import BaseModel
 billing_link_router = APIRouter()
 PROOF_TTL_SECONDS = 120
 PROOF_ISSUE_INTERVAL_SECONDS = 1
-PROOF_ISSUE_LOCKS = tuple(Lock() for _ in range(64))
-PROOF_CONSUME_LOCKS = tuple(Lock() for _ in range(64))
+PROOF_OPERATION_LOCK = Lock()
 
 
 class ProofOut(BaseModel):
@@ -46,9 +45,9 @@ def forbidden() -> None:
 def issue_proof(user: UserType = Depends(get_authenticated_user)):
     proof = secrets.token_urlsafe(32)
     issued_at = timezone.now()
-    # A fixed stripe handles same-process concurrency even on databases without
-    # row locking. The account row remains the cross-process production lock.
-    with PROOF_ISSUE_LOCKS[user.pk % len(PROOF_ISSUE_LOCKS)]:
+    # One process lock covers issuance and consumption even on databases without
+    # row locking. Database predicates remain the cross-process production authority.
+    with PROOF_OPERATION_LOCK:
         with transaction.atomic():
             UserType.objects.select_for_update().only("pk").get(pk=user.pk)
             prior = BillingLinkProof.objects.filter(user=user, audience="billing").order_by("-expires_at").first()
@@ -77,8 +76,7 @@ def consume_proof(payload: ConsumeIn, x_etebase_billing_key: str | None = Header
         forbidden()
     digest = BillingLinkProof.digest(payload.etebaseLinkProof)
     consumed_at = timezone.now()
-    stripe = int(digest[:16], 16) % len(PROOF_CONSUME_LOCKS)
-    with PROOF_CONSUME_LOCKS[stripe]:
+    with PROOF_OPERATION_LOCK:
         with transaction.atomic():
             claimed = BillingLinkProof.objects.filter(
                 proof_hash=digest,

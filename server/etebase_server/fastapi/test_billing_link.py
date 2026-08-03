@@ -154,6 +154,33 @@ def test_consumption_is_one_time(user_factory, monkeypatch):
     assert BillingLinkProof.objects.get().consumed_at is not None
 
 
+def test_concurrent_reissue_and_consume_never_return_500(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    app, client = make_client(user)
+    proof = issue_proof(client)
+    BillingLinkProof.objects.filter(user=user, audience="billing").update(
+        expires_at=timezone.now() + timedelta(seconds=118),
+    )
+
+    def reissue():
+        with TestClient(app, raise_server_exceptions=False) as concurrent_client:
+            return concurrent_client.post("/api/v1/billing/link-proof/").status_code
+
+    def consume_attempt():
+        with TestClient(app, raise_server_exceptions=False) as concurrent_client:
+            return consume(concurrent_client, proof).status_code
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reissue_future = pool.submit(reissue)
+        consume_future = pool.submit(consume_attempt)
+
+    assert reissue_future.result() == 200
+    assert consume_future.result() in (200, 401)
+    assert BillingLinkProof.objects.filter(user=user, audience="billing").count() == 1
+    assert BillingLinkProof.objects.get(user=user, audience="billing").consumed_at is None
+
+
 def test_concurrent_consumers_have_exactly_one_winner(user_factory, monkeypatch):
     monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
     user = user_factory(username="proof-user", email="proof@example.com")
