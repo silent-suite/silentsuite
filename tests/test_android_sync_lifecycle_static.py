@@ -449,13 +449,14 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         "- name: Run focused launcher and setup recreation contracts", 1
     )[1].split("- name: Upload focused androidTest reports and results", 1)[0]
     script = FOCUSED_RUNTIME_SCRIPT.read_text(encoding="utf-8")
+    navigation_wrapper = (ROOT / "android/scripts/run-focused-runtime-with-navigation.sh").read_text(encoding="utf-8")
     assertion = workflow.split("- name: Assert focused runtime methods executed", 1)[1]
 
     assert "timeout-minutes: 60" in job
-    assert re.findall(r"^\s+script:\s*(.+)$", step, re.MULTILINE) == ["|"]
-    runner = 'bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"'
-    assert runner in step
-    assert step.index('navigation_mode="${{ matrix.navigation-mode }}"') < step.index(runner)
+    runner = 'bash android/scripts/run-focused-runtime-with-navigation.sh "${{ matrix.api-level }}" "${{ matrix.shard }}" "${{ matrix.navigation-mode }}"'
+    assert re.findall(r"^\s+script:\s*(.+)$", step, re.MULTILINE) == [runner]
+    assert navigation_wrapper.index('navigation_mode="$3"') < navigation_wrapper.index("settings get secure navigation_mode")
+    assert navigation_wrapper.rstrip().endswith('exec bash "$(dirname "$0")/run-focused-runtime-tests.sh" "$api_level" "$shard"')
     rows = re.findall(r"- api-level: (\d+)\n\s+arch: (\S+)\n\s+shard: (\S+)", job)
     assert rows == [
         ("21", "x86", "mixed"), ("21", "x86", "remaining"),
@@ -564,9 +565,9 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "expected_sizes={'21:mixed':1,'21:remaining':83,'35:all':84,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':40}" in assertion
     assert '"21:remaining": 82' in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
-    assert "com.android.internal.systemui.navbar.gestural" in job
-    assert "com.android.internal.systemui.navbar.threebutton" in job
-    assert 'settings get secure navigation_mode' in job
+    assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
+    assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper
+    assert 'settings get secure navigation_mode' in navigation_wrapper
     assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     assert "unexpected=set(counts)-expected" in assertion
     assert "duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}" in assertion

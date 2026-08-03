@@ -118,6 +118,11 @@ def styles(qualifier: str) -> dict[str, dict[str, str]]:
     return {style.attrib["name"]: {item.attrib["name"]: (item.text or "").strip() for item in style.findall("item")} for style in root.findall("style")}
 
 
+def resource_styles(qualifier: str) -> dict[str, dict[str, str]]:
+    root = ET.parse(RES / qualifier / "styles.xml").getroot()
+    return {style.attrib["name"]: {item.attrib["name"]: (item.text or "").strip() for item in style.findall("item")} for style in root.findall("style")}
+
+
 def source(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
@@ -220,6 +225,15 @@ def test_text_input_refresh_and_system_bar_mechanics_are_bounded():
         assert "@color/semantic_focus" in text and "@color/semantic_outline" in text and "@color/semantic_disabled_content" in text
     for path in ("values/styles.xml", "values-night/styles.xml"):
         assert "<item name=\"boxStrokeErrorColor\">@color/semantic_error</item>" in source(f"android/app/src/main/res/{path}")
+    expected_text_input = {
+        "boxBackgroundColor": "@color/semantic_surface",
+        "shapeAppearance": "@style/ShapeAppearance.AppTheme.Material3.Standard",
+        "boxStrokeColor": "@color/login_input_stroke",
+        "boxStrokeErrorColor": "@color/semantic_error",
+        "boxStrokeWidthFocused": "2dp",
+    }
+    for qualifier in ("values", "values-night"):
+        assert resource_styles(qualifier)["Widget.AppTheme.Material3.TextInputLayout"] == expected_text_input
     assert 'app:boxStrokeErrorColor="@color/semantic_error"' in source("android/app/src/main/res/layout/login_encryption_details.xml")
     for path in ("android/app/src/main/java/io/silentsuite/sync/ui/AccountActivity.kt", "android/app/src/main/java/io/silentsuite/sync/ui/etebase/ListEntriesFragment.kt"):
         body = source(path)
@@ -383,7 +397,8 @@ def test_context_aware_vector_roles_and_tint_consumers_are_exact():
 
     import_item = source("android/app/src/main/res/layout/import_actions_list_item.xml")
     assert 'android:id="@+id/action_icon"' in import_item
-    assert 'android:tint="@color/semantic_on_surface"' in import_item
+    assert 'app:tint="@color/semantic_on_surface"' in import_item
+    assert 'android:tint="@color/semantic_on_surface"' not in import_item
     assert "R.drawable.ic_file_white" in source("android/app/src/main/java/io/silentsuite/sync/ui/importlocal/ImportActivity.kt")
     assert "R.drawable.ic_account_circle_white" in source("android/app/src/main/java/io/silentsuite/sync/ui/importlocal/ImportActivity.kt")
 
@@ -441,17 +456,18 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     workflow = source(".github/workflows/build-android.yml")
     parity_job = yaml.safe_load(workflow)["jobs"]["color-parity-evidence"]
     parity_step = next(step for step in parity_job["steps"] if step.get("id") == "parity-evidence")
-    parity_script = parity_step["with"]["script"]
-    assert parity_script.startswith("set -eu\n")
-    assert "pipefail" not in parity_script
-    subprocess.run(["/usr/bin/dash", "-n"], input=parity_script, text=True, check=True)
-    assert 'remote_evidence_dir="/sdcard/Download/SilentSuiteColorParityEvidence"' in parity_script
+    parity_command = parity_step["with"]["script"]
+    assert parity_command == "bash android/scripts/run-color-parity-evidence.sh"
+    subprocess.run(["/usr/bin/dash", "-n", "-c", parity_command], check=True)
+    parity_script = source("android/scripts/run-color-parity-evidence.sh")
+    subprocess.run(["bash", "-n", "android/scripts/run-color-parity-evidence.sh"], cwd=ROOT, check=True)
+    assert parity_script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert 'evidence_nonce="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-color-parity}"' in parity_script
+    assert '[[ "$evidence_nonce" =~ ^[A-Za-z0-9._-]+$ ]]' in parity_script
+    assert 'remote_evidence_dir="/sdcard/Android/data/io.silentsuite.android/files/color-parity-evidence/$evidence_nonce"' in parity_script
     assert 'local_evidence_dir="build/color-parity-evidence"' in parity_script
-    cleanup = 'adb shell rm -rf "$remote_evidence_dir"'
-    recreate = 'adb shell mkdir -p "$remote_evidence_dir"'
     instrumentation = "./gradlew app:connectedDebugAndroidTest"
-    assert cleanup in parity_script and recreate in parity_script
-    assert parity_script.index(cleanup) < parity_script.index(recreate) < parity_script.index(instrumentation)
+    assert "adb shell rm -rf" not in parity_script
     assert parity_script.count("set +e") == 1
     assert parity_script.index("set +e") < parity_script.index(instrumentation)
     assert parity_script.index("instrumentation_status=$?") > parity_script.index(instrumentation)
@@ -462,10 +478,11 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     ):
         assert name in parity_script
     assert 'if ! adb pull "$remote_evidence_dir/$name" "$local_evidence_dir/$name"; then' in parity_script
+    assert '[[ ! -s "$local_evidence_dir/$name" ]]' in parity_script
     assert "missing_evidence=1" in parity_script
     metadata = parity_script.index("parity-metadata.json")
-    instrumentation_failure = parity_script.index('if [ "$instrumentation_status" -ne 0 ]; then')
-    missing_failure = parity_script.index('if [ "$missing_evidence" -ne 0 ]; then')
+    instrumentation_failure = parity_script.index('if [[ "$instrumentation_status" -ne 0 ]]; then')
+    missing_failure = parity_script.index('if [[ "$missing_evidence" -ne 0 ]]; then')
     assert metadata < instrumentation_failure < missing_failure
     assert 'exit "$instrumentation_status"' in parity_script
     assert 'exit 1' in parity_script[missing_failure:]
@@ -475,15 +492,17 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
 
     focused_job = yaml.safe_load(workflow)["jobs"]["account-recreation-runtime"]
     focused_step = next(step for step in focused_job["steps"] if step.get("id") == "focused-runtime")
-    focused_script = focused_step["with"]["script"]
-    runner = 'bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"'
+    focused_command = focused_step["with"]["script"]
+    assert focused_command == 'bash android/scripts/run-focused-runtime-with-navigation.sh "${{ matrix.api-level }}" "${{ matrix.shard }}" "${{ matrix.navigation-mode }}"'
+    subprocess.run(["/usr/bin/dash", "-n", "-c", focused_command], check=True)
+    focused_script = source("android/scripts/run-focused-runtime-with-navigation.sh")
+    subprocess.run(["bash", "-n", "android/scripts/run-focused-runtime-with-navigation.sh"], cwd=ROOT, check=True)
+    runner = 'exec bash "$(dirname "$0")/run-focused-runtime-tests.sh" "$api_level" "$shard"'
 
     assert focused_step["uses"].startswith("ReactiveCircus/android-emulator-runner@")
-    assert focused_script.startswith("set -eu\n")
-    assert "pipefail" not in focused_script
-    subprocess.run(["/usr/bin/dash", "-n"], input=focused_script, text=True, check=True)
-    assert 'navigation_mode="${{ matrix.navigation-mode }}"' in focused_script
-    assert 'if [ -n "$navigation_mode" ]; then' in focused_script
+    assert focused_script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert 'navigation_mode="$3"' in focused_script
+    assert 'if [[ -n "$navigation_mode" ]]; then' in focused_script
     for command in (
         "adb shell cmd overlay enable com.android.internal.systemui.navbar.gestural",
         "adb shell cmd overlay enable com.android.internal.systemui.navbar.threebutton",
