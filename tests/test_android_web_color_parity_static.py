@@ -193,17 +193,53 @@ def valid_color_slot_value(value: str) -> bool:
     )
 
 
-def test_web_roles_and_android_semantics_are_exact_in_day_and_night():
-    web = WEB.read_text(encoding="utf-8")
-    def variables(selector: str) -> dict[str, str]:
-        blocks = re.findall(rf"(?ms)^{re.escape(selector)}\s*\{{(.*?)^\}}", web)
+def web_role_variable_values(css: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Parse the two canonical token blocks and reject any competing declaration."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    monitored = set(WEB_ROLE_VARIABLES.values())
+    assert not re.search(r"--[^:;{}]*\\[^:;{}]*:", css), "escaped custom-property declarations are unsupported"
+    for variable in monitored:
+        declarations = re.findall(rf"--{re.escape(variable)}(?![a-z0-9-])\s*:", css)
+        assert len(declarations) == 2, (variable, len(declarations))
+
+    top_level_blocks: list[tuple[str, str]] = []
+    statement_start = 0
+    block_start = 0
+    selector = ""
+    depth = 0
+    for index, character in enumerate(css):
+        if character == ";" and depth == 0:
+            statement_start = index + 1
+        elif character == "{":
+            if depth == 0:
+                selector = css[statement_start:index].strip()
+                block_start = index + 1
+            depth += 1
+        elif character == "}":
+            assert depth > 0, ("unexpected closing brace", index)
+            depth -= 1
+            if depth == 0:
+                top_level_blocks.append((selector, css[block_start:index]))
+                statement_start = index + 1
+    assert depth == 0, "unterminated CSS block"
+
+    def canonical_block(selector: str) -> dict[str, str]:
+        blocks = [body for actual_selector, body in top_level_blocks if actual_selector == selector]
         assert len(blocks) == 1, (selector, len(blocks))
-        pairs = re.findall(r"(?m)^\s*--([a-z0-9-]+):\s*([0-9]+\s+[0-9]+\s+[0-9]+);\s*$", blocks[0])
+        pairs = re.findall(
+            r"--([a-z0-9-]+)\s*:\s*([^;{}]+?)\s*(?:;|$)",
+            blocks[0],
+        )
         names = [name for name, _ in pairs]
         assert len(names) == len(set(names)), (selector, names)
-        return dict(pairs)
+        return {name: " ".join(value.split()) for name, value in pairs}
 
-    light_variables, dark_variables = variables(":root"), variables(".dark")
+    return canonical_block(":root"), canonical_block(".dark")
+
+
+def test_web_roles_and_android_semantics_are_exact_in_day_and_night():
+    web = WEB.read_text(encoding="utf-8")
+    light_variables, dark_variables = web_role_variable_values(web)
     for role, variable in WEB_ROLE_VARIABLES.items():
         light, dark = WEB_ROLES[role]
         expected_light = " ".join(str(int(light[index:index + 2], 16)) for index in (1, 3, 5))
@@ -217,6 +253,24 @@ def test_web_roles_and_android_semantics_are_exact_in_day_and_night():
         for name, (light, dark) in roles.items():
             assert day.get(name) == light, (name, day.get(name), light)
             assert night.get(name) == dark, (name, night.get(name), dark)
+
+
+def test_web_role_parser_accepts_formatting_but_rejects_effective_overrides():
+    web = WEB.read_text(encoding="utf-8")
+    reformatted = web.replace(":root {", "  :root{").replace(".dark {", "\n  .dark{")
+    assert web_role_variable_values(reformatted) == web_role_variable_values(web)
+
+    overrides = (
+        ":root{--background: 0 0 0;}",
+        ":root, html { --background: 0 0 0; }",
+        ".dark { --primary: 0 0 0; }",
+    )
+    for override in overrides:
+        try:
+            web_role_variable_values(f"{web}\n{override}\n")
+        except AssertionError:
+            continue
+        raise AssertionError(f"effective web-token override was accepted: {override}")
 
 
 def test_material3_used_roles_and_closed_aliases_are_explicit():
