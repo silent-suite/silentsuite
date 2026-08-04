@@ -1,0 +1,6 @@
+{
+  "advisories": {
+    "1": { "severity": "high", "module_name": "unexpected-package", "title": "Unknown high advisory", "url": "https://github.com/advisories/GHSA-zzzz-yyyy-xxxx" }
+  },
+  "metadata": { "vulnerabilities": { "critical": 0, "high": 1, "moderate": 0, "low": 0 } }
+}
