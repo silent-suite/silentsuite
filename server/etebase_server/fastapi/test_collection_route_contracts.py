@@ -1,4 +1,4 @@
-"""Route-level contract tests for `{collection_uid}` path-parameter binding (issue #465).
+"""Route-level collection route contracts (issue #465).
 
 The restore incident showed that helper/queryset tests can stay green while the
 real FastAPI route wiring breaks: `{collection_uid}` is supplied by the *router
@@ -28,10 +28,12 @@ import django  # noqa: E402
 
 django.setup()
 
+from django.conf import settings  # noqa: E402
 from django.contrib.auth import get_user_model  # noqa: E402
 from django.test import TransactionTestCase  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.routing import APIRoute, APIWebSocketRoute, iter_route_contexts  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from etebase_server.django import models  # noqa: E402
@@ -45,6 +47,156 @@ from etebase_server.fastapi.utils import msgpack_decode, msgpack_encode  # noqa:
 User = get_user_model()
 
 COLLECTION_PREFIX = "/api/v1/collection"
+
+# `create_application()` mounts these routers in production. Keep this as a
+# complete inventory rather than a smoke-test sentinel: `iter_route_contexts`
+# expands included routers lazily, so seeing one route of each kind would not
+# detect a branch that stopped expanding. The 18 HTTP routes are collection
+# (1), item (9), member (4), and invitation (4); the WebSocket router adds 1.
+EXPECTED_TEMPLATED_HTTP_ROUTES = (
+    (("GET",), "/api/v1/collection/{collection_uid}/", ("collection_uid",)),
+    (("GET",), "/api/v1/collection/{collection_uid}/item/", ("collection_uid",)),
+    (("POST",), "/api/v1/collection/{collection_uid}/item/batch/", ("collection_uid",)),
+    (("POST",), "/api/v1/collection/{collection_uid}/item/fetch_updates/", ("collection_uid",)),
+    (("POST",), "/api/v1/collection/{collection_uid}/item/subscription-ticket/", ("collection_uid",)),
+    (("POST",), "/api/v1/collection/{collection_uid}/item/transaction/", ("collection_uid",)),
+    (("GET",), "/api/v1/collection/{collection_uid}/item/{item_uid}/", ("collection_uid", "item_uid")),
+    (("GET",), "/api/v1/collection/{collection_uid}/item/{item_uid}/revision/", ("collection_uid", "item_uid")),
+    (("PUT",), "/api/v1/collection/{collection_uid}/item/{item_uid}/chunk/{chunk_uid}/", ("chunk_uid", "collection_uid", "item_uid")),
+    (("GET",), "/api/v1/collection/{collection_uid}/item/{item_uid}/chunk/{chunk_uid}/download/", ("chunk_uid", "collection_uid", "item_uid")),
+    (("POST",), "/api/v1/collection/{collection_uid}/member/leave/", ("collection_uid",)),
+    (("GET",), "/api/v1/collection/{collection_uid}/member/", ("collection_uid",)),
+    (("DELETE",), "/api/v1/collection/{collection_uid}/member/{username}/", ("collection_uid", "username")),
+    (("PATCH",), "/api/v1/collection/{collection_uid}/member/{username}/", ("collection_uid", "username")),
+    (("POST",), "/api/v1/invitation/incoming/{invitation_uid}/accept/", ("invitation_uid",)),
+    (("DELETE",), "/api/v1/invitation/incoming/{invitation_uid}/", ("invitation_uid",)),
+    (("GET",), "/api/v1/invitation/incoming/{invitation_uid}/", ("invitation_uid",)),
+    (("DELETE",), "/api/v1/invitation/outgoing/{invitation_uid}/", ("invitation_uid",)),
+)
+EXPECTED_TEMPLATED_WEBSOCKET_ROUTES = (
+    ("/api/v1/ws/{ticket}/", ("ticket",)),
+)
+
+
+def _format_route_inventory(routes) -> str:
+    return "\n".join(f"  {route}" for route in sorted(routes)) or "  (none)"
+
+
+def _request_field_name(field) -> str:
+    """Return the runtime request-field alias, falling back to its Python name."""
+    return getattr(field, "alias", None) or field.name
+
+
+def _dependency_query_parameter_names(dependant) -> set[str]:
+    """Collect query request-field names throughout a dependency tree."""
+    query_names: set[str] = set()
+    pending = [dependant]
+
+    while pending:
+        current = pending.pop()
+        query_names.update(_request_field_name(field) for field in current.query_params)
+        pending.extend(current.dependencies)
+
+    return query_names
+
+
+def _effective_websocket_route(route_context) -> APIWebSocketRoute:
+    """Return FastAPI 0.138.2's rebuilt WebSocket route for an included router.
+
+    ``iter_route_contexts`` is the public API for expanding lazy
+    ``_IncludedRouter`` branches.  In this pinned FastAPI version, however,
+    its WebSocket ``RouteContext`` proxies an ``_EffectiveRouteContext`` whose
+    path and dependant are placeholders; the actual prefixed route and its
+    rebuilt dependency tree are on ``starlette_route``.  Keep this private
+    compatibility access here, and fail clearly if FastAPI changes that shape.
+    """
+    effective_context = getattr(route_context, "_route_context", None)
+    if effective_context is None:
+        effective_route = route_context.route
+    else:
+        effective_route = getattr(effective_context, "starlette_route", None)
+
+    if not isinstance(effective_route, APIWebSocketRoute):
+        raise AssertionError(
+            "FastAPI route-context compatibility error: expected an "
+            "APIWebSocketRoute at RouteContext._route_context.starlette_route "
+            "for an effective WebSocket route; update this pinned-version shim."
+        )
+    return effective_route
+
+
+def test_mounted_route_template_parameters_are_not_query_parameters(monkeypatch, tmp_path):
+    """Ensure mounted FastAPI template parameters are absent from query metadata.
+
+    Inspect the final production-style application and each complete dependency
+    graph.  Some routes intentionally expose a template parameter that no
+    dependency consumes, but no template parameter may also be a query field.
+    """
+    monkeypatch.setattr(settings, "STATIC_ROOT", str(tmp_path))
+
+    from etebase_server.fastapi.main import create_application
+
+    app = create_application()
+    violations = []
+    templated_http_routes = []
+    templated_websocket_routes = []
+
+    for route_context in iter_route_contexts(app.routes):
+        original_route = route_context.original_route
+        if not isinstance(original_route, (APIRoute, APIWebSocketRoute)):
+            continue
+
+        if isinstance(original_route, APIRoute):
+            # RouteContext publicly proxies the effective HTTP route metadata.
+            effective_route = route_context
+        else:
+            effective_route = _effective_websocket_route(route_context)
+
+        path = effective_route.path
+        path_format = effective_route.path_format
+        template_names = set(effective_route.path_regex.groupindex)
+        if not template_names:
+            continue
+
+        query_names = _dependency_query_parameter_names(effective_route.dependant)
+        conflicting_query_names = template_names & query_names
+        if isinstance(original_route, APIRoute):
+            methods = tuple(sorted(effective_route.methods))
+            templated_http_routes.append((methods, path_format, tuple(sorted(template_names))))
+            diagnostic = ", ".join(methods)
+        else:
+            templated_websocket_routes.append((path_format, tuple(sorted(template_names))))
+            diagnostic = "WebSocket"
+
+        if conflicting_query_names:
+            violations.append(
+                f"{diagnostic} {path} (template {path_format}): "
+                f"template parameters in query metadata: {sorted(conflicting_query_names)}"
+            )
+
+    assert len(templated_http_routes) == 18, (
+        "Expected 18 templated HTTP routes from the production application; observed:\n"
+        + _format_route_inventory(templated_http_routes)
+    )
+    assert sorted(templated_http_routes) == sorted(EXPECTED_TEMPLATED_HTTP_ROUTES), (
+        "Templated HTTP route inventory changed.\n"
+        "Expected:\n"
+        + _format_route_inventory(EXPECTED_TEMPLATED_HTTP_ROUTES)
+        + "\nObserved:\n"
+        + _format_route_inventory(templated_http_routes)
+    )
+    assert len(templated_websocket_routes) == 1, (
+        "Expected 1 templated WebSocket route from the production application; observed:\n"
+        + _format_route_inventory(templated_websocket_routes)
+    )
+    assert sorted(templated_websocket_routes) == sorted(EXPECTED_TEMPLATED_WEBSOCKET_ROUTES), (
+        "Templated WebSocket route inventory changed.\n"
+        "Expected:\n"
+        + _format_route_inventory(EXPECTED_TEMPLATED_WEBSOCKET_ROUTES)
+        + "\nObserved:\n"
+        + _format_route_inventory(templated_websocket_routes)
+    )
+    assert not violations, "Mounted route query-metadata contract violations:\n" + "\n".join(violations)
 
 
 def _uid(prefix: str) -> str:
