@@ -22,6 +22,15 @@ WEB_ROLES = {
     "semantic_on_surface_variant": ("#475569", "#A3B3C9"),
     "semantic_outline": ("#C8D2DE", "#253549"),
 }
+WEB_ROLE_VARIABLES = {
+    "semantic_background": "background",
+    "semantic_surface": "surface",
+    "semantic_on_surface": "foreground",
+    "semantic_primary": "primary",
+    "semantic_secondary_action": "primary-hover",
+    "semantic_on_surface_variant": "muted",
+    "semantic_outline": "border",
+}
 STATE_ROLES = {
     "semantic_on_primary": ("#0A1018", "#0A1018"),
     "semantic_success": ("#047857", "#34D399"),
@@ -186,9 +195,23 @@ def valid_color_slot_value(value: str) -> bool:
 
 def test_web_roles_and_android_semantics_are_exact_in_day_and_night():
     web = WEB.read_text(encoding="utf-8")
-    for value in {value for pair in WEB_ROLES.values() for value in pair}:
-        rgb = " ".join(str(int(value[index:index + 2], 16)) for index in (1, 3, 5))
-        assert rgb in web, value
+    def variables(selector: str) -> dict[str, str]:
+        blocks = re.findall(rf"(?ms)^{re.escape(selector)}\s*\{{(.*?)^\}}", web)
+        assert len(blocks) == 1, (selector, len(blocks))
+        pairs = re.findall(r"(?m)^\s*--([a-z0-9-]+):\s*([0-9]+\s+[0-9]+\s+[0-9]+);\s*$", blocks[0])
+        names = [name for name, _ in pairs]
+        assert len(names) == len(set(names)), (selector, names)
+        return dict(pairs)
+
+    light_variables, dark_variables = variables(":root"), variables(".dark")
+    for role, variable in WEB_ROLE_VARIABLES.items():
+        light, dark = WEB_ROLES[role]
+        expected_light = " ".join(str(int(light[index:index + 2], 16)) for index in (1, 3, 5))
+        expected_dark = " ".join(str(int(dark[index:index + 2], 16)) for index in (1, 3, 5))
+        assert light_variables.get(variable) == expected_light, (role, variable, "light")
+        assert dark_variables.get(variable) == expected_dark, (role, variable, "dark")
+    workflow = source(".github/workflows/build-android.yml")
+    assert workflow.count("- 'apps/web/app/globals.css'") == 2
     day, night = colors("values"), colors("values-night")
     for roles in (WEB_ROLES, MATERIAL_SUPPORTING_ROLES, STATE_ROLES):
         for name, (light, dark) in roles.items():
@@ -393,6 +416,9 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
             assert action_ratio >= 4.5, (qualifier, "semantic_action_text", background, action_ratio)
             control_ratio = contrast_ratio(declared["semantic_on_surface_variant"], declared[background])
             assert control_ratio >= 3, (qualifier, "semantic_on_surface_variant", background, control_ratio)
+            for icon_role in ("semantic_warning", "semantic_error"):
+                icon_ratio = contrast_ratio(declared[icon_role], declared[background])
+                assert icon_ratio >= 3, (qualifier, icon_role, background, icon_ratio)
 
     for selector in ("buttontext.xml", "button_secondary_text.xml"):
         assert "@color/semantic_action_text" in source(f"android/app/src/main/res/color/{selector}")
@@ -413,6 +439,8 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
     assert resource_styles("values")["login_link"]["android:textColor"] == "@color/semantic_action_text"
     for vector in ("action_add", "ic_calendar_outline", "ic_check", "ic_contacts_outline", "ic_tasks_outline"):
         assert "@color/semantic_action_text" in source(f"android/app/src/main/res/drawable/{vector}.xml")
+    for vector in ("action_change", "action_delete"):
+        assert "android:alpha" not in source(f"android/app/src/main/res/drawable/{vector}.xml")
     styles = resource_styles("values")
     for style in (
         "Widget.AppTheme.Material3.Card",

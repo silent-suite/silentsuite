@@ -8,6 +8,7 @@ on:
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
+      - 'apps/web/app/globals.css'
       - 'scripts/check-android-signing-boundary.py'
       - '.github/workflows/**'
       - 'android/.github/workflows/**'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
+      - 'apps/web/app/globals.css'
       - 'scripts/check-android-signing-boundary.py'
       - '.github/workflows/**'
       - 'android/.github/workflows/**'
