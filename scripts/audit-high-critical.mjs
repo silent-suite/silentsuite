@@ -1,92 +1,101 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process'
 
-const ALLOWLIST = [
-  {
-    advisory: 'GHSA-r5fr-rjxr-66jc',
-    module: 'lodash',
-    severity: 'high',
-    expires: '2026-07-14',
-    rationale: 'Transitive via @ducanh2912/next-pwa -> workbox-build. pnpm audit reports patched >=4.18.0, but npm lodash currently has no 4.18.x release to resolve to. Keep visible and fail once expired or if any new high/critical appears.',
-  },
-  {
-    advisory: 'GHSA-gv7w-rqvm-qjhr',
-    module: 'esbuild',
-    severity: 'high',
-    expires: '2026-07-14',
-    rationale: 'Transitive build-tool exposure from Vite/Webpack paths. The patched esbuild 0.28.x line currently breaks VitePress production builds in this workspace, so keep this visible while upstream-compatible patches are evaluated. No runtime browser/server dependency on esbuild is introduced by this allowlist.',
-  },
-  {
-    advisory: 'GHSA-mh99-v99m-4gvg',
-    module: 'brace-expansion',
-    severity: 'high',
-    expires: '2026-08-09',
-    rationale: 'Transitive build-tool exposure through legacy minimatch/glob consumers. Forcing brace-expansion 5.0.8 into minimatch 3.x/5.x breaks brace matching at runtime because v5 exports a named API. Keep the compatible patched 1.1.16/2.1.2 lines visible while upstream consumers migrate; no production request path evaluates attacker-controlled glob patterns.',
-  },
-]
-
-function advisoryId(advisory) {
-  const url = String(advisory.url ?? '')
-  return url.match(/GHSA-[a-z0-9-]+/i)?.[0] ?? String(advisory.id ?? advisory.title ?? 'unknown')
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-function isExpired(entry) {
-  return Date.now() > Date.parse(`${entry.expires}T23:59:59Z`)
+function hasAdvisoryIdentity(advisory) {
+  const id = advisory.id
+  if ((typeof id === 'string' && id.trim() !== '') || (Number.isInteger(id) && id > 0)) return true
+
+  return typeof advisory.url === 'string' && /GHSA-[a-z0-9-]+/i.test(advisory.url)
 }
 
-function isAllowed(advisory) {
-  const id = advisoryId(advisory)
-  return ALLOWLIST.some((entry) => {
-    return !isExpired(entry)
-      && entry.advisory === id
-      && entry.module === advisory.module_name
-      && entry.severity === advisory.severity
-  })
-}
-
-const result = spawnSync('pnpm', ['audit', '--audit-level=high', '--json'], {
-  encoding: 'utf8',
-  stdio: ['ignore', 'pipe', 'pipe'],
-})
-
-let report
-try {
-  report = JSON.parse(result.stdout)
-} catch (err) {
-  console.error('Could not parse pnpm audit JSON output.')
-  if (result.stderr) console.error(result.stderr)
-  process.exit(1)
-}
-
-const advisories = Object.values(report.advisories ?? {})
-const highCritical = advisories.filter((advisory) => ['high', 'critical'].includes(advisory.severity))
-const unallowed = highCritical.filter((advisory) => !isAllowed(advisory))
-const allowed = highCritical.filter((advisory) => isAllowed(advisory))
-const counts = report.metadata?.vulnerabilities ?? {}
-
-console.log(`Dependency audit summary: ${counts.critical ?? 0} critical, ${counts.high ?? 0} high, ${counts.moderate ?? 0} moderate, ${counts.low ?? 0} low.`)
-
-if (allowed.length > 0) {
-  console.log('')
-  console.log('Temporarily allowlisted high/critical advisories:')
-  for (const advisory of allowed) {
-    const id = advisoryId(advisory)
-    const entry = ALLOWLIST.find((item) => item.advisory === id && item.module === advisory.module_name)
-    console.log(`- ${advisory.severity}: ${advisory.module_name} ${id}; expires ${entry?.expires}; ${entry?.rationale}`)
+function validateReport(report) {
+  if (!isObject(report) || Object.hasOwn(report, 'error')) return 'Audit returned an error response.'
+  if (!isObject(report.advisories)) return 'Audit report is missing advisory metadata.'
+  if (!isObject(report.metadata) || !isObject(report.metadata.vulnerabilities)) {
+    return 'Audit report is missing vulnerability metadata.'
   }
-}
 
-if (unallowed.length > 0) {
-  console.error('')
-  console.error('Unallowlisted high/critical dependency advisories found:')
-  for (const advisory of unallowed) {
-    console.error(`- ${advisory.severity}: ${advisory.module_name} ${advisoryId(advisory)} — ${advisory.title}`)
+  for (const severity of ['critical', 'high', 'moderate', 'low']) {
+    if (!Number.isInteger(report.metadata.vulnerabilities[severity]) || report.metadata.vulnerabilities[severity] < 0) {
+      return `Audit report has invalid ${severity} vulnerability metadata.`
+    }
   }
-  process.exit(1)
+
+  const advisories = Object.values(report.advisories)
+  for (const advisory of advisories) {
+    if (!isObject(advisory)
+      || !['critical', 'high', 'moderate', 'low'].includes(advisory.severity)
+      || typeof advisory.module_name !== 'string' || advisory.module_name.trim() === ''
+      || typeof advisory.title !== 'string' || advisory.title.trim() === ''
+      || !hasAdvisoryIdentity(advisory)) {
+      return 'Audit report has malformed advisory metadata.'
+    }
+  }
+
+  for (const severity of ['critical', 'high']) {
+    const hasAdvisory = advisories.some((advisory) => advisory.severity === severity)
+    const metadataHasVulnerability = report.metadata.vulnerabilities[severity] > 0
+    if (hasAdvisory !== metadataHasVulnerability) {
+      return `Audit report has contradictory ${severity} vulnerability metadata.`
+    }
+  }
+
+  return undefined
 }
 
-if (highCritical.length === 0) {
-  console.log('No high or critical advisories found.')
-} else {
-  console.log('No unallowlisted high or critical advisories found.')
+export function runAudit({ spawn = spawnSync, log = console.log, error = console.error } = {}) {
+  let result
+  try {
+    result = spawn('pnpm', ['audit', '--audit-level=high', '--json'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch (cause) {
+    error(`Could not start pnpm audit: ${cause.message}`)
+    return 1
+  }
+
+  if (!result || result.error || result.signal || ![0, 1].includes(result.status)) {
+    error('pnpm audit did not complete with an expected exit status.')
+    if (result?.stderr) error(result.stderr)
+    return 1
+  }
+
+  let report
+  try {
+    if (typeof result.stdout !== 'string' || result.stdout.trim() === '') throw new Error('empty output')
+    report = JSON.parse(result.stdout)
+  } catch {
+    error('Could not parse pnpm audit JSON output.')
+    if (result.stderr) error(result.stderr)
+    return 1
+  }
+
+  const validationError = validateReport(report)
+  if (validationError) {
+    error(validationError)
+    return 1
+  }
+
+  const advisories = Object.values(report.advisories)
+  const highCritical = advisories.filter((advisory) => ['high', 'critical'].includes(advisory.severity))
+  const counts = report.metadata.vulnerabilities
+
+  log(`Dependency audit summary: ${counts.critical} critical, ${counts.high} high, ${counts.moderate} moderate, ${counts.low} low.`)
+
+  if (highCritical.length > 0) {
+    error('')
+    error('High or critical dependency advisories found:')
+    for (const advisory of highCritical) error(`- ${advisory.severity}: ${advisory.module_name} — ${advisory.title}`)
+    return 1
+  }
+
+  log('No high or critical advisories found.')
+  return 0
 }
+
+if (import.meta.url === `file://${process.argv[1]}`) process.exitCode = runAudit()

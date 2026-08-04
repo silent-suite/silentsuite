@@ -1,0 +1,6 @@
+{
+  "advisories": {
+    "1": { "severity": "high", "module_name": "example-package", "title": "High advisory", "url": "https://github.com/advisories/GHSA-aaaa-bbbb-cccc" }
+  },
+  "metadata": { "vulnerabilities": { "critical": 0, "high": 0, "moderate": 0, "low": 0 } }
+}
