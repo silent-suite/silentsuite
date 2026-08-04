@@ -46,7 +46,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/app_name"
-                android:textColor="@color/semantic_primary"
+                android:textColor="@color/semantic_action_text"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:ellipsize="end"

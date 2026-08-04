@@ -2,6 +2,7 @@ package io.silentsuite.sync.ui
 
 import android.os.Build
 import android.os.Bundle
+import android.view.Gravity
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
@@ -16,8 +17,8 @@ import androidx.core.view.WindowInsetsCompat
 import io.silentsuite.sync.R
 
 open class BaseActivity : AppCompatActivity() {
-    private var statusBarScrim: View? = null
-    private var navigationBarScrim: View? = null
+    private var statusBarScrims: Map<Int, View> = emptyMap()
+    private var navigationBarScrims: Map<Int, View> = emptyMap()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyReadableSystemBars()
@@ -68,52 +69,41 @@ open class BaseActivity : AppCompatActivity() {
 
     private fun installSystemBarScrims(color: Int) {
         val overlay = window.decorView as ViewGroup
-        fun scrim(existing: View?, tag: String): View = existing ?: View(this).also {
-            it.tag = tag
-            it.isClickable = false
-            it.isFocusable = false
-            it.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            it.setBackgroundColor(color)
-            overlay.addView(it, FrameLayout.LayoutParams(0, 0))
-        }
-        statusBarScrim = scrim(statusBarScrim, STATUS_BAR_SCRIM_TAG)
-        navigationBarScrim = scrim(navigationBarScrim, NAVIGATION_BAR_SCRIM_TAG)
+        fun scrims(existing: Map<Int, View>, tagPrefix: String): Map<Int, View> =
+            SCRIM_EDGES.associate { (gravity, suffix) ->
+                gravity to (existing[gravity] ?: View(this).also {
+                    it.tag = "$tagPrefix-$suffix"
+                    it.isClickable = false
+                    it.isFocusable = false
+                    it.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    it.setBackgroundColor(color)
+                    overlay.addView(it, FrameLayout.LayoutParams(0, 0))
+                })
+            }
+        statusBarScrims = scrims(statusBarScrims, STATUS_BAR_SCRIM_TAG)
+        navigationBarScrims = scrims(navigationBarScrims, NAVIGATION_BAR_SCRIM_TAG)
         ViewCompat.setOnApplyWindowInsetsListener(overlay) { _, insets ->
             val status = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            statusBarScrim!!.layoutParams = scrimLayoutParams(status, statusBar = true)
-            navigationBarScrim!!.layoutParams = scrimLayoutParams(navigation, statusBar = false)
+            statusBarScrims.forEach { (gravity, view) ->
+                view.layoutParams = scrimLayoutParams(status, gravity)
+            }
+            navigationBarScrims.forEach { (gravity, view) ->
+                view.layoutParams = scrimLayoutParams(navigation, gravity)
+            }
             insets
         }
         ViewCompat.requestApplyInsets(overlay)
     }
 
-    private fun scrimLayoutParams(insets: Insets, statusBar: Boolean): FrameLayout.LayoutParams {
-        val edge = if (statusBar) {
-            when {
-                insets.top > 0 -> android.view.Gravity.TOP
-                insets.left > 0 -> android.view.Gravity.LEFT
-                insets.right > 0 -> android.view.Gravity.RIGHT
-                insets.bottom > 0 -> android.view.Gravity.BOTTOM
-                else -> android.view.Gravity.NO_GRAVITY
-            }
-        } else {
-            when {
-                insets.bottom > 0 -> android.view.Gravity.BOTTOM
-                insets.left > 0 -> android.view.Gravity.LEFT
-                insets.right > 0 -> android.view.Gravity.RIGHT
-                insets.top > 0 -> android.view.Gravity.TOP
-                else -> android.view.Gravity.NO_GRAVITY
-            }
+    private fun scrimLayoutParams(insets: Insets, gravity: Int): FrameLayout.LayoutParams =
+        when (gravity) {
+            Gravity.TOP -> FrameLayout.LayoutParams(-1, insets.top, gravity)
+            Gravity.BOTTOM -> FrameLayout.LayoutParams(-1, insets.bottom, gravity)
+            Gravity.LEFT -> FrameLayout.LayoutParams(insets.left, -1, gravity)
+            Gravity.RIGHT -> FrameLayout.LayoutParams(insets.right, -1, gravity)
+            else -> FrameLayout.LayoutParams(0, 0, Gravity.NO_GRAVITY)
         }
-        return when (edge) {
-            android.view.Gravity.TOP -> FrameLayout.LayoutParams(-1, insets.top, edge)
-            android.view.Gravity.BOTTOM -> FrameLayout.LayoutParams(-1, insets.bottom, edge)
-            android.view.Gravity.LEFT -> FrameLayout.LayoutParams(insets.left, -1, edge)
-            android.view.Gravity.RIGHT -> FrameLayout.LayoutParams(insets.right, -1, edge)
-            else -> FrameLayout.LayoutParams(0, 0, edge)
-        }
-    }
 
     private fun Window.clearLightStatusBar() {
         decorView.systemUiVisibility = decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
@@ -126,5 +116,11 @@ open class BaseActivity : AppCompatActivity() {
     companion object {
         const val STATUS_BAR_SCRIM_TAG = "color-parity-status-bar-scrim"
         const val NAVIGATION_BAR_SCRIM_TAG = "color-parity-navigation-bar-scrim"
+        internal val SCRIM_EDGES = listOf(
+            Gravity.TOP to "top",
+            Gravity.BOTTOM to "bottom",
+            Gravity.LEFT to "left",
+            Gravity.RIGHT to "right",
+        )
     }
 }

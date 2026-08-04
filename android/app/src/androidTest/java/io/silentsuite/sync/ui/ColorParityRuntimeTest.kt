@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.SystemClock
+import android.view.Gravity
 import android.view.View
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.graphics.Insets
@@ -17,6 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.viewpager.widget.ViewPager
 import io.silentsuite.sync.R
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -151,24 +153,27 @@ class ColorParityRuntimeTest {
 
     private fun View.bounds() = Rect(left, top, right, bottom)
 
-    private fun expectedScrimBounds(decor: View, insets: Insets, statusBar: Boolean): Rect =
-        if (statusBar) {
-            when {
-                insets.top > 0 -> Rect(0, 0, decor.width, insets.top)
-                insets.left > 0 -> Rect(0, 0, insets.left, decor.height)
-                insets.right > 0 -> Rect(decor.width - insets.right, 0, decor.width, decor.height)
-                insets.bottom > 0 -> Rect(0, decor.height - insets.bottom, decor.width, decor.height)
-                else -> Rect()
-            }
-        } else {
-            when {
-                insets.bottom > 0 -> Rect(0, decor.height - insets.bottom, decor.width, decor.height)
-                insets.left > 0 -> Rect(0, 0, insets.left, decor.height)
-                insets.right > 0 -> Rect(decor.width - insets.right, 0, decor.width, decor.height)
-                insets.top > 0 -> Rect(0, 0, decor.width, insets.top)
-                else -> Rect()
-            }
+    private fun expectedScrimBounds(decor: View, insets: Insets, gravity: Int): Rect =
+        when (gravity) {
+            Gravity.TOP -> Rect(0, 0, decor.width, insets.top)
+            Gravity.BOTTOM -> Rect(0, decor.height - insets.bottom, decor.width, decor.height)
+            Gravity.LEFT -> Rect(0, 0, insets.left, decor.height)
+            Gravity.RIGHT -> Rect(decor.width - insets.right, 0, decor.width, decor.height)
+            else -> Rect()
         }
+
+    private fun assertScrimSet(activity: AboutActivity, prefix: String, insets: Insets) {
+        val decor = activity.window.decorView
+        val expectedColor = ContextCompat.getColor(activity, R.color.semantic_system_bar)
+        for ((gravity, suffix) in BaseActivity.SCRIM_EDGES) {
+            val tag = "$prefix-$suffix"
+            val scrim = decor.findViewWithTag<View>(tag)
+            assertNotNull(tag, scrim)
+            assertEquals(tag, expectedScrimBounds(decor, insets, gravity), scrim!!.bounds())
+            assertEquals(tag, expectedColor, (scrim.background as ColorDrawable).color)
+            assertEquals(tag, 1, countTagged(decor, tag))
+        }
+    }
 
     private fun assertScrimBounds(activity: AboutActivity) {
         val decor = activity.window.decorView
@@ -176,14 +181,8 @@ class ColorParityRuntimeTest {
         assertNotNull(insets)
         val status = insets!!.getInsets(WindowInsetsCompat.Type.statusBars())
         val navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-        val statusScrim = decor.findViewWithTag<View>(BaseActivity.STATUS_BAR_SCRIM_TAG)
-        val navigationScrim = decor.findViewWithTag<View>(BaseActivity.NAVIGATION_BAR_SCRIM_TAG)
-        assertNotNull(statusScrim)
-        assertNotNull(navigationScrim)
-        assertEquals(expectedScrimBounds(decor, status, statusBar = true), statusScrim!!.bounds())
-        assertEquals(expectedScrimBounds(decor, navigation, statusBar = false), navigationScrim!!.bounds())
-        assertEquals(ContextCompat.getColor(activity, R.color.semantic_system_bar), (statusScrim.background as ColorDrawable).color)
-        assertEquals(ContextCompat.getColor(activity, R.color.semantic_system_bar), (navigationScrim.background as ColorDrawable).color)
+        assertScrimSet(activity, BaseActivity.STATUS_BAR_SCRIM_TAG, status)
+        assertScrimSet(activity, BaseActivity.NAVIGATION_BAR_SCRIM_TAG, navigation)
     }
 
     @Test fun systemBarProtectionMatchesApiAndInsets() {
@@ -192,11 +191,19 @@ class ColorParityRuntimeTest {
                 if (Build.VERSION.SDK_INT >= 35) {
                     assertEquals(Color.TRANSPARENT, activity.window.statusBarColor)
                     assertEquals(Color.TRANSPARENT, activity.window.navigationBarColor)
+                    assertFalse(activity.window.isStatusBarContrastEnforced)
+                    assertFalse(activity.window.isNavigationBarContrastEnforced)
                     assertScrimBounds(activity)
                 } else {
                     val expected = ContextCompat.getColor(activity, R.color.semantic_system_bar)
                     assertEquals(expected, activity.window.statusBarColor)
                     assertEquals(expected, activity.window.navigationBarColor)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    assertEquals(0, activity.window.decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    assertEquals(0, activity.window.decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR)
                 }
             }
         }
@@ -217,8 +224,10 @@ class ColorParityRuntimeTest {
                 if (Build.VERSION.SDK_INT >= 35) {
                     val decor = activity.window.decorView
                     assertScrimBounds(activity)
-                    assertEquals(1, countTagged(decor, BaseActivity.STATUS_BAR_SCRIM_TAG))
-                    assertEquals(1, countTagged(decor, BaseActivity.NAVIGATION_BAR_SCRIM_TAG))
+                    assertEquals(8, BaseActivity.SCRIM_EDGES.sumOf { (_, suffix) ->
+                        countTagged(decor, "${BaseActivity.STATUS_BAR_SCRIM_TAG}-$suffix") +
+                            countTagged(decor, "${BaseActivity.NAVIGATION_BAR_SCRIM_TAG}-$suffix")
+                    })
                 }
             }
         }

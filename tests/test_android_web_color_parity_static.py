@@ -266,17 +266,18 @@ def test_text_input_refresh_and_system_bar_mechanics_are_bounded():
     for token in ("Build.VERSION.SDK_INT >= 35", "WindowInsetsCompat.Type.statusBars()", "WindowInsetsCompat.Type.navigationBars()", "setStatusBarContrastEnforced(false)", "setNavigationBarContrastEnforced(false)"):
         assert token in base
     for token in (
-        "insets.top > 0", "insets.left > 0", "insets.right > 0", "insets.bottom > 0",
-        "android.view.Gravity.LEFT", "android.view.Gravity.RIGHT", "android.view.Gravity.NO_GRAVITY",
-        "FrameLayout.LayoutParams(insets.left, -1, edge)",
-        "FrameLayout.LayoutParams(insets.right, -1, edge)",
-        "FrameLayout.LayoutParams(0, 0, edge)",
+        "statusBarScrims: Map<Int, View>", "navigationBarScrims: Map<Int, View>",
+        "FrameLayout.LayoutParams(-1, insets.top, gravity)",
+        "FrameLayout.LayoutParams(-1, insets.bottom, gravity)",
+        "FrameLayout.LayoutParams(insets.left, -1, gravity)",
+        "FrameLayout.LayoutParams(insets.right, -1, gravity)",
+        "FrameLayout.LayoutParams(0, 0, Gravity.NO_GRAVITY)",
+        "statusBarScrims.forEach", "navigationBarScrims.forEach",
     ):
         assert token in base
     assert "Gravity.START" not in base and "Gravity.END" not in base
-    status_edges, navigation_edges = base.split("val edge = if (statusBar) {", 1)[1].split("return when (edge)", 1)[0].split("} else {", 1)
-    assert status_edges.index("insets.top > 0") < status_edges.index("insets.left > 0") < status_edges.index("insets.right > 0") < status_edges.index("insets.bottom > 0")
-    assert navigation_edges.index("insets.bottom > 0") < navigation_edges.index("insets.left > 0") < navigation_edges.index("insets.right > 0") < navigation_edges.index("insets.top > 0")
+    for gravity, suffix in (("TOP", "top"), ("BOTTOM", "bottom"), ("LEFT", "left"), ("RIGHT", "right")):
+        assert f'Gravity.{gravity} to "{suffix}"' in base
 
 
 def test_every_android_resource_xml_obeys_the_closed_color_contract():
@@ -393,6 +394,12 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
 
     for selector in ("buttontext.xml", "button_secondary_text.xml"):
         assert "@color/semantic_action_text" in source(f"android/app/src/main/res/color/{selector}")
+    for layout in (
+        "nav_header_accounts.xml",
+        "contact_info_item_group.xml",
+        "activity_post_login_setup.xml",
+    ):
+        assert "@color/semantic_action_text" in source(f"android/app/src/main/res/layout/{layout}")
 
     # Disabled content and fills intentionally preserve the reviewed disabled-state exception.
     assert set(DISABLED_CONTRAST_EXCEPTIONS) == {"semantic_disabled_content", "semantic_disabled_container"}
@@ -499,11 +506,18 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
         assert runtime.count(f"R.color.{role}") >= 2, role
     assert "STATUS_BAR_SCRIM_TAG" in runtime and "NAVIGATION_BAR_SCRIM_TAG" in runtime
     for token in (
-        "private fun expectedScrimBounds", "insets.left > 0", "insets.right > 0",
+        "private fun expectedScrimBounds", "private fun assertScrimSet",
         "Rect(0, 0, insets.left, decor.height)",
-        "Rect(decor.width - insets.right, 0, decor.width, decor.height)", "else -> Rect()",
+        "Rect(decor.width - insets.right, 0, decor.width, decor.height)",
+        "isStatusBarContrastEnforced", "isNavigationBarContrastEnforced",
+        "SYSTEM_UI_FLAG_LIGHT_STATUS_BAR", "SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR",
     ):
         assert token in runtime
+    base_activity = source("android/app/src/main/java/io/silentsuite/sync/ui/BaseActivity.kt")
+    assert "statusBarScrims: Map<Int, View>" in base_activity
+    assert "navigationBarScrims: Map<Int, View>" in base_activity
+    for suffix in ("top", "bottom", "left", "right"):
+        assert f'Gravity.{suffix.upper()} to "{suffix}"' in base_activity
 
     screenshots = source("android/app/src/androidTest/java/io/silentsuite/screenshots/StoreScreenshotsTest.java")
     assert "requireSafeScreenshotDir" in screenshots
