@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { usePathname } from 'next/navigation'
-import { buildSignupPageviewPayload } from '@/app/lib/public-analytics'
+import { buildSignupPageviewPayload, SIGNUP_ANALYTICS_PATHS } from '@/app/lib/public-analytics'
 
 const PLAUSIBLE_EVENT_ENDPOINT = 'https://plausible.silentsuite.io/api/event'
 
@@ -13,7 +13,7 @@ export function shouldSendSignupAnalytics(
   return enabled === 'true'
     && location.protocol === 'https:'
     && location.hostname === 'app.silentsuite.io'
-    && (location.pathname === '/signup' || location.pathname.startsWith('/signup/'))
+    && SIGNUP_ANALYTICS_PATHS.includes(location.pathname as typeof SIGNUP_ANALYTICS_PATHS[number])
 }
 
 type SignupPageviewTransport = {
@@ -49,7 +49,7 @@ export function SignupAnalytics() {
   const pathname = usePathname()
 
   useEffect(() => {
-    if (!pathname?.startsWith('/signup')) return
+    if (!pathname || !SIGNUP_ANALYTICS_PATHS.includes(pathname as typeof SIGNUP_ANALYTICS_PATHS[number])) return
     const location = new URL(window.location.href)
     if (!shouldSendSignupAnalytics(location)) return
 

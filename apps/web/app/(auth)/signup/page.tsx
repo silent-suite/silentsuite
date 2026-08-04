@@ -25,6 +25,7 @@ import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
+import { trackCheckoutInitiated, trackPlanSelected } from './commercial-funnel-analytics'
 
 const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED === 'true'
 const BTCPAY_CHECKOUT_ORIGIN = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ORIGIN ?? 'https://btcpay.silentsuite.io'
@@ -691,14 +692,16 @@ function StepChoosePlan({
 
   const handleSelectCard = useCallback(() => {
     setPaymentMethodError(null)
+    trackPlanSelected(interval)
     onSelectPaid(promoCode)
-  }, [onSelectPaid, promoCode])
+  }, [interval, onSelectPaid, promoCode])
 
   const handleSelectBitcoin = useCallback(() => {
     if (interval !== 'annual') {
       onIntervalChange('annual')
     }
     setPaymentMethodError(null)
+    trackPlanSelected('annual')
     onSelectCrypto(interval !== 'annual')
   }, [interval, onIntervalChange, onSelectCrypto])
 
@@ -1437,6 +1440,7 @@ export default function SignupPage() {
       const planId: PlanId = selectedInterval === 'monthly' ? 'early_monthly' : 'early_annual'
       const result = await signup(planId, '30day', promoCode)
       if (result.clientSecret) {
+        trackCheckoutInitiated(selectedInterval, 'stripe')
         setClientSecret(result.clientSecret)
       }
     } catch (err: unknown) {
@@ -1487,6 +1491,7 @@ export default function SignupPage() {
         lookupToken: result.cryptoInvoiceLookupToken,
         checkoutUrl: checkoutUrl.toString(),
       })
+      trackCheckoutInitiated('annual', 'btcpay')
       setPlanView('crypto')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'

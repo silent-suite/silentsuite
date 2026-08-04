@@ -86,15 +86,15 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
     deploy: { steps: 'bbd0c9a9415d24b319bf53201011b78485a5a22674d36336b252fa770e19cf4c', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-docs.yml': {
-    build: { steps: '91656156d61547951a0d50b9c710a6356288443ac53c935b12c050c730a9215f', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
-    deploy: { steps: '3637fc52acda8299a45cbc10b550f22c958b66ad938757f1c8ea13b8a1f87abb', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
+    build: { steps: '4152d1fcdb56f0c8d6f7bb6f5c192536a4c29c201da386efe7488e55c5bed9e5', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '9e11d7e32e0c425dcce74bcebcad1f8226610a896432764b5f42d33e2605819f', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
   },
 }
 
 const workflowContracts: Record<string, string> = {
   'deploy-web.yml': '67fe57e851cfa98a1736c623e070ddb3dc61bbc88f1b05f0f2b32cf8306ee74a',
   'deploy-server.yml': 'ee8015b23a29d0faa6b0ecb0371f049ae9189c37fe4c80591f82f0e844193312',
-  'deploy-docs.yml': 'd9f4bbecc94008729bf0d6b3ddc43ace09c420d6959a67263a4c1fd732ecec27',
+  'deploy-docs.yml': 'f2658b6a03897bb12fbd20c20387e0fbc2b861cb8ebe1ac37e7494e687ba7e50',
 }
 
 const approvedNode24ActionPins: Record<string, string> = {
@@ -354,7 +354,7 @@ describe('production deployment workflow integrity', () => {
     expect(deployJob).toContain('ACTUAL_ARTIFACT_DIGEST=$(sha256sum')
     expect(deployJob).toContain('test "$ACTUAL_ARTIFACT_DIGEST" = "$EXPECTED_ARTIFACT_DIGEST"')
     const download = deploySteps[downloadIndex]
-    expect(sha256(download?.run ?? '')).toBe('3839d4770098d4b1a20435631a3c1c628aed3648b5f1678f94fc965f949052eb')
+    expect(sha256(download?.run ?? '')).toBe('ee4fc688752cc0d5381af6ea1bf9be77f9b652c1de4ddb650847bc72f7ee9715')
     expect(deployJob).not.toContain('actions/download-artifact@')
     expect(deployJob).not.toContain('pnpm run build')
     expect(mutationActions).toHaveLength(1)

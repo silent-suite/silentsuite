@@ -39,13 +39,24 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build public surfaces
         run: |
-          pnpm --filter @silentsuite/web build
+          NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true pnpm --filter @silentsuite/web build
           SILENTSUITE_HOSTED_DOCS_ANALYTICS=1 pnpm --filter @silentsuite/docs exec vitepress build --outDir .vitepress/dist-hosted
           pnpm --filter @silentsuite/docs exec vitepress build --outDir .vitepress/dist-self
+          node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist-hosted --mode enabled
+          node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist-self --mode disabled
+      - name: Verify docs Turbo analytics cache isolation
+        run: |
+          rm -rf .turbo apps/docs/.vitepress/dist
+          SILENTSUITE_HOSTED_DOCS_ANALYTICS=1 pnpm run build:docs
+          node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist --mode enabled
+          pnpm run build:docs
+          node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist --mode disabled
+          SILENTSUITE_HOSTED_DOCS_ANALYTICS=1 pnpm run build:docs
+          node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist --mode enabled
       - name: Test Android distribution documentation
         run: pnpm --filter @silentsuite/docs test:android-distribution
       - name: Enforce source and bundle analytics boundary
-        run: pnpm run check:public-analytics
+        run: PUBLIC_ANALYTICS_ENABLED_BUILD=true pnpm run check:public-analytics
 
   lint-and-typecheck:
     name: Lint & Type Check

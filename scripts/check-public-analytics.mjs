@@ -2,8 +2,16 @@ import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const appsRoot = path.resolve('apps')
+const analyticsEndpoint = 'plausible.silentsuite.io/api/event'
+const generatedAppRootArgument = process.argv.find((argument) => argument.startsWith('--generated-app-root='))
+const generatedAppRoot = generatedAppRootArgument
+  ? path.resolve(generatedAppRootArgument.slice('--generated-app-root='.length))
+  : path.join(appsRoot, 'web/.next/static/chunks/app/(app)')
+const enabledGeneratedBuild = process.argv.includes('--enabled-generated-build') || process.env.PUBLIC_ANALYTICS_ENABLED_BUILD === 'true'
 const allowedAnalyticsFiles = new Set([
   path.join(appsRoot, 'web/app/(auth)/signup/signup-analytics.tsx'),
+  path.join(appsRoot, 'web/app/(auth)/signup/commercial-funnel-analytics.tsx'),
+  path.join(appsRoot, 'web/app/(app)/settings/subscription/subscription-entry.tsx'),
   path.join(appsRoot, 'web/next.config.js'),
   path.join(appsRoot, 'docs/.vitepress/config.mts'),
   path.join(appsRoot, 'docs/.vitepress/theme/index.mts'),
@@ -26,7 +34,7 @@ async function walk(directory) {
       if (/utm_(?:content|term)/.test(source)) {
         violations.push(`${path.relative(process.cwd(), fullPath)}: prohibited free-form UTM key`)
       }
-      if (fullPath.includes(`${path.sep}web${path.sep}app${path.sep}(app)${path.sep}`) && /plausible|analytics/i.test(source)) {
+      if (fullPath.includes(`${path.sep}web${path.sep}app${path.sep}(app)${path.sep}`) && /plausible|analytics/i.test(source) && !allowedAnalyticsFiles.has(fullPath)) {
         violations.push(`${path.relative(process.cwd(), fullPath)}: analytics reference in authenticated app route`)
       }
     }
@@ -38,12 +46,14 @@ await walk(appsRoot)
 const requiredContracts = new Map([
   ['apps/docs/.vitepress/theme/public-analytics.mts', ['Hosted App Click', 'Android Download Click', 'github_release', 'repository']],
   ['apps/docs/.vitepress/theme/index.mts', ['__SILENTSUITE_DOCS_ANALYTICS_ENDPOINT__', 'window.location.hostname', 'classifyDocsOutboundEvent']],
-  ['apps/web/next.config.js', ['Content-Security-Policy', 'signupConnectSources', 'hostedConnectSources']],
+  ['apps/web/next.config.js', ['Content-Security-Policy', 'signupConnectSources', 'subscriptionConnectSources', "source: '/settings/subscription'", 'hostedConnectSources']],
   ['apps/web/app/(auth)/signup/signup-analytics.tsx', [
     "enabled === 'true'",
     "location.hostname === 'app.silentsuite.io'",
     "location.protocol === 'https:'",
   ]],
+  ['apps/web/app/(auth)/signup/commercial-funnel-analytics.tsx', ['buildPlanSelectedPayload', 'buildCheckoutInitiatedPayload', 'buildCheckoutReturnedPayload']],
+  ['apps/web/app/(app)/settings/subscription/subscription-entry.tsx', ['buildSubscriptionManagementEntryPayload']],
   ['Dockerfile.web', ['ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
   ['.github/workflows/deploy-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true']],
   ['.github/workflows/preview-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
@@ -56,18 +66,26 @@ for (const [relativePath, snippets] of requiredContracts) {
   }
 }
 
-const generatedAppRoot = path.join(appsRoot, 'web/.next/static/chunks/app/(app)')
 try {
+  let subscriptionRouteContainsEndpoint = false
   async function scanGenerated(directory) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const fullPath = path.join(directory, entry.name)
       if (entry.isDirectory()) await scanGenerated(fullPath)
-      else if (/\.js$/.test(entry.name) && /plausible\.silentsuite\.io|window\.plausible/.test(await readFile(fullPath, 'utf8'))) {
-        violations.push(`${path.relative(process.cwd(), fullPath)}: analytics endpoint in authenticated production bundle`)
+      else if (/\.js$/.test(entry.name)) {
+        const source = await readFile(fullPath, 'utf8')
+        if (!source.includes(analyticsEndpoint)) continue
+        const relativePath = path.relative(generatedAppRoot, fullPath)
+        const isSubscriptionRouteChunk = /^settings[\\/]subscription[\\/]page-[^\\/]+\.js$/.test(relativePath)
+        if (isSubscriptionRouteChunk) subscriptionRouteContainsEndpoint = true
+        else violations.push(`${path.relative(process.cwd(), fullPath)}: analytics endpoint in authenticated production bundle`)
       }
     }
   }
   await scanGenerated(generatedAppRoot)
+  if (enabledGeneratedBuild && !subscriptionRouteContainsEndpoint) {
+    violations.push('subscription route chunk: expected analytics endpoint absent')
+  }
 } catch (error) {
   if (error.code !== 'ENOENT') throw error
 }

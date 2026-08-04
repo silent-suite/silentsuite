@@ -23,6 +23,9 @@ describe('signup analytics transport boundary', () => {
     'https://app.silentsuite.io.evil.test/signup',
     'https://self-hosted.example/signup',
     'https://app.silentsuite.io/calendar',
+    'https://app.silentsuite.io/signup/plan',
+    'https://app.silentsuite.io/signup/customer@example.com',
+    'https://app.silentsuite.io/signup/550e8400-e29b-41d4-a716-446655440000',
   ])('rejects noncanonical runtime URL %s even when enabled', (url) => {
     expect(shouldSendSignupAnalytics(new URL(url), 'true')).toBe(false)
   })
@@ -67,4 +70,11 @@ describe('signup analytics transport boundary', () => {
       }),
     )
   })
+
+  it.each(['/signup', '/signup/pending-payment', '/signup/success', '/signup/cancel'])(
+    'admits registered signup pageview route %s',
+    (pathname) => {
+      expect(shouldSendSignupAnalytics(new URL(`https://app.silentsuite.io${pathname}`), 'true')).toBe(true)
+    },
+  )
 })
