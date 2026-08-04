@@ -244,7 +244,7 @@ def test_text_input_refresh_and_system_bar_mechanics_are_bounded():
         text = path.read_text(encoding="utf-8")
         assert "state_error" not in text
         assert 'state_focused="true"' in text and 'state_hovered="true"' in text and 'state_enabled="true"' in text
-        assert "@color/semantic_focus" in text and "@color/semantic_outline" in text and "@color/semantic_disabled_content" in text
+        assert "@color/semantic_focus" in text and "@color/semantic_on_surface_variant" in text and "@color/semantic_disabled_content" in text
     for path in ("values/styles.xml", "values-night/styles.xml"):
         assert "<item name=\"boxStrokeErrorColor\">@color/semantic_error</item>" in source(f"android/app/src/main/res/{path}")
     expected_text_input = {
@@ -391,6 +391,8 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
             assert ratio >= 3, (qualifier, "semantic_focus", background, ratio)
             action_ratio = contrast_ratio(declared["semantic_action_text"], declared[background])
             assert action_ratio >= 4.5, (qualifier, "semantic_action_text", background, action_ratio)
+            control_ratio = contrast_ratio(declared["semantic_on_surface_variant"], declared[background])
+            assert control_ratio >= 3, (qualifier, "semantic_on_surface_variant", background, control_ratio)
 
     for selector in ("buttontext.xml", "button_secondary_text.xml"):
         assert "@color/semantic_action_text" in source(f"android/app/src/main/res/color/{selector}")
@@ -400,6 +402,26 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
         "activity_post_login_setup.xml",
     ):
         assert "@color/semantic_action_text" in source(f"android/app/src/main/res/layout/{layout}")
+    for layout in ("account_collection_item.xml", "activity_account.xml"):
+        root = ET.parse(RES / "layout" / layout).getroot()
+        text_colors = {
+            element.attrib.get("{http://schemas.android.com/apk/res/android}textColor")
+            for element in root.iter()
+        }
+        assert "@color/semantic_outline" not in text_colors
+        assert "@color/semantic_on_surface_variant" in source(f"android/app/src/main/res/layout/{layout}")
+    assert resource_styles("values")["login_link"]["android:textColor"] == "@color/semantic_action_text"
+    for vector in ("action_add", "ic_calendar_outline", "ic_check", "ic_contacts_outline", "ic_tasks_outline"):
+        assert "@color/semantic_action_text" in source(f"android/app/src/main/res/drawable/{vector}.xml")
+    styles = resource_styles("values")
+    for style in (
+        "Widget.AppTheme.Material3.Card",
+        "Widget.AppTheme.Dashboard.ServiceCard",
+        "Widget.AppTheme.Dashboard.CollectionCard",
+    ):
+        assert styles[style]["strokeColor"] == "@color/semantic_on_surface_variant"
+    assert styles["Widget.AppTheme.Dashboard.CollectionToolbar"]["navigationIconTint"] == "@color/semantic_action_text"
+    assert "@color/semantic_on_surface_variant" in source("android/app/src/main/res/drawable/bg_setup_step_upcoming.xml")
 
     # Disabled content and fills intentionally preserve the reviewed disabled-state exception.
     assert set(DISABLED_CONTRAST_EXCEPTIONS) == {"semantic_disabled_content", "semantic_disabled_container"}

@@ -58,7 +58,7 @@
                         app:cardBackgroundColor="@color/semantic_surface"
                         app:cardCornerRadius="@dimen/shape_radius_standard"
                         app:cardElevation="@dimen/elevation_resting"
-                        app:strokeColor="@color/semantic_outline"
+                        app:strokeColor="@color/semantic_on_surface_variant"
                         app:strokeWidth="1dp">
                         <LinearLayout
                             android:layout_width="match_parent"
@@ -79,7 +79,7 @@
                                 android:layout_marginTop="@dimen/spacing_8"
                                 android:text="@string/dashboard_encrypted_sync"
                                 android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                                android:textColor="@color/semantic_outline" />
+                                android:textColor="@color/semantic_on_surface_variant" />
                             <LinearLayout
                                 android:id="@+id/dashboard_status_row"
                                 android:layout_width="match_parent"
@@ -116,7 +116,7 @@
                                         android:layout_marginTop="4dp"
                                         android:text="@string/dashboard_waiting_for_results"
                                         android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                                        android:textColor="@color/semantic_outline" />
+                                        android:textColor="@color/semantic_on_surface_variant" />
                                 </LinearLayout>
                             </LinearLayout>
                             <com.google.android.material.button.MaterialButton

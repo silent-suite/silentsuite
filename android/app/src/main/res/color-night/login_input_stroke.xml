@@ -3,6 +3,6 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_focused="true" android:color="@color/semantic_focus" />
     <item android:state_hovered="true" android:color="@color/semantic_focus" />
-    <item android:state_enabled="true" android:color="@color/semantic_outline" />
+    <item android:state_enabled="true" android:color="@color/semantic_on_surface_variant" />
     <item android:color="@color/semantic_disabled_content" />
 </selector>
