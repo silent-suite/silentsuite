@@ -1,0 +1,6 @@
+{
+  "advisories": {
+    "1": { "severity": "moderate", "module_name": "example-package", "title": "A valid moderate advisory", "url": "https://github.com/advisories/GHSA-aaaa-bbbb-cccc" }
+  },
+  "metadata": { "vulnerabilities": { "critical": 0, "high": 0, "moderate": 1, "low": 0 } }
+}
