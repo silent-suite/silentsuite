@@ -31,3 +31,31 @@ test('fails closed for disabled endpoint, unresolved values, wrong endpoints, an
     finally { await rm(directory, { recursive: true }) }
   }
 })
+
+test('rejects every unapproved event occurrence in enabled and disabled artifacts', async () => {
+  const taxonomy = 'docs.silentsuite.io pageview Hosted App Click Android Download Click GitHub Click'
+  const unapprovedOccurrences = [
+    '/api/event',
+    'http://plausible.silentsuite.io/api/event',
+    '//plausible.silentsuite.io/api/event',
+    'https://plausible.silentsuite.io/api/event/extra',
+    'https://plausible.silentsuite.io/api/event?source=docs',
+    'https://plausible.silentsuite.io/api/event#fragment',
+    'https://plausible.silentsuite.io.evil.example/api/event',
+    'https://plausible.silentsuite.io:8443/api/event',
+    'https://plausible.silentsuite.io/api/event https://evil.example/api/event',
+    '\\x2fapi\\x2fevent',
+    'https:%2F%2Fevil.example%2Fapi%2Fevent',
+  ]
+
+  for (const occurrence of unapprovedOccurrences) {
+    for (const [mode, contents] of [
+      ['enabled', `${occurrence} ${taxonomy}`],
+      ['disabled', occurrence],
+    ]) {
+      const directory = await fixture(contents)
+      try { await assert.rejects(() => verifyDocsAnalyticsBuild(directory, mode), occurrence) }
+      finally { await rm(directory, { recursive: true }) }
+    }
+  }
+})
