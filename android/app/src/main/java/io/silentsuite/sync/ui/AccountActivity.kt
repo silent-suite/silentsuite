@@ -977,8 +977,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             AccountDashboardIcon.PROVIDER -> R.drawable.ic_status_provider
         })
         val color = ContextCompat.getColor(this, when (presentation.tone) {
-            AccountDashboardTone.NEUTRAL -> R.color.semantic_outline
-            AccountDashboardTone.PRIMARY -> R.color.semantic_primary
+            AccountDashboardTone.NEUTRAL -> R.color.semantic_on_surface_variant
+            AccountDashboardTone.PRIMARY -> R.color.semantic_action_text
             AccountDashboardTone.SUCCESS -> R.color.semantic_success
             AccountDashboardTone.WARNING -> R.color.semantic_warning
             AccountDashboardTone.ERROR -> R.color.semantic_error

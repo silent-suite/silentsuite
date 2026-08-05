@@ -814,6 +814,15 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
         assert "android:alpha" not in body, path.as_posix()
     for vector in ("action_change", "action_delete", "ic_error_dark", "ic_members_dark", "ic_readonly_dark"):
         assert "android:alpha" not in source(f"android/app/src/main/res/drawable/{vector}.xml")
+    # Dashboard status tone foregrounds must use accessible action/variant roles, not
+    # outline/primary, because they are painted over surface by setColorFilter + setTextColor.
+    account_activity = source("android/app/src/main/java/io/silentsuite/sync/ui/AccountActivity.kt")
+    assert "R.color.semantic_on_surface_variant" in account_activity
+    assert "R.color.semantic_action_text" in account_activity
+    assert "AccountDashboardTone.NEUTRAL -> R.color.semantic_on_surface_variant" in account_activity
+    assert "AccountDashboardTone.PRIMARY -> R.color.semantic_action_text" in account_activity
+    assert "R.color.semantic_outline" not in account_activity
+    assert "AccountDashboardTone.PRIMARY -> R.color.semantic_primary" not in account_activity
     styles = resource_styles("values")
     for style in (
         "Widget.AppTheme.Material3.Card",
