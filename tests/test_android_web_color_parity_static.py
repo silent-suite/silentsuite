@@ -806,7 +806,13 @@ def test_theme_color_resources_resolve_in_both_day_and_night_and_meet_contrast_c
     assert resource_styles("values")["login_link"]["android:textColor"] == "@color/semantic_action_text"
     for vector in ("action_add", "ic_calendar_outline", "ic_check", "ic_contacts_outline", "ic_tasks_outline"):
         assert "@color/semantic_action_text" in source(f"android/app/src/main/res/drawable/{vector}.xml")
-    for vector in ("action_change", "action_delete"):
+    # Persistent icon vectors must not root-multiply alpha after semantic tints/filters.
+    # Dashboard status icons, collection indicators, and action glyphs are color-filtered
+    # or tinted at runtime; residual android:alpha="0.54" drops effective contrast below 3:1.
+    for path in sorted((ROOT / "android/app/src/main/res/drawable").glob("*.xml")):
+        body = path.read_text(encoding="utf-8")
+        assert "android:alpha" not in body, path.as_posix()
+    for vector in ("action_change", "action_delete", "ic_error_dark", "ic_members_dark", "ic_readonly_dark"):
         assert "android:alpha" not in source(f"android/app/src/main/res/drawable/{vector}.xml")
     styles = resource_styles("values")
     for style in (
