@@ -193,48 +193,341 @@ def valid_color_slot_value(value: str) -> bool:
     )
 
 
-def web_role_variable_values(css: str) -> tuple[dict[str, str], dict[str, str]]:
-    """Parse the two canonical token blocks and reject any competing declaration."""
-    css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
-    monitored = set(WEB_ROLE_VARIABLES.values())
-    assert not re.search(r"--[^:;{}]*\\[^:;{}]*:", css), "escaped custom-property declarations are unsupported"
-    for variable in monitored:
-        declarations = re.findall(rf"--{re.escape(variable)}(?![a-z0-9-])\s*:", css)
-        assert len(declarations) == 2, (variable, len(declarations))
+def _skip_string(css: str, start: int) -> int:
+    """Return the index just past the string token that starts at start."""
+    quote = css[start]
+    index = start + 1
+    while index < len(css):
+        char = css[index]
+        if char == "\\":
+            index += 2
+        elif char == quote:
+            return index + 1
+        else:
+            index += 1
+    return len(css)
 
-    top_level_blocks: list[tuple[str, str]] = []
+
+def _skip_escape(css: str, start: int) -> int:
+    """start points at a backslash; return the index just past the escape."""
+    n = len(css)
+    index = start + 1
+    if index >= n:
+        return n
+    if css[index] in "0123456789abcdefABCDEF":
+        while index < n and index - start - 1 < 6 and css[index] in "0123456789abcdefABCDEF":
+            index += 1
+        if index < n and css[index] in " \t\r\n\f":
+            index += 1
+    else:
+        index += 1
+    return index
+
+
+def _decode_css_identifier(raw: str) -> str:
+    """Decode CSS identifier escapes (hex and simple) to their logical codepoints."""
+    decoded: list[str] = []
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char != "\\":
+            decoded.append(char)
+            index += 1
+            continue
+        index += 1
+        if index >= len(raw):
+            break
+        codepoint = 0
+        hex_digits = 0
+        while index < len(raw) and hex_digits < 6 and raw[index] in "0123456789abcdefABCDEF":
+            codepoint = codepoint * 16 + int(raw[index], 16)
+            hex_digits += 1
+            index += 1
+        if hex_digits:
+            if index < len(raw) and raw[index] in " \t\r\n\f":
+                index += 1
+            if codepoint == 0 or 0xD800 <= codepoint <= 0xDFFF or codepoint > 0x10FFFF:
+                codepoint = 0xFFFD
+            decoded.append(chr(codepoint))
+        else:
+            decoded.append(raw[index])
+            index += 1
+    return "".join(decoded)
+
+
+def _strip_comments(css: str) -> str:
+    """Replace CSS comments with a single space, leaving strings and escapes intact."""
+    out: list[str] = []
+    index = 0
+    while index < len(css):
+        char = css[index]
+        if char in "\"'":
+            quote = char
+            out.append(char)
+            index += 1
+            while index < len(css):
+                current = css[index]
+                if current == "\\":
+                    out.append(current)
+                    index += 1
+                    if index < len(css):
+                        out.append(css[index])
+                        index += 1
+                elif current == quote:
+                    out.append(current)
+                    index += 1
+                    break
+                else:
+                    out.append(current)
+                    index += 1
+            continue
+        if char == "/" and index + 1 < len(css) and css[index + 1] == "*":
+            end = css.find("*/", index + 2)
+            if end == -1:
+                out.append(" ")
+                return "".join(out)
+            out.append(" ")
+            index = end + 2
+            continue
+        if char == "\\":
+            out.append(char)
+            index += 1
+            if index < len(css):
+                out.append(css[index])
+                index += 1
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def _top_level_blocks(css: str) -> list[tuple[str, str]]:
+    """Split comment-stripped CSS into top-level (selector, body) blocks.
+
+    Brace scanning is string/escape aware so a brace hidden inside a string or
+    an escape cannot terminate a block early.
+    """
+    blocks: list[tuple[str, str]] = []
     statement_start = 0
     block_start = 0
     selector = ""
     depth = 0
-    for index, character in enumerate(css):
-        if character == ";" and depth == 0:
+    index = 0
+    while index < len(css):
+        char = css[index]
+        if char in "\"'":
+            index = _skip_string(css, index)
+        elif char == "\\":
+            index = _skip_escape(css, index)
+        elif char == ";" and depth == 0:
             statement_start = index + 1
-        elif character == "{":
+            index += 1
+        elif char == "{":
             if depth == 0:
                 selector = css[statement_start:index].strip()
                 block_start = index + 1
             depth += 1
-        elif character == "}":
+            index += 1
+        elif char == "}":
             assert depth > 0, ("unexpected closing brace", index)
             depth -= 1
             if depth == 0:
-                top_level_blocks.append((selector, css[block_start:index]))
+                blocks.append((selector, css[block_start:index]))
                 statement_start = index + 1
+            index += 1
+        else:
+            index += 1
     assert depth == 0, "unterminated CSS block"
+    return blocks
 
-    def canonical_block(selector: str) -> dict[str, str]:
-        blocks = [body for actual_selector, body in top_level_blocks if actual_selector == selector]
-        assert len(blocks) == 1, (selector, len(blocks))
-        pairs = re.findall(
-            r"--([a-z0-9-]+)\s*:\s*([^;{}]+?)\s*(?:;|$)",
-            blocks[0],
-        )
-        names = [name for name, _ in pairs]
-        assert len(names) == len(set(names)), (selector, names)
-        return {name: " ".join(value.split()) for name, value in pairs}
 
-    return canonical_block(":root"), canonical_block(".dark")
+def _find_matching_close(css: str, open_index: int) -> int:
+    """open_index points at '{'; return the index of its matching '}'."""
+    depth = 1
+    index = open_index + 1
+    while index < len(css):
+        char = css[index]
+        if char in "\"'":
+            index = _skip_string(css, index)
+        elif char == "\\":
+            index = _skip_escape(css, index)
+        elif char == "{":
+            depth += 1
+            index += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+            index += 1
+        else:
+            index += 1
+    raise AssertionError("unterminated nested CSS block")
+
+
+def _scan_statement_end(css: str, start: int) -> int:
+    """Scan from start (string/escape aware) until ';', '{', or '}'."""
+    index = start
+    while index < len(css):
+        char = css[index]
+        if char in "\"'":
+            index = _skip_string(css, index)
+        elif char == "\\":
+            index = _skip_escape(css, index)
+        elif char in ";{}":
+            return index
+        else:
+            index += 1
+    return len(css)
+
+
+def _read_ident(css: str, start: int) -> tuple[str, int]:
+    """Read a maximal CSS identifier starting at start; return (raw, index_after)."""
+    index = start
+    first = True
+    while index < len(css):
+        char = css[index]
+        if char == "\\":
+            index = _skip_escape(css, index)
+            first = False
+        elif first:
+            if char == "-":
+                nxt = css[index + 1] if index + 1 < len(css) else ""
+                if nxt == "" or nxt == "-" or nxt == "_" or nxt == "\\" or nxt >= "\x80" or nxt.isalpha():
+                    index += 1
+                    first = False
+                else:
+                    break
+            elif char == "_" or char.isalpha() or char >= "\x80":
+                index += 1
+                first = False
+            else:
+                break
+        elif char == "_" or char == "-" or char.isalnum() or char >= "\x80":
+            index += 1
+        else:
+            break
+    return css[start:index], index
+
+
+def _parse_body(body: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Parse a comment-stripped rule body into (declarations, nested_blocks).
+
+    Declarations are (decoded_name, value); nested_blocks are (selector, body).
+    Nested rule/at-rule blocks are descended into by the caller.
+    """
+    declarations: list[tuple[str, str]] = []
+    nested: list[tuple[str, str]] = []
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char in " \t\r\n\f;":
+            index += 1
+            continue
+        statement_start = index
+        if char == "{":
+            close = _find_matching_close(body, index)
+            nested.append((body[statement_start:index].strip(), body[index + 1:close]))
+            index = close + 1
+            continue
+        if char == "@":
+            end = _scan_statement_end(body, index)
+            if end < len(body) and body[end] == "{":
+                close = _find_matching_close(body, end)
+                nested.append((body[statement_start:end].strip(), body[end + 1:close]))
+                index = close + 1
+            else:
+                index = end + 1
+            continue
+        if char == "\\" or char == "-" or char == "_" or char.isalpha() or char >= "\x80":
+            raw, after = _read_ident(body, index)
+            if after == index:
+                index += 1
+                continue
+            colon = after
+            while colon < len(body) and body[colon] in " \t\r\n\f":
+                colon += 1
+            if colon < len(body) and body[colon] == ":":
+                value_end = _scan_statement_end(body, colon + 1)
+                if value_end < len(body) and body[value_end] == "{":
+                    close = _find_matching_close(body, value_end)
+                    nested.append((body[statement_start:value_end].strip(), body[value_end + 1:close]))
+                    index = close + 1
+                else:
+                    declarations.append((_decode_css_identifier(raw), body[colon + 1:value_end].strip()))
+                    index = value_end + 1 if value_end < len(body) else value_end
+                continue
+            end = _scan_statement_end(body, index)
+            if end < len(body) and body[end] == "{":
+                close = _find_matching_close(body, end)
+                nested.append((body[statement_start:end].strip(), body[end + 1:close]))
+                index = close + 1
+            else:
+                index = end + 1 if end < len(body) else len(body)
+            continue
+        index += 1
+    return declarations, nested
+
+
+def web_role_variable_values(css: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Parse the two canonical token blocks and reject any competing declaration.
+
+    The brace scanner is string/escape aware and declaration names are decoded
+    with CSS escape rules, so escaped names that normalize to a monitored
+    variable (e.g. -\\-background, --back\\67 round) still fail closed.
+    """
+    css = _strip_comments(css)
+    top_level_blocks = _top_level_blocks(css)
+    monitored = {f"--{variable}" for variable in WEB_ROLE_VARIABLES.values()}
+
+    light_block = None
+    dark_block = None
+    for actual_selector, body in top_level_blocks:
+        if actual_selector == ":root":
+            assert light_block is None, "duplicate :root block"
+            light_block = body
+        elif actual_selector == ".dark":
+            assert dark_block is None, "duplicate .dark block"
+            dark_block = body
+    assert light_block is not None, "missing canonical :root block"
+    assert dark_block is not None, "missing canonical .dark block"
+
+    def canonical_dict(block: str) -> dict[str, str]:
+        pairs, _nested = _parse_body(block)
+        names = [name for name, _value in pairs]
+        assert len(names) == len(set(names)), ("duplicate declaration in canonical block", names)
+        return {
+            name[len("--"):] if name.startswith("--") else name: " ".join(value.split())
+            for name, value in pairs
+        }
+
+    light = canonical_dict(light_block)
+    dark = canonical_dict(dark_block)
+
+    monitored_counts: dict[str, int] = {}
+
+    def walk(block: str) -> None:
+        declarations, nested_blocks = _parse_body(block)
+        for name, _value in declarations:
+            if name in monitored:
+                monitored_counts[name] = monitored_counts.get(name, 0) + 1
+        for _selector, nested_body in nested_blocks:
+            walk(nested_body)
+
+    for _selector, body in top_level_blocks:
+        walk(body)
+
+    for name in monitored:
+        assert monitored_counts.get(name) == 2, (name, monitored_counts.get(name))
+
+    for variable, (light_hex, dark_hex) in (
+        (WEB_ROLE_VARIABLES[role], WEB_ROLES[role]) for role in WEB_ROLE_VARIABLES
+    ):
+        expected_light = " ".join(str(int(light_hex[index:index + 2], 16)) for index in (1, 3, 5))
+        expected_dark = " ".join(str(int(dark_hex[index:index + 2], 16)) for index in (1, 3, 5))
+        assert light.get(variable) == expected_light, (variable, "light", light.get(variable))
+        assert dark.get(variable) == expected_dark, (variable, "dark", dark.get(variable))
+
+    return light, dark
 
 
 def test_web_roles_and_android_semantics_are_exact_in_day_and_night():
@@ -257,13 +550,33 @@ def test_web_roles_and_android_semantics_are_exact_in_day_and_night():
 
 def test_web_role_parser_accepts_formatting_but_rejects_effective_overrides():
     web = WEB.read_text(encoding="utf-8")
+    base = web_role_variable_values(web)
     reformatted = web.replace(":root {", "  :root{").replace(".dark {", "\n  .dark{")
-    assert web_role_variable_values(reformatted) == web_role_variable_values(web)
+    assert web_role_variable_values(reformatted) == base
+
+    harmless = (
+        'html:root { content: "}"; }',
+        'html:root { content: "{"; }',
+        "html:root { --sx-color-primary: rgb(var(--primary)); }",
+    )
+    for block in harmless:
+        assert web_role_variable_values(f"{web}\n{block}\n") == base, block
 
     overrides = (
         ":root{--background: 0 0 0;}",
         ":root, html { --background: 0 0 0; }",
         ".dark { --primary: 0 0 0; }",
+        "html:root { --background: 0 0 0; }",
+        "html:root { -\\-background: 0 0 0; }",
+        "html:root { --back\\67 round: 0 0 0; }",
+        "html:root { --\\62 ackground: 0 0 0; }",
+        ":ro\\6ft { --background: 0 0 0; }",
+        'html:root { content: "}"; --background: 0 0 0; }',
+        'html:root { content: "{"; --background: 0 0 0; }',
+        "html:root { --background: 0 0 \\}; }",
+        "html:root { --background: 0 0 0\\7d; }",
+        "html:root { & { -\\-background: 0 0 0; } }",
+        "@media (prefers-color-scheme: dark) { html:root { --background: 0 0 0; } }",
     )
     for override in overrides:
         try:
