@@ -1,0 +1,1 @@
+Major update: redesigned Android app with Material 3, targeted Android 16 / API 36, hardened DAV Bridge sync reliability and macOS CardDAV support, replaced billing session handoff with single-use link proofs, and added resumable first-run setup with account switching.

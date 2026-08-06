@@ -1,6 +1,6 @@
-# Store listing paste copy for SilentSuite v0.4.2-beta
+# Store listing paste copy for SilentSuite v0.5.0-beta
 
-Use with the final 8 screenshots exported from Figma on 2026-06-27.
+Use with the final 6 screenshots exported from Figma on 2026-08-06.
 
 ## App title
 
@@ -28,11 +28,9 @@ Requires a SilentSuite account. Self-hosting documentation is available at docs.
 
 ## Phone screenshot order
 
-1. Sync your Android life privately
-2. Keep personal and work separate
-3. Calendar, contacts, and tasks stay in sync privately
-4. No vendor lock-in
-5. Open source by design
+1. End-to-end encrypted sync for calendar, contacts, and tasks
+2. Private cross-platform sync
+3. Calendar, contacts, and tasks stay in sync
+4. Multiple collections you can share privately
+5. Import and export simply
 6. Only your devices can read it
-7. Built for Android
-8. Choose hosted sync or connect a custom server
