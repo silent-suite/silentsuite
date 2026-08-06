@@ -213,12 +213,12 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
     assert 'style="@style/Widget.AppTheme.Material3.Button.Text"' in skip
     assert styles.count('<item name="android:textColor">@color/button_secondary_text</item>') >= 2
     secondary_colors = source(RES / "color/button_secondary_text.xml")
-    assert '@color/semantic_secondary_action' in secondary_colors
+    assert '@color/semantic_action_text' in secondary_colors
     assert '@color/semantic_disabled' in secondary_colors
-    assert '<color name="semantic_secondary_action">#047857</color>' in source(
+    assert '<color name="semantic_secondary_action">#059669</color>' in source(
         RES / "values/colors.xml"
     )
-    assert '@color/teal400' in source(RES / "values-night/colors.xml")
+    assert '<color name="semantic_secondary_action">#10B981</color>' in source(RES / "values-night/colors.xml")
     assert 'android:maxLines="2"' not in layout
     for node_id in (
         "setup_step_connect_node", "setup_step_prepare_node", "setup_step_ready_node",

@@ -78,7 +78,7 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
         swipeRefreshLayout?.apply {
             // Match the app accent palette for the refresh indicator.
             setColorSchemeResources(
-                    R.color.teal400, R.color.teal500, R.color.teal600, R.color.teal700)
+                    R.color.semantic_primary, R.color.semantic_secondary_action, R.color.semantic_success, R.color.semantic_focus)
             setOnRefreshListener { onUserRefresh() }
             // The direct child is a FrameLayout (so the empty view can overlay the
             // ListView), so delegate scroll-up detection to the real scrollable list.

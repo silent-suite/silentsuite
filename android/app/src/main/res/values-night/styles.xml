@@ -2,42 +2,56 @@
 <!-- Dark theme overrides for SilentSuite -->
 <resources>
 
+    <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxBackgroundColor">@color/semantic_surface</item>
+        <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
+        <item name="boxStrokeColor">@color/login_input_stroke</item>
+        <item name="boxStrokeErrorColor">@color/semantic_error</item>
+        <item name="boxStrokeWidthFocused">2dp</item>
+    </style>
+
     <style name="AppTheme.Dialog.Alert" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
-        <item name="colorAccent">@color/teal400</item>
-        <item name="colorPrimary">@color/teal400</item>
-        <item name="colorSecondary">@color/teal400</item>
-        <item name="colorSurface">@color/navy600</item>
-        <item name="colorOnSurface">@android:color/white</item>
+        <item name="colorAccent">@color/semantic_secondary_action</item>
+        <item name="colorPrimary">@color/semantic_primary</item>
+        <item name="colorOnPrimary">@color/semantic_on_primary</item>
+        <item name="colorSecondary">@color/semantic_secondary_action</item>
+        <item name="colorOnSecondary">@color/semantic_on_secondary</item>
+        <item name="colorSurface">@color/semantic_surface</item>
+        <item name="colorOnSurface">@color/semantic_on_surface</item>
+        <item name="colorError">@color/semantic_error</item>
+        <item name="colorOnError">@color/semantic_on_error</item>
+        <item name="colorErrorContainer">@color/semantic_error_container</item>
+        <item name="colorOnErrorContainer">@color/semantic_on_error_container</item>
         <item name="shapeAppearanceOverlay">@style/AppTheme.ShapeAppearance.Dialog</item>
         <item name="buttonBarButtonStyle">@style/AppTheme.Dialog.Button</item>
     </style>
 
     <style name="AppTheme.Dialog.Button" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
-        <item name="android:textColor">@color/teal400</item>
+        <item name="android:textColor">@color/button_secondary_text</item>
         <item name="android:textAllCaps">true</item>
     </style>
 
     <!-- stepper (wizard) - dark variant -->
     <style name="stepper_nav_bar">
-        <item name="android:background">@color/navy800</item>
+        <item name="android:background">@color/semantic_surface</item>
         <item name="android:elevation">4dp</item>
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingBottom">8dp</item>
     </style>
 
     <style name="toolbar_style" parent="Widget.AppCompat.Toolbar">
-        <item name="android:background">@color/navy700</item>
-        <item name="titleTextColor">@android:color/white</item>
+        <item name="android:background">@color/semantic_system_bar</item>
+        <item name="titleTextColor">@color/semantic_on_system_bar</item>
     </style>
 
     <style name="tablayout" parent="Base.Widget.Design.TabLayout">
-        <item name="android:background">@color/navy700</item>
+        <item name="android:background">@color/semantic_system_bar</item>
     </style>
 
     <!-- Dark mode heading uses brighter teal -->
     <style name="TextView.Heading" parent="AppTheme">
         <item name="android:textSize">22sp</item>
-        <item name="android:textColor">@color/teal400</item>
+        <item name="android:textColor">@color/semantic_primary</item>
     </style>
 
 </resources>

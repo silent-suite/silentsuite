@@ -12,11 +12,17 @@
     <!-- dialogs -->
 
     <style name="AppTheme.Dialog.Alert" parent="ThemeOverlay.MaterialComponents.MaterialAlertDialog">
-        <item name="colorAccent">@color/teal600</item>
-        <item name="colorPrimary">@color/teal600</item>
-        <item name="colorSecondary">@color/teal600</item>
-        <item name="colorSurface">@android:color/white</item>
-        <item name="colorOnSurface">@color/navy800</item>
+        <item name="colorAccent">@color/semantic_secondary_action</item>
+        <item name="colorPrimary">@color/semantic_primary</item>
+        <item name="colorOnPrimary">@color/semantic_on_primary</item>
+        <item name="colorSecondary">@color/semantic_secondary_action</item>
+        <item name="colorOnSecondary">@color/semantic_on_secondary</item>
+        <item name="colorSurface">@color/semantic_surface</item>
+        <item name="colorOnSurface">@color/semantic_on_surface</item>
+        <item name="colorError">@color/semantic_error</item>
+        <item name="colorOnError">@color/semantic_on_error</item>
+        <item name="colorErrorContainer">@color/semantic_error_container</item>
+        <item name="colorOnErrorContainer">@color/semantic_on_error_container</item>
         <item name="shapeAppearanceOverlay">@style/AppTheme.ShapeAppearance.Dialog</item>
         <item name="buttonBarButtonStyle">@style/AppTheme.Dialog.Button</item>
     </style>
@@ -27,7 +33,7 @@
     </style>
 
     <style name="AppTheme.Dialog.Button" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
-        <item name="android:textColor">@color/teal600</item>
+        <item name="android:textColor">@color/button_secondary_text</item>
         <item name="android:textAllCaps">true</item>
     </style>
 
@@ -47,7 +53,7 @@
         <item name="android:minHeight">48dp</item>
         <item name="android:paddingTop">6dp</item>
         <item name="android:paddingBottom">6dp</item>
-        <item name="android:textColor">?attr/colorSecondary</item>
+        <item name="android:textColor">@color/semantic_action_text</item>
         <item name="android:textSize">14sp</item>
         <item name="android:background">?attr/selectableItemBackground</item>
         <item name="android:clickable">true</item>
@@ -83,7 +89,7 @@
     <!-- stepper (wizard) — light mode -->
 
     <style name="stepper_nav_bar">
-        <item name="android:background">@color/offwhite</item>
+        <item name="android:background">@color/semantic_surface</item>
         <item name="android:elevation">4dp</item>
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingBottom">8dp</item>
@@ -144,7 +150,7 @@
         <item name="cardBackgroundColor">@color/semantic_surface</item>
         <item name="cardCornerRadius">@dimen/shape_radius_standard</item>
         <item name="cardElevation">@dimen/elevation_resting</item>
-        <item name="strokeColor">@color/semantic_outline</item>
+        <item name="strokeColor">@color/semantic_on_surface_variant</item>
         <item name="strokeWidth">1dp</item>
     </style>
 
@@ -156,7 +162,7 @@
     <style name="Widget.AppTheme.Material3.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
         <item name="boxBackgroundColor">@color/semantic_surface</item>
         <item name="shapeAppearance">@style/ShapeAppearance.AppTheme.Material3.Standard</item>
-        <item name="boxStrokeColor">@color/semantic_outline</item>
+        <item name="boxStrokeColor">@color/login_input_stroke</item>
         <item name="boxStrokeErrorColor">@color/semantic_error</item>
         <item name="boxStrokeWidthFocused">2dp</item>
     </style>
@@ -165,7 +171,7 @@
         <item name="cardBackgroundColor">@color/semantic_surface</item>
         <item name="cardCornerRadius">@dimen/shape_radius_standard</item>
         <item name="cardElevation">@dimen/elevation_resting</item>
-        <item name="strokeColor">@color/semantic_outline</item>
+        <item name="strokeColor">@color/semantic_on_surface_variant</item>
         <item name="strokeWidth">1dp</item>
     </style>
 
@@ -196,7 +202,7 @@
         <item name="cardBackgroundColor">@color/semantic_surface</item>
         <item name="cardCornerRadius">@dimen/shape_radius_standard</item>
         <item name="cardElevation">@dimen/elevation_resting</item>
-        <item name="strokeColor">@color/semantic_outline</item>
+        <item name="strokeColor">@color/semantic_on_surface_variant</item>
         <item name="strokeWidth">1dp</item>
     </style>
 
@@ -205,19 +211,19 @@
         <item name="android:layout_height">wrap_content</item>
         <item name="android:minHeight">@dimen/touch_target_min</item>
         <item name="titleTextColor">@color/semantic_on_surface</item>
-        <item name="navigationIconTint">@color/semantic_primary</item>
+        <item name="navigationIconTint">@color/semantic_action_text</item>
     </style>
 
     <style name="tablayout" parent="Base.Widget.Design.TabLayout">
-        <item name="android:background">@color/navy700</item>
+        <item name="android:background">@color/semantic_system_bar</item>
     </style>
 
     <style name="toolbar_theme">
-        <item name="android:textColorSecondary">@android:color/white</item>
+        <item name="android:textColorSecondary">@color/semantic_on_system_bar</item>
     </style>
     <style name="toolbar_style" parent="Widget.AppCompat.Toolbar">
-        <item name="android:background">@color/navy700</item>
-        <item name="titleTextColor">@android:color/white</item>
+        <item name="android:background">@color/semantic_system_bar</item>
+        <item name="titleTextColor">@color/semantic_on_system_bar</item>
     </style>
 
 
@@ -225,7 +231,7 @@
 
     <style name="TextView.Heading" parent="AppTheme">
         <item name="android:textSize">22sp</item>
-        <item name="android:textColor">@color/teal600</item>
+        <item name="android:textColor">@color/semantic_secondary_action</item>
     </style>
 
 </resources>

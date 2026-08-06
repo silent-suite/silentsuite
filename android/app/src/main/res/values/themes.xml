@@ -1,22 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Existing activity theme stays in place while surfaces migrate individually. -->
     <style name="AppTheme" parent="Theme.MaterialComponents.DayNight">
-        <item name="colorPrimary">@color/navy700</item>
-        <item name="colorPrimaryDark">@color/navy900</item>
-        <item name="colorPrimaryVariant">@color/navy600</item>
-        <item name="colorOnPrimary">@android:color/white</item>
-        <item name="colorSecondary">@color/teal600</item>
-        <item name="colorSecondaryVariant">@color/teal700</item>
-        <item name="colorOnSecondary">@android:color/white</item>
-        <item name="colorError">@color/errorColor</item>
-        <item name="colorOnError">@android:color/white</item>
-        <item name="android:colorBackground">@color/offwhite</item>
-        <item name="colorSurface">@android:color/white</item>
-        <item name="colorOnSurface">@color/navy800</item>
-        <item name="android:textColorPrimary">@color/navy800</item>
-        <item name="android:textColorSecondary">@color/navy600</item>
-        <item name="android:textColorHint">@color/navy600</item>
+        <item name="colorPrimary">@color/semantic_primary</item>
+        <item name="colorPrimaryDark">@color/semantic_system_bar</item>
+        <item name="colorPrimaryVariant">@color/semantic_primary_container</item>
+        <item name="colorOnPrimary">@color/semantic_on_primary</item>
+        <item name="colorSecondary">@color/semantic_secondary_action</item>
+        <item name="colorSecondaryVariant">@color/semantic_secondary_container</item>
+        <item name="colorOnSecondary">@color/semantic_on_secondary</item>
+        <item name="colorError">@color/semantic_error</item>
+        <item name="colorOnError">@color/semantic_on_error</item>
+        <item name="android:colorBackground">@color/semantic_background</item>
+        <item name="colorSurface">@color/semantic_surface</item>
+        <item name="colorOnSurface">@color/semantic_on_surface</item>
+        <item name="android:textColorPrimary">@color/semantic_on_surface</item>
+        <item name="android:textColorSecondary">@color/semantic_on_surface_variant</item>
+        <item name="android:textColorHint">@color/semantic_on_surface_variant</item>
         <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
         <item name="android:navigationBarColor">@color/semantic_system_bar</item>
@@ -31,28 +30,63 @@
         <item name="android:navigationBarColor">@color/semantic_system_bar</item>
     </style>
 
-    <!-- Reserved for later target-surface migration; the manifest remains legacy in Slice 5. -->
     <style name="AppTheme.Material3" parent="Theme.Material3.DayNight">
         <item name="android:colorBackground">@color/semantic_background</item>
+        <item name="colorOnBackground">@color/semantic_on_surface</item>
         <item name="colorSurface">@color/semantic_surface</item>
         <item name="colorOnSurface">@color/semantic_on_surface</item>
+        <item name="colorSurfaceVariant">@color/semantic_surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/semantic_on_surface_variant</item>
         <item name="colorOutline">@color/semantic_outline</item>
+        <item name="colorOutlineVariant">@color/semantic_outline_variant</item>
         <item name="colorPrimary">@color/semantic_primary</item>
-        <item name="colorOnPrimary">@color/navy900</item>
+        <item name="colorOnPrimary">@color/semantic_on_primary</item>
+        <item name="colorPrimaryContainer">@color/semantic_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/semantic_on_primary_container</item>
+        <item name="colorSecondary">@color/semantic_secondary_action</item>
+        <item name="colorOnSecondary">@color/semantic_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/semantic_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/semantic_on_secondary_container</item>
         <item name="colorError">@color/semantic_error</item>
-        <item name="colorOnError">@color/semantic_surface</item>
+        <item name="colorOnError">@color/semantic_on_error</item>
+        <item name="colorErrorContainer">@color/semantic_error_container</item>
+        <item name="colorOnErrorContainer">@color/semantic_on_error_container</item>
+        <item name="colorSurfaceInverse">@color/semantic_inverse_surface</item>
+        <item name="colorOnSurfaceInverse">@color/semantic_inverse_on_surface</item>
+        <item name="colorPrimaryInverse">@color/semantic_inverse_primary</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
         <item name="android:navigationBarColor">@color/semantic_system_bar</item>
+        <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
+        <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
     </style>
 
     <style name="AppTheme.Material3.NoActionBar" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:colorBackground">@color/semantic_background</item>
+        <item name="colorOnBackground">@color/semantic_on_surface</item>
         <item name="colorSurface">@color/semantic_surface</item>
         <item name="colorOnSurface">@color/semantic_on_surface</item>
+        <item name="colorSurfaceVariant">@color/semantic_surface_variant</item>
+        <item name="colorOnSurfaceVariant">@color/semantic_on_surface_variant</item>
         <item name="colorOutline">@color/semantic_outline</item>
+        <item name="colorOutlineVariant">@color/semantic_outline_variant</item>
         <item name="colorPrimary">@color/semantic_primary</item>
-        <item name="colorOnPrimary">@color/navy900</item>
+        <item name="colorOnPrimary">@color/semantic_on_primary</item>
+        <item name="colorPrimaryContainer">@color/semantic_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/semantic_on_primary_container</item>
+        <item name="colorSecondary">@color/semantic_secondary_action</item>
+        <item name="colorOnSecondary">@color/semantic_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/semantic_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/semantic_on_secondary_container</item>
+        <item name="colorError">@color/semantic_error</item>
+        <item name="colorOnError">@color/semantic_on_error</item>
+        <item name="colorErrorContainer">@color/semantic_error_container</item>
+        <item name="colorOnErrorContainer">@color/semantic_on_error_container</item>
+        <item name="colorSurfaceInverse">@color/semantic_inverse_surface</item>
+        <item name="colorOnSurfaceInverse">@color/semantic_inverse_on_surface</item>
+        <item name="colorPrimaryInverse">@color/semantic_inverse_primary</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
         <item name="android:navigationBarColor">@color/semantic_system_bar</item>
+        <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
+        <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
     </style>
 </resources>

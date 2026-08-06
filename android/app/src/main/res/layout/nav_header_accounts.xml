@@ -46,7 +46,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/app_name"
-                android:textColor="@color/nav_header_email"
+                android:textColor="@color/semantic_action_text"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 android:ellipsize="end"
@@ -68,7 +68,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:textColor="@color/nav_header_subtitle"
+            android:textColor="@color/semantic_on_surface_variant"
             android:textSize="12sp"
             android:text="@string/navigation_drawer_subtitle"/>
 

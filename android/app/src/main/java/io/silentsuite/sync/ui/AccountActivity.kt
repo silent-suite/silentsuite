@@ -248,7 +248,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         swipeRefreshLayout = findViewById(R.id.account_swipe_refresh)
         swipeRefreshLayout?.apply {
             setColorSchemeResources(
-                    R.color.teal400, R.color.teal500, R.color.teal600, R.color.teal700)
+                    R.color.semantic_primary, R.color.semantic_secondary_action, R.color.semantic_success, R.color.semantic_focus)
             setOnRefreshListener { onAccountSwipeRefresh() }
         }
 
@@ -977,8 +977,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             AccountDashboardIcon.PROVIDER -> R.drawable.ic_status_provider
         })
         val color = ContextCompat.getColor(this, when (presentation.tone) {
-            AccountDashboardTone.NEUTRAL -> R.color.semantic_outline
-            AccountDashboardTone.PRIMARY -> R.color.semantic_primary
+            AccountDashboardTone.NEUTRAL -> R.color.semantic_on_surface_variant
+            AccountDashboardTone.PRIMARY -> R.color.semantic_action_text
             AccountDashboardTone.SUCCESS -> R.color.semantic_success
             AccountDashboardTone.WARNING -> R.color.semantic_warning
             AccountDashboardTone.ERROR -> R.color.semantic_error

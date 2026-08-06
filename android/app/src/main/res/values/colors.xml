@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Brand palette: arrows-only navy and emerald remain the visual anchors. -->
+    <!-- Raw foundations are consumed only by semantic roles and immutable artwork. -->
     <color name="navy900">#0A1018</color>
     <color name="navy800">#111B27</color>
     <color name="navy700">#1B2838</color>
@@ -15,36 +15,56 @@
     <color name="white">#FFFFFF</color>
     <color name="offwhite">#F0F3F7</color>
 
-    <!-- Material foundation roles; target surfaces consume roles, not raw palette values. -->
-    <color name="semantic_background">#F7F9FC</color>
-    <color name="semantic_surface">#FFFFFF</color>
-    <color name="semantic_on_surface">#17212E</color>
-    <color name="semantic_outline">#5B6878</color>
-    <color name="semantic_primary">@color/teal600</color>
-    <color name="semantic_secondary_action">#047857</color>
-    <color name="nav_account_selected_background">#1F10B981</color>
-    <color name="semantic_success">#15803D</color>
+    <color name="semantic_background">#FCFDFF</color>
+    <color name="semantic_surface">#F3F5F9</color>
+    <color name="semantic_on_surface">#111B27</color>
+    <color name="semantic_on_surface_variant">#475569</color>
+    <color name="semantic_outline">#C8D2DE</color>
+    <color name="semantic_surface_variant">#E7EBF0</color>
+    <color name="semantic_outline_variant">#DCE3EB</color>
+    <color name="semantic_primary">#10B981</color>
+    <color name="semantic_secondary_action">#059669</color>
+    <!-- Android accessibility exception for normal-sized text actions on light surfaces. -->
+    <color name="semantic_action_text">#047857</color>
+    <color name="semantic_on_primary">#0A1018</color>
+    <color name="semantic_primary_container">#D1FAE5</color>
+    <color name="semantic_on_primary_container">#064E3B</color>
+    <color name="semantic_on_secondary">#FFFFFF</color>
+    <color name="semantic_secondary_container">#D1FAE5</color>
+    <color name="semantic_on_secondary_container">#064E3B</color>
+    <color name="semantic_success">#047857</color>
+    <color name="semantic_on_success">#FFFFFF</color>
     <color name="semantic_warning">#B45309</color>
+    <color name="semantic_on_warning">#FFFFFF</color>
     <color name="semantic_error">#B91C1C</color>
-    <color name="semantic_disabled">#9CA3AF</color>
-    <color name="semantic_focus">@color/teal400</color>
-    <color name="semantic_system_bar">@color/navy900</color>
+    <color name="semantic_on_error">#FFFFFF</color>
+    <color name="semantic_error_container">#FEE2E2</color>
+    <color name="semantic_on_error_container">#7F1D1D</color>
+    <color name="semantic_focus">#047857</color>
+    <color name="semantic_selected_container">#1F10B981</color>
+    <color name="semantic_disabled_content">#A3A7AD</color>
+    <color name="semantic_disabled_container">#E0E2E5</color>
+    <color name="semantic_inverse_surface">#1B2838</color>
+    <color name="semantic_inverse_on_surface">#FFFFFF</color>
+    <color name="semantic_inverse_primary">#34D399</color>
+    <color name="semantic_system_bar">#0A1018</color>
+    <color name="semantic_on_system_bar">#FFFFFF</color>
 
-    <!-- Legacy names remain available until their screen-by-screen migrations. -->
+    <!-- Baseline compatibility declarations: no application consumer may remain. -->
     <color name="errorColor">@color/semantic_error</color>
-    <color name="nav_header_email">@color/teal700</color>
-    <color name="nav_header_subtitle">@color/navy600</color>
-    <color name="infoColor">#E0EDF4</color>
-    <color name="light_green500">@color/teal500</color>
-    <color name="light_green700">@color/navy700</color>
-    <color name="orange400">@color/teal600</color>
-    <color name="orangeA700">@color/teal500</color>
-    <color name="primaryColor">@color/navy700</color>
-    <color name="primaryLightColor">@color/navy600</color>
-    <color name="primaryDarkColor">@color/navy900</color>
-    <color name="secondaryColor">@color/teal500</color>
-    <color name="secondaryLightColor">@color/teal400</color>
-    <color name="secondaryDarkColor">@color/teal700</color>
-    <color name="primaryTextColor">#FFFFFF</color>
-    <color name="preference_fallback_accent_color">@color/teal500</color>
+    <color name="nav_header_email">@color/semantic_primary</color>
+    <color name="nav_header_subtitle">@color/semantic_on_surface_variant</color>
+    <color name="infoColor">@color/semantic_surface_variant</color>
+    <color name="light_green500">@color/semantic_primary</color>
+    <color name="light_green700">@color/semantic_secondary_action</color>
+    <color name="orange400">@color/semantic_primary</color>
+    <color name="orangeA700">@color/semantic_primary</color>
+    <color name="primaryColor">@color/semantic_primary</color>
+    <color name="primaryLightColor">@color/semantic_primary_container</color>
+    <color name="primaryDarkColor">@color/semantic_system_bar</color>
+    <color name="secondaryColor">@color/semantic_secondary_action</color>
+    <color name="secondaryLightColor">@color/semantic_secondary_container</color>
+    <color name="secondaryDarkColor">@color/semantic_secondary_action</color>
+    <color name="primaryTextColor">@color/semantic_on_primary</color>
+    <color name="preference_fallback_accent_color">@color/semantic_primary</color>
 </resources>

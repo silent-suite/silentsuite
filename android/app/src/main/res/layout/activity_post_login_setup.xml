@@ -46,7 +46,7 @@
                     android:background="@drawable/bg_setup_step_current"
                     android:gravity="center"
                     android:text="1"
-                    android:textColor="@color/navy900"
+                    android:textColor="@color/semantic_on_primary"
                     android:textStyle="bold" />
 
                 <TextView
@@ -208,7 +208,7 @@
                 android:minHeight="48dp"
                 android:text="@string/post_login_recommended_apps"
                 android:textAppearance="@style/TextAppearance.AppTheme.FirstRun.Body"
-                android:textColor="@color/semantic_secondary_action" />
+                android:textColor="@color/semantic_action_text" />
 
             <TextView
                 android:layout_width="match_parent"

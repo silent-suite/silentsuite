@@ -2,7 +2,7 @@
  * SilentSuite store screenshot capture test.
  *
  * Drives the app through the 8 screens used for Google Play store screenshots
- * and saves raw screencaps to /sdcard/SilentSuiteScreenshots/. The CI workflow
+ * and saves raw screencaps to /sdcard/Download/SilentSuiteScreenshots/. The CI workflow
  * pulls these and composites branded marketing frames.
  *
  * If test account credentials are provided via instrumentation arguments
@@ -35,7 +35,10 @@ import android.content.Intent;
 import android.widget.EditText;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.view.View;
 
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.test.core.app.ActivityScenario;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.FixMethodOrder;
@@ -74,26 +77,43 @@ public class StoreScreenshotsTest {
     private static String testPassword;
     private static boolean loggedIn = false;
 
+    private static String requireSafeScreenshotDir(String value) {
+        if (DEFAULT_CAPTURE_DIR.equals(value)) {
+            return value;
+        }
+        String parityPrefix = "/sdcard/Android/data/" + PACKAGE + "/files/color-parity-evidence/";
+        if (!value.startsWith(parityPrefix)) {
+            throw new IllegalArgumentException("Unsupported screenshot directory");
+        }
+        String nonce = value.substring(parityPrefix.length());
+        if (!nonce.matches("[A-Za-z0-9._-]+") || ".".equals(nonce) || "..".equals(nonce)) {
+            throw new IllegalArgumentException("Invalid screenshot evidence nonce");
+        }
+        return value;
+    }
+
     @BeforeClass
     public static void setUp() {
         device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
 
         // Read instrumentation arguments (passed by CI).
         Bundle args = InstrumentationRegistry.getArguments();
-        String screenshotDir = args.getString("screenshotDir", DEFAULT_CAPTURE_DIR);
+        String screenshotDir = requireSafeScreenshotDir(
+                args.getString("screenshotDir", DEFAULT_CAPTURE_DIR));
         captureDir = new File(screenshotDir);
 
-        // Create the directory both through shell (works on scoped storage paths)
-        // and File.mkdirs() (works for app-owned paths). UiDevice.takeScreenshot
-        // fails with ENOENT if the parent directory is missing.
-        try {
-            InstrumentationRegistry.getInstrumentation()
-                    .getUiAutomation()
-                    .executeShellCommand("mkdir -p " + screenshotDir);
-        } catch (Exception ignored) {
+        // Only the exact legacy shared directory reaches the shell. Parity evidence
+        // uses its validated app-owned path and File.mkdirs().
+        if (DEFAULT_CAPTURE_DIR.equals(screenshotDir)) {
+            try {
+                InstrumentationRegistry.getInstrumentation()
+                        .getUiAutomation()
+                        .executeShellCommand("mkdir -p " + DEFAULT_CAPTURE_DIR);
+            } catch (Exception ignored) {
+            }
         }
-        if (!captureDir.exists()) {
-            captureDir.mkdirs();
+        if (!captureDir.exists() && !captureDir.mkdirs()) {
+            throw new AssertionError("Failed to create screenshot directory");
         }
 
         testEmail = cleanArg(args.getString("testEmail", null));
@@ -229,6 +249,40 @@ public class StoreScreenshotsTest {
 
     private void sleep(long ms) {
         SystemClock.sleep(ms);
+    }
+
+    private static void waitForAbout(ActivityScenario<io.silentsuite.sync.ui.AboutActivity> scenario) {
+        for (int attempt = 0; attempt < 40; attempt++) {
+            final boolean[] ready = {false};
+            scenario.onActivity(activity -> {
+                androidx.viewpager.widget.ViewPager pager = activity.findViewById(io.silentsuite.sync.R.id.viewpager);
+                ready[0] = pager != null && pager.isAttachedToWindow() && pager.isShown()
+                        && pager.getAdapter() != null && pager.getAdapter().getCount() > 0;
+            });
+            if (ready[0]) return;
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            SystemClock.sleep(50);
+        }
+        throw new AssertionError("AboutActivity viewpager was not attached, shown, and populated");
+    }
+
+    private static void waitForGlobalSettings(ActivityScenario<io.silentsuite.sync.ui.AppSettingsActivity> scenario) {
+        for (int attempt = 0; attempt < 40; attempt++) {
+            final boolean[] ready = {false};
+            scenario.onActivity(activity -> {
+                View content = activity.findViewById(android.R.id.content);
+                androidx.fragment.app.Fragment fragment = activity.getSupportFragmentManager()
+                        .findFragmentById(android.R.id.content);
+                ready[0] = content != null && content.isAttachedToWindow() && content.isShown()
+                        && fragment instanceof io.silentsuite.sync.ui.AppSettingsActivity.HomeFragment
+                        && ((io.silentsuite.sync.ui.AppSettingsActivity.HomeFragment) fragment)
+                                .findPreference("settings_category_appearance") != null;
+            });
+            if (ready[0]) return;
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+            SystemClock.sleep(50);
+        }
+        throw new AssertionError("global AppSettingsActivity HomeFragment was not ready");
     }
 
     private boolean tapText(String text) {
@@ -495,5 +549,46 @@ public class StoreScreenshotsTest {
         tapText("Import");
         sleep(2000);
         capture("8-import");
+    }
+
+    /**
+     * Credential-free parity evidence for the retained Material 3 and legacy
+     * routes. This is intentionally separately selectable from store captures.
+     */
+    private static void setNightModeOnMainThread(int mode) {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                () -> AppCompatDelegate.setDefaultNightMode(mode));
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+    }
+
+    @Test
+    public void testParityEvidence() {
+        int prior = AppCompatDelegate.getDefaultNightMode();
+        Context targetContext = InstrumentationRegistry.getInstrumentation().getTargetContext();
+        try {
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO);
+            try (ActivityScenario<io.silentsuite.sync.ui.AboutActivity> scenario =
+                         ActivityScenario.launch(io.silentsuite.sync.ui.AboutActivity.class)) {
+                waitForAbout(scenario);
+                capture("parity-m3-about-light");
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES);
+                scenario.recreate();
+                waitForAbout(scenario);
+                capture("parity-m3-about-dark");
+            }
+
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO);
+            try (ActivityScenario<io.silentsuite.sync.ui.AppSettingsActivity> scenario =
+                         ActivityScenario.launch(io.silentsuite.sync.ui.AppSettingsActivity.Companion.newIntent(targetContext))) {
+                waitForGlobalSettings(scenario);
+                capture("parity-legacy-app-settings-light");
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES);
+                scenario.recreate();
+                waitForGlobalSettings(scenario);
+                capture("parity-legacy-app-settings-dark");
+            }
+        } finally {
+            setNightModeOnMainThread(prior);
+        }
     }
 }

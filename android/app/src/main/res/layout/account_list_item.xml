@@ -14,7 +14,7 @@
             android:layout_height="wrap_content"
             android:foreground="?android:attr/selectableItemBackground"
             card_view:contentPadding="16dp"
-            card_view:cardBackgroundColor="@color/orange400"
+            card_view:cardBackgroundColor="@color/semantic_primary"
             card_view:cardElevation="2dp">
 
         <LinearLayout
@@ -26,7 +26,8 @@
             <TextView
                 android:layout_width="48dp"
                 android:layout_height="48dp"
-                android:background="@drawable/ic_account_circle_white"/>
+                android:background="@drawable/ic_account_circle_white"
+                android:backgroundTint="@color/semantic_on_primary"/>
 
             <TextView
                 android:id="@+id/account_name"
@@ -34,7 +35,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
                 android:textAppearance="@style/TextAppearance.AppCompat.Title"
-                android:textColor="@android:color/white"
+                android:textColor="@color/semantic_on_primary"
                 tools:text="Account Name"/>
 
         </LinearLayout>
