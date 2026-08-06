@@ -24,6 +24,7 @@
             android:layout_height="40dp"
             android:contentDescription="@null"
             android:importantForAccessibility="no"
+            app:tint="@color/semantic_on_surface"
             tools:src="@drawable/ic_account_circle_white" />
 
         <TextView

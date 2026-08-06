@@ -765,7 +765,7 @@ class PostLoginSetupActivity : BaseActivity() {
                 index < currentIndex -> {
                     node.setBackgroundResource(R.drawable.bg_setup_step_complete)
                     node.text = ""
-                    node.setTextColor(ContextCompat.getColor(this, R.color.navy900))
+                    node.setTextColor(ContextCompat.getColor(this, R.color.semantic_on_primary))
                 }
                 index == currentIndex && error -> {
                     node.setBackgroundResource(R.drawable.bg_setup_step_error_icon)
@@ -774,7 +774,7 @@ class PostLoginSetupActivity : BaseActivity() {
                 index == currentIndex -> {
                     node.setBackgroundResource(R.drawable.bg_setup_step_current)
                     node.text = (index + 1).toString()
-                    node.setTextColor(ContextCompat.getColor(this, R.color.navy900))
+                    node.setTextColor(ContextCompat.getColor(this, R.color.semantic_on_primary))
                 }
                 else -> {
                     node.setBackgroundResource(R.drawable.bg_setup_step_upcoming)

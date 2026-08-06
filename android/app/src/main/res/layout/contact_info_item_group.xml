@@ -22,7 +22,7 @@
                 android:layout_margin="@dimen/activity_margin"
                 android:text="@string/about"
                 android:textAppearance="?android:attr/textAppearanceMedium"
-                android:textColor="@color/orange400"
+                android:textColor="@color/semantic_action_text"
                 android:textStyle="bold" />
 
             <View

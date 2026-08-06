@@ -2,7 +2,7 @@
 <!-- Dark mode: navy gradient header -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
     <gradient
-        android:startColor="@color/navy800"
-        android:endColor="@color/navy900"
+        android:startColor="@color/semantic_surface"
+        android:endColor="@color/semantic_background"
         android:angle="270" />
 </shape>

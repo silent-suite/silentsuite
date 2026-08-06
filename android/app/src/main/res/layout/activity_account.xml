@@ -30,7 +30,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="?attr/actionBarSize"
                 android:background="?attr/colorPrimary"
-                app:titleTextColor="@color/white" />
+                app:titleTextColor="@color/semantic_on_primary" />
         </com.google.android.material.appbar.AppBarLayout>
 
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -58,7 +58,7 @@
                         app:cardBackgroundColor="@color/semantic_surface"
                         app:cardCornerRadius="@dimen/shape_radius_standard"
                         app:cardElevation="@dimen/elevation_resting"
-                        app:strokeColor="@color/semantic_outline"
+                        app:strokeColor="@color/semantic_on_surface_variant"
                         app:strokeWidth="1dp">
                         <LinearLayout
                             android:layout_width="match_parent"
@@ -79,7 +79,7 @@
                                 android:layout_marginTop="@dimen/spacing_8"
                                 android:text="@string/dashboard_encrypted_sync"
                                 android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                                android:textColor="@color/semantic_outline" />
+                                android:textColor="@color/semantic_on_surface_variant" />
                             <LinearLayout
                                 android:id="@+id/dashboard_status_row"
                                 android:layout_width="match_parent"
@@ -116,7 +116,7 @@
                                         android:layout_marginTop="4dp"
                                         android:text="@string/dashboard_waiting_for_results"
                                         android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                                        android:textColor="@color/semantic_outline" />
+                                        android:textColor="@color/semantic_on_surface_variant" />
                                 </LinearLayout>
                             </LinearLayout>
                             <com.google.android.material.button.MaterialButton
@@ -240,7 +240,7 @@
                     <com.google.android.material.card.MaterialCardView android:id="@+id/taskdav" style="@style/Widget.AppTheme.Dashboard.CollectionCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8">
                         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
                             <com.google.android.material.appbar.MaterialToolbar android:id="@+id/taskdav_menu" style="@style/Widget.AppTheme.Dashboard.CollectionToolbar" app:navigationIcon="@drawable/ic_task_light" app:title="@string/settings_taskdav" />
-                            <TextView android:id="@+id/taskdav_opentasks_warning" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="@dimen/spacing_8" android:background="@color/infoColor" android:padding="@dimen/spacing_16" android:text="@string/account_tasks_not_showing" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" android:textColor="@color/semantic_on_surface" android:visibility="gone" />
+                            <TextView android:id="@+id/taskdav_opentasks_warning" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="@dimen/spacing_8" android:background="@color/semantic_surface_variant" android:padding="@dimen/spacing_16" android:text="@string/account_tasks_not_showing" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" android:textColor="@color/semantic_on_surface" android:visibility="gone" />
                             <io.silentsuite.sync.ui.widget.MaximizedListView android:id="@+id/tasklists" android:layout_width="match_parent" android:layout_height="wrap_content" android:choiceMode="multipleChoice" android:descendantFocusability="beforeDescendants" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>

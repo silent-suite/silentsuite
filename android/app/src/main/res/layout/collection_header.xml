@@ -25,7 +25,7 @@
             android:layout_width="32dp"
             android:layout_height="32dp"
             android:layout_marginStart="@dimen/spacing_16"
-            android:background="@color/orangeA700"
+            android:background="@color/semantic_primary"
             android:importantForAccessibility="no" />
     </LinearLayout>
 

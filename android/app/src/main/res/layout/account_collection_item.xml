@@ -50,7 +50,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-            android:textColor="@color/semantic_outline"
+            android:textColor="@color/semantic_on_surface_variant"
             android:ellipsize="end"
             android:maxLines="2"
             tools:text="Description" />
@@ -81,6 +81,6 @@
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:importantForAccessibility="no"
-        tools:background="@color/green700" />
+        tools:background="@color/semantic_secondary_action" />
 
 </LinearLayout>

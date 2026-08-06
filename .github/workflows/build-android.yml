@@ -8,6 +8,7 @@ on:
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
+      - 'apps/web/app/globals.css'
       - 'scripts/check-android-signing-boundary.py'
       - '.github/workflows/**'
       - 'android/.github/workflows/**'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
+      - 'apps/web/app/globals.css'
       - 'scripts/check-android-signing-boundary.py'
       - '.github/workflows/**'
       - 'android/.github/workflows/**'
@@ -270,6 +272,7 @@ jobs:
           - api-level: 35
             arch: x86_64
             shard: all
+            navigation-mode: 2
           - api-level: 36
             arch: x86_64
             shard: account-dashboard
@@ -279,6 +282,7 @@ jobs:
           - api-level: 36
             arch: x86_64
             shard: status-routes
+            navigation-mode: 0
     defaults:
       run:
         working-directory: android
@@ -329,7 +333,7 @@ jobs:
           target: google_apis
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
-          script: bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"
+          script: bash android/scripts/run-focused-runtime-with-navigation.sh "${{ matrix.api-level }}" "${{ matrix.shard }}" "${{ matrix.navigation-mode }}"
 
       - name: Initialize focused runtime producer manifest
         if: always()
@@ -417,8 +421,8 @@ jobs:
             expected={pair for pair in canonical if pair[0] in owners}
           else:
             raise SystemExit(f'unsupported API/shard {key}')
-          expected_sizes={'21:mixed':1,'21:remaining':80,'35:all':81,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':37}
-          if len(canonical) != 81 or len(expected) != expected_sizes[key]:
+          expected_sizes={'21:mixed':1,'21:remaining':83,'35:all':84,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':40}
+          if len(canonical) != 84 or len(expected) != expected_sizes[key]:
             raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
@@ -499,6 +503,66 @@ jobs:
             android/app/build/outputs/androidTest-results/connected/
             android/app/build/outputs/androidTest-results/scenarios/
             android/app/build/reports/androidTests/connected/
+          if-no-files-found: warn
+          retention-days: 14
+
+  color-parity-evidence:
+    name: Android color parity evidence (API 36)
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Rust Android targets
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable and build native client
+        run: |
+          chmod +x gradlew
+          scripts/build-etebase-client-16kb.sh
+
+      - name: Enable KVM for the emulator
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Capture credential-free color parity evidence
+        id: parity-evidence
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: bash android/scripts/run-color-parity-evidence.sh
+
+      - name: Upload color parity evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-color-parity-evidence-${{ github.sha }}
+          path: android/build/color-parity-evidence/
           if-no-files-found: warn
           retention-days: 14
 

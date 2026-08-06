@@ -449,12 +449,14 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         "- name: Run focused launcher and setup recreation contracts", 1
     )[1].split("- name: Upload focused androidTest reports and results", 1)[0]
     script = FOCUSED_RUNTIME_SCRIPT.read_text(encoding="utf-8")
+    navigation_wrapper = (ROOT / "android/scripts/run-focused-runtime-with-navigation.sh").read_text(encoding="utf-8")
     assertion = workflow.split("- name: Assert focused runtime methods executed", 1)[1]
 
     assert "timeout-minutes: 60" in job
-    assert re.findall(r"^\s+script:\s*(.+)$", step, re.MULTILINE) == [
-        'bash android/scripts/run-focused-runtime-tests.sh "${{ matrix.api-level }}" "${{ matrix.shard }}"'
-    ]
+    runner = 'bash android/scripts/run-focused-runtime-with-navigation.sh "${{ matrix.api-level }}" "${{ matrix.shard }}" "${{ matrix.navigation-mode }}"'
+    assert re.findall(r"^\s+script:\s*(.+)$", step, re.MULTILINE) == [runner]
+    assert navigation_wrapper.index('navigation_mode="$3"') < navigation_wrapper.index("settings get secure navigation_mode")
+    assert navigation_wrapper.rstrip().endswith('exec bash "$(dirname "$0")/run-focused-runtime-tests.sh" "$api_level" "$shard"')
     rows = re.findall(r"- api-level: (\d+)\n\s+arch: (\S+)\n\s+shard: (\S+)", job)
     assert rows == [
         ("21", "x86", "mixed"), ("21", "x86", "remaining"),
@@ -486,16 +488,20 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             (class_name, method)
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
-    assert len(canonical) == 81
+    assert len(canonical) == 84
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
+    requested = {
+        pair for pair in canonical
+        if pair[1] == "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
+    }
     api36 = {
         key: {pair for pair in canonical if pair[0] in set(ledger["shards"][key])}
         for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes")
     }
-    assert (len(mixed), len(canonical - mixed), len(canonical)) == (1, 80, 81)
-    assert tuple(len(api36[key]) for key in api36) == (27, 17, 37)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 82, 84)
+    assert tuple(len(api36[key]) for key in api36) == (27, 17, 40)
     assert all(
         left.isdisjoint(right)
         for index, left in enumerate(api36.values())
@@ -556,7 +562,12 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':80,'35:all':81,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':37}" in assertion
+    assert "expected_sizes={'21:mixed':1,'21:remaining':83,'35:all':84,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':40}" in assertion
+    assert '"21:remaining": 82' in script
+    assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
+    assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
+    assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper
+    assert 'settings get secure navigation_mode' in navigation_wrapper
     assert "glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True)" in assertion
     assert "unexpected=set(counts)-expected" in assertion
     assert "duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}" in assertion
