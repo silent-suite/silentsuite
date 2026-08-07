@@ -68,9 +68,12 @@ jobs:
         run: pnpm --filter @silentsuite/docs test:android-distribution
 
       - name: Build docs
-        run: pnpm run build --filter=@silentsuite/docs
+        run: pnpm --filter @silentsuite/docs exec vitepress build
         env:
           SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'
+
+      - name: Verify admitted docs artifact before upload
+        run: node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist --mode enabled
 
       - name: Upload admitted docs artifact
         id: upload
@@ -124,6 +127,7 @@ jobs:
           rm -rf apps/docs/.vitepress/dist
           mkdir -p apps/docs/.vitepress/dist
           unzip -q "$ARTIFACT_ZIP" -d apps/docs/.vitepress/dist
+          node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist --mode enabled
 
       - name: Re-assert owner approval immediately before deployment
         shell: bash

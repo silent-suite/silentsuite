@@ -6,6 +6,7 @@ const { withSentryConfig } = require('@sentry/nextjs')
 const withNextIntl = createNextIntlPlugin('./i18n/request.ts')
 const hostedConnectSources = "connect-src 'self' https://api.silentsuite.io https://server.silentsuite.io wss://server.silentsuite.io https://*.sentry.io"
 const signupConnectSources = `${hostedConnectSources} https://plausible.silentsuite.io https://api.stripe.com`
+const subscriptionConnectSources = `${hostedConnectSources} https://plausible.silentsuite.io`
 
 // Resolve etebase CJS entry — it's a dep of @silentsuite/core,
 // not directly in apps/web's node_modules (pnpm strict isolation).
@@ -39,6 +40,10 @@ const nextConfig = {
         source,
         headers: [{ key: 'Content-Security-Policy', value: hostedConnectSources }],
       })),
+      {
+        source: '/settings/subscription',
+        headers: [{ key: 'Content-Security-Policy', value: subscriptionConnectSources }],
+      },
     ]
   },
   webpack: (config) => {

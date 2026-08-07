@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildSignupPageviewPayload,
+  buildCheckoutReturnedPayload,
+  buildPlanSelectedPayload,
+  buildSubscriptionManagementEntryPayload,
   canonicalizeCampaignParams,
   classifyReferrer,
   sanitizedSignupPageUrl,
@@ -36,12 +39,21 @@ describe('public analytics privacy contract', () => {
     })
   })
 
-  it('sanitizes signup page URLs to canonical campaign values', () => {
+  it('strips all query and fragment data from signup page URLs', () => {
     expect(
       sanitizedSignupPageUrl(
         'https://app.silentsuite.io/signup?utm_source=github&utm_medium=referral&utm_content=email@example.com&returnTo=%2Fcalendar',
       ),
-    ).toBe('https://app.silentsuite.io/signup?utm_source=github&utm_medium=referral')
+    ).toBe('https://app.silentsuite.io/signup')
+  })
+
+  it('uses the fixed signup registry URL instead of an arbitrary origin or nested path', () => {
+    expect(sanitizedSignupPageUrl('https://previewapp.silentsuite.io/signup/plan?email=user@example.com#private')).toBe(
+      'https://app.silentsuite.io/signup',
+    )
+    expect(sanitizedSignupPageUrl('https://evil.test/signup/customer@example.com')).toBe(
+      'https://app.silentsuite.io/signup',
+    )
   })
 
   it('classifies the referrer without retaining its path', () => {
@@ -59,8 +71,20 @@ describe('public analytics privacy contract', () => {
     )).toEqual({
       domain: 'app.silentsuite.io',
       name: 'pageview',
-      url: 'https://app.silentsuite.io/signup?utm_source=github',
-      props: { referrer_category: 'github' },
+      url: 'https://app.silentsuite.io/signup',
+      props: { referrer_category: 'github', utm_source: 'github' },
+    })
+  })
+
+  it('creates only fixed commercial-funnel event payloads', () => {
+    expect(buildPlanSelectedPayload('monthly')).toEqual({
+      domain: 'app.silentsuite.io', name: 'Plan Selected', url: 'https://app.silentsuite.io/signup', props: { plan_class: 'monthly' },
+    })
+    expect(buildCheckoutReturnedPayload('cancelled', 'btcpay')).toEqual({
+      domain: 'app.silentsuite.io', name: 'Checkout Returned', url: 'https://app.silentsuite.io/signup/cancel', props: { outcome: 'cancelled', payment_method: 'btcpay' },
+    })
+    expect(buildSubscriptionManagementEntryPayload()).toEqual({
+      domain: 'app.silentsuite.io', name: 'Subscription Management Entry', url: 'https://app.silentsuite.io/settings/subscription', props: { surface: 'subscription_settings' },
     })
   })
 })

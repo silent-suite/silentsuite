@@ -8,6 +8,7 @@ import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
+import { CheckoutReturnAnalytics } from '../commercial-funnel-analytics'
 
 type PaymentState = 'pending' | 'settled' | 'account' | 'vault' | 'expired' | 'timeout' | 'unknown'
 type PaymentFlowCheckState = 'idle' | 'loading' | 'ready' | 'failed'
@@ -388,6 +389,7 @@ export default function PendingPaymentPage() {
 
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center space-y-6 text-center">
+      <CheckoutReturnAnalytics outcome="pending" paymentMethod="btcpay" />
       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10">
         {state === 'settled' ? <Check className="h-7 w-7 text-emerald-400" /> : isWaiting ? <Loader2 className="h-7 w-7 animate-spin text-amber-300" /> : <AlertTriangle className="h-7 w-7 text-amber-300" />}
       </div>

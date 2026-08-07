@@ -15,7 +15,7 @@
     "type-check": "turbo type-check",
     "i18n:check": "pnpm --filter @silentsuite/web i18n:check",
     "i18n:report": "pnpm --filter @silentsuite/web i18n:report",
-    "check:public-analytics": "node scripts/check-public-analytics.mjs && node --experimental-strip-types --test apps/docs/.vitepress/theme/public-analytics.test.mts",
+    "check:public-analytics": "node scripts/check-public-analytics.mjs && node --test apps/web/next.config.public-analytics.test.mjs apps/web/signup-plan-selected-contract.test.mjs scripts/check-public-analytics.test.mjs scripts/verify-docs-analytics-build.test.mjs scripts/docs-analytics-deploy.test.mjs && node --experimental-strip-types --test apps/docs/.vitepress/theme/public-analytics.test.mts apps/docs/.vitepress/theme/docs-analytics-runtime.test.mts",
     "test:dependency-security": "node --test scripts/audit-high-critical.test.mjs scripts/dependency-compatibility-smoke.test.mjs",
     "audit:security": "pnpm run test:dependency-security && node scripts/audit-high-critical.mjs"
   },

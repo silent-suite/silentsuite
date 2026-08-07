@@ -3,10 +3,12 @@
 import Link from 'next/link'
 import { XCircle } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
+import { CheckoutReturnAnalytics } from '../commercial-funnel-analytics'
 
 export default function SignupCancelPage() {
   return (
     <div className="max-w-md mx-auto space-y-6 text-center">
+      <CheckoutReturnAnalytics outcome="cancelled" paymentMethod="unknown" />
       <div className="flex flex-col items-center gap-4">
         <div className="rounded-full bg-[rgb(var(--surface))] p-4">
           <XCircle className="h-12 w-12 text-[rgb(var(--muted))]" />

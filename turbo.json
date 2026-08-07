@@ -4,6 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "env": ["SILENTSUITE_HOSTED_DOCS_ANALYTICS"],
       "outputs": [".next/**", "!.next/cache/**", "dist/**", ".vitepress/dist/**"]
     },
     "dev": {

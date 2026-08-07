@@ -6,6 +6,36 @@ export type DocsOutboundEvent =
     }
   | { event: 'GitHub Click'; props: { surface: 'docs_android'; channel: 'repository' } }
 
+export const REGISTERED_DOCS_PATHS = new Set([
+  '/', '/app-logo-notices', '/bridge', '/contributing', '/contributing/architecture-overview',
+  '/contributing/code-conventions', '/contributing/dev-setup', '/contributing/pull-request-guide',
+  '/contributing/testing', '/self-hosting', '/self-hosting/admin-dashboard',
+  '/self-hosting/architecture', '/self-hosting/backup-and-restore', '/self-hosting/configuration',
+  '/self-hosting/manual-setup', '/self-hosting/quick-start', '/self-hosting/requirements',
+  '/self-hosting/troubleshooting', '/self-hosting/uninstalling', '/self-hosting/updating',
+  '/user-guide', '/user-guide/calendar', '/user-guide/contacts', '/user-guide/encryption-explained',
+  '/user-guide/faq', '/user-guide/getting-started', '/user-guide/tasks', '/user-guide/apps',
+  '/user-guide/apps/android', '/user-guide/apps/dav-bridge', '/user-guide/apps/evolution',
+  '/user-guide/apps/gnome', '/user-guide/apps/ios', '/user-guide/apps/kde',
+  '/user-guide/apps/linux-bridge', '/user-guide/apps/macos', '/user-guide/apps/tasks-org',
+  '/user-guide/apps/thunderbird', '/user-guide/apps/windows',
+])
+
+export function canonicalDocsPath(rawPath: string): string | undefined {
+  const path = rawPath.split(/[?#]/, 1)[0].replace(/\/$/, '') || '/'
+  return REGISTERED_DOCS_PATHS.has(path) ? path : undefined
+}
+
+export function createDocsPageviewTracker(deliver: (path: string) => void) {
+  let lastPath: string | undefined
+  return (rawPath: string) => {
+    const path = canonicalDocsPath(rawPath)
+    if (!path || path === lastPath) return
+    lastPath = path
+    deliver(path)
+  }
+}
+
 const APPROVED_DESTINATIONS: Readonly<Record<string, DocsOutboundEvent>> = {
   'https://app.silentsuite.io': {
     event: 'Hosted App Click',

@@ -10,6 +10,7 @@ import { formatDate as formatDateUtil } from '@/app/lib/date'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
+import { CheckoutReturnAnalytics } from '../commercial-funnel-analytics'
 
 // ---------------------------------------------------------------------------
 // Inner component that reads searchParams (must be inside <Suspense>)
@@ -28,6 +29,7 @@ function SignupSuccessInner() {
   const setupIntent = searchParams.get('setup_intent')
   const returnTo = normalizeSignupReturnTo(searchParams.get('return_to'))
   const isStripeRedirect = !!(setupIntent && redirectStatus)
+  const checkoutReturn = <CheckoutReturnAnalytics outcome={redirectStatus === 'failed' ? 'failed' : 'returned'} paymentMethod={isStripeRedirect ? 'stripe' : 'unknown'} />
 
   const [state, setState] = useState<RedirectState>(isStripeRedirect ? 'loading' : 'none')
   const [restoredEmail, setRestoredEmail] = useState<string>('')
@@ -97,6 +99,7 @@ function SignupSuccessInner() {
   if (state === 'loading') {
     return (
       <div className="max-w-md mx-auto flex flex-col items-center justify-center py-12">
+        {checkoutReturn}
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
         <p className="mt-4 text-sm text-[rgb(var(--muted))]">Completing setup...</p>
       </div>
@@ -106,6 +109,7 @@ function SignupSuccessInner() {
   if (state === 'account') {
     return (
       <div className="max-w-md mx-auto space-y-6">
+        {checkoutReturn}
         <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
           <CheckCircle className="h-5 w-5 text-emerald-500 shrink-0" />
           <div>
@@ -122,6 +126,7 @@ function SignupSuccessInner() {
   if (state === 'vault') {
     return (
       <div className="max-w-md mx-auto space-y-6">
+        {checkoutReturn}
         {/* Brief success confirmation before vault */}
         <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
           <CheckCircle className="h-5 w-5 text-emerald-500 shrink-0" />
@@ -151,6 +156,7 @@ function SignupSuccessInner() {
   if (state === 'failed') {
     return (
       <div className="max-w-md mx-auto space-y-6 text-center">
+        {checkoutReturn}
         <div className="flex flex-col items-center gap-4">
           <div className="rounded-full bg-red-500/10 p-4">
             <AlertTriangle className="h-12 w-12 text-red-400" />
@@ -198,6 +204,7 @@ function SignupSuccessInner() {
 
   return (
     <div className="max-w-md mx-auto space-y-6 text-center">
+      {checkoutReturn}
       <div className="flex flex-col items-center gap-4">
         <div className="rounded-full bg-[rgb(var(--primary))]/10 p-4">
           <CheckCircle className="h-12 w-12 text-[rgb(var(--primary))]" />

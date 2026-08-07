@@ -8,6 +8,7 @@ import { formatDate as formatDateUtil } from '@/app/lib/date'
 import AddCardBanner from '@/app/components/add-card-banner'
 import PaymentChoicePanel from '@/app/components/payment-choice-panel'
 import { getPaidBonusAccessDate } from './bonus-access'
+import { SubscriptionEntry } from './subscription-entry'
 
 interface SubscriptionCapabilities {
   trialActive: boolean
@@ -79,6 +80,7 @@ function getCapabilities(data: SubscriptionData): SubscriptionCapabilities {
 function LoadingSkeleton() {
   return (
     <div className="space-y-6">
+      <SubscriptionEntry />
       <div className="rounded-lg border border-[rgb(var(--border))] p-4 space-y-4">
         <div className="h-4 w-32 animate-pulse rounded bg-[rgb(var(--border))]" />
         <div className="space-y-3">
