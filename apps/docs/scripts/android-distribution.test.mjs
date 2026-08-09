@@ -222,14 +222,15 @@ test('hosted Android guide exposes direct logo buttons for every distribution st
   assert.match(hostedAndroid, /class="android-channel-button is-pending"[^>]*aria-label="F-Droid, on the roadmap, pending official inclusion"/)
 })
 
-test('hosted Android guide presents Orion as a full-width third-party tile below the other stores', () => {
+test('hosted Android guide presents Orion as a standard-size third-party tile below the other stores', () => {
   assert.match(hostedAndroid, /### Other community stores/)
   assert.match(hostedAndroid, /https:\/\/github\.com\/RookieEnough\/Orion-Store/)
-  assert.match(hostedAndroid, /class="android-channel-button is-wide" href="orionstore:\/\/app\/silentsuite"/)
+  assert.match(hostedAndroid, /class="android-channel-button" href="orionstore:\/\/app\/silentsuite"/)
   assert.match(hostedAndroid, /\/channel-icons\/orion\.png/)
   assert.match(hostedAndroid, /<strong>Orion Store<\/strong><small>Third-party community store<\/small>/)
-  assert.match(hostedAndroid, /F-Droid[\s\S]*class="android-channel-button is-wide" href="orionstore:\/\/app\/silentsuite"/)
-  assert.match(themeCss, /\.android-channel-button\.is-wide\s*\{[^}]*grid-column:\s*1 \/ -1/s)
+  assert.match(hostedAndroid, /F-Droid[\s\S]*class="android-channel-button" href="orionstore:\/\/app\/silentsuite"/)
+  assert.doesNotMatch(hostedAndroid, /android-channel-button is-wide/)
+  assert.doesNotMatch(themeCss, /\.android-channel-button\.is-wide/)
   assert.match(hostedAndroid, /retrieves the developer-signed APK from SilentSuite's GitHub Releases/)
   assert.match(hostedAndroid, /third-party distribution client and is not operated by SilentSuite/)
   assert.match(hostedAndroid, /confirm that Orion shows the expected SilentSuite version and GitHub release source/)
