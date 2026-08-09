@@ -1,0 +1,1 @@
+Improved Bridge upgrades for existing caches, refreshed the landing page, improved mobile responsiveness, and updated distribution documentation.
