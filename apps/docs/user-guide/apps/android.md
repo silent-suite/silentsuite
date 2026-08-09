@@ -29,6 +29,10 @@ downloads keep independent distribution paths available.
     <span class="android-channel-logo"><img src="/channel-icons/fdroid.png" alt="" aria-hidden="true"></span>
     <span class="android-channel-copy"><strong>F-Droid</strong><small>Pending official inclusion</small><span class="android-channel-status">On the roadmap</span></span>
   </div>
+  <a class="android-channel-button is-wide" href="orionstore://app/silentsuite">
+    <span class="android-channel-logo"><img src="/channel-icons/orion.png" alt="" aria-hidden="true"></span>
+    <span class="android-channel-copy"><strong>Orion Store</strong><small>Third-party community store</small></span>
+  </a>
 </div>
 
 <div class="android-channel-secondary">

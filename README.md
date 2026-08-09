@@ -166,7 +166,7 @@ The marketing site and hosted billing/accounts API live separately and have no c
 
 ## License
 
-[AGPL-3.0-only](./LICENSE) · [`android/LICENSE`](./android/LICENSE) (GPL-3.0)
+[AGPL-3.0-only](./LICENSE) · [`android/LICENSE`](./android/LICENSE) (GPL-3.0) · [Third-party logo notices](./apps/docs/app-logo-notices.md)
 
 <div align="center">
 

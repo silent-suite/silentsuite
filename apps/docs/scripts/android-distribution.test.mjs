@@ -13,6 +13,7 @@ function read(path) {
 const hostedAndroid = read(resolve(docsRoot, 'user-guide/apps/android.md'))
 const hostedIos = read(resolve(docsRoot, 'user-guide/apps/ios.md'))
 const hostedFaq = read(resolve(docsRoot, 'user-guide/faq.md'))
+const appLogoNotices = read(resolve(docsRoot, 'app-logo-notices.md'))
 const siblingFaq = read(resolve(repoRoot, 'docs/user-guide/faq.md'))
 const siblingGettingStarted = read(resolve(repoRoot, 'docs/user-guide/getting-started.md'))
 const siblingGuideIndex = read(resolve(repoRoot, 'docs/user-guide/README.md'))
@@ -206,7 +207,7 @@ function hasFalseQrTargetClaim(content) {
 }
 
 test('hosted Android guide exposes direct logo buttons for every distribution state', () => {
-  const assets = ['google-play.svg', 'obtainium.svg', 'zapstore.png', 'fdroid.png', 'github.svg']
+  const assets = ['google-play.svg', 'obtainium.svg', 'zapstore.png', 'fdroid.png', 'orion.png', 'github.svg']
   for (const asset of assets) {
     assert.equal(existsSync(resolve(docsRoot, `public/channel-icons/${asset}`)), true, asset)
     assert.match(hostedAndroid, new RegExp(`/channel-icons/${asset.replace('.', '\\.')}`))
@@ -221,14 +222,23 @@ test('hosted Android guide exposes direct logo buttons for every distribution st
   assert.match(hostedAndroid, /class="android-channel-button is-pending"[^>]*aria-label="F-Droid, on the roadmap, pending official inclusion"/)
 })
 
-test('hosted Android guide presents Orion as a third-party community store', () => {
+test('hosted Android guide presents Orion as a full-width third-party tile below the other stores', () => {
   assert.match(hostedAndroid, /### Other community stores/)
   assert.match(hostedAndroid, /https:\/\/github\.com\/RookieEnough\/Orion-Store/)
-  assert.match(hostedAndroid, /orionstore:\/\/app\/silentsuite/)
+  assert.match(hostedAndroid, /class="android-channel-button is-wide" href="orionstore:\/\/app\/silentsuite"/)
+  assert.match(hostedAndroid, /\/channel-icons\/orion\.png/)
+  assert.match(hostedAndroid, /<strong>Orion Store<\/strong><small>Third-party community store<\/small>/)
+  assert.match(hostedAndroid, /F-Droid[\s\S]*class="android-channel-button is-wide" href="orionstore:\/\/app\/silentsuite"/)
+  assert.match(themeCss, /\.android-channel-button\.is-wide\s*\{[^}]*grid-column:\s*1 \/ -1/s)
   assert.match(hostedAndroid, /retrieves the developer-signed APK from SilentSuite's GitHub Releases/)
   assert.match(hostedAndroid, /third-party distribution client and is not operated by SilentSuite/)
   assert.match(hostedAndroid, /confirm that Orion shows the expected SilentSuite version and GitHub release source/)
-  assert.doesNotMatch(hostedAndroid, /class="android-channel-button"[^>]*href="orionstore:\/\/app\/silentsuite"/)
+  assert.match(appLogoNotices, /Orion Store contributors \/ RookieEnough/)
+  assert.match(appLogoNotices, /96faec24d476aa57abcbbfd0daff31c2d4e3276f\/assets\/orion_logo_512\.png/)
+  assert.match(appLogoNotices, /GPL-3\.0/)
+  assert.match(appLogoNotices, /resized from the 1496 × 1496 source bitmap to 192 × 192 on 2026-08-09/)
+  assert.match(appLogoNotices, /69b7fc5c13b932e88e8309edf838ce1b835826cebf1bd0559543043b9d315fcd\s+orion\.png/)
+  assert.match(rootReadme, /Third-party logo notices/)
 })
 
 test('channel buttons use theme-appropriate high-contrast focus indicators', () => {

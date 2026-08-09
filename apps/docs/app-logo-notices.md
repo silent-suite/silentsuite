@@ -16,12 +16,13 @@ The files are served locally so loading the documentation does not contact third
 | Apple Calendar | Apple Inc. | [Exact icon file](https://help.apple.com/assets/67DB4AD617009A1F970697F4/67DB4AD747D53316F70BB655/en_US/9c6fd1cb730164c989d1b3afab213fad.png) from the official [Calendar User Guide](https://support.apple.com/guide/calendar/welcome/mac) | Proprietary Apple app icon, reproduced solely for nominative reference; not licensed under AGPL-3.0-only; see [Apple trademark guidelines](https://www.apple.com/legal/intellectual-property/guidelinesfor3rdparties.html) |
 | Apple Contacts | Apple Inc. | [Exact icon file](https://help.apple.com/assets/6940565209A94A9B200A40A9/69405653B52840D87D012299/en_US/7f52b6a8a42927374571f4ead913072a.png) from the official [Contacts User Guide](https://support.apple.com/guide/contacts/welcome/mac) | Proprietary Apple app icon, reproduced solely for nominative reference; not licensed under AGPL-3.0-only; see [Apple trademark guidelines](https://www.apple.com/legal/intellectual-property/guidelinesfor3rdparties.html) |
 | Microsoft Outlook | Microsoft Corporation | [Exact FY26 Outlook icon file](https://www.microsoft.com/content/dam/microsoft/bade/images/icons/en-us/m365-app-icons-fy26/Outlook-Icon-FY26.svg) from the [Outlook for Windows product page](https://www.microsoft.com/en-us/microsoft-365/outlook/outlook-for-windows) | Proprietary Microsoft app icon, reproduced solely for nominative reference; not licensed under AGPL-3.0-only; see [Microsoft trademark and brand guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks) |
+| Orion Store | Orion Store contributors / RookieEnough | [`assets/orion_logo_512.png`](https://github.com/RookieEnough/Orion-Store/blob/96faec24d476aa57abcbbfd0daff31c2d4e3276f/assets/orion_logo_512.png) | [GPL-3.0](https://github.com/RookieEnough/Orion-Store/blob/96faec24d476aa57abcbbfd0daff31c2d4e3276f/LICENSE); Orion Store mark; resized from the 1496 × 1496 source bitmap to 192 × 192 on 2026-08-09, without recoloring |
 
-No logo artwork was recolored, redrawn, or combined with the SilentSuite mark. Files were copied at their source dimensions and are resized only by browser layout rules.
+No logo artwork was recolored, redrawn, or combined with the SilentSuite mark. Files were copied at their source dimensions and are resized only by browser layout rules, except for the Orion Store bitmap transformation recorded above.
 
 ## Integrity Inventory
 
-The files were retrieved or verified against their listed sources on 2026-08-01.
+The original app-directory files were retrieved or verified against their listed sources on 2026-08-01. The Orion Store icon was retrieved, transformed, and verified on 2026-08-09.
 
 ```text
 883ecb1c699319053a69da792329b76412047e9ed8896a3a62e1dfc0910753ec  logo.svg
@@ -34,4 +35,5 @@ b15caad3128a32b1e02999902d56e072e72a8fbbfbb2d3d64b20a592c71222b3  gnome-contacts
 d67b8bb4bb8d7afe8e71e066112452d5d681ea7991fa1ec7c37df962246b2c31  outlook.svg
 85411d976f96746405ff810c695c574bef835d9d8edf6b3f2f964ffdf946d553  tasks-org.svg
 c64b09547bec63b6742e3810b0df8a23210f33e218345a430c9722822b272157  thunderbird.png
+69b7fc5c13b932e88e8309edf838ce1b835826cebf1bd0559543043b9d315fcd  orion.png
 ```
