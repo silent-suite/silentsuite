@@ -221,6 +221,16 @@ test('hosted Android guide exposes direct logo buttons for every distribution st
   assert.match(hostedAndroid, /class="android-channel-button is-pending"[^>]*aria-label="F-Droid, on the roadmap, pending official inclusion"/)
 })
 
+test('hosted Android guide presents Orion as a third-party community store', () => {
+  assert.match(hostedAndroid, /### Other community stores/)
+  assert.match(hostedAndroid, /https:\/\/github\.com\/RookieEnough\/Orion-Store/)
+  assert.match(hostedAndroid, /orionstore:\/\/app\/silentsuite/)
+  assert.match(hostedAndroid, /retrieves the developer-signed APK from SilentSuite's GitHub Releases/)
+  assert.match(hostedAndroid, /third-party distribution client and is not operated by SilentSuite/)
+  assert.match(hostedAndroid, /confirm that Orion shows the expected SilentSuite version and GitHub release source/)
+  assert.doesNotMatch(hostedAndroid, /class="android-channel-button"[^>]*href="orionstore:\/\/app\/silentsuite"/)
+})
+
 test('channel buttons use theme-appropriate high-contrast focus indicators', () => {
   assert.match(themeCss, /\.android-channel-button\[href\]:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--vp-c-brand-3\)/s)
   assert.match(themeCss, /\.dark \.android-channel-button\[href\]:focus-visible\s*\{[^}]*outline-color:\s*var\(--vp-c-brand-1\)/s)

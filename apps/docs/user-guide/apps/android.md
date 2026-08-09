@@ -66,6 +66,12 @@ Grab the latest APK directly from GitHub Releases:
 
 Look for the asset named `silentsuite-android-vX.Y.Z-beta.apk` and install it. You'll need to allow installation from unknown sources the first time.
 
+### Other community stores
+
+SilentSuite is also indexed by the independent, open-source [Orion Store](https://github.com/RookieEnough/Orion-Store). Orion currently retrieves the developer-signed APK from SilentSuite's GitHub Releases. Install Orion separately, then [open SilentSuite in Orion](orionstore://app/silentsuite).
+
+Orion is a third-party distribution client and is not operated by SilentSuite. Before installing, confirm that Orion shows the expected SilentSuite version and GitHub release source.
+
 ### F-Droid status
 
 Official F-Droid publication is pending inclusion. SilentSuite is not yet
@@ -74,14 +80,14 @@ of the available installation channels above.
 
 ### Certificate hashes and channel switching
 
-Android only allows an app update when the installed app and the update APK are signed with the same certificate. Google Play uses Play App Signing, so the APK installed from Play can have a different certificate than the developer-signed APK distributed through GitHub Releases, Zapstore, or a future F-Droid build.
+Android only allows an app update when the installed app and the update APK are signed with the same certificate. Google Play uses Play App Signing, so the APK installed from Play can have a different certificate than the developer-signed APK distributed through GitHub Releases, Zapstore, Orion Store, or a future F-Droid build.
 
 SilentSuite's known Android signing certificate SHA-256 hashes are:
 
 - **Google Play app signing certificate:** `2e10d9ef90276e755bddf086391d7e0c933589c6d36e4e43fae59a7babcb8a49`
-- **Developer-signed release certificate for GitHub Releases, Zapstore, and future reproducible F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
+- **Developer-signed release certificate for GitHub Releases, Zapstore, Orion Store, and future reproducible F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
 
-If you installed from Google Play, update through Google Play. If you installed from GitHub Releases or Zapstore, update through that same direct APK channel. When official F-Droid distribution becomes available, keep F-Droid installations on that channel. Switching between Google Play and developer-signed APK channels may require uninstalling and reinstalling the app. A certificate mismatch warning in that situation is expected and does not by itself indicate a compromised build.
+If you installed from Google Play, update through Google Play. If you installed from GitHub Releases, Zapstore, or Orion Store, update through that same developer-signed APK channel. When official F-Droid distribution becomes available, keep F-Droid installations on that channel. Switching between Google Play and developer-signed APK channels may require uninstalling and reinstalling the app. A certificate mismatch warning in that situation is expected and does not by itself indicate a compromised build.
 
 ::: tip
 The SilentSuite Android app is a fork of the [EteSync Android app](https://github.com/etesync/android) with SilentSuite branding and `server.silentsuite.io` pre-configured as the default server. If you prefer, the original EteSync app from [Google Play](https://play.google.com/store/apps/details?id=com.etesync.syncadapter) or [F-Droid](https://f-droid.org/packages/com.etesync.syncadapter/) also works -- just enter the server URL manually.
