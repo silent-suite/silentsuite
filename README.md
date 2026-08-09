@@ -17,7 +17,11 @@ Open-source, zero-knowledge sync. Plaintext stays off the server; encryption key
 <br />
 
 <a href="https://silentsuite.io">
-  <img src="./.github/assets/product-showcase.png" alt="SilentSuite calendar on a laptop and phone" width="100%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./.github/assets/product-showcase-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="./.github/assets/product-showcase-light.png" />
+    <img src="./.github/assets/product-showcase-light.png" alt="SilentSuite calendar on a laptop and phone" width="100%" />
+  </picture>
 </a>
 
 <br />
@@ -58,7 +62,11 @@ SilentSuite takes a different approach:
 
 ## How it works
 
-<img src="./.github/assets/encryption-flow.png" alt="Readable calendar, task, and contact data is encrypted before reaching the server and decrypted on another trusted device" width="100%" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./.github/assets/encryption-flow-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="./.github/assets/encryption-flow-light.png" />
+  <img src="./.github/assets/encryption-flow-light.png" alt="Readable calendar, task, and contact data is encrypted before reaching the server and decrypted on another trusted device" width="100%" />
+</picture>
 
 1. A trusted client derives and uses encryption keys locally.
 2. Calendar, contact, and task records are encrypted before upload.
