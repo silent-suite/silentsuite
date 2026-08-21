@@ -59,13 +59,13 @@ def test_bundletool_uses_a_private_temporary_password_file():
     )
 
 
-def test_android_build_runs_for_dev_and_main_pull_requests():
+def test_android_build_runs_for_main_pull_requests_only():
     workflow = ANDROID_BUILD_WORKFLOW.read_text(encoding="utf-8")
     pull_request = workflow.split("  pull_request:\n", 1)[1].split(
         "  workflow_dispatch:\n", 1
     )[0]
 
-    assert "branches: [dev, main]" in pull_request
+    assert "branches: [main]" in pull_request
 
 
 def test_every_checked_in_android_source_set_uses_lease_scoped_setup_secrets():

@@ -3,7 +3,7 @@ name: Test Bridge (Windows)
 on:
   workflow_dispatch:
   push:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'bridge/**'
       - 'android/app/src/main/AndroidManifest.xml'
@@ -21,7 +21,7 @@ on:
       - 'tests/test_windows_installer_static.py'
       - '.github/workflows/test-bridge-windows.yml'
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'bridge/**'
       - 'android/app/src/main/AndroidManifest.xml'

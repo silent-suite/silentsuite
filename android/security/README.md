@@ -10,7 +10,7 @@ SilentSuite's Android policy prohibits analytics, advertising, attribution, inst
 
 The Android build workflow gates:
 
-- debug APK, unsigned release APK, and unsigned release AAB on PR/dev/main;
+- debug APK, unsigned release APK, and unsigned release AAB on PRs and `main`;
 - signed release APK and AAB before tag artifacts are attached;
 - bundletool 1.18.1, verified by its pinned SHA-256, to generate local split/universal APK evidence;
 - debug/release runtime dependency graphs, merged/intermediate manifests, mapping/resource outputs, packaged archives, DEX bytes, and native strings;

@@ -2,14 +2,14 @@ name: CI Server
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'server/**'
       - 'Dockerfile.server'
       - '.dockerignore'
       - '.github/workflows/ci-server.yml'
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'server/**'
       - 'Dockerfile.server'

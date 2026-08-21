@@ -1,6 +1,6 @@
 # Production deployment authorization
 
-Promotion to `main` does not authorize or start a production deployment. Web, Server, and Docs use manual workflows bound to the exact reviewed live `main` commit.
+A reviewed merge to protected `main` does not authorize or start a production deployment. Web, Server, and Docs use manual workflows bound to the exact reviewed live `main` commit.
 
 ## Component authorization
 
@@ -46,8 +46,8 @@ Server migrations run with Compose interactive stdin and TTY attachment explicit
 
 An older ancestor is not eligible for direct dispatch because every workflow requires `expected_sha` to equal live `main`. To restore earlier behavior:
 
-1. Create and review a revert on `dev`.
-2. Promote that reviewed tree through the normal `dev` to `main` gate.
+1. Create and review a revert PR directly against protected `main`.
+2. Merge that reviewed revert through the normal protected-`main` gate.
 3. Authorize and dispatch the resulting new live `main` SHA using the normal component procedure.
 
 If an in-progress Web or Server replacement fails, its workflow restores the captured previously running image automatically. Verify the running image identity and service health before clearing the approval variable.

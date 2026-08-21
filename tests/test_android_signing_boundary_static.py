@@ -396,8 +396,8 @@ def test_nonrelease_job_write_permission_is_rejected(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "  build-pr:\n    name: Build (unsigned, PR/dev/main)\n    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n",
-        "  build-pr:\n    name: Build (unsigned, PR/dev/main)\n    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions: write-all\n",
+        "  build-pr:\n    name: Build (unsigned, PR/main)\n    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n",
+        "  build-pr:\n    name: Build (unsigned, PR/main)\n    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions: write-all\n",
     )
 
     assert_rejected(

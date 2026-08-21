@@ -2,7 +2,7 @@ name: Build Android APK and AAB
 
 on:
   push:
-    branches: [dev, main]
+    branches: [main]
     tags:
       - 'v*'
     paths:
@@ -13,7 +13,7 @@ on:
       - '.github/workflows/**'
       - 'android/.github/workflows/**'
   pull_request:
-    branches: [dev, main]
+    branches: [main]
     paths:
       - 'android/**'
       - 'tests/test_android_*.py'
@@ -50,11 +50,11 @@ jobs:
         run: python "$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py"
 
   # ─────────────────────────────────────────────────────────────────────
-  # PR / dev / main builds — unsigned, no signing secrets accessible.
+  # PR / main builds — unsigned, no signing secrets accessible.
   # Validates that the Android project compiles and assembles.
   # ─────────────────────────────────────────────────────────────────────
   build-pr:
-    name: Build (unsigned, PR/dev/main)
+    name: Build (unsigned, PR/main)
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

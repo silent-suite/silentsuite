@@ -3,11 +3,11 @@ name: Test Bridge (Linux x86_64)
 on:
   workflow_dispatch:
   push:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'bridge/**'
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'bridge/**'
 

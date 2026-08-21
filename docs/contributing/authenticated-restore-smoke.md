@@ -33,7 +33,7 @@ Production smoke is mutation-free only when the account is already initialized. 
 
 ## Preview smoke recipe
 
-1. Wait until the target change is merged to `dev` and the preview deploy has completed. PR image builds do not deploy the shared preview.
+1. Wait until the target change is merged to protected `main` and the shared preview deploy has completed. PR image builds do not deploy the shared preview. An optional manually dispatched preview may deploy an identified exact PR head; record that PR number and full SHA with the smoke evidence so it is not mistaken for the shared `main` preview.
 2. Open the deployed preview with restore diagnostics enabled:
 
    ```text

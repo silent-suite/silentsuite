@@ -1,9 +1,9 @@
-name: Preview Web App (dev deploy + PR builds)
+name: Preview Web App (protected-main shared deploy + PR builds)
 
 on:
   push:
     branches:
-      - dev
+      - main
     paths:
       - 'apps/web/**'
       - 'packages/**'
@@ -17,7 +17,7 @@ on:
       - 'scripts/check-billing-copy*.mjs'
       - '.github/workflows/**'
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - 'apps/web/**'
       - 'packages/**'
@@ -30,10 +30,16 @@ on:
       - 'android/**'
       - 'scripts/check-billing-copy*.mjs'
       - '.github/workflows/**'
-
-concurrency:
-  group: preview-web-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open same-repository PR number whose exact head should be previewed
+        required: true
+        type: string
+      expected_sha:
+        description: Exact lowercase 40-character PR head SHA to preview
+        required: true
+        type: string
 
 jobs:
   build-preview:
@@ -48,6 +54,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -87,7 +95,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const body = `**Preview build completed**\n\nVPS preview deploy is restricted to \`dev\` pushes. This PR built the web image locally but did not publish the shared preview tag or SSH deploy.\n\nBranch: \`${context.payload.pull_request.head.ref}\``;
+            const body = `**Preview build completed**\n\nThe shared preview updates from protected \`main\` only. This PR built the web image locally but did not publish the shared preview tag or SSH deploy. A manually dispatched exact-head preview is a separate, identified operation.\n\nBranch: \`${context.payload.pull_request.head.ref}\``;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -115,18 +123,63 @@ jobs:
               });
             }
 
-  build-and-deploy-preview:
-    name: Build & Deploy Preview
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+  resolve-trusted-target:
+    name: Resolve trusted preview target
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      target_sha: ${{ steps.resolve.outputs.target_sha }}
+
+    steps:
+      - name: Resolve push or manually requested exact PR head
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          PUSH_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.event.repository.id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            [[ "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "push must be from main" >&2; exit 1; }
+            target_sha="$PUSH_SHA"
+          else
+            [[ "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "manual preview must be dispatched from refs/heads/main" >&2; exit 1; }
+            [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "pr_number must be a positive decimal integer" >&2; exit 1; }
+            [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "expected_sha must be lowercase 40-character hexadecimal" >&2; exit 1; }
+            pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")"
+            jq -e \
+              --arg expected_sha "$EXPECTED_SHA" \
+              --argjson repository_id "$REPOSITORY_ID" \
+              '.state == "open" and .base.ref == "main" and .head.repo.id == $repository_id and .head.sha == $expected_sha' \
+              <<<"$pr" >/dev/null || { echo "PR must be open, target main, belong to this repository, and match expected_sha" >&2; exit 1; }
+            target_sha="$EXPECTED_SHA"
+          fi
+          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+
+  build-shared-preview-image:
+    name: Build Shared Preview Image
+    needs: resolve-trusted-target
+    if: needs.resolve-trusted-target.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-trusted-target.outputs.target_sha }}
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -146,22 +199,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push preview image
+      - name: Build preview image without registry or deployment credentials
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: Dockerfile.web
-          push: true
-          tags: |
-            ghcr.io/silent-suite/silentsuite-web:preview
-            ghcr.io/silent-suite/silentsuite-web:preview-${{ github.sha }}
+          push: false
+          tags: silentsuite-web:preview-${{ needs.resolve-trusted-target.outputs.target_sha }}
+          outputs: type=docker,dest=${{ runner.temp }}/preview-image.tar
           build-args: |
             NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
             NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
@@ -170,6 +215,76 @@ jobs:
             NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Upload exact preview image for the credentialed publish job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: preview-image-${{ needs.resolve-trusted-target.outputs.target_sha }}
+          path: ${{ runner.temp }}/preview-image.tar
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish-and-deploy-preview:
+    name: Publish & Deploy Shared Preview
+    needs: [resolve-trusted-target, build-shared-preview-image]
+    if: needs.build-shared-preview-image.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: preview-web-shared-main
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+
+    steps:
+      - name: Download exact preview image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: preview-image-${{ needs.resolve-trusted-target.outputs.target_sha }}
+          path: ${{ runner.temp }}
+
+      - name: Load exact preview image
+        run: docker load --input "$RUNNER_TEMP/preview-image.tar"
+
+      - name: Revalidate manually requested exact PR head
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_SHA: ${{ needs.resolve-trusted-target.outputs.target_sha }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.event.repository.id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")"
+          jq -e \
+            --arg expected_sha "$EXPECTED_SHA" \
+            --argjson repository_id "$REPOSITORY_ID" \
+            '.state == "open" and .base.ref == "main" and .head.repo.id == $repository_id and .head.sha == $expected_sha' \
+            <<<"$pr" >/dev/null || { echo "PR identity changed; refusing preview deployment" >&2; exit 1; }
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish exact and shared preview tags
+        env:
+          TARGET_SHA: ${{ needs.resolve-trusted-target.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          source_image="silentsuite-web:preview-$TARGET_SHA"
+          exact_image="ghcr.io/silent-suite/silentsuite-web:preview-$TARGET_SHA"
+          shared_image="ghcr.io/silent-suite/silentsuite-web:preview"
+          docker tag "$source_image" "$exact_image"
+          docker tag "$source_image" "$shared_image"
+          docker push "$exact_image"
+          docker push "$shared_image"
 
       - name: Deploy preview to VPS
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
@@ -181,4 +296,4 @@ jobs:
             docker pull ghcr.io/silent-suite/silentsuite-web:preview
             cd ~/etebase
             docker compose -f docker-compose.preview.yml up -d --force-recreate web-preview
-            echo "Preview deployed: https://previewapp.silentsuite.io (branch: ${{ github.ref_name }})"
+            echo "Preview deployed: https://previewapp.silentsuite.io (SHA: ${{ needs.resolve-trusted-target.outputs.target_sha }})"
