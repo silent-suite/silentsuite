@@ -133,6 +133,7 @@ jobs:
       pull-requests: read
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
+      cache_scope: ${{ steps.resolve.outputs.cache_scope }}
 
     steps:
       - name: Resolve push or manually requested exact PR head
@@ -151,6 +152,7 @@ jobs:
           if [[ "$EVENT_NAME" == "push" ]]; then
             [[ "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "push must be from main" >&2; exit 1; }
             target_sha="$PUSH_SHA"
+            cache_scope="main"
           else
             [[ "$WORKFLOW_REF" == "refs/heads/main" ]] || { echo "manual preview must be dispatched from refs/heads/main" >&2; exit 1; }
             [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "pr_number must be a positive decimal integer" >&2; exit 1; }
@@ -162,8 +164,10 @@ jobs:
               '.state == "open" and .base.ref == "main" and .head.repo.id == $repository_id and .head.sha == $expected_sha' \
               <<<"$pr" >/dev/null || { echo "PR must be open, target main, belong to this repository, and match expected_sha" >&2; exit 1; }
             target_sha="$EXPECTED_SHA"
+            cache_scope="pr-$PR_NUMBER"
           fi
           echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+          echo "cache_scope=$cache_scope" >> "$GITHUB_OUTPUT"
 
   build-shared-preview-image:
     name: Build Shared Preview Image
@@ -213,8 +217,8 @@ jobs:
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
             NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=preview-${{ needs.resolve-trusted-target.outputs.cache_scope }}
+          cache-to: type=gha,mode=max,scope=preview-${{ needs.resolve-trusted-target.outputs.cache_scope }}
 
       - name: Upload exact preview image for the credentialed publish job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -249,22 +253,27 @@ jobs:
       - name: Load exact preview image
         run: docker load --input "$RUNNER_TEMP/preview-image.tar"
 
-      - name: Revalidate manually requested exact PR head
-        if: github.event_name == 'workflow_dispatch'
+      - name: Revalidate trusted target immediately before publication
         env:
+          EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ inputs.pr_number }}
-          EXPECTED_SHA: ${{ needs.resolve-trusted-target.outputs.target_sha }}
+          TARGET_SHA: ${{ needs.resolve-trusted-target.outputs.target_sha }}
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_ID: ${{ github.event.repository.id }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")"
-          jq -e \
-            --arg expected_sha "$EXPECTED_SHA" \
-            --argjson repository_id "$REPOSITORY_ID" \
-            '.state == "open" and .base.ref == "main" and .head.repo.id == $repository_id and .head.sha == $expected_sha' \
-            <<<"$pr" >/dev/null || { echo "PR identity changed; refusing preview deployment" >&2; exit 1; }
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            live_main="$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+            [[ "$live_main" == "$TARGET_SHA" ]] || { echo "main advanced; refusing stale preview publication" >&2; exit 1; }
+          else
+            pr="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")"
+            jq -e \
+              --arg expected_sha "$TARGET_SHA" \
+              --argjson repository_id "$REPOSITORY_ID" \
+              '.state == "open" and .base.ref == "main" and .head.repo.id == $repository_id and .head.sha == $expected_sha' \
+              <<<"$pr" >/dev/null || { echo "PR identity changed; refusing preview deployment" >&2; exit 1; }
+          fi
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
