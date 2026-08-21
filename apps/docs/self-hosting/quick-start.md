@@ -112,6 +112,7 @@ Your data is end-to-end encrypted. The server never sees your plaintext calendar
 
 ## Next Steps
 
+- [Troubleshooting](./troubleshooting.md) -- common install, reverse proxy, and health-check problems.
 - [Configuration](./configuration.md) -- understand and customize your environment variables.
 - [Admin Dashboard](./admin-dashboard.md) -- manage users via the web app admin panel.
 - [Backup & Restore](./backup-and-restore.md) -- set up automated backups.
