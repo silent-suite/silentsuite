@@ -50,3 +50,16 @@ On Linux, start with the [Linux desktop bridge guide](./linux-bridge.md) for ins
 ::: tip
 Use one of the documented desktop clients above with the [SilentSuite Bridge](./dav-bridge.md). Protocol support alone does not establish SilentSuite compatibility. iOS is not currently supported.
 :::
+
+## How to report bridge compatibility
+
+If you try an app with the [SilentSuite Bridge](./dav-bridge.md), report your result with:
+
+- **App name and version** you tested.
+- **Operating system** (for example, macOS 15, Windows 11, Ubuntu 24.04).
+- **Bridge version** you were running.
+- **Calendar sync:** yes, no, or partial.
+- **Contacts sync:** yes, no, or partial.
+- **Notes or errors** -- what worked, what failed, and any error message or log excerpt.
+
+Redact private data before sharing: remove usernames, email addresses, server URLs, and any event or contact content from logs and screenshots. Only report apps you have actually tested -- an untested app is not known to work.

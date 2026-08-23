@@ -128,6 +128,17 @@ The SilentSuite Android app is open source. The source lives in the `android/` d
 
 - [github.com/silent-suite/silentsuite/tree/main/android](https://github.com/silent-suite/silentsuite/tree/main/android)
 
+## What to include in a beta test report
+
+When you report a beta test result, include:
+
+- **Android version** (for example, Android 15).
+- **Device model** (for example, Pixel 8).
+- **Install source** -- Google Play, Obtainium, Zapstore, or a signed APK from GitHub Releases. F-Droid is not available yet.
+- **Signup/login result** -- whether account creation and login succeeded.
+- **Sync result for contacts, calendars, and tasks** -- what synced, what did not, and any error message shown.
+- **Errors or screenshots** -- redact your username, email address, server URL (if self-hosted), and any contact, event, or task content before sharing.
+
 ## Troubleshooting
 
 ### Data not syncing
