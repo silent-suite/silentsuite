@@ -52,15 +52,6 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
             testProguardFile 'proguard-rules.txt'
             buildConfigField 'String', 'DEBUG_REMOTE_URL', 'null'
-
-            // Emit app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
-            // so Play Console can symbolicate native crashes. SYMBOL_TABLE covers the
-            // locally rebuilt 64-bit libetebase_android.so copies; libconscrypt_jni.so
-            // and the upstream 32-bit Etebase libraries ship pre-stripped, so no debug
-            // metadata can be extracted for them.
-            ndk {
-                debugSymbolLevel 'SYMBOL_TABLE'
-            }
         }
     }
 

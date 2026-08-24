@@ -1,10 +1,12 @@
 # Android release: Play Console upload checklist
 
 Pushing a `v*` tag runs the signed `build-release` job in
-`.github/workflows/build-android.yml`. It builds the signed AAB, generates
-`native-debug-symbols.zip` (AGP `ndk.debugSymbolLevel SYMBOL_TABLE`), verifies
-both against the expected native inventory, and attaches deterministic
-artifacts to the draft umbrella GitHub release.
+`.github/workflows/build-android.yml`. It builds the signed AAB, manually
+packages `native-debug-symbols.zip` from the locally rebuilt Etebase AAR (AGP
+8.11.1 does not emit a standalone symbol ZIP for projects whose native
+libraries arrive exclusively through prebuilt AARs), verifies both against the
+expected native inventory, and attaches deterministic artifacts to the draft
+umbrella GitHub release.
 
 Native inventory of the release AAB, for arm64-v8a, armeabi-v7a, x86, and
 x86_64:
@@ -16,11 +18,18 @@ x86_64:
   (cert4android). All copies ship pre-stripped upstream.
 
 Because pre-stripped dependencies carry no extractable debug metadata, the
-symbol ZIP is only required (and verified) to contain non-empty symbol entries
-for `arm64-v8a/libetebase_android.so` and `x86_64/libetebase_android.so`. Do
-not expect or claim symbols for the stripped Conscrypt or upstream 32-bit
+CI workflow packages the symbol ZIP manually via
+`android/scripts/package-native-debug-symbols.py`, extracting only the two
+symbol-bearing 64-bit Etebase libraries (`arm64-v8a/libetebase_android.so` and
+`x86_64/libetebase_android.so`) from the same rebuilt AAR that feeds the build.
+Each selected ELF is validated to have a real `.symtab` via `readelf` (fail-
+closed). The ZIP is written atomically with deterministic entry ordering,
+timestamps, and permissions.
+
+Do not expect or claim symbols for the stripped Conscrypt or upstream 32-bit
 Etebase payloads. The job fails closed if the ZIP is missing, malformed, or
-missing those required entries.
+missing those required entries, or if any symbol-bearing entry's bytes do not
+match the byte-identical copy packaged in the AAB (SHA-256 comparison).
 
 For every Play Console release, the operator must:
 

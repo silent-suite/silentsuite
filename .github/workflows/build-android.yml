@@ -240,8 +240,16 @@ jobs:
             app/build/outputs/apk/debug/*.apk
 
       # libconscrypt_jni.so and the upstream 32-bit libetebase_android.so ship
-      # pre-stripped, so AGP cannot extract symbols for them; only the locally
-      # rebuilt 64-bit Etebase libraries are required to carry symbol entries.
+      # pre-stripped, so no symbols can be extracted for them; only the locally
+      # rebuilt 64-bit Etebase libraries carry symbol tables. AGP 8.11.1 does
+      # not emit a native-debug-symbols.zip for prebuilt-AAR-only native
+      # libraries, so the ZIP is packaged manually from the rebuilt AAR.
+      - name: Package release native debug symbols
+        run: |
+          python3 scripts/package-native-debug-symbols.py \
+            --etebase-aar app/libs/client-2.3.2-16kb.aar \
+            --output app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+
       - name: Verify release native debug symbols
         run: |
           python3 scripts/verify-native-debug-symbols.py \
@@ -729,8 +737,16 @@ jobs:
             app/build/outputs/bundle/release/*.aab
 
       # libconscrypt_jni.so and the upstream 32-bit libetebase_android.so ship
-      # pre-stripped, so AGP cannot extract symbols for them; only the locally
-      # rebuilt 64-bit Etebase libraries are required to carry symbol entries.
+      # pre-stripped, so no symbols can be extracted for them; only the locally
+      # rebuilt 64-bit Etebase libraries carry symbol tables. AGP 8.11.1 does
+      # not emit a native-debug-symbols.zip for prebuilt-AAR-only native
+      # libraries, so the ZIP is packaged manually from the rebuilt AAR.
+      - name: Package release native debug symbols
+        run: |
+          python3 scripts/package-native-debug-symbols.py \
+            --etebase-aar app/libs/client-2.3.2-16kb.aar \
+            --output app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+
       - name: Verify release native debug symbols
         run: |
           python3 scripts/verify-native-debug-symbols.py \

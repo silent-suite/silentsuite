@@ -2,6 +2,7 @@
 
 import importlib.util
 import re
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -13,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ANDROID_BUILD_WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 APP_BUILD_GRADLE = ROOT / "android/app/build.gradle"
 SYMBOLS_VERIFIER = ROOT / "android/scripts/verify-native-debug-symbols.py"
+SYMBOLS_PACKAGER = ROOT / "android/scripts/package-native-debug-symbols.py"
 ANDROID_RELEASE_RUNBOOK = ROOT / "runbooks/android-release.md"
 SIGNING_CHECKER = ROOT / "scripts/check-android-signing-boundary.py"
 
@@ -139,13 +141,18 @@ def gradle_block(text: str, keyword: str) -> str:
     raise AssertionError(f"unterminated Gradle block: {keyword}")
 
 
-def test_release_build_type_emits_native_debug_symbol_zip():
+def test_release_build_type_does_not_claim_agp_emits_symbol_zip():
+    """AGP 8.11.1 does not emit a native-debug-symbols.zip for this project's
+    prebuilt-AAR-only native libraries, so the release build type must not keep
+    the ineffective `ndk.debugSymbolLevel` config (nor any comment claiming it
+    produces the ZIP).
+    """
     build_types = gradle_block(
         APP_BUILD_GRADLE.read_text(encoding="utf-8"), "buildTypes"
     )
     release = gradle_block(build_types, "release")
-    ndk = gradle_block(release, "ndk")
-    assert re.search(r"debugSymbolLevel\s+'SYMBOL_TABLE'", ndk)
+    assert "debugSymbolLevel" not in release
+    assert "native-debug-symbols" not in release
 
 
 @pytest.mark.parametrize("job", ["build-pr", "build-release"])
@@ -160,6 +167,22 @@ def test_native_symbol_verification_gates_both_release_builds(job: str):
     assert (
         "--symbols app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip"
         in run
+    )
+
+
+@pytest.mark.parametrize("job", ["build-pr", "build-release"])
+def test_manual_symbol_packaging_precedes_verification(job: str):
+    steps = job_steps(job)
+    ordered = list(steps)
+    package = steps["Package release native debug symbols"]["run"]
+    assert "scripts/package-native-debug-symbols.py" in package
+    assert "--etebase-aar app/libs/client-2.3.2-16kb.aar" in package
+    assert (
+        "--output app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip"
+        in package
+    )
+    assert ordered.index("Package release native debug symbols") < ordered.index(
+        "Verify release native debug symbols"
     )
 
 
@@ -206,6 +229,11 @@ def test_android_release_runbook_documents_play_symbol_upload():
     # Play acceptance stays a manual gate; CI cannot verify Play Console state.
     assert "missing-native-debug-symbols warning" in text
     assert "CI cannot verify Play Console state" in text
+    # Manual packaging workflow (not AGP-generated) must be documented.
+    assert "package-native-debug-symbols.py" in text
+    assert "same rebuilt AAR" in text
+    assert ".symtab" in text
+    assert "SHA-256" in text
 
 
 def test_release_job_hash_constant_matches_workflow():
@@ -234,10 +262,12 @@ def load_symbols_verifier():
     return module
 
 
-def write_bundle(path: Path, pairs) -> None:
+def write_bundle(path: Path, pairs, payloads=None) -> None:
+    payload_map = dict(payloads or {})
     with zipfile.ZipFile(path, "w") as archive:
         for abi, library in pairs:
-            archive.writestr(f"base/lib/{abi}/{library}", b"elf")
+            payload = payload_map.get((abi, library), b"elf")
+            archive.writestr(f"base/lib/{abi}/{library}", payload)
 
 
 def write_symbols(path: Path, entries) -> None:
@@ -246,12 +276,35 @@ def write_symbols(path: Path, entries) -> None:
             archive.writestr(name, payload)
 
 
+# Byte-identical symbol payloads keyed by (abi, library): the Symbol ZIP entries
+# and the AAB-packaged libraries are the same ELF bytes, so the SHA-256 identity
+# check expects them to match exactly.
+ETEBASE_PAYLOADS = {
+    ("arm64-v8a", "libetebase_android.so"): b"elf64-arm64-symtab",
+    ("x86_64", "libetebase_android.so"): b"elf64-x86_64-symtab",
+}
+
+
+def full_bundle_payloads() -> dict:
+    payloads = {}
+    for abi in EXPECTED_ABIS:
+        for library in REQUIRED_NATIVE_LIBS:
+            payloads[(abi, library)] = ETEBASE_PAYLOADS.get((abi, library), b"elf")
+    return payloads
+
+
 FULL_BUNDLE = [
     (abi, library) for abi in EXPECTED_ABIS for library in REQUIRED_NATIVE_LIBS
 ]
 GOOD_SYMBOL_ENTRIES = [
-    ("arm64-v8a/libetebase_android.so.sym", b"symtab"),
-    ("x86_64/libetebase_android.so.sym", b"symtab"),
+    (
+        "arm64-v8a/libetebase_android.so",
+        ETEBASE_PAYLOADS[("arm64-v8a", "libetebase_android.so")],
+    ),
+    (
+        "x86_64/libetebase_android.so",
+        ETEBASE_PAYLOADS[("x86_64", "libetebase_android.so")],
+    ),
 ]
 
 
@@ -259,7 +312,7 @@ def test_symbols_verifier_accepts_expected_inventory(tmp_path):
     module = load_symbols_verifier()
     bundle = tmp_path / "app-release.aab"
     symbols = tmp_path / "native-debug-symbols.zip"
-    write_bundle(bundle, FULL_BUNDLE)
+    write_bundle(bundle, FULL_BUNDLE, full_bundle_payloads())
     write_symbols(symbols, GOOD_SYMBOL_ENTRIES)
     assert (
         module.collect_errors(
@@ -267,6 +320,25 @@ def test_symbols_verifier_accepts_expected_inventory(tmp_path):
         )
         == []
     )
+
+
+def test_symbols_verifier_rejects_payload_divergence(tmp_path):
+    """The symbol entry for a symbol-bearing library must be byte-identical to
+    the copy packaged inside the same AAB; a divergent payload means the ZIP was
+    built from a different source and must fail closed.
+    """
+    module = load_symbols_verifier()
+    bundle = tmp_path / "app-release.aab"
+    symbols = tmp_path / "native-debug-symbols.zip"
+    payloads = full_bundle_payloads()
+    write_bundle(bundle, FULL_BUNDLE, payloads)
+    diverged = list(GOOD_SYMBOL_ENTRIES)
+    diverged[0] = ("arm64-v8a/libetebase_android.so", b"elf64-arm64-OTHER")
+    write_symbols(symbols, diverged)
+    errors = module.collect_errors(
+        bundle, symbols, set(REQUIRED_NATIVE_LIBS), set(REQUIRED_SYMBOL_PAIRS)
+    )
+    assert any("SHA-256 mismatch" in error for error in errors)
 
 
 @pytest.mark.parametrize(
@@ -319,3 +391,213 @@ def test_symbols_verifier_fails_closed_when_zip_missing(tmp_path):
         bundle, absent, set(REQUIRED_NATIVE_LIBS), set(REQUIRED_SYMBOL_PAIRS)
     )
     assert errors == [f"missing archive: {absent}"]
+
+
+def load_symbols_packager():
+    spec = importlib.util.spec_from_file_location(
+        "package_native_debug_symbols", SYMBOLS_PACKAGER
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_complete_etebase_aar(path: Path) -> None:
+    """Write a rebuilt Etebase AAR with every `jni/<abi>/libetebase_android.so`
+    entry present, as android/scripts/build-etebase-client-16kb.sh produces it.
+    """
+    with zipfile.ZipFile(path, "w") as archive:
+        # The repacked AAR retains the upstream 32-bit copies too.
+        archive.writestr("jni/armeabi-v7a/libetebase_android.so", b"elf32-armv7")
+        archive.writestr("jni/x86/libetebase_android.so", b"elf32-x86")
+        archive.writestr(
+            "jni/arm64-v8a/libetebase_android.so",
+            ETEBASE_PAYLOADS[("arm64-v8a", "libetebase_android.so")],
+        )
+        archive.writestr(
+            "jni/x86_64/libetebase_android.so",
+            ETEBASE_PAYLOADS[("x86_64", "libetebase_android.so")],
+        )
+
+
+def test_packager_emits_deterministic_symbol_zip(tmp_path, monkeypatch):
+    packager = load_symbols_packager()
+    monkeypatch.setattr(packager, "has_symtab", lambda elf: True)
+
+    aar = tmp_path / "client-2.3.2-16kb.aar"
+    build_complete_etebase_aar(aar)
+
+    out_a = tmp_path / "a.zip"
+    out_b = tmp_path / "b.zip"
+    packager.write_symbols_zip(out_a, packager.read_aar_payloads(aar))
+    packager.write_symbols_zip(out_b, packager.read_aar_payloads(aar))
+    assert out_a.read_bytes() == out_b.read_bytes()
+
+    # Exactly two entries, bare `.so` names, no Conscrypt, no 32-bit Etebase.
+    with zipfile.ZipFile(out_a) as archive:
+        names = archive.namelist()
+    assert names == [
+        "arm64-v8a/libetebase_android.so",
+        "x86_64/libetebase_android.so",
+    ]
+    with zipfile.ZipFile(out_a) as archive:
+        for info in archive.infolist():
+            assert info.filename in names
+            assert info.file_size > 0
+            assert info.external_attr == 0o100644 << 16
+            assert info.date_time == (1980, 1, 1, 0, 0, 0)
+            payload = archive.read(info.filename)
+            assert payload == ETEBASE_PAYLOADS[
+                (info.filename.split("/")[0], info.filename.split("/")[1])
+            ]
+
+
+def test_packager_rejects_32bit_and_conscrypt_are_never_included():
+    packager = load_symbols_packager()
+    # The packaging script hard-codes its two symbol-bearing entries; verify its
+    # declared inventory excludes Conscrypt and the 32-bit Etebase ABIs.
+    assert packager.SYMBOL_ENTRIES == (
+        ("arm64-v8a", "libetebase_android.so"),
+        ("x86_64", "libetebase_android.so"),
+    )
+
+
+def test_packager_rejects_missing_source_entry(tmp_path):
+    packager = load_symbols_packager()
+    aar = tmp_path / "incomplete.aar"
+    with zipfile.ZipFile(aar, "w") as archive:
+        # Only one 64-bit library present; the x86_64 entry is missing.
+        archive.writestr(
+            "jni/arm64-v8a/libetebase_android.so",
+            ETEBASE_PAYLOADS[("arm64-v8a", "libetebase_android.so")],
+        )
+    with pytest.raises(SystemExit):
+        packager.read_aar_payloads(aar)
+
+
+def test_packager_rejects_symbolless_payload(tmp_path, monkeypatch):
+    packager = load_symbols_packager()
+    monkeypatch.setattr(
+        packager,
+        "has_symtab",
+        lambda elf: elf
+        == ETEBASE_PAYLOADS[("arm64-v8a", "libetebase_android.so")],
+    )
+    aar = tmp_path / "stripped.aar"
+    build_complete_etebase_aar(aar)
+    payloads = packager.read_aar_payloads(aar)
+    with pytest.raises(SystemExit):
+        packager.validate_payloads(payloads, aar)
+
+
+def test_packager_validate_payloads_accepts_complete(tmp_path, monkeypatch):
+    packager = load_symbols_packager()
+    monkeypatch.setattr(packager, "has_symtab", lambda elf: True)
+    aar = tmp_path / "ok.aar"
+    build_complete_etebase_aar(aar)
+    payloads = packager.read_aar_payloads(aar)
+    packager.validate_payloads(payloads, aar)  # must not raise
+
+
+def _sections(name: str, type_: str) -> str:
+    """Render a single `readelf -SW` section row in fixed-column layout."""
+    return f"  [25] {name:<16} {type_:<16} 0000000000000000 000000 000000 00 0 0 0"
+
+
+class _FakeCompleted:
+    def __init__(self, stdout: str):
+        self.stdout = stdout
+
+    def returncode(self) -> int:
+        return 0
+
+
+def _fake_run(readelf_stdout: str):
+    def fake_run(argv, **kwargs):
+        assert argv[:1] == ["readelf"]
+        return _FakeCompleted(readelf_stdout)
+
+    return fake_run
+
+
+def test_packager_has_symtab_accepts_readelf_symtab_row(monkeypatch):
+    """A real `readelf -SW` row puts `.symtab` at field index 1 (the section
+    number `[25]` occupies index 0); the section name must match exactly.
+    """
+    packager = load_symbols_packager()
+    monkeypatch.setattr(
+        packager.subprocess,
+        "run",
+        _fake_run(
+            "There are 29 section headers...\n"
+            + _sections(".symtab", "SYMTAB")
+            + "\n"
+            + _sections(".strtab", "STRTAB")
+            + "\n"
+        ),
+    )
+    assert packager.has_symtab(b"elf64") is True
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        _sections(".symtab_shndx", "SYMTAB_SECTION_INDEX"),  # lookalike name
+        _sections(".symtab", "PROGBITS"),  # wrong type
+        "",  # empty output
+        "There are no sections in this file.\n",
+    ],
+)
+def test_packager_has_symtab_rejects_non_symtab(monkeypatch, stdout):
+    packager = load_symbols_packager()
+    monkeypatch.setattr(packager.subprocess, "run", _fake_run(stdout))
+    assert packager.has_symtab(b"elf64") is False
+
+
+def test_packager_has_symtab_rejects_readelf_failure(monkeypatch):
+    packager = load_symbols_packager()
+
+    def failing_run(argv, **kwargs):
+        raise subprocess.CalledProcessError(1, argv)
+
+    monkeypatch.setattr(packager.subprocess, "run", failing_run)
+    assert packager.has_symtab(b"elf64") is False
+
+
+def test_packager_rejects_duplicate_selected_aar_entry(tmp_path):
+    packager = load_symbols_packager()
+    aar = tmp_path / "duplicated.aar"
+    with zipfile.ZipFile(aar, "w") as archive:
+        payload = ETEBASE_PAYLOADS[("arm64-v8a", "libetebase_android.so")]
+        archive.writestr("jni/arm64-v8a/libetebase_android.so", payload)
+        archive.writestr("jni/arm64-v8a/libetebase_android.so", payload)
+        archive.writestr(
+            "jni/x86_64/libetebase_android.so",
+            ETEBASE_PAYLOADS[("x86_64", "libetebase_android.so")],
+        )
+    with pytest.raises(SystemExit):
+        packager.read_aar_payloads(aar)
+
+
+def test_packager_write_symbols_zip_leaves_tmp_dir_clean(tmp_path):
+    """`write_symbols_zip` must close the mkstemp fd and remove the temporary
+    file, leaving only the final output alongside no stray `.tmp` siblings."""
+    packager = load_symbols_packager()
+    aar = tmp_path / "client-2.3.2-16kb.aar"
+    build_complete_etebase_aar(aar)
+    output = tmp_path / "native-debug-symbols.zip"
+    packager.write_symbols_zip(output, packager.read_aar_payloads(aar))
+    assert output.is_file()
+    siblings = {p.name for p in tmp_path.iterdir()}
+    assert not any(name.endswith(".tmp") for name in siblings)
+
+
+def test_symbols_verifier_rejects_duplicate_aab_native_entry(tmp_path):
+    module = load_symbols_verifier()
+    bundle = tmp_path / "dup.aab"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        payload = ETEBASE_PAYLOADS[("arm64-v8a", "libetebase_android.so")]
+        archive.writestr("base/lib/arm64-v8a/libetebase_android.so", payload)
+        archive.writestr("base/lib/arm64-v8a/libetebase_android.so", payload)
+    errors = module.bundle_native_libs(bundle)[2]
+    assert any("duplicate" in error for error in errors)
