@@ -11,7 +11,8 @@ BORINGSSL_REPOSITORY="https://github.com/google/boringssl.git"
 # Exact revision embedded in the published Conscrypt 2.6.3 AAR.
 BORINGSSL_COMMIT="3adc3d1aba162a578e2547f329fcce8659b8e89c"
 ANDROID_NDK_VERSION="28.2.13676358"
-OUTPUT_AAR="cert4android/libs/conscrypt-android-2.6.3-r28.aar"
+OUTPUT_AAR="build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.aar"
+OUTPUT_POM="build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.pom"
 
 if [[ -z "${ANDROID_HOME:-}" ]]; then
   echo "error: ANDROID_HOME must point to the Android SDK" >&2
@@ -130,4 +131,24 @@ if actual_properties != expected_properties:
 PY
 mkdir -p "$(dirname "$OUTPUT_AAR")"
 cp "$built_aar" "$OUTPUT_AAR"
+python3 - "$OUTPUT_POM" <<'PY'
+from pathlib import Path
+import sys
+
+pom = Path(sys.argv[1])
+pom.write_text(
+    """<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.conscrypt</groupId>
+  <artifactId>conscrypt-android</artifactId>
+  <version>2.6.3-r28</version>
+  <packaging>aar</packaging>
+</project>
+""",
+    encoding="utf-8",
+)
+PY
 sha256sum "$OUTPUT_AAR"

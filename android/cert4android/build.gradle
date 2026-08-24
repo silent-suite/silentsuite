@@ -49,7 +49,9 @@ androidComponents {
 
 dependencies {
     def androidX = rootProject.ext.androidXVersions
-    def conscryptR28Aar = file("libs/conscrypt-android-${versions.conscrypt}-r28.aar")
+    def conscryptR28Artifact = rootProject.file(
+            "build/conscrypt-m2/org/conscrypt/conscrypt-android/${versions.conscrypt}-r28/conscrypt-android-${versions.conscrypt}-r28.aar"
+    )
     def conscryptR28Required = providers.gradleProperty('requireConscryptR28')
             .map { it.toBoolean() }
             .getOrElse(false)
@@ -67,10 +69,10 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-livedata:${androidX.lifecycle}"
     implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:${androidX.lifecycle}"
     implementation "com.google.android.material:material:${androidX.material}"
-    if (conscryptR28Aar.exists()) {
-        implementation files(conscryptR28Aar)
+    if (conscryptR28Artifact.exists()) {
+        implementation "org.conscrypt:conscrypt-android:${versions.conscrypt}-r28"
     } else if (conscryptR28Required || releaseBuildRequested) {
-        throw new GradleException("Missing ${conscryptR28Aar}. Run android/scripts/build-conscrypt-android-r28.sh before release builds.")
+        throw new GradleException("Missing ${conscryptR28Artifact}. Run android/scripts/build-conscrypt-android-r28.sh before release builds.")
     } else {
         logger.warn("Using Maven org.conscrypt:conscrypt-android:${versions.conscrypt}; run android/scripts/build-conscrypt-android-r28.sh to build the NDK r28 AAR.")
         implementation "org.conscrypt:conscrypt-android:${versions.conscrypt}"

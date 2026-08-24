@@ -90,13 +90,13 @@ jobs:
           python3 scripts/verify-native-16kb.py \
             --require-lib libconscrypt_jni.so \
             --require-android-ndk-major libconscrypt_jni.so=28 \
-            cert4android/libs/conscrypt-android-2.6.3-r28.aar
+            build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.aar
 
       - name: Upload rebuilt Conscrypt AAR
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
-          path: android/cert4android/libs/conscrypt-android-2.6.3-r28.aar
+          path: android/build/conscrypt-m2
           if-no-files-found: error
           retention-days: 1
 
@@ -121,10 +121,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download rebuilt Conscrypt AAR
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
-          path: android/cert4android/libs
+          path: android/build/conscrypt-m2
 
       - name: Set up JDK 17
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -154,7 +154,7 @@ jobs:
             cd android &&
             ./gradlew cert4android:connectedDebugAndroidTest --no-daemon
             -PrequireConscryptR28=true
-            -Pandroid.testInstrumentationRunnerArguments.class=at.bitfire.cert4android.CustomCertManagerTest
+            -Pandroid.testInstrumentationRunnerArguments.class=at.bitfire.cert4android.ConscryptProviderRuntimeTest
 
       - name: Assert Conscrypt runtime methods executed
         if: always()
@@ -165,12 +165,7 @@ jobs:
           import xml.etree.ElementTree as ET
 
           expected = {
-              "acceptThenTrustedCheckUsesTheRealServiceBinder",
-              "rejectAndDuplicateOrStaleGenerationsAreIgnored",
-              "multipleCallbacksResolveExactlyOnceAndAbortDetachesOnlyItsCallback",
-              "unavailableNotificationFailsClosedForBackgroundRequests",
-              "activityRecreationAndNewIntentDeliverTheRenderedGenerationDecision",
-              "activityAcceptDeliversThroughTheStartedService",
+              "providerLoadsAndCreatesTlsContext",
           }
           records = []
           for path in glob.glob(
@@ -178,7 +173,7 @@ jobs:
               recursive=True,
           ):
               for case in ET.parse(path).getroot().iter("testcase"):
-                  if case.attrib.get("classname") == "at.bitfire.cert4android.CustomCertManagerTest":
+                  if case.attrib.get("classname") == "at.bitfire.cert4android.ConscryptProviderRuntimeTest":
                       records.append(case)
           names = [case.attrib.get("name", "") for case in records]
           errors = [
@@ -225,10 +220,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download rebuilt Conscrypt AAR
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
-          path: android/cert4android/libs
+          path: android/build/conscrypt-m2
 
       - name: Set up JDK 17
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -522,10 +517,10 @@ jobs:
         run: scripts/build-etebase-client-16kb.sh
 
       - name: Download rebuilt Conscrypt AAR
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
-          path: android/cert4android/libs
+          path: android/build/conscrypt-m2
 
       - name: Enable KVM for the emulator
         run: |
@@ -753,10 +748,10 @@ jobs:
           scripts/build-etebase-client-16kb.sh
 
       - name: Download rebuilt Conscrypt AAR
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
-          path: android/cert4android/libs
+          path: android/build/conscrypt-m2
 
       - name: Enable KVM for the emulator
         run: |
@@ -840,10 +835,10 @@ jobs:
         run: scripts/build-etebase-client-16kb.sh
 
       - name: Download rebuilt Conscrypt AAR
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
-          path: android/cert4android/libs
+          path: android/build/conscrypt-m2
 
       - name: Decode release keystore
         env:

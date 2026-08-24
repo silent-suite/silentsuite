@@ -10,9 +10,18 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 CERT4ANDROID_GRADLE = ROOT / "android/cert4android/build.gradle"
+ROOT_GRADLE = ROOT / "android/build.gradle"
 BUILD_SCRIPT = ROOT / "android/scripts/build-conscrypt-android-r28.sh"
 VERIFIER = ROOT / "android/scripts/verify-native-16kb.py"
-LOCAL_AAR = "cert4android/libs/conscrypt-android-2.6.3-r28.aar"
+RUNTIME_TEST = ROOT / (
+    "android/cert4android/src/androidTest/java/at/bitfire/cert4android/"
+    "ConscryptProviderRuntimeTest.kt"
+)
+LOCAL_MAVEN_REPO = "build/conscrypt-m2"
+LOCAL_AAR = (
+    f"{LOCAL_MAVEN_REPO}/org/conscrypt/conscrypt-android/2.6.3-r28/"
+    "conscrypt-android-2.6.3-r28.aar"
+)
 CONSCRYPT_COMMIT = "657e1c64c46961bcc48e7302e42ebc02d6632645"
 BORINGSSL_COMMIT = "3adc3d1aba162a578e2547f329fcce8659b8e89c"
 NDK_VERSION = "28.2.13676358"
@@ -45,12 +54,15 @@ def test_conscrypt_builder_pins_source_boringssl_and_ndk_r28():
 
 def test_release_builds_fail_closed_without_rebuilt_conscrypt_aar():
     source = CERT4ANDROID_GRADLE.read_text(encoding="utf-8")
+    root_source = ROOT_GRADLE.read_text(encoding="utf-8")
     assert "conscrypt: '2.6.3'" in source
-    assert 'libs/conscrypt-android-${versions.conscrypt}-r28.aar' in source
+    assert 'build/conscrypt-m2/org/conscrypt/conscrypt-android' in source
     assert "requireConscryptR28" in source
-    assert "implementation files(conscryptR28Aar)" in source
+    assert 'implementation "org.conscrypt:conscrypt-android:${versions.conscrypt}-r28"' in source
     assert "org.conscrypt:conscrypt-android:${versions.conscrypt}" in source
-    assert "Missing ${conscryptR28Aar}" in source
+    assert "Missing ${conscryptR28Artifact}" in source
+    assert 'maven { url uri("$rootDir/build/conscrypt-m2")' in root_source
+    assert 'includeModule("org.conscrypt", "conscrypt-android")' in root_source
 
 
 def test_workflow_builds_conscrypt_once_without_secrets_and_reuses_exact_run_artifact():
@@ -67,7 +79,7 @@ def test_workflow_builds_conscrypt_once_without_secrets_and_reuses_exact_run_art
     assert "--require-android-ndk-major libconscrypt_jni.so=28" in verify
     upload = producer_steps["Upload rebuilt Conscrypt AAR"]["with"]
     assert upload["name"] == "conscrypt-r28-${{ github.sha }}"
-    assert upload["path"] == f"android/{LOCAL_AAR}"
+    assert upload["path"] == f"android/{LOCAL_MAVEN_REPO}"
     assert upload["if-no-files-found"] == "error"
 
     for job_name in (
@@ -82,7 +94,7 @@ def test_workflow_builds_conscrypt_once_without_secrets_and_reuses_exact_run_art
         steps = {step["name"]: step for step in job["steps"]}
         download = steps["Download rebuilt Conscrypt AAR"]["with"]
         assert download["name"] == "conscrypt-r28-${{ github.sha }}"
-        assert download["path"] == "android/cert4android/libs"
+        assert download["path"] == f"android/{LOCAL_MAVEN_REPO}"
 
 
 def test_final_apk_and_aab_gates_require_conscrypt_ndk_r28_identity():
@@ -111,18 +123,20 @@ def test_conscrypt_provider_runs_on_api_floor_and_target_api():
     assert steps["Download rebuilt Conscrypt AAR"]["with"]["name"] == "conscrypt-r28-${{ github.sha }}"
     command = steps["Run Conscrypt certificate-service runtime tests"]["with"]["script"]
     assert "cert4android:connectedDebugAndroidTest" in command
-    assert "at.bitfire.cert4android.CustomCertManagerTest" in command
+    assert "at.bitfire.cert4android.ConscryptProviderRuntimeTest" in command
     assert "-PrequireConscryptR28=true" in command
     ledger = steps["Assert Conscrypt runtime methods executed"]["run"]
-    for method in (
-        "acceptThenTrustedCheckUsesTheRealServiceBinder",
-        "rejectAndDuplicateOrStaleGenerationsAreIgnored",
-        "multipleCallbacksResolveExactlyOnceAndAbortDetachesOnlyItsCallback",
-        "unavailableNotificationFailsClosedForBackgroundRequests",
-        "activityRecreationAndNewIntentDeliverTheRenderedGenerationDecision",
-        "activityAcceptDeliversThroughTheStartedService",
-    ):
-        assert method in ledger
+    assert "providerLoadsAndCreatesTlsContext" in ledger
+
+
+def test_conscrypt_runtime_test_exercises_the_real_native_provider():
+    source = RUNTIME_TEST.read_text(encoding="utf-8")
+    assert "Conscrypt.newProvider()" in source
+    assert "Conscrypt.version()" in source
+    assert "SSLContext.getInstance(\"TLS\", provider)" in source
+    assert "context.init(null, null, null)" in source
+    assert "context.createSSLEngine()" in source
+    assert "providerLoadsAndCreatesTlsContext" in source
 
 
 def test_ndk_note_parser_accepts_r28_and_rejects_r27(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

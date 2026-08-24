@@ -63,6 +63,11 @@ buildscript {
 
 allprojects {
     repositories {
+        maven { url uri("$rootDir/build/conscrypt-m2")
+            content {
+                includeModule("org.conscrypt", "conscrypt-android")
+            }
+        }
         mavenCentral()
         maven { url 'https://jitpack.io' }
         google()
