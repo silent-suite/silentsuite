@@ -237,6 +237,27 @@ jobs:
             --require-lib libconscrypt_jni.so \
             app/build/outputs/apk/debug/*.apk
 
+      # libconscrypt_jni.so and the upstream 32-bit libetebase_android.so ship
+      # pre-stripped, so AGP cannot extract symbols for them; only the locally
+      # rebuilt 64-bit Etebase libraries are required to carry symbol entries.
+      - name: Verify release native debug symbols
+        run: |
+          python3 scripts/verify-native-debug-symbols.py \
+            --require-lib libetebase_android.so \
+            --require-lib libconscrypt_jni.so \
+            --require-symbol arm64-v8a/libetebase_android.so \
+            --require-symbol x86_64/libetebase_android.so \
+            --bundle app/build/outputs/bundle/release/app-release.aab \
+            --symbols app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+
+      - name: Upload unsigned release native debug symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-native-debug-symbols-${{ github.sha }}
+          path: android/app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload tracker verification evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -705,6 +726,19 @@ jobs:
             app/build/outputs/apk/release/*.apk \
             app/build/outputs/bundle/release/*.aab
 
+      # libconscrypt_jni.so and the upstream 32-bit libetebase_android.so ship
+      # pre-stripped, so AGP cannot extract symbols for them; only the locally
+      # rebuilt 64-bit Etebase libraries are required to carry symbol entries.
+      - name: Verify release native debug symbols
+        run: |
+          python3 scripts/verify-native-debug-symbols.py \
+            --require-lib libetebase_android.so \
+            --require-lib libconscrypt_jni.so \
+            --require-symbol arm64-v8a/libetebase_android.so \
+            --require-symbol x86_64/libetebase_android.so \
+            --bundle app/build/outputs/bundle/release/app-release.aab \
+            --symbols app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+
       - name: Verify APK signature
         run: |
           BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
@@ -713,13 +747,15 @@ jobs:
       - name: Verify AAB signature
         run: jarsigner -verify -certs -verbose app/build/outputs/bundle/release/*.aab
 
-      - name: Upload signed release APK and AAB
+      - name: Upload signed release APK, AAB, and native debug symbols
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: silentsuite-release-${{ github.sha }}
           path: |
             android/app/build/outputs/apk/release/*.apk
             android/app/build/outputs/bundle/release/*.aab
+            android/app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+          if-no-files-found: error
           retention-days: 30
 
       - name: Rename Android artifacts for release
@@ -728,12 +764,17 @@ jobs:
              "app/build/outputs/apk/release/silentsuite-android-${{ github.ref_name }}.apk"
           mv app/build/outputs/bundle/release/app-release.aab \
              "app/build/outputs/bundle/release/silentsuite-android-${{ github.ref_name }}.aab"
+          mv app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip \
+             "app/build/outputs/native-debug-symbols/release/silentsuite-android-${{ github.ref_name }}-native-debug-symbols.zip"
           cd app/build/outputs/apk/release
           sha256sum "silentsuite-android-${{ github.ref_name }}.apk" \
             > "silentsuite-android-${{ github.ref_name }}-installer.sha256"
           cd ../../bundle/release
           sha256sum "silentsuite-android-${{ github.ref_name }}.aab" \
             > "silentsuite-android-${{ github.ref_name }}-bundle.sha256"
+          cd ../../native-debug-symbols/release
+          sha256sum "silentsuite-android-${{ github.ref_name }}-native-debug-symbols.zip" \
+            > "silentsuite-android-${{ github.ref_name }}-native-debug-symbols.sha256"
 
       - name: Attach Android artifacts to umbrella GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
@@ -747,6 +788,8 @@ jobs:
             android/app/build/outputs/apk/release/silentsuite-android-${{ github.ref_name }}-installer.sha256
             android/app/build/outputs/bundle/release/silentsuite-android-${{ github.ref_name }}.aab
             android/app/build/outputs/bundle/release/silentsuite-android-${{ github.ref_name }}-bundle.sha256
+            android/app/build/outputs/native-debug-symbols/release/silentsuite-android-${{ github.ref_name }}-native-debug-symbols.zip
+            android/app/build/outputs/native-debug-symbols/release/silentsuite-android-${{ github.ref_name }}-native-debug-symbols.sha256
 
       - name: Cleanup keystore
         if: always()

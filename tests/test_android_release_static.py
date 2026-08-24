@@ -1,6 +1,8 @@
-"""Static contracts for Android release artifact naming."""
+"""Static contracts for Android release artifact naming and native symbols."""
 
+import importlib.util
 import re
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -9,15 +11,34 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 ANDROID_BUILD_WORKFLOW = ROOT / ".github/workflows/build-android.yml"
+APP_BUILD_GRADLE = ROOT / "android/app/build.gradle"
+SYMBOLS_VERIFIER = ROOT / "android/scripts/verify-native-debug-symbols.py"
+ANDROID_RELEASE_RUNBOOK = ROOT / "runbooks/android-release.md"
+
+REQUIRED_NATIVE_LIBS = ("libetebase_android.so", "libconscrypt_jni.so")
+EXPECTED_ABIS = ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+# Only the locally rebuilt 64-bit Etebase libraries retain symbol tables;
+# Conscrypt and the upstream 32-bit Etebase copies ship pre-stripped.
+REQUIRED_SYMBOL_PAIRS = {
+    ("arm64-v8a", "libetebase_android.so"),
+    ("x86_64", "libetebase_android.so"),
+}
+SYMBOLS_ZIP_BUILD_PATH = (
+    "android/app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip"
+)
 
 
-def release_steps() -> dict[str, dict[str, object]]:
+def job_steps(job: str) -> dict[str, dict[str, object]]:
     workflow = yaml.load(
         ANDROID_BUILD_WORKFLOW.read_text(encoding="utf-8"),
         Loader=yaml.BaseLoader,
     )
-    steps = workflow["jobs"]["build-release"]["steps"]
+    steps = workflow["jobs"][job]["steps"]
     return {step["name"]: step for step in steps}
+
+
+def release_steps() -> dict[str, dict[str, object]]:
+    return job_steps("build-release")
 
 
 def checksum_outputs(run: str) -> dict[str, str]:
@@ -59,24 +80,30 @@ def test_android_release_checksum_generation_matches_uploads():
     tag = "${{ github.ref_name }}"
     apk = f"silentsuite-android-{tag}.apk"
     aab = f"silentsuite-android-{tag}.aab"
+    symbols = f"silentsuite-android-{tag}-native-debug-symbols.zip"
     installer_checksum = f"silentsuite-android-{tag}-installer.sha256"
     bundle_checksum = f"silentsuite-android-{tag}-bundle.sha256"
+    symbols_checksum = f"silentsuite-android-{tag}-native-debug-symbols.sha256"
 
     rename_run = steps["Rename Android artifacts for release"]["run"]
     assert checksum_outputs(rename_run) == {
         apk: installer_checksum,
         aab: bundle_checksum,
+        symbols: symbols_checksum,
     }
 
-    uploaded = steps["Attach Android artifacts to umbrella GitHub Release"]["with"][
-        "files"
-    ].splitlines()
+    attach = steps["Attach Android artifacts to umbrella GitHub Release"]
+    uploaded = attach["with"]["files"].splitlines()
     assert uploaded == [
         f"android/app/build/outputs/apk/release/{apk}",
         f"android/app/build/outputs/apk/release/{installer_checksum}",
         f"android/app/build/outputs/bundle/release/{aab}",
         f"android/app/build/outputs/bundle/release/{bundle_checksum}",
+        f"android/app/build/outputs/native-debug-symbols/release/{symbols}",
+        f"android/app/build/outputs/native-debug-symbols/release/{symbols_checksum}",
     ]
+    assert attach["with"]["draft"] == "true"
+    assert attach["with"]["fail_on_unmatched_files"] == "true"
 
 
 def test_android_release_checksum_sidecars_do_not_match_orion_apk_filter():
@@ -95,3 +122,163 @@ def test_android_release_checksum_sidecars_do_not_match_orion_apk_filter():
         )
 
     assert all(not looks_installable(sidecar) for sidecar in sidecars)
+
+
+def gradle_block(text: str, keyword: str) -> str:
+    match = re.search(rf"^\s*{re.escape(keyword)}\s*\{{", text, flags=re.MULTILINE)
+    assert match is not None, f"missing Gradle block: {keyword}"
+    depth = 0
+    for index in range(match.end() - 1, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[match.end() : index]
+    raise AssertionError(f"unterminated Gradle block: {keyword}")
+
+
+def test_release_build_type_emits_native_debug_symbol_zip():
+    build_types = gradle_block(
+        APP_BUILD_GRADLE.read_text(encoding="utf-8"), "buildTypes"
+    )
+    release = gradle_block(build_types, "release")
+    ndk = gradle_block(release, "ndk")
+    assert re.search(r"debugSymbolLevel\s+'SYMBOL_TABLE'", ndk)
+
+
+@pytest.mark.parametrize("job", ["build-pr", "build-release"])
+def test_native_symbol_verification_gates_both_release_builds(job: str):
+    run = job_steps(job)["Verify release native debug symbols"]["run"]
+    assert "scripts/verify-native-debug-symbols.py" in run
+    for library in REQUIRED_NATIVE_LIBS:
+        assert f"--require-lib {library}" in run
+    for abi, library in sorted(REQUIRED_SYMBOL_PAIRS):
+        assert f"--require-symbol {abi}/{library}" in run
+    assert "--bundle app/build/outputs/bundle/release/app-release.aab" in run
+    assert (
+        "--symbols app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip"
+        in run
+    )
+
+
+def test_release_artifact_upload_includes_symbols_and_fails_closed():
+    step = release_steps()[
+        "Upload signed release APK, AAB, and native debug symbols"
+    ]
+    assert SYMBOLS_ZIP_BUILD_PATH in step["with"]["path"].splitlines()
+    assert step["with"]["if-no-files-found"] == "error"
+
+
+def test_pr_build_uploads_generated_symbols_for_inspection():
+    step = job_steps("build-pr")["Upload unsigned release native debug symbols"]
+    assert step["with"]["path"] == SYMBOLS_ZIP_BUILD_PATH
+    assert step["with"]["if-no-files-found"] == "error"
+
+
+def test_android_release_runbook_documents_play_symbol_upload():
+    text = ANDROID_RELEASE_RUNBOOK.read_text(encoding="utf-8")
+    assert "silentsuite-android-<tag>.aab" in text
+    assert "silentsuite-android-<tag>-native-debug-symbols.zip" in text
+    assert "Play Console" in text
+    # Honest coverage: stripped dependencies have no extractable symbols.
+    assert "pre-stripped" in text
+    # Play acceptance stays a manual gate; CI cannot verify Play Console state.
+    assert "missing-native-debug-symbols warning" in text
+    assert "CI cannot verify Play Console state" in text
+
+
+def load_symbols_verifier():
+    spec = importlib.util.spec_from_file_location(
+        "verify_native_debug_symbols", SYMBOLS_VERIFIER
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def write_bundle(path: Path, pairs) -> None:
+    with zipfile.ZipFile(path, "w") as archive:
+        for abi, library in pairs:
+            archive.writestr(f"base/lib/{abi}/{library}", b"elf")
+
+
+def write_symbols(path: Path, entries) -> None:
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, payload in entries:
+            archive.writestr(name, payload)
+
+
+FULL_BUNDLE = [
+    (abi, library) for abi in EXPECTED_ABIS for library in REQUIRED_NATIVE_LIBS
+]
+GOOD_SYMBOL_ENTRIES = [
+    ("arm64-v8a/libetebase_android.so.sym", b"symtab"),
+    ("x86_64/libetebase_android.so.sym", b"symtab"),
+]
+
+
+def test_symbols_verifier_accepts_expected_inventory(tmp_path):
+    module = load_symbols_verifier()
+    bundle = tmp_path / "app-release.aab"
+    symbols = tmp_path / "native-debug-symbols.zip"
+    write_bundle(bundle, FULL_BUNDLE)
+    write_symbols(symbols, GOOD_SYMBOL_ENTRIES)
+    assert (
+        module.collect_errors(
+            bundle, symbols, set(REQUIRED_NATIVE_LIBS), set(REQUIRED_SYMBOL_PAIRS)
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "bundle_pairs", "symbol_zip_entries"),
+    [
+        ("missing-required-symbol", FULL_BUNDLE, GOOD_SYMBOL_ENTRIES[:1]),
+        (
+            "empty-required-symbol",
+            FULL_BUNDLE,
+            [GOOD_SYMBOL_ENTRIES[0], ("x86_64/libetebase_android.so.sym", b"")],
+        ),
+        (
+            "symbol-for-unpackaged-library",
+            FULL_BUNDLE,
+            GOOD_SYMBOL_ENTRIES + [("x86/libunknown.so.sym", b"symtab")],
+        ),
+        (
+            "malformed-symbol-entry",
+            FULL_BUNDLE,
+            GOOD_SYMBOL_ENTRIES + [("arm64-v8a/notes.txt", b"junk")],
+        ),
+        ("bundle-missing-required-library", FULL_BUNDLE[:-1], GOOD_SYMBOL_ENTRIES),
+        (
+            "bundle-unexpected-library",
+            FULL_BUNDLE + [("x86", "libextra.so")],
+            GOOD_SYMBOL_ENTRIES,
+        ),
+    ],
+)
+def test_symbols_verifier_fails_closed_on_defects(
+    tmp_path, name, bundle_pairs, symbol_zip_entries
+):
+    module = load_symbols_verifier()
+    bundle = tmp_path / f"{name}.aab"
+    symbols = tmp_path / f"{name}.zip"
+    write_bundle(bundle, bundle_pairs)
+    write_symbols(symbols, symbol_zip_entries)
+    errors = module.collect_errors(
+        bundle, symbols, set(REQUIRED_NATIVE_LIBS), set(REQUIRED_SYMBOL_PAIRS)
+    )
+    assert errors, name
+
+
+def test_symbols_verifier_fails_closed_when_zip_missing(tmp_path):
+    module = load_symbols_verifier()
+    bundle = tmp_path / "app-release.aab"
+    write_bundle(bundle, FULL_BUNDLE)
+    absent = tmp_path / "native-debug-symbols.zip"
+    errors = module.collect_errors(
+        bundle, absent, set(REQUIRED_NATIVE_LIBS), set(REQUIRED_SYMBOL_PAIRS)
+    )
+    assert errors == [f"missing archive: {absent}"]

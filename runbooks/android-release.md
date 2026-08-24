@@ -1,0 +1,41 @@
+# Android release: Play Console upload checklist
+
+Pushing a `v*` tag runs the signed `build-release` job in
+`.github/workflows/build-android.yml`. It builds the signed AAB, generates
+`native-debug-symbols.zip` (AGP `ndk.debugSymbolLevel SYMBOL_TABLE`), verifies
+both against the expected native inventory, and attaches deterministic
+artifacts to the draft umbrella GitHub release.
+
+Native inventory of the release AAB, for arm64-v8a, armeabi-v7a, x86, and
+x86_64:
+
+- `libetebase_android.so` — from the local Etebase 2.3.2 16 KB AAR built by
+  `android/scripts/build-etebase-client-16kb.sh`. Only the locally rebuilt
+  64-bit copies retain symbol tables; the upstream 32-bit copies are stripped.
+- `libconscrypt_jni.so` — transitively from `org.conscrypt:conscrypt-android`
+  (cert4android). All copies ship pre-stripped upstream.
+
+Because pre-stripped dependencies carry no extractable debug metadata, the
+symbol ZIP is only required (and verified) to contain non-empty symbol entries
+for `arm64-v8a/libetebase_android.so` and `x86_64/libetebase_android.so`. Do
+not expect or claim symbols for the stripped Conscrypt or upstream 32-bit
+Etebase payloads. The job fails closed if the ZIP is missing, malformed, or
+missing those required entries.
+
+For every Play Console release, the operator must:
+
+1. Download from the same draft GitHub release, for the same tag:
+   `silentsuite-android-<tag>.aab` and
+   `silentsuite-android-<tag>-native-debug-symbols.zip`. Verify each against
+   its `.sha256` sidecar before upload.
+2. Upload the AAB and the native debug-symbol ZIP together to the same Play
+   Console release: after uploading the AAB, attach the ZIP as that version's
+   native debug symbols (or via App bundle explorer → select that version →
+   Downloads → native debug symbols).
+3. Confirm Play Console accepted the symbols: the release page must show no
+   missing-native-debug-symbols warning for that version code after upload.
+   CI cannot verify Play Console state — this acceptance check is a manual
+   release gate.
+
+Never upload an AAB and a symbol ZIP from different tags or workflow runs; the
+symbol ZIP is validated only against the AAB built in the same job.
