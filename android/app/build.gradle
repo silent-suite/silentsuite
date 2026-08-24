@@ -23,8 +23,8 @@ android {
         minSdkVersion 21
         targetSdkVersion 36
 
-        versionCode 15
-        versionName "0.5.1-beta"
+        versionCode 16
+        versionName "0.5.2-beta"
 
         buildConfigField "boolean", "customCerts", "true"
     }

@@ -1,0 +1,1 @@
+Improved Android compatibility on 16 KB-page devices, simplified annual subscriptions, clarified remote Bridge setup, and updated troubleshooting guidance.
