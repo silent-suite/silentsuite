@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -45,7 +46,23 @@ def load_alignments(path: pathlib.Path) -> list[int]:
     return alignments
 
 
-def verify_archive(archive: pathlib.Path, required_libs: set[str]) -> bool:
+def android_ndk_major(path: pathlib.Path) -> int | None:
+    """Return the NDK major recorded in the ELF Android identity note."""
+    try:
+        output = subprocess.check_output(
+            ["readelf", "-p", ".note.android.ident", str(path)], text=True
+        )
+    except subprocess.CalledProcessError:
+        return None
+    match = re.search(r"\br(\d+)(?:[a-z0-9]*)\b", output)
+    return int(match.group(1)) if match else None
+
+
+def verify_archive(
+    archive: pathlib.Path,
+    required_libs: set[str],
+    required_ndk_majors: dict[str, int],
+) -> bool:
     ok = True
     checked = 0
     seen_by_abi: dict[str, set[str]] = defaultdict(set)
@@ -69,6 +86,21 @@ def verify_archive(archive: pathlib.Path, required_libs: set[str]) -> bool:
             else:
                 print(f"UNALIGNED {archive}: {info.filename}: {formatted}")
                 ok = False
+            minimum_ndk = required_ndk_majors.get(lib_name)
+            if minimum_ndk is not None:
+                actual_ndk = android_ndk_major(out)
+                if actual_ndk is not None and actual_ndk >= minimum_ndk:
+                    print(
+                        f"NDK        {archive}: {info.filename}: "
+                        f"r{actual_ndk} (minimum r{minimum_ndk})"
+                    )
+                else:
+                    actual = f"r{actual_ndk}" if actual_ndk is not None else "missing"
+                    print(
+                        f"OLD_NDK    {archive}: {info.filename}: "
+                        f"{actual} (minimum r{minimum_ndk})"
+                    )
+                    ok = False
     if checked == 0:
         print(f"error: no 64-bit Android shared libraries found in {archive}", file=sys.stderr)
         ok = False
@@ -91,17 +123,41 @@ def main() -> int:
         default=[],
         help="Shared-library basename that must be present for both arm64-v8a and x86_64. Repeatable.",
     )
+    parser.add_argument(
+        "--require-android-ndk-major",
+        action="append",
+        default=[],
+        metavar="LIB=MAJOR",
+        help=(
+            "Require a named 64-bit shared library to record at least this Android NDK "
+            "major in its .note.android.ident section. Repeatable."
+        ),
+    )
     parser.add_argument("archives", nargs="+", type=pathlib.Path)
     args = parser.parse_args()
 
     required_libs = set(args.require_lib)
+    required_ndk_majors: dict[str, int] = {}
+    for requirement in args.require_android_ndk_major:
+        try:
+            lib_name, raw_major = requirement.rsplit("=", 1)
+            major = int(raw_major)
+        except (TypeError, ValueError):
+            parser.error(
+                f"invalid --require-android-ndk-major value {requirement!r}; expected LIB=MAJOR"
+            )
+        if not lib_name.endswith(".so") or major < 1:
+            parser.error(
+                f"invalid --require-android-ndk-major value {requirement!r}; expected LIB=MAJOR"
+            )
+        required_ndk_majors[lib_name] = major
     ok = True
     for archive in args.archives:
         if not archive.exists():
             print(f"error: archive does not exist: {archive}", file=sys.stderr)
             ok = False
             continue
-        ok = verify_archive(archive, required_libs) and ok
+        ok = verify_archive(archive, required_libs, required_ndk_majors) and ok
     return 0 if ok else 1
 
 

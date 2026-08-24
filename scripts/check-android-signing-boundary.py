@@ -25,6 +25,7 @@ SIGNING_SECRETS = {
 }
 ROOT_WORKFLOW = Path(".github/workflows/build-android.yml")
 ANDROID_SIBLING_WORKFLOW = Path("android/.github/workflows/build.yml")
+CONSCRYPT_BUILD_SCRIPT = Path("android/scripts/build-conscrypt-android-r28.sh")
 ALLOWED_JOB = "build-release"
 POLICY_JOB = "signing-policy"
 TAG_GUARD = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
@@ -84,12 +85,16 @@ EXPECTED_RELEASE_STEP_ENVIRONMENTS: dict[str, dict[str, str]] = {
 }
 EXPECTED_SECRET_STEP_SHA256 = {
     "Decode release keystore": "44c1231395b5f7347980a05fa641b0e7d866451e10ddb88958e61459f649ffba",
-    "Build signed release APK and AAB": "07a1049b765ab5e0005e943a165dd5399b83741fc38cc91fa7919bd360873d94",
+    "Build signed release APK and AAB": "e9e02db295ff745dfe2ead024747b996b246ddb2fc2cc0f195ed2244b1a86776",
     "Capture release dependency graph and generate signed-release splits": (
         "69ded7eab4c4ff48deff2da950aacf8e627da05373ffa507f358fbcc986a7a6a"
     ),
 }
-EXPECTED_RELEASE_JOB_SHA256 = "2edcf0dde3402e8b93a673411d0c24d80496389e164776011e2eb7f75aa1df85"
+EXPECTED_RELEASE_JOB_SHA256 = "7f6bbb84157416b1466b2aa00c94593b926106f34c586a561e4a19a5da0a6624"
+EXPECTED_CONSCRYPT_JOB_SHA256 = "dbe1bc92d76e8437b5c6915e5e5599bfaf1dc7d2e2f1bdcf5e3e1211c0322ef2"
+EXPECTED_CONSCRYPT_BUILD_SCRIPT_SHA256 = (
+    "5d8141a1985ce883b5e28ec13b5e8dc2c38e7896f88136ce109e1d12d93c6465"
+)
 ALLOWED_RELEASE_JOB_KEYS = {
     "name",
     "needs",
@@ -328,6 +333,17 @@ def check(root: Path) -> list[str]:
     if not isinstance(release, Mapping):
         violations.append(f"{ROOT_WORKFLOW} is missing mapping job {ALLOWED_JOB}")
         return violations
+    conscrypt_job = jobs.get("conscrypt-r28")
+    if not isinstance(conscrypt_job, Mapping):
+        violations.append(f"{ROOT_WORKFLOW} is missing mapping job conscrypt-r28")
+    elif semantic_sha256(conscrypt_job) != EXPECTED_CONSCRYPT_JOB_SHA256:
+        violations.append("conscrypt-r28 must match the exact reviewed producer specification")
+
+    conscrypt_script = root / CONSCRYPT_BUILD_SCRIPT
+    if not conscrypt_script.is_file():
+        violations.append(f"{CONSCRYPT_BUILD_SCRIPT} is missing")
+    elif hashlib.sha256(conscrypt_script.read_bytes()).hexdigest() != EXPECTED_CONSCRYPT_BUILD_SCRIPT_SHA256:
+        violations.append(f"{CONSCRYPT_BUILD_SCRIPT} must match its exact reviewed digest")
 
     top_permissions = root_workflow.get("permissions")
     if top_permissions is not None and not permissions_read_only(top_permissions):
@@ -360,8 +376,10 @@ def check(root: Path) -> list[str]:
         violations.append(f"{ALLOWED_JOB} is missing signing references: {', '.join(sorted(missing_refs))}")
     if release.get("if") != TAG_GUARD:
         violations.append(f"{ALLOWED_JOB} must use the exact push-triggered version-tag guard")
-    if release.get("needs") != POLICY_JOB:
-        violations.append(f"{ALLOWED_JOB} must require successful {POLICY_JOB}")
+    if release.get("needs") != [POLICY_JOB, "conscrypt-r28"]:
+        violations.append(
+            f"{ALLOWED_JOB} must require successful {POLICY_JOB} and conscrypt-r28"
+        )
     if release.get("environment") != ENVIRONMENT_NAME:
         violations.append(f"{ALLOWED_JOB} must bind the {ENVIRONMENT_NAME} environment")
     if release.get("runs-on") != "ubuntu-latest":

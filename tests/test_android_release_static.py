@@ -234,6 +234,10 @@ def test_android_release_runbook_documents_play_symbol_upload():
     assert "same rebuilt AAR" in text
     assert ".symtab" in text
     assert "SHA-256" in text
+    assert "build-conscrypt-android-r28.sh" in text
+    assert "NDK r28" in text
+    assert ".note.android.ident" in text
+    assert "old-NDK compatibility warning" in text
 
 
 def test_release_job_hash_constant_matches_workflow():

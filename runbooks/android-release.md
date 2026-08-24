@@ -14,8 +14,16 @@ x86_64:
 - `libetebase_android.so` — from the local Etebase 2.3.2 16 KB AAR built by
   `android/scripts/build-etebase-client-16kb.sh`. Only the locally rebuilt
   64-bit copies retain symbol tables; the upstream 32-bit copies are stripped.
-- `libconscrypt_jni.so` — transitively from `org.conscrypt:conscrypt-android`
-  (cert4android). All copies ship pre-stripped upstream.
+- `libconscrypt_jni.so` — from Conscrypt 2.6.3 and its recorded BoringSSL
+  revision, rebuilt by `android/scripts/build-conscrypt-android-r28.sh` with
+  NDK r28 and the explicit 16 KB max/common-page-size linker flags. All copies
+  remain pre-stripped.
+
+The credential-free `conscrypt-r28` job builds that AAR once and every app job
+downloads the same run-scoped artifact. The AAR and final release APK/AAB are
+checked for both 16 KB ELF `LOAD` alignment and a Conscrypt
+`.note.android.ident` value of NDK r28 or newer. The Android signing-boundary
+guard digest-binds the producer job and source-build script.
 
 Because pre-stripped dependencies carry no extractable debug metadata, the
 CI workflow packages the symbol ZIP manually via
@@ -45,6 +53,9 @@ For every Play Console release, the operator must:
    missing-native-debug-symbols warning for that version code after upload.
    CI cannot verify Play Console state — this acceptance check is a manual
    release gate.
+4. Confirm Play Console no longer shows the Conscrypt old-NDK compatibility warning
+   for 16 KB-page devices. Treat the warning as a failed release gate even when
+   Play accepted the AAB and its debug symbols.
 
 Never upload an AAB and a symbol ZIP from different tags or workflow runs; the
 symbol ZIP is validated only against the AAB built in the same job.

@@ -51,12 +51,166 @@ jobs:
       - name: Enforce Android signing boundary
         run: python "$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py"
 
+  conscrypt-r28:
+    name: Build Conscrypt with Android NDK r28
+    needs: signing-policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Install Android NDK r28 and CMake
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Build Conscrypt with Android NDK r28
+        run: |
+          chmod +x scripts/build-conscrypt-android-r28.sh
+          scripts/build-conscrypt-android-r28.sh
+
+      - name: Verify rebuilt Conscrypt AAR
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libconscrypt_jni.so \
+            --require-android-ndk-major libconscrypt_jni.so=28 \
+            cert4android/libs/conscrypt-android-2.6.3-r28.aar
+
+      - name: Upload rebuilt Conscrypt AAR
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/cert4android/libs/conscrypt-android-2.6.3-r28.aar
+          if-no-files-found: error
+          retention-days: 1
+
+  conscrypt-runtime:
+    name: Conscrypt runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+    needs: conscrypt-r28
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: '21'
+            arch: x86
+          - api-level: '36'
+            arch: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/cert4android/libs
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Enable KVM for the emulator
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+      - name: Run Conscrypt certificate-service runtime tests
+        id: conscrypt-runtime
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: >-
+            cd android &&
+            ./gradlew cert4android:connectedDebugAndroidTest --no-daemon
+            -PrequireConscryptR28=true
+            -Pandroid.testInstrumentationRunnerArguments.class=at.bitfire.cert4android.CustomCertManagerTest
+
+      - name: Assert Conscrypt runtime methods executed
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob
+          import sys
+          import xml.etree.ElementTree as ET
+
+          expected = {
+              "acceptThenTrustedCheckUsesTheRealServiceBinder",
+              "rejectAndDuplicateOrStaleGenerationsAreIgnored",
+              "multipleCallbacksResolveExactlyOnceAndAbortDetachesOnlyItsCallback",
+              "unavailableNotificationFailsClosedForBackgroundRequests",
+              "activityRecreationAndNewIntentDeliverTheRenderedGenerationDecision",
+              "activityAcceptDeliversThroughTheStartedService",
+          }
+          records = []
+          for path in glob.glob(
+              "android/cert4android/build/outputs/androidTest-results/connected/**/*.xml",
+              recursive=True,
+          ):
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  if case.attrib.get("classname") == "at.bitfire.cert4android.CustomCertManagerTest":
+                      records.append(case)
+          names = [case.attrib.get("name", "") for case in records]
+          errors = [
+              name
+              for case, name in zip(records, names)
+              if any(case.find(kind) is not None for kind in ("failure", "error", "skipped"))
+          ]
+          if set(names) != expected or len(names) != len(expected) or errors:
+              print(f"expected={sorted(expected)}", file=sys.stderr)
+              print(f"executed={sorted(names)}", file=sys.stderr)
+              print(f"failed_or_skipped={sorted(errors)}", file=sys.stderr)
+              raise SystemExit(1)
+          print(f"verified {len(names)} Conscrypt certificate-service runtime methods")
+          PY
+
+      - name: Upload Conscrypt runtime reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conscrypt-runtime-${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            android/cert4android/build/outputs/androidTest-results/connected/
+            android/cert4android/build/reports/androidTests/connected/
+          if-no-files-found: error
+          retention-days: 14
+
   # ─────────────────────────────────────────────────────────────────────
   # PR / main builds — unsigned, no signing secrets accessible.
   # Validates that the Android project compiles and assembles.
   # ─────────────────────────────────────────────────────────────────────
   build-pr:
     name: Build (unsigned, PR/main)
+    needs: conscrypt-r28
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -68,6 +222,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/cert4android/libs
 
       - name: Set up JDK 17
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -130,7 +290,7 @@ jobs:
           cert4android:assembleDebugAndroidTest
           ical4android:assembleDebugAndroidTest
           vcard4android:assembleDebugAndroidTest
-          --continue --no-daemon -PrequireEtebase16Kb=true
+          --continue --no-daemon -PrequireEtebase16Kb=true -PrequireConscryptR28=true
 
       - name: Upload unit test reports and results
         if: always()
@@ -163,7 +323,7 @@ jobs:
             > build/privacy-evidence/dependencies/release-runtime.txt
 
       - name: Build debug APK and unsigned release APK/AAB
-        run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon -PrequireEtebase16Kb=true
+        run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon -PrequireEtebase16Kb=true -PrequireConscryptR28=true
 
       - name: Verify packaged debug and unsigned release APK SDK levels
         env:
@@ -239,6 +399,16 @@ jobs:
             --require-lib libconscrypt_jni.so \
             app/build/outputs/apk/debug/*.apk
 
+      - name: Verify unsigned release native libraries
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-lib libconscrypt_jni.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            --require-android-ndk-major libconscrypt_jni.so=28 \
+            app/build/outputs/apk/release/*.apk \
+            app/build/outputs/bundle/release/*.aab
+
       # libconscrypt_jni.so and the upstream 32-bit libetebase_android.so ship
       # pre-stripped, so no symbols can be extracted for them; only the locally
       # rebuilt 64-bit Etebase libraries carry symbol tables. AGP 8.11.1 does
@@ -285,6 +455,7 @@ jobs:
 
   account-recreation-runtime:
     name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})
+    needs: conscrypt-r28
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -348,6 +519,12 @@ jobs:
 
       - name: Build 16 KB-aligned Etebase client AAR
         run: scripts/build-etebase-client-16kb.sh
+
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/cert4android/libs
 
       - name: Enable KVM for the emulator
         run: |
@@ -539,6 +716,7 @@ jobs:
 
   color-parity-evidence:
     name: Android color parity evidence (API 36)
+    needs: conscrypt-r28
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -573,6 +751,12 @@ jobs:
           chmod +x gradlew
           scripts/build-etebase-client-16kb.sh
 
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/cert4android/libs
+
       - name: Enable KVM for the emulator
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
@@ -604,7 +788,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   build-release:
     name: Build (signed, tag release)
-    needs: signing-policy
+    needs: [signing-policy, conscrypt-r28]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment: android-release
@@ -654,6 +838,12 @@ jobs:
       - name: Build 16 KB-aligned Etebase client AAR
         run: scripts/build-etebase-client-16kb.sh
 
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/cert4android/libs
+
       - name: Decode release keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -669,6 +859,7 @@ jobs:
         run: |
           ./gradlew assembleRelease bundleRelease --no-daemon \
             -PrequireEtebase16Kb=true \
+            -PrequireConscryptR28=true \
             -PsigningStoreLocation="$KEYSTORE_PATH" \
             -PsigningKeyAlias="$KEY_ALIAS"
 
@@ -728,11 +919,13 @@ jobs:
           path: android/build/privacy-evidence/
           retention-days: 30
 
-      - name: Verify release native library alignment
+      - name: Verify release native libraries
         run: |
           python3 scripts/verify-native-16kb.py \
             --require-lib libetebase_android.so \
             --require-lib libconscrypt_jni.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            --require-android-ndk-major libconscrypt_jni.so=28 \
             app/build/outputs/apk/release/*.apk \
             app/build/outputs/bundle/release/*.aab
 

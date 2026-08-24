@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts" / "check-android-signing-boundary.py"
 ROOT_WORKFLOW = Path(".github/workflows/build-android.yml")
 SIBLING_WORKFLOW = Path("android/.github/workflows/build.yml")
+CONSCRYPT_BUILD_SCRIPT = Path("android/scripts/build-conscrypt-android-r28.sh")
 POLICY_STEP = """      - name: Enforce Android signing boundary
         run: python "$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py"
 
@@ -30,6 +31,8 @@ def fixture_root(tmp_path: Path) -> Path:
     shutil.copytree(ROOT / ".github", root / ".github")
     (root / SIBLING_WORKFLOW).parent.mkdir(parents=True)
     shutil.copy2(ROOT / SIBLING_WORKFLOW, root / SIBLING_WORKFLOW)
+    (root / CONSCRYPT_BUILD_SCRIPT).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / CONSCRYPT_BUILD_SCRIPT, root / CONSCRYPT_BUILD_SCRIPT)
     return root
 
 
@@ -55,6 +58,26 @@ def test_repository_workflows_satisfy_android_signing_boundary() -> None:
     result = run_checker(ROOT)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Android signing boundary check passed" in result.stdout
+
+
+def test_conscrypt_producer_job_is_immutable(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    workflow = root / ROOT_WORKFLOW
+    mutate(
+        workflow,
+        "          scripts/build-conscrypt-android-r28.sh\n",
+        "          scripts/build-conscrypt-android-r28.sh --unreviewed\n",
+    )
+
+    assert_rejected(run_checker(root), "conscrypt-r28 must match the exact reviewed producer specification")
+
+
+def test_conscrypt_builder_script_is_digest_bound(tmp_path: Path) -> None:
+    root = fixture_root(tmp_path)
+    script = root / CONSCRYPT_BUILD_SCRIPT
+    script.write_text(script.read_text(encoding="utf-8") + "# unreviewed\n", encoding="utf-8")
+
+    assert_rejected(run_checker(root), f"{CONSCRYPT_BUILD_SCRIPT} must match its exact reviewed digest")
 
 
 def test_quoted_job_with_bracket_secret_reference_is_rejected(tmp_path: Path) -> None:
@@ -396,8 +419,8 @@ def test_nonrelease_job_write_permission_is_rejected(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "  build-pr:\n    name: Build (unsigned, PR/main)\n    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n",
-        "  build-pr:\n    name: Build (unsigned, PR/main)\n    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions: write-all\n",
+        "  build-pr:\n    name: Build (unsigned, PR/main)\n    needs: conscrypt-r28\n    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n",
+        "  build-pr:\n    name: Build (unsigned, PR/main)\n    needs: conscrypt-r28\n    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    permissions: write-all\n",
     )
 
     assert_rejected(
@@ -421,7 +444,7 @@ def test_release_job_extra_write_permission_is_rejected(tmp_path: Path) -> None:
 def test_release_requires_successful_policy_job(tmp_path: Path) -> None:
     root = fixture_root(tmp_path)
     workflow = root / ROOT_WORKFLOW
-    mutate(workflow, "    needs: signing-policy\n", "")
+    mutate(workflow, "    needs: [signing-policy, conscrypt-r28]\n", "")
 
     assert_rejected(run_checker(root), "build-release must require successful signing-policy")
 
@@ -431,8 +454,8 @@ def test_release_needs_must_be_exact(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "    needs: signing-policy\n",
-        "    needs: [signing-policy, attacker]\n",
+        "    needs: [signing-policy, conscrypt-r28]\n",
+        "    needs: [signing-policy, conscrypt-r28, attacker]\n",
     )
 
     assert_rejected(run_checker(root), "build-release must require successful signing-policy")
@@ -718,6 +741,7 @@ def test_secret_bearing_step_cannot_be_replaced_by_pinned_action(tmp_path: Path)
         run: |
           ./gradlew assembleRelease bundleRelease --no-daemon \\
             -PrequireEtebase16Kb=true \\
+            -PrequireConscryptR28=true \\
             -PsigningStoreLocation="$KEYSTORE_PATH" \\
             -PsigningKeyAlias="$KEY_ALIAS"
 """,
@@ -773,8 +797,8 @@ def test_release_job_cannot_invoke_local_action(tmp_path: Path) -> None:
     workflow = root / ROOT_WORKFLOW
     mutate(
         workflow,
-        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n\n      - name: Set up JDK 17\n",
-        "  build-release:\n    name: Build (signed, tag release)\n    needs: signing-policy\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n\n      - name: Local release action\n        uses: ./malicious-action\n\n      - name: Set up JDK 17\n",
+        "  build-release:\n    name: Build (signed, tag release)\n    needs: [signing-policy, conscrypt-r28]\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n\n      - name: Set up JDK 17\n",
+        "  build-release:\n    name: Build (signed, tag release)\n    needs: [signing-policy, conscrypt-r28]\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n    runs-on: ubuntu-latest\n    environment: android-release\n    permissions:\n      contents: write\n    defaults:\n      run:\n        working-directory: android\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n\n      - name: Local release action\n        uses: ./malicious-action\n\n      - name: Set up JDK 17\n",
     )
 
     assert_rejected(run_checker(root), "build-release must not invoke local actions")

@@ -1,7 +1,7 @@
 
 buildscript {
     ext.versions = [
-        conscrypt: '2.5.3'
+        conscrypt: '2.6.3'
     ]
 }
 
@@ -49,6 +49,15 @@ androidComponents {
 
 dependencies {
     def androidX = rootProject.ext.androidXVersions
+    def conscryptR28Aar = file("libs/conscrypt-android-${versions.conscrypt}-r28.aar")
+    def conscryptR28Required = providers.gradleProperty('requireConscryptR28')
+            .map { it.toBoolean() }
+            .getOrElse(false)
+    def releaseBuildRequested = gradle.startParameter.taskNames.any { taskName ->
+        def normalized = taskName.toLowerCase()
+        normalized == 'assemblerelease' || normalized.endsWith(':assemblerelease') ||
+                normalized == 'bundlerelease' || normalized.endsWith(':bundlerelease')
+    }
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}"
 
@@ -58,7 +67,14 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-livedata:${androidX.lifecycle}"
     implementation "androidx.lifecycle:lifecycle-viewmodel-ktx:${androidX.lifecycle}"
     implementation "com.google.android.material:material:${androidX.material}"
-    implementation "org.conscrypt:conscrypt-android:${versions.conscrypt}"
+    if (conscryptR28Aar.exists()) {
+        implementation files(conscryptR28Aar)
+    } else if (conscryptR28Required || releaseBuildRequested) {
+        throw new GradleException("Missing ${conscryptR28Aar}. Run android/scripts/build-conscrypt-android-r28.sh before release builds.")
+    } else {
+        logger.warn("Using Maven org.conscrypt:conscrypt-android:${versions.conscrypt}; run android/scripts/build-conscrypt-android-r28.sh to build the NDK r28 AAR.")
+        implementation "org.conscrypt:conscrypt-android:${versions.conscrypt}"
+    }
 
     androidTestImplementation "androidx.test:runner:${androidX.testRunner}"
     androidTestImplementation "androidx.test:rules:${androidX.testRules}"
