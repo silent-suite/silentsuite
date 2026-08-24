@@ -14,6 +14,7 @@ ANDROID_BUILD_WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 APP_BUILD_GRADLE = ROOT / "android/app/build.gradle"
 SYMBOLS_VERIFIER = ROOT / "android/scripts/verify-native-debug-symbols.py"
 ANDROID_RELEASE_RUNBOOK = ROOT / "runbooks/android-release.md"
+SIGNING_CHECKER = ROOT / "scripts/check-android-signing-boundary.py"
 
 REQUIRED_NATIVE_LIBS = ("libetebase_android.so", "libconscrypt_jni.so")
 EXPECTED_ABIS = ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
@@ -162,18 +163,37 @@ def test_native_symbol_verification_gates_both_release_builds(job: str):
     )
 
 
-def test_release_artifact_upload_includes_symbols_and_fails_closed():
-    step = release_steps()[
+def test_release_symbols_upload_is_gated_by_verifier_and_release_attach():
+    """upload-artifact's if-no-files-found: error only fires when zero path
+    patterns match, so it cannot enforce one missing file in a multi-path
+    upload. Presence of the symbols ZIP is enforced by the preceding
+    'Verify release native debug symbols' step and, for release assets, by
+    the attach step's fail_on_unmatched_files; if-no-files-found stays only
+    as defense in depth.
+    """
+    steps = release_steps()
+    ordered = list(steps)
+    upload = steps["Upload signed release APK, AAB, and native debug symbols"]
+    assert SYMBOLS_ZIP_BUILD_PATH in upload["with"]["path"].splitlines()
+    assert upload["with"]["if-no-files-found"] == "error"
+    assert ordered.index("Verify release native debug symbols") < ordered.index(
         "Upload signed release APK, AAB, and native debug symbols"
-    ]
-    assert SYMBOLS_ZIP_BUILD_PATH in step["with"]["path"].splitlines()
-    assert step["with"]["if-no-files-found"] == "error"
+    )
+    attach = steps["Attach Android artifacts to umbrella GitHub Release"]
+    assert attach["with"]["fail_on_unmatched_files"] == "true"
 
 
-def test_pr_build_uploads_generated_symbols_for_inspection():
-    step = job_steps("build-pr")["Upload unsigned release native debug symbols"]
+def test_pr_build_uploads_generated_symbols_after_verification():
+    steps = job_steps("build-pr")
+    ordered = list(steps)
+    step = steps["Upload unsigned release native debug symbols"]
+    # Single-pattern upload, so if-no-files-found: error does cover this ZIP;
+    # the verifier step above it remains the primary contract gate.
     assert step["with"]["path"] == SYMBOLS_ZIP_BUILD_PATH
     assert step["with"]["if-no-files-found"] == "error"
+    assert ordered.index("Verify release native debug symbols") < ordered.index(
+        "Upload unsigned release native debug symbols"
+    )
 
 
 def test_android_release_runbook_documents_play_symbol_upload():
@@ -186,6 +206,23 @@ def test_android_release_runbook_documents_play_symbol_upload():
     # Play acceptance stays a manual gate; CI cannot verify Play Console state.
     assert "missing-native-debug-symbols warning" in text
     assert "CI cannot verify Play Console state" in text
+
+
+def test_release_job_hash_constant_matches_workflow():
+    """Pin the checker's EXPECTED_RELEASE_JOB_SHA256 to the committed
+    workflow, so editing the build-release job without refreshing the
+    constant fails here with a direct message, not only in signing-policy.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "check_android_signing_boundary", SIGNING_CHECKER
+    )
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    workflow = checker.load_workflow(ANDROID_BUILD_WORKFLOW)
+    assert (
+        checker.semantic_sha256(workflow["jobs"]["build-release"])
+        == checker.EXPECTED_RELEASE_JOB_SHA256
+    )
 
 
 def load_symbols_verifier():

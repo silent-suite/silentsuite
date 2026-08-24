@@ -89,7 +89,7 @@ EXPECTED_SECRET_STEP_SHA256 = {
         "69ded7eab4c4ff48deff2da950aacf8e627da05373ffa507f358fbcc986a7a6a"
     ),
 }
-EXPECTED_RELEASE_JOB_SHA256 = "4be2edec41e9cd8702a139a4f89d7c74eca94fb22d78de8c7fcebf61b1366216"
+EXPECTED_RELEASE_JOB_SHA256 = "0ccb5dff794d238df58f630b4f19dbacee0c6112cdeea6030f69ff828c3aa2c2"
 ALLOWED_RELEASE_JOB_KEYS = {
     "name",
     "needs",
@@ -104,6 +104,7 @@ ALLOWED_RELEASE_STEP_KEYS = {"name", "uses", "with", "run", "env", "if"}
 REQUIRED_TRIGGER_PATHS = {
     ".github/workflows/**",
     "android/.github/workflows/**",
+    "runbooks/android-release.md",
     "scripts/check-android-signing-boundary.py",
     "tests/test_android_*.py",
 }
