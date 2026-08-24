@@ -89,6 +89,45 @@ if [[ ! -s "$built_aar" ]]; then
   echo "error: Conscrypt build did not produce $built_aar" >&2
   exit 1
 fi
+python3 - "$built_aar" "$CONSCRYPT_VERSION" "$BORINGSSL_COMMIT" <<'PY'
+from io import BytesIO
+from pathlib import Path
+import sys
+import zipfile
+
+aar = Path(sys.argv[1])
+version = sys.argv[2]
+boringssl_commit = sys.argv[3]
+with zipfile.ZipFile(aar) as archive:
+    expected_native = {
+        f"jni/{abi}/libconscrypt_jni.so"
+        for abi in ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+    }
+    missing_native = sorted(expected_native - set(archive.namelist()))
+    if missing_native:
+        raise SystemExit(f"error: rebuilt Conscrypt AAR is missing: {', '.join(missing_native)}")
+    with zipfile.ZipFile(BytesIO(archive.read("classes.jar"))) as classes:
+        raw_properties = classes.read("org/conscrypt/conscrypt.properties").decode("utf-8")
+
+properties = dict(
+    line.split("=", 1)
+    for line in raw_properties.splitlines()
+    if line and not line.startswith("#") and "=" in line
+)
+major, minor, patch = version.split(".")
+expected_properties = {
+    "org.conscrypt.boringssl.version": boringssl_commit,
+    "org.conscrypt.version.major": major,
+    "org.conscrypt.version.minor": minor,
+    "org.conscrypt.version.patch": patch,
+}
+actual_properties = {key: properties.get(key) for key in expected_properties}
+if actual_properties != expected_properties:
+    raise SystemExit(
+        f"error: rebuilt Conscrypt properties mismatch: expected {expected_properties}, "
+        f"got {actual_properties}"
+    )
+PY
 mkdir -p "$(dirname "$OUTPUT_AAR")"
 cp "$built_aar" "$OUTPUT_AAR"
 sha256sum "$OUTPUT_AAR"

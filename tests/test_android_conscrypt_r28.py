@@ -38,6 +38,9 @@ def test_conscrypt_builder_pins_source_boringssl_and_ndk_r28():
     assert "-z max-page-size=16384 -z common-page-size=16384" in source
     assert ":conscrypt-android:assembleRelease" in source
     assert LOCAL_AAR in source
+    assert "org/conscrypt/conscrypt.properties" in source
+    assert "org.conscrypt.boringssl.version" in source
+    assert "org.conscrypt.version.patch" in source
 
 
 def test_release_builds_fail_closed_without_rebuilt_conscrypt_aar():
@@ -54,6 +57,7 @@ def test_workflow_builds_conscrypt_once_without_secrets_and_reuses_exact_run_art
     jobs = workflow_jobs()
     producer = jobs["conscrypt-r28"]
     assert producer["permissions"] == {"contents": "read"}
+    assert producer["timeout-minutes"] == 30
     assert "environment" not in producer
     producer_steps = {step["name"]: step for step in producer["steps"]}
     build = producer_steps["Build Conscrypt with Android NDK r28"]["run"]

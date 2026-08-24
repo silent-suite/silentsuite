@@ -55,6 +55,7 @@ jobs:
     name: Build Conscrypt with Android NDK r28
     needs: signing-policy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     defaults:
