@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import androidx.core.view.ViewCompat
 import androidx.fragment.app.Fragment
 import io.silentsuite.sync.R
+import io.silentsuite.sync.ui.applySystemBarInsetsAsPadding
 
 /** Presentation-only first destination for account entry. */
 class AccountChoiceFragment : Fragment() {
@@ -56,20 +57,5 @@ class AccountChoiceFragment : Fragment() {
         super.onDestroyView()
     }
 
-    private fun applyInsets(root: View) {
-        val left = root.paddingLeft
-        val top = root.paddingTop
-        val right = root.paddingRight
-        val bottom = root.paddingBottom
-        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
-            view.setPadding(
-                left + insets.systemWindowInsetLeft,
-                top + insets.systemWindowInsetTop,
-                right + insets.systemWindowInsetRight,
-                bottom + insets.systemWindowInsetBottom,
-            )
-            insets
-        }
-        ViewCompat.requestApplyInsets(root)
-    }
+    private fun applyInsets(root: View) = root.applySystemBarInsetsAsPadding()
 }

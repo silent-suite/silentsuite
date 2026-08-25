@@ -24,6 +24,18 @@ open class BaseActivity : AppCompatActivity() {
         applyReadableSystemBars()
     }
 
+    override fun onContentChanged() {
+        super.onContentChanged()
+        applyContentInsets()
+    }
+
+    override fun onPostCreate(savedInstanceState: Bundle?) {
+        super.onPostCreate(savedInstanceState)
+        // Fragment-only activities may never call setContentView(), so onContentChanged()
+        // is not guaranteed to run after AppCompat installs android.R.id.content.
+        applyContentInsets()
+    }
+
     override fun onResume() {
         super.onResume()
         applyReadableSystemBars()
@@ -82,18 +94,39 @@ open class BaseActivity : AppCompatActivity() {
             }
         statusBarScrims = scrims(statusBarScrims, STATUS_BAR_SCRIM_TAG)
         navigationBarScrims = scrims(navigationBarScrims, NAVIGATION_BAR_SCRIM_TAG)
-        ViewCompat.setOnApplyWindowInsetsListener(overlay) { _, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(overlay) { view, insets ->
             val status = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            statusBarScrims.forEach { (gravity, view) ->
-                view.layoutParams = scrimLayoutParams(status, gravity)
+            statusBarScrims.forEach { (gravity, scrim) ->
+                scrim.layoutParams = scrimLayoutParams(status, gravity)
             }
-            navigationBarScrims.forEach { (gravity, view) ->
-                view.layoutParams = scrimLayoutParams(navigation, gravity)
+            navigationBarScrims.forEach { (gravity, scrim) ->
+                scrim.layoutParams = scrimLayoutParams(navigation, gravity)
             }
-            insets
+            // A listener replaces DecorView's normal onApplyWindowInsets call. Invoke it so
+            // decor bookkeeping still runs and the resulting insets reach the content tree.
+            ViewCompat.onApplyWindowInsets(view, insets)
         }
         ViewCompat.requestApplyInsets(overlay)
+    }
+
+    /**
+     * API 35+ enforces edge-to-edge for this target SDK. Keep every [BaseActivity] content tree
+     * outside the system bars, then dispatch only the unclaimed inset space to descendants.
+     * Descendants can therefore add IME padding without double-claiming the navigation bar.
+     */
+    private fun applyContentInsets() {
+        if (Build.VERSION.SDK_INT < 35) return
+        val content = window.decorView.findViewById<ViewGroup>(android.R.id.content) ?: return
+        content.clipToPadding = false
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+            val safeDrawing = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            view.setPadding(safeDrawing.left, safeDrawing.top, safeDrawing.right, safeDrawing.bottom)
+            ViewCompat.onApplyWindowInsets(view, insets.inset(safeDrawing))
+        }
+        ViewCompat.requestApplyInsets(content)
     }
 
     private fun scrimLayoutParams(insets: Insets, gravity: Int): FrameLayout.LayoutParams =

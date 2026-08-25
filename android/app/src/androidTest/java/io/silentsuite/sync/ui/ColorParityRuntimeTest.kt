@@ -20,6 +20,7 @@ import io.silentsuite.sync.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -153,6 +154,23 @@ class ColorParityRuntimeTest {
 
     private fun View.bounds() = Rect(left, top, right, bottom)
 
+    private fun View.paddingBounds() = Rect(paddingLeft, paddingTop, paddingRight, paddingBottom)
+
+    private fun assertContentInsets(activity: AboutActivity) {
+        if (Build.VERSION.SDK_INT < 35) return
+        val content = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
+        val rootInsets = ViewCompat.getRootWindowInsets(activity.window.decorView)
+        assertNotNull(rootInsets)
+        val safeDrawing = rootInsets!!.getInsets(
+            WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+        )
+        assertEquals(
+            Rect(safeDrawing.left, safeDrawing.top, safeDrawing.right, safeDrawing.bottom),
+            content.paddingBounds(),
+        )
+        assertTrue("Content must retain its inflated child", content.childCount > 0)
+    }
+
     private fun expectedScrimBounds(decor: View, insets: Insets, gravity: Int): Rect =
         when (gravity) {
             Gravity.TOP -> Rect(0, 0, decor.width, insets.top)
@@ -194,6 +212,7 @@ class ColorParityRuntimeTest {
                     assertFalse(activity.window.isStatusBarContrastEnforced)
                     assertFalse(activity.window.isNavigationBarContrastEnforced)
                     assertScrimBounds(activity)
+                    assertContentInsets(activity)
                 } else {
                     val expected = ContextCompat.getColor(activity, R.color.semantic_system_bar)
                     assertEquals(expected, activity.window.statusBarColor)
@@ -212,8 +231,10 @@ class ColorParityRuntimeTest {
     @Test fun repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent() {
         about { scenario ->
             var before: Rect? = null
+            var paddingBefore: Rect? = null
             scenario.onActivity { activity ->
                 before = activity.findViewById<View>(android.R.id.content).bounds()
+                paddingBefore = activity.findViewById<View>(android.R.id.content).paddingBounds()
                 ViewCompat.requestApplyInsets(activity.window.decorView)
             }
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
@@ -221,9 +242,11 @@ class ColorParityRuntimeTest {
             waitForAbout(scenario)
             scenario.onActivity { activity ->
                 assertEquals(before, activity.findViewById<View>(android.R.id.content).bounds())
+                assertEquals(paddingBefore, activity.findViewById<View>(android.R.id.content).paddingBounds())
                 if (Build.VERSION.SDK_INT >= 35) {
                     val decor = activity.window.decorView
                     assertScrimBounds(activity)
+                    assertContentInsets(activity)
                     assertEquals(8, BaseActivity.SCRIM_EDGES.sumOf { (_, suffix) ->
                         countTagged(decor, "${BaseActivity.STATUS_BAR_SCRIM_TAG}-$suffix") +
                             countTagged(decor, "${BaseActivity.NAVIGATION_BAR_SCRIM_TAG}-$suffix")

@@ -13,6 +13,7 @@ import android.view.View
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.navigation.NavigationView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -60,6 +61,18 @@ class AccountDashboardRuntimeTest {
             val overallText = AtomicReference<String>("")
             val caldavText = AtomicReference<String>("")
             scenario.onActivity { activity ->
+                if (Build.VERSION.SDK_INT >= 35) {
+                    val systemBars = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
+                        .getInsets(WindowInsetsCompat.Type.systemBars())
+                    val dashboard = activity.findViewById<View>(R.id.parent)
+                    val location = IntArray(2)
+                    dashboard.getLocationOnScreen(location)
+                    assertTrue("Dashboard starts under the status bar", location[1] >= systemBars.top)
+                    assertTrue(
+                        "Dashboard ends under the navigation bar",
+                        location[1] + dashboard.height <= activity.window.decorView.height - systemBars.bottom,
+                    )
+                }
                 fun observe(viewId: Int, observed: AtomicReference<String>) {
                     val view = activity.findViewById<TextView>(viewId)
                     observed.set(view.text.toString())

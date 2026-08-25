@@ -24,6 +24,7 @@ import androidx.core.view.ViewCompat
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.ui.WebViewActivity
+import io.silentsuite.sync.ui.applySystemBarInsetsAsPadding
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import net.cachapa.expandablelayout.ExpandableLayout
@@ -175,35 +176,8 @@ class LoginCredentialsFragment : Fragment() {
         )
     }
 
-    private fun applyLoginActionBarInsets(actionBar: View) {
-        val basePaddingLeft = actionBar.paddingLeft
-        val basePaddingTop = actionBar.paddingTop
-        val basePaddingRight = actionBar.paddingRight
-        val basePaddingBottom = actionBar.paddingBottom
-
-        ViewCompat.setOnApplyWindowInsetsListener(actionBar) { view, insets ->
-            view.setPadding(
-                    basePaddingLeft,
-                    basePaddingTop,
-                    basePaddingRight,
-                    basePaddingBottom + insets.systemWindowInsetBottom
-            )
-            insets
-        }
-
-        if (ViewCompat.isAttachedToWindow(actionBar)) {
-            ViewCompat.requestApplyInsets(actionBar)
-        } else {
-            actionBar.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                override fun onViewAttachedToWindow(view: View) {
-                    view.removeOnAttachStateChangeListener(this)
-                    ViewCompat.requestApplyInsets(view)
-                }
-
-                override fun onViewDetachedFromWindow(view: View) = Unit
-            })
-        }
-    }
+    private fun applyLoginActionBarInsets(actionBar: View) =
+            actionBar.applySystemBarInsetsAsPadding(top = false, includeIme = true)
 
     companion object {
         private const val KEY_ADVANCED_EXPANDED = "advancedExpanded"

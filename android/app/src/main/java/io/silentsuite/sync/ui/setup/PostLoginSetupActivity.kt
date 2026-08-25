@@ -17,8 +17,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.observe
 import at.bitfire.ical4android.TaskProvider.ProviderName
 import io.silentsuite.sync.AccountSettings
@@ -30,6 +28,7 @@ import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.BaseActivity
 import io.silentsuite.sync.ui.WebViewActivity
+import io.silentsuite.sync.ui.applySystemBarInsetsAsPadding
 import java.util.UUID
 
 /** Resumes a durable setup row. It deliberately accepts no credentials or session extra. */
@@ -698,35 +697,8 @@ class PostLoginSetupActivity : BaseActivity() {
             visible(actionButtons.any { it.visibility == View.VISIBLE })
     }
 
-    private fun applySetupActionBarInsets(actionBar: View) {
-        val basePaddingLeft = actionBar.paddingLeft
-        val basePaddingTop = actionBar.paddingTop
-        val basePaddingRight = actionBar.paddingRight
-        val basePaddingBottom = actionBar.paddingBottom
-
-        ViewCompat.setOnApplyWindowInsetsListener(actionBar) { view, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(
-                basePaddingLeft + systemBars.left,
-                basePaddingTop,
-                basePaddingRight + systemBars.right,
-                basePaddingBottom + systemBars.bottom,
-            )
-            insets
-        }
-        if (ViewCompat.isAttachedToWindow(actionBar)) {
-            ViewCompat.requestApplyInsets(actionBar)
-        } else {
-            actionBar.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                override fun onViewAttachedToWindow(view: View) {
-                    view.removeOnAttachStateChangeListener(this)
-                    ViewCompat.requestApplyInsets(view)
-                }
-
-                override fun onViewDetachedFromWindow(view: View) = Unit
-            })
-        }
-    }
+    private fun applySetupActionBarInsets(actionBar: View) =
+        actionBar.applySystemBarInsetsAsPadding(top = false)
 
     private fun renderSetupStepper(presentation: PostLoginSetupPresentation) {
         val stages = listOf(

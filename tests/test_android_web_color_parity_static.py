@@ -668,6 +668,12 @@ def test_text_input_refresh_and_system_bar_mechanics_are_bounded():
     assert "Gravity.START" not in base and "Gravity.END" not in base
     for gravity, suffix in (("TOP", "top"), ("BOTTOM", "bottom"), ("LEFT", "left"), ("RIGHT", "right")):
         assert f'Gravity.{gravity} to "{suffix}"' in base
+    assert "ViewCompat.onApplyWindowInsets(view, insets)" in base
+    assert "applyContentInsets()" in base
+    assert "override fun onContentChanged()" in base
+    assert "override fun onPostCreate(savedInstanceState: Bundle?)" in base
+    assert "WindowInsetsCompat.Type.displayCutout()" in base
+    assert "insets.inset(safeDrawing)" in base
 
 
 def test_every_android_resource_xml_obeys_the_closed_color_contract():
@@ -948,6 +954,8 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     base_activity = source("android/app/src/main/java/io/silentsuite/sync/ui/BaseActivity.kt")
     assert "statusBarScrims: Map<Int, View>" in base_activity
     assert "navigationBarScrims: Map<Int, View>" in base_activity
+    assert "private fun assertContentInsets" in runtime
+    assert "content.paddingBounds()" in runtime
     for suffix in ("top", "bottom", "left", "right"):
         assert f'Gravity.{suffix.upper()} to "{suffix}"' in base_activity
 

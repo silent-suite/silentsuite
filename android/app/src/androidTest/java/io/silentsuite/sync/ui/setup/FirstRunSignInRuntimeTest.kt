@@ -3,12 +3,15 @@ package io.silentsuite.sync.ui.setup
 import android.accounts.AccountManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.os.Bundle
 import android.os.Build
+import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.TextView
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -36,6 +39,13 @@ class FirstRunSignInRuntimeTest {
                 scenario.onActivity { activity ->
                     assertVisibleDestination(activity, "AccountChoiceFragment")
                     assertEquals("Add account", activity.title.toString())
+                }
+                waitForViewLayout(scenario, "account_choice_scroll")
+                scenario.onActivity { activity ->
+                    assertOutsideSystemBars(
+                        activity,
+                        activity.findViewById(requiredId(activity, "account_choice_scroll")),
+                    )
                     LoginActivity.browserLauncherForTest = { _, _ -> throw ActivityNotFoundException() }
                     activity.findViewById<View>(requiredId(activity, "account_choice_create_account")).performClick()
                     activity.supportFragmentManager.executePendingTransactions()
@@ -47,6 +57,9 @@ class FirstRunSignInRuntimeTest {
                     assertVisibleDestination(activity, "LoginCredentialsFragment")
                     assertEquals("Sign in", activity.title.toString())
                     assertEquals(1, activity.supportFragmentManager.backStackEntryCount)
+                }
+                assertImeKeepsPrimaryActionVisible(scenario)
+                scenario.onActivity { activity ->
                     val leaseBeforeMalformedRestore = requireNotNull(activity.setupLease())
                     val operationBeforeMalformedRestore = requireNotNull(
                         SetupSecretHolder.beginOperation(leaseBeforeMalformedRestore),
@@ -75,6 +88,74 @@ class FirstRunSignInRuntimeTest {
         } finally {
             finishScenario("choice-credentials-back-up", passed)
         }
+    }
+
+    private fun waitForViewLayout(scenario: ActivityScenario<LoginActivity>, idName: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        repeat(100) {
+            var laidOut = false
+            scenario.onActivity { activity ->
+                val view = activity.findViewById<View>(requiredId(activity, idName))
+                laidOut = ViewCompat.isLaidOut(view) && view.width > 0 && view.height > 0
+            }
+            if (laidOut) return
+            instrumentation.waitForIdleSync()
+            SystemClock.sleep(50)
+        }
+        throw AssertionError("$idName was not laid out")
+    }
+
+    private fun assertOutsideSystemBars(activity: LoginActivity, view: View) {
+        if (Build.VERSION.SDK_INT < 35) return
+        val insets = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
+            .getInsets(WindowInsetsCompat.Type.systemBars())
+        val location = IntArray(2)
+        view.getLocationOnScreen(location)
+        assertTrue(
+            "View starts under the status bar: top=${location[1]} inset=${insets.top}",
+            location[1] >= insets.top,
+        )
+        assertTrue(
+            "View ends under the navigation bar",
+            location[1] + view.height <= activity.window.decorView.height - insets.bottom,
+        )
+    }
+
+    private fun assertImeKeepsPrimaryActionVisible(scenario: ActivityScenario<LoginActivity>) {
+        if (Build.VERSION.SDK_INT < 35) return
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        scenario.onActivity { activity ->
+            val password = activity.findViewById<View>(requiredId(activity, "login_password"))
+            password.requestFocus()
+            ViewCompat.getWindowInsetsController(password)?.show(WindowInsetsCompat.Type.ime())
+            activity.getSystemService(InputMethodManager::class.java)?.showSoftInput(password, 0)
+        }
+        var verified = false
+        for (attempt in 0 until 100) {
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                val rootInsets = ViewCompat.getRootWindowInsets(activity.window.decorView) ?: return@onActivity
+                if (!rootInsets.isVisible(WindowInsetsCompat.Type.ime())) return@onActivity
+                val ime = rootInsets.getInsets(WindowInsetsCompat.Type.ime())
+                val primaryAction = activity.findViewById<View>(requiredId(activity, "login"))
+                val location = IntArray(2)
+                primaryAction.getLocationOnScreen(location)
+                // LoginActivity uses adjustResize. Depending on platform inset dispatch, the
+                // window can shrink above the IME or the pinned action can receive IME padding.
+                // The contract is the same in both cases: the action remains fully visible.
+                verified = location[1] + primaryAction.height <=
+                    activity.window.decorView.height - ime.bottom
+            }
+            if (verified) break
+            SystemClock.sleep(50)
+        }
+        assertTrue("IME did not leave the sign-in action fully visible", verified)
+        scenario.onActivity { activity ->
+            val password = activity.findViewById<View>(requiredId(activity, "login_password"))
+            ViewCompat.getWindowInsetsController(password)?.hide(WindowInsetsCompat.Type.ime())
+            password.clearFocus()
+        }
+        instrumentation.waitForIdleSync()
     }
 
     @Test

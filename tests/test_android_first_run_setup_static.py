@@ -249,8 +249,11 @@ def test_setup_has_approved_stage_surface_stable_ids_and_copy():
     constants = source(JAVA / "Constants.kt")
     assert 'appendEncodedPath("user-guide/apps/android")' in constants
     assert "applySetupActionBarInsets(findViewById(R.id.setup_action_bar))" in activity
-    assert "WindowInsetsCompat.Type.systemBars()" in activity
-    assert "basePaddingBottom + systemBars.bottom" in activity
+    view_insets = source(JAVA / "ui/ViewInsets.kt")
+    assert "WindowInsetsCompat.Type.systemBars()" in view_insets
+    assert "WindowInsetsCompat.Type.displayCutout()" in view_insets
+    assert "basePaddingBottom + if (bottom) applied.bottom else 0" in view_insets
+    assert "actionBar.applySystemBarInsetsAsPadding(top = false)" in activity
     blocked_visibility = activity.split(
         "findViewById<Button>(R.id.setup_continue_limited).visibility", 1
     )[1].split("findViewById<Button>(R.id.setup_retry_inventory)", 1)[0]

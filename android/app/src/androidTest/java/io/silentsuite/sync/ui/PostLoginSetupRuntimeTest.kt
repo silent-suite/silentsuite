@@ -3,9 +3,12 @@ package io.silentsuite.sync.ui
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.ContentResolver
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import androidx.test.core.app.ActivityScenario
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -59,6 +62,17 @@ class PostLoginSetupRuntimeTest {
         PostLoginSyncConfigurator.configureOverride={ _, _ -> false }
         try {
             ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account,id)).use { scenario -> scenario.onActivity { activity ->
+                if (Build.VERSION.SDK_INT >= 35) {
+                    val systemBars = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
+                        .getInsets(WindowInsetsCompat.Type.systemBars())
+                    val actionBar = activity.findViewById<View>(R.id.setup_action_bar)
+                    val location = IntArray(2)
+                    actionBar.getLocationOnScreen(location)
+                    assertTrue(
+                        "Setup actions end under the navigation bar",
+                        location[1] + actionBar.height <= activity.window.decorView.height - systemBars.bottom,
+                    )
+                }
                 activity.findViewById<android.widget.Button>(R.id.setup_continue_limited).performClick()
                 assertEquals(PostLoginSetupState.ACCOUNT_CREATED,AccountSettings.setupState(manager,account,true))
                 assertEquals(id,manager.getUserData(account,AccountSettings.KEY_CREATION_ID))
