@@ -1,6 +1,6 @@
 {
   "name": "@silentsuite/config",
-  "version": "0.5.2-beta",
+  "version": "0.5.3-beta",
   "private": true,
   "files": [
     "typescript",

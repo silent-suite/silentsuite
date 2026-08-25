@@ -1,0 +1,1 @@
+Fixes Android sign-in and setup screens hidden behind system bars or the keyboard.
