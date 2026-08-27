@@ -173,11 +173,12 @@ describe('PaymentChoicePanel cancellation safety', () => {
     const onCancel = renderPanel()
 
     expect(await screen.findByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel any payment in progress and close' }))
 
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/payment-flows/cancel'))).toBe(true))
     expect(onCancel).not.toHaveBeenCalled()
-    expect(await screen.findByText('Cancellation could not be confirmed.')).toBeInTheDocument()
+    expect(await screen.findByText('Could not cancel the pending payment flow.')).toBeInTheDocument()
+    expect(screen.queryByText('Cancellation could not be confirmed.')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /retry payment status/i }))
     expect(await screen.findByRole('button', { name: /continue to card payment/i })).toBeInTheDocument()
@@ -200,7 +201,7 @@ describe('PaymentChoicePanel cancellation safety', () => {
     })
     const onCancel = renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: /cancel and choose another method/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment' }))
     await waitFor(() => expect(resolveCancellation).toBeTypeOf('function'))
     expect(onCancel).not.toHaveBeenCalled()
 

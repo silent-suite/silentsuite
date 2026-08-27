@@ -22,6 +22,12 @@ import {
   formatAnnualOfferAmount,
   isAnnualOfferProviderAvailable,
 } from '@/app/lib/annual-offer-presentation'
+import {
+  BITCOIN_CANCELLATION_WARNING,
+  PAYMENT_FLOW_CANCELLATION_MESSAGES,
+  cancelPaymentFlow,
+  type PaymentFlowCancellationProvider,
+} from '@/app/lib/payment-flow-cancellation'
 import BitcoinPaymentPanel, { type BitcoinPaymentSession } from './bitcoin-payment-panel'
 
 const CRYPTO_CHECKOUT_ENABLED = process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED === 'true'
@@ -43,17 +49,13 @@ type PaymentOption = {
   enabled: boolean
 }
 
+const CURRENT_FLOW_KINDS = ['stripe_pay_now', 'btcpay_annual'] as const
+
 type CurrentPaymentFlow = {
-  flowKind: 'stripe_pay_now' | 'btcpay_annual'
-  provider: 'stripe' | 'btcpay'
-  status: string
-  planId: string
-  amount: string
-  currency: string
+  flowKind: (typeof CURRENT_FLOW_KINDS)[number]
   createdAt: string
   cancellable: boolean
-  invoiceId?: string | null
-  checkoutUrl?: string | null
+  checkoutUrl: string | null
 }
 
 interface PaymentChoicePanelProps {
@@ -110,6 +112,87 @@ function resolveBtcpayUrl(rawUrl: unknown): string | null {
   return checkoutUrl.toString()
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * A 2xx reply is authoritative only when the body itself states the outcome.
+ * Provider creation is released solely by an own, literal `flow: null`; a
+ * present flow must carry the smallest fields this panel depends on: the kind
+ * that identifies the provider authority, the creation timestamp that binds a
+ * Bitcoin acknowledgement to it, and the cancellable state that gates its
+ * cancel control. Anything else is malformed and throws, so the caller fails
+ * closed on its retry path instead of treating an unreadable success as proof
+ * that no payment exists. The thrown reason is never rendered: server detail,
+ * identifiers and checkout URLs stay out of the error surface.
+ */
+function readCurrentPaymentFlow(data: unknown): CurrentPaymentFlow | null {
+  const malformed = () => new Error('The current payment flow reply could not be read.')
+  if (!isPlainObject(data) || !Object.prototype.hasOwnProperty.call(data, 'flow')) throw malformed()
+  const flow = data.flow
+  if (flow === null) return null
+  if (!isPlainObject(flow)) throw malformed()
+  const flowKind = CURRENT_FLOW_KINDS.find((kind) => kind === flow.flowKind)
+  if (!flowKind) throw malformed()
+  if (typeof flow.cancellable !== 'boolean') throw malformed()
+  if (typeof flow.createdAt !== 'string' || flow.createdAt === '') throw malformed()
+  return {
+    flowKind,
+    createdAt: flow.createdAt,
+    cancellable: flow.cancellable,
+    checkoutUrl: typeof flow.checkoutUrl === 'string' ? flow.checkoutUrl : null,
+  }
+}
+
+/**
+ * Cancellation is provider-bound: a BTCPay authority can settle out-of-band, so
+ * the client must know which provider it is releasing before it decides whether
+ * a local Bitcoin acknowledgement is required.
+ */
+function cancellationProviderOf(flowKind: string | null | undefined): PaymentFlowCancellationProvider {
+  if (flowKind === 'btcpay_annual') return 'btcpay'
+  if (flowKind === 'stripe_pay_now') return 'stripe'
+  return 'unknown'
+}
+
+/**
+ * Every cancellation control states the consequence it performs. Where the
+ * current server offer does not expose the other provider, the label stops at
+ * the cancellation instead of promising a method the user cannot then choose.
+ */
+function cancellationActionLabel(provider: PaymentFlowCancellationProvider, otherProviderAvailable: boolean): string {
+  if (provider === 'btcpay') return otherProviderAvailable ? 'Cancel Bitcoin payment and choose card' : 'Cancel Bitcoin payment'
+  if (provider === 'stripe') return otherProviderAvailable ? 'Cancel card payment and choose Bitcoin' : 'Cancel card payment'
+  return 'Cancel payment'
+}
+
+function BitcoinCancellationAcknowledgement({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean
+  disabled: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-left">
+      <p className="text-xs text-amber-700 dark:text-amber-200">{BITCOIN_CANCELLATION_WARNING}</p>
+      <label className="flex items-start gap-2 text-xs text-[rgb(var(--foreground))]">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>I have not sent Bitcoin for this payment.</span>
+      </label>
+    </div>
+  )
+}
+
 function safeBtcpayUrl(rawUrl: string): string {
   const checkoutUrl = resolveBtcpayUrl(rawUrl)
   if (!checkoutUrl) throw new Error('Bitcoin checkout returned an unexpected payment URL.')
@@ -136,6 +219,10 @@ export default function PaymentChoicePanel({
   const [currentFlowLoaded, setCurrentFlowLoaded] = useState(false)
   const [currentFlowLoadFailed, setCurrentFlowLoadFailed] = useState(false)
   const [offerRefreshFailed, setOfferRefreshFailed] = useState(false)
+  const [bitcoinCancelAcknowledged, setBitcoinCancelAcknowledged] = useState(false)
+  // Set when the authoritative endpoint proves a Bitcoin authority the local
+  // state could not identify, so the acknowledgement can be offered truthfully.
+  const [bitcoinAcknowledgementProven, setBitcoinAcknowledgementProven] = useState(false)
 
   const applyAnnualOffer = useCallback((offer: AnnualOfferResponse) => {
     setAnnualOffer(offer)
@@ -205,6 +292,35 @@ export default function PaymentChoicePanel({
   const currentFlowCheckoutUrl = useMemo(() => resolveBtcpayUrl(currentFlow?.checkoutUrl), [currentFlow?.checkoutUrl])
   const stripeAvailable = Boolean(annualOffer && isAnnualOfferProviderAvailable(annualOffer.offer, 'stripe'))
   const btcpayAvailable = Boolean(annualOffer && isAnnualOfferProviderAvailable(annualOffer.offer, 'btcpay', CRYPTO_CHECKOUT_ENABLED))
+  const cancellationProvider: PaymentFlowCancellationProvider = bitcoinSession
+    ? 'btcpay'
+    : clientSecret
+      ? 'stripe'
+      : cancellationProviderOf(currentFlow?.flowKind)
+  const otherProviderAvailable = cancellationProvider === 'btcpay'
+    ? stripeAvailable
+    : cancellationProvider === 'stripe'
+      ? btcpayAvailable
+      : false
+  const cancellationLabel = cancellationActionLabel(cancellationProvider, otherProviderAvailable)
+  const bitcoinAcknowledgementRequired = cancellationProvider === 'btcpay' || bitcoinAcknowledgementProven
+  const cancellationBlocked = bitcoinAcknowledgementRequired && !bitcoinCancelAcknowledged
+  const cancellationDisabled = loading !== null || cancellationBlocked
+  // Identity of the provider authority currently on screen. A different
+  // authority must never inherit a previous acknowledgement.
+  const activeFlowKey = bitcoinSession
+    ? `btcpay:${bitcoinSession.invoiceId}`
+    : clientSecret
+      ? 'stripe:inline'
+      : currentFlow
+        ? `${currentFlow.flowKind}:${currentFlow.createdAt}`
+        : 'none'
+
+  useEffect(() => {
+    setBitcoinCancelAcknowledged(false)
+    setBitcoinAcknowledgementProven(false)
+  }, [activeFlowKey])
+
   const implicitDismissible = currentFlowLoaded
     && !currentFlowLoadFailed
     && !currentFlow
@@ -220,8 +336,7 @@ export default function PaymentChoicePanel({
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows/current`, { credentials: 'include' })
       if (!res.ok) throw new Error('Could not verify the current payment flow.')
-      const data = await res.json()
-      const flow = data.flow ?? null
+      const flow = readCurrentPaymentFlow(await res.json())
       if (!isCancelled()) {
         setCurrentFlow(flow)
         setCurrentFlowLoaded(true)
@@ -248,35 +363,46 @@ export default function PaymentChoicePanel({
     onDismissibilityChange?.(implicitDismissible)
   }, [implicitDismissible, onDismissibilityChange])
 
-  async function handleFlowInProgress() {
-    await loadCurrentFlow()
-    setError(null)
-  }
-
-  const cancelCurrentFlow = async (): Promise<boolean> => {
+  const cancelCurrentFlow = async (provider: PaymentFlowCancellationProvider = cancellationProvider): Promise<boolean> => {
+    // A Bitcoin authority is never released without a local acknowledgement,
+    // even if a control were somehow actioned while blocked.
+    if (provider === 'btcpay' && !bitcoinCancelAcknowledged) {
+      setBitcoinAcknowledgementProven(true)
+      setError(PAYMENT_FLOW_CANCELLATION_MESSAGES['bitcoin-acknowledgement-required'])
+      return false
+    }
     setLoading('cancel-flow')
     setError(null)
     try {
-      const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows/cancel`, {
-        method: 'POST',
-        credentials: 'include',
+      const result = await cancelPaymentFlow({
+        fetcher: fetch,
+        billingApiUrl: BILLING_API_URL,
+        provider,
+        confirmNoBitcoinSent: bitcoinCancelAcknowledged,
       })
-      const data = await res.json().catch(() => null)
-      if (!res.ok || !data || data.cancelled !== true) {
-        throw new Error(data?.detail ?? 'Could not cancel the pending payment flow.')
+      if (!result.cancelled) {
+        // The provider authority survives every refusal, ambiguity and lost
+        // response: local panel state is left exactly as it was.
+        if (result.failure === 'bitcoin-acknowledgement-required') setBitcoinAcknowledgementProven(true)
+        setError(result.message)
+        return false
       }
       setCurrentFlow(null)
-      setCurrentFlowLoaded(true)
       setClientSecret(null)
       setPaymentOffer(null)
       setBitcoinSession(null)
+      setBitcoinAcknowledgementProven(false)
+      // Provider creation stays unavailable continuously from cancellation
+      // success until a fresh lookup proves `flow: null`. The re-proof is
+      // started in the same commit that releases the authority, so a faster
+      // offer refresh can never repopulate the creation controls first.
+      const reprovedCurrentFlow = loadCurrentFlow()
       await loadOptions()
-      await loadCurrentFlow()
+      await reprovedCurrentFlow
       return true
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not cancel the pending payment flow.')
-      return false
     } finally {
+      // Each attempt requires its own deliberate acknowledgement.
+      setBitcoinCancelAcknowledged(false)
       setLoading(null)
     }
   }
@@ -417,7 +543,23 @@ export default function PaymentChoicePanel({
         title={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} annual with Bitcoin`}
         description={`Scan the QR code or copy the payment details to pay ${formatAnnualOfferAmount(annualOffer.offer)} for ${annualOfferPlanLabel(annualOffer.offer)} (${annualOffer.offer.planId}). Your 14 bonus days and paid access apply after settlement confirms.`}
         settledMessage="Payment settled. Refreshing your subscription..."
-        onBack={() => { void cancelCurrentFlow() }}
+        backLabel={loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
+        backDisabled={cancellationDisabled}
+        backHint={(
+          <div className="space-y-3">
+            <BitcoinCancellationAcknowledgement
+              checked={bitcoinCancelAcknowledged}
+              disabled={loading !== null}
+              onChange={setBitcoinCancelAcknowledged}
+            />
+            {error && (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+              </div>
+            )}
+          </div>
+        )}
+        onBack={() => { void cancelCurrentFlow('btcpay') }}
         onPaymentComplete={async () => {
           await onSuccess()
           await successPoll?.()
@@ -431,11 +573,11 @@ export default function PaymentChoicePanel({
       <div className="space-y-4">
         <button
           type="button"
-          onClick={() => { void cancelCurrentFlow() }}
-          disabled={loading !== null}
+          onClick={() => { void cancelCurrentFlow('stripe') }}
+          disabled={cancellationDisabled}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))] disabled:opacity-50"
         >
-          ← Back to payment options
+          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         </button>
 
         <div className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
@@ -467,12 +609,17 @@ export default function PaymentChoicePanel({
           mode="payment"
           returnPath="/settings/subscription"
         />
+        {error && (
+          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+          </div>
+        )}
         <button
-          onClick={() => { void cancelCurrentFlow() }}
-          disabled={loading !== null}
+          onClick={() => { void cancelCurrentFlow('stripe') }}
+          disabled={cancellationDisabled}
           className="w-full text-center text-xs text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors disabled:opacity-50"
         >
-          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : '← Back to options'}
+          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         </button>
       </div>
     )
@@ -502,8 +649,15 @@ export default function PaymentChoicePanel({
             <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
           </div>
         )}
-        <Button onClick={() => { void cancelCurrentFlow() }} disabled={loading !== null || !currentFlow.cancellable} variant="outline" className="w-full">
-          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : 'Cancel and choose another method'}
+        {bitcoinAcknowledgementRequired && (
+          <BitcoinCancellationAcknowledgement
+            checked={bitcoinCancelAcknowledged}
+            disabled={loading !== null || !currentFlow.cancellable}
+            onChange={setBitcoinCancelAcknowledged}
+          />
+        )}
+        <Button onClick={() => { void cancelCurrentFlow() }} disabled={cancellationDisabled || !currentFlow.cancellable} variant="outline" className="w-full">
+          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         </Button>
         {!currentFlow.cancellable && (
           <p className="text-xs text-[rgb(var(--muted))]">This payment is already being confirmed. Please wait for the provider update or contact support.</p>
@@ -589,15 +743,30 @@ export default function PaymentChoicePanel({
       )}
 
       {onCancel && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleExplicitCancel}
-          disabled={loading !== null || (!currentFlowLoaded && !currentFlowLoadFailed)}
-          className="w-full"
-        >
-          {loading === 'cancel-flow' ? 'Cancelling payment flow...' : !currentFlowLoaded && !currentFlowLoadFailed ? 'Checking current payment...' : 'Cancel'}
-        </Button>
+        <>
+          {bitcoinAcknowledgementRequired && (
+            <BitcoinCancellationAcknowledgement
+              checked={bitcoinCancelAcknowledged}
+              disabled={loading !== null}
+              onChange={setBitcoinCancelAcknowledged}
+            />
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExplicitCancel}
+            disabled={cancellationDisabled || (!currentFlowLoaded && !currentFlowLoadFailed)}
+            className="w-full"
+          >
+            {loading === 'cancel-flow'
+              ? 'Cancelling payment flow...'
+              : !currentFlowLoaded && !currentFlowLoadFailed
+                ? 'Checking current payment...'
+                : implicitDismissible
+                  ? 'Cancel'
+                  : 'Cancel any payment in progress and close'}
+          </Button>
+        </>
       )}
     </div>
   )

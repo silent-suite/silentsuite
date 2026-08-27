@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ArrowLeft, ExternalLink } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { BILLING_API_URL } from '@/app/lib/config'
@@ -30,6 +30,15 @@ type BitcoinPaymentPanelProps = {
   onInvoiceInactive?: () => void
   onPaymentComplete: () => void | Promise<void>
   externalCheckoutLabel?: string
+  /**
+   * Callers that own a provider authority replace the generic back label with
+   * the exact consequence the control performs, gate it behind a local
+   * acknowledgement, and render that acknowledgement adjacent to it. Defaults
+   * keep every other caller's behaviour unchanged.
+   */
+  backLabel?: string
+  backDisabled?: boolean
+  backHint?: ReactNode
 }
 
 export default function BitcoinPaymentPanel({
@@ -41,6 +50,9 @@ export default function BitcoinPaymentPanel({
   onInvoiceInactive,
   onPaymentComplete,
   externalCheckoutLabel = 'Open in BTCPay instead',
+  backLabel = 'Back to payment options',
+  backDisabled = false,
+  backHint,
 }: BitcoinPaymentPanelProps) {
   const [paymentMethods, setPaymentMethods] = useState<CryptoPaymentMethod[]>([])
   const [selectedMethodId, setSelectedMethodId] = useState<string | null>(null)
@@ -136,10 +148,11 @@ export default function BitcoinPaymentPanel({
     <button
       type="button"
       onClick={() => { void handleBack() }}
-      className="inline-flex items-center gap-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))]"
+      disabled={backDisabled}
+      className="inline-flex items-center gap-1.5 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))] disabled:opacity-50"
     >
       <ArrowLeft className="h-4 w-4" />
-      Back to payment options
+      {backLabel}
     </button>
   )
 
@@ -213,6 +226,7 @@ export default function BitcoinPaymentPanel({
         </div>
       )}
 
+      {backHint}
       <div>{backButton}</div>
     </div>
   )

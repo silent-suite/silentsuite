@@ -220,7 +220,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     fireEvent.click(dialog.previousElementSibling!)
     expect(screen.getByRole('dialog', { name: /continue with silentsuite\.io/i })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /cancel and choose another method/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel card payment' }))
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => (
       url === 'https://billing.test/subscription/payment-flows/cancel'
         && (init as RequestInit | undefined)?.method === 'POST'
@@ -277,14 +277,15 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     render(<SubscriptionPage />)
     fireEvent.click(await screen.findByRole('button', { name: /choose payment/i }))
     await screen.findByRole('button', { name: /retry payment status/i })
-    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel any payment in progress and close' }))
 
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => (
       url === 'https://billing.test/subscription/payment-flows/cancel'
         && (init as RequestInit | undefined)?.method === 'POST'
     ))).toBe(true))
     expect(screen.getByRole('dialog', { name: /continue with silentsuite\.io/i })).toBeInTheDocument()
-    expect(await screen.findByText('Cancellation could not be confirmed.')).toBeInTheDocument()
+    expect(await screen.findByText('Could not cancel the pending payment flow.')).toBeInTheDocument()
+    expect(screen.queryByText('Cancellation could not be confirmed.')).not.toBeInTheDocument()
   })
 
   it('shows subscribe recovery for expired no-card trials', async () => {
@@ -591,7 +592,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
       await Promise.resolve()
     })
     expect(screen.getByText(/card payment in progress/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /cancel and choose another method/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeInTheDocument()
     expect(screen.queryByText(/taking longer than expected/i)).not.toBeInTheDocument()
   })
 
@@ -658,7 +659,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
 
     expect(screen.getByText(/^payment in progress$/i)).toBeInTheDocument()
     expect(screen.queryByText(/card payment in progress/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /cancel and choose another method/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeInTheDocument()
   })
 
   it('opens current-flow recovery after a failed Stripe redirect when subscription data is unavailable', async () => {
@@ -679,7 +680,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     fireEvent.click(screen.getByRole('button', { name: /review payment options/i }))
     expect(await screen.findByText(/^payment in progress$/i)).toBeInTheDocument()
     expect(screen.queryByText(/card payment in progress/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /cancel and choose another method/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeInTheDocument()
     expect(window.location.search).toBe('')
   })
 
@@ -702,7 +703,7 @@ describe('SubscriptionPage billing recovery CTAs', () => {
     expect(screen.getByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /review payment options/i }))
     expect(await screen.findByText(/card payment in progress/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /cancel and choose another method/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel card payment' })).toBeInTheDocument()
     expect(screen.queryByText(/Stripe could not confirm this payment/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
     expect(window.location.search).toBe('')

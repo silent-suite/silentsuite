@@ -100,7 +100,7 @@ describe('PaymentChoicePanel BTCPay continuation link', () => {
     // The surrounding flow UI must survive: an unusable URL is not a reason to
     // destroy the only cancellation control mid-payment.
     expect(await screen.findByText(/payment already in progress/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /cancel and choose another method/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /continue in btcpay/i })).not.toBeInTheDocument()
   })
 })
