@@ -1,44 +1,67 @@
+/*
+ * Copyright © Tim Ross / SilentSuite contributors.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, version 3 only.
+ */
+
 package io.silentsuite.sync.utils
 
-import androidx.core.content.FileProvider
+import android.accounts.Account
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import io.silentsuite.sync.R
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class CalendarInvitationFileProviderTest {
 
+    private val content = "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"
+
     @Test
-    fun calendarInvitationAttachmentIsReadableThroughFileProvider() {
+    fun productionAttachmentIsReadableThroughFileProvider() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val invitationDir = File(
-            context.cacheDir,
-            "calendar-invitations/${UUID.randomUUID()}"
-        )
-        val attachment = File(invitationDir, "invite.ics")
-        val content = "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"
+        val invitationRoot = File(context.cacheDir, "calendar-invitations")
+        val invitation = EventEmailInvitation(context, Account("owner@example.com", "test"))
+        val existingDirectories = invitationRoot.listFiles()?.toSet().orEmpty()
 
         try {
-            check(invitationDir.mkdirs())
-            attachment.writeText(content)
+            val uri = invitation.createAttachmentFromString(context, content)
+            assertNotNull(uri)
 
-            val uri = FileProvider.getUriForFile(
-                context,
-                context.getString(R.string.authority_log_provider),
-                attachment
-            )
-            val actual = context.contentResolver.openInputStream(uri)?.use { stream ->
-                stream.bufferedReader().readText()
+            val actual = context.contentResolver.openInputStream(requireNotNull(uri)).use { stream ->
+                requireNotNull(stream).bufferedReader().readText()
             }
-
             assertEquals(content, actual)
         } finally {
-            invitationDir.deleteRecursively()
+            invitationRoot.listFiles()
+                ?.filterNot(existingDirectories::contains)
+                ?.forEach { it.deleteRecursively() }
+        }
+    }
+
+    @Test
+    fun fileProviderFailureReturnsNull() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val invitationRoot = File(context.cacheDir, "calendar-invitations")
+        val invitation = EventEmailInvitation(context, Account("owner@example.com", "test"))
+        val existingDirectories = invitationRoot.listFiles()?.toSet().orEmpty()
+
+        try {
+            val uri = invitation.createAttachmentFromString(context, content) { _, _ ->
+                throw IllegalArgumentException("test FileProvider failure")
+            }
+
+            assertNull(uri)
+        } finally {
+            invitationRoot.listFiles()
+                ?.filterNot(existingDirectories::contains)
+                ?.forEach { it.deleteRecursively() }
         }
     }
 }
