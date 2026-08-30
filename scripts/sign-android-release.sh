@@ -172,8 +172,23 @@ require_pinned_certificate "APK" \
 require_pinned_certificate "AAB" \
   "$("$KEYTOOL" "${KEYTOOL_LOCALE[@]}" -printcert -jarfile "$SIGNED_AAB" 2>/dev/null | leaf_fingerprint || true)"
 
-"$JARSIGNER" -verify -strict "$SIGNED_AAB" >/dev/null \
-  || refuse "the signed AAB did not verify"
+# Strict verification is required because plain `jarsigner -verify` exits zero
+# for an unsigned JAR. The already preflighted JKS is also the explicit trust
+# store: it trusts the deliberately self-signed, exactly pinned upload
+# certificate while strict mode rejects unsigned entries, integrity failures,
+# and algorithm-policy errors. JDK 17 still exits zero for a wholly unsigned
+# JAR even in strict mode, so require its locale-stabilized verified result too.
+JARSIGNER_VERIFY_LOG="$WORKDIR/jarsigner-verify.log"
+if ! "$JARSIGNER" -verify -strict \
+  -keystore "$KEYSTORE_PATH" -storepass:env KSTOREPWD \
+  "${KEYTOOL_LOCALE[@]}" "$SIGNED_AAB" >"$JARSIGNER_VERIFY_LOG" 2>&1 \
+  || ! grep -Fxq 'jar verified.' "$JARSIGNER_VERIFY_LOG"; then
+  echo "Refusing to sign: the signed AAB failed cryptographic integrity verification" >&2
+  echo "  jarsigner diagnostic (sanitized, first 4096 bytes):" >&2
+  head -c 4096 "$JARSIGNER_VERIFY_LOG" | LC_ALL=C tr -cd '\11\12\15\40-\176' >&2
+  echo >&2
+  exit 1
+fi
 
 # ── Signed split evidence ─────────────────────────────────────────────
 #

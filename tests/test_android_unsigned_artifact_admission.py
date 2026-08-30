@@ -17,8 +17,11 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -312,6 +315,11 @@ def test_the_signer_proves_the_pinned_certificate_on_both_outputs():
     assert '"$APKSIGNER" verify --print-certs' in code
     assert "-printcert -jarfile" in code
     assert '"$JARSIGNER" -verify -strict' in code
+    assert '-keystore "$KEYSTORE_PATH" -storepass:env KSTOREPWD' in code
+    assert "grep -Fxq 'jar verified.' \"$JARSIGNER_VERIFY_LOG\"" in code
+    assert '"$JARSIGNER" -verify "$SIGNED_AAB"' not in code
+    assert "failed cryptographic integrity verification" in code
+    assert 'head -c 4096 "$JARSIGNER_VERIFY_LOG"' in code
     assert "-J-Duser.language=en" in code, "keytool labels must not be locale-dependent"
 
 
@@ -377,6 +385,170 @@ def test_a_tool_symlink_escaping_its_fixed_root_is_rejected(tmp_path: Path):
     assert "zipalign resolves outside its trusted root" in result.stderr
 
 
+def jdk_signing_fixture(tmp_path: Path, *, mode: str, expected: str | None = None):
+    """Exercise the AAB checks with real JDK signing tools and inert SDK peers."""
+
+    java = shutil.which("java")
+    keytool_real = shutil.which("keytool")
+    jarsigner_real = shutil.which("jarsigner")
+    if not all((java, keytool_real, jarsigner_real)):
+        pytest.skip("local JDK signing tools are unavailable")
+
+    java_home = tmp_path / "jdk"
+    bin_dir = java_home / "bin"
+    bin_dir.mkdir(parents=True)
+    argv_log = tmp_path / "jarsigner.argv"
+    tamper_script = tmp_path / "tamper-signed-entry.py"
+    tamper_script.write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "path = Path(os.environ['TAMPER_AAB'])\n"
+        "data = bytearray(path.read_bytes())\n"
+        "marker = b'minimal signed-entry fixture'\n"
+        "offset = data.index(marker)\n"
+        "data[offset] ^= 1\n"
+        "path.write_bytes(data)\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "java").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (bin_dir / "java").chmod(0o755)
+    (bin_dir / "keytool").write_text(
+        "#!/bin/sh\n"
+        + (
+            'for arg in "$@"; do\n'
+            '  if [ "$arg" = "-printcert" ]; then\n'
+            "    printf 'SHA256: %s\\n' \"$FIXTURE_CERT\"; exit 0\n"
+            "  fi\n"
+            "done\n"
+            if mode == "unsigned" else ""
+        )
+        + f'{shlex.quote(keytool_real)} "$@"\n'
+        'status=$?\n'
+        + (f'{shlex.quote(sys.executable)} {shlex.quote(str(tamper_script))}\n'
+           if mode == "tampered" else "")
+        + "exit $status\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "keytool").chmod(0o755)
+    if mode == "unsigned":
+        jarsigner_body = (
+            "#!/bin/sh\n"
+            'if [ "${1:-}" = "-keystore" ]; then\n'
+            '  while [ "$#" -gt 0 ]; do\n'
+            '    if [ "$1" = "-signedjar" ]; then cp "$3" "$2"; exit 0; fi\n'
+            '    shift\n'
+            "  done\n"
+            "fi\n"
+            f'printf "%s\\n" "$@" >> {shlex.quote(str(argv_log))}\n'
+            f'exec {shlex.quote(jarsigner_real)} "$@"\n'
+        )
+        (bin_dir / "jarsigner").write_text(jarsigner_body, encoding="utf-8")
+        (bin_dir / "jarsigner").chmod(0o755)
+    else:
+        (bin_dir / "jarsigner").write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$@" >> {shlex.quote(str(argv_log))}\n'
+            f'exec {shlex.quote(jarsigner_real)} "$@"\n', encoding="utf-8"
+        )
+        (bin_dir / "jarsigner").chmod(0o755)
+
+    android_home = tmp_path / "android-sdk"
+    build_tools = android_home / "build-tools" / "36.0.0"
+    build_tools.mkdir(parents=True)
+    (build_tools / "zipalign").write_text(
+        '#!/bin/sh\ncase "$1" in -c) exit 0;; *) cp "$5" "$6";; esac\n',
+        encoding="utf-8",
+    )
+    (build_tools / "apksigner").write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "sign" ]; then\n'
+        '  while [ "$1" != "--out" ]; do shift; done; cp "$3" "$2"\n'
+        "else\n"
+        "  printf 'Signer #1 certificate SHA-256 digest: %s\\n' \"$FIXTURE_CERT\"\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    for tool in (build_tools / "zipalign", build_tools / "apksigner"):
+        tool.chmod(0o755)
+
+    password = "temporary-fixture-password"
+    alias = "fixture-key"
+    keystore = tmp_path / "fixture.jks"
+    fixture_env = {**os.environ, "KSTOREPWD": password}
+    subprocess.run(
+        [
+            str(bin_dir / "keytool"), "-genkeypair", "-storetype", "JKS",
+            "-keystore", str(keystore), "-storepass:env", "KSTOREPWD",
+            "-keypass:env", "KSTOREPWD", "-alias", alias, "-keyalg", "RSA",
+            "-keysize", "2048", "-validity", "2",
+            "-dname", "CN=SilentSuite AAB integrity fixture",
+        ],
+        check=True, capture_output=True, text=True, env=fixture_env,
+    )
+    listed = subprocess.run(
+        [
+            str(bin_dir / "keytool"), "-J-Duser.language=en", "-J-Duser.country=US",
+            "-list", "-v", "-keystore", str(keystore),
+            "-storepass:env", "KSTOREPWD", "-alias", alias,
+        ],
+        check=True, capture_output=True, text=True, env=fixture_env,
+    ).stdout
+    match = re.search(r"SHA256:\s*((?:[0-9A-F]{2}:){31}[0-9A-F]{2})", listed)
+    assert match, listed
+    fingerprint = match.group(1).replace(":", "").lower()
+
+    unsigned = tmp_path / "unsigned"
+    unsigned.mkdir()
+    (unsigned / "app-release-unsigned.apk").write_bytes(b"minimal apk fixture")
+    with zipfile.ZipFile(unsigned / "app-release.aab", "w") as bundle:
+        bundle.writestr("BundleConfig.pb", b"minimal signed-entry fixture")
+    output = tmp_path / "signed"
+    bundletool = tmp_path / "bundletool.jar"
+    bundletool.write_bytes(b"inert fixture")
+    result = subprocess.run(
+        ["bash", str(SIGNER), "--expect-sha256", expected or fingerprint],
+        capture_output=True,
+        text=True,
+        env={
+            **fixture_env,
+            "ANDROID_HOME": str(android_home), "JAVA_HOME": str(java_home),
+            "UNSIGNED_DIR": str(unsigned), "OUTPUT_DIR": str(output),
+            "KEYSTORE_PATH": str(keystore), "KEY_ALIAS": alias,
+            "BUNDLETOOL_JAR": str(bundletool),
+            "FIXTURE_CERT": expected or fingerprint,
+            "TAMPER_AAB": str(output / "app-release.aab"),
+        },
+    )
+    assert password not in result.stdout + result.stderr
+    recorded_argv = argv_log.read_text(encoding="utf-8")
+    assert password not in recorded_argv
+    assert "-storepass:env\nKSTOREPWD" in recorded_argv
+    return result
+
+
+def test_valid_self_signed_pinned_aab_passes_integrity(tmp_path: Path):
+    result = jdk_signing_fixture(tmp_path, mode="valid")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_byte_tampered_signed_aab_fails_integrity(tmp_path: Path):
+    result = jdk_signing_fixture(tmp_path, mode="tampered")
+    assert result.returncode != 0
+    assert "failed cryptographic integrity verification" in result.stderr
+
+
+def test_wrong_aab_signing_certificate_fails_the_pin(tmp_path: Path):
+    result = jdk_signing_fixture(tmp_path, mode="valid", expected="0" * 64)
+    assert result.returncode != 0
+    assert "does not carry the reviewed upload key" in result.stderr
+
+
+def test_unsigned_aab_fails_integrity(tmp_path: Path):
+    result = jdk_signing_fixture(tmp_path, mode="unsigned")
+    assert result.returncode != 0
+    assert "failed cryptographic integrity verification" in result.stderr
+
+
 def test_signer_end_to_end_with_generated_jks_when_exact_sdk_fixtures_exist(
     tmp_path: Path,
 ):
@@ -427,24 +599,26 @@ def test_signer_end_to_end_with_generated_jks_when_exact_sdk_fixtures_exist(
     subprocess.run(
         [
             str(keytool), "-genkeypair", "-storetype", "JKS",
-            "-keystore", str(keystore), "-storepass", password,
-            "-keypass", password, "-alias", alias, "-keyalg", "RSA",
+            "-keystore", str(keystore), "-storepass:env", "KSTOREPWD",
+            "-keypass:env", "KSTOREPWD", "-alias", alias, "-keyalg", "RSA",
             "-keysize", "2048", "-validity", "2",
             "-dname", "CN=SilentSuite signing test",
         ],
         check=True,
         capture_output=True,
         text=True,
+        env={**os.environ, "KSTOREPWD": password},
     )
     listed = subprocess.run(
         [
             str(keytool), "-J-Duser.language=en", "-J-Duser.country=US",
             "-list", "-v", "-keystore", str(keystore),
-            "-storepass", password, "-alias", alias,
+            "-storepass:env", "KSTOREPWD", "-alias", alias,
         ],
         check=True,
         capture_output=True,
         text=True,
+        env={**os.environ, "KSTOREPWD": password},
     ).stdout
     match = re.search(r"SHA256:\s*((?:[0-9A-F]{2}:){31}[0-9A-F]{2})", listed)
     assert match, listed
@@ -467,6 +641,7 @@ def test_signer_end_to_end_with_generated_jks_when_exact_sdk_fixtures_exist(
             "BUNDLETOOL_JAR": bundletool_value,
         },
     )
+    assert password not in result.stdout + result.stderr
     assert result.returncode == 0, result.stdout + result.stderr
     for name in ("app-release.apk", "app-release.aab", "signed-release.apks"):
         assert (output / name).is_file() and (output / name).stat().st_size > 0
