@@ -96,14 +96,20 @@ class EventEmailInvitation constructor(val context: Context, val account: Accoun
 
     private fun createAttachmentFromString(context: Context, content: String): Uri? {
         val name = UUID.randomUUID().toString()
-        val parentDir = File(context.cacheDir, name)
-        parentDir.mkdirs()
+        val invitationCache = File(context.cacheDir, "calendar-invitations")
+        val parentDir = File(invitationCache, name)
+        if (!parentDir.mkdirs()) {
+            Logger.log.severe("Unable to create calendar invitation cache directory")
+            return null
+        }
         val cache = File(parentDir, "invite.ics")
         try {
             FileWriter(cache).use { it.write(content) }
             return FileProvider.getUriForFile(context, context.getString(R.string.authority_log_provider), cache)
         } catch (e: IOException) {
-            e.printStackTrace()
+            Logger.log.severe("Unable to write calendar invitation attachment")
+        } catch (e: IllegalArgumentException) {
+            Logger.log.severe("Unable to share calendar invitation attachment")
         }
 
         return null
