@@ -1,0 +1,47 @@
+name: Annual-only Public Review Producer
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha: { description: Exact live main SHA to review, required: true, type: string }
+concurrency:
+  group: annual-only-public-review
+  cancel-in-progress: false
+jobs:
+  review:
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha
+    runs-on: ubuntu-latest
+    environment: annual-public-review
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact main SHA without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch live main, assert immutable identity, and sign closed public Annual review
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          PUBLIC_SHA: ${{ inputs.expected_sha }}
+          PUBLIC_RUN_ID: ${{ github.run_id }}
+          PUBLIC_RUN_ATTEMPT: ${{ github.run_attempt }}
+          ANNUAL_PUBLIC_REVIEW_HMAC_KEY: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
+          ANNUAL_PUBLIC_REVIEW_OUTPUT_DIRECTORY: ${{ runner.temp }}/annual-public-review
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$EXPECTED_SHA"
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          git checkout --detach "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          node scripts/sign-annual-public-review.mjs
+      - name: Upload exactly the two signed public review files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: annual-only-public-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/annual-public-review
+          if-no-files-found: error
+          include-hidden-files: false

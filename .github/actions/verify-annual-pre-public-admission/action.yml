@@ -7,6 +7,7 @@ inputs:
   private_artifact_id: { required: true }
   expected_public_sha: { required: true }
   private_admission_hmac_key: { required: true }
+  public_review_hmac_key: { required: true }
 runs:
   using: composite
   steps:
@@ -19,6 +20,7 @@ runs:
         PRIVATE_ARTIFACT_ID: ${{ inputs.private_artifact_id }}
         EXPECTED_PUBLIC_SHA: ${{ inputs.expected_public_sha }}
         ANNUAL_PRIVATE_ADMISSION_HMAC_KEY: ${{ inputs.private_admission_hmac_key }}
+        ANNUAL_PUBLIC_REVIEW_HMAC_KEY: ${{ inputs.public_review_hmac_key }}
       run: |
         set -euo pipefail
         [[ "$PRIVATE_RUN_ID" =~ ^[1-9][0-9]*$ && "$PRIVATE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ && "$PRIVATE_ARTIFACT_ID" =~ ^[1-9][0-9]*$ && "$EXPECTED_PUBLIC_SHA" =~ ^[0-9a-f]{40}$ ]]

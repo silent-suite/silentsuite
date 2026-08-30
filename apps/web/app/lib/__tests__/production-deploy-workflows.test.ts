@@ -22,7 +22,14 @@ type WorkflowJob = {
   steps?: WorkflowStep[]
 }
 
-type ParsedWorkflow = { jobs: Record<string, WorkflowJob> }
+type ParsedWorkflow = {
+  on?: {
+    workflow_call?: {
+      secrets?: Record<string, { required?: boolean }>
+    }
+  }
+  jobs: Record<string, WorkflowJob>
+}
 
 function workflow(name: string): string {
   return readFileSync(resolve(process.cwd(), `../../.github/workflows/${name}`), 'utf8')
@@ -78,23 +85,23 @@ esac
 
 const jobContracts: Record<string, Record<string, { steps: string; permissions: string }>> = {
   'deploy-web.yml': {
-    'build-and-push': { steps: '7ffa893cb9fe3ec23c36eb36504a4abe3ec947243dbb4635ecae39af1201daec', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: '038fec227f6f6b26dd244462e5d2c9595fb00c36d6f6197641ea72580566e0db', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    'build-and-push': { steps: '879dff8ef54f62febae9b7d55fb6411e3033a843e6b71104914b4922ab63114c', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
+    deploy: { steps: '27dd7a182f56f254b5c05c93ac2dbc93057201a55f99c8c59f23fbe289e848a4', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-server.yml': {
     'build-and-push': { steps: 'eaaaecf8738fd3b7d25bfb6f383709911df7c00da94dff1cca81014fdb254a62', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
     deploy: { steps: 'bbd0c9a9415d24b319bf53201011b78485a5a22674d36336b252fa770e19cf4c', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-docs.yml': {
-    build: { steps: '735d78bbc35bf060c054dc608ad75baed8e7bfc05538c75cc1b88c0548d3b57a', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
-    deploy: { steps: 'c8df0e46e9f4738c43c6cb0949570a0ae43382597754556db0d83c7897d8b88f', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
+    build: { steps: 'aaa1a984b500e400dfe37e18519e66fff62ead0c6d96bc09b731174a2ad0ce5b', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '6e12aca6ea1f36bec6c34603968cf8d2aa32e9434a9dd6805a6ce182301c0aca', permissions: '551b70084a8244c7f3114d8603c3d2ddac6b642093a4b34cd2e3a00b7e4f8ee1' },
   },
 }
 
 const workflowContracts: Record<string, string> = {
-  'deploy-web.yml': 'c09667e79ae905e923d21d18f7e50512b0badb07b8fa6daee9c89f6184ea047b',
+  'deploy-web.yml': 'aea6e1ff7b3d1e29474e49c3f973041ce5e7adf1abd6e9ad3d057b7198f928bd',
   'deploy-server.yml': 'ee8015b23a29d0faa6b0ecb0371f049ae9189c37fe4c80591f82f0e844193312',
-  'deploy-docs.yml': '94ecb2839f55f94469e5c24f3d58c166ab79c2c4f28c5c2711c0df4d6af4201e',
+  'deploy-docs.yml': 'b75623f1069fc1a4d6ede2834a85b9e90bbc190a70260bf3e3d5b9e2d65f1d3d',
 }
 
 const approvedNode24ActionPins: Record<string, string> = {
@@ -291,6 +298,13 @@ describe('production deployment workflow integrity', () => {
     expect(source).toContain('workflow_dispatch:')
     expect(source).toContain('expected_sha:')
     expect(source).not.toMatch(/^  push:/m)
+    if (name !== 'deploy-server.yml') {
+      expect(parsed.on?.workflow_call?.secrets?.ANNUAL_PUBLIC_REVIEW_HMAC_KEY).toEqual({ required: true })
+      expect(Object.values(parsed.jobs).flatMap((job) => job.steps ?? []).filter(
+        (step) => step.uses === './.github/actions/verify-annual-pre-public-admission' &&
+          step.with?.public_review_hmac_key === '${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}',
+      )).toHaveLength(2)
+    }
     for (const [index, jobName] of jobNames.entries()) {
       const job = parsed.jobs[jobName]
       expect(sha256(JSON.stringify(job.steps ?? []))).toBe(jobContracts[name][jobName].steps)

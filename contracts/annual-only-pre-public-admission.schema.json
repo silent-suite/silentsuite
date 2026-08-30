@@ -2,16 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://silentsuite.io/contracts/annual-only-pre-public-admission.schema.json",
   "type": "object", "additionalProperties": false,
-  "required": ["schemaVersion", "predicateType", "privateSha", "expectedPublicSha", "billingImageDigest", "rollbackImageDigest", "buildAttestationDigest", "qaAttestationDigest", "providerRegistryDigest", "disclosureDigest", "privateDeploymentRun", "publicReview", "signature"],
+  "required": ["schemaVersion", "predicateType", "privateSha", "expectedPublicSha", "billingImageDigest", "rollbackImageDigest", "buildAttestationDigest", "qaAttestationDigest", "providerRegistryDigest", "providerAdmission", "disclosureDigest", "privateDeploymentRun", "publicReview", "signature"],
   "properties": {
     "schemaVersion": { "const": 1 }, "predicateType": { "const": "https://silentsuite.io/attestations/annual-only-pre-public-admission/v1" },
     "privateSha": { "$ref": "#/$defs/sha" }, "expectedPublicSha": { "$ref": "#/$defs/sha" },
-    "billingImageDigest": { "$ref": "#/$defs/digest" }, "rollbackImageDigest": { "$ref": "#/$defs/digest" }, "buildAttestationDigest": { "$ref": "#/$defs/digest" }, "qaAttestationDigest": { "$ref": "#/$defs/digest" }, "providerRegistryDigest": { "$ref": "#/$defs/digest" }, "disclosureDigest": { "$ref": "#/$defs/digest" },
-    "privateDeploymentRun": { "$ref": "#/$defs/run" }, "publicReview": { "$ref": "#/$defs/artifact" }, "signature": { "$ref": "#/$defs/signature" }
+    "billingImageDigest": { "$ref": "#/$defs/digest" }, "rollbackImageDigest": { "$ref": "#/$defs/digest" }, "buildAttestationDigest": { "$ref": "#/$defs/digest" }, "qaAttestationDigest": { "$ref": "#/$defs/digest" }, "providerRegistryDigest": { "$ref": "#/$defs/digest" }, "providerAdmission": { "$ref": "#/$defs/providerAdmission" }, "disclosureDigest": { "$ref": "#/$defs/digest" },
+    "privateDeploymentRun": { "$ref": "#/$defs/run" }, "publicReview": { "$ref": "#/$defs/review" }, "signature": { "$ref": "#/$defs/signature" }
   },
   "$defs": {
     "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "run": { "type": "object", "additionalProperties": false, "required": ["runId", "runAttempt"], "properties": { "runId": { "type": "integer", "minimum": 1 }, "runAttempt": { "type": "integer", "minimum": 1 } } },
-    "artifact": { "type": "object", "additionalProperties": false, "required": ["repository", "runId", "runAttempt", "artifactId"], "properties": { "repository": { "type": "string", "pattern": "^silent-suite/[a-z0-9._-]+$" }, "runId": { "type": "integer", "minimum": 1 }, "runAttempt": { "type": "integer", "minimum": 1 }, "artifactId": { "type": "integer", "minimum": 1 } } }
+    "providerAdmission": { "type": "object", "additionalProperties": false, "required": ["artifactId", "archiveDigest", "statementDigest", "runId", "runAttempt"], "properties": { "artifactId": { "type": "integer", "minimum": 1 }, "archiveDigest": { "$ref": "#/$defs/digest" }, "statementDigest": { "$ref": "#/$defs/digest" }, "runId": { "type": "integer", "minimum": 1 }, "runAttempt": { "type": "integer", "minimum": 1 } } },
+    "review": { "type": "object", "additionalProperties": false, "required": ["schemaVersion", "predicateType", "repository", "publicSha", "runId", "runAttempt", "disclosureDigest", "signature"], "properties": { "schemaVersion": { "const": 2 }, "predicateType": { "const": "https://silentsuite.io/attestations/annual-only-public-review/v2" }, "repository": { "const": "silent-suite/silentsuite" }, "publicSha": { "$ref": "#/$defs/sha" }, "runId": { "type": "integer", "minimum": 1 }, "runAttempt": { "type": "integer", "minimum": 1 }, "disclosureDigest": { "$ref": "#/$defs/digest" }, "signature": { "$ref": "#/$defs/signature" } } }
   }
 }

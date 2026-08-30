@@ -29,6 +29,7 @@ on:
       ANNUAL_PRIVATE_ADMISSION_APP_ID: { required: true }
       ANNUAL_PRIVATE_ADMISSION_APP_PRIVATE_KEY: { required: true }
       ANNUAL_PRIVATE_ADMISSION_HMAC_KEY: { required: true }
+      ANNUAL_PUBLIC_REVIEW_HMAC_KEY: { required: true }
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: { required: true }
       VPS_HOST: { required: true }
       VPS_USER: { required: true }
@@ -97,6 +98,7 @@ jobs:
           private_artifact_id: ${{ inputs.private_admission_artifact_id }}
           expected_public_sha: ${{ inputs.expected_sha }}
           private_admission_hmac_key: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
+          public_review_hmac_key: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
 
       - name: Assert this is the live main commit
         shell: bash
@@ -182,6 +184,7 @@ jobs:
           private_artifact_id: ${{ inputs.private_admission_artifact_id }}
           expected_public_sha: ${{ inputs.expected_sha }}
           private_admission_hmac_key: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
+          public_review_hmac_key: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
 
       - name: Re-assert live main immediately before deployment
         shell: bash

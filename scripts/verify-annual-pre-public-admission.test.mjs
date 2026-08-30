@@ -9,12 +9,17 @@ const admissionKey = 'private-admission-test-key'; const privateSha = 'a'.repeat
 const digest = (value) => `sha256:${createHash('sha256').update(value).digest('hex')}`
 const sign = (value) => createHmac('sha256', admissionKey).update(digest(JSON.stringify(value))).digest('hex')
 const sourceArtifact = { repository: 'silent-suite/silentsuite-internal', runId: 918273645, runAttempt: 2, artifactId: 881, name: 'annual-only-pre-public-admission-918273645-2' }
-const unsigned = () => ({ schemaVersion: 1, predicateType: 'https://silentsuite.io/attestations/annual-only-pre-public-admission/v1', privateSha, expectedPublicSha: publicSha, billingImageDigest: `sha256:${'c'.repeat(64)}`, rollbackImageDigest: `sha256:${'d'.repeat(64)}`, buildAttestationDigest: `sha256:${'e'.repeat(64)}`, qaAttestationDigest: `sha256:${'f'.repeat(64)}`, providerRegistryDigest: `sha256:${'1'.repeat(64)}`, disclosureDigest: `sha256:${'2'.repeat(64)}`, privateDeploymentRun: { runId: sourceArtifact.runId, runAttempt: sourceArtifact.runAttempt }, publicReview: { repository: 'silent-suite/silentsuite', runId: 44, runAttempt: 2, artifactId: 77 } })
+const reviewUnsigned = { schemaVersion: 2, predicateType: 'https://silentsuite.io/attestations/annual-only-public-review/v2', repository: 'silent-suite/silentsuite', publicSha, runId: 44, runAttempt: 2, disclosureDigest: `sha256:${'2'.repeat(64)}` }
+const unsigned = () => ({ schemaVersion: 1, predicateType: 'https://silentsuite.io/attestations/annual-only-pre-public-admission/v1', privateSha, expectedPublicSha: publicSha, billingImageDigest: `sha256:${'c'.repeat(64)}`, rollbackImageDigest: `sha256:${'d'.repeat(64)}`, buildAttestationDigest: `sha256:${'e'.repeat(64)}`, qaAttestationDigest: `sha256:${'f'.repeat(64)}`, providerRegistryDigest: `sha256:${'1'.repeat(64)}`, providerAdmission: { artifactId: 88, archiveDigest: `sha256:${'3'.repeat(64)}`, statementDigest: `sha256:${'4'.repeat(64)}`, runId: sourceArtifact.runId, runAttempt: sourceArtifact.runAttempt }, disclosureDigest: `sha256:${'2'.repeat(64)}`, privateDeploymentRun: { runId: sourceArtifact.runId, runAttempt: sourceArtifact.runAttempt }, publicReview: { ...reviewUnsigned, signature: sign(reviewUnsigned) } })
 function fixture(mutate = (value) => value) { const value = mutate(unsigned()); const bytes = Buffer.from(`${JSON.stringify({ ...value, signature: sign(value) })}\n`); return { bytes, digest: digest(bytes) } }
-function verify(overrides = {}) { const value = fixture(); return verifyPrePublicAdmission({ admissionBytes: value.bytes, expectedAdmissionDigest: value.digest, expectedPublicSha: publicSha, expectedSourcePrivateSha: privateSha, expectedSourceArtifact: sourceArtifact, expectedPublicRepository: 'silent-suite/silentsuite', hmacKey: admissionKey, ...overrides }) }
+function verify(overrides = {}) { const value = fixture(); return verifyPrePublicAdmission({ admissionBytes: value.bytes, expectedAdmissionDigest: value.digest, expectedPublicSha: publicSha, expectedSourcePrivateSha: privateSha, expectedSourceArtifact: sourceArtifact, expectedPublicRepository: 'silent-suite/silentsuite', hmacKey: admissionKey, publicReviewHmacKey: admissionKey, ...overrides }) }
 
 test('accepts only the closed canonical Stage A admission for the exact public SHA and immutable private source run', () => {
   assert.deepEqual(verify(), { privateSha, expectedPublicSha: publicSha, billingImageDigest: `sha256:${'c'.repeat(64)}`, disclosureDigest: `sha256:${'2'.repeat(64)}`, privateDeploymentRun: { runId: sourceArtifact.runId, runAttempt: sourceArtifact.runAttempt }, privateAdmissionDigest: fixture().digest })
+})
+test('rejects the legacy publicReview artifact identity shape even when Stage A signs it', () => {
+  const value = fixture((admission) => { admission.publicReview = { repository: 'silent-suite/silentsuite', runId: 44, runAttempt: 2, artifactId: 77 }; return admission })
+  assert.throws(() => verify({ admissionBytes: value.bytes, expectedAdmissionDigest: value.digest }), /signed v2 public review/i)
 })
 test('fails closed for extra/missing fields, signature/digest/SHA/repository/run/attempt/artifact mismatch, and forbidden served claims', () => {
   assert.throws(() => verify({ expectedAdmissionDigest: `sha256:${'0'.repeat(64)}` }), /digest/i)
@@ -41,6 +46,6 @@ test('rejects validly signed body-provenance substitutions from the exact GitHub
   }
 })
 test('pins byte-identical canonical Stage A and Stage B schemas', () => {
-  assert.equal(createHash('sha256').update(readFileSync(resolve('contracts/annual-only-pre-public-admission.schema.json'))).digest('hex'), 'f944971ae6753dd9d0bdba3c9c73ace6e196f69fb31bf96c9d2b4d39f9300edb')
+  assert.equal(createHash('sha256').update(readFileSync(resolve('contracts/annual-only-pre-public-admission.schema.json'))).digest('hex'), '0d1a15d21d6f6a3f76632c37471efdc3ae0d1974ae2011abe93ddc6fdfde64d1')
   assert.equal(createHash('sha256').update(readFileSync(resolve('contracts/annual-only-public-served-attestation.schema.json'))).digest('hex'), 'b466e16aef5be2e5ff3390e3ba316f5c2cba8f84e6a8291352237e8d216bbcca')
 })

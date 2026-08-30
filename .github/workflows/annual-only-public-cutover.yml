@@ -27,6 +27,7 @@ jobs:
       ANNUAL_PRIVATE_ADMISSION_APP_ID: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_APP_ID }}
       ANNUAL_PRIVATE_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_APP_PRIVATE_KEY }}
       ANNUAL_PRIVATE_ADMISSION_HMAC_KEY: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
+      ANNUAL_PUBLIC_REVIEW_HMAC_KEY: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
       VPS_USER: ${{ secrets.VPS_USER }}
@@ -44,6 +45,7 @@ jobs:
       ANNUAL_PRIVATE_ADMISSION_APP_ID: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_APP_ID }}
       ANNUAL_PRIVATE_ADMISSION_APP_PRIVATE_KEY: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_APP_PRIVATE_KEY }}
       ANNUAL_PRIVATE_ADMISSION_HMAC_KEY: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
+      ANNUAL_PUBLIC_REVIEW_HMAC_KEY: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
@@ -95,6 +97,7 @@ jobs:
           private_artifact_id: ${{ inputs.private_admission_artifact_id }}
           expected_public_sha: ${{ inputs.expected_sha }}
           private_admission_hmac_key: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
+          public_review_hmac_key: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
       - name: Freshly verify exact production Web and Docs served identities before Stage B
         id: served-identities
         shell: bash
@@ -112,6 +115,7 @@ jobs:
           ANNUAL_PRIVATE_ADMISSION_ARTIFACT_ID: ${{ inputs.private_admission_artifact_id }}
           ANNUAL_PRIVATE_ADMISSION_ARTIFACT_NAME: annual-only-pre-public-admission-${{ inputs.private_admission_run_id }}-${{ inputs.private_admission_run_attempt }}
           ANNUAL_PRIVATE_ADMISSION_HMAC_KEY: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
+          ANNUAL_PUBLIC_REVIEW_HMAC_KEY: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
           ANNUAL_PUBLIC_SERVED_HMAC_KEY: ${{ secrets.ANNUAL_PUBLIC_SERVED_HMAC_KEY }}
           ANNUAL_PUBLIC_SERVED_OUTPUT_DIRECTORY: .annual-only/public-served
           ANNUAL_PUBLIC_SERVED_ARTIFACT_NAME: annual-only-public-served-attestation-${{ github.run_id }}-${{ github.run_attempt }}

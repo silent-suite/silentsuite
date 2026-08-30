@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://silentsuite.io/contracts/annual-only-public-review-v2.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "predicateType", "repository", "publicSha", "runId", "runAttempt", "disclosureDigest", "signature"],
+  "properties": {
+    "schemaVersion": { "const": 2 }, "predicateType": { "const": "https://silentsuite.io/attestations/annual-only-public-review/v2" },
+    "repository": { "const": "silent-suite/silentsuite" }, "publicSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "runId": { "type": "integer", "minimum": 1 }, "runAttempt": { "type": "integer", "minimum": 1 },
+    "disclosureDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

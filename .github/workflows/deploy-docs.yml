@@ -29,6 +29,7 @@ on:
       ANNUAL_PRIVATE_ADMISSION_APP_ID: { required: true }
       ANNUAL_PRIVATE_ADMISSION_APP_PRIVATE_KEY: { required: true }
       ANNUAL_PRIVATE_ADMISSION_HMAC_KEY: { required: true }
+      ANNUAL_PUBLIC_REVIEW_HMAC_KEY: { required: true }
       CLOUDFLARE_API_TOKEN: { required: true }
       CLOUDFLARE_ACCOUNT_ID: { required: true }
 
@@ -113,6 +114,7 @@ jobs:
           private_artifact_id: ${{ inputs.private_admission_artifact_id }}
           expected_public_sha: ${{ inputs.expected_sha }}
           private_admission_hmac_key: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
+          public_review_hmac_key: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
 
       - name: Test Android distribution documentation
         run: pnpm --filter @silentsuite/docs test:android-distribution
@@ -218,6 +220,7 @@ jobs:
           private_artifact_id: ${{ inputs.private_admission_artifact_id }}
           expected_public_sha: ${{ inputs.expected_sha }}
           private_admission_hmac_key: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
+          public_review_hmac_key: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
 
       - name: Re-verify public analytics and relay topology immediately before deployment
         run: pnpm run check:public-analytics

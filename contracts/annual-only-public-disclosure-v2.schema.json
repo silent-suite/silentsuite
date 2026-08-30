@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://silentsuite.io/contracts/annual-only-public-disclosure-v2.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "predicateType", "publicSha", "disclosure", "signature"],
+  "properties": {
+    "schemaVersion": { "const": 2 }, "predicateType": { "const": "https://silentsuite.io/attestations/annual-only-public-disclosure/v2" },
+    "publicSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "disclosure": { "type": "object", "additionalProperties": false, "required": ["contractVersion", "source", "sourceDigest", "offer"], "properties": {
+      "contractVersion": { "const": 2 }, "source": { "const": "contracts/annual-only-billing-v2.schema.json" }, "sourceDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+      "offer": { "type": "object", "additionalProperties": false, "required": ["planIds", "billingInterval", "currency", "providers"], "properties": {
+        "planIds": { "const": ["early_annual", "standard_annual"] }, "billingInterval": { "const": "annual" }, "currency": { "const": "EUR" }, "providers": { "const": ["stripe", "btcpay"] }
+      }}
+    }}, "signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

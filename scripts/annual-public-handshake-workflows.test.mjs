@@ -9,8 +9,18 @@ import test from 'node:test'
 const source = (file) => readFileSync(resolve(file), 'utf8')
 test('the shared Stage A consumer fetches only the exact private artifact and validates immutable metadata, archive digest, HMAC, and closed schema', () => {
   const consumer = source('.github/actions/verify-annual-pre-public-admission/action.yml')
-  for (const value of ['silent-suite/silentsuite-internal', 'annual-only-pre-public-admission-${PRIVATE_RUN_ID}-${PRIVATE_RUN_ATTEMPT}', 'repos/$PRIVATE_REPOSITORY', 'actions/runs/$PRIVATE_RUN_ID', 'actions/workflows/$PRIVATE_WORKFLOW_ID', '.repository.full_name', '.repository.private', '.repository.fork', '.workflow_id', '.event', '.path', '.workflow_run.id', '.workflow_run.head_sha', '.id', '.run_attempt', '.conclusion', '.expired', '.digest', 'sha256sum', 'verify-annual-pre-public-admission.mjs', 'ANNUAL_PRIVATE_ADMISSION_HMAC_KEY']) assert.match(consumer, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  for (const value of ['silent-suite/silentsuite-internal', 'annual-only-pre-public-admission-${PRIVATE_RUN_ID}-${PRIVATE_RUN_ATTEMPT}', 'repos/$PRIVATE_REPOSITORY', 'actions/runs/$PRIVATE_RUN_ID', 'actions/workflows/$PRIVATE_WORKFLOW_ID', '.repository.full_name', '.repository.private', '.repository.fork', '.workflow_id', '.event', '.path', '.workflow_run.id', '.workflow_run.head_sha', '.id', '.run_attempt', '.conclusion', '.expired', '.digest', 'sha256sum', 'verify-annual-pre-public-admission.mjs', 'ANNUAL_PRIVATE_ADMISSION_HMAC_KEY', 'ANNUAL_PUBLIC_REVIEW_HMAC_KEY']) assert.match(consumer, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   assert.doesNotMatch(consumer, /refs\/heads\/|\/actions\/artifacts\?/)
+})
+test('the public review signer fetches live main and asserts every identity in the same final signing step', () => {
+  const text = source('.github/workflows/annual-only-public-review.yml')
+  const fetch = text.indexOf('git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main')
+  const sign = text.indexOf('node scripts/sign-annual-public-review.mjs')
+  assert.ok(fetch >= 0 && sign > fetch)
+  assert.match(text.slice(fetch, sign), /test "\$GITHUB_REF" = refs\/heads\/main/)
+  assert.match(text.slice(fetch, sign), /test "\$GITHUB_SHA" = "\$EXPECTED_SHA"/)
+  assert.match(text.slice(fetch, sign), /git rev-parse HEAD/)
+  assert.equal((text.slice(fetch, sign).match(/\n\s*- name:/g) ?? []).length, 0)
 })
 
 const actionRun = source('.github/actions/verify-annual-pre-public-admission/action.yml').match(/\n      run: \|\n([\s\S]+)$/)?.[1].replace(/^ {8}/gm, '')
@@ -44,9 +54,12 @@ function runStageAAction(mutate = () => {}) {
     qaAttestationDigest: `sha256:${'f'.repeat(64)}`,
     providerRegistryDigest: `sha256:${'1'.repeat(64)}`,
     disclosureDigest: `sha256:${'2'.repeat(64)}`,
+    providerAdmission: { artifactId: 88, archiveDigest: `sha256:${'3'.repeat(64)}`, statementDigest: `sha256:${'4'.repeat(64)}`, runId, runAttempt },
     privateDeploymentRun: { runId, runAttempt },
-    publicReview: { repository: 'silent-suite/silentsuite', runId: 44, runAttempt: 2, artifactId: 77 },
+    publicReview: { schemaVersion: 2, predicateType: 'https://silentsuite.io/attestations/annual-only-public-review/v2', repository: 'silent-suite/silentsuite', publicSha, runId: 44, runAttempt: 2, disclosureDigest: `sha256:${'2'.repeat(64)}`, signature: '0'.repeat(64) },
   }
+  const reviewUnsigned = { ...unsignedAdmission.publicReview }; delete reviewUnsigned.signature
+  unsignedAdmission.publicReview.signature = createHmac('sha256', admissionKey).update(archiveDigest(Buffer.from(JSON.stringify(reviewUnsigned)))).digest('hex')
   const admission = { ...unsignedAdmission, signature: signAdmission(unsignedAdmission) }
   const admissionFile = join(payloadDirectory, 'annual-only-pre-public-admission.json')
   writeFileSync(admissionFile, `${JSON.stringify(admission)}\n`)
@@ -120,6 +133,7 @@ cp "$GH_FIXTURE_ADMISSION" "$destination/annual-only-pre-public-admission.json"
       PRIVATE_ARTIFACT_ID: String(artifactId),
       EXPECTED_PUBLIC_SHA: publicSha,
       ANNUAL_PRIVATE_ADMISSION_HMAC_KEY: admissionKey,
+      ANNUAL_PUBLIC_REVIEW_HMAC_KEY: admissionKey,
       GITHUB_REPOSITORY: 'silent-suite/silentsuite',
       GITHUB_ENV: join(root, 'github-env'),
       GH_FIXTURE_REPOSITORY: join(fixturesDirectory, 'repository.json'),
