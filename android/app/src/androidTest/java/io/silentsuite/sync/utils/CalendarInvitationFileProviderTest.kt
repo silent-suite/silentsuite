@@ -58,6 +58,7 @@ class CalendarInvitationFileProviderTest {
             }
 
             assertNull(uri)
+            assertEquals(existingDirectories, invitationRoot.listFiles()?.toSet().orEmpty())
         } finally {
             invitationRoot.listFiles()
                 ?.filterNot(existingDirectories::contains)

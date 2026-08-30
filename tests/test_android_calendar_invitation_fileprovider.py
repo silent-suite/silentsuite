@@ -15,6 +15,7 @@ def test_calendar_invitation_cache_directory_is_narrowly_authorized():
         for entry in paths.findall("cache-path")
     }
 
+    assert all(entry.tag == "cache-path" for entry in paths)
     assert cache_paths == {
         "debug-info": "debug-info/",
         "calendar-invitations": "calendar-invitations/",

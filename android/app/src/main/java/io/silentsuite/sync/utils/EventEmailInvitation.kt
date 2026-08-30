@@ -117,8 +117,10 @@ class EventEmailInvitation constructor(val context: Context, val account: Accoun
             FileWriter(cache).use { it.write(content) }
             return uriForFile(context, cache)
         } catch (e: IOException) {
+            parentDir.deleteRecursively()
             Logger.log.severe("Unable to write calendar invitation attachment")
         } catch (e: IllegalArgumentException) {
+            parentDir.deleteRecursively()
             Logger.log.severe("Unable to share calendar invitation attachment")
         }
 

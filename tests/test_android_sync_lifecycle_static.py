@@ -473,6 +473,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     canonical_bytes = (json.dumps(ledger, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     assert raw == canonical_bytes
     assert ledger["schema"] == 1
+    assert ledger["shards"]["21:remaining"] == "canonical-minus-mixed"
+    assert ledger["shards"]["35:all"] == "canonical"
     assert list(ledger["classes"]) == sorted(ledger["classes"])
     assert all(methods == sorted(methods) and len(methods) == len(set(methods)) for methods in ledger["classes"].values())
 
