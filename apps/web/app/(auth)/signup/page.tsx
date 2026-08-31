@@ -518,19 +518,19 @@ function CryptoPaymentPanel({
           credentials: 'include',
           headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': session.lookupToken },
         })
-        if (!res.ok) throw new Error('Could not load Bitcoin payment details.')
+        if (!res.ok) throw new Error('Could not load cryptocurrency payment details.')
         const data = await res.json()
         if (cancelled) return
         const methods = Array.isArray(data.paymentMethods) ? data.paymentMethods as CryptoPaymentMethod[] : []
         if (!methods.some((method) => method.qrValue || method.paymentLink || method.address)) {
-          throw new Error('Could not load Bitcoin payment details.')
+          throw new Error('Could not load cryptocurrency payment details.')
         }
         setPaymentMethods(methods)
         setSelectedMethodId(methods[0]?.id ?? null)
         setStatus('pending')
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Could not load Bitcoin payment details.')
+          setError(err instanceof Error ? err.message : 'Could not load cryptocurrency payment details.')
           setStatus('error')
         }
       }
@@ -550,7 +550,7 @@ function CryptoPaymentPanel({
           credentials: 'include',
           headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': session.lookupToken },
         })
-        if (!res.ok) throw new Error('Could not check Bitcoin payment status.')
+        if (!res.ok) throw new Error('Could not check cryptocurrency payment status.')
         const data = await res.json()
         if (cancelled) return
         if (data.status === 'settled') {
@@ -600,9 +600,9 @@ function CryptoPaymentPanel({
   return (
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
       <div className="space-y-2 text-center">
-        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Pay {annualOfferAnnualLabel(annualOffer)} with Bitcoin</h2>
+        <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Pay with Bitcoin, Lightning or Monero</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Scan the QR code or copy the payment details to pay {annualOfferRenewalCopy(annualOffer)} for your {annualOfferPlanLabel(annualOffer)} (Plan ID: {annualOffer.planId}). Access unlocks after settlement confirms.
+          Choose a payment method, then scan the QR code or copy the payment details. Your silentsuite.io access unlocks after BTCPay confirms settlement.
         </p>
       </div>
 
@@ -614,23 +614,24 @@ function CryptoPaymentPanel({
         </div>
       ) : status === 'expired' ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-200">
-          This Bitcoin invoice expired. Go back and start a new Bitcoin invoice.
+          This cryptocurrency invoice expired. Go back and start a new invoice.
         </div>
       ) : status === 'error' ? (
         <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
-          <p>{error ?? 'Could not load Bitcoin payment details.'}</p>
+          <p>{error ?? 'Could not load cryptocurrency payment details.'}</p>
           <Link href={session.checkoutUrl} onClick={handleExternalCheckout} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-500/10 dark:text-red-200">
             Open in BTCPay instead
           </Link>
         </div>
       ) : selectedMethod && qrValue ? (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="group" aria-label="Cryptocurrency payment method">
             {paymentMethods.map((method) => (
               <button
                 key={method.id}
                 type="button"
                 onClick={() => setSelectedMethodId(method.id)}
+                aria-pressed={selectedMethod.id === method.id}
                 className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                   selectedMethod.id === method.id
                     ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-200'
@@ -649,7 +650,7 @@ function CryptoPaymentPanel({
           <div className="space-y-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 text-left">
             {selectedMethod.amountDue && (
               <p className="text-sm text-[rgb(var(--foreground))]">
-                Amount due: <span className="font-medium">{selectedMethod.amountDue} {selectedMethod.cryptoCode ?? 'BTC'}</span>
+                Amount due: <span className="font-medium">{selectedMethod.amountDue} {selectedMethod.cryptoCode ?? ''}</span>
               </p>
             )}
             <p className="break-all text-xs text-[rgb(var(--muted))]">{selectedMethod.address ?? qrValue}</p>
@@ -669,7 +670,7 @@ function CryptoPaymentPanel({
       ) : (
         <div className="flex flex-col items-center justify-center py-8">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
-          <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading Bitcoin payment details...</p>
+          <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading cryptocurrency payment details...</p>
         </div>
       )}
 
@@ -749,7 +750,7 @@ function StepChoosePlan({
 
   const handleSelectBitcoin = useCallback(() => {
     if (!bitcoinAvailable) {
-      setPaymentMethodError('Bitcoin checkout is not available for this server-owned annual offer.')
+      setPaymentMethodError('Cryptocurrency checkout is not available for this server-owned annual offer.')
       return
     }
     setPaymentMethodError(null)
@@ -798,7 +799,7 @@ function StepChoosePlan({
     if (!bitcoinAvailable) {
       return (
         <div className="space-y-4" role="alert">
-          <p className="text-sm text-red-600 dark:text-red-400">Bitcoin checkout is not available for this server-owned annual offer.</p>
+          <p className="text-sm text-red-600 dark:text-red-400">Cryptocurrency checkout is not available for this server-owned annual offer.</p>
           <Button type="button" variant="outline" onClick={onBack}>Back to payment methods</Button>
         </div>
       )
@@ -863,7 +864,7 @@ function StepChoosePlan({
               type="button"
               onClick={handleSelectBitcoin}
               disabled={provisioning}
-              aria-label={`Pay ${annualOfferAnnualLabel(annualOfferDetails)} with Bitcoin for ${annualOfferPlanLabel(annualOfferDetails)}`}
+              aria-label={`Pay ${annualOfferAnnualLabel(annualOfferDetails)} with Bitcoin, Lightning or Monero for ${annualOfferPlanLabel(annualOfferDetails)}`}
               className="group w-full rounded-xl border-2 border-slate-700/50 bg-[rgb(var(--surface))] p-4 text-left transition-all hover:border-amber-500/70 hover:bg-amber-500/5 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <div className="flex items-start gap-3">
@@ -872,11 +873,11 @@ function StepChoosePlan({
                 </div>
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-semibold text-[rgb(var(--foreground))]">Bitcoin with BTCPay</h3>
+                    <h3 className="font-semibold text-[rgb(var(--foreground))]">Bitcoin, Lightning or Monero</h3>
                     <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">Annual only</span>
                   </div>
                   <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                    Pay {annualOfferRenewalCopy(annualOfferDetails)} once with Bitcoin. App access starts only after the invoice settles.
+                    Pay once with Bitcoin, Lightning, or Monero. Payment is processed through our self-hosted BTCPay Server. Access starts after the invoice settles.
                   </p>
                 </div>
               </div>
@@ -931,7 +932,7 @@ function StepChoosePlan({
           </p>
           <div className="mt-2 flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
             <Lock className="h-3 w-3 text-emerald-500" />
-            <span>Secured by Stripe. We never see your card details.</span>
+            <span>Your card details are sent directly to Stripe and never pass through SilentSuite.</span>
           </div>
         </div>
 
@@ -945,7 +946,7 @@ function StepChoosePlan({
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <CreditCard className="h-4 w-4 text-[rgb(var(--muted))]" />
-              <h3 className="text-sm font-medium text-[rgb(var(--foreground))]">Card <span className="text-[rgb(var(--muted))] font-normal">(powered by Stripe)</span></h3>
+              <h3 className="text-sm font-medium text-[rgb(var(--foreground))]">Secure card payment with Stripe</h3>
             </div>
             <StripePaymentForm
               clientSecret={clientSecret}
@@ -956,7 +957,7 @@ function StepChoosePlan({
             />
             <p className="flex items-center justify-center gap-1.5 text-[10px] text-[rgb(var(--muted))]">
               <Lock className="h-3 w-3 text-emerald-500" />
-              Secured by Stripe
+              <a href="https://stripe.com" target="_blank" rel="noreferrer" className="font-medium text-indigo-600 dark:text-indigo-300">Powered by Stripe</a>
             </p>
           </div>
         ) : provisionError ? (
@@ -1525,7 +1526,7 @@ export default function SignupPage() {
   const renewAnnualOfferAndRequireConsent = useCallback(async (staleOffer: AnnualOfferResponse | null) => {
     const email = normalizeEmailForComparison(recoveredSignupEmail ?? '')
     const requestId = staleOffer?.requestId ?? annualOfferRequestId
-    // Provider choice, card secret, and Bitcoin checkout data are consent
+    // Provider choice, card secret, and BTCPay checkout data are consent
     // derived from the rejected offer, so none may survive a refresh.
     setClientSecret(null)
     setCryptoPaymentSession(null)
@@ -1623,7 +1624,7 @@ export default function SignupPage() {
     setProvisioning(true)
     try {
       if (!annualOffer || !emailOwnershipToken || !recoveredSignupEmail) throw new Error('Verify your email before selecting a payment method.')
-      if (!isAnnualOfferProviderAvailable(annualOffer.offer, 'btcpay', CRYPTO_CHECKOUT_ENABLED)) throw new Error('Bitcoin checkout is not available for this server-owned annual offer.')
+      if (!isAnnualOfferProviderAvailable(annualOffer.offer, 'btcpay', CRYPTO_CHECKOUT_ENABLED)) throw new Error('Cryptocurrency checkout is not available for this server-owned annual offer.')
       if (cryptoPaymentSession) {
         setPlanView('crypto')
         return

@@ -335,7 +335,7 @@ describe('email-link seven-day no-card continuation', () => {
 
   it.each([
     ['card', /continue to card payment for early adopter plan, €36\.00\/year/i],
-    ['bitcoin', /pay €36\.00\/year with bitcoin for early adopter plan/i],
+    ['bitcoin', /pay €36\.00\/year with bitcoin, lightning or monero for early adopter plan/i],
   ] as const)('returns expired signup %s selection to renewed consent without starting payment', async (_kind, paymentAction) => {
     const standardOffer = {
       ...offer,
