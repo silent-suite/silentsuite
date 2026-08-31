@@ -316,7 +316,9 @@ export default function PaymentChoicePanel({
         ? `${currentFlow.flowKind}:${currentFlow.createdAt}`
         : 'none'
 
-  useEffect(() => {
+  // Reset before the browser can accept input for the new authority. A passive
+  // effect can run after an immediate acknowledgement click and erase it.
+  useLayoutEffect(() => {
     setBitcoinCancelAcknowledged(false)
     setBitcoinAcknowledgementProven(false)
   }, [activeFlowKey])
