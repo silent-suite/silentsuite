@@ -83,7 +83,7 @@ docker compose up -d --force-recreate server
 **Fixes:**
 
 - Confirm PostgreSQL is healthy: `docker compose ps postgres`
-- Confirm `DATABASE_PASSWORD` in `.env` matches what was used when the database was first initialized. If the database volume already exists, changing the password in `.env` alone won't update the database. You must either recreate the volume (`docker compose down -v` -- **this deletes all data**) or alter the password inside PostgreSQL.
+- Confirm `DATABASE_PASSWORD` in `.env` matches what was used when the database was first initialized. If the database volume already exists, changing the password in `.env` alone won't update the database. Change the password inside PostgreSQL instead; recreating the database volume would destroy every account and sync row, and this release does not automate that.
 
 ### Server Takes a Long Time to Start
 
@@ -103,7 +103,7 @@ If it's still not healthy after 2 minutes, check the logs for errors.
 
 **Fixes:**
 
-- Recreating volumes usually resolves this: `docker compose down -v && docker compose up -d` (**deletes all data**).
+- Check ownership inside the volume rather than recreating it: recreating a data volume deletes every account and sync row, and this release does not automate that.
 - On SELinux-enabled systems, add the `:z` flag to volume mounts in `docker-compose.yml`.
 
 ### Cannot Connect from the Web App
@@ -129,10 +129,15 @@ docker compose restart server
 docker compose up -d --force-recreate server
 ```
 
-## Reset Everything
+## Stop the Stack
 
 ```bash
-# WARNING: This deletes ALL data (users, encrypted sync data, everything)
-docker compose down -v
-./install.sh
+docker compose down
 ```
+
+This stops and removes the containers and leaves both data volumes intact;
+`docker compose up -d` resumes where you left off. There is no supported reset
+command: automated volume deletion is not supported, and re-running `install.sh`
+is not an upgrade or reset path — it refuses to touch an existing installation.
+If you are recovering from data loss, take and verify a backup first
+([Backup & Recovery](./backup-and-restore.md)).

@@ -62,6 +62,7 @@ DRAFT_FALSE = '  "draft": false,\n'
 BUNDLE_FILES = (
     ".env.example",
     "SELF-HOSTING.md",
+    "backup.sh",
     "close-signups.sh",
     "docker-compose.yml",
     "install.sh",
@@ -430,6 +431,7 @@ def test_a_valid_release_installs_and_pins_the_immutable_index_digest(workspace)
         "update.sh",
         "verify.sh",
         "close-signups.sh",
+        "backup.sh",
         "success.html",
         MANIFEST_NAME,
     ):

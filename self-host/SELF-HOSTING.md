@@ -446,45 +446,90 @@ before you ran it.
 
 The advanced Django admin panel is disabled by default in self-host installs (`ETEBASE_DISABLE_DJANGO_ADMIN=true`) because normal operators do not need it exposed on the public sync domain. If you need it for recovery or advanced maintenance, set `ETEBASE_DISABLE_DJANGO_ADMIN=false` in `.env`, recreate the server container, and protect `/admin/` with your reverse proxy or Cloudflare Access before exposing it.
 
-## Backup and Restore
+## Backup and Recovery
 
-### Backup
+### Never type a volume name from documentation
 
-```bash
-# Database
-docker exec silentsuite-postgres pg_dump -U silentsuite silentsuite > backup.sql
+Docker creates a named volume silently when it does not exist, so
+`docker run -v some_name:/data ... tar czf ...` succeeds against a brand-new
+empty volume whenever `some_name` is not the one your server is really using —
+and produces an empty archive that looks like a backup. Compose derives the
+physical volume name from the project name, which depends on your directory,
+`COMPOSE_PROJECT_NAME`, or a `name:` key, so no document can know it.
 
-# Server data (secret key, media)
-docker run --rm \
-  -v self-host_server_data:/data \
-  -v $(pwd)/backups:/backup \
-  alpine tar czf /backup/server-data.tar.gz -C /data .
+`./backup.sh` reads the volume out of the live container that is mounting it.
 
-# Environment file
-cp .env backups/.env.backup
-```
-
-### Restore
+### Inspect
 
 ```bash
-# Database
-docker compose down
-docker volume rm self-host_pgdata
-docker compose up -d postgres
-sleep 10
-docker exec -i silentsuite-postgres psql -U silentsuite silentsuite < backup.sql
-docker compose up -d
-
-# Server data
-docker compose down
-docker volume rm self-host_server_data
-docker volume create self-host_server_data
-docker run --rm \
-  -v self-host_server_data:/data \
-  -v $(pwd)/backups:/backup \
-  alpine tar xzf /backup/server-data.tar.gz -C /data
-docker compose up -d
+./backup.sh inspect
 ```
+
+Read-only. Prints the Compose project, both containers, the server image ID, and
+the physical volume mounted at `/data` and `/var/lib/postgresql/data`.
+
+### Back up
+
+```bash
+./backup.sh backup ~/silentsuite-backups/$(date +%Y%m%d-%H%M%S)
+```
+
+The destination must not exist. Work happens in a private `.partial` sibling
+that is removed on any failure and renamed into place only after every check
+passes, so a failed run never leaves something that looks like a backup.
+
+Admission requires exactly one `server` and one `postgres` container, exactly one
+mount at each expected target, two distinct named volumes carrying this
+project's Compose labels, the default `local` driver with local scope and no
+driver options. Bind mounts, anonymous, shared or redirected volumes, custom
+drivers and ambiguous identities are refused. The run then takes a real
+`pg_dump` using the database container's own credentials (never printed), proves
+`django_migrations` has rows, archives the server-data volume read-only using the
+exact image ID the server container is already running, proves the archive holds
+a real file and contains the configured `secret_file` when that path is under
+`/data`, copies `.env`, `etebase-server.ini`, `docker-compose.yml` (plus
+`docker-compose.override.yml` and `server-image.json` when present) with private
+permissions, and writes `backup-metadata.txt` and a `SHA256SUMS` manifest. The
+container, volume and image identities are re-checked after collection.
+
+A `secret_file` outside `/data` is operator-managed; the helper does not read
+host paths and you must back it up yourself.
+
+The backup directory always contains your `.env`; it contains the server secret
+key when `secret_file` is under `/data`. Keep it private and encrypted at rest.
+
+```bash
+./backup.sh verify ~/silentsuite-backups/20260101-020000
+```
+
+This enforces the manifest grammar and exact file inventory, validates the
+backup's metadata and secret scope, and checks that every file still matches
+`SHA256SUMS`. It catches corruption or edits while the manifest is unchanged,
+plus changes made during one verification run. Because `SHA256SUMS` is stored
+beside the backup and is not independently authenticated, verification does not
+prove who created the backup and cannot detect a deliberate edit accompanied by
+a correctly recomputed manifest.
+
+### Recovery
+
+**Automated restore is not supported yet.** There is no restore command, no
+automated volume deletion, and no automated reset. If you need to recover:
+preserve whatever data still exists and every backup you hold, verify a backup
+with `./backup.sh verify`, and use PostgreSQL- and storage-specific recovery
+procedures with expert assistance against the dump and archive inside it.
+
+To stop the stack without deleting data:
+
+```bash
+docker compose down
+```
+
+Both volumes persist; `docker compose up -d` resumes where you left off.
+
+Starting an older server image does **not** reverse Django migrations already
+applied to your database. A full rollback generally requires a logical dump
+taken *before* the migration ran — take one with `./backup.sh backup` before any
+version move.
 
 ## Troubleshooting
 
@@ -502,7 +547,7 @@ docker compose up -d --force-recreate server
 
 ### Database connection errors
 - Verify PostgreSQL is healthy: `docker compose ps`
-- Check that `DATABASE_PASSWORD` in `.env` matches the original value (changing it after first run requires a volume reset or manual password change in PostgreSQL)
+- Check that `DATABASE_PASSWORD` in `.env` matches the original value (after first run, change the password inside PostgreSQL; recreating the database volume would destroy every account and sync row)
 
 ### Server won't start: SILENTSUITE_SERVER_IMAGE is not set
 Compose refuses to start without a verified image digest. Copy `indexDigest`
@@ -510,15 +555,15 @@ from `server-image.json` in your install directory into `.env` as
 `SILENTSUITE_SERVER_IMAGE=ghcr.io/silent-suite/silentsuite-server@sha256:...`,
 or re-install into a fresh directory from a published release.
 
-### Reset everything
+### Stopping the stack
 ```bash
-docker compose down -v   # WARNING: Deletes all data!
-rm -rf silentsuite-server
-curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash
+docker compose down
 ```
-The installer refuses to use a path that already exists — even an empty
-directory — so the old one must be removed first. Everything in it, including
-your credentials, is gone at that point.
+This removes the containers and leaves both data volumes intact. There is no
+supported reset command: automated volume deletion is not supported, and
+re-running `install.sh` is not an upgrade or reset path — it refuses to touch an
+existing installation. Take and verify a backup before any maintenance you are
+unsure about.
 
 ## Security Notes
 

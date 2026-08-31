@@ -26,6 +26,7 @@ on:
       - 'scripts/lock-server-requirements.py'
       - 'scripts/stage-bridge-release-assets.sh'
       - 'tests/test_self_host_*.py'
+      - 'tests/fixtures/self-host-backup/**'
       - 'tests/test_umbrella_release_*.py'
       - 'tests/test_server_image_verifier.py'
       - 'tests/test_reusable_workflow_caller_permissions.py'
@@ -60,6 +61,7 @@ on:
       - 'scripts/lock-server-requirements.py'
       - 'scripts/stage-bridge-release-assets.sh'
       - 'tests/test_self_host_*.py'
+      - 'tests/fixtures/self-host-backup/**'
       - 'tests/test_umbrella_release_*.py'
       - 'tests/test_server_image_verifier.py'
       - 'tests/test_reusable_workflow_caller_permissions.py'
@@ -196,6 +198,8 @@ jobs:
             self-host/install.sh \
             self-host/update.sh \
             self-host/verify.sh \
+            self-host/backup.sh \
+            tests/fixtures/self-host-backup/harness.sh \
             self-host/close-signups.sh \
             scripts/self-host-image-smoke.sh \
             scripts/self-host-compose-effective-check.sh \
@@ -226,6 +230,33 @@ jobs:
         env:
           SILENTSUITE_REQUIRE_REGISTRY_CONTRACT: '1'
         run: python -m pytest tests/test_self_host_server_image_materials.py -q
+
+  self-host-backup-behaviour:
+    name: Self-Host Backup Behaviour (amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Read-only, credential-free, GitHub-hosted. The fixture starts throwaway
+    # Compose stacks from the PostgreSQL digest this repository already pins,
+    # and removes every container and volume it created. Nothing is pushed,
+    # published or deployed.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Proves the properties a static test cannot: the physical volume is
+      # resolved from the live container under a default and a custom Compose
+      # project name, the backup is exact and checksummed over real sentinel
+      # data, the old guessed-name volumes are untouched, unchanged-manifest
+      # corruption and concurrent drift are detected, the unauthenticated
+      # manifest boundary is explicit, and invalid identities are refused before
+      # any backup directory exists.
+      - name: Run the self-host backup behaviour fixture
+        run: tests/fixtures/self-host-backup/harness.sh
 
   self-host-image:
     name: Self-Host Image (${{ matrix.platform }})

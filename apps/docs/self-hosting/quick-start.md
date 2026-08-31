@@ -98,9 +98,13 @@ cloudflared tunnel --url http://localhost:3735
 
 **Nginx Proxy Manager** or other Docker-based proxies:
 
-If your reverse proxy runs in Docker, connect it to the SilentSuite network:
+If your reverse proxy runs in Docker, connect it to the SilentSuite network. The
+network's physical name depends on your Compose project, so read it off the
+running server container rather than typing one from documentation:
 ```bash
-docker network connect silentsuite-server_silentsuite <proxy_container>
+docker inspect --format '{{range $net, $_ := .NetworkSettings.Networks}}{{$net}}{{"\n"}}{{end}}' silentsuite-server
+# Replace these two placeholders with an exact name printed above and your proxy container.
+docker network connect NETWORK_NAME PROXY_CONTAINER_NAME
 ```
 Then use `silentsuite-server:3735` as the upstream instead of `localhost:3735`.
 Set `TRUSTED_PROXY_IPS` in `.env` to the proxy container's exact IP so the server

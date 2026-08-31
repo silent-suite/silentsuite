@@ -622,6 +622,7 @@ done < "$MEMBER_LIST"
 EXPECTED_MEMBERS="$(printf '%s\n' \
   .env.example \
   SELF-HOSTING.md \
+  backup.sh \
   close-signups.sh \
   docker-compose.yml \
   install.sh \
@@ -767,10 +768,10 @@ echo ""
 echo "Creating install directory: $INSTALL_DIR"
 claim_target
 
-for file in docker-compose.yml install.sh SELF-HOSTING.md update.sh verify.sh close-signups.sh success.html .env.example "$MANIFEST_NAME"; do
+for file in docker-compose.yml install.sh SELF-HOSTING.md update.sh verify.sh close-signups.sh backup.sh success.html .env.example "$MANIFEST_NAME"; do
   cp "$BUNDLE_ROOT/$file" "$INSTALL_DIR/$file"
 done
-chmod +x "$INSTALL_DIR/install.sh" "$INSTALL_DIR/update.sh" "$INSTALL_DIR/verify.sh" "$INSTALL_DIR/close-signups.sh"
+chmod +x "$INSTALL_DIR/install.sh" "$INSTALL_DIR/update.sh" "$INSTALL_DIR/verify.sh" "$INSTALL_DIR/close-signups.sh" "$INSTALL_DIR/backup.sh"
 
 cd "$INSTALL_DIR"
 

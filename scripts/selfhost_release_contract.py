@@ -30,6 +30,7 @@ SUPPORTED_PLATFORMS = ("linux/amd64", "linux/arm64")
 BUNDLE_SOURCE_FILES = (
     ".env.example",
     "SELF-HOSTING.md",
+    "backup.sh",
     "close-signups.sh",
     "docker-compose.yml",
     "install.sh",

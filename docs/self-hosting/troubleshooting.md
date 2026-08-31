@@ -65,7 +65,7 @@ TLS is your reverse proxy's responsibility — these are not SilentSuite-server 
 **Fixes:**
 
 - Confirm PostgreSQL is healthy: `docker compose ps postgres`
-- Confirm the `DATABASE_PASSWORD` in `.env` matches what was used when the database was first initialized. If the database volume already exists, changing the password in `.env` will not update the database. You must either recreate the volume or alter the password inside PostgreSQL.
+- Confirm the `DATABASE_PASSWORD` in `.env` matches what was used when the database was first initialized. If the database volume already exists, changing the password in `.env` will not update the database. Change the password inside PostgreSQL instead; recreating the database volume would destroy every account and sync row, and this release does not automate that.
 
 ### "Permission Denied" Errors
 
@@ -73,7 +73,7 @@ TLS is your reverse proxy's responsibility — these are not SilentSuite-server 
 
 **Fixes:**
 
-- Ensure the data volumes are owned by the correct users. Recreating volumes usually fixes this.
+- Check ownership inside the volume rather than recreating it: recreating a data volume deletes every account and sync row, and this release does not automate that.
 - On SELinux-enabled systems, you may need to add the `:z` flag to volume mounts.
 
 ### Server Not Accepting Connections
@@ -97,3 +97,16 @@ docker compose restart server
 # Recreate a service (picks up .env changes)
 docker compose up -d --force-recreate server
 ```
+
+## Stop the Stack
+
+```bash
+docker compose down
+```
+
+This stops and removes the containers and leaves both data volumes intact;
+`docker compose up -d` resumes where you left off. There is no supported reset
+command: automated volume deletion is not supported, and re-running `install.sh`
+is not an upgrade or reset path — it refuses to touch an existing installation.
+If you are recovering from data loss, take and verify a backup first
+([Backup & Recovery](./backup-and-restore.md)).
