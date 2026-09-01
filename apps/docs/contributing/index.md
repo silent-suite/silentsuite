@@ -40,4 +40,4 @@ Be respectful, constructive, and inclusive. We're building privacy tools for eve
 
 ## License
 
-By contributing to SilentSuite, you agree that your contributions will be licensed under the AGPL-3.0 license.
+By contributing to SilentSuite, you agree that your contributions will be licensed under the license that applies to the component you are modifying: AGPL-3.0-only for the server, web, self-host, and documentation components; GPL-3.0-only for the Android sync adapter; and the terms in bridge/LICENSE (GNU AGPL v3 or later) for the Bridge. Check the LICENSE file in the subtree you are contributing to.

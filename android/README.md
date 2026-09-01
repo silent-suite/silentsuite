@@ -11,7 +11,7 @@ Secure, end-to-end encrypted, and privacy respecting sync for your contacts, cal
 
 Please see the [SilentSuite website](https://silentsuite.io) for more information.
 
-SilentSuite is licensed under the [GPLv3 License](LICENSE).
+The Android sync adapter is licensed under [GPL-3.0-only](LICENSE), reflecting its Android/EteSync/DAVx5/bitfire lineage. The rest of the SilentSuite repository (server, web, self-host, and documentation) is licensed separately under AGPL-3.0-only; the Bridge has its own bridge/LICENSE terms (GNU AGPL v3 or later). F-Droid reviewers and downstream packagers should identify the Android package as GPL-3.0-only per this license file.
 
 Based on [EteSync for Android](https://github.com/etesync/android) by Ricki Hirner / bitfire web engineering and Tom Hacohen. See [NOTICE](NOTICE) for full attribution.
 

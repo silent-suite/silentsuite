@@ -174,7 +174,14 @@ The marketing site and hosted billing/accounts API live separately and have no c
 
 ## License
 
-[AGPL-3.0-only](./LICENSE) · [`android/LICENSE`](./android/LICENSE) (GPL-3.0) · [Third-party logo notices](./apps/docs/app-logo-notices.md)
+SilentSuite is a multi-license repository:
+
+- **Server, web client, self-host, and documentation** ([`server/`](./server/), [`apps/web/`](./apps/web/), [`self-host/`](./self-host/), and the docs tree): [AGPL-3.0-only](./LICENSE).
+- **Bridge** ([`bridge/`](./bridge/)): see [`bridge/LICENSE`](./bridge/LICENSE) (GNU AGPL v3 or later).
+- **Android sync adapter** ([`android/`](./android/)): [GPL-3.0-only](./android/LICENSE), reflecting its Android/EteSync/DAVx5/bitfire lineage.
+- A subtree may include a `LICENSE` statement of its own; see that file for the applicable terms for the subtree.
+
+[Third-party logo notices](./apps/docs/app-logo-notices.md)
 
 <div align="center">
 
