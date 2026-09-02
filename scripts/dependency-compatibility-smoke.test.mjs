@@ -16,6 +16,7 @@ const addFormats = requireFrom('node_modules/.pnpm/ajv-formats@2.1.1_ajv@8.18.0/
 const { JSDOM } = requireFrom('apps/web/package.json')('jsdom')
 const yaml = requireFrom('node_modules/.pnpm/js-yaml@4.3.1/node_modules/js-yaml/package.json')('.')
 const { customAlphabet, nanoid } = requireFrom('node_modules/.pnpm/nanoid@3.3.18/node_modules/nanoid/package.json')('.')
+const browserslist = requireFrom('node_modules/.pnpm/browserslist@4.28.8/node_modules/browserslist/package.json')('.')
 const manifest = JSON.parse(readFileSync(resolve(import.meta.dirname, '..', 'package.json'), 'utf8'))
 
 for (const [line, minimatch] of [['3', minimatch3], ['5', minimatch5], ['10', minimatch10]]) {
@@ -54,9 +55,17 @@ test('nanoid 3 patched generators preserve normal positive-size behavior', () =>
   assert.match(customAlphabet('abc', 8)(), /^[abc]{8}$/)
 })
 
+test('browserslist 4 resolves representative production targets', () => {
+  const targets = browserslist('last 2 versions')
+  assert.ok(targets.length > 0)
+  assert.ok(targets.every((target) => typeof target === 'string' && target.length > 0))
+})
+
 test('security overrides remain scoped to compatible vulnerable major lines', () => {
   assert.equal(manifest.pnpm.overrides['js-yaml@>=4.0.0 <4.3.1'], '4.3.1')
   assert.equal(manifest.pnpm.overrides['nanoid@>=3.0.0 <3.3.18'], '3.3.18')
+  assert.equal(manifest.pnpm.overrides['browserslist@>=4.0.0 <4.28.8'], '4.28.8')
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'js-yaml'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'nanoid@<3.3.18'), false)
+  assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'browserslist'), false)
 })
