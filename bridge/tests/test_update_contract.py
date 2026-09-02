@@ -687,6 +687,68 @@ def test_http_adapter_passes_configured_timeout_to_transport():
     assert call_kwargs.get("timeout") == 45
 
 
+def test_http_adapter_enforces_total_deadline_while_streaming():
+    from silentsuite_bridge.update.http import HttpError, SilentSuiteHttpAdapter
+
+    now = [0.0]
+
+    def clock():
+        return now[0]
+
+    def delayed_stream():
+        now[0] = 4.0
+        yield b"late chunk"
+
+    response = MagicMock(status=200, content=None)
+    response.iter_content.return_value = delayed_stream()
+    transport = MagicMock()
+    transport.get.return_value = response
+    adapter = SilentSuiteHttpAdapter(
+        transport=transport,
+        timeout=2,
+        total_timeout=3,
+        clock=clock,
+    )
+
+    with pytest.raises(HttpError, match="timed out"):
+        adapter.download(f"{ASSETS_HOST}/bin")
+
+    response.close.assert_called()
+
+
+def test_http_adapter_shares_total_deadline_across_redirect_hops():
+    from silentsuite_bridge.update.http import HttpError, SilentSuiteHttpAdapter
+
+    now = [0.0]
+    timeouts = []
+
+    def clock():
+        return now[0]
+
+    def get(_url, *, timeout):
+        timeouts.append(timeout)
+        now[0] += 2.0
+        return MagicMock(
+            status=302,
+            headers={"Location": f"{GITHUB_HOST}/next"},
+        )
+
+    transport = MagicMock()
+    transport.get.side_effect = get
+    adapter = SilentSuiteHttpAdapter(
+        transport=transport,
+        timeout=2,
+        total_timeout=3,
+        max_redirects=5,
+        clock=clock,
+    )
+
+    with pytest.raises(HttpError, match="timed out"):
+        adapter.download(f"{GITHUB_API}/repos/silent-suite/silentsuite/releases")
+
+    assert timeouts == [2, 1]
+
+
 def test_http_adapter_rejects_oversized_response():
     from silentsuite_bridge.update.http import HttpError, SilentSuiteHttpAdapter
 
@@ -1559,6 +1621,15 @@ def test_windows_helper_validates_plan_and_bounds_wait(tmp_path):
     assert "Move-Item -Force -Path $Target -Destination $Backup" in content
     assert "Move-Item -Force -Path $Backup -Destination $Target" in content
     assert "Start-Process -FilePath $Target" in content
+    # The rollback backup survives until process creation succeeds, and a
+    # failed restart restores it before giving the target-only instruction.
+    start_index = content.index("Start-Process -FilePath $Target")
+    remove_backup_index = content.index("Remove-Item -Force -Path $Backup")
+    restart_restore_index = content.rindex(
+        "Move-Item -Force -Path $Backup -Destination $Target"
+    )
+    assert remove_backup_index > start_index
+    assert restart_restore_index > start_index
 
 
 def test_windows_plan_and_helper_are_private_files(tmp_path):

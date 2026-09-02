@@ -130,13 +130,20 @@ try {
     exit 1
 }
 
-Remove-Item -Force -Path $Backup -ErrorAction SilentlyContinue
-
 # --- Restart the exact installed target only ---
 try {
     Start-Process -FilePath $Target -WindowStyle Hidden -ErrorAction Stop
+    # The new process was created successfully; rollback is no longer needed.
+    Remove-Item -Force -Path $Backup -ErrorAction SilentlyContinue
 } catch {
-    Write-Host "The Bridge was updated but did not restart automatically. Run manually: $Target"
+    Write-Host 'ERROR: the updated Bridge did not restart; restoring the previous Bridge.'
+    try {
+        Remove-Item -Force -Path $Target -ErrorAction Stop
+        Move-Item -Force -Path $Backup -Destination $Target -ErrorAction Stop
+        Write-Host "The previous Bridge was restored. Run manually: $Target"
+    } catch {
+        Write-Host "ERROR: automatic restore failed. Run manually: $Target"
+    }
 }
 
 Remove-UpdateArtifacts

@@ -7,6 +7,7 @@ sanitized exceptions.  urllib is instructed never to auto-follow redirects.
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -33,6 +34,7 @@ _MAX_BINARY = 128 * 1024 * 1024
 MAX_CHECKSUM_BYTES = 1024
 
 DEFAULT_TIMEOUT = 60
+DEFAULT_TOTAL_TIMEOUT = 120
 DEFAULT_MAX_REDIRECTS = 5
 
 _USER_AGENT = "SilentSuite-Bridge-Updater"
@@ -58,13 +60,19 @@ class SilentSuiteHttpAdapter:
         *,
         transport: Any = None,
         timeout: int = DEFAULT_TIMEOUT,
+        total_timeout: int = DEFAULT_TOTAL_TIMEOUT,
         max_redirects: int = DEFAULT_MAX_REDIRECTS,
         max_size: int | None = None,
+        clock=None,
     ):
+        if timeout <= 0 or total_timeout <= 0:
+            raise ValueError("Update timeouts must be positive.")
         self._transport = transport
         self._timeout = timeout
+        self._total_timeout = total_timeout
         self._max_redirects = max_redirects
         self._max_size = max_size
+        self._clock = clock or time.monotonic
 
     def fetch_releases(self) -> list[dict]:
         """Fetch GitHub Releases JSON. Returns list of release dicts."""
@@ -83,12 +91,15 @@ class SilentSuiteHttpAdapter:
     def download(self, url: str, max_size: int | None = None) -> bytes:
         """Download `url` with bounded redirects, time, and size."""
         effective_max = max_size if max_size is not None else self._max_size
+        deadline = self._clock() + self._total_timeout
         return _bounded_download(
             url=url,
             transport=self._transport,
             timeout=self._timeout,
             max_redirects=self._max_redirects,
             max_size=effective_max or _MAX_BINARY,
+            deadline=deadline,
+            clock=self._clock,
         )
 
 
@@ -98,6 +109,8 @@ def _bounded_download(
     timeout: int,
     max_redirects: int,
     max_size: int,
+    deadline: float,
+    clock,
     _redirect_count: int = 0,
 ) -> bytes:
     parsed = urlparse(url)
@@ -110,23 +123,31 @@ def _bounded_download(
     if parsed.scheme != "https":
         raise HttpError("Refusing non-HTTPS URL.")
 
+    request_timeout = _remaining_timeout(timeout, deadline, clock)
+
     if transport is not None:
         # Injected fake transport (tests)
         try:
-            resp = transport.get(url, timeout=timeout)
+            resp = transport.get(url, timeout=request_timeout)
         except Exception:
             raise HttpError("Network error during download.") from None
     else:
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
         opener = urllib.request.build_opener(_NoRedirect())
         try:
-            resp = opener.open(req, timeout=timeout)
+            resp = opener.open(req, timeout=request_timeout)
         except urllib.error.HTTPError as err:
             # Non-2xx from the real transport. Close and sanitize.
             _close_response(err)
             raise HttpError("Request failed.") from None
         except Exception:
             raise HttpError("Network error during download.") from None
+
+    try:
+        _ensure_before_deadline(deadline, clock)
+    except HttpError:
+        _close_response(resp)
+        raise
 
     status = int(getattr(resp, "status", 0))
     location = _extract_location(resp)
@@ -140,6 +161,8 @@ def _bounded_download(
             timeout=timeout,
             max_redirects=max_redirects,
             max_size=max_size,
+            deadline=deadline,
+            clock=clock,
             _redirect_count=_redirect_count + 1,
         )
 
@@ -159,11 +182,13 @@ def _bounded_download(
             return encoded
         it = getattr(resp, "iter_content", None)
         if it is not None:
-            return _read_chunks(it(), max_size, response=resp)
+            return _read_chunks(
+                it(), max_size, response=resp, deadline=deadline, clock=clock,
+            )
         _close_response(resp)
         raise HttpError("Unexpected response format.")
     else:
-        return _read_streamed(resp, max_size)
+        return _read_streamed(resp, max_size, deadline=deadline, clock=clock)
 
 
 def _extract_location(resp) -> str | None:
@@ -185,22 +210,35 @@ def _resolve_redirect(base_url: str, location: str) -> str:
     return urljoin(base_url, location)
 
 
-def _read_streamed(response, max_size: int) -> bytes:
+def _read_streamed(response, max_size: int, *, deadline: float, clock) -> bytes:
     def chunks():
         while True:
+            _ensure_before_deadline(deadline, clock)
             chunk = response.read(65536)
+            _ensure_before_deadline(deadline, clock)
             if not chunk:
                 break
             yield chunk
 
-    return _read_chunks(chunks(), max_size, response=response)
+    return _read_chunks(
+        chunks(), max_size, response=response, deadline=deadline, clock=clock,
+    )
 
 
-def _read_chunks(chunks_iter, max_size: int, *, response=None) -> bytes:
+def _read_chunks(
+    chunks_iter, max_size: int, *, response=None, deadline: float, clock,
+) -> bytes:
     chunks: list[bytes] = []
     total = 0
     try:
-        for chunk in chunks_iter:
+        iterator = iter(chunks_iter)
+        while True:
+            _ensure_before_deadline(deadline, clock)
+            try:
+                chunk = next(iterator)
+            except StopIteration:
+                break
+            _ensure_before_deadline(deadline, clock)
             if not isinstance(chunk, bytes):
                 raise HttpError("Unexpected response format.")
             total += len(chunk)
@@ -215,3 +253,15 @@ def _read_chunks(chunks_iter, max_size: int, *, response=None) -> bytes:
 def _close_response(response) -> None:
     if response is not None and hasattr(response, "close"):
         response.close()
+
+
+def _remaining_timeout(per_operation: float, deadline: float, clock) -> float:
+    remaining = deadline - clock()
+    if remaining <= 0:
+        raise HttpError("Update request timed out.")
+    return min(per_operation, remaining)
+
+
+def _ensure_before_deadline(deadline: float, clock) -> None:
+    if clock() >= deadline:
+        raise HttpError("Update request timed out.")
