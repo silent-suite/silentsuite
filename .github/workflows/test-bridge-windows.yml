@@ -61,6 +61,14 @@ jobs:
           python -m pip install pytest
           python -m pytest tests/test_windows_installer_static.py tests/test_release_versions_static.py tests/test_android_security_static.py tests/test_android_toolchain_static.py -q
 
+      - name: Run bridge update contract tests
+        working-directory: bridge
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+          python -m pytest tests/test_update_contract.py -v --tb=short
+
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: |
