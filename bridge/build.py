@@ -18,48 +18,25 @@ It will be renamed to the release asset name, e.g.:
 
 import argparse
 import hashlib
-import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+# Canonical PlatformMapping from the updater (Issue #223).
+# Add bridge/src to sys.path so the package is importable even when
+# build.py is run standalone before a pip install.
+_SCRIPT_DIR = Path(__file__).parent.resolve()
+_SRC = _SCRIPT_DIR / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
-# ---------------------------------------------------------------------------
-# Platform detection
-# ---------------------------------------------------------------------------
+from silentsuite_bridge.update.platform import PlatformMapping  # noqa: E402
 
-def get_os_label() -> str:
-    s = platform.system().lower()
-    if s == "linux":
-        return "linux"
-    elif s == "darwin":
-        return "macos"
-    elif s == "windows":
-        return "windows"
-    else:
-        raise RuntimeError(f"Unsupported OS: {s}")
-
-
-def get_arch_label() -> str:
-    m = platform.machine().lower()
-    if m in ("x86_64", "amd64"):
-        return "x86_64"
-    elif m in ("aarch64", "arm64"):
-        return "arm64"
-    else:
-        raise RuntimeError(f"Unsupported arch: {m}")
-
-
-def get_asset_name() -> str:
-    os_label = get_os_label()
-    arch_label = get_arch_label()
-    suffix = ".exe" if os_label == "windows" else ""
-    return f"silentsuite-bridge-{os_label}-{arch_label}{suffix}"
-
-
-def get_exe_suffix() -> str:
-    return ".exe" if platform.system().lower() == "windows" else ""
+_get_os_label = PlatformMapping.get_os_label
+_get_arch_label = PlatformMapping.get_arch_label
+_get_asset_name = PlatformMapping.get_asset_name
+_get_exe_suffix = PlatformMapping.get_exe_suffix
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +44,7 @@ def get_exe_suffix() -> str:
 # ---------------------------------------------------------------------------
 
 def run_pyinstaller(clean: bool, debug: bool, no_upx: bool) -> None:
-    script_dir = Path(__file__).parent.resolve()
+    script_dir = _SCRIPT_DIR
     spec_file = script_dir / "silentsuite-bridge.spec"
 
     if not spec_file.exists():
@@ -97,9 +74,9 @@ def run_pyinstaller(clean: bool, debug: bool, no_upx: bool) -> None:
 
 
 def rename_binary(dist_dir: Path) -> Path:
-    suffix = get_exe_suffix()
+    suffix = _get_exe_suffix()
     src = dist_dir / f"silentsuite-bridge{suffix}"
-    asset_name = get_asset_name()
+    asset_name = _get_asset_name()
     dst = dist_dir / asset_name
 
     if not src.exists():
@@ -146,15 +123,15 @@ def main() -> None:
     parser.add_argument("--no-smoke", action="store_true", help="Skip smoke test")
     args = parser.parse_args()
 
-    os_label = get_os_label()
-    arch_label = get_arch_label()
-    asset_name = get_asset_name()
+    os_label = _get_os_label()
+    arch_label = _get_arch_label()
+    asset_name = _get_asset_name()
 
     print(f"[build] Platform: {os_label}/{arch_label}")
     print(f"[build] Asset name: {asset_name}")
     print()
 
-    dist_dir = Path(__file__).parent / "dist"
+    dist_dir = _SCRIPT_DIR / "dist"
 
     # Build
     run_pyinstaller(clean=args.clean, debug=args.debug, no_upx=args.no_upx)
@@ -163,7 +140,7 @@ def main() -> None:
     if not args.no_rename:
         binary = rename_binary(dist_dir)
     else:
-        suffix = get_exe_suffix()
+        suffix = _get_exe_suffix()
         binary = dist_dir / f"silentsuite-bridge{suffix}"
 
     # Smoke test

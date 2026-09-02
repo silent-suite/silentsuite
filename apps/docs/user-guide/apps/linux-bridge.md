@@ -16,7 +16,7 @@ The installer supports Linux on x86_64 and ARM64. Run the stable installer in a 
 curl -fsSL https://silentsuite.io/bridge/install.sh | sh
 ```
 
-The installer downloads the current bridge release, attempts checksum verification when both a checksum tool and the release checksum are available, installs it at `~/.local/bin/silentsuite-bridge`, and configures a systemd user service. If you require manual verification, download the binary and its `.sha256` file from GitHub Releases and compare them before running it.
+The installer downloads the current bridge release, verifies the checksum against the release's `.sha256` sidecar before installing, installs it at `~/.local/bin/silentsuite-bridge`, and configures a systemd user service. Checksum verification is mandatory — the installer refuses to install when the verifier, release checksum sidecar, or asset/binary is unavailable, ambiguous, malformed, or mismatched. If you require manual verification, download the binary and its `.sha256` file from GitHub Releases and compare them before running it.
 
 If your current shell cannot find the command immediately, open a new terminal or run:
 

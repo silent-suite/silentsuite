@@ -213,6 +213,17 @@ a = Analysis(
         "silentsuite_bridge.local_cache.db",
         "silentsuite_bridge.local_cache.models",
 
+        # Bridge update modules (Issue #223)
+        "silentsuite_bridge.update",
+        "silentsuite_bridge.update.types",
+        "silentsuite_bridge.update.platform",
+        "silentsuite_bridge.update.http",
+        "silentsuite_bridge.update.verify",
+        "silentsuite_bridge.update.fs",
+        "silentsuite_bridge.update.replace",
+        "silentsuite_bridge.update.restart",
+        "silentsuite_bridge.update.check",
+
         # Dependencies
         "vobject",
         "vobject.icalendar",

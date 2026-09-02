@@ -618,13 +618,46 @@ def _serve_radicale_with_bridge_application(configuration) -> None:
         _RADICALE_SERVER_APPLICATION_LOCK.release()
 
 
+def _print_check_result(result) -> None:
+    """Print a human-readable check-update result."""
+    from .update.types import UpdateStatus
+
+    print(f"SilentSuite Bridge v{result.current_version}")
+
+    if result.status == UpdateStatus.AVAILABLE:
+        print(f"Update available: {result.tag_name}")
+    elif result.status == UpdateStatus.CURRENT:
+        print("Up to date.")
+    elif result.status == UpdateStatus.DOWNGRADE:
+        print("Running version is newer than the latest compatible release.")
+    elif result.status == UpdateStatus.DEVELOPMENT:
+        print("Development build — no release checking.")
+    elif result.status == UpdateStatus.UNSUPPORTED:
+        print("Platform not supported for automatic updates.")
+    elif result.status == UpdateStatus.MISSING_ASSET:
+        print("No compatible release asset found.")
+    elif result.status == UpdateStatus.FAILURE:
+        print("Update check failed.")
+
+
+def _check_result_exit_code(result) -> int:
+    """Return the exit code for a check-update result."""
+    from .update.types import UpdateStatus
+
+    if result.status in (
+        UpdateStatus.AVAILABLE,
+        UpdateStatus.CURRENT,
+        UpdateStatus.DOWNGRADE,
+        UpdateStatus.DEVELOPMENT,
+    ):
+        return 0
+    # FAILURE, UNSUPPORTED, MISSING_ASSET → nonzero
+    return 1
+
+
 def main():
     """Main entry point for the bridge CLI."""
-    # Handle --version and --help before any side effects
-    if "--version" in sys.argv:
-        print(f"SilentSuite Bridge v{__version__}")
-        sys.exit(0)
-
+    # --help/-h before anything else (including update flags)
     if "--help" in sys.argv or "-h" in sys.argv:
         print(f"SilentSuite Bridge v{__version__}")
         print("E2EE CalDAV/CardDAV sync daemon\n")
@@ -632,6 +665,9 @@ def main():
         print("Options:")
         print("  --help, -h            Show this help message and exit")
         print("  --version             Show version and exit")
+        print("  --check-update        Check for a newer release (no mutation)")
+        print("  --self-update         Download, verify, and install the latest")
+        print("                        release (requires a frozen release binary)")
         print("  --login               Add or re-authenticate an account")
         print("  --list-accounts       List configured bridge accounts")
         print("  --logout ACCOUNT      Remove local credentials; keep cache")
@@ -659,6 +695,62 @@ def main():
         print("  SILENTSUITE_BRIDGE_SSL       Enable HTTPS for the bridge listener (opt-in)")
         print("  SILENTSUITE_BRIDGE_SSL_CERT  Path to the SSL certificate file")
         print("  SILENTSUITE_BRIDGE_SSL_KEY   Path to the SSL private key file")
+        sys.exit(0)
+
+    # Handle --version before any side effects
+    if "--version" in sys.argv:
+        print(f"SilentSuite Bridge v{__version__}")
+        sys.exit(0)
+
+    # Reject contradictory update flags
+    has_check = "--check-update" in sys.argv
+    has_self = "--self-update" in sys.argv
+    if has_check and has_self:
+        print("Error: --check-update and --self-update cannot be used together.", file=sys.stderr)
+        sys.exit(1)
+
+    # --check-update / --self-update must run before config/data-dir init
+    if has_check:
+        from .update import check_for_update
+
+        try:
+            result = check_for_update()
+        except Exception:
+            print("Error: update check failed.", file=sys.stderr)
+            sys.exit(1)
+        _print_check_result(result)
+        sys.exit(_check_result_exit_code(result))
+
+    if has_self:
+        from .update import perform_update
+
+        try:
+            result = perform_update()
+            if not result.success:
+                print(
+                    result.recovery_instruction
+                    or "Update failed; the installed Bridge is unchanged.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            if result.pending_completion:
+                print(
+                    "The verified update is staged and will finish after this "
+                    "process exits."
+                )
+            else:
+                print("Bridge updated.")
+                if result.recovery_instruction:
+                    print(result.recovery_instruction)
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        except Exception:
+            print(
+                "Error: update failed; the installed Bridge was preserved.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         sys.exit(0)
 
     # Handle --server before anything that uses config.ETEBASE_SERVER_URL

@@ -48,6 +48,33 @@ If Apple Internet Accounts still fails after HTTPS setup, collect redacted bridg
 
 The local bridge cache contains decrypted calendar/contact/task data. Use `--remove-account` when retiring a shared or untrusted machine.
 
+## Self-Update
+
+The Bridge can check for and apply updates from the CLI:
+
+```bash
+# Check whether a newer release is available (no mutation)
+silentsuite-bridge --check-update
+
+# Download, verify, and install the latest release (frozen binary only)
+silentsuite-bridge --self-update
+```
+
+`--check-update` prints the running version, queries public GitHub releases,
+and reports whether an update is available without touching any configuration,
+data, or server state.
+
+`--self-update` downloads the latest compatible binary and its `.sha256`
+sidecar, verifies the checksum, and replaces the running executable. It only
+works with frozen release binaries (installed via the official installer or
+GitHub download) in writable locations. Source/editable installs are refused.
+Same-version replacement and downgrades are always refused.
+
+Failed downloads, checksum mismatches, or replacement errors leave the
+installed executable intact. The existing autostart entries are not changed.
+The full bridge docs at `https://docs.silentsuite.io/bridge` cover
+manual-installer updates, Windows running-process behavior, and recovery.
+
 ## License
 
 AGPL-3.0-only

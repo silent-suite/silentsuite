@@ -281,6 +281,9 @@ silentsuite-bridge
 ```bash
 silentsuite-bridge                    # Start the bridge
 silentsuite-bridge --version          # Show version
+silentsuite-bridge --check-update     # Check for a newer release (no mutation)
+silentsuite-bridge --self-update      # Download, verify, and install the latest
+                                      # release (requires a frozen release binary)
 silentsuite-bridge --login            # Add or re-authenticate an account
 silentsuite-bridge --list-accounts    # List configured accounts
 silentsuite-bridge --logout EMAIL     # Remove local credentials; keep cache
@@ -290,6 +293,69 @@ silentsuite-bridge --install-autostart  # Install auto-start
 silentsuite-bridge --remove-autostart   # Remove auto-start
 silentsuite-bridge --no-tray          # Start without system tray
 ```
+
+## Updating the Bridge
+
+### Check for updates
+
+Run `--check-update` to see whether a newer release is available without
+downloading or changing anything:
+
+```bash
+silentsuite-bridge --check-update
+```
+
+This prints the running version, compares it against the latest compatible
+GitHub release, and reports whether an update, current, or another state
+(development build, unsupported platform, network error) applies. The check
+does not touch any configuration, data directory, or server state.
+
+### Apply an update (release binary only)
+
+```bash
+silentsuite-bridge --self-update
+```
+
+This downloads the latest compatible release binary and its `.sha256` sidecar,
+verifies the checksum, and safely replaces the running executable. The command
+requires a frozen release binary (installed via the official installer or a
+GitHub download) in a writable location. Source and editable installs are
+refused; update those manually with git or pip. Same-version replacement
+and downgrades are always refused. After replacement, the updater attempts
+to restart the bridge through systemd (Linux), launchd (macOS), or prints
+an exact manual restart command when automatic restart is unavailable.
+
+### What happens to the running process during update
+
+- **Linux/macOS:** The verified candidate is staged on the same filesystem,
+  the live binary is atomically replaced, and the bridge daemon is restarted
+  via systemd or launchd.
+- **Windows:** The running `.exe` is never overwritten in-process. A verified
+  candidate is staged and a PowerShell helper script is launched to complete
+  the swap after the old process exits, preserving a backup. If the helper
+  cannot be launched, the updater prints an exact manual recovery instruction.
+
+Autostart continues to reference the same installed executable path; it is
+not changed to point at temporary staging paths.
+
+### Recovery after a failed update
+
+A failed download, checksum, or replace leaves the installed executable
+intact. If the replacement fails mid-swap, the original is preserved or
+restored from the same-directory backup. In all cases, the autostart
+entries (systemd/launchd/registry) are not modified, so the bridge can
+be restarted manually from the same path. A manual reinstall via the
+installer script or a direct GitHub download is always an available
+recovery path.
+
+### Manual installer update
+
+The existing `bridge/install.sh` and `bridge/install.ps1` installers still
+work for new installations and manual upgrades. Running the installer over
+an existing installation downloads the latest release and replaces the binary
+after verifying its checksum. This is the recommended path when automatic
+self-update is not available (source installs, unsupported platforms, or
+when you prefer a fresh download).
 
 ## Troubleshooting
 
