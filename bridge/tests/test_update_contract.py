@@ -73,8 +73,14 @@ def _make_fs():
     return fs
 
 
-def _make_http_download_for(data, checksum_hex, asset_name):
+def _make_http_download_for(data, checksum_hex, asset_name, remote_version="99.0.0"):
+    """Fake HTTP adapter: one newer compatible release with an exact
+    checksum sidecar, plus the checksum-then-binary download sequence."""
     http = MagicMock()
+    http.fetch_releases.return_value = [
+        _release(f"v{remote_version}",
+                 assets=[asset_name, f"{asset_name}.sha256"]),
+    ]
     http.download.side_effect = [
         _checksum_line(checksum_hex, asset_name).encode(),
         data,
@@ -323,6 +329,26 @@ def test_check_rejects_invalid_current_version_grammar_without_network(bad_curre
         http=http,
         platform=Platform("linux", "x86_64"),
         current_version=bad_current,
+    )
+
+    assert result.status == UpdateStatus.DEVELOPMENT
+    http.fetch_releases.assert_not_called()
+
+
+@pytest.mark.parametrize("reserved", ["0.0.0-dev", "0.0.0"])
+def test_check_reserved_development_stamps_never_reach_network(reserved):
+    """The development stamp and the unknown placeholder satisfy the
+    SemVer grammar but must still classify as development, pre-network."""
+    from silentsuite_bridge.update.types import Platform, UpdateStatus
+
+    http = MagicMock()
+    http.fetch_releases.side_effect = AssertionError("must not reach network")
+
+    from silentsuite_bridge.update import check_for_update
+    result = check_for_update(
+        http=http,
+        platform=Platform("linux", "x86_64"),
+        current_version=reserved,
     )
 
     assert result.status == UpdateStatus.DEVELOPMENT
@@ -1856,6 +1882,8 @@ def test_perform_update_refuses_development_version():
             asset_name=ASSET_LINUX_X86_64,
         )
 
+    # Refused at admission — before the release fetch and any download
+    http.fetch_releases.assert_not_called()
     http.download.assert_not_called()
     fs.replace.assert_not_called()
     restart.restart.assert_not_called()

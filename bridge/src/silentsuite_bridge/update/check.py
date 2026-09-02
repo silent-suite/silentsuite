@@ -20,10 +20,16 @@ _VERSION_RE = re.compile(
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 
+# Reserved stamps that satisfy the SemVer grammar but never denote a
+# release: the source-tree development stamp and the unknown placeholder.
+_RESERVED_DEV_VERSIONS = frozenset({"0.0.0-dev", "0.0.0"})
+
 
 def version_is_stable(version: str) -> bool:
     """Return True if `version` looks like a valid release version."""
     if not version:
+        return False
+    if version in _RESERVED_DEV_VERSIONS:
         return False
     return bool(_VERSION_RE.match(version))
 

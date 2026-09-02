@@ -161,16 +161,29 @@ class FilesystemAdapter:
         suffix = ".update-staged"
         fd, staged_path = tempfile.mkstemp(suffix=suffix, dir=str(parent))
         try:
-            _write_all(fd, data)
-            os.fsync(fd)
+            write_error: BaseException | None = None
+            try:
+                _write_all(fd, data)
+                os.fsync(fd)
+            except Exception as exc:
+                write_error = exc
+            # Close exactly once, and always before unlink — Windows
+            # refuses to remove a file with an open descriptor.
+            try:
+                os.close(fd)
+            except OSError:
+                # A close failure must not mask the original error; on
+                # an otherwise-successful write it is itself fatal.
+                if write_error is None:
+                    raise
+            if write_error is not None:
+                raise write_error
         except Exception:
             try:
                 os.unlink(staged_path)
             except OSError:
                 pass
             raise
-        finally:
-            os.close(fd)
         return staged_path
 
     def chmod(self, path: str | Path, mode: int) -> None:
@@ -265,13 +278,24 @@ def _write_private_text(path: Path, content: str) -> None:
     data = content.encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        _write_all(fd, data)
-        os.fsync(fd)
+        write_error: BaseException | None = None
+        try:
+            _write_all(fd, data)
+            os.fsync(fd)
+        except Exception as exc:
+            write_error = exc
+        # Close exactly once, and always before unlink — Windows refuses
+        # to remove a file with an open descriptor.
+        try:
+            os.close(fd)
+        except OSError:
+            if write_error is None:
+                raise
+        if write_error is not None:
+            raise write_error
     except Exception:
         try:
             os.unlink(path)
         except OSError:
             pass
         raise
-    finally:
-        os.close(fd)
