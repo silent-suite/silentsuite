@@ -11,7 +11,7 @@
  * Update this on release so displayed versions don't go stale. Keep in sync
  * with the current release tag.
  */
-export const DISPLAY_VERSION = '0.5.4-beta'
+export const DISPLAY_VERSION = '0.5.5-beta'
 
 // ── Time unit multipliers (ms) ──────────────────────────────────────────
 export const MS_PER_SECOND = 1_000

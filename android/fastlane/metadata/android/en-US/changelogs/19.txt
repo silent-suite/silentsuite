@@ -1,0 +1,1 @@
+Makes Android release builds reproducible so published downloads match independently built ones.
