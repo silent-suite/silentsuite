@@ -17,6 +17,15 @@ set -euo pipefail
 #   * ThinLTO module identifiers, which LLVM derives from the real object-file
 #     paths and no flag rewrites. Cargo therefore runs at the contract's fixed
 #     canonical root, so those paths are identical everywhere to begin with.
+#
+# A fourth cause is not a path at all. flapigen, the build-time JNI binding
+# generator, keeps its find-class cache in a std HashMap, whose iteration order
+# is seeded from OS randomness once per process. It emits JNI_OnLoad's
+# FindClass calls and their global handles in that order, so every run produced
+# a differently ordered java_glue.rs, a differently sized JNI_OnLoad and a
+# different LLVM module hash in the promoted `.llvm.*` symbol names. The
+# generator is therefore checked out at its pinned commit here and its cache is
+# rewritten to a BTreeMap, so the generated bindings are ordered by class id.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_DIR="$ROOT_DIR/scripts"
@@ -33,6 +42,10 @@ BUILD_DIR="$(ss_reproducible_workspace etebase)"
 ORIGINAL_AAR_URL="${ORIGINAL_AAR_URL:-https://repo1.maven.org/maven2/com/etebase/client/2.3.2/client-2.3.2.aar}"
 ORIGINAL_AAR_SHA256="${ORIGINAL_AAR_SHA256:-1d1ff77036911852b74f18f2854f86a731766f58138f87e1ac151f641291ede3}"
 ORIGINAL_AAR="$BUILD_DIR/client-2.3.2.aar"
+FLAPIGEN_REPO_URL="${FLAPIGEN_REPO_URL:-https://github.com/tasn/flapigen-rs.git}"
+# The exact revision the upstream Cargo.toml already pins as a build dependency.
+FLAPIGEN_EXPECTED_COMMIT="d2fbb9bd8ecb4ead986c295bffcfe889d9f47e8c"
+FLAPIGEN_SOURCE="$BUILD_DIR/flapigen-rs"
 NATIVE_OUT="$BUILD_DIR/native"
 ETEBASE_SOURCE="$BUILD_DIR/etebase-java"
 
@@ -89,10 +102,10 @@ if [[ ! -d "$TOOLCHAIN_BIN" ]]; then
   exit 1
 fi
 
-export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+ss_canonical_rust_env
 
 mkdir -p "$BUILD_DIR" "$NATIVE_OUT" "$APP_LIBS_DIR"
-rm -rf "$ETEBASE_SOURCE" "$NATIVE_OUT"
+rm -rf "$ETEBASE_SOURCE" "$FLAPIGEN_SOURCE" "$NATIVE_OUT"
 mkdir -p "$NATIVE_OUT"
 
 printf 'Using NDK: %s\n' "$NDK_DIR"
@@ -109,6 +122,71 @@ if [[ "$actual_commit" != "$ETEBASE_EXPECTED_COMMIT" ]]; then
 fi
 
 ss_provision_rust_toolchain "${TARGETS[@]}"
+
+git clone --quiet "$FLAPIGEN_REPO_URL" "$FLAPIGEN_SOURCE"
+git -C "$FLAPIGEN_SOURCE" checkout --quiet --detach "$FLAPIGEN_EXPECTED_COMMIT"
+flapigen_commit="$(git -C "$FLAPIGEN_SOURCE" rev-parse HEAD)"
+if [[ "$flapigen_commit" != "$FLAPIGEN_EXPECTED_COMMIT" ]]; then
+  echo "error: flapigen resolved to $flapigen_commit, expected $FLAPIGEN_EXPECTED_COMMIT" >&2
+  exit 1
+fi
+
+# Order the generated JNI bindings, and point the build dependency at the
+# ordered generator. Cargo.lock is edited in step with the patch — a path patch
+# carries no source of its own — so the build still runs `--locked` and every
+# other dependency stays at the revision upstream resolved.
+python3 - "$FLAPIGEN_SOURCE" "$ETEBASE_SOURCE" "$FLAPIGEN_EXPECTED_COMMIT" <<'PY'
+import pathlib
+import sys
+
+flapigen = pathlib.Path(sys.argv[1])
+source = pathlib.Path(sys.argv[2])
+commit = sys.argv[3]
+
+find_cache = flapigen / "macroslib/src/java_jni/find_cache.rs"
+text = find_cache.read_text(encoding="utf-8")
+for old, new in (
+    ("use std::collections::HashMap;", "use std::collections::BTreeMap;"),
+    (
+        "pub calls: HashMap<String, JniFindClass>,",
+        "pub calls: BTreeMap<String, JniFindClass>,",
+    ),
+):
+    if text.count(old) != 1:
+        raise SystemExit(
+            f"error: expected exactly one {old!r} in {find_cache}; flapigen's find-class "
+            "cache has moved and its iteration order is no longer known to be ordered"
+        )
+    text = text.replace(old, new)
+find_cache.write_text(text, encoding="utf-8")
+if "HashMap" in text:
+    raise SystemExit(f"error: {find_cache} still uses a randomly ordered HashMap")
+
+manifest = source / "Cargo.toml"
+manifest_text = manifest.read_text(encoding="utf-8")
+dependency = (
+    'flapigen = { git = "https://github.com/tasn/flapigen-rs", '
+    f'rev = "{commit}" }}'
+)
+if manifest_text.count(dependency) != 1:
+    raise SystemExit(f"error: expected exactly one pinned flapigen dependency {dependency!r}")
+if "[patch." in manifest_text:
+    raise SystemExit("error: the upstream manifest already patches a dependency source")
+manifest.write_text(
+    manifest_text
+    + '\n[patch."https://github.com/tasn/flapigen-rs"]\n'
+    + f'flapigen = {{ path = "{flapigen}/macroslib" }}\n',
+    encoding="utf-8",
+)
+
+lock = source / "Cargo.lock"
+lock_text = lock.read_text(encoding="utf-8")
+locked_source = f'source = "git+https://github.com/tasn/flapigen-rs?rev={commit}#{commit}"\n'
+if lock_text.count(locked_source) != 1:
+    raise SystemExit(f"error: expected exactly one locked flapigen source {locked_source!r}")
+lock.write_text(lock_text.replace(locked_source, ""), encoding="utf-8")
+print(f"Ordered the flapigen JNI binding generator at {commit}")
+PY
 
 PREFIX_MAPS=()
 while IFS= read -r pair; do

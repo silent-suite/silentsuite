@@ -37,6 +37,16 @@ SILENTSUITE_REPRODUCIBLE_ROOT="${SILENTSUITE_REPRODUCIBLE_ROOT:-$SILENTSUITE_CAN
 # The virtual root every real path is rewritten onto. It never exists on disk.
 SILENTSUITE_VIRTUAL_ROOT="/silentsuite-build"
 
+# Cargo's and rustup's homes are toolchain roots, not caches: the registry
+# sources Cargo compiles, and the sysroot rustc links against, both live under
+# them. The GitHub runner puts them in $HOME and the Debian rebuild container
+# puts them in /opt, so a build that inherits them from the environment starts
+# from two different absolute paths. They are placed under the canonical root
+# instead, by this contract rather than by whichever workflow ran first, so the
+# Rust build sees the same paths everywhere before any prefix map applies.
+SILENTSUITE_CARGO_HOME="$SILENTSUITE_REPRODUCIBLE_ROOT/cargo"
+SILENTSUITE_RUSTUP_HOME="$SILENTSUITE_REPRODUCIBLE_ROOT/rustup"
+
 # The exact compiler the release APK is compiled with. javac — not the JVM that
 # happens to run Gradle — decides the class-file attributes that reach
 # classes.dex, so it is pinned to one immutable, checksummed build. Debian's
@@ -208,9 +218,21 @@ ss_provision_release_jdk() {
   printf '%s\n' "$SILENTSUITE_RELEASE_JDK_HOME"
 }
 
-# Install the pinned Rust toolchain and its Android targets. Never `stable`.
+# Put CARGO_HOME and RUSTUP_HOME at their canonical paths, overriding whatever
+# the environment set. Exported rather than returned: every cargo and rustup
+# invocation that follows has to see them, including the ones cargo spawns.
+ss_canonical_rust_env() {
+  mkdir -p "$SILENTSUITE_CARGO_HOME" "$SILENTSUITE_RUSTUP_HOME" \
+    || ss_die "cannot create the canonical Rust toolchain roots"
+  export CARGO_HOME="$SILENTSUITE_CARGO_HOME"
+  export RUSTUP_HOME="$SILENTSUITE_RUSTUP_HOME"
+}
+
+# Install the pinned Rust toolchain and its Android targets. Never `stable`,
+# and always into the canonical toolchain roots.
 ss_provision_rust_toolchain() {
   command -v rustup >/dev/null 2>&1 || ss_die "rustup is required to install $SILENTSUITE_RELEASE_RUST_TOOLCHAIN"
+  ss_canonical_rust_env
   rustup toolchain install --profile minimal --no-self-update "$SILENTSUITE_RELEASE_RUST_TOOLCHAIN"
   if [[ "$#" -gt 0 ]]; then
     rustup target add --toolchain "$SILENTSUITE_RELEASE_RUST_TOOLCHAIN" "$@"
@@ -232,6 +254,8 @@ SILENTSUITE_VIRTUAL_ROOT=$SILENTSUITE_VIRTUAL_ROOT
 SILENTSUITE_RELEASE_JDK_RELEASE=$SILENTSUITE_RELEASE_JDK_RELEASE
 SILENTSUITE_RELEASE_JDK_HOME=$SILENTSUITE_RELEASE_JDK_HOME
 SILENTSUITE_RELEASE_RUST_TOOLCHAIN=$SILENTSUITE_RELEASE_RUST_TOOLCHAIN
+SILENTSUITE_CARGO_HOME=$SILENTSUITE_CARGO_HOME
+SILENTSUITE_RUSTUP_HOME=$SILENTSUITE_RUSTUP_HOME
 EOF
       ;;
     provision-jdk)

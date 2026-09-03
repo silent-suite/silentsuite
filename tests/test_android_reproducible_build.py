@@ -42,6 +42,7 @@ PINNED_JDK_RELEASE = "jdk-17.0.20.1+1"
 PINNED_JDK_JAVA_VERSION = "17.0.20.1"
 PINNED_JDK_IMPLEMENTOR_VERSION = "Temurin-17.0.20.1+1"
 PINNED_RUST_TOOLCHAIN = "1.98.0"
+PINNED_FLAPIGEN_COMMIT = "d2fbb9bd8ecb4ead986c295bffcfe889d9f47e8c"
 CANONICAL_ROOT = "/tmp/silentsuite-reproducible-build"
 VIRTUAL_ROOT = "/silentsuite-build"
 REBUILD_JOB = "rebuild-fdroid-environment"
@@ -389,6 +390,90 @@ def test_etebase_rustflags_are_reversed_because_rustc_keeps_the_last_match():
     # clang keeps the first match, so its list must not be reversed.
     clang_loop = script.index('CC_PREFIX_FLAGS+=("-ffile-prefix-map=$pair")')
     assert clang_loop < script.index(reversal)
+
+
+def test_contract_owns_the_cargo_and_rustup_roots_rather_than_the_environment():
+    """The runner puts them in $HOME, the rebuild container in /opt."""
+    contract = read(CONTRACT)
+
+    assert 'SILENTSUITE_CARGO_HOME="$SILENTSUITE_REPRODUCIBLE_ROOT/cargo"' in contract
+    assert 'SILENTSUITE_RUSTUP_HOME="$SILENTSUITE_REPRODUCIBLE_ROOT/rustup"' in contract
+    assert 'export CARGO_HOME="$SILENTSUITE_CARGO_HOME"' in contract
+    assert 'export RUSTUP_HOME="$SILENTSUITE_RUSTUP_HOME"' in contract
+
+    # Provisioning is the one entry point every Rust build already calls, so
+    # the canonical roots cannot be forgotten by a future caller.
+    provision = contract.index("ss_provision_rust_toolchain() {")
+    canonical = contract.index("ss_canonical_rust_env", provision)
+    assert canonical < contract.index("rustup toolchain install", provision)
+
+
+def test_etebase_build_does_not_inherit_cargo_home_from_the_runner():
+    script = read(ETEBASE_SCRIPT)
+
+    assert "ss_canonical_rust_env" in script
+    assert 'CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"' not in script
+
+
+def test_etebase_build_orders_the_generated_jni_bindings():
+    """flapigen emits JNI_OnLoad in std HashMap order, which is seeded randomly."""
+    script = read(ETEBASE_SCRIPT)
+
+    assert f'FLAPIGEN_EXPECTED_COMMIT="{PINNED_FLAPIGEN_COMMIT}"' in script
+    assert 'if [[ "$flapigen_commit" != "$FLAPIGEN_EXPECTED_COMMIT" ]]; then' in script
+    assert '"pub calls: BTreeMap<String, JniFindClass>,"' in script
+    assert '"use std::collections::BTreeMap;"' in script
+    # The generator is redirected, not merely checked out.
+    assert '[patch."https://github.com/tasn/flapigen-rs"]' in script
+    # Redirecting it must not become an excuse to unpin everything else.
+    assert 'build --target "$target" --release --locked' in script
+
+
+def test_etebase_flapigen_patch_fails_closed_when_the_cache_moves(tmp_path: Path):
+    patch = block_containing(read(ETEBASE_SCRIPT), "randomly ordered HashMap")
+    find_cache = tmp_path / "flapigen" / "macroslib/src/java_jni"
+    find_cache.mkdir(parents=True)
+    (find_cache / "find_cache.rs").write_text(
+        "use rustc_hash::FxHashMap;\npub calls: FxHashMap<String, JniFindClass>,\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "source"
+    source.mkdir()
+
+    result = run_block(patch, str(tmp_path / "flapigen"), str(source), PINNED_FLAPIGEN_COMMIT)
+
+    assert result.returncode != 0
+    assert "no longer known to be ordered" in result.stderr
+
+
+def test_conscrypt_build_drops_the_debug_information_the_build_id_hashes():
+    """The GNU build ID covers sections AGP strips back out of the AAR."""
+    script = read(CONSCRYPT_SCRIPT)
+
+    assert "'-DCMAKE_C_FLAGS_RELWITHDEBINFO={debug_free_flags}'" in script
+    assert "'-DCMAKE_CXX_FLAGS_RELWITHDEBINFO={debug_free_flags}'" in script
+    assert 'debug_free_flags = "-O2 -DNDEBUG -g0"' in script
+    # Overriding the configuration's own flags is the point: CMake appends them
+    # after the flags AGP passes, so a -g0 in cFlags would lose to their -g.
+    assert "cFlags '-g0'" not in script
+
+
+def test_conscrypt_debug_suppression_fails_closed_when_the_anchor_moves(tmp_path: Path):
+    patch = block_containing(read(CONSCRYPT_SCRIPT), "cFlags '-fvisibility=hidden',")
+    android_gradle = conscrypt_gradle_fixture(tmp_path)
+    android_gradle.write_text(
+        android_gradle.read_text(encoding="utf-8").replace(
+            "-DCMAKE_SHARED_LINKER_FLAGS=-z max-page-size=16384 -z common-page-size=16384",
+            "-DCMAKE_SHARED_LINKER_FLAGS=-z max-page-size=4096",
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_block(
+        patch, str(tmp_path), "2.6.3", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
+    )
+
+    assert result.returncode != 0
 
 
 def test_etebase_leak_scan_rejects_cargo_home_and_accepts_normalised_paths(tmp_path: Path):

@@ -12,6 +12,16 @@ set -euo pipefail
 # host-specific prefix is rewritten with -ffile-prefix-map, which covers both
 # the debug line table and the __FILE__ macro. The AAR is rejected below if a
 # real host path survives into a shipped library.
+#
+# The debug information itself is then dropped. AGP's release variant selects
+# CMake's RelWithDebInfo, and the linker computes the GNU build ID over the
+# whole image it links — debug sections included — before AGP strips them back
+# out for the AAR. Two builds whose shipped bytes were already identical
+# therefore still disagreed on those 20 bytes, because their unshipped DWARF
+# did. Conscrypt ships pre-stripped and is excluded from the Play native
+# debug-symbol upload (android/scripts/package-native-debug-symbols.py), so
+# nothing consumes that debug information; suppressing it makes the build ID a
+# hash of the shipped bytes and of nothing else.
 CONSCRYPT_REPOSITORY="https://github.com/google/conscrypt.git"
 CONSCRYPT_COMMIT="657e1c64c46961bcc48e7302e42ebc02d6632645"
 CONSCRYPT_VERSION="2.6.3"
@@ -103,6 +113,28 @@ required_flags = "-z max-page-size=16384 -z common-page-size=16384"
 if android_text.count(required_flags) != 1:
     raise SystemExit("error: upstream Conscrypt 16 KB linker flags are missing or ambiguous")
 android_text = android_text.replace(old_ndk, new_ndk)
+
+# CMake appends CMAKE_<LANG>_FLAGS_<CONFIG> after the flags AGP passes, so the
+# `-g` in the RelWithDebInfo defaults wins over any `-g0` added to cFlags. The
+# configuration's own flags are overridden instead: RelWithDebInfo minus its
+# debug information, with the optimisation level and NDEBUG left untouched.
+debug_free_flags = "-O2 -DNDEBUG -g0"
+linker_anchor = (
+    "'-DCMAKE_SHARED_LINKER_FLAGS=-z max-page-size=16384 -z common-page-size=16384'"
+)
+if android_text.count(linker_anchor) != 1:
+    raise SystemExit(
+        f"error: expected exactly one upstream CMake argument list anchored at {linker_anchor!r}"
+    )
+android_text = android_text.replace(
+    linker_anchor,
+    linker_anchor
+    + ",\n"
+    + " " * 24
+    + f"'-DCMAKE_C_FLAGS_RELWITHDEBINFO={debug_free_flags}',\n"
+    + " " * 24
+    + f"'-DCMAKE_CXX_FLAGS_RELWITHDEBINFO={debug_free_flags}'",
+)
 
 # Normalise every C and C++ source path that reaches the shipped library.
 # -ffile-prefix-map covers __FILE__ and the debug line table in one flag, so
