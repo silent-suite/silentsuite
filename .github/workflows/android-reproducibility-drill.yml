@@ -165,6 +165,7 @@ jobs:
       # Debian JDK here is the point — it is what runs Gradle, so the contract
       # is proven to survive a daemon JVM that is not the pinned compiler.
       - name: Install the Debian build environment
+        shell: bash
         run: |
           set -euo pipefail
           apt-get update
@@ -183,6 +184,7 @@ jobs:
         env:
           CMDLINE_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
           CMDLINE_TOOLS_SHA256: 7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$ANDROID_HOME/cmdline-tools"
@@ -207,6 +209,7 @@ jobs:
         env:
           RUSTUP_INIT_URL: https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init
           RUSTUP_INIT_SHA256: dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
+        shell: bash
         run: |
           set -euo pipefail
           curl --fail --location --silent --show-error \
@@ -222,18 +225,22 @@ jobs:
       # toolchain than the release lane used.
       - name: Provision the pinned reproducible JDK
         working-directory: android
+        shell: bash
         run: scripts/reproducible-build-contract.sh provision-jdk
 
       - name: Build 16 KB-aligned Etebase client AAR
         working-directory: android
+        shell: bash
         run: scripts/build-etebase-client-16kb.sh
 
       - name: Build Conscrypt with Android NDK r28
         working-directory: android
+        shell: bash
         run: scripts/build-conscrypt-android-r28.sh
 
       - name: Build the unsigned release APK
         working-directory: android
+        shell: bash
         run: |
           set -euo pipefail
           chmod +x gradlew
@@ -244,6 +251,7 @@ jobs:
 
       - name: Stage the independently rebuilt APK
         working-directory: android
+        shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
