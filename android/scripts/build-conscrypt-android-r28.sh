@@ -13,15 +13,21 @@ set -euo pipefail
 # the debug line table and the __FILE__ macro. The AAR is rejected below if a
 # real host path survives into a shipped library.
 #
-# The debug information itself is then dropped. AGP's release variant selects
-# CMake's RelWithDebInfo, and the linker computes the GNU build ID over the
-# whole image it links — debug sections included — before AGP strips them back
-# out for the AAR. Two builds whose shipped bytes were already identical
-# therefore still disagreed on those 20 bytes, because their unshipped DWARF
-# did. Conscrypt ships pre-stripped and is excluded from the Play native
-# debug-symbol upload (android/scripts/package-native-debug-symbols.py), so
-# nothing consumes that debug information; suppressing it makes the build ID a
-# hash of the shipped bytes and of nothing else.
+# The debug information itself is then dropped, at both ends of the link. AGP's
+# release variant selects CMake's RelWithDebInfo and then runs
+# :conscrypt-android:stripReleaseDebugSymbols over the result, so the image the
+# linker hashes into NT_GNU_BUILD_ID is not the image the AAR ships: it still
+# carries the DWARF and the symbol table that strip removes afterwards. Two
+# rebuilds whose shipped bytes were byte-identical therefore still disagreed on
+# exactly those 20 bytes, and on nothing else, because their unshipped sections
+# differed. Suppressing the debug information at compile time (-g0) is not
+# enough on its own, because .symtab and .strtab survive it and are stripped
+# too. The link itself is therefore told to emit the stripped image directly
+# (-Wl,--strip-all), which makes Gradle's later strip a no-op and makes the
+# build ID a hash of the shipped bytes and of nothing else. Conscrypt ships
+# pre-stripped and is excluded from the Play native debug-symbol upload
+# (android/scripts/package-native-debug-symbols.py), so nothing consumes the
+# information being dropped.
 CONSCRYPT_REPOSITORY="https://github.com/google/conscrypt.git"
 CONSCRYPT_COMMIT="657e1c64c46961bcc48e7302e42ebc02d6632645"
 CONSCRYPT_VERSION="2.6.3"
@@ -126,9 +132,12 @@ if android_text.count(linker_anchor) != 1:
     raise SystemExit(
         f"error: expected exactly one upstream CMake argument list anchored at {linker_anchor!r}"
     )
+# lld emits the build-ID note last, over the image it has just written. Asking
+# it to write the stripped image means the note covers the shipped bytes.
+patched_linker_anchor = linker_anchor[:-1] + " -Wl,--strip-all'"
 android_text = android_text.replace(
     linker_anchor,
-    linker_anchor
+    patched_linker_anchor
     + ",\n"
     + " " * 24
     + f"'-DCMAKE_C_FLAGS_RELWITHDEBINFO={debug_free_flags}',\n"
@@ -176,6 +185,54 @@ import zipfile
 aar = Path(sys.argv[1])
 version = sys.argv[2]
 boringssl_commit = sys.argv[3]
+
+# Section names that a stripped shared library must not have. Their contents
+# reach the linker's build-ID hash but never the AAR, so a library that still
+# has them is one whose build ID depends on bytes no rebuild can reproduce.
+def unstripped_sections(payload: bytes) -> list[str]:
+    if payload[:4] != b"\x7fELF":
+        raise SystemExit("error: rebuilt Conscrypt library is not an ELF object")
+    is_64 = payload[4] == 2
+    little = payload[5] == 1
+    order = "little" if little else "big"
+
+    def number(offset: int, size: int) -> int:
+        return int.from_bytes(payload[offset : offset + size], order)
+
+    if is_64:
+        sh_offset, sh_entry_size, sh_count, sh_strndx = (
+            number(0x28, 8),
+            number(0x3A, 2),
+            number(0x3C, 2),
+            number(0x3E, 2),
+        )
+        name_field, offset_field, size_field, offset_width = 0, 0x18, 0x20, 8
+    else:
+        sh_offset, sh_entry_size, sh_count, sh_strndx = (
+            number(0x20, 4),
+            number(0x2E, 2),
+            number(0x30, 2),
+            number(0x32, 2),
+        )
+        name_field, offset_field, size_field, offset_width = 0, 0x10, 0x14, 4
+
+    def header(index: int) -> int:
+        return sh_offset + index * sh_entry_size
+
+    strtab = header(sh_strndx)
+    strtab_offset = number(strtab + offset_field, offset_width)
+    strtab_size = number(strtab + size_field, offset_width)
+    names = payload[strtab_offset : strtab_offset + strtab_size]
+
+    found: list[str] = []
+    for index in range(sh_count):
+        start = number(header(index) + name_field, 4)
+        section = names[start : names.index(b"\x00", start)].decode("utf-8", "replace")
+        if section == ".symtab" or section == ".strtab" or section.startswith(".debug"):
+            found.append(section)
+    return sorted(set(found))
+
+
 with zipfile.ZipFile(aar) as archive:
     expected_native = {
         f"jni/{abi}/libconscrypt_jni.so"
@@ -184,6 +241,14 @@ with zipfile.ZipFile(aar) as archive:
     missing_native = sorted(expected_native - set(archive.namelist()))
     if missing_native:
         raise SystemExit(f"error: rebuilt Conscrypt AAR is missing: {', '.join(missing_native)}")
+    for name in sorted(expected_native):
+        unshipped = unstripped_sections(archive.read(name))
+        if unshipped:
+            raise SystemExit(
+                f"error: {name} still carries link-time-only sections "
+                f"({', '.join(unshipped)}); the GNU build ID would hash bytes the AAR "
+                "does not ship and the rebuild would diverge on that note alone"
+            )
     with zipfile.ZipFile(BytesIO(archive.read("classes.jar"))) as classes:
         raw_properties = classes.read("org/conscrypt/conscrypt.properties").decode("utf-8")
 
