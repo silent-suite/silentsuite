@@ -219,6 +219,12 @@ jobs:
           toolchain: stable
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
+      # javac decides the class-file attributes that reach classes.dex, so the
+      # release APK is compiled by the exact checksummed JDK the contract pins
+      # rather than by whichever 17 the runner image ships.
+      - name: Provision the pinned reproducible JDK
+        run: scripts/reproducible-build-contract.sh provision-jdk
+
       - name: Install Android NDK r28
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -255,7 +261,8 @@ jobs:
         run: |
           ./gradlew assembleRelease bundleRelease --no-daemon \
             -PrequireEtebase16Kb=true \
-            -PrequireConscryptR28=true
+            -PrequireConscryptR28=true \
+            -PrequireReproducibleJdk=true
 
       - name: Capture release dependency graph and unsigned split evidence
         env:
@@ -391,6 +398,204 @@ jobs:
           retention-days: 14
 
   # ─────────────────────────────────────────────────────────────────────
+  # The independent rebuild — the half of the reproducibility contract that
+  # cannot be faked by building the same tree twice on the same machine.
+  #
+  # F-Droid does not accept a developer-signed APK because our CI says it is
+  # deterministic. It rebuilds from the public source on its own Debian
+  # buildserver and publishes only if every unsigned entry matches. The
+  # 0.5.4-beta attempt discovered that after the release was cut, from someone
+  # else's pipeline: 2509 of 2517 entries matched, which is a failure.
+  #
+  # This job is that second environment, before signing rather than after
+  # publication. It is deliberately unlike `build-unsigned-release` on every
+  # axis the contract has to survive:
+  #
+  #   Debian bookworm, not the Ubuntu runner image
+  #   a container HOME, CARGO_HOME=/opt/rust/cargo, ANDROID_HOME=/opt/android-sdk
+  #   Gradle running on Debian's openjdk-17, not Temurin
+  #   its own Conscrypt, BoringSSL and Etebase native builds from source
+  #
+  # What it must NOT differ in is the pinned compiler, the canonical build root
+  # and the prefix maps — those are the contract. If the APKs still match here,
+  # the remaining distance to F-Droid's builder is the recipe, not the source.
+  #
+  # It holds nothing: no environment, no signing secret, no workflow token, and
+  # a read-only checkout of the candidate, exactly like the producer it doubles.
+  # ─────────────────────────────────────────────────────────────────────
+  rebuild-fdroid-environment:
+    name: Rebuild independently (F-Droid-representative environment)
+    needs: signing-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    container:
+      image: debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      ANDROID_HOME: /opt/android-sdk
+      ANDROID_SDK_ROOT: /opt/android-sdk
+      ANDROID_NDK_HOME: /opt/android-sdk/ndk/28.2.13676358
+      CARGO_HOME: /opt/rust/cargo
+      RUSTUP_HOME: /opt/rust/rustup
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+    steps:
+      # Before the checkout: a slim image has neither git nor a JDK, and the
+      # Debian JDK here is the point — it is what runs Gradle, so the contract
+      # is proven to survive a daemon JVM that is not the pinned compiler.
+      - name: Install the Debian build environment
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils build-essential ca-certificates curl file git \
+            openjdk-17-jdk-headless python3 unzip xz-utils zip
+          "$JAVA_HOME/bin/javac" -version
+
+      - name: Checkout the admitted commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Install the Android SDK, NDK r28 and CMake
+        env:
+          CMDLINE_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+          CMDLINE_TOOLS_SHA256: 7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee
+        run: |
+          set -euo pipefail
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl --fail --location --silent --show-error \
+            "$CMDLINE_TOOLS_URL" --output /tmp/cmdline-tools.zip
+          echo "$CMDLINE_TOOLS_SHA256  /tmp/cmdline-tools.zip" | sha256sum --check --strict
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+          mv /tmp/cmdline-tools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          # Not `yes | sdkmanager --licenses`: sdkmanager stops reading once the
+          # prompts are answered, `yes` takes SIGPIPE, and under pipefail the
+          # pipeline returns 141 and kills the step. A regular file has no
+          # writer to signal, so the acceptance is deterministic.
+          for _ in $(seq 100); do echo y; done > /tmp/sdk-license-acceptance
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses \
+            < /tmp/sdk-license-acceptance > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;28.2.13676358" "cmake;3.22.1"
+          test -d "$ANDROID_NDK_HOME"
+
+      - name: Install rustup
+        env:
+          RUSTUP_INIT_URL: https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init
+          RUSTUP_INIT_SHA256: dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            "$RUSTUP_INIT_URL" --output /tmp/rustup-init
+          echo "$RUSTUP_INIT_SHA256  /tmp/rustup-init" | sha256sum --check --strict
+          chmod +x /tmp/rustup-init
+          /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain none
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+
+      # The same scripts the release producer runs. The pinned Rust toolchain,
+      # the pinned JDK and the canonical build root all come from the contract
+      # inside them, so nothing about this environment can select a different
+      # toolchain than the release lane used.
+      - name: Provision the pinned reproducible JDK
+        working-directory: android
+        run: scripts/reproducible-build-contract.sh provision-jdk
+
+      - name: Build 16 KB-aligned Etebase client AAR
+        working-directory: android
+        run: scripts/build-etebase-client-16kb.sh
+
+      - name: Build Conscrypt with Android NDK r28
+        working-directory: android
+        run: scripts/build-conscrypt-android-r28.sh
+
+      - name: Build the unsigned release APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon \
+            -PrequireEtebase16Kb=true \
+            -PrequireConscryptR28=true \
+            -PrequireReproducibleJdk=true
+
+      - name: Stage the independently rebuilt APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          rebuilt=(app/build/outputs/apk/release/*.apk)
+          [ "${#rebuilt[@]}" -eq 1 ] \
+            || { echo "expected exactly one rebuilt APK, found ${#rebuilt[@]}" >&2; exit 1; }
+          mkdir -p build/fdroid-rebuild
+          cp "${rebuilt[0]}" build/fdroid-rebuild/app-release-unsigned.apk
+          sha256sum build/fdroid-rebuild/app-release-unsigned.apk
+
+      - name: Publish the independent rebuild to the reproducibility gate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: silentsuite-android-fdroid-rebuild-${{ inputs.source_sha }}
+          path: android/build/fdroid-rebuild/
+          if-no-files-found: error
+          retention-days: 14
+
+  # ─────────────────────────────────────────────────────────────────────
+  # The gate. `sign-release` cannot start until this passes, so an APK that
+  # only this machine can produce is never signed and never published.
+  #
+  # It runs the comparison out of a checkout of the protected controller
+  # revision, not the candidate tree: the check that decides whether a release
+  # may be signed must not be defined by the thing being released.
+  # ─────────────────────────────────────────────────────────────────────
+  reproducibility-gate:
+    name: Prove the release build is independently reproducible
+    needs: [build-unsigned-release, rebuild-fdroid-environment]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the trusted controller revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+          persist-credentials: false
+
+      - name: Download the release lane's unsigned build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: silentsuite-android-unsigned-${{ inputs.source_sha }}
+          path: release-lane
+
+      - name: Download the independent rebuild
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: silentsuite-android-fdroid-rebuild-${{ inputs.source_sha }}
+          path: fdroid-rebuild
+
+      - name: Compare both builds under the F-Droid byte contract
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/scripts/verify-android-build-reproducibility.py" \
+            --reference "$GITHUB_WORKSPACE/release-lane/app-release-unsigned.apk" \
+            --candidate "$GITHUB_WORKSPACE/fdroid-rebuild/app-release-unsigned.apk" \
+            --report "$GITHUB_WORKSPACE/reproducibility/verdict.json"
+
+      - name: Upload the reproducibility verdict
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-reproducibility-verdict-${{ inputs.source_sha }}
+          path: reproducibility/
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────
   # Signing — a fresh runner that never sees candidate code.
   #
   # No candidate checkout, no Gradle, no build script, no candidate PATH entry.
@@ -405,7 +610,9 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   sign-release:
     name: Sign (admitted release)
-    needs: [signing-policy, conscrypt-r28, revalidate-signing, build-unsigned-release]
+    needs:
+      [signing-policy, conscrypt-r28, revalidate-signing, build-unsigned-release,
+       reproducibility-gate]
     runs-on: ubuntu-latest
     environment: android-release
     permissions:

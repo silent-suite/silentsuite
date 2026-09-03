@@ -276,6 +276,12 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      # This job assembles the release variant, which is bound to the pinned
+      # reproducible compiler exactly as the release lane is. Provisioning it
+      # here keeps CI building the same bytes a release would.
+      - name: Provision the pinned reproducible JDK
+        run: scripts/reproducible-build-contract.sh provision-jdk
+
       - name: Build 16 KB-aligned Etebase client AAR
         run: scripts/build-etebase-client-16kb.sh
 
@@ -325,7 +331,11 @@ jobs:
             > build/privacy-evidence/dependencies/release-runtime.txt
 
       - name: Build debug APK and unsigned release APK/AAB
-        run: ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon -PrequireEtebase16Kb=true -PrequireConscryptR28=true
+        run: |
+          ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon \
+            -PrequireEtebase16Kb=true \
+            -PrequireConscryptR28=true \
+            -PrequireReproducibleJdk=true
 
       - name: Verify packaged debug and unsigned release APK SDK levels
         env:

@@ -4,6 +4,14 @@ set -euo pipefail
 # Rebuild the current Conscrypt release with Android NDK r28. The upstream
 # 2.6.3 AAR records NDK r27d even though it carries the manual 16 KB linker
 # flags, which leaves Google Play's old-NDK compatibility warning unresolved.
+#
+# The build also has to be byte-reproducible in an environment that is not this
+# one: BoringSSL embeds 201 __FILE__ strings in libconscrypt_jni.so, and an
+# unnormalised build records wherever it happened to be checked out. Sources are
+# therefore compiled at the contract's canonical root and every remaining
+# host-specific prefix is rewritten with -ffile-prefix-map, which covers both
+# the debug line table and the __FILE__ macro. The AAR is rejected below if a
+# real host path survives into a shipped library.
 CONSCRYPT_REPOSITORY="https://github.com/google/conscrypt.git"
 CONSCRYPT_COMMIT="657e1c64c46961bcc48e7302e42ebc02d6632645"
 CONSCRYPT_VERSION="2.6.3"
@@ -13,6 +21,11 @@ BORINGSSL_COMMIT="3adc3d1aba162a578e2547f329fcce8659b8e89c"
 ANDROID_NDK_VERSION="28.2.13676358"
 OUTPUT_AAR="build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.aar"
 OUTPUT_POM="build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.pom"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=android/scripts/reproducible-build-contract.sh
+source "$SCRIPT_DIR/reproducible-build-contract.sh"
+ss_require_clean_toolchain_env
 
 if [[ -z "${ANDROID_HOME:-}" ]]; then
   echo "error: ANDROID_HOME must point to the Android SDK" >&2
@@ -26,11 +39,23 @@ if [[ ! -d "$expected_ndk" ]]; then
 fi
 export ANDROID_NDK_HOME="$expected_ndk"
 
-workspace="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/silentsuite-conscrypt-r28"
+# Conscrypt's Java classes land in the AAR the app compiles against, so this
+# build uses the same pinned javac as the release APK rather than whichever
+# JDK the host distribution installed.
+JAVA_HOME="$(ss_provision_release_jdk)"
+export JAVA_HOME
+export PATH="$JAVA_HOME/bin:$PATH"
+
+workspace="$(ss_reproducible_workspace conscrypt)"
 conscrypt_source="$workspace/conscrypt"
 boringssl_source="$workspace/boringssl"
 rm -rf "$workspace"
 mkdir -p "$workspace"
+
+prefix_maps=()
+while IFS= read -r pair; do
+  [[ -n "$pair" ]] && prefix_maps+=("$pair")
+done < <(ss_prefix_map_pairs "$ANDROID_NDK_HOME" "" "")
 
 clone_exact_commit() {
   local repository="$1"
@@ -51,13 +76,14 @@ clone_exact_commit() {
 clone_exact_commit "$CONSCRYPT_REPOSITORY" "$CONSCRYPT_COMMIT" "$conscrypt_source"
 clone_exact_commit "$BORINGSSL_REPOSITORY" "$BORINGSSL_COMMIT" "$boringssl_source"
 
-python3 - "$conscrypt_source" "$CONSCRYPT_VERSION" "$ANDROID_NDK_VERSION" <<'PY'
+python3 - "$conscrypt_source" "$CONSCRYPT_VERSION" "$ANDROID_NDK_VERSION" "${prefix_maps[@]}" <<'PY'
 from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
 version = sys.argv[2]
 ndk = sys.argv[3]
+prefix_maps = sys.argv[4:]
 
 root_gradle = root / "build.gradle"
 root_text = root_gradle.read_text(encoding="utf-8")
@@ -76,7 +102,26 @@ if android_text.count(old_ndk) != 1:
 required_flags = "-z max-page-size=16384 -z common-page-size=16384"
 if android_text.count(required_flags) != 1:
     raise SystemExit("error: upstream Conscrypt 16 KB linker flags are missing or ambiguous")
-android_gradle.write_text(android_text.replace(old_ndk, new_ndk), encoding="utf-8")
+android_text = android_text.replace(old_ndk, new_ndk)
+
+# Normalise every C and C++ source path that reaches the shipped library.
+# -ffile-prefix-map covers __FILE__ and the debug line table in one flag, so
+# BoringSSL's assertion strings stop recording the build machine.
+if not prefix_maps:
+    raise SystemExit("error: the reproducible-build contract produced no prefix maps")
+for pair in prefix_maps:
+    if any(character in pair for character in ("'", "$", "\\", "\n")):
+        raise SystemExit(f"error: prefix map {pair!r} is not safe to embed in a Gradle literal")
+flags = [f"-ffile-prefix-map={pair}" for pair in prefix_maps]
+anchor = "cFlags '-fvisibility=hidden',"
+if android_text.count(anchor) != 1:
+    raise SystemExit(f"error: expected exactly one upstream flag declaration {anchor!r}")
+indent = " " * 16
+c_flags = "".join(f"'{flag}', " for flag in flags)
+cpp_flags = ", ".join(f"'{flag}'" for flag in flags)
+replacement = f"cppFlags {cpp_flags}\n{indent}cFlags {c_flags}'-fvisibility=hidden',"
+android_text = android_text.replace(anchor, replacement)
+android_gradle.write_text(android_text, encoding="utf-8")
 PY
 
 (
@@ -128,6 +173,49 @@ if actual_properties != expected_properties:
         f"error: rebuilt Conscrypt properties mismatch: expected {expected_properties}, "
         f"got {actual_properties}"
     )
+PY
+
+# The reproducibility gate proper: a shipped library that still names this
+# machine cannot be rebuilt anywhere else, so the build fails here rather than
+# after the release is signed.
+host_specific_paths=()
+while IFS= read -r host_path; do
+  [[ -n "$host_path" ]] && host_specific_paths+=("$host_path")
+done < <(ss_host_specific_paths "$ANDROID_NDK_HOME" "")
+
+python3 - "$built_aar" "$SILENTSUITE_VIRTUAL_ROOT" "${host_specific_paths[@]}" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+aar = Path(sys.argv[1])
+virtual_root = sys.argv[2].encode()
+host_paths = [value for value in sys.argv[3:] if value and value != "/"]
+
+leaked: list[str] = []
+normalised = 0
+with zipfile.ZipFile(aar) as archive:
+    for name in sorted(archive.namelist()):
+        if not name.startswith("jni/") or not name.endswith(".so"):
+            continue
+        payload = archive.read(name)
+        normalised += payload.count(virtual_root)
+        for host_path in host_paths:
+            occurrences = payload.count(host_path.encode())
+            if occurrences:
+                leaked.append(f"{name}: {occurrences} reference(s) to {host_path}")
+
+if leaked:
+    raise SystemExit(
+        "error: rebuilt Conscrypt libraries embed host-specific build paths:\n  "
+        + "\n  ".join(leaked)
+    )
+if not normalised:
+    raise SystemExit(
+        "error: no normalised source path was found in the rebuilt Conscrypt libraries; "
+        "-ffile-prefix-map did not reach the native compile"
+    )
+print(f"Normalised source paths in rebuilt Conscrypt libraries: {normalised}")
 PY
 mkdir -p "$(dirname "$OUTPUT_AAR")"
 cp "$built_aar" "$OUTPUT_AAR"

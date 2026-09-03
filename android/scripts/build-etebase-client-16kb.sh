@@ -4,18 +4,37 @@ set -euo pipefail
 # Rebuild Etebase Android 2.3.2 native libraries with 16 KB ELF LOAD
 # segment alignment, then repack the upstream Maven AAR as a local drop-in
 # artifact for SilentSuite Android builds.
+#
+# The libraries also have to come out byte-identical when F-Droid rebuilds them
+# on its own machine. Three things previously prevented that and are pinned or
+# normalised here:
+#
+#   * a moving `stable` toolchain. The Rust release is pinned by the contract,
+#     installed by this script rather than inherited from the runner.
+#   * CARGO_HOME, OUT_DIR and $HOME paths compiled into the library through
+#     file!() and the cc crate. --remap-path-prefix and -ffile-prefix-map
+#     rewrite them onto the contract's virtual root.
+#   * ThinLTO module identifiers, which LLVM derives from the real object-file
+#     paths and no flag rewrites. Cargo therefore runs at the contract's fixed
+#     canonical root, so those paths are identical everywhere to begin with.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$ROOT_DIR/scripts"
+# shellcheck source=android/scripts/reproducible-build-contract.sh
+source "$SCRIPT_DIR/reproducible-build-contract.sh"
+ss_require_clean_toolchain_env
+
 APP_LIBS_DIR="$ROOT_DIR/app/libs"
 OUT_AAR="${OUT_AAR:-$APP_LIBS_DIR/client-2.3.2-16kb.aar}"
 ETEBASE_REPO_URL="${ETEBASE_REPO_URL:-https://github.com/etesync/etebase-java.git}"
 ETEBASE_REF="${ETEBASE_REF:-v2.3.2}"
 ETEBASE_EXPECTED_COMMIT="${ETEBASE_EXPECTED_COMMIT:-365f7af82b5e2cb39ec59c9711fd11096ee127a7}"
-BUILD_DIR="${ETEBASE_BUILD_DIR:-${RUNNER_TEMP:-$ROOT_DIR/build}/etebase-client-16kb}"
+BUILD_DIR="$(ss_reproducible_workspace etebase)"
 ORIGINAL_AAR_URL="${ORIGINAL_AAR_URL:-https://repo1.maven.org/maven2/com/etebase/client/2.3.2/client-2.3.2.aar}"
 ORIGINAL_AAR_SHA256="${ORIGINAL_AAR_SHA256:-1d1ff77036911852b74f18f2854f86a731766f58138f87e1ac151f641291ede3}"
 ORIGINAL_AAR="$BUILD_DIR/client-2.3.2.aar"
 NATIVE_OUT="$BUILD_DIR/native"
+ETEBASE_SOURCE="$BUILD_DIR/etebase-java"
 
 # Google Play's 16 KB page-size requirement applies to 64-bit Android
 # devices. Rebuild and replace only the 64-bit Etebase libraries; leave the
@@ -70,8 +89,10 @@ if [[ ! -d "$TOOLCHAIN_BIN" ]]; then
   exit 1
 fi
 
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+
 mkdir -p "$BUILD_DIR" "$NATIVE_OUT" "$APP_LIBS_DIR"
-rm -rf "$BUILD_DIR/etebase-java" "$NATIVE_OUT"
+rm -rf "$ETEBASE_SOURCE" "$NATIVE_OUT"
 mkdir -p "$NATIVE_OUT"
 
 printf 'Using NDK: %s\n' "$NDK_DIR"
@@ -79,20 +100,50 @@ if [[ -f "$NDK_DIR/source.properties" ]]; then
   sed -n 's/^Pkg.Revision *= */NDK revision: /p' "$NDK_DIR/source.properties"
 fi
 
-git clone --quiet --branch "$ETEBASE_REF" --depth 1 "$ETEBASE_REPO_URL" "$BUILD_DIR/etebase-java"
-cd "$BUILD_DIR/etebase-java"
+git clone --quiet --branch "$ETEBASE_REF" --depth 1 "$ETEBASE_REPO_URL" "$ETEBASE_SOURCE"
+cd "$ETEBASE_SOURCE"
 actual_commit="$(git rev-parse HEAD)"
 if [[ "$actual_commit" != "$ETEBASE_EXPECTED_COMMIT" ]]; then
   echo "error: $ETEBASE_REF resolved to $actual_commit, expected $ETEBASE_EXPECTED_COMMIT" >&2
   exit 1
 fi
 
-rustup target add "${TARGETS[@]}"
+ss_provision_rust_toolchain "${TARGETS[@]}"
+
+PREFIX_MAPS=()
+while IFS= read -r pair; do
+  [[ -n "$pair" ]] && PREFIX_MAPS+=("$pair")
+done < <(ss_prefix_map_pairs "$NDK_DIR" "$CARGO_HOME" "$ETEBASE_SOURCE")
 
 # NDK r28+ emits 16 KB-aligned Android shared libraries by default, but
 # these flags keep the build correct if CI ever runs an older NDK. Android's
 # 16 KB page-size guidance requires both flags for old NDK/linker versions.
-export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-z,common-page-size=16384"
+#
+# CARGO_ENCODED_RUSTFLAGS rather than RUSTFLAGS: the remapped paths are
+# separator-sensitive, and the ASCII-unit-separator form cannot be re-split by
+# a path that happens to contain a space.
+RUST_FLAGS=(
+  -C link-arg=-Wl,-z,max-page-size=16384
+  -C link-arg=-Wl,-z,common-page-size=16384
+)
+CC_PREFIX_FLAGS=()
+for pair in "${PREFIX_MAPS[@]}"; do
+  CC_PREFIX_FLAGS+=("-ffile-prefix-map=$pair")
+done
+# rustc keeps the last matching remap rather than the first, so the contract's
+# most-specific-first order is reversed for it and preserved for clang.
+for (( index = ${#PREFIX_MAPS[@]} - 1; index >= 0; index-- )); do
+  RUST_FLAGS+=("--remap-path-prefix=${PREFIX_MAPS[$index]}")
+done
+encoded=""
+for flag in "${RUST_FLAGS[@]}"; do
+  if [[ -z "$encoded" ]]; then
+    encoded="$flag"
+  else
+    encoded="$encoded"$'\x1f'"$flag"
+  fi
+done
+export CARGO_ENCODED_RUSTFLAGS="$encoded"
 
 for i in "${!ABIS[@]}"; do
   abi="${ABIS[$i]}"
@@ -107,9 +158,18 @@ for i in "${!ABIS[@]}"; do
   export CC="$linker"
   env_name="CARGO_TARGET_$(upper_target_env "$target")_LINKER"
   export "$env_name=$linker"
+  # The cc crate compiles the vendored C dependencies of the Etebase crate and
+  # appends these to its own flags. It looks the variable up under the target
+  # triple in both spellings; the hyphenated one is not a shell identifier, so
+  # the whole set is passed through `env` rather than exported.
+  target_underscored="$(printf '%s' "$target" | tr '-' '_')"
 
   echo "Building Etebase native library for $abi ($target)"
-  cargo build --target "$target" --release --locked
+  env \
+    "CFLAGS_$target=${CC_PREFIX_FLAGS[*]}" \
+    "CFLAGS_$target_underscored=${CC_PREFIX_FLAGS[*]}" \
+    "TARGET_CFLAGS=${CC_PREFIX_FLAGS[*]}" \
+    cargo "+$SILENTSUITE_RELEASE_RUST_TOOLCHAIN" build --target "$target" --release --locked
 
   built="target/$target/release/libetebase_android.so"
   if [[ ! -f "$built" ]]; then
@@ -146,6 +206,45 @@ for so in sorted(root.glob('jni/*/*.so')):
         failed = True
 if failed:
     raise SystemExit('error: rebuilt Etebase 64-bit library is not 16 KB aligned')
+PY
+
+# A library that still names CARGO_HOME, the NDK or this account's home
+# directory cannot be rebuilt byte-for-byte anywhere else, so the build fails
+# here rather than after the release is signed.
+host_specific_paths=()
+while IFS= read -r host_path; do
+  [[ -n "$host_path" ]] && host_specific_paths+=("$host_path")
+done < <(ss_host_specific_paths "$NDK_DIR" "$CARGO_HOME")
+
+python3 - "$NATIVE_OUT" "$SILENTSUITE_VIRTUAL_ROOT" "${host_specific_paths[@]}" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+virtual_root = sys.argv[2].encode()
+host_paths = [value for value in sys.argv[3:] if value and value != '/']
+
+leaked = []
+normalised = 0
+for so in sorted(root.glob('jni/*/*.so')):
+    payload = so.read_bytes()
+    normalised += payload.count(virtual_root)
+    for host_path in host_paths:
+        occurrences = payload.count(host_path.encode())
+        if occurrences:
+            leaked.append(f'{so.name} ({so.parts[-2]}): {occurrences} reference(s) to {host_path}')
+
+if leaked:
+    raise SystemExit(
+        'error: rebuilt Etebase libraries embed host-specific build paths:\n  '
+        + '\n  '.join(leaked)
+    )
+if not normalised:
+    raise SystemExit(
+        'error: no normalised source path was found in the rebuilt Etebase libraries; '
+        '--remap-path-prefix did not reach the Rust compile'
+    )
+print(f'Normalised source paths in rebuilt Etebase libraries: {normalised}')
 PY
 
 python3 - "$ORIGINAL_AAR_URL" "$ORIGINAL_AAR" "$ORIGINAL_AAR_SHA256" <<'PY'

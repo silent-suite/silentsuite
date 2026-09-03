@@ -80,6 +80,83 @@ subprojects {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Reproducible release compiler contract.
+//
+// F-Droid rebuilds this app on its own Debian buildserver and publishes the
+// developer-signed APK only when the result matches ours byte for byte. javac,
+// not the JVM that happens to run Gradle, decides the class-file attributes
+// that survive R8 into classes.dex, and Temurin and Debian's OpenJDK do not
+// agree on all of them: one 8-byte MethodParameters attribute was the entire
+// remaining delta that failed the 0.5.4-beta comparison.
+//
+// Release Java therefore compiles with the exact JDK pinned by
+// android/scripts/reproducible-build-contract.sh, forked by absolute path so
+// the daemon's own JVM is irrelevant.
+//
+// The binding is on the compile task, not on the requested task name. An
+// external recipe reaches the same JavaCompile through `gradle build`,
+// `gradle assemble` or the abbreviation `aR`, none of which spell
+// "assembleRelease"; a name-matching gate would wave all three through with an
+// unpinned compiler and no error. Presence and identity of the JDK are checked
+// when a release class file is actually about to be compiled, so the failure
+// is impossible to route around and impossible to reach silently.
+// ─────────────────────────────────────────────────────────────────────
+ext.reproducibleBuildRoot = '/tmp/silentsuite-reproducible-build'
+ext.reproducibleJdkRelease = 'jdk-17.0.20.1+1'
+ext.reproducibleJdkJavaVersion = '17.0.20.1'
+ext.reproducibleJdkImplementorVersion = 'Temurin-17.0.20.1+1'
+
+def configuredReproducibleJdkHome = System.getenv('SILENTSUITE_RELEASE_JDK_HOME')
+ext.reproducibleJdkHome = file(configuredReproducibleJdkHome?.trim() ?
+        configuredReproducibleJdkHome.trim() :
+        "${reproducibleBuildRoot}/jdk/${reproducibleJdkRelease}")
+
+def verifyReproducibleJdk = { File jdkHome ->
+    def hint = 'Run android/scripts/reproducible-build-contract.sh provision-jdk first.'
+    if (!new File(jdkHome, 'bin/javac').canExecute())
+        throw new GradleException("Missing pinned release JDK ${rootProject.ext.reproducibleJdkRelease} at ${jdkHome}. ${hint}")
+
+    def releaseManifest = new File(jdkHome, 'release')
+    if (!releaseManifest.isFile())
+        throw new GradleException("Pinned release JDK at ${jdkHome} has no release manifest. ${hint}")
+
+    def jdkMetadata = [:]
+    releaseManifest.eachLine('UTF-8') { line ->
+        def separator = line.indexOf('=')
+        if (separator > 0)
+            jdkMetadata[line.substring(0, separator)] = line.substring(separator + 1).replaceAll('^"|"$', '')
+    }
+    // A JDK 17 is not the contract; this exact build is. Vendor and patch level
+    // are both checked, because either one changes javac's output.
+    [
+        IMPLEMENTOR_VERSION: rootProject.ext.reproducibleJdkImplementorVersion,
+        JAVA_VERSION: rootProject.ext.reproducibleJdkJavaVersion
+    ].each { key, expected ->
+        if (jdkMetadata[key] != expected)
+            throw new GradleException("Pinned release JDK at ${jdkHome} reports ${key}=${jdkMetadata[key]}, expected ${expected}. ${hint}")
+    }
+}
+
+// -PrequireReproducibleJdk=true extends the same compiler to every variant, so
+// a lane that wants one toolchain for the whole build can ask for it.
+def pinEveryJavaCompile = providers.gradleProperty('requireReproducibleJdk')
+        .map { it.toBoolean() }
+        .getOrElse(false)
+
+allprojects {
+    tasks.withType(JavaCompile).configureEach { compileTask ->
+        if (!pinEveryJavaCompile && !compileTask.name.toLowerCase().contains('release'))
+            return
+
+        compileTask.options.fork = true
+        compileTask.options.forkOptions.javaHome = rootProject.ext.reproducibleJdkHome
+        compileTask.doFirst {
+            verifyReproducibleJdk(rootProject.ext.reproducibleJdkHome)
+        }
+    }
+}
+
 tasks.register('verifySlice4DependencyCohort') {
     group = 'verification'
     description = 'Checks the API-21 AndroidX/Material 1.13 graph and default-preference continuity contracts.'

@@ -68,6 +68,11 @@ REVALIDATION_JOB = "revalidate-signing"
 CONSCRYPT_JOB = "conscrypt-r28"
 ATTACHMENT_JOB = "attach-release-assets"
 ADMISSION_JOB = "admit"
+# The two halves of the pre-signing reproducibility contract: an independent
+# rebuild in an environment representative of F-Droid's, and the byte
+# comparison that `sign-release` cannot start without.
+INDEPENDENT_REBUILD_JOB = "rebuild-fdroid-environment"
+REPRODUCIBILITY_GATE_JOB = "reproducibility-gate"
 ENVIRONMENT_NAME = "android-release"
 
 IDENTITY_HELPER = Path("scripts/verify-release-identity.sh")
@@ -77,6 +82,7 @@ BRIDGE_STAGING_HELPER = Path("scripts/stage-bridge-release-assets.sh")
 KEYSTORE_HELPER = Path("scripts/verify-android-release-keystore.sh")
 ARTIFACT_ADMISSION_HELPER = Path("scripts/admit-unsigned-android-artifact.sh")
 SIGNING_HELPER = Path("scripts/sign-android-release.sh")
+REPRODUCIBILITY_HELPER = Path("scripts/verify-android-build-reproducibility.py")
 # The developer upload certificate the signed build must produce. It is pinned
 # here as well as in the helper so that changing which key the project ships
 # under cannot pass as a routine script edit.
@@ -85,6 +91,9 @@ EXPECTED_UPLOAD_CERT_SHA256 = (
 )
 RELEASE_ASSET_ARTIFACT = "silentsuite-android-release-assets-${{ inputs.source_sha }}"
 UNSIGNED_ARTIFACT = "silentsuite-android-unsigned-${{ inputs.source_sha }}"
+FDROID_REBUILD_ARTIFACT = "silentsuite-android-fdroid-rebuild-${{ inputs.source_sha }}"
+CONSCRYPT_ARTIFACT = "conscrypt-r28-${{ inputs.source_sha }}"
+CONTAINER_DIGEST_PIN = re.compile(r"@sha256:[0-9a-f]{64}$")
 
 # The server lane's irreversible act and the check that must immediately precede
 # it. `publish_alias` returns early when the alias already exists, so verifying
@@ -110,6 +119,9 @@ TRUSTED_HELPERS = (
     "build-self-host-bundle.py",
     "verify-self-host-bundle.py",
     "self-host-image-smoke.sh",
+    # The gate that decides whether a build may be signed at all. Its bytes
+    # must come from the protected revision, never from the tree being released.
+    "verify-android-build-reproducibility.py",
 )
 TRUSTED_REF = "${{ github.sha }}"
 
@@ -481,7 +493,7 @@ REVIEWED_RELEASE_STEP_ENVIRONMENTS: dict[str, dict[str, str]] = {
 }
 # Covers the whole reviewed signing job: the explicit literal checks state the
 # intent, this digest makes any other edit to the job fail closed as well.
-EXPECTED_RELEASE_JOB_SHA256 = "77295dce0752b35f290310f641c1d8b1eaf3a2b3db78445c90679b75459f105e"
+EXPECTED_RELEASE_JOB_SHA256 = "97c4b717570a2e6e50156f1fc2e5589c88e6b6e7ac737259acd661957a2f0da4"
 # The Android caller is the only controller job allowed to grant secrets. Pin
 # its entire semantic job after reviewing the exact three-name capability map.
 EXPECTED_CONTROLLER_ANDROID_JOB_SHA256 = "8caa709d1d1680daff0e2e53438072c113c265cfdd8fcb6064f9f2cc808df237"
@@ -491,11 +503,15 @@ EXPECTED_CONTROLLER_ANDROID_JOB_SHA256 = "8caa709d1d1680daff0e2e53438072c113c265
 EXPECTED_CONTROLLER_READINESS_JOB_SHA256 = "b1ebaab82df3634d071533f54a6ea43c510ad608b93ec940c9eeb17364f9f7f0"
 EXPECTED_READINESS_WORKFLOW_SHA256 = "f3331dd191728bb497a0df8b88df9cc4426da9fba40b8d0a1c20b912f50c0d4f"
 EXPECTED_READINESS_JOB_SHA256 = "debdf8eab733402d4ebb98b30ab5c3b5e93c7f78f14aa959669fe6308f9510bb"
-EXPECTED_UNSIGNED_JOB_SHA256 = "b20d7ce02bb1de96741fda2320c3b5993b63ff55ffec314ea534b83129f52823"
+EXPECTED_UNSIGNED_JOB_SHA256 = "97cfc880945b8d1cc0c60f877c271efdf63d4d9d4b9dffe4a29bf588b2182c29"
 # Same treatment for the one job that can write a release. It carries the write
 # credential, the attachment helper and the umbrella lock, so every byte of it
 # is reviewed.
 EXPECTED_ATTACHMENT_JOB_SHA256 = "a7ca21a04a0f403520773be23fb89aa9a39b6ebc91c74d970dc23f8312be5a0e"
+# The reproducibility contract's two jobs, pinned like every other job whose
+# removal or weakening would let an unreproducible build reach the keystore.
+EXPECTED_REBUILD_JOB_SHA256 = "e0ef62f4e3b746b455df1d9b51247e9b30e920f5435e3301fac73b9c20eb10d6"
+EXPECTED_REPRODUCIBILITY_GATE_JOB_SHA256 = "9af962149c7ec149d87360d8cee00ff92261eb494bbc2a28d65ec2feedeaec19"
 EXPECTED_CONTROLLER_ADMIT_SHA256 = "6423d79810b64d292382c9bccab15a7b0ed342a6ff6e7272972502a868a3d958"
 # The helpers those jobs execute. Hashing the step is not enough: the step text
 # is stable while the file it runs is what reaches the network and the API.
@@ -503,6 +519,7 @@ EXPECTED_IDENTITY_HELPER_SHA256 = "855c557e36e8fb55979e6877b02808d1ed0e40dafb9e8
 EXPECTED_ATTACHMENT_HELPER_SHA256 = "f37f415e7ec9439fe2e16c7e68a32a7ff0f8927de77eb2266480549e93aca875"
 EXPECTED_ARTIFACT_ADMISSION_SHA256 = "5c810ac880a6f91c334dc108c456927a70dbbbd6284016f14fd11a4ea01c4b4e"
 EXPECTED_SIGNING_HELPER_SHA256 = "6e36285e5837ac13eb8ef20e1a34d07eb88b857c1acaffbaff6af458ed94ade5"
+EXPECTED_REPRODUCIBILITY_HELPER_SHA256 = "f968f9cb21cbcab1bdb65d624727514579c3daca7b3b1722234383e08447c767"
 EXPECTED_KEYSTORE_HELPER_SHA256 = "b9b0c8046a85209754c5e206b9cc1778036d2366d0709caf9a60fbf741f5c9b6"
 EXPECTED_READINESS_HELPER_SHA256 = "c75ebfba772c4f7bd6559161f64df3127c9c390bf1e5a81e39236ba47cc6e26f"
 EXPECTED_BRIDGE_STAGING_HELPER_SHA256 = "b9dd8980fa763c485caa5ac999b2ba9f9d187a9545e02e3cc580425fc223e0b6"
@@ -512,7 +529,7 @@ EXPECTED_BRIDGE_STAGING_HELPER_SHA256 = "b9dd8980fa763c485caa5ac999b2ba9f9d187a9
 EXPECTED_CI_CONSCRYPT_JOB_SHA256 = "ed27963320252615ff159bbc388c858fdc872516fc0ea2aa5f50d905f4a5063b"
 EXPECTED_RELEASE_CONSCRYPT_JOB_SHA256 = "e7d36401f4d350a09355af11917f22f1e66b7a466c87723b77aad77f978a455c"
 EXPECTED_CONSCRYPT_BUILD_SCRIPT_SHA256 = (
-    "0ee234f2ced343c4167bd1efad134a77853f288eb9c5210c1e1173594a014b8b"
+    "2d51d2c55e5b0080ea7ec01651ad5e1d2687623c4fa49796bc8ca621b11c2125"
 )
 ALLOWED_RELEASE_JOB_KEYS = {
     "name",
@@ -775,6 +792,118 @@ def check_trusted_helper_sources(
                 f"{relative} job {job_name} runs '{reference}', which is not inside a checkout of "
                 f"the protected controller revision ({sorted(trusted_paths)})"
             )
+
+
+def check_reproducibility_contract(
+    jobs: Mapping[str, Any], violations: list[str]
+) -> None:
+    """The pre-signing proof that this build is not machine-specific.
+
+    F-Droid will not publish a developer-signed APK it cannot rebuild from the
+    public source, and the only honest place to discover that is before the
+    release is signed. Two jobs carry it: an independent rebuild in an
+    environment deliberately unlike the release runner, and a byte comparison
+    that `sign-release` depends on. Both are reviewed here so neither can be
+    quietly softened into a self-comparison, which would pass forever and prove
+    nothing.
+    """
+
+    rebuild = jobs.get(INDEPENDENT_REBUILD_JOB)
+    if not isinstance(rebuild, Mapping):
+        violations.append(f"{ROOT_WORKFLOW} must define the {INDEPENDENT_REBUILD_JOB} job")
+    else:
+        rebuild_body = "\n".join(strings(rebuild))
+        if rebuild.get("permissions") != {"contents": "read"}:
+            violations.append(
+                f"{INDEPENDENT_REBUILD_JOB} permissions must be exactly contents: read"
+            )
+        if environment_name(rebuild) is not None:
+            violations.append(f"{INDEPENDENT_REBUILD_JOB} must not bind a deployment environment")
+        if signing_references(rebuild):
+            violations.append(
+                f"{INDEPENDENT_REBUILD_JOB} must never reference Android signing secrets"
+            )
+        if WORKFLOW_TOKEN in rebuild_body:
+            violations.append(f"{INDEPENDENT_REBUILD_JOB} must not carry the workflow token")
+        for marker in RELEASE_WRITE_MARKERS:
+            if marker in rebuild_body:
+                violations.append(
+                    f"{INDEPENDENT_REBUILD_JOB} must not be able to write a release: {marker}"
+                )
+
+        # A second run on the same image proves only that the build is
+        # deterministic on this runner. The container is what makes the rebuild
+        # an independent environment, and its digest is what keeps it one.
+        container = rebuild.get("container")
+        image = container.get("image") if isinstance(container, Mapping) else container
+        if not isinstance(image, str):
+            violations.append(
+                f"{INDEPENDENT_REBUILD_JOB} must run in a container image unlike the release "
+                "runner; a same-image rebuild is a self-comparison"
+            )
+        elif not CONTAINER_DIGEST_PIN.search(image):
+            violations.append(
+                f"{INDEPENDENT_REBUILD_JOB} container image must be pinned by sha256 digest"
+            )
+
+        if [ref for ref, _ in checkout_refs(rebuild)] != ["${{ inputs.source_sha }}"]:
+            violations.append(
+                f"{INDEPENDENT_REBUILD_JOB} must check out exactly the admitted commit"
+            )
+        # Reusing the release lane's Conscrypt artifact would import the very
+        # bytes the rebuild exists to reproduce independently.
+        if CONSCRYPT_ARTIFACT in rebuild_body:
+            violations.append(
+                f"{INDEPENDENT_REBUILD_JOB} must build Conscrypt itself, not consume "
+                f"{CONSCRYPT_ARTIFACT}"
+            )
+        for required in (
+            "scripts/build-conscrypt-android-r28.sh",
+            "scripts/build-etebase-client-16kb.sh",
+            "-PrequireReproducibleJdk=true",
+            FDROID_REBUILD_ARTIFACT,
+        ):
+            if required not in rebuild_body:
+                violations.append(f"{INDEPENDENT_REBUILD_JOB} must contain {required!r}")
+        if semantic_sha256(rebuild) != EXPECTED_REBUILD_JOB_SHA256:
+            violations.append(
+                f"{INDEPENDENT_REBUILD_JOB} must match the exact reviewed independent-rebuild "
+                "specification"
+            )
+
+    gate = jobs.get(REPRODUCIBILITY_GATE_JOB)
+    if not isinstance(gate, Mapping):
+        violations.append(f"{ROOT_WORKFLOW} must define the {REPRODUCIBILITY_GATE_JOB} job")
+        return
+
+    gate_body = "\n".join(strings(gate))
+    if gate.get("permissions") != {"contents": "read"}:
+        violations.append(f"{REPRODUCIBILITY_GATE_JOB} permissions must be exactly contents: read")
+    if environment_name(gate) is not None:
+        violations.append(f"{REPRODUCIBILITY_GATE_JOB} must not bind a deployment environment")
+    if signing_references(gate):
+        violations.append(f"{REPRODUCIBILITY_GATE_JOB} must never reference Android signing secrets")
+    if WORKFLOW_TOKEN in gate_body:
+        violations.append(f"{REPRODUCIBILITY_GATE_JOB} must not carry the workflow token")
+    for marker in RELEASE_WRITE_MARKERS:
+        if marker in gate_body:
+            violations.append(
+                f"{REPRODUCIBILITY_GATE_JOB} must not be able to write a release: {marker}"
+            )
+    if gate.get("needs") != [UNSIGNED_JOB, INDEPENDENT_REBUILD_JOB]:
+        violations.append(
+            f"{REPRODUCIBILITY_GATE_JOB} must compare exactly {UNSIGNED_JOB} against "
+            f"{INDEPENDENT_REBUILD_JOB}"
+        )
+    # Comparing one artifact with itself is the failure mode this whole gate
+    # exists to prevent, so both inputs are named as literals.
+    for required in (UNSIGNED_ARTIFACT, FDROID_REBUILD_ARTIFACT, str(REPRODUCIBILITY_HELPER)):
+        if required not in gate_body:
+            violations.append(f"{REPRODUCIBILITY_GATE_JOB} must contain {required!r}")
+    if semantic_sha256(gate) != EXPECTED_REPRODUCIBILITY_GATE_JOB_SHA256:
+        violations.append(
+            f"{REPRODUCIBILITY_GATE_JOB} must match the exact reviewed gate specification"
+        )
 
 
 def check_control_plane(
@@ -1291,6 +1420,8 @@ def check(root: Path) -> list[str]:
                 f"{relative} {CONSCRYPT_JOB} must match the exact reviewed producer specification"
             )
 
+    check_reproducibility_contract(jobs, violations)
+
     conscrypt_script = root / CONSCRYPT_BUILD_SCRIPT
     if not conscrypt_script.is_file():
         violations.append(f"{CONSCRYPT_BUILD_SCRIPT} is missing")
@@ -1308,6 +1439,7 @@ def check(root: Path) -> list[str]:
         (KEYSTORE_HELPER, EXPECTED_KEYSTORE_HELPER_SHA256),
         (ARTIFACT_ADMISSION_HELPER, EXPECTED_ARTIFACT_ADMISSION_SHA256),
         (SIGNING_HELPER, EXPECTED_SIGNING_HELPER_SHA256),
+        (REPRODUCIBILITY_HELPER, EXPECTED_REPRODUCIBILITY_HELPER_SHA256),
     ):
         path = root / helper
         if not path.is_file():
@@ -1470,10 +1602,16 @@ def check(root: Path) -> list[str]:
             f"{ALLOWED_JOB} must not carry an event guard; this lane is reachable only through "
             "the protected controller"
         )
-    if release.get("needs") != [POLICY_JOB, CONSCRYPT_JOB, REVALIDATION_JOB, UNSIGNED_JOB]:
+    if release.get("needs") != [
+        POLICY_JOB,
+        CONSCRYPT_JOB,
+        REVALIDATION_JOB,
+        UNSIGNED_JOB,
+        REPRODUCIBILITY_GATE_JOB,
+    ]:
         violations.append(
             f"{ALLOWED_JOB} must require successful {POLICY_JOB}, {CONSCRYPT_JOB}, "
-            f"{REVALIDATION_JOB} and {UNSIGNED_JOB}"
+            f"{REVALIDATION_JOB}, {UNSIGNED_JOB} and {REPRODUCIBILITY_GATE_JOB}"
         )
     if release.get("permissions") != {"contents": "read"}:
         violations.append(

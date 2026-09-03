@@ -33,9 +33,12 @@ BRIDGE_STAGING_HELPER = Path("scripts/stage-bridge-release-assets.sh")
 KEYSTORE_HELPER = Path("scripts/verify-android-release-keystore.sh")
 ARTIFACT_ADMISSION_HELPER = Path("scripts/admit-unsigned-android-artifact.sh")
 SIGNING_HELPER = Path("scripts/sign-android-release.sh")
+REPRODUCIBILITY_HELPER = Path("scripts/verify-android-build-reproducibility.py")
 
 RELEASE_NEEDS = (
-    "    needs: [signing-policy, conscrypt-r28, revalidate-signing, build-unsigned-release]\n"
+    "    needs:\n"
+    "      [signing-policy, conscrypt-r28, revalidate-signing, build-unsigned-release,\n"
+    "       reproducibility-gate]\n"
 )
 RELEASE_CHECKOUT = (
     "      - name: Check out the trusted controller revision\n"
@@ -82,6 +85,7 @@ def fixture_root(tmp_path: Path) -> Path:
         KEYSTORE_HELPER,
         ARTIFACT_ADMISSION_HELPER,
         SIGNING_HELPER,
+        REPRODUCIBILITY_HELPER,
     ):
         (root / helper).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / helper, root / helper)
@@ -1113,12 +1117,30 @@ def test_dropping_the_pre_signing_revalidation_is_rejected(tmp_path: Path) -> No
     mutate(
         root / ROOT_WORKFLOW,
         RELEASE_NEEDS,
-        "    needs: [signing-policy, conscrypt-r28, build-unsigned-release]\n",
+        "    needs: [signing-policy, conscrypt-r28, build-unsigned-release,\n"
+        "       reproducibility-gate]\n",
     )
     assert_rejected(
         run_checker(root),
         "sign-release must require successful signing-policy, conscrypt-r28, "
-        "revalidate-signing and build-unsigned-release",
+        "revalidate-signing, build-unsigned-release and reproducibility-gate",
+    )
+
+
+def test_dropping_the_pre_signing_reproducibility_gate_is_rejected(tmp_path: Path) -> None:
+    """An APK only this machine can build must not reach the keystore."""
+
+    root = fixture_root(tmp_path)
+    mutate(
+        root / ROOT_WORKFLOW,
+        RELEASE_NEEDS,
+        "    needs: [signing-policy, conscrypt-r28, revalidate-signing,\n"
+        "       build-unsigned-release]\n",
+    )
+    assert_rejected(
+        run_checker(root),
+        "sign-release must require successful signing-policy, conscrypt-r28, "
+        "revalidate-signing, build-unsigned-release and reproducibility-gate",
     )
 
 
