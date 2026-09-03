@@ -1,0 +1,310 @@
+name: Android Reproducibility Drill
+
+# The rehearsal for the release lane's reproducibility gate.
+#
+# `release-android.yml` is workflow_call-only and reachable solely through the
+# protected controller, so its independent rebuild and byte comparison first
+# execute on release day, inside a three-hour job, with a release waiting on
+# them. That is the wrong moment to discover that a merged change introduced
+# nondeterminism or that a Debian package moved.
+#
+# This workflow runs the same two builds and the same comparison on demand,
+# against an exact commit, so the answer is known before a tag exists. It is a
+# rehearsal and nothing more:
+#
+#   * dispatch-only. No push, no pull_request, no schedule, no
+#     repository_dispatch, no workflow_call — nothing an untrusted fork or a
+#     moved tag can reach. Dispatching requires repository write access.
+#   * no signing capability of any kind. The keystore secrets are declared as
+#     workflow_call capabilities that only the release controller can grant, so
+#     this workflow cannot request them even by mistake; it binds no
+#     environment, holds contents: read, and names no secret at all.
+#   * its own artifact names. A drill build must never be mistakable for, or
+#     consumable by, a release run.
+#
+# The build steps below are byte-identical to the release lane's — copied, and
+# held that way by the boundary checker — because a drill that exercises
+# different steps than the gate it rehearses proves nothing about the gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: The exact 40-hex commit to rebuild and compare.
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  # The release controller admits an exact 40-hex commit before anything runs.
+  # The drill has no controller, so it admits its own input the same way rather
+  # than resolving a branch name that could move between the two builds.
+  validate-source:
+    name: Admit the drill source commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require an exact commit
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          case "$SOURCE_SHA" in
+            *[!0-9a-f]* | "") echo "refusing a source that is not 40 lowercase hex: $SOURCE_SHA" >&2; exit 1 ;;
+          esac
+          [ "${#SOURCE_SHA}" -eq 40 ] \
+            || { echo "refusing a source that is not 40 lowercase hex: $SOURCE_SHA" >&2; exit 1; }
+          echo "Drilling $SOURCE_SHA"
+
+  # The Ubuntu side of the comparison. It mirrors the release lane's unsigned
+  # producer, minus the release-only evidence and handoff staging, and builds
+  # Conscrypt itself rather than consuming another job's artifact so that both
+  # sides of the drill are symmetric.
+  build-unsigned-ubuntu:
+    name: Build (unsigned, Ubuntu runner)
+    needs: validate-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout the drill commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28 and CMake
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Provision the pinned reproducible JDK
+        working-directory: android
+        run: scripts/reproducible-build-contract.sh provision-jdk
+
+      - name: Build 16 KB-aligned Etebase client AAR
+        working-directory: android
+        run: scripts/build-etebase-client-16kb.sh
+
+      - name: Build Conscrypt with Android NDK r28
+        working-directory: android
+        run: scripts/build-conscrypt-android-r28.sh
+
+      - name: Build the unsigned release APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon \
+            -PrequireEtebase16Kb=true \
+            -PrequireConscryptR28=true \
+            -PrequireReproducibleJdk=true
+
+      - name: Stage the Ubuntu build
+        working-directory: android
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          built=(app/build/outputs/apk/release/*.apk)
+          [ "${#built[@]}" -eq 1 ] \
+            || { echo "expected exactly one unsigned APK, found ${#built[@]}" >&2; exit 1; }
+          mkdir -p build/drill-ubuntu
+          cp "${built[0]}" build/drill-ubuntu/app-release-unsigned.apk
+          sha256sum build/drill-ubuntu/app-release-unsigned.apk
+
+      - name: Publish the Ubuntu build to the drill comparison
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: silentsuite-android-drill-ubuntu-${{ inputs.source_sha }}
+          path: android/build/drill-ubuntu/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The F-Droid-representative side. Its steps are the release lane's, verbatim.
+  rebuild-fdroid-environment:
+    name: Rebuild independently (F-Droid-representative environment)
+    needs: validate-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    container:
+      image: debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      ANDROID_HOME: /opt/android-sdk
+      ANDROID_SDK_ROOT: /opt/android-sdk
+      ANDROID_NDK_HOME: /opt/android-sdk/ndk/28.2.13676358
+      CARGO_HOME: /opt/rust/cargo
+      RUSTUP_HOME: /opt/rust/rustup
+      JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+    steps:
+      # Before the checkout: a slim image has neither git nor a JDK, and the
+      # Debian JDK here is the point — it is what runs Gradle, so the contract
+      # is proven to survive a daemon JVM that is not the pinned compiler.
+      - name: Install the Debian build environment
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils build-essential ca-certificates curl file git \
+            openjdk-17-jdk-headless python3 unzip xz-utils zip
+          "$JAVA_HOME/bin/javac" -version
+
+      - name: Checkout the admitted commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Install the Android SDK, NDK r28 and CMake
+        env:
+          CMDLINE_TOOLS_URL: https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+          CMDLINE_TOOLS_SHA256: 7ec965280a073311c339e571cd5de778b9975026cfcbe79f2b1cdcb1e15317ee
+        run: |
+          set -euo pipefail
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl --fail --location --silent --show-error \
+            "$CMDLINE_TOOLS_URL" --output /tmp/cmdline-tools.zip
+          echo "$CMDLINE_TOOLS_SHA256  /tmp/cmdline-tools.zip" | sha256sum --check --strict
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+          mv /tmp/cmdline-tools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          # Not `yes | sdkmanager --licenses`: sdkmanager stops reading once the
+          # prompts are answered, `yes` takes SIGPIPE, and under pipefail the
+          # pipeline returns 141 and kills the step. A regular file has no
+          # writer to signal, so the acceptance is deterministic.
+          for _ in $(seq 100); do echo y; done > /tmp/sdk-license-acceptance
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses \
+            < /tmp/sdk-license-acceptance > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;28.2.13676358" "cmake;3.22.1"
+          test -d "$ANDROID_NDK_HOME"
+
+      - name: Install rustup
+        env:
+          RUSTUP_INIT_URL: https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init
+          RUSTUP_INIT_SHA256: dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            "$RUSTUP_INIT_URL" --output /tmp/rustup-init
+          echo "$RUSTUP_INIT_SHA256  /tmp/rustup-init" | sha256sum --check --strict
+          chmod +x /tmp/rustup-init
+          /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain none
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+
+      # The same scripts the release producer runs. The pinned Rust toolchain,
+      # the pinned JDK and the canonical build root all come from the contract
+      # inside them, so nothing about this environment can select a different
+      # toolchain than the release lane used.
+      - name: Provision the pinned reproducible JDK
+        working-directory: android
+        run: scripts/reproducible-build-contract.sh provision-jdk
+
+      - name: Build 16 KB-aligned Etebase client AAR
+        working-directory: android
+        run: scripts/build-etebase-client-16kb.sh
+
+      - name: Build Conscrypt with Android NDK r28
+        working-directory: android
+        run: scripts/build-conscrypt-android-r28.sh
+
+      - name: Build the unsigned release APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon \
+            -PrequireEtebase16Kb=true \
+            -PrequireConscryptR28=true \
+            -PrequireReproducibleJdk=true
+
+      - name: Stage the independently rebuilt APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          rebuilt=(app/build/outputs/apk/release/*.apk)
+          [ "${#rebuilt[@]}" -eq 1 ] \
+            || { echo "expected exactly one rebuilt APK, found ${#rebuilt[@]}" >&2; exit 1; }
+          mkdir -p build/fdroid-rebuild
+          cp "${rebuilt[0]}" build/fdroid-rebuild/app-release-unsigned.apk
+          sha256sum build/fdroid-rebuild/app-release-unsigned.apk
+
+      - name: Publish the independent rebuild to the drill comparison
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: silentsuite-android-drill-rebuild-${{ inputs.source_sha }}
+          path: android/build/fdroid-rebuild/
+          if-no-files-found: error
+          retention-days: 7
+
+  # The same comparison the release lane's gate performs, run from the
+  # dispatched revision. Failing here is the entire point: it means the release
+  # lane's gate would have failed on release day instead.
+  drill-comparison:
+    name: Compare both drill builds under the F-Droid byte contract
+    needs: [build-unsigned-ubuntu, rebuild-fdroid-environment]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out the dispatched revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+          persist-credentials: false
+
+      - name: Download the Ubuntu build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: silentsuite-android-drill-ubuntu-${{ inputs.source_sha }}
+          path: ubuntu-build
+
+      - name: Download the independent rebuild
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: silentsuite-android-drill-rebuild-${{ inputs.source_sha }}
+          path: fdroid-rebuild
+
+      - name: Compare both builds under the F-Droid byte contract
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/scripts/verify-android-build-reproducibility.py" \
+            --reference "$GITHUB_WORKSPACE/ubuntu-build/app-release-unsigned.apk" \
+            --candidate "$GITHUB_WORKSPACE/fdroid-rebuild/app-release-unsigned.apk" \
+            --report "$GITHUB_WORKSPACE/reproducibility/drill-verdict.json"
+
+      - name: Upload the drill verdict
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-reproducibility-drill-verdict-${{ inputs.source_sha }}
+          path: reproducibility/
+          retention-days: 30

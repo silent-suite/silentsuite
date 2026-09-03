@@ -647,6 +647,172 @@ def test_signing_boundary_rejects_a_gate_that_compares_a_build_with_itself():
     assert any("must compare exactly" in violation for violation in violations)
 
 
+# ── the dispatch-only drill that rehearses the gate ──────────────────────
+
+
+DRILL_WORKFLOW = ROOT / ".github/workflows/android-reproducibility-drill.yml"
+
+
+def drill_state():
+    checker = load_boundary_checker()
+    loaded = {
+        checker.ROOT_WORKFLOW: checker.load_workflow(RELEASE_WORKFLOW),
+        checker.DRILL_WORKFLOW: checker.load_workflow(DRILL_WORKFLOW),
+    }
+    return checker, loaded
+
+
+def drill_violations(mutate=None) -> list[str]:
+    checker, loaded = drill_state()
+    if mutate is not None:
+        mutate(loaded[checker.DRILL_WORKFLOW])
+    violations: list[str] = []
+    checker.check_reproducibility_drill(loaded, violations)
+    return violations
+
+
+def test_drill_is_dispatch_only_and_bound_to_an_exact_commit():
+    drill = workflow(DRILL_WORKFLOW)
+    events = drill[True] if True in drill else drill["on"]
+
+    # push/pull_request would run a three-hour container build on every change;
+    # workflow_call or repository_dispatch would make this a second entry point
+    # into release-shaped work.
+    assert set(events) == {"workflow_dispatch"}
+    source = events["workflow_dispatch"]["inputs"]["source_sha"]
+    assert source["required"] is True
+    assert "default" not in source
+
+    validate = steps(drill["jobs"]["validate-source"])["Require an exact commit"]
+    assert validate["env"] == {"SOURCE_SHA": "${{ inputs.source_sha }}"}
+    assert '[ "${#SOURCE_SHA}" -eq 40 ]' in validate["run"]
+
+
+def test_drill_holds_no_signing_capability_and_no_write():
+    drill = workflow(DRILL_WORKFLOW)
+
+    assert drill["permissions"] == {}
+    for name, job in drill["jobs"].items():
+        assert job["permissions"] == {"contents": "read"}, name
+        assert "environment" not in job, name
+
+    body = read(DRILL_WORKFLOW)
+    assert "secrets." not in body
+    assert "ANDROID_KEYSTORE" not in body
+    assert "android-release" not in body
+    assert "contents: write" not in body
+
+
+def test_drill_artifacts_cannot_be_confused_with_a_release_run():
+    body = read(DRILL_WORKFLOW)
+
+    assert "silentsuite-android-drill-ubuntu-${{ inputs.source_sha }}" in body
+    assert "silentsuite-android-drill-rebuild-${{ inputs.source_sha }}" in body
+    assert "silentsuite-android-unsigned-${{ inputs.source_sha }}" not in body
+    assert "silentsuite-android-fdroid-rebuild-${{ inputs.source_sha }}" not in body
+
+
+def test_drill_rebuild_steps_are_byte_identical_to_the_release_lane():
+    checker, loaded = drill_state()
+    release = loaded[checker.ROOT_WORKFLOW]["jobs"][REBUILD_JOB]
+    drill = loaded[checker.DRILL_WORKFLOW]["jobs"][REBUILD_JOB]
+
+    assert drill["container"] == release["container"]
+    assert drill["env"] == release["env"]
+
+    release_steps = {str(s.get("name")): s for s in release["steps"]}
+    drill_steps = {str(s.get("name")): s for s in drill["steps"]}
+    for name in checker.DRILL_SHARED_REBUILD_STEPS:
+        assert drill_steps[name] == release_steps[name], name
+
+
+def test_drill_comparison_runs_the_trusted_verifier_on_both_builds():
+    drill = workflow(DRILL_WORKFLOW)
+    comparison = drill["jobs"]["drill-comparison"]
+
+    assert comparison["needs"] == ["build-unsigned-ubuntu", REBUILD_JOB]
+    comparison_steps = steps(comparison)
+    assert (
+        comparison_steps["Check out the dispatched revision"]["with"]["ref"] == "${{ github.sha }}"
+    )
+    run = comparison_steps["Compare both builds under the F-Droid byte contract"]["run"]
+    assert '"$GITHUB_WORKSPACE/scripts/verify-android-build-reproducibility.py"' in run
+    assert "ubuntu-build/app-release-unsigned.apk" in run
+    assert "fdroid-rebuild/app-release-unsigned.apk" in run
+
+
+def test_signing_boundary_accepts_the_reviewed_drill():
+    assert drill_violations() == []
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda drill: drill["on"].update({"pull_request": None}),
+            "must be reachable only by workflow_dispatch",
+        ),
+        (
+            lambda drill: drill["on"]["workflow_dispatch"]["inputs"]["source_sha"].update(
+                {"required": "false"}
+            ),
+            "source_sha must be required",
+        ),
+        (
+            lambda drill: drill["jobs"]["drill-comparison"].update(
+                {"permissions": {"contents": "write"}}
+            ),
+            "permissions must be exactly contents: read",
+        ),
+        (
+            lambda drill: drill["jobs"]["build-unsigned-ubuntu"]["steps"].append(
+                {"name": "Leak", "run": "echo ${{ secrets.ANDROID_KEYSTORE_BASE64 }}"}
+            ),
+            "must never reference Android signing secrets",
+        ),
+        (
+            lambda drill: drill["jobs"]["drill-comparison"]["steps"].append(
+                {"name": "Reuse", "run": "echo silentsuite-android-unsigned-${{ inputs.source_sha }}"}
+            ),
+            "must not produce or consume the release lane artifact",
+        ),
+        (
+            lambda drill: drill["jobs"][REBUILD_JOB]["steps"].__setitem__(
+                0, {"name": "Install the Debian build environment", "run": "apt-get install -y curl"}
+            ),
+            "has drifted from the release lane's",
+        ),
+        (
+            lambda drill: drill["jobs"]["build-unsigned-ubuntu"].update(
+                {"environment": "android-release"}
+            ),
+            "must not bind a deployment environment",
+        ),
+    ],
+    ids=(
+        "extra-trigger",
+        "optional-source",
+        "write-permission",
+        "signing-secret",
+        "release-artifact",
+        "drifted-step",
+        "protected-environment",
+    ),
+)
+def test_signing_boundary_fails_closed_on_a_weakened_drill(mutation, expected):
+    violations = drill_violations(mutation)
+
+    assert any(expected in violation for violation in violations), violations
+
+
+def test_release_lane_stays_workflow_call_only():
+    release = workflow(RELEASE_WORKFLOW)
+    events = release[True] if True in release else release["on"]
+
+    # The drill exists so this never has to gain a dispatch trigger.
+    assert set(events) == {"workflow_call"}
+
+
 def test_signing_boundary_pins_the_comparison_helper_bytes():
     checker = load_boundary_checker()
 

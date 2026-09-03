@@ -45,6 +45,10 @@ ROOT_WORKFLOW = WORKFLOW_DIR / "release-android.yml"
 # producer, and must never regain a release-producing job.
 ANDROID_CI_WORKFLOW = WORKFLOW_DIR / "build-android.yml"
 ANDROID_SIBLING_WORKFLOW = Path("android/.github/workflows/build.yml")
+# The dispatch-only rehearsal for the release lane's reproducibility gate. It
+# runs the same two builds and the same comparison, holds no signing capability
+# whatsoever, and must never become a second way to produce a release artifact.
+DRILL_WORKFLOW = WORKFLOW_DIR / "android-reproducibility-drill.yml"
 CONSCRYPT_BUILD_SCRIPT = Path("android/scripts/build-conscrypt-android-r28.sh")
 
 CONTROLLER_WORKFLOW = WORKFLOW_DIR / "release-controller.yml"
@@ -73,6 +77,25 @@ ADMISSION_JOB = "admit"
 # comparison that `sign-release` cannot start without.
 INDEPENDENT_REBUILD_JOB = "rebuild-fdroid-environment"
 REPRODUCIBILITY_GATE_JOB = "reproducibility-gate"
+DRILL_SOURCE_JOB = "validate-source"
+DRILL_UBUNTU_JOB = "build-unsigned-ubuntu"
+DRILL_COMPARISON_JOB = "drill-comparison"
+DRILL_SOURCE_REF = "${{ inputs.source_sha }}"
+DRILL_UBUNTU_ARTIFACT = "silentsuite-android-drill-ubuntu-${{ inputs.source_sha }}"
+DRILL_REBUILD_ARTIFACT = "silentsuite-android-drill-rebuild-${{ inputs.source_sha }}"
+# The build steps the drill exists to rehearse. A drill that runs different
+# steps than the gate it stands in for proves nothing about that gate, so these
+# are compared as exact text against the release lane's.
+DRILL_SHARED_REBUILD_STEPS = (
+    "Install the Debian build environment",
+    "Install the Android SDK, NDK r28 and CMake",
+    "Install rustup",
+    "Provision the pinned reproducible JDK",
+    "Build 16 KB-aligned Etebase client AAR",
+    "Build Conscrypt with Android NDK r28",
+    "Build the unsigned release APK",
+    "Stage the independently rebuilt APK",
+)
 ENVIRONMENT_NAME = "android-release"
 
 IDENTITY_HELPER = Path("scripts/verify-release-identity.sh")
@@ -511,6 +534,7 @@ EXPECTED_ATTACHMENT_JOB_SHA256 = "a7ca21a04a0f403520773be23fb89aa9a39b6ebc91c74d
 # The reproducibility contract's two jobs, pinned like every other job whose
 # removal or weakening would let an unreproducible build reach the keystore.
 EXPECTED_REBUILD_JOB_SHA256 = "e0ef62f4e3b746b455df1d9b51247e9b30e920f5435e3301fac73b9c20eb10d6"
+EXPECTED_DRILL_WORKFLOW_SHA256 = "8cbdadda957e5022244936b8c87809096b76d8d0ed9c640e91f0d548416257f9"
 EXPECTED_REPRODUCIBILITY_GATE_JOB_SHA256 = "9af962149c7ec149d87360d8cee00ff92261eb494bbc2a28d65ec2feedeaec19"
 EXPECTED_CONTROLLER_ADMIT_SHA256 = "6423d79810b64d292382c9bccab15a7b0ed342a6ff6e7272972502a868a3d958"
 # The helpers those jobs execute. Hashing the step is not enough: the step text
@@ -904,6 +928,162 @@ def check_reproducibility_contract(
         violations.append(
             f"{REPRODUCIBILITY_GATE_JOB} must match the exact reviewed gate specification"
         )
+
+
+def check_reproducibility_drill(
+    loaded: Mapping[Path, dict[str, Any]], violations: list[str]
+) -> None:
+    """The rehearsal must stay a rehearsal.
+
+    The drill exists because the release lane's gate would otherwise first run
+    on release day. It runs the same expensive builds against an exact commit,
+    on demand. Everything reviewed here keeps it from becoming anything else: a
+    second trigger into the release lane, a job that can hold signing material,
+    or a producer whose artifacts a release run could consume.
+    """
+
+    workflow = loaded.get(DRILL_WORKFLOW)
+    release = loaded.get(ROOT_WORKFLOW)
+    if workflow is None:
+        violations.append(f"missing reproducibility drill workflow: {DRILL_WORKFLOW}")
+        return
+
+    # Dispatch-only. push/pull_request would run a three-hour container build on
+    # every change; repository_dispatch or workflow_call would make this a
+    # second entry point into release-shaped work.
+    declared_triggers = set(triggers(workflow))
+    if declared_triggers != {"workflow_dispatch"}:
+        violations.append(
+            f"{DRILL_WORKFLOW} must be reachable only by workflow_dispatch; found "
+            f"{sorted(declared_triggers)}"
+        )
+    dispatch = triggers(workflow).get("workflow_dispatch")
+    inputs = dispatch.get("inputs") if isinstance(dispatch, Mapping) else None
+    if not isinstance(inputs, Mapping) or set(inputs) != {"source_sha"}:
+        violations.append(
+            f"{DRILL_WORKFLOW} must take exactly one input, the exact commit to drill"
+        )
+    elif str((inputs.get("source_sha") or {}).get("required")).lower() != "true":
+        violations.append(
+            f"{DRILL_WORKFLOW} source_sha must be required; a defaulted ref could move "
+            "between the two builds it compares"
+        )
+
+    if workflow.get("permissions") != {}:
+        violations.append(f"{DRILL_WORKFLOW} must grant no default permissions")
+    for inherited_key in ("defaults", "env"):
+        if inherited_key in workflow:
+            violations.append(f"{DRILL_WORKFLOW} must not define workflow-level {inherited_key}")
+
+    body = "\n".join(strings(workflow))
+    # It cannot request the signing secrets — they are workflow_call
+    # capabilities only the controller grants — and it must not name any
+    # credential at all, so this stays true by inspection rather than by luck.
+    named_secrets = {name for item in strings(workflow) for name in SECRET_REFERENCE.findall(item)}
+    if named_secrets:
+        violations.append(
+            f"{DRILL_WORKFLOW} must name no secret; found {', '.join(sorted(named_secrets))}"
+        )
+    for marker in RELEASE_WRITE_MARKERS:
+        if marker in body:
+            violations.append(f"{DRILL_WORKFLOW} must not be able to write a release: {marker}")
+    # A drill artifact must never be mistakable for, or consumable by, a
+    # release run.
+    for release_artifact in (UNSIGNED_ARTIFACT, FDROID_REBUILD_ARTIFACT, RELEASE_ASSET_ARTIFACT):
+        if release_artifact in body:
+            violations.append(
+                f"{DRILL_WORKFLOW} must not produce or consume the release lane artifact "
+                f"{release_artifact}"
+            )
+    for target in action_uses(workflow):
+        if target.startswith("./"):
+            violations.append(f"{DRILL_WORKFLOW} must not invoke local actions")
+        elif unpinned_action(target):
+            violations.append(f"{DRILL_WORKFLOW} action must be SHA-pinned: {target}")
+
+    jobs = workflow.get("jobs")
+    if not isinstance(jobs, Mapping):
+        violations.append(f"{DRILL_WORKFLOW} jobs must be a mapping")
+        return
+    expected_jobs = {DRILL_SOURCE_JOB, DRILL_UBUNTU_JOB, INDEPENDENT_REBUILD_JOB, DRILL_COMPARISON_JOB}
+    if set(jobs) != expected_jobs:
+        violations.append(
+            f"{DRILL_WORKFLOW} must define exactly {sorted(expected_jobs)}; found {sorted(jobs)}"
+        )
+
+    for job_name, job in jobs.items():
+        if not isinstance(job, Mapping):
+            violations.append(f"{DRILL_WORKFLOW} job {job_name} must be a mapping")
+            continue
+        if job.get("permissions") != {"contents": "read"}:
+            violations.append(
+                f"{DRILL_WORKFLOW} job {job_name} permissions must be exactly contents: read"
+            )
+        if environment_name(job) is not None:
+            violations.append(
+                f"{DRILL_WORKFLOW} job {job_name} must not bind a deployment environment"
+            )
+        if signing_references(job):
+            violations.append(
+                f"{DRILL_WORKFLOW} job {job_name} must never reference Android signing secrets"
+            )
+        # Both builds must be bound to the one admitted commit. The comparison
+        # runs the verifier out of the dispatched revision instead, which is
+        # the same trusted-source rule the release lane's gate follows.
+        expected_ref = TRUSTED_REF if job_name == DRILL_COMPARISON_JOB else DRILL_SOURCE_REF
+        for ref, _ in checkout_refs(job):
+            if ref != expected_ref:
+                violations.append(
+                    f"{DRILL_WORKFLOW} job {job_name} checks out {ref!r}, expected {expected_ref!r}"
+                )
+        for step in job_steps(job):
+            uses = step.get("uses")
+            if isinstance(uses, str) and uses.startswith("actions/checkout@"):
+                options = step.get("with") if isinstance(step.get("with"), Mapping) else {}
+                if str(options.get("persist-credentials")).lower() != "false":
+                    violations.append(
+                        f"{DRILL_WORKFLOW} job {job_name} must check out with "
+                        "persist-credentials: false"
+                    )
+
+    comparison = jobs.get(DRILL_COMPARISON_JOB)
+    if isinstance(comparison, Mapping):
+        if comparison.get("needs") != [DRILL_UBUNTU_JOB, INDEPENDENT_REBUILD_JOB]:
+            violations.append(
+                f"{DRILL_WORKFLOW} {DRILL_COMPARISON_JOB} must compare exactly {DRILL_UBUNTU_JOB} "
+                f"against {INDEPENDENT_REBUILD_JOB}"
+            )
+        comparison_body = "\n".join(strings(comparison))
+        for required in (DRILL_UBUNTU_ARTIFACT, DRILL_REBUILD_ARTIFACT, str(REPRODUCIBILITY_HELPER)):
+            if required not in comparison_body:
+                violations.append(f"{DRILL_WORKFLOW} {DRILL_COMPARISON_JOB} must contain {required!r}")
+
+    # Same image, same steps: a drill against a different container or a
+    # different build sequence rehearses something other than the gate.
+    drill_rebuild = jobs.get(INDEPENDENT_REBUILD_JOB)
+    release_rebuild = ((release or {}).get("jobs") or {}).get(INDEPENDENT_REBUILD_JOB)
+    if isinstance(drill_rebuild, Mapping) and isinstance(release_rebuild, Mapping):
+        if drill_rebuild.get("container") != release_rebuild.get("container"):
+            violations.append(
+                f"{DRILL_WORKFLOW} {INDEPENDENT_REBUILD_JOB} must use the same digest-pinned "
+                "container as the release lane"
+            )
+        if drill_rebuild.get("env") != release_rebuild.get("env"):
+            violations.append(
+                f"{DRILL_WORKFLOW} {INDEPENDENT_REBUILD_JOB} must use the same environment as the "
+                "release lane"
+            )
+        drill_steps = {str(step.get("name")): step for step in job_steps(drill_rebuild)}
+        release_steps = {str(step.get("name")): step for step in job_steps(release_rebuild)}
+        for step_name in DRILL_SHARED_REBUILD_STEPS:
+            if drill_steps.get(step_name) != release_steps.get(step_name):
+                violations.append(
+                    f"{DRILL_WORKFLOW} {INDEPENDENT_REBUILD_JOB} step {step_name!r} has drifted "
+                    "from the release lane's; the drill would rehearse a different build"
+                )
+
+    if semantic_sha256(workflow) != EXPECTED_DRILL_WORKFLOW_SHA256:
+        violations.append(f"{DRILL_WORKFLOW} must match its exact reviewed whole-workflow digest")
 
 
 def check_control_plane(
@@ -1421,6 +1601,7 @@ def check(root: Path) -> list[str]:
             )
 
     check_reproducibility_contract(jobs, violations)
+    check_reproducibility_drill(loaded, violations)
 
     conscrypt_script = root / CONSCRYPT_BUILD_SCRIPT
     if not conscrypt_script.is_file():
