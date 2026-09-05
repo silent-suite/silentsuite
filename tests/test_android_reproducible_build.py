@@ -224,11 +224,24 @@ def test_prefix_maps_are_emitted_most_specific_first():
             assert not path.startswith(later + "/") or real_paths.index(later) > index
 
 
-# ── Conscrypt: C/C++ source-path normalisation ───────────────────────────
+# ── Conscrypt: Java toolchains and C/C++ source-path normalisation ───────
 
 
 def conscrypt_gradle_fixture(directory: Path, *, with_anchor: bool = True) -> Path:
     (directory / "build.gradle").write_text('version = "2.6-SNAPSHOT"\n', encoding="utf-8")
+    conventions = directory / "build-logic/src/main/groovy/conventions.jvm.gradle"
+    conventions.parent.mkdir(parents=True)
+    conventions.write_text(
+        "java {\n"
+        "    toolchain { languageVersion = JavaLanguageVersion.of(11) }\n"
+        "    sourceCompatibility = JavaVersion.VERSION_1_8\n"
+        "    targetCompatibility = JavaVersion.VERSION_1_8\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    doclet = directory / "api-doclet/build.gradle"
+    doclet.parent.mkdir()
+    doclet.write_text("kotlin {\n    jvmToolchain(11)\n}\n", encoding="utf-8")
     android = directory / "android"
     android.mkdir()
     flags = "cFlags '-fvisibility=hidden'," if with_anchor else "cFlags '-DSOMETHING_ELSE',"
@@ -244,6 +257,64 @@ def conscrypt_gradle_fixture(directory: Path, *, with_anchor: bool = True) -> Pa
         encoding="utf-8",
     )
     return android / "build.gradle"
+
+
+def test_conscrypt_build_patches_both_java_toolchains_to_jdk17(tmp_path: Path):
+    patch = block_containing(read(CONSCRYPT_SCRIPT), "cFlags '-fvisibility=hidden',")
+    conscrypt_gradle_fixture(tmp_path)
+
+    result = run_block(
+        patch, str(tmp_path), "2.6.3", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert read(tmp_path / "build-logic/src/main/groovy/conventions.jvm.gradle") == (
+        "java {\n"
+        "    toolchain { languageVersion = JavaLanguageVersion.of(17) }\n"
+        "    sourceCompatibility = JavaVersion.VERSION_1_8\n"
+        "    targetCompatibility = JavaVersion.VERSION_1_8\n"
+        "}\n"
+    )
+    assert read(tmp_path / "api-doclet/build.gradle") == "kotlin {\n    jvmToolchain(17)\n}\n"
+
+
+@pytest.mark.parametrize(
+    ("relative", "declaration"),
+    [
+        ("build-logic/src/main/groovy/conventions.jvm.gradle", "JavaLanguageVersion.of(11)"),
+        ("api-doclet/build.gradle", "jvmToolchain(11)"),
+    ],
+    ids=("jvm-conventions", "api-doclet"),
+)
+@pytest.mark.parametrize("fault", ("missing", "duplicate", "changed", "missing-file"))
+def test_conscrypt_java_toolchain_drift_fails_before_any_source_mutation(
+    tmp_path: Path, relative: str, declaration: str, fault: str
+):
+    patch = block_containing(read(CONSCRYPT_SCRIPT), "cFlags '-fvisibility=hidden',")
+    conscrypt_gradle_fixture(tmp_path)
+    target = tmp_path / relative
+    if fault == "missing-file":
+        target.unlink()
+    else:
+        replacement = {
+            "missing": "",
+            "duplicate": f"{declaration}\n{declaration}",
+            "changed": declaration.replace("(11)", "(17)"),
+        }[fault]
+        target.write_text(read(target).replace(declaration, replacement), encoding="utf-8")
+    before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*.gradle")}
+
+    result = run_block(
+        patch, str(tmp_path), "2.6.3", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
+    )
+
+    assert result.returncode != 0
+    assert relative in result.stderr
+    if fault != "missing-file":
+        assert "expected exactly one upstream Java toolchain declaration" in result.stderr
+        assert repr(declaration) in result.stderr
+    after = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*.gradle")}
+    assert after == before, "invalid sibling toolchain must leave all source files untouched"
 
 
 def test_conscrypt_build_injects_file_prefix_maps_into_c_and_cxx_flags(tmp_path: Path):
