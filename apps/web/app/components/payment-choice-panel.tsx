@@ -77,11 +77,12 @@ function PriceDisplay({ offer }: { offer: AnnualOffer }) {
 function StripeTrustNote() {
   return (
     <div className="space-y-1.5 text-center text-xs text-[rgb(var(--muted))]">
-      <p className="font-medium text-[rgb(var(--foreground))]">Powered by Stripe</p>
+      <p className="font-medium text-[rgb(var(--foreground))]">Secure card payment with Stripe</p>
       <div className="flex items-center justify-center gap-1.5">
         <Lock className="h-3 w-3 text-emerald-500" />
-        <span>Secured by Stripe. We never see your card details.</span>
+        <span>Your card details are sent directly to Stripe and never pass through SilentSuite.</span>
       </div>
+      <a href="https://stripe.com" target="_blank" rel="noreferrer" className="inline-flex font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200">Powered by Stripe</a>
     </div>
   )
 }
@@ -162,8 +163,8 @@ function cancellationProviderOf(flowKind: string | null | undefined): PaymentFlo
  * the cancellation instead of promising a method the user cannot then choose.
  */
 function cancellationActionLabel(provider: PaymentFlowCancellationProvider, otherProviderAvailable: boolean): string {
-  if (provider === 'btcpay') return otherProviderAvailable ? 'Cancel Bitcoin payment and choose card' : 'Cancel Bitcoin payment'
-  if (provider === 'stripe') return otherProviderAvailable ? 'Cancel card payment and choose Bitcoin' : 'Cancel card payment'
+  if (provider === 'btcpay') return otherProviderAvailable ? 'Cancel cryptocurrency payment and choose card' : 'Cancel cryptocurrency payment'
+  if (provider === 'stripe') return otherProviderAvailable ? 'Cancel card payment and choose cryptocurrency' : 'Cancel card payment'
   return 'Cancel payment'
 }
 
@@ -187,7 +188,7 @@ function BitcoinCancellationAcknowledgement({
           onChange={(event) => onChange(event.target.checked)}
           className="mt-0.5 h-4 w-4 shrink-0"
         />
-        <span>I have not sent Bitcoin for this payment.</span>
+        <span>I have not sent cryptocurrency for this payment.</span>
       </label>
     </div>
   )
@@ -195,7 +196,7 @@ function BitcoinCancellationAcknowledgement({
 
 function safeBtcpayUrl(rawUrl: string): string {
   const checkoutUrl = resolveBtcpayUrl(rawUrl)
-  if (!checkoutUrl) throw new Error('Bitcoin checkout returned an unexpected payment URL.')
+  if (!checkoutUrl) throw new Error('Cryptocurrency checkout returned an unexpected payment URL.')
   return checkoutUrl
 }
 
@@ -452,7 +453,7 @@ export default function PaymentChoicePanel({
     setLoading('btcpay')
     setError(null)
     try {
-      if (!annualOffer || !btcpayAvailable) throw new Error('Bitcoin checkout is not available for this server-owned annual offer.')
+      if (!annualOffer || !btcpayAvailable) throw new Error('Cryptocurrency checkout is not available for this server-owned annual offer.')
       const activation = await activateAuthenticatedAnnualCheckout({
         fetcher: fetch,
         billingApiUrl: BILLING_API_URL,
@@ -467,7 +468,7 @@ export default function PaymentChoicePanel({
         await renewAnnualOfferAndRequireConsent()
         return
       }
-      setError(err instanceof Error ? err.message : 'Unable to start Bitcoin checkout.')
+      setError(err instanceof Error ? err.message : 'Unable to start cryptocurrency checkout.')
     } finally {
       setLoading(null)
     }
@@ -494,7 +495,7 @@ export default function PaymentChoicePanel({
         return
       }
       const checkoutUrl = safeBtcpayUrl(data.checkoutUrl)
-      if (!data.invoiceId || !data.invoiceLookupToken) throw new Error('Bitcoin checkout did not return a complete payment session.')
+      if (!data.invoiceId || !data.invoiceLookupToken) throw new Error('Cryptocurrency checkout did not return a complete payment session.')
       setBitcoinSession({ invoiceId: data.invoiceId, lookupToken: data.invoiceLookupToken, checkoutUrl })
       setPendingActivation(null)
     } catch (err) {
@@ -502,7 +503,7 @@ export default function PaymentChoicePanel({
         await renewAnnualOfferAndRequireConsent()
         return
       }
-      setError(err instanceof Error ? err.message : 'Unable to start Bitcoin checkout.')
+      setError(err instanceof Error ? err.message : 'Unable to start cryptocurrency checkout.')
     } finally {
       setLoading(null)
     }
@@ -542,8 +543,8 @@ export default function PaymentChoicePanel({
     return (
       <BitcoinPaymentPanel
         session={bitcoinSession}
-        title={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} annual with Bitcoin`}
-        description={`Scan the QR code or copy the payment details to pay ${formatAnnualOfferAmount(annualOffer.offer)} for ${annualOfferPlanLabel(annualOffer.offer)} (${annualOffer.offer.planId}). Your 14 bonus days and paid access apply after settlement confirms.`}
+        title="Pay with Bitcoin, Lightning or Monero"
+        description={`Choose a payment method, then scan the QR code or copy the payment details to pay ${formatAnnualOfferAmount(annualOffer.offer)} for ${annualOfferPlanLabel(annualOffer.offer)} (${annualOffer.offer.planId}). Your silentsuite.io access unlocks after BTCPay confirms settlement.`}
         settledMessage="Payment settled. Refreshing your subscription..."
         backLabel={loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         backDisabled={cancellationDisabled}
@@ -635,7 +636,7 @@ export default function PaymentChoicePanel({
         <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Payment already in progress</h2>
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-left">
           <h3 className="font-medium text-[rgb(var(--foreground))]">
-            {isBitcoin ? 'Bitcoin invoice in progress' : isStripe ? 'Card payment in progress' : 'Payment in progress'}
+            {isBitcoin ? 'Cryptocurrency invoice in progress' : isStripe ? 'Card payment in progress' : 'Payment in progress'}
           </h3>
           <p className="mt-1 text-sm text-[rgb(var(--muted))]">
             To prevent double payments, only one payment flow can be active at a time. Continue the current payment or cancel it before choosing another method.
@@ -716,8 +717,8 @@ export default function PaymentChoicePanel({
       )}
 
       {currentFlowLoaded && btcpayAnnualOption && btcpayAvailable && annualOffer && (
-        <Button onClick={startBtcpay} disabled={loading !== null} variant="outline" className="w-full" aria-label={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} with Bitcoin for ${annualOfferPlanLabel(annualOffer.offer)}`}>
-          {loading === 'btcpay' ? 'Opening Bitcoin checkout...' : 'Pay annual with Bitcoin'}
+        <Button onClick={startBtcpay} disabled={loading !== null} variant="outline" className="w-full" aria-label={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} with Bitcoin, Lightning or Monero for ${annualOfferPlanLabel(annualOffer.offer)}`}>
+          {loading === 'btcpay' ? 'Opening cryptocurrency checkout...' : 'Pay annual with Bitcoin, Lightning or Monero'}
         </Button>
       )}
 

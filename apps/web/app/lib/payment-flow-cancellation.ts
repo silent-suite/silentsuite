@@ -30,11 +30,11 @@ export type PaymentFlowCancellationResult =
  * manual-review path instead of promising automatic crediting.
  */
 export const BITCOIN_CANCELLATION_WARNING =
-  'Only cancel if you have not sent Bitcoin. After cancelling, do not pay the previous QR code or address. '
+  'Only cancel if you have not sent cryptocurrency for this payment. After cancelling, do not pay the previous QR code or address. '
   + 'A payment sent afterward cannot be credited automatically; contact support for manual review.'
 
 export const PAYMENT_FLOW_CANCELLATION_MESSAGES: Record<PaymentFlowCancellationFailure, string> = {
-  'bitcoin-acknowledgement-required': 'Confirm that you have not sent Bitcoin before cancelling this Bitcoin payment.',
+  'bitcoin-acknowledgement-required': 'Confirm that you have not sent cryptocurrency before cancelling this payment.',
   'invalid-cancellation-request': 'This payment could not be cancelled. Reload the page and try again.',
   'payment-reconciliation-required': 'This payment is still being reconciled and cannot be cancelled yet. Wait for the provider update or contact support.',
   'provider-cancellation-failed': 'The payment provider would not cancel this payment. It may already have been paid. Wait for the provider update or contact support.',

@@ -128,7 +128,7 @@ describe('billing v2 public authority client', () => {
     })).rejects.toThrow('another signup')
   })
 
-  it('rejects a Bitcoin lookup authority that differs from the recovery authority', async () => {
+  it('rejects a BTCPay lookup authority that differs from the recovery authority', async () => {
     const fetcher = vi.fn<BillingV2Fetch>().mockResolvedValue(new Response(JSON.stringify({
       contractVersion: 2,
       kind: 'btcpay',
@@ -147,7 +147,7 @@ describe('billing v2 public authority client', () => {
       wantsProductUpdates: true,
       rememberDevice: false,
       returnUrl: 'https://app.example.test/signup/pending-payment',
-    })).rejects.toThrow('Bitcoin recovery')
+    })).rejects.toThrow('BTCPay recovery')
   })
 
   it('uses the closed payment-session-owned anonymous recovery contract with capability-only credentials and every bound lineage field', async () => {

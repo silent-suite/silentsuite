@@ -364,7 +364,7 @@ describe('PendingPaymentPage Bitcoin restart across the email navigation', () =>
 
     render(<PendingPaymentPage />)
 
-    const restart = await screen.findByRole('button', { name: /start new bitcoin invoice/i })
+    const restart = await screen.findByRole('button', { name: /start new cryptocurrency invoice/i })
     // The verified continuation was rebuilt from the persisted proof context.
     expect(authState.prepareSignupDraft).toHaveBeenCalledWith('customer@example.test', true, true)
     fireEvent.click(restart)
@@ -378,7 +378,7 @@ describe('PendingPaymentPage Bitcoin restart across the email navigation', () =>
     expect(screen.getByText(/period end rule.*confirmation bonus then 1 utc calendar year/i)).toBeInTheDocument()
     expect(screen.getByText(/does not renew automatically/i)).toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: /agree.*create bitcoin invoice/i }))
+    fireEvent.click(screen.getByRole('button', { name: /agree.*create cryptocurrency invoice/i }))
     await waitFor(() => expect(authState.startAnnualSignupPayment).toHaveBeenCalledWith(emailOwnershipToken, 'btcpay', 'https://app.silentsuite.io/signup/pending-payment'))
     expect(screen.queryByText(/return to signup to verify your email/i)).not.toBeInTheDocument()
     expect(window.location.href).toBe(checkoutUrl)
@@ -425,7 +425,7 @@ describe('PendingPaymentPage Bitcoin restart across the email navigation', () =>
 
     render(<PendingPaymentPage />)
 
-    expect(await screen.findByRole('button', { name: /start new bitcoin invoice/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /start new cryptocurrency invoice/i })).toBeInTheDocument()
     expect(localStorage.getItem('silentsuite-signup-email-proof')).toBeNull()
   })
 

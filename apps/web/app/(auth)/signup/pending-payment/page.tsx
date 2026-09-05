@@ -467,11 +467,11 @@ export default function PendingPaymentPage() {
   const description = state === 'settled'
     ? 'Your annual prepaid access is active. Review the vault warning below, then continue into SilentSuite.'
     : state === 'expired'
-      ? 'The invoice expired or was marked invalid. Verify your email to request a new Bitcoin invoice without creating another account.'
+      ? 'The invoice expired or was marked invalid. Verify your email to request a new cryptocurrency invoice without creating another account.'
       : state === 'timeout'
-        ? 'Settlement is taking longer than expected. You can check again manually or start a new Bitcoin invoice.'
+        ? 'Settlement is taking longer than expected. You can check again manually or start a new cryptocurrency invoice.'
         : state === 'unknown'
-          ? 'This browser no longer has the invoice details needed to poll BTCPay. If your billing session is still active, you can start a new Bitcoin invoice.'
+          ? 'This browser no longer has the invoice details needed to poll BTCPay. If your billing session is still active, you can start a new cryptocurrency invoice.'
           : 'Crypto payments can take a little time to settle. Your app access stays locked until the BTCPay webhook activates the account.'
 
   async function restartBitcoinCheckout() {
@@ -508,7 +508,7 @@ export default function PendingPaymentPage() {
 
       const offer = await fetchAnonymousAnnualOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email, requestId: emailProofRequestId })
       if (!isAnnualOfferProviderAvailable(offer.offer, 'btcpay', CRYPTO_CHECKOUT_ENABLED)) {
-        throw new Error('Bitcoin checkout is not available for this server-owned annual offer.')
+        throw new Error('Cryptocurrency checkout is not available for this server-owned annual offer.')
       }
       const authority = await activateAnnualCheckout({
         fetcher: fetch, billingApiUrl: BILLING_API_URL, offer, email, emailOwnershipToken,
@@ -516,7 +516,7 @@ export default function PendingPaymentPage() {
       })
       setPendingRestartActivation(authority)
     } catch (err) {
-      setRestartError(err instanceof Error ? err.message : 'Could not prepare a new Bitcoin invoice.')
+      setRestartError(err instanceof Error ? err.message : 'Could not prepare a new cryptocurrency invoice.')
     } finally {
       setRestarting(false)
     }
@@ -536,11 +536,11 @@ export default function PendingPaymentPage() {
         new URL('/signup/pending-payment', window.location.href).toString(),
       )
       if (!result.cryptoCheckoutUrl || !result.cryptoInvoiceId || !result.cryptoInvoiceLookupToken) {
-        throw new Error('Billing did not return a complete Bitcoin payment authority.')
+        throw new Error('Billing did not return a complete cryptocurrency payment authority.')
       }
       const checkoutUrl = new URL(result.cryptoCheckoutUrl)
       if (checkoutUrl.origin !== BTCPAY_CHECKOUT_ORIGIN || checkoutUrl.protocol !== 'https:') {
-        throw new Error('Bitcoin checkout returned an unexpected payment URL.')
+        throw new Error('Cryptocurrency checkout returned an unexpected payment URL.')
       }
       sessionStorage.setItem('silentsuite-pending-crypto-invoice', result.cryptoInvoiceId)
       if (returnTo) sessionStorage.setItem('silentsuite-pending-crypto-return-to', returnTo)
@@ -554,7 +554,7 @@ export default function PendingPaymentPage() {
       setPendingRestartActivation(null)
       window.location.href = checkoutUrl.toString()
     } catch (err) {
-      setRestartError(err instanceof Error ? err.message : 'Could not start a new Bitcoin invoice.')
+      setRestartError(err instanceof Error ? err.message : 'Could not start a new cryptocurrency invoice.')
     } finally {
       setRestarting(false)
     }
@@ -604,7 +604,7 @@ export default function PendingPaymentPage() {
           <p className="text-sm text-[rgb(var(--muted))]">Period end rule: {disclosure.periodEndRule.replaceAll('_', ' ')}.</p>
           <p className="text-sm text-[rgb(var(--muted))]">{disclosure.refundWindowDays}-day refund window and {disclosure.bonusDays} bonus days after settlement.</p>
           <button type="button" onClick={() => { void confirmBitcoinRestart() }} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
-            {restarting ? 'Creating invoice...' : 'I agree — create Bitcoin invoice'}
+            {restarting ? 'Creating invoice...' : 'I agree — create cryptocurrency invoice'}
           </button>
           <button type="button" onClick={() => setPendingRestartActivation(null)} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 px-4 py-2 text-sm font-medium">Cancel</button>
         </div>
@@ -634,7 +634,7 @@ export default function PendingPaymentPage() {
           </div>
           {checkoutUrl && (
             <button type="button" onClick={() => { window.location.href = checkoutUrl }} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
-              Continue Bitcoin checkout
+              Continue cryptocurrency checkout
             </button>
           )}
           <button type="button" onClick={cancelCurrentFlow} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-navy-300 bg-transparent px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-navy-100 disabled:cursor-not-allowed disabled:opacity-60">
@@ -650,7 +650,7 @@ export default function PendingPaymentPage() {
     }
     return (
       <button type="button" onClick={restartBitcoinCheckout} disabled={restarting} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600 disabled:cursor-not-allowed disabled:opacity-60">
-        {restarting ? 'Starting new invoice...' : emailProofRequested ? 'Check your email to continue' : emailOwnershipToken ? 'Start new Bitcoin invoice' : 'Verify email to start a new invoice'}
+        {restarting ? 'Starting new invoice...' : emailProofRequested ? 'Check your email to continue' : emailOwnershipToken ? 'Start new cryptocurrency invoice' : 'Verify email to start a new invoice'}
       </button>
     )
   }
@@ -661,7 +661,7 @@ export default function PendingPaymentPage() {
         <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
           <Check className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <div>
-            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Bitcoin payment settled</p>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Cryptocurrency payment settled</p>
             <p className="text-xs text-[rgb(var(--muted))]">One last step - set up your vault.</p>
           </div>
         </div>
@@ -684,7 +684,7 @@ export default function PendingPaymentPage() {
         <div className="flex items-center gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
           <Check className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <div>
-            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Bitcoin payment settled</p>
+            <p className="text-sm font-medium text-[rgb(var(--foreground))]">Cryptocurrency payment settled</p>
             <p className="text-xs text-[rgb(var(--muted))]">One last account step before your vault setup.</p>
           </div>
         </div>

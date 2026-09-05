@@ -2,7 +2,7 @@
 
 ## General
 
-New hosted billing is annual only: Early Adopter access is **€36 annually (€3 per month, billed annually)**, while future Standard access is **€48 annually (€4 per month, billed annually)**. Choose a **7-day no-card trial with no automatic charge** or a **30-day card-backed trial**. Billing displays the exact annual charge date and cancellation deadline; cancel before that deadline. Card and prepaid Bitcoin annual payments include a 30-day refund promise. Self-hosting remains free with every feature unlocked.
+New hosted billing is annual only: Early Adopter access is **€36 annually (€3 per month, billed annually)**, while future Standard access is **€48 annually (€4 per month, billed annually)**. Choose a **7-day no-card trial with no automatic charge** or a **30-day card-backed trial**. Billing displays the exact annual charge date and cancellation deadline; cancel before that deadline. Card and prepaid BTCPay annual payments (Bitcoin, Lightning, or Monero) include a 30-day refund promise. Self-hosting remains free with every feature unlocked.
 
 ### What is SilentSuite?
 

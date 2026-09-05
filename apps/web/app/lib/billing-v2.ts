@@ -245,7 +245,7 @@ export async function startSignupAnnualPayment(params: { fetcher: BillingV2Fetch
   const body = await jsonOrThrow(await params.fetcher(api(params.billingApiUrl, '/auth/signup/payment-session/v2'), jsonInit('POST', { contractVersion: 2, checkoutIntentToken: params.checkoutIntentToken, email: params.email, requestKey: params.requestKey, recoverySecret: params.recoverySecret, wantsProductUpdates: params.wantsProductUpdates, rememberDevice: params.rememberDevice, returnUrl })))
   assertSignupPayment(body)
   if (body.paymentSessionToken !== params.recoverySecret) throw new Error('Billing returned payment recovery for another signup')
-  if (body.kind === 'btcpay' && body.cryptoInvoiceLookupToken !== params.recoverySecret) throw new Error('Billing returned Bitcoin recovery for another signup')
+  if (body.kind === 'btcpay' && body.cryptoInvoiceLookupToken !== params.recoverySecret) throw new Error('Billing returned BTCPay recovery for another signup')
   return body
 }
 

@@ -173,9 +173,9 @@ describe('payment lifecycle never cancels an authority implicitly', () => {
       checkoutUrl: 'https://btcpay.test/i/abc123', invoiceId: 'invoice-1', invoiceLookupToken: 'B'.repeat(43),
     }))
     const view = render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
-    fireEvent.click(await screen.findByRole('button', { name: /pay .* with bitcoin for/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /pay .* with bitcoin, lightning or monero for/i }))
     fireEvent.click(await screen.findByRole('button', { name: /confirm annual terms and continue/i }))
-    await screen.findByRole('heading', { name: /pay .* annual with bitcoin/i })
+    await screen.findByRole('heading', { name: /pay with bitcoin, lightning or monero/i })
 
     await act(async () => { window.dispatchEvent(new Event('pagehide')) })
     view.unmount()
@@ -187,7 +187,7 @@ describe('payment lifecycle never cancels an authority implicitly', () => {
     mockBilling(async () => response({ type: 'https://api.silentsuite.io/errors/provider-cancellation-failed' }, false, 502))
     await openCardAuthority()
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel card payment and choose Bitcoin' })[0]!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel card payment and choose cryptocurrency' })[0]!)
 
     await waitFor(() => expect(cancellationCalls()).toHaveLength(1))
     expect(screen.getByTestId('stripe-payment-form')).toBeInTheDocument()
@@ -197,7 +197,7 @@ describe('payment lifecycle never cancels an authority implicitly', () => {
     mockBilling()
     await openCardAuthority()
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel card payment and choose Bitcoin' })[0]!)
+    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel card payment and choose cryptocurrency' })[0]!)
 
     await waitFor(() => expect(screen.queryByTestId('stripe-payment-form')).not.toBeInTheDocument())
     expect(cancellationCalls()).toHaveLength(1)
