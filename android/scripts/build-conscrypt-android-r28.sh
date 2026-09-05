@@ -101,6 +101,29 @@ version = sys.argv[2]
 ndk = sys.argv[3]
 prefix_maps = sys.argv[4:]
 
+# Both upstream Java toolchains must use the pinned release JDK provisioned
+# above. Validate both sibling declarations before writing either file so an
+# upstream change cannot leave only one toolchain patched.
+java_toolchain_patches = []
+for relative, old, new in (
+    (
+        "build-logic/src/main/groovy/conventions.jvm.gradle",
+        "JavaLanguageVersion.of(11)",
+        "JavaLanguageVersion.of(17)",
+    ),
+    ("api-doclet/build.gradle", "jvmToolchain(11)", "jvmToolchain(17)"),
+):
+    path = root / relative
+    text = path.read_text(encoding="utf-8")
+    if text.count(old) != 1:
+        raise SystemExit(
+            f"error: expected exactly one upstream Java toolchain declaration {old!r} in {relative}"
+        )
+    java_toolchain_patches.append((path, text.replace(old, new)))
+
+for path, text in java_toolchain_patches:
+    path.write_text(text, encoding="utf-8")
+
 root_gradle = root / "build.gradle"
 root_text = root_gradle.read_text(encoding="utf-8")
 old_version = 'version = "2.6-SNAPSHOT"'
