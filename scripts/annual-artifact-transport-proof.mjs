@@ -190,28 +190,40 @@ export function tamperedArchive(archive, mutate) {
   const content = readSingleEntryArchive(archive, PROOF_ENTRY_NAME); const payload = JSON.parse(content.toString('utf8')); mutate(payload)
   return buildStoredZipArchive(PROOF_ENTRY_NAME, `${JSON.stringify(payload)}\n`)
 }
-export async function runNegatives({ env = process.env, fetchImpl = fetch } = {}) {
+// Each negative must fail for its intended binding. Any other error (HTTP 500, rate limit,
+// network, parsing, fixture construction) is reported as `unexpected`, never as a rejection,
+// so an outage after the positive retrieval cannot masquerade as ten security rejections.
+// Only the wrong-ID and wrong-repository cases may reject on an explicit HTTP 404 (or, if the
+// service returns a different artifact, on the exact ID mismatch).
+const artifactNotFound = /^GitHub API actions\/artifacts\/[0-9]+ failed \(HTTP 404\)$|^Artifact identity differs from the finalized ID$/
+export async function runNegatives({ env = process.env, fetchImpl = fetch, tamper = tamperedArchive } = {}) {
   const inputs = await consumerInputs(env)
   const positiveResult = await verifyPublishedArtifact({ fetchImpl, ...inputs })
   const flipDigest = (digest) => `${digest.slice(0, -1)}${digest.endsWith('0') ? '1' : '0'}`
   const otherSha = inputs.sourceSha.endsWith('0') ? `${inputs.sourceSha.slice(0, -1)}1` : `${inputs.sourceSha.slice(0, -1)}0`
-  const remote = (name, patch) => [name, () => verifyPublishedArtifact({ fetchImpl, ...inputs, ...patch })]
+  const remote = (name, patch, expected) => [name, () => verifyPublishedArtifact({ fetchImpl, ...inputs, ...patch }), expected]
   const cases = [
-    remote('wrong artifact ID', { artifactId: inputs.artifactId + 1 }),
-    remote('wrong upload digest', { uploadDigest: flipDigest(inputs.uploadDigest) }),
-    remote('wrong run ID', { run: { ...inputs.run, runId: inputs.run.runId + 1 } }),
-    remote('wrong run attempt', { run: { ...inputs.run, runAttempt: inputs.run.runAttempt + 1 } }),
-    remote('wrong source SHA', { sourceSha: otherSha, servedIdentities: { web: { publicSha: otherSha }, docs: { publicSha: otherSha } } }),
-    remote('wrong producer workflow path', { workflowPath: '.github/workflows/annual-only-public-cutover.yml' }),
-    remote('wrong repository', { repository: `${inputs.repository}-substitute` }),
-    remote('wrong predecessor digest', { predecessorDigest: flipDigest(inputs.predecessorDigest) }),
-    remote('wrong signing key', { key: flipDigest(inputs.key) }),
+    remote('wrong artifact ID', { artifactId: inputs.artifactId + 1 }, artifactNotFound),
+    remote('wrong upload digest', { uploadDigest: flipDigest(inputs.uploadDigest) }, /^GitHub API artifact digest differs from the upload output digest$/),
+    remote('wrong run ID', { run: { ...inputs.run, runId: inputs.run.runId + 1 } }, /^Artifact name is not the exact run-scoped proof name$/),
+    remote('wrong run attempt', { run: { ...inputs.run, runAttempt: inputs.run.runAttempt + 1 } }, /^Artifact name is not the exact run-scoped proof name$/),
+    remote('wrong source SHA', { sourceSha: otherSha, servedIdentities: { web: { publicSha: otherSha }, docs: { publicSha: otherSha } } }, /^Artifact run head differs from the source SHA$/),
+    remote('wrong producer workflow path', { workflowPath: '.github/workflows/annual-only-public-cutover.yml' }, /^Producer workflow path differs$/),
+    remote('wrong repository', { repository: `${inputs.repository}-substitute` }, artifactNotFound),
+    remote('wrong predecessor digest', { predecessorDigest: flipDigest(inputs.predecessorDigest) }, /^Proof predecessor digest binding differs$/),
+    remote('wrong signing key', { key: flipDigest(inputs.key) }, /^Proof signature does not verify$/),
     // The produced-bytes digest is deliberately not supplied here so that the signature,
     // not the byte digest, is what rejects a payload altered after signing.
-    ['altered signed payload', () => verifyProofArchive(tamperedArchive(positiveResult.archive, (payload) => { payload.predecessorDigest = flipDigest(payload.predecessorDigest) }), { ...inputs, predecessorDigest: flipDigest(inputs.predecessorDigest), payloadDigest: undefined })],
+    ['altered signed payload', () => verifyProofArchive(tamper(positiveResult.archive, (payload) => { payload.predecessorDigest = flipDigest(payload.predecessorDigest) }), { ...inputs, predecessorDigest: flipDigest(inputs.predecessorDigest), payloadDigest: undefined }), /^Proof signature does not verify$/],
   ]
   const results = []
-  for (const [name, attempt] of cases) { try { await attempt(); results.push({ name, rejected: false, message: 'accepted' }) } catch (error) { results.push({ name, rejected: true, message: error instanceof Error ? error.message : 'unknown error' }) } }
+  for (const [name, attempt, expected] of cases) {
+    try { await attempt(); results.push({ name, rejected: false, unexpected: false, message: 'accepted' }) } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown error'
+      const rejected = expected.test(message)
+      results.push({ name, rejected, unexpected: !rejected, message })
+    }
+  }
   return results
 }
 export async function runProofCli(command = process.argv[2], io = { env: process.env, fetchImpl: fetch, stdout: process.stdout, stderr: process.stderr }) {
@@ -219,9 +231,12 @@ export async function runProofCli(command = process.argv[2], io = { env: process
     if (command === 'produce') { const result = await produceProof({ env: io.env }); io.stdout.write(`Proof payload staged for ${result.artifactName} (payload ${result.payloadDigest})\n`); return 0 }
     if (command === 'consume') { const result = await consumeProof({ env: io.env, fetchImpl: io.fetchImpl }); io.stdout.write(`Proof consumed independently: artifact ${result.artifactId} ${result.digest} entry ${PROOF_ENTRY_NAME} payload ${result.payloadDigest}\n`); return 0 }
     if (command === 'negatives') {
-      const results = await runNegatives({ env: io.env, fetchImpl: io.fetchImpl }); let accepted = 0
-      for (const result of results) { io.stdout.write(`${result.rejected ? 'rejected' : 'ACCEPTED'} ${result.name}: ${result.message}\n`); if (!result.rejected) accepted += 1 }
-      assert(results.length === 10 && accepted === 0, `${accepted} substitution or replay negative(s) were accepted`); return 0
+      const results = await runNegatives({ env: io.env, fetchImpl: io.fetchImpl }); let accepted = 0; let unexpected = 0
+      for (const result of results) {
+        io.stdout.write(`${result.rejected ? 'rejected' : result.unexpected ? 'UNEXPECTED ERROR' : 'ACCEPTED'} ${result.name}: ${result.message}\n`)
+        if (result.unexpected) unexpected += 1; else if (!result.rejected) accepted += 1
+      }
+      assert(results.length === 10 && accepted === 0 && unexpected === 0, `${accepted} substitution or replay negative(s) were accepted and ${unexpected} failed for an unexpected reason`); return 0
     }
     throw new Error('Usage: annual-artifact-transport-proof.mjs produce|consume|negatives')
   } catch (error) { io.stderr.write(`Annual artifact transport proof failed: ${error instanceof Error ? error.message : 'unknown error'}\n`); return 1 }

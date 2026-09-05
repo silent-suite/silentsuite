@@ -189,12 +189,54 @@ test('consume refuses while the staged payload still exists, then admits only th
     const consumed = await consumeProof({ env: consumerEnv, fetchImpl: state.fetchImpl })
     assert.deepEqual(consumed, { artifactId: 9001, digest: bytesDigest(archive), artifactName: produced.artifactName, payloadDigest: produced.payloadDigest })
     const results = await runNegatives({ env: consumerEnv, fetchImpl: state.fetchImpl })
-    assert.equal(results.length, 10); assert.deepEqual(results.filter((result) => !result.rejected), [])
+    assert.equal(results.length, 10); assert.deepEqual(results.filter((result) => !result.rejected || result.unexpected), [])
     assert.deepEqual(results.map((result) => result.name), ['wrong artifact ID', 'wrong upload digest', 'wrong run ID', 'wrong run attempt', 'wrong source SHA', 'wrong producer workflow path', 'wrong repository', 'wrong predecessor digest', 'wrong signing key', 'altered signed payload'])
-    assert.match(results.at(-1).message, /signature does not verify/)
+    // Every negative must have rejected on its intended binding, not on an incidental error.
+    assert.deepEqual(results.map((result) => result.message), [
+      'GitHub API actions/artifacts/9002 failed (HTTP 404)', 'GitHub API artifact digest differs from the upload output digest',
+      'Artifact name is not the exact run-scoped proof name', 'Artifact name is not the exact run-scoped proof name', 'Artifact run head differs from the source SHA',
+      'Producer workflow path differs', 'GitHub API actions/artifacts/9001 failed (HTTP 404)', 'Proof predecessor digest binding differs',
+      'Proof signature does not verify', 'Proof signature does not verify',
+    ])
     const out = []; const io = { env: consumerEnv, fetchImpl: state.fetchImpl, stdout: { write: (text) => out.push(text) }, stderr: { write: (text) => out.push(text) } }
     assert.equal(await runProofCli('consume', io), 0); assert.equal(await runProofCli('negatives', io), 0); assert.equal(await runProofCli('bogus', io), 1)
     const printed = out.join(''); assert.doesNotMatch(printed, new RegExp(keyValue)); assert.doesNotMatch(printed, new RegExp(tokenSentinel)); assert.match(printed, /Proof consumed independently: artifact 9001 sha256:[0-9a-f]{64}/); assert.equal((printed.match(/^rejected /gm) ?? []).length, 10)
     assert.equal(createHash('sha256').update(staged).digest('hex'), produced.payloadDigest.slice(7))
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+test('negatives fail when the positive succeeds but later API requests error, or when the local tamper fixture itself breaks', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'annual-transport-proof-'))
+  try {
+    const env = produceInto(root)
+    const produced = await produceProof({ env })
+    const archive = buildDeflatedArchive([[PROOF_ENTRY_NAME, readFileSync(produced.stagedPath)]])
+    rmSync(join(env.PROOF_DIRECTORY, 'stage'), { recursive: true, force: true })
+    const consumerEnv = { ...env, GH_TOKEN: tokenSentinel, PROOF_ARTIFACT_ID: '9001', PROOF_UPLOAD_DIGEST: bytesDigest(archive) }
+    // The positive retrieval (four API calls plus one storage redirect) succeeds; every request after it is an outage.
+    const outage = (status) => { const state = fixture({ archive }); let calls = 0; const original = state.fetchImpl; state.fetchImpl = async (input, init) => (calls += 1) > 5 ? new Response('{}', { status }) : original(input, init); return state }
+    for (const status of [500, 429]) {
+      const state = outage(status)
+      const results = await runNegatives({ env: consumerEnv, fetchImpl: state.fetchImpl })
+      assert.equal(results.length, 10)
+      const remote = results.slice(0, 9)
+      assert.deepEqual(remote.map((result) => result.rejected), remote.map(() => false), `HTTP ${status} must not count as a rejection`)
+      assert.deepEqual(remote.map((result) => result.unexpected), remote.map(() => true))
+      for (const result of remote) assert.match(result.message, new RegExp(`HTTP ${status}`))
+      assert.equal(results.at(-1).rejected, true, 'the local tamper case does not depend on the API')
+      const out = []; const io = { env: consumerEnv, fetchImpl: outage(status).fetchImpl, stdout: { write: (text) => out.push(text) }, stderr: { write: (text) => out.push(text) } }
+      assert.equal(await runProofCli('negatives', io), 1)
+      const printed = out.join(''); assert.equal((printed.match(/^UNEXPECTED ERROR /gm) ?? []).length, 9); assert.match(printed, /9 failed for an unexpected reason/); assert.doesNotMatch(printed, new RegExp(tokenSentinel))
+    }
+    // A network failure after the positive must likewise never count as a rejection.
+    const network = fixture({ archive }); let calls = 0; const original = network.fetchImpl; network.fetchImpl = async (input, init) => { if ((calls += 1) > 5) throw new TypeError('fetch failed'); return original(input, init) }
+    const networkResults = await runNegatives({ env: consumerEnv, fetchImpl: network.fetchImpl })
+    assert.deepEqual(networkResults.slice(0, 9).map((result) => [result.rejected, result.unexpected, result.message]), Array.from({ length: 9 }, () => [false, true, 'fetch failed']))
+    // A broken local fixture is an unexpected error, not a signature rejection.
+    const healthy = fixture({ archive })
+    const broken = await runNegatives({ env: consumerEnv, fetchImpl: healthy.fetchImpl, tamper: () => { throw new Error('Archive entry checksum does not match') } })
+    assert.deepEqual(broken.slice(0, 9).filter((result) => !result.rejected), [])
+    assert.deepEqual([broken.at(-1).rejected, broken.at(-1).unexpected, broken.at(-1).message], [false, true, 'Archive entry checksum does not match'])
+    const io = { env: consumerEnv, fetchImpl: fixture({ archive }).fetchImpl, stdout: { write: () => {} }, stderr: { write: () => {} } }
+    assert.equal(await runProofCli('negatives', io), 0)
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
