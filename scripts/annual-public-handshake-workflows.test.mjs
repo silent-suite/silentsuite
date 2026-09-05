@@ -190,7 +190,7 @@ test('Web and Docs gate production deploy before build and immediately before mu
   }
 })
 test('only protected exact-SHA annual cutover can mint Stage B after freshly probing both live served identities', () => {
-  const text = source('.github/workflows/annual-only-public-cutover.yml'); const probes = source('scripts/verify-annual-public-served-identities.mjs'); assert.match(text, /workflow_dispatch:/); assert.match(text, /github\.ref == 'refs\/heads\/main'/); assert.match(text, /github\.sha == inputs\.expected_sha/); assert.match(text, /environment: annual-public-cutover/); assert.match(text, /needs: \[deploy-web, deploy-docs\]/); assert.match(text, /ANNUAL_PUBLIC_SERVED_HMAC_KEY/); assert.match(text, /permission-actions: read/); assert.match(text, /Freshly verify exact production Web and Docs served identities before Stage B/); assert.match(text, /verify-annual-public-served-identities\.mjs/); assert.match(probes, /https:\/\/app\.silentsuite\.io\/api\/deployment-identity/); assert.match(probes, /https:\/\/docs\.silentsuite\.io\/deployment-identity\.json/); assert.match(text, /ANNUAL_PUBLIC_SERVED_CLIENT_SERVED_AT/); assert.match(text, /ANNUAL_DEPLOYMENT_VERIFIED: 'true'/); assert.match(text, /annual-only-public-served-attestation-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/); assert.match(text, /publish-annual-public-served-attestation\.mjs/); assert.doesNotMatch(text, /annual-only-final-cutover-manifest\.json/)
+  const text = source('.github/workflows/annual-only-public-cutover.yml'); const probes = source('scripts/verify-annual-public-served-identities.mjs'); assert.match(text, /workflow_dispatch:/); assert.match(text, /github\.ref == 'refs\/heads\/main'/); assert.match(text, /github\.sha == inputs\.expected_sha/); assert.match(text, /environment: annual-public-cutover/); assert.match(text, /needs: \[deploy-web, deploy-docs\]/); assert.match(text, /ANNUAL_PUBLIC_SERVED_HMAC_KEY/); assert.match(text, /permission-actions: read/); assert.match(text, /Freshly verify exact production Web and Docs served identities before Stage B/); assert.match(text, /verify-annual-public-served-identities\.mjs/); assert.match(probes, /https:\/\/app\.silentsuite\.io\/api\/deployment-identity/); assert.match(probes, /https:\/\/docs\.silentsuite\.io\/deployment-identity\.json/); assert.match(text, /ANNUAL_PUBLIC_SERVED_CLIENT_SERVED_AT/); assert.match(text, /ANNUAL_DEPLOYMENT_VERIFIED: 'true'/); assert.match(text, /annual-only-public-served-attestation-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/); assert.match(text, /uses: \.\/\.github\/actions\/publish-annual-public-served-attestation/); assert.doesNotMatch(text, /annual-only-final-cutover-manifest\.json/)
   assert.ok(text.indexOf('Freshly verify exact production Web and Docs served identities before Stage B') < text.indexOf('Reserve, sign, and finalize immutable truthful served attestation'))
   assert.match(source('.github/workflows/deploy-web.yml'), /api\/deployment-identity/); assert.match(source('.github/workflows/deploy-docs.yml'), /deployment-identity\.json/)
 })
@@ -211,3 +211,54 @@ test('reusable cutover callers map only declared secrets and every App token can
   }
 })
 test('preview and CI never contain a public-served key or artifact path', () => { for (const workflow of ['.github/workflows/preview-web.yml', '.github/workflows/preview-docs.yml', '.github/workflows/ci.yml']) assert.doesNotMatch(source(workflow), /ANNUAL_PUBLIC_SERVED_HMAC_KEY|annual-only-public-served-attestation/) })
+test('Stage B publishes the served artifact from a local JavaScript action, the only runtime that natively receives the Actions artifact variables', () => {
+  const workflow = source('.github/workflows/annual-only-public-cutover.yml')
+  // A plain shell `run:` step does not reliably receive ACTIONS_RESULTS_URL /
+  // ACTIONS_RUNTIME_TOKEN, so the publisher fails before artifact reservation.
+  assert.doesNotMatch(workflow, /run: node scripts\/publish-annual-public-served-attestation\.mjs/)
+  assert.match(workflow, /uses: \.\/\.github\/actions\/publish-annual-public-served-attestation\n/)
+  const actionDirectory = '.github/actions/publish-annual-public-served-attestation'
+  const action = source(join(actionDirectory, 'action.yml'))
+  assert.match(action, /using: node(?:2[0-9]|[2-9][0-9])\n/)
+  const entry = action.match(/\n\s+main: (\S+)\n/)?.[1]
+  assert.ok(entry, 'the JavaScript action must declare an entrypoint')
+  const entrySource = source(join(actionDirectory, entry))
+  assert.match(entrySource, /publish-annual-public-served-attestation\.mjs/)
+  // The runtime credentials must reach only the publisher process itself.
+  for (const [name, text] of [['workflow', workflow], ['action', action], ['entrypoint', entrySource]]) {
+    assert.doesNotMatch(text, /ACTIONS_RUNTIME_TOKEN|ACTIONS_RESULTS_URL/, `${name} must not restate the Actions artifact runtime variables`)
+  }
+  const publisher = source('scripts/publish-annual-public-served-attestation.mjs')
+  assert.doesNotMatch(publisher, /GITHUB_ENV/)
+  for (const write of publisher.match(/appendFile\([\s\S]{0,300}?\)/g) ?? []) assert.doesNotMatch(write, /ACTIONS_|runtimeToken|resultsUrl|signedUploadUrl/)
+})
+test('the served-attestation publisher never leaks the Actions runtime token or results URL to logs, GITHUB_ENV, or step outputs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'annual-stage-b-publish-'))
+  const githubEnv = join(root, 'github-env')
+  const githubOutput = join(root, 'github-output')
+  writeFileSync(githubEnv, '')
+  writeFileSync(githubOutput, '')
+  const runtimeToken = `header.${Buffer.from(JSON.stringify({ scp: 'Actions.Results:run-backend:job-backend' })).toString('base64url')}.signature-secret-material`
+  const resultsUrl = 'https://results-receiver.invalid.localhost/'
+  const result = spawnSync(process.execPath, [resolve('scripts/publish-annual-public-served-attestation.mjs')], {
+    cwd: resolve('.'),
+    encoding: 'utf8',
+    env: {
+      PATH: process.env.PATH ?? '',
+      GITHUB_RUN_ID: '33907789637',
+      GITHUB_RUN_ATTEMPT: '1',
+      GITHUB_REPOSITORY: 'silent-suite/silentsuite',
+      ANNUAL_PUBLIC_SERVED_ARTIFACT_NAME: 'annual-only-public-served-attestation-33907789637-1',
+      ANNUAL_DEPLOYMENT_VERIFIED: 'true',
+      ANNUAL_PUBLIC_SERVED_OUTPUT_DIRECTORY: join(root, 'public-served'),
+      ACTIONS_RESULTS_URL: resultsUrl,
+      ACTIONS_RUNTIME_TOKEN: runtimeToken,
+      GITHUB_ENV: githubEnv,
+      GITHUB_OUTPUT: githubOutput,
+    },
+  })
+  const emitted = `${result.stdout}${result.stderr}${readFileSync(githubEnv, 'utf8')}${readFileSync(githubOutput, 'utf8')}`
+  rmSync(root, { recursive: true, force: true })
+  assert.notEqual(result.status, 0)
+  assert.doesNotMatch(emitted, /signature-secret-material|results-receiver\.invalid/)
+})

@@ -158,6 +158,7 @@ jobs:
         run: node scripts/verify-annual-public-served-identities.mjs
       - name: Reserve, sign, and finalize immutable truthful served attestation
         id: served-attestation
+        uses: ./.github/actions/publish-annual-public-served-attestation
         env:
           ANNUAL_DEPLOYMENT_VERIFIED: 'true'
           ANNUAL_PRE_PUBLIC_ADMISSION: .annual-only/pre-public/annual-only-pre-public-admission.json
@@ -173,7 +174,6 @@ jobs:
           ANNUAL_PUBLIC_SERVED_ARTIFACT_NAME: annual-only-public-served-attestation-${{ github.run_id }}-${{ github.run_attempt }}
           ANNUAL_PUBLIC_SERVED_CLIENT_SERVED_AT: ${{ steps.served-identities.outputs.client_served_at }}
           EXPECTED_PUBLIC_SHA: ${{ inputs.expected_sha }}
-        run: node scripts/publish-annual-public-served-attestation.mjs
 
   cutover-outcome:
     name: Refuse a silent cutover that executed no admitted work
