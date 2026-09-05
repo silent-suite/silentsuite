@@ -109,7 +109,13 @@ jobs:
     timeout-minutes: 10
     environment: annual-public-cutover
     permissions:
+      # actions: read lets the default token re-read the finalized artifact record
+      # after upload; it grants nothing on the private repository.
+      actions: read
       contents: read
+    outputs:
+      artifact_id: ${{ steps.served-attestation-upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.served-attestation-upload.outputs.artifact-digest }}
     env:
       ANNUAL_PUBLIC_CUTOVER_APPROVED_SHA: ${{ vars.ANNUAL_PUBLIC_CUTOVER_APPROVED_SHA }}
     steps:
@@ -156,9 +162,10 @@ jobs:
         env:
           EXPECTED_PUBLIC_SHA: ${{ inputs.expected_sha }}
         run: node scripts/verify-annual-public-served-identities.mjs
-      - name: Reserve, sign, and finalize immutable truthful served attestation
+      - name: Sign truthful served attestation before any artifact exists
         id: served-attestation
-        uses: ./.github/actions/publish-annual-public-served-attestation
+        shell: bash
+        run: node scripts/build-annual-public-served-attestation.mjs
         env:
           ANNUAL_DEPLOYMENT_VERIFIED: 'true'
           ANNUAL_PRE_PUBLIC_ADMISSION: .annual-only/pre-public/annual-only-pre-public-admission.json
@@ -174,6 +181,34 @@ jobs:
           ANNUAL_PUBLIC_SERVED_ARTIFACT_NAME: annual-only-public-served-attestation-${{ github.run_id }}-${{ github.run_attempt }}
           ANNUAL_PUBLIC_SERVED_CLIENT_SERVED_AT: ${{ steps.served-identities.outputs.client_served_at }}
           EXPECTED_PUBLIC_SHA: ${{ inputs.expected_sha }}
+      - name: Upload exactly the signed served attestation through the pinned official artifact action
+        id: served-attestation-upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: annual-only-public-served-attestation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .annual-only/public-served/annual-only-public-served-attestation.json
+          if-no-files-found: error
+          include-hidden-files: false
+      - name: Verify the finalized Stage B artifact record binds this exact run and head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ARTIFACT_ID: ${{ steps.served-attestation-upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.served-attestation-upload.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] || { echo '::error::official upload returned no finalized artifact ID'; exit 1; }
+          digest="${ARTIFACT_DIGEST#sha256:}"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]] || { echo '::error::official upload returned no finalized artifact digest'; exit 1; }
+          artifact="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID")"
+          test "$(jq -r .id <<<"$artifact")" = "$ARTIFACT_ID"
+          test "$(jq -r .name <<<"$artifact")" = "annual-only-public-served-attestation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test "$(jq -r .workflow_run.id <<<"$artifact")" = "$GITHUB_RUN_ID"
+          test "$(jq -r .workflow_run.head_sha <<<"$artifact")" = "$EXPECTED_SHA"
+          test "$(jq -r .expired <<<"$artifact")" = false
+          test "$(jq -r '.digest | ltrimstr("sha256:")' <<<"$artifact")" = "$digest"
+          echo "Stage B finalized: public artifact $ARTIFACT_ID sha256:$digest for run $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT. Dispatch private Stage C with exactly these identities."
 
   cutover-outcome:
     name: Refuse a silent cutover that executed no admitted work
