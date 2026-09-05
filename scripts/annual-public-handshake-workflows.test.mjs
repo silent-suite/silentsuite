@@ -232,33 +232,10 @@ test('Stage B publishes the served artifact from a local JavaScript action, the 
   assert.doesNotMatch(publisher, /GITHUB_ENV/)
   for (const write of publisher.match(/appendFile\([\s\S]{0,300}?\)/g) ?? []) assert.doesNotMatch(write, /ACTIONS_|runtimeToken|resultsUrl|signedUploadUrl/)
 })
-test('the served-attestation publisher never leaks the Actions runtime token or results URL to logs, GITHUB_ENV, or step outputs', () => {
-  const root = mkdtempSync(join(tmpdir(), 'annual-stage-b-publish-'))
-  const githubEnv = join(root, 'github-env')
-  const githubOutput = join(root, 'github-output')
-  writeFileSync(githubEnv, '')
-  writeFileSync(githubOutput, '')
-  const runtimeToken = `header.${Buffer.from(JSON.stringify({ scp: 'Actions.Results:run-backend:job-backend' })).toString('base64url')}.signature-secret-material`
-  const resultsUrl = 'https://results-receiver.invalid.localhost/'
-  const result = spawnSync(process.execPath, [resolve('scripts/publish-annual-public-served-attestation.mjs')], {
-    cwd: resolve('.'),
-    encoding: 'utf8',
-    env: {
-      PATH: process.env.PATH ?? '',
-      GITHUB_RUN_ID: '33907789637',
-      GITHUB_RUN_ATTEMPT: '1',
-      GITHUB_REPOSITORY: 'silent-suite/silentsuite',
-      ANNUAL_PUBLIC_SERVED_ARTIFACT_NAME: 'annual-only-public-served-attestation-33907789637-1',
-      ANNUAL_DEPLOYMENT_VERIFIED: 'true',
-      ANNUAL_PUBLIC_SERVED_OUTPUT_DIRECTORY: join(root, 'public-served'),
-      ACTIONS_RESULTS_URL: resultsUrl,
-      ACTIONS_RUNTIME_TOKEN: runtimeToken,
-      GITHUB_ENV: githubEnv,
-      GITHUB_OUTPUT: githubOutput,
-    },
-  })
-  const emitted = `${result.stdout}${result.stderr}${readFileSync(githubEnv, 'utf8')}${readFileSync(githubOutput, 'utf8')}`
-  rmSync(root, { recursive: true, force: true })
-  assert.notEqual(result.status, 0)
-  assert.doesNotMatch(emitted, /signature-secret-material|results-receiver\.invalid/)
+test('the served-attestation publisher hands the Actions runtime credentials to no child process', () => {
+  // A child process inherits this environment, so an external archiver would receive the
+  // runtime token, results URL, and Stage B signing keys. Execution-level proof that the
+  // action entrypoint publishes, receives the runtime variables, and leaks nothing lives
+  // in scripts/publish-annual-public-served-attestation.test.mjs.
+  assert.doesNotMatch(source('scripts/publish-annual-public-served-attestation.mjs'), /child_process|execFile|spawn/)
 })
