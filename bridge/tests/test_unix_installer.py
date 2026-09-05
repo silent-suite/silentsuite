@@ -64,7 +64,13 @@ exit 0
     return fake_bin
 
 
-def run_installer(tmp_path: Path, checksum_case: str, checksum_body: str, verifier: str | None = "sha256sum"):
+def run_installer(
+    tmp_path: Path,
+    checksum_case: str,
+    checksum_body: str,
+    verifier: str | None = "sha256sum",
+    binary_body: str = BINARY_BODY,
+):
     fake_bin = installer_path(tmp_path, verifier=verifier)
     install_dir = tmp_path / "install"
     env = {
@@ -74,7 +80,7 @@ def run_installer(tmp_path: Path, checksum_case: str, checksum_body: str, verifi
         "SILENTSUITE_INSTALL_DIR": str(install_dir),
         "CHECKSUM_CASE": checksum_case,
         "CHECKSUM_BODY": checksum_body,
-        "BINARY_BODY": BINARY_BODY,
+        "BINARY_BODY": binary_body,
         "TMPDIR": str(tmp_path),
     }
     (tmp_path / "home").mkdir()
@@ -131,3 +137,26 @@ def test_unix_installer_accepts_one_exact_matching_checksum(tmp_path: Path):
     assert installed.read_text(encoding="utf-8") == BINARY_BODY
     assert os.access(installed, os.X_OK)
     assert leftovers == []
+    assert "Auto-start configured" in result.stdout
+    assert "Auto-start was not confirmed" not in result.stdout
+
+
+AUTOSTART_FAILING_BODY = '#!/bin/sh\n[ "${1:-}" = "--install-autostart" ] && exit 1\nexit 0\n'
+
+
+def test_unix_installer_does_not_claim_autostart_when_install_autostart_fails(tmp_path: Path):
+    body_hash = hashlib.sha256(AUTOSTART_FAILING_BODY.encode()).hexdigest()
+
+    result, installed, leftovers = run_installer(
+        tmp_path,
+        "valid",
+        f"{body_hash}  silentsuite-bridge-linux-x86_64\n",
+        binary_body=AUTOSTART_FAILING_BODY,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert installed.exists()
+    assert leftovers == []
+    assert "Auto-start configured" not in result.stdout
+    assert "Auto-start was not confirmed" in result.stdout
+    assert "--install-autostart" in result.stdout

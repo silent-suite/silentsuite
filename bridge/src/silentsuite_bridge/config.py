@@ -6,7 +6,9 @@ All defaults point to server.silentsuite.io.
 
 import json
 import os
+import re
 import sys
+import tempfile
 from ipaddress import ip_address
 
 from appdirs import user_data_dir
@@ -17,24 +19,7 @@ ETEBASE_SERVER_URL = os.environ.get(
     "https://server.silentsuite.io",
 )
 
-# --- Network ---
-LISTEN_ADDRESS = os.environ.get("SILENTSUITE_LISTEN_ADDRESS", "127.0.0.1")
-LISTEN_PORT = int(os.environ.get("SILENTSUITE_LISTEN_PORT", "37358"))
-
-
-def _format_host_port(host: str, port: int) -> str:
-    """Format host:port for Radicale, bracketing IPv6 literals."""
-    return f"[{host}]:{port}" if ":" in host and not host.startswith("[") else f"{host}:{port}"
-
-
-DEFAULT_SERVER_HOSTS = _format_host_port(LISTEN_ADDRESS, LISTEN_PORT)
-SERVER_HOSTS = os.environ.get(
-    "SILENTSUITE_SERVER_HOSTS",
-    DEFAULT_SERVER_HOSTS,
-)
-ALLOW_REMOTE = os.environ.get("SILENTSUITE_ALLOW_REMOTE", "").lower() in {"1", "true", "yes", "on"}
-
-# --- SSL ---
+# --- Boolean parsing ---
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSEY = {"0", "false", "no", "off"}
 
@@ -55,6 +40,218 @@ def _bool_value(value, default: bool = False) -> bool:
     return default
 
 
+# --- Network ---
+#
+# The listener profile is resolved from three layers, highest precedence first:
+#   1. environment variables (SILENTSUITE_LISTEN_ADDRESS, ...),
+#   2. the persisted, closed-world ``"network"`` object in settings.json,
+#   3. built-in loopback defaults.
+# Autostart entries (systemd/launchd/registry) run with a clean environment,
+# so ``--install-autostart`` persists explicitly configured values into layer 2.
+# Layer 2 is validated strictly and fails closed; nothing outside the four keys
+# below is ever read from or written to it.
+
+NETWORK_PROFILE_KEY = "network"
+NETWORK_PROFILE_ENV = {
+    "listenAddress": "SILENTSUITE_LISTEN_ADDRESS",
+    "listenPort": "SILENTSUITE_LISTEN_PORT",
+    "serverHosts": "SILENTSUITE_SERVER_HOSTS",
+    "allowRemote": "SILENTSUITE_ALLOW_REMOTE",
+}
+DEFAULT_LISTEN_ADDRESS = "127.0.0.1"
+DEFAULT_LISTEN_PORT = 37358
+
+_HOSTNAME_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+_PORT_RULE = "must be an integer from 1 to 65535"
+# 65535 has five digits; longer digit strings are rejected before int() so an
+# oversized value can never raise ValueError past the validator.
+_PORT_MAX_DIGITS = 5
+
+
+class NetworkConfigError(RuntimeError):
+    """A network configuration refusal whose text names settings and rules, never supplied values."""
+
+
+class NetworkProfileError(NetworkConfigError):
+    """An invalid network profile. Messages name keys and rules, never supplied values."""
+
+
+class SettingsFileError(RuntimeError):
+    """settings.json exists but is not a JSON object; message never echoes its content."""
+
+
+def _format_host_port(host: str, port: int) -> str:
+    """Format host:port for Radicale, bracketing IPv6 literals."""
+    return f"[{host}]:{port}" if ":" in host and not host.startswith("[") else f"{host}:{port}"
+
+
+def _is_valid_host(host: str) -> bool:
+    """Accept an IP literal or an RFC 1123 hostname; reject everything else."""
+    if not host or len(host) > 253 or any(ch.isspace() for ch in host):
+        return False
+    try:
+        ip_address(host)
+        return True
+    except ValueError:
+        pass
+    labels = host[:-1].split(".") if host.endswith(".") else host.split(".")
+    return all(_HOSTNAME_LABEL.match(label) for label in labels)
+
+
+def _validate_port(value, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+        raise NetworkProfileError(f"{label} {_PORT_RULE}")
+    return value
+
+
+def _parse_port_text(text: str, label: str) -> int:
+    """Parse a bounded decimal port string; never lets int() see unbounded input."""
+    if not text.isascii() or not text.isdigit() or len(text) > _PORT_MAX_DIGITS:
+        raise NetworkProfileError(f"{label} {_PORT_RULE}")
+    return _validate_port(int(text), label)
+
+
+def _parse_env_port(raw: str, label: str = "SILENTSUITE_LISTEN_PORT") -> int:
+    return _parse_port_text(raw.strip(), label)
+
+
+def _split_host_spec(spec: str, label: str) -> tuple[str, int]:
+    """Split one Radicale host spec strictly: host:port, [ipv6]:port, or ipv6:port."""
+    if spec.startswith("["):
+        end = spec.find("]")
+        if end == -1 or spec[end + 1 : end + 2] != ":":
+            raise NetworkProfileError(f"{label} contains a malformed bracketed IPv6 entry")
+        host, port_text = spec[1:end], spec[end + 2 :]
+    else:
+        host, separator, port_text = spec.rpartition(":")
+        if not separator:
+            raise NetworkProfileError(f"{label} entries must include a port")
+    port = _parse_port_text(port_text, f"{label} entries")
+    if not _is_valid_host(host):
+        raise NetworkProfileError(f"{label} entries must use an IP literal or hostname")
+    return host, port
+
+
+def _validate_host_specs(value, label: str) -> str:
+    if not isinstance(value, str):
+        raise NetworkProfileError(f"{label} must be a string of comma-separated host:port entries")
+    specs = [spec.strip() for spec in value.split(",")]
+    if any(not spec for spec in specs):
+        raise NetworkProfileError(f"{label} must be a non-empty list of host:port entries")
+    for spec in specs:
+        _split_host_spec(spec, label)
+    return ",".join(specs)
+
+
+def validate_network_profile(profile, source: str = "settings") -> dict:
+    """Return a normalized copy of a closed-world network profile or fail closed.
+
+    ``source`` selects the labels used in error text: ``"settings"`` names JSON
+    keys, ``"environment"`` names the environment variables. Supplied values are
+    never echoed.
+    """
+    if not isinstance(profile, dict):
+        raise NetworkProfileError("network profile must be a JSON object")
+    unknown = [key for key in profile if key not in NETWORK_PROFILE_ENV]
+    if unknown:
+        raise NetworkProfileError(f"network profile contains {len(unknown)} unsupported key(s)")
+
+    def label(key: str) -> str:
+        return NETWORK_PROFILE_ENV[key] if source == "environment" else key
+
+    normalized: dict = {}
+    if "listenAddress" in profile:
+        value = profile["listenAddress"]
+        if not isinstance(value, str) or not _is_valid_host(value.strip()):
+            raise NetworkProfileError(f"{label('listenAddress')} must be an IP literal or hostname")
+        normalized["listenAddress"] = value.strip()
+    if "listenPort" in profile:
+        normalized["listenPort"] = _validate_port(profile["listenPort"], label("listenPort"))
+    if "serverHosts" in profile:
+        normalized["serverHosts"] = _validate_host_specs(profile["serverHosts"], label("serverHosts"))
+    if "allowRemote" in profile:
+        if not isinstance(profile["allowRemote"], bool):
+            raise NetworkProfileError(f"{label('allowRemote')} must be true or false")
+        normalized["allowRemote"] = profile["allowRemote"]
+    return normalized
+
+
+def explicit_network_profile_from_env(environ=None) -> dict:
+    """Return only the network values explicitly present in the environment.
+
+    This is the closed allowlist of what ``--install-autostart`` may persist.
+    Unset variables are absent (never defaulted); present ones are validated
+    strictly so a malformed value fails before anything is written.
+    """
+    environ = os.environ if environ is None else environ
+    profile: dict = {}
+    for key, variable in NETWORK_PROFILE_ENV.items():
+        if variable not in environ:
+            continue
+        raw = environ[variable]
+        if key == "listenPort":
+            profile[key] = _parse_env_port(raw, variable)
+        elif key == "allowRemote":
+            normalized = raw.strip().lower()
+            if normalized in _TRUTHY:
+                profile[key] = True
+            elif normalized in _FALSEY or normalized == "":
+                profile[key] = False
+            else:
+                raise NetworkProfileError(f"{variable} must be true or false")
+        else:
+            profile[key] = raw
+    return validate_network_profile(profile, source="environment")
+
+
+LISTEN_ADDRESS = DEFAULT_LISTEN_ADDRESS
+LISTEN_PORT = DEFAULT_LISTEN_PORT
+DEFAULT_SERVER_HOSTS = _format_host_port(LISTEN_ADDRESS, LISTEN_PORT)
+SERVER_HOSTS = DEFAULT_SERVER_HOSTS
+ALLOW_REMOTE = False
+# Bounded, value-free description of why the effective network profile is
+# unusable. Checked by validate_network_config() so startup fails closed.
+NETWORK_PROFILE_ERROR: str | None = None
+
+
+def _resolve_network(settings: dict) -> None:
+    """Apply env > persisted profile > defaults to the module-level network globals."""
+    global LISTEN_ADDRESS, LISTEN_PORT, DEFAULT_SERVER_HOSTS, SERVER_HOSTS, ALLOW_REMOTE
+    global NETWORK_PROFILE_ERROR
+
+    errors: list[str] = []
+    persisted: dict = {}
+    if NETWORK_PROFILE_KEY in settings:
+        try:
+            persisted = validate_network_profile(settings[NETWORK_PROFILE_KEY])
+        except NetworkProfileError as exc:
+            errors.append(f"settings.json {exc}")
+
+    env_address = os.environ.get("SILENTSUITE_LISTEN_ADDRESS")
+    env_port: int | None = None
+    env_port_raw = os.environ.get("SILENTSUITE_LISTEN_PORT")
+    if env_port_raw is not None:
+        try:
+            env_port = _parse_env_port(env_port_raw)
+        except NetworkProfileError as exc:
+            errors.append(str(exc))
+    env_hosts = os.environ.get("SILENTSUITE_SERVER_HOSTS")
+    env_allow_remote = os.environ.get("SILENTSUITE_ALLOW_REMOTE")
+
+    LISTEN_ADDRESS = env_address if env_address is not None else persisted.get("listenAddress", DEFAULT_LISTEN_ADDRESS)
+    LISTEN_PORT = env_port if env_port is not None else persisted.get("listenPort", DEFAULT_LISTEN_PORT)
+    DEFAULT_SERVER_HOSTS = _format_host_port(LISTEN_ADDRESS, LISTEN_PORT)
+    SERVER_HOSTS = env_hosts if env_hosts is not None else persisted.get("serverHosts", DEFAULT_SERVER_HOSTS)
+    if env_allow_remote is not None:
+        ALLOW_REMOTE = _bool_value(env_allow_remote, False)
+    else:
+        ALLOW_REMOTE = persisted.get("allowRemote", False)
+    NETWORK_PROFILE_ERROR = "; ".join(errors) if errors else None
+
+
+_resolve_network({})
+
+# --- SSL ---
 SSL_ENABLED = _env_bool("SILENTSUITE_BRIDGE_SSL", False) or _env_bool("SILENTSUITE_SSL", False)
 SSL_CERT_FILE = os.environ.get(
     "SILENTSUITE_BRIDGE_SSL_CERT", os.environ.get("SILENTSUITE_SSL_CERT", "")
@@ -159,21 +356,30 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
-def remote_bind_reasons() -> list[str]:
-    """Describe configured bind values that would expose the bridge remotely."""
-    reasons: list[str] = []
-    if not is_loopback_host(LISTEN_ADDRESS):
-        reasons.append(f"SILENTSUITE_LISTEN_ADDRESS={LISTEN_ADDRESS}")
+def _remote_bind_reasons_for(listen_address: str, server_hosts: str) -> list[str]:
+    """Describe which bind settings would expose the bridge remotely.
 
-    for host_spec in SERVER_HOSTS.split(","):
+    Reasons name the setting, not its value, so they are safe to print or log.
+    """
+    reasons: list[str] = []
+    if not is_loopback_host(listen_address):
+        reasons.append("SILENTSUITE_LISTEN_ADDRESS is not a loopback address")
+
+    for host_spec in server_hosts.split(","):
         host_spec = host_spec.strip()
         if not host_spec:
             continue
         host = _extract_host(host_spec)
         if not is_loopback_host(host):
-            reasons.append(f"SILENTSUITE_SERVER_HOSTS includes {host_spec}")
+            reasons.append("SILENTSUITE_SERVER_HOSTS includes a non-loopback host")
+            break
 
     return reasons
+
+
+def remote_bind_reasons() -> list[str]:
+    """Describe effective bind settings that would expose the bridge remotely."""
+    return _remote_bind_reasons_for(LISTEN_ADDRESS, SERVER_HOSTS)
 
 
 def is_remote_bind_configured() -> bool:
@@ -185,15 +391,70 @@ def is_dashboard_enabled() -> bool:
     return not is_remote_bind_configured()
 
 
+def _remote_bind_error(reasons: list[str]) -> NetworkConfigError:
+    joined = "; ".join(reasons)
+    return NetworkConfigError(
+        "SilentSuite Bridge refuses non-loopback bind without SILENTSUITE_ALLOW_REMOTE=1. "
+        f"Remote bind setting(s): {joined}. The bridge exposes decrypted DAV data over HTTP."
+    )
+
+
 def validate_network_config() -> None:
-    """Fail closed before exposing plaintext DAV/dashboard surfaces remotely."""
+    """Fail closed before exposing plaintext DAV/dashboard surfaces remotely.
+
+    An invalid persisted profile (or malformed environment port) is rejected
+    first so a corrupted settings.json can never widen the bind.
+    """
+    if NETWORK_PROFILE_ERROR:
+        raise NetworkProfileError(f"SilentSuite Bridge network configuration is invalid: {NETWORK_PROFILE_ERROR}")
     reasons = remote_bind_reasons()
     if reasons and not ALLOW_REMOTE:
-        joined = "; ".join(reasons)
-        raise RuntimeError(
-            "SilentSuite Bridge refuses non-loopback bind without SILENTSUITE_ALLOW_REMOTE=1. "
-            f"Remote bind setting(s): {joined}. The bridge exposes decrypted DAV data over HTTP."
+        raise _remote_bind_error(reasons)
+
+
+def validate_restart_profile(profile: dict) -> dict:
+    """Validate the settings-only view a clean-environment restart will use.
+
+    Autostart processes see no shell environment, so permission for a remote
+    bind must itself be persisted. Returns the normalized profile.
+    """
+    normalized = validate_network_profile(profile)
+    address = normalized.get("listenAddress", DEFAULT_LISTEN_ADDRESS)
+    port = normalized.get("listenPort", DEFAULT_LISTEN_PORT)
+    hosts = normalized.get("serverHosts", _format_host_port(address, port))
+    reasons = _remote_bind_reasons_for(address, hosts)
+    if reasons and not normalized.get("allowRemote", False):
+        raise NetworkProfileError(
+            "the persisted network profile would bind remotely on restart without allowRemote permission "
+            f"({'; '.join(reasons)})"
         )
+    return normalized
+
+
+def persisted_network_profile(settings: dict | None = None) -> dict:
+    """Return the validated persisted profile from settings.json ({} when absent).
+
+    Reads strictly: a settings.json that is not a JSON object raises
+    SettingsFileError rather than being treated as empty, so a later write
+    can never silently replace an unreadable file.
+    """
+    if settings is None:
+        settings = read_settings_strict()
+    if NETWORK_PROFILE_KEY not in settings:
+        return {}
+    return validate_network_profile(settings[NETWORK_PROFILE_KEY])
+
+
+def network_profile_for_autostart() -> dict:
+    """Compute the profile ``--install-autostart`` may persist, validating before any write.
+
+    Explicit environment values are merged over the existing persisted profile
+    (retention on reinstall); nothing is defaulted. Both the effective
+    configuration and the resulting restart profile must validate.
+    """
+    validate_network_config()
+    merged = {**persisted_network_profile(), **explicit_network_profile_from_env()}
+    return validate_restart_profile(merged)
 
 
 def dav_scheme() -> str:
@@ -256,11 +517,14 @@ def load_settings():
             settings = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
     try:
         if "syncInterval" in settings:
             SYNC_INTERVAL = int(settings["syncInterval"])
     except ValueError:
         pass
+    _resolve_network(settings)
     # Environment variables override settings even if tests/processes set them
     # after the module was imported.
     env_ssl = os.environ.get("SILENTSUITE_BRIDGE_SSL")
@@ -289,6 +553,61 @@ def save_settings(settings):
     existing.update(settings)
     with open(SETTINGS_FILE, "w") as f:
         json.dump(existing, f, indent=2)
+
+
+def save_network_profile(profile: dict) -> bool:
+    """Persist a validated network profile; return whether settings.json was written.
+
+    An empty profile writes nothing so a no-env installation never pins the
+    loopback defaults into settings.json. Unrelated settings are preserved.
+    The write is atomic (temp file + replace in the same directory) so a
+    failure leaves the existing settings.json byte-for-byte intact, and an
+    existing file that is not a JSON object is refused rather than discarded.
+    """
+    normalized = validate_network_profile(profile)
+    if not normalized:
+        return False
+    ensure_data_dir()
+    existing = read_settings_strict()
+    existing[NETWORK_PROFILE_KEY] = normalized
+    _atomic_write_json(SETTINGS_FILE, existing)
+    return True
+
+
+def _atomic_write_json(path: str, payload: dict) -> None:
+    """Write JSON to a sibling temp file, fsync, then atomically replace ``path``."""
+    directory = os.path.dirname(path) or "."
+    fd, temp_path = tempfile.mkstemp(prefix=".settings-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(temp_path, os.stat(path).st_mode & 0o777)
+        except FileNotFoundError:
+            pass
+        os.replace(temp_path, path)
+    except BaseException:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
+
+
+def read_settings_strict() -> dict:
+    """Read settings.json as a JSON object; missing file is {}, malformed content is an error."""
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            settings = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise SettingsFileError("settings.json is not valid JSON; repair or remove it first") from exc
+    if not isinstance(settings, dict):
+        raise SettingsFileError("settings.json must contain a JSON object; repair or remove it first")
+    return settings
 
 
 def get_settings():

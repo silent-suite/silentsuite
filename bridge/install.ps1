@@ -208,9 +208,17 @@ function Invoke-SilentSuiteBridgeInstall {
 
     # --- Auto-start ---
     Write-Step "Setting up auto-start..."
+    # The bridge validates and persists explicitly set SILENTSUITE_LISTEN_* /
+    # SILENTSUITE_SERVER_HOSTS / SILENTSUITE_ALLOW_REMOTE into settings.json before
+    # writing the startup entry. A non-zero exit code means the entry was not
+    # confirmed, so do not report success in that case.
     try {
         & $ExePath --install-autostart 2>&1 | Out-Null
-        Write-Ok "Auto-start configured"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Auto-start was not confirmed (exit code $LASTEXITCODE). Retry later with: $BinaryName --install-autostart"
+        } else {
+            Write-Ok "Auto-start configured"
+        }
     } catch {
         Write-Warn "Could not set up auto-start (run later: $BinaryName --install-autostart)"
     }

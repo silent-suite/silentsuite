@@ -675,8 +675,11 @@ def main():
         print("                        Remove credentials plus that account's cache")
         print("  --server URL          Etebase server URL (for self-hosters)")
         print("  --manual-login        Run CLI login (for development/testing)")
-        print("  --install-autostart   Install auto-start for current platform")
-        print("  --remove-autostart    Remove auto-start for current platform")
+        print("  --install-autostart   Install auto-start for current platform; persists")
+        print("                        explicitly set listen/hosts/remote settings into")
+        print("                        settings.json so the clean-environment restart keeps them")
+        print("  --remove-autostart    Remove auto-start for current platform (keeps settings;")
+        print("                        on Windows a running bridge is not stopped)")
         print("  --no-tray             Start without system tray icon")
         print("  --setup-macos-apple-accounts")
         print("                        Generate/reuse a localhost HTTPS certificate")
@@ -688,7 +691,8 @@ def main():
         print("  SILENTSUITE_LISTEN_PORT      Listen port (default: 37358)")
         print("  SILENTSUITE_SERVER_HOSTS     Radicale host specs (default: listen address:port)")
         print("  SILENTSUITE_ALLOW_REMOTE     Allow non-loopback bind and disable dashboard")
-        print("  SILENTSUITE_DATA_DIR         Data directory path")
+        print("  (Environment overrides the persisted settings.json network profile.)")
+        print("  SILENTSUITE_DATA_DIR         Data directory path (not supported with --install-autostart)")
         print("  SILENTSUITE_LOG_LEVEL        Log level (default: INFO)")
         print("  SILENTSUITE_LOG_FILE         Log file path")
         print("  SILENTSUITE_SYNC_INTERVAL    Sync interval in seconds (default: 900)")
@@ -769,6 +773,14 @@ def main():
     if "--setup-macos-apple-accounts" in sys.argv:
         sys.exit(setup_macos_apple_accounts())
 
+    # Handle --remove-autostart before network/SSL validation: removal starts
+    # no listener and writes no settings, and an operator with a corrupt
+    # persisted profile must still be able to remove the auto-start entry.
+    if "--remove-autostart" in sys.argv:
+        from .autostart import remove_autostart
+
+        sys.exit(remove_autostart())
+
     try:
         config.validate_network_config()
         config.validate_ssl_config()
@@ -780,6 +792,10 @@ def main():
             "Bridge configuration is invalid",
             exc,
         )
+        if isinstance(exc, config.NetworkConfigError):
+            # Network refusals name settings and rules only, never supplied
+            # values, so the actionable text is safe to show the operator.
+            print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
     config.ensure_data_dir()
@@ -860,19 +876,12 @@ def main():
         manual_login()
         sys.exit(0)
 
-    # Handle --install-autostart
+    # Handle --install-autostart. The network profile is validated and
+    # persisted inside install_autostart() before any platform entry is written.
     if "--install-autostart" in sys.argv:
         from .autostart import install_autostart
 
-        install_autostart()
-        sys.exit(0)
-
-    # Handle --remove-autostart
-    if "--remove-autostart" in sys.argv:
-        from .autostart import remove_autostart
-
-        remove_autostart()
-        sys.exit(0)
+        sys.exit(install_autostart())
 
     # Resume durable cleanup before checking whether account state allows startup.
     if not _prepare_server_start():
