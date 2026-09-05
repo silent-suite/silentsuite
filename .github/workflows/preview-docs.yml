@@ -4,6 +4,9 @@ on:
   push:
     branches-ignore:
       - main
+      # Exact branch only: the annual artifact transport proof touches .github/workflows/**
+      # and must not deploy an incidental docs preview. No other branch is excluded.
+      - chore/annual-artifact-proof-20260905
     paths:
       - 'apps/docs/**'
       - 'apps/web/**'

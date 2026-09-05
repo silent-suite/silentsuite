@@ -1,0 +1,69 @@
+name: Annual Artifact Transport Proof (non-production)
+
+# Proof-only. Evidences that an artifact signed BEFORE upload with an ephemeral key, uploaded
+# through the pinned official actions/upload-artifact, can be consumed independently by its
+# exact finalized artifact ID through the GitHub API with archive digest, run, attempt, head
+# SHA, repository, and producer-workflow bindings. It changes no production path, uses no
+# secret, environment, or reusable deployment workflow, and is evidence of transport only,
+# never permission to deploy. Runs on this feature PR without a default-branch merge.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/annual-artifact-transport-proof.yml'
+      - 'scripts/annual-artifact-transport-proof.mjs'
+      - 'scripts/annual-artifact-transport-proof.test.mjs'
+
+permissions: {}
+
+jobs:
+  proof:
+    name: Upload through the official action and consume by exact finalized artifact ID
+    # Same-repository pull requests only; a fork head has no business exercising this path.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The runner context is not available in job-level env, so the proof directory is
+      # derived inside a step from RUNNER_TEMP and exported (nonsecret) through GITHUB_ENV.
+      - name: Initialize the proof directory under runner temp
+        run: echo "PROOF_DIRECTORY=$RUNNER_TEMP/annual-artifact-transport-proof" >> "$GITHUB_ENV"
+      - name: Set up Node 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Run the proof unit tests against mocked API fixtures first
+        run: node --test scripts/annual-artifact-transport-proof.test.mjs
+      - name: Produce the synthetic signed payload with an ephemeral key kept only in runner temp
+        env:
+          PROOF_SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/annual-artifact-transport-proof.mjs produce
+      - name: Upload through the pinned official artifact action
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: annual-artifact-transport-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/annual-artifact-transport-proof/stage/annual-artifact-transport-proof.json
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
+      - name: Remove the staged payload so consumption can only come from the artifact service
+        run: rm -rf "$PROOF_DIRECTORY/stage"
+      - name: Consume independently by exact finalized artifact ID through the GitHub API
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROOF_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          PROOF_UPLOAD_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: node scripts/annual-artifact-transport-proof.mjs consume
+      - name: Reject every substitution and replay negative against the real finalized artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROOF_ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          PROOF_UPLOAD_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: node scripts/annual-artifact-transport-proof.mjs negatives
