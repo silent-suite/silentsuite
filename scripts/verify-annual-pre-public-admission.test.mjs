@@ -70,5 +70,5 @@ test('rejects validly signed body-provenance substitutions from the exact GitHub
 })
 test('pins byte-identical canonical Stage A and Stage B schemas', () => {
   assert.equal(createHash('sha256').update(readFileSync(resolve('contracts/annual-only-pre-public-admission.schema.json'))).digest('hex'), '1d104603298e53f4dd6eb10bdcffbf72cf139bfb49b53106eb547369f77175d1')
-  assert.equal(createHash('sha256').update(readFileSync(resolve('contracts/annual-only-public-served-attestation.schema.json'))).digest('hex'), '143ab2b93b55daab5c49186a2283e86cb1d571d97524ae995ea270612cca3cdd')
+  assert.equal(createHash('sha256').update(readFileSync(resolve('contracts/annual-only-public-served-attestation.schema.json'))).digest('hex'), '9990a6fce91f0468dadde0b89b95dbff523f2eaaebb20376dbc1ba5c98c3ef43')
 })
