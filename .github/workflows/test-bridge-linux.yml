@@ -2,6 +2,15 @@ name: Test Bridge (Linux x86_64)
 
 on:
   workflow_dispatch:
+    inputs:
+      baseline_red_sha:
+        description: >-
+          Optional full commit SHA of pre-fix base source. When set, the
+          candidate's tests/test_autostart_clean_shell_cli.py is run against
+          that base's bridge/src (git archive into a temp dir) and must FAIL
+          with an assertion mismatch, proving behavioural RED for #658.
+        required: false
+        default: ""
   push:
     branches: [main]
     paths:
@@ -41,6 +50,31 @@ jobs:
       - name: Run tests
         working-directory: bridge
         run: python -m pytest tests/ -v --tb=short
+
+      - name: Baseline RED proof for #658 (dispatch-only)
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline_red_sha != ''
+        env:
+          BASE_SHA: ${{ inputs.baseline_red_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$BASE_SHA"
+          base="$(mktemp -d)"
+          git archive "$BASE_SHA" bridge/src | tar -x -C "$base"
+          mkdir -p "$base/bridge/tests"
+          cp bridge/tests/test_autostart_clean_shell_cli.py "$base/bridge/tests/"
+          cd "$base/bridge"
+          set +e
+          PYTHONPATH="$base/bridge/src" python -m pytest tests/test_autostart_clean_shell_cli.py \
+            -k remote-with-persisted-permission -p no:cacheprovider -v --tb=long 2>&1 | tee red.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "::error::base $BASE_SHA passed the remote persistence test; RED proof failed"; exit 1
+          fi
+          grep -q "1 failed" red.log || { echo "::error::expected exactly one behavioural failure, not a collection/import error"; exit 1; }
+          grep -Eq "assert '127.0.0.1' == '0.0.0.0'|AssertionError" red.log || { echo "::error::failure was not an assertion mismatch"; exit 1; }
+          grep -Eq "ImportError|ModuleNotFoundError|ERROR collecting" red.log && { echo "::error::collection/import failure, not behavioural RED"; exit 1; }
+          echo "Behavioural RED confirmed on base $BASE_SHA"
 
   build:
     name: Build linux-x86_64

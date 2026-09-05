@@ -66,6 +66,8 @@ Semantics:
 
 - A non-loopback bind without `SILENTSUITE_ALLOW_REMOTE=1` is refused before anything is written. Permission is persisted alongside the bind so the clean-environment restart is validated too. The dashboard stays disabled on remote binds.
 - Reinstalling merges newly exported variables over the retained profile; values you do not export again are kept. `--remove-autostart` removes the entry but keeps the profile. To reset, delete the `"network"` object from `settings.json`.
+- `--remove-autostart` runs before the profile is validated, so it still works when `settings.json` holds an invalid `"network"` object. On Linux/macOS it exits non-zero and keeps the entry for a retry when systemd/launchd does not confirm the stop/unload. On Windows it only deletes the sign-in Run entry; a bridge that is already running is not stopped.
+- The profile is written atomically (temp file + replace). A write failure leaves the existing `settings.json` unchanged, and a `settings.json` that is not a JSON object is refused rather than overwritten.
 - The persisted profile is validated strictly at every startup (types, port range, host syntax, unknown keys). An invalid profile stops the bridge before it binds; the error names the offending key, never its value, and unrelated settings are left untouched.
 - `SILENTSUITE_DATA_DIR` is not supported together with `--install-autostart` (the restarted process would read the default directory); the command refuses and changes nothing.
 - `--install-autostart` exits non-zero when the service manager did not confirm the start; the installers report that honestly instead of claiming success.

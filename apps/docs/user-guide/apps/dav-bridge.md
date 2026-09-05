@@ -254,6 +254,14 @@ This removes the startup entry but keeps the persisted `"network"` profile, so a
 `silentsuite-bridge` run still binds the same way. To reset to the loopback defaults,
 delete the `"network"` object from `settings.json` in the bridge data directory.
 
+- Removal works even when `settings.json` holds an invalid `"network"` object; it starts
+  no listener and writes no settings.
+- **Linux/macOS**: the bridge is stopped/unloaded first. If systemd or launchd does not
+  confirm that, the command exits non-zero, keeps the entry so you can retry, and never
+  reports the bridge as removed.
+- **Windows**: only the sign-in Run entry is deleted. A bridge process that is already
+  running keeps running until you stop it (for example with `Stop-Process`).
+
 ## Uninstall
 
 ### Windows PowerShell Installer

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from ipaddress import ip_address
 
 from appdirs import user_data_dir
@@ -62,6 +63,9 @@ DEFAULT_LISTEN_PORT = 37358
 
 _HOSTNAME_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 _PORT_RULE = "must be an integer from 1 to 65535"
+# 65535 has five digits; longer digit strings are rejected before int() so an
+# oversized value can never raise ValueError past the validator.
+_PORT_MAX_DIGITS = 5
 
 
 class NetworkConfigError(RuntimeError):
@@ -70,6 +74,10 @@ class NetworkConfigError(RuntimeError):
 
 class NetworkProfileError(NetworkConfigError):
     """An invalid network profile. Messages name keys and rules, never supplied values."""
+
+
+class SettingsFileError(RuntimeError):
+    """settings.json exists but is not a JSON object; message never echoes its content."""
 
 
 def _format_host_port(host: str, port: int) -> str:
@@ -96,11 +104,15 @@ def _validate_port(value, label: str) -> int:
     return value
 
 
-def _parse_env_port(raw: str, label: str = "SILENTSUITE_LISTEN_PORT") -> int:
-    text = raw.strip()
-    if not text.isascii() or not text.isdigit():
+def _parse_port_text(text: str, label: str) -> int:
+    """Parse a bounded decimal port string; never lets int() see unbounded input."""
+    if not text.isascii() or not text.isdigit() or len(text) > _PORT_MAX_DIGITS:
         raise NetworkProfileError(f"{label} {_PORT_RULE}")
     return _validate_port(int(text), label)
+
+
+def _parse_env_port(raw: str, label: str = "SILENTSUITE_LISTEN_PORT") -> int:
+    return _parse_port_text(raw.strip(), label)
 
 
 def _split_host_spec(spec: str, label: str) -> tuple[str, int]:
@@ -114,11 +126,10 @@ def _split_host_spec(spec: str, label: str) -> tuple[str, int]:
         host, separator, port_text = spec.rpartition(":")
         if not separator:
             raise NetworkProfileError(f"{label} entries must include a port")
-    if not port_text.isascii() or not port_text.isdigit():
-        raise NetworkProfileError(f"{label} entries {_PORT_RULE}")
+    port = _parse_port_text(port_text, f"{label} entries")
     if not _is_valid_host(host):
         raise NetworkProfileError(f"{label} entries must use an IP literal or hostname")
-    return host, _validate_port(int(port_text), f"{label} entries")
+    return host, port
 
 
 def _validate_host_specs(value, label: str) -> str:
@@ -421,9 +432,14 @@ def validate_restart_profile(profile: dict) -> dict:
 
 
 def persisted_network_profile(settings: dict | None = None) -> dict:
-    """Return the validated persisted profile from settings.json ({} when absent)."""
+    """Return the validated persisted profile from settings.json ({} when absent).
+
+    Reads strictly: a settings.json that is not a JSON object raises
+    SettingsFileError rather than being treated as empty, so a later write
+    can never silently replace an unreadable file.
+    """
     if settings is None:
-        settings = get_settings()
+        settings = read_settings_strict()
     if NETWORK_PROFILE_KEY not in settings:
         return {}
     return validate_network_profile(settings[NETWORK_PROFILE_KEY])
@@ -544,12 +560,54 @@ def save_network_profile(profile: dict) -> bool:
 
     An empty profile writes nothing so a no-env installation never pins the
     loopback defaults into settings.json. Unrelated settings are preserved.
+    The write is atomic (temp file + replace in the same directory) so a
+    failure leaves the existing settings.json byte-for-byte intact, and an
+    existing file that is not a JSON object is refused rather than discarded.
     """
     normalized = validate_network_profile(profile)
     if not normalized:
         return False
-    save_settings({NETWORK_PROFILE_KEY: normalized})
+    ensure_data_dir()
+    existing = read_settings_strict()
+    existing[NETWORK_PROFILE_KEY] = normalized
+    _atomic_write_json(SETTINGS_FILE, existing)
     return True
+
+
+def _atomic_write_json(path: str, payload: dict) -> None:
+    """Write JSON to a sibling temp file, fsync, then atomically replace ``path``."""
+    directory = os.path.dirname(path) or "."
+    fd, temp_path = tempfile.mkstemp(prefix=".settings-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(temp_path, os.stat(path).st_mode & 0o777)
+        except FileNotFoundError:
+            pass
+        os.replace(temp_path, path)
+    except BaseException:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
+
+
+def read_settings_strict() -> dict:
+    """Read settings.json as a JSON object; missing file is {}, malformed content is an error."""
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            settings = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise SettingsFileError("settings.json is not valid JSON; repair or remove it first") from exc
+    if not isinstance(settings, dict):
+        raise SettingsFileError("settings.json must contain a JSON object; repair or remove it first")
+    return settings
 
 
 def get_settings():

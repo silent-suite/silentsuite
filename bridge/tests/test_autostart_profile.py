@@ -47,15 +47,22 @@ BINARY = "/opt/Silent Suite/silentsuite-bridge"
 
 
 class FakeServiceManager:
-    """Record service-manager invocations; fail the configured actions."""
+    """Record service-manager invocations; fail the configured actions.
+
+    ``failing`` holds argv tokens that exit non-zero; ``missing`` holds tool
+    names that raise FileNotFoundError as if the manager were not installed.
+    """
 
     def __init__(self, failing=()):
         self.calls = []
         self.failing = set(failing)
+        self.missing = set()
 
     def __call__(self, argv, **kwargs):
         argv = list(argv)
         self.calls.append(argv)
+        if argv[0] in self.missing:
+            raise FileNotFoundError(argv[0])
         returncode = 1 if any(token in argv for token in self.failing) else 0
         stdout = b"Linger=yes" if argv[0] == "loginctl" else b""
         return subprocess.CompletedProcess(argv, returncode, stdout=stdout, stderr=b"")
@@ -262,6 +269,165 @@ def test_remove_autostart_retains_profile_and_reinstall_merges(env, capsys):
 def test_remove_autostart_when_not_installed_is_idempotent(env, capsys):
     assert autostart.remove_autostart() == 0
     assert "Auto-start was not installed." in capsys.readouterr().out
+    assert env.manager.calls == []
+
+
+def test_install_autostart_refuses_malformed_settings_file_without_overwriting(env, capsys):
+    env.data_dir.mkdir()
+    env.settings.write_text("{tok-c3f1e9 not json", encoding="utf-8")
+    set_env(env, SILENTSUITE_LISTEN_PORT="45123")
+
+    assert autostart.install_autostart() == 1
+
+    captured = capsys.readouterr()
+    assert "settings.json" in captured.err
+    assert "nothing was changed" in captured.err
+    assert "tok-c3f1e9" not in captured.err
+    assert env.settings.read_text(encoding="utf-8") == "{tok-c3f1e9 not json"
+    assert not env.unit.exists()
+    assert env.manager.calls == []
+
+
+def test_install_autostart_settings_write_failure_keeps_original_and_writes_no_unit(env, capsys):
+    env.data_dir.mkdir()
+    env.settings.write_text(json.dumps({"syncInterval": 120}), encoding="utf-8")
+    original = env.settings.read_text(encoding="utf-8")
+    set_env(env, SILENTSUITE_LISTEN_PORT="45123")
+
+    def refuse_replace(src, dst):
+        raise OSError("disk full")
+
+    env.monkeypatch.setattr(config.os, "replace", refuse_replace)
+
+    assert autostart.install_autostart() == 1
+
+    assert "left unchanged" in capsys.readouterr().err
+    assert env.settings.read_text(encoding="utf-8") == original
+    assert [p.name for p in env.data_dir.iterdir()] == ["settings.json"]
+    assert not env.unit.exists()
+    assert env.manager.calls == []
+
+
+# --- Honest removal status --------------------------------------------------
+
+
+@pytest.mark.parametrize("failing_action", ["stop", "disable"])
+def test_linux_remove_keeps_unit_and_fails_when_stop_or_disable_not_confirmed(env, capsys, failing_action):
+    set_env(env, SILENTSUITE_LISTEN_PORT="45123")
+    assert autostart.install_autostart() == 0
+    capsys.readouterr()
+    env.manager.calls.clear()
+    env.manager.failing = {failing_action}
+
+    assert autostart.remove_autostart() == 1
+
+    captured = capsys.readouterr()
+    assert "Auto-start removed" not in captured.out
+    assert "was not removed" in captured.err
+    assert "may still be running" in captured.err
+    assert env.unit.exists()
+    assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
+    actions = env.manager.actions()
+    assert actions[:2] == ["systemctl --user stop", "systemctl --user disable"]
+    assert "systemctl --user daemon-reload" not in actions
+
+    # Retry after the manager recovers completes the removal.
+    env.manager.failing = set()
+    env.manager.calls.clear()
+    assert autostart.remove_autostart() == 0
+    assert "Auto-start removed." in capsys.readouterr().out
+    assert not env.unit.exists()
+    assert env.manager.actions() == [
+        "systemctl --user stop",
+        "systemctl --user disable",
+        "systemctl --user daemon-reload",
+    ]
+
+
+def test_linux_remove_reports_missing_service_manager_without_claiming_removal(env, capsys):
+    assert autostart.install_autostart() == 0
+    capsys.readouterr()
+    env.manager.missing = {"systemctl"}
+
+    assert autostart.remove_autostart() == 1
+
+    captured = capsys.readouterr()
+    assert "Auto-start removed" not in captured.out
+    assert "systemctl is not available" in captured.out
+    assert "was not removed" in captured.err
+    assert env.unit.exists()
+
+
+def test_linux_remove_reports_daemon_reload_failure_after_deleting_unit(env, capsys):
+    assert autostart.install_autostart() == 0
+    capsys.readouterr()
+    env.manager.failing = {"daemon-reload"}
+
+    assert autostart.remove_autostart() == 1
+
+    captured = capsys.readouterr()
+    assert "Auto-start removed." not in captured.out
+    assert "did not confirm the reload" in captured.err
+    assert not env.unit.exists()
+
+
+def test_macos_remove_keeps_plist_and_fails_when_unload_not_confirmed(env, capsys):
+    env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
+    set_env(env, SILENTSUITE_LISTEN_PORT="45123")
+    assert autostart.install_autostart() == 0
+    capsys.readouterr()
+    env.manager.failing = {"unload"}
+
+    assert autostart.remove_autostart() == 1
+
+    captured = capsys.readouterr()
+    assert "Auto-start removed" not in captured.out
+    assert "was not removed" in captured.err
+    assert "launchctl list io.silentsuite.bridge" in captured.err
+    assert env.plist.exists()
+    assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
+
+    env.manager.failing = set()
+    assert autostart.remove_autostart() == 0
+    assert not env.plist.exists()
+
+
+def test_macos_remove_reports_missing_launchctl(env, capsys):
+    env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
+    assert autostart.install_autostart() == 0
+    capsys.readouterr()
+    env.manager.missing = {"launchctl"}
+
+    assert autostart.remove_autostart() == 1
+
+    assert env.plist.exists()
+    assert "Auto-start removed" not in capsys.readouterr().out
+
+
+def test_remove_autostart_never_starts_listener_or_writes_settings_with_corrupt_profile(env, capsys):
+    assert autostart.install_autostart() == 0
+    env.data_dir.mkdir(exist_ok=True)
+    env.settings.write_text(json.dumps({"network": {"sessionToken": "private-token-value"}}), encoding="utf-8")
+    original = env.settings.read_text(encoding="utf-8")
+    config.load_settings()
+    assert config.NETWORK_PROFILE_ERROR is not None
+    capsys.readouterr()
+
+    assert autostart.remove_autostart() == 0
+
+    captured = capsys.readouterr()
+    assert "Auto-start removed." in captured.out
+    assert "private-token-value" not in captured.out + captured.err
+    assert env.settings.read_text(encoding="utf-8") == original
+    assert not env.unit.exists()
+
+
+def test_windows_remove_source_documents_that_running_process_is_not_stopped():
+    source = Path(autostart.__file__).read_text(encoding="utf-8")
+    body = source[source.index("def remove_autostart_windows"):source.index("# --- Public API ---")]
+
+    assert "already running is not stopped" in body
+    assert "was not stopped" in body
 
 
 def test_macos_install_writes_escaped_plist_and_reports_load_failure(env, capsys):
@@ -305,170 +471,6 @@ def test_macos_remove_retains_profile(env, capsys):
     assert "was kept" in capsys.readouterr().out
 
 
-# --- Production CLI journey: install -> clean-shell restart ---------------
-
-
-CLI_CASES = [
-    pytest.param(
-        {"SILENTSUITE_LISTEN_ADDRESS": "::1", "SILENTSUITE_LISTEN_PORT": "45123"},
-        {
-            "exit": 0,
-            "network": {"listenAddress": "::1", "listenPort": 45123},
-            "address": "::1",
-            "port": 45123,
-            "radicale_hosts": [["::1", 45123]],
-            "dashboard": True,
-            "web": "silentsuite_bridge.web",
-        },
-        id="loopback-ipv6-custom-port",
-    ),
-    pytest.param(
-        {"SILENTSUITE_LISTEN_ADDRESS": "0.0.0.0", "SILENTSUITE_ALLOW_REMOTE": "1"},
-        {
-            "exit": 0,
-            "network": {"listenAddress": "0.0.0.0", "allowRemote": True},
-            "address": "0.0.0.0",
-            "port": 37358,
-            "radicale_hosts": [["0.0.0.0", 37358]],
-            "dashboard": False,
-            "web": "none",
-        },
-        id="remote-with-persisted-permission",
-    ),
-    pytest.param(
-        {"SILENTSUITE_LISTEN_ADDRESS": "0.0.0.0"},
-        {"exit": 1},
-        id="remote-without-permission-refused",
-    ),
-    pytest.param(
-        {},
-        {
-            "exit": 0,
-            "network": None,
-            "address": "127.0.0.1",
-            "port": 37358,
-            "radicale_hosts": [["127.0.0.1", 37358]],
-            "dashboard": True,
-            "web": "silentsuite_bridge.web",
-        },
-        id="fresh-install-no-env-no-pinning",
-    ),
-]
-
-CLEAN_SHELL_PROBE = """
-import json
-from silentsuite_bridge import config
-from silentsuite_bridge.__main__ import build_radicale_configuration
-radicale = build_radicale_configuration()
-hosts = radicale.get("server", "hosts")
-if isinstance(hosts, str):
-    hosts = [list(config._split_host_spec(spec.strip(), "hosts")) for spec in hosts.split(",")]
-else:
-    hosts = [[host, int(port)] for host, port in hosts]
-print(json.dumps({
-    "address": config.LISTEN_ADDRESS,
-    "port": config.LISTEN_PORT,
-    "hosts": config.SERVER_HOSTS,
-    "allow": config.ALLOW_REMOTE,
-    "dashboard": config.is_dashboard_enabled(),
-    "settings": config.SETTINGS_FILE,
-    "radicale_hosts": hosts,
-    "web": radicale.get("web", "type"),
-}))
-"""
-
-DECOY_ENV = {
-    "SILENTSUITE_SERVER_URL": "https://user:private-token@example.invalid/private",
-    "SILENTSUITE_LOG_LEVEL": "INFO",
-    "SILENTSUITE_SYNC_INTERVAL": "60",
-}
-
-
-def _clean_shell_env(tmp_path):
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    for name in ("systemctl", "loginctl", "launchctl", "sudo"):
-        tool = fake_bin / name
-        tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        tool.chmod(0o755)
-    home = tmp_path / "home"
-    home.mkdir()
-    pythonpath = str(BRIDGE_ROOT / "src")
-    if os.environ.get("PYTHONPATH"):
-        pythonpath = pythonpath + os.pathsep + os.environ["PYTHONPATH"]
-    env = {
-        "HOME": str(home),
-        "XDG_DATA_HOME": str(tmp_path / "xdg-data"),
-        "XDG_CONFIG_HOME": str(home / ".config"),
-        "PATH": str(fake_bin),
-        "PYTHONPATH": pythonpath,
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "TMPDIR": str(tmp_path),
-    }
-    for passthrough in ("SYSTEMROOT", "PYTHONHOME", "VIRTUAL_ENV", "LANG", "LC_ALL"):
-        if passthrough in os.environ:
-            env[passthrough] = os.environ[passthrough]
-    return env, home
-
-
-def _run(args, env, tmp_path):
-    return subprocess.run(
-        [sys.executable, *args],
-        cwd=str(tmp_path),
-        env=env,
-        text=True,
-        capture_output=True,
-        timeout=120,
-    )
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows autostart writes the real registry; covered by unit tests")
-@pytest.mark.parametrize(("exported", "expected"), CLI_CASES)
-def test_cli_install_autostart_then_clean_shell_restart_uses_same_profile(tmp_path, exported, expected):
-    base_env, home = _clean_shell_env(tmp_path)
-    log_file = tmp_path / "private-person-bridge.log"
-    install_env = {**base_env, **DECOY_ENV, "SILENTSUITE_LOG_FILE": str(log_file), **exported}
-
-    install = _run(["-m", "silentsuite_bridge", "--install-autostart"], install_env, tmp_path)
-    assert install.returncode == expected["exit"], install.stdout + install.stderr
-    assert "Traceback" not in install.stderr
-
-    if sys.platform == "darwin":
-        artifact = home / "Library" / "LaunchAgents" / "io.silentsuite.bridge.plist"
-    else:
-        artifact = home / ".config" / "systemd" / "user" / "silentsuite-bridge.service"
-
-    if expected["exit"] != 0:
-        assert "SILENTSUITE_ALLOW_REMOTE=1" in install.stderr
-        assert "0.0.0.0" not in install.stderr
-        assert not artifact.exists()
-        data_root = tmp_path / "xdg-data"
-        assert not data_root.exists() or not list(data_root.rglob("settings.json"))
-        return
-
-    assert artifact.exists()
-    if sys.platform == "darwin":
-        assert plistlib.loads(artifact.read_bytes())["Label"] == "io.silentsuite.bridge"
-    else:
-        assert "ExecStart=" in artifact.read_text(encoding="utf-8")
-
-    # Clean shell: none of the SILENTSUITE_* variables are present any more.
-    probe = _run(["-c", CLEAN_SHELL_PROBE], base_env, tmp_path)
-    assert probe.returncode == 0, probe.stdout + probe.stderr
-    observed = json.loads(probe.stdout.strip().splitlines()[-1])
-
-    assert observed["address"] == expected["address"]
-    assert observed["port"] == expected["port"]
-    assert observed["radicale_hosts"] == expected["radicale_hosts"]
-    assert observed["dashboard"] is expected["dashboard"]
-    assert observed["web"] == expected["web"]
-
-    settings_path = Path(observed["settings"])
-    if expected["network"] is None:
-        assert not settings_path.exists()
-    else:
-        text = settings_path.read_text(encoding="utf-8")
-        assert json.loads(text) == {"network": expected["network"]}
-        assert "private" not in text
-        assert str(log_file) not in text
-        assert "example.invalid" not in text
+# The production CLI journey (install -> clean-shell restart) lives in
+# test_autostart_clean_shell_cli.py so it also collects and runs against the
+# pre-fix base source as a behavioural RED proof.

@@ -69,6 +69,12 @@ jobs:
           pip install -e ".[dev]" || pip install -e .
           python -m pytest tests/test_update_contract.py -v --tb=short
 
+      - name: Run network profile / autostart tests natively (#658)
+        working-directory: bridge
+        shell: pwsh
+        run: |
+          python -m pytest tests/test_network_profile.py tests/test_autostart_profile.py tests/test_autostart_clean_shell_cli.py -v --tb=short
+
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: |

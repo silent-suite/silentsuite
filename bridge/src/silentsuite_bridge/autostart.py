@@ -21,6 +21,7 @@ Usage:
 import logging
 import os
 import plistlib
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -84,9 +85,13 @@ def persist_network_profile() -> int:
 
     try:
         written = config.save_network_profile(profile)
+    except config.SettingsFileError as exc:
+        print(f"Error: {exc}; auto-start was not installed.", file=sys.stderr)
+        return 1
     except OSError:
         print(
-            "Error: could not write the bridge settings file; auto-start was not installed.",
+            "Error: could not write the bridge settings file; the existing settings.json was left "
+            "unchanged and auto-start was not installed.",
             file=sys.stderr,
         )
         return 1
@@ -147,8 +152,13 @@ def _systemd_service_path():
 
 
 def _run_reported(argv, action) -> bool:
-    """Run a service-manager command; report and return False on non-zero exit."""
-    result = subprocess.run(argv, check=False, capture_output=True)
+    """Run a service-manager command; report and return False on non-zero exit or a missing tool."""
+    try:
+        result = subprocess.run(argv, check=False, capture_output=True)
+    except OSError:
+        logger.warning("%s failed (service manager not available)", action)
+        print(f"  Warning: {action} could not run ({argv[0]} is not available)")
+        return False
     if result.returncode != 0:
         logger.warning("%s failed (exit %d)", action, result.returncode)
         print(f"  Warning: {action} exited with code {result.returncode}")
@@ -214,32 +224,46 @@ def _enable_linger() -> None:
 
 
 def remove_autostart_linux() -> int:
-    """Remove systemd user service. The persisted network profile is retained."""
+    """Remove the systemd user service. The persisted network profile is retained.
+
+    Order: stop, disable, delete the unit file, daemon-reload. If stop or
+    disable is not confirmed the unit file is kept so the command can be
+    retried; a non-zero return never claims the bridge was removed or stopped.
+    """
     service_path = _systemd_service_path()
 
-    subprocess.run(
-        ["systemctl", "--user", "stop", SYSTEMD_UNIT],
-        check=False, capture_output=True,
-    )
-    subprocess.run(
-        ["systemctl", "--user", "disable", SYSTEMD_UNIT],
-        check=False, capture_output=True,
-    )
-
-    if os.path.exists(service_path):
-        try:
-            os.remove(service_path)
-        except OSError:
-            print("Error: could not remove the systemd user service file.", file=sys.stderr)
-            return 1
-        subprocess.run(
-            ["systemctl", "--user", "daemon-reload"],
-            check=False, capture_output=True,
-        )
-        logger.info("Removed systemd service")
-        print("Auto-start removed.")
-    else:
+    if not os.path.exists(service_path):
         print("Auto-start was not installed.")
+        print(_PROFILE_RETAINED_NOTE)
+        return 0
+
+    ok = _run_reported(["systemctl", "--user", "stop", SYSTEMD_UNIT], "systemctl stop")
+    ok = _run_reported(["systemctl", "--user", "disable", SYSTEMD_UNIT], "systemctl disable") and ok
+    if not ok:
+        print(
+            "Auto-start was not removed: systemd did not confirm stop/disable, so the service file "
+            "was kept and the bridge may still be running. Retry after checking "
+            "`systemctl --user status silentsuite-bridge`.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        os.remove(service_path)
+    except OSError:
+        print("Error: could not remove the systemd user service file.", file=sys.stderr)
+        return 1
+    logger.info("Removed systemd service")
+
+    if not _run_reported(["systemctl", "--user", "daemon-reload"], "systemctl daemon-reload"):
+        print(
+            "The service file was removed, but systemd did not confirm the reload; run "
+            "`systemctl --user daemon-reload` to finish removal.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("Auto-start removed.")
     print(_PROFILE_RETAINED_NOTE)
     return 0
 
@@ -262,8 +286,10 @@ def render_launchd_plist(binary_args, log_dir: str) -> bytes:
         "ProgramArguments": list(binary_args),
         "RunAtLoad": True,
         "KeepAlive": {"NetworkState": True},
-        "StandardOutPath": os.path.join(log_dir, "bridge.log"),
-        "StandardErrorPath": os.path.join(log_dir, "bridge.error.log"),
+        # launchd paths are always POSIX; posixpath keeps rendering portable when
+        # the plist is generated or tested on Windows.
+        "StandardOutPath": posixpath.join(log_dir, "bridge.log"),
+        "StandardErrorPath": posixpath.join(log_dir, "bridge.error.log"),
     }
     return plistlib.dumps(payload, sort_keys=False)
 
@@ -298,23 +324,33 @@ def install_autostart_macos() -> int:
 
 
 def remove_autostart_macos() -> int:
-    """Remove launchd agent. The persisted network profile is retained."""
+    """Remove the launchd agent. The persisted network profile is retained.
+
+    If ``launchctl unload`` is not confirmed the plist is kept so the command
+    can be retried; a non-zero return never claims the agent was removed.
+    """
     plist_path = _launchd_plist_path()
 
-    if os.path.exists(plist_path):
-        subprocess.run(
-            ["launchctl", "unload", plist_path],
-            check=False, capture_output=True,
-        )
-        try:
-            os.remove(plist_path)
-        except OSError:
-            print("Error: could not remove the launchd agent file.", file=sys.stderr)
-            return 1
-        logger.info("Removed launchd agent")
-        print("Auto-start removed.")
-    else:
+    if not os.path.exists(plist_path):
         print("Auto-start was not installed.")
+        print(_PROFILE_RETAINED_NOTE)
+        return 0
+
+    if not _run_reported(["launchctl", "unload", plist_path], "launchctl unload"):
+        print(
+            "Auto-start was not removed: launchctl did not confirm the unload, so the agent file "
+            "was kept and the bridge may still be running. Retry after checking "
+            f"`launchctl list {LAUNCHD_LABEL}`.",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        os.remove(plist_path)
+    except OSError:
+        print("Error: could not remove the launchd agent file.", file=sys.stderr)
+        return 1
+    logger.info("Removed launchd agent")
+    print("Auto-start removed.")
     print(_PROFILE_RETAINED_NOTE)
     return 0
 
@@ -363,7 +399,11 @@ def install_autostart_windows() -> int:
 
 
 def remove_autostart_windows() -> int:
-    """Remove Windows startup registry entry. The persisted network profile is retained."""
+    """Remove the Windows Run registry entry. The persisted network profile is retained.
+
+    This only disables future sign-in startup; a bridge process that is
+    already running is not stopped (there is no service manager to ask).
+    """
     try:
         import winreg
     except ImportError:
@@ -382,7 +422,8 @@ def remove_autostart_windows() -> int:
         finally:
             winreg.CloseKey(key)
         logger.info("Removed Windows startup entry")
-        print("Auto-start removed.")
+        print("Auto-start removed: the bridge will no longer start at sign-in.")
+        print("A bridge process that is currently running was not stopped.")
     except FileNotFoundError:
         print("Auto-start was not installed.")
     except OSError:
@@ -420,7 +461,13 @@ def install_autostart() -> int:
 
 
 def remove_autostart() -> int:
-    """Remove auto-start for the current platform; return a process exit code."""
+    """Remove auto-start for the current platform; return a process exit code.
+
+    Never starts a listener or writes settings, so it is safe to run with an
+    invalid persisted profile. Linux/macOS return non-zero when the service
+    manager did not confirm stop/unload (the entry is kept for a retry);
+    Windows only removes the sign-in entry and never stops a running bridge.
+    """
     platform = config.get_platform()
     if platform == "linux":
         return remove_autostart_linux()

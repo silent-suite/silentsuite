@@ -678,7 +678,8 @@ def main():
         print("  --install-autostart   Install auto-start for current platform; persists")
         print("                        explicitly set listen/hosts/remote settings into")
         print("                        settings.json so the clean-environment restart keeps them")
-        print("  --remove-autostart    Remove auto-start for current platform (keeps settings)")
+        print("  --remove-autostart    Remove auto-start for current platform (keeps settings;")
+        print("                        on Windows a running bridge is not stopped)")
         print("  --no-tray             Start without system tray icon")
         print("  --setup-macos-apple-accounts")
         print("                        Generate/reuse a localhost HTTPS certificate")
@@ -771,6 +772,14 @@ def main():
     # this command is how users create the missing cert/key in the first place.
     if "--setup-macos-apple-accounts" in sys.argv:
         sys.exit(setup_macos_apple_accounts())
+
+    # Handle --remove-autostart before network/SSL validation: removal starts
+    # no listener and writes no settings, and an operator with a corrupt
+    # persisted profile must still be able to remove the auto-start entry.
+    if "--remove-autostart" in sys.argv:
+        from .autostart import remove_autostart
+
+        sys.exit(remove_autostart())
 
     try:
         config.validate_network_config()
@@ -873,12 +882,6 @@ def main():
         from .autostart import install_autostart
 
         sys.exit(install_autostart())
-
-    # Handle --remove-autostart
-    if "--remove-autostart" in sys.argv:
-        from .autostart import remove_autostart
-
-        sys.exit(remove_autostart())
 
     # Resume durable cleanup before checking whether account state allows startup.
     if not _prepare_server_start():

@@ -251,15 +251,19 @@ def test_remote_permission_is_persisted_with_the_bind(settings_file, monkeypatch
 
 
 def test_install_profile_persists_only_allowlisted_network_values(settings_file, monkeypatch):
+    # Every decoy carries a unique secret token so leakage is detected by the
+    # token, never by a digit or short flag value that legitimately occurs in
+    # the persisted port (for example "1" inside 45123).
     decoys = {
-        "SILENTSUITE_SERVER_URL": "https://user:private-token@example.invalid/private",
-        "SILENTSUITE_LOG_FILE": "/private/person/bridge.log",
+        "SILENTSUITE_SERVER_URL": "https://user:tok-c3f1e9-svr@example.invalid/tok-c3f1e9-path",
+        "SILENTSUITE_LOG_FILE": "/home/person/tok-c3f1e9-log/bridge.log",
         "SILENTSUITE_LOG_LEVEL": "DEBUG",
-        "SILENTSUITE_DATABASE_FILE": "/private/person/bridge_data.db",
-        "SILENTSUITE_BRIDGE_SSL_KEY": "/private/person/localhost-key.pem",
+        "SILENTSUITE_DATABASE_FILE": "/home/person/tok-c3f1e9-db/bridge_data.db",
+        "SILENTSUITE_BRIDGE_SSL_KEY": "/home/person/tok-c3f1e9-key/localhost-key.pem",
+        "SILENTSUITE_BRIDGE_SSL": "1",
         "SILENTSUITE_SYNC_INTERVAL": "60",
         "SILENTSUITE_DASHBOARD_DUMP": "1",
-        "SILENTSUITE_PRIVATE_ACCOUNT": "person@example.invalid",
+        "SILENTSUITE_PRIVATE_ACCOUNT": "tok-c3f1e9-acct@example.invalid",
     }
     reload_with_env(
         monkeypatch,
@@ -273,11 +277,17 @@ def test_install_profile_persists_only_allowlisted_network_values(settings_file,
     assert profile == {"listenAddress": "127.0.0.1", "listenPort": 45123, "allowRemote": False}
     assert config.save_network_profile(profile) is True
 
+    # Structured, exact: the file holds the allowlisted payload and nothing else.
+    stored = read_settings(settings_file)
+    assert stored == {"network": profile}
+    assert set(stored["network"]) == {"listenAddress", "listenPort", "allowRemote"}
+    for key in ("sslEnabled", "sslKeyFile", "syncInterval", "logFile", "serverUrl"):
+        assert key not in stored
     text = settings_file.read_text(encoding="utf-8")
-    assert read_settings(settings_file) == {"network": profile}
-    for value in decoys.values():
-        assert value not in text
-    assert "private" not in text
+    assert "tok-c3f1e9" not in text
+    assert "example.invalid" not in text
+    for variable in decoys:
+        assert variable not in text
 
 
 def test_explicit_env_profile_never_defaults_absent_variables(settings_file, monkeypatch):
@@ -368,6 +378,106 @@ def test_invalid_persisted_profile_exits_startup_cleanly_before_data_dir_writes(
     assert "unsupported key" in captured.err
     assert "private-token-value" not in captured.out + captured.err
     assert "sessionToken" not in captured.out + captured.err
+
+
+@pytest.mark.parametrize("digits", ["9" * 6, "1" + "0" * 5000])
+def test_oversized_numeric_port_strings_are_refused_without_value_error(settings_file, monkeypatch, digits):
+    with pytest.raises(config.NetworkProfileError, match="SILENTSUITE_LISTEN_PORT"):
+        config._parse_env_port(digits)
+    with pytest.raises(config.NetworkProfileError, match="serverHosts"):
+        config.validate_network_profile({"serverHosts": f"127.0.0.1:{digits}"})
+
+    monkeypatch.setenv("SILENTSUITE_LISTEN_PORT", digits)
+    config.load_settings()
+    assert config.NETWORK_PROFILE_ERROR is not None
+    assert config.LISTEN_PORT == 37358
+
+
+def test_remove_autostart_runs_before_validation_with_corrupt_profile(settings_file, monkeypatch, capsys):
+    from silentsuite_bridge import autostart
+
+    write_settings(settings_file, {"syncInterval": 120, "network": {"sessionToken": "private-token-value"}})
+    original = settings_file.read_text(encoding="utf-8")
+    config.load_settings()
+    assert config.NETWORK_PROFILE_ERROR is not None
+    monkeypatch.setattr(sys, "argv", ["silentsuite-bridge", "--remove-autostart"])
+    monkeypatch.setattr(bridge_main, "configure_logging", lambda: None)
+    monkeypatch.setattr(config, "ensure_data_dir", lambda: pytest.fail("must not touch the data dir"))
+    monkeypatch.setattr(config, "validate_network_config", lambda: pytest.fail("removal must not validate"))
+    monkeypatch.setattr(config, "validate_ssl_config", lambda: pytest.fail("removal must not validate"))
+    monkeypatch.setattr(bridge_main, "run_server", lambda: pytest.fail("no listener may start"))
+    calls = []
+    monkeypatch.setattr(autostart, "remove_autostart", lambda: calls.append("removed") or 0)
+
+    with pytest.raises(SystemExit) as excinfo:
+        bridge_main.main()
+
+    assert excinfo.value.code == 0
+    assert calls == ["removed"]
+    assert settings_file.read_text(encoding="utf-8") == original
+    captured = capsys.readouterr()
+    assert "private-token-value" not in captured.out + captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_remove_autostart_exit_code_is_propagated_from_platform_removal(settings_file, monkeypatch):
+    from silentsuite_bridge import autostart
+
+    monkeypatch.setattr(sys, "argv", ["silentsuite-bridge", "--remove-autostart"])
+    monkeypatch.setattr(bridge_main, "configure_logging", lambda: None)
+    monkeypatch.setattr(autostart, "remove_autostart", lambda: 1)
+
+    with pytest.raises(SystemExit) as excinfo:
+        bridge_main.main()
+
+    assert excinfo.value.code == 1
+
+
+# --- Durable settings writes ----------------------------------------------
+
+
+def test_save_network_profile_failure_preserves_original_file_and_leaves_no_temp(settings_file, monkeypatch):
+    payload = dict(UNRELATED_SETTINGS)
+    payload["network"] = {"listenPort": 45123}
+    write_settings(settings_file, payload)
+    original = settings_file.read_text(encoding="utf-8")
+
+    def refuse_replace(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(config.os, "replace", refuse_replace)
+
+    with pytest.raises(OSError):
+        config.save_network_profile({"listenPort": 45999})
+
+    assert settings_file.read_text(encoding="utf-8") == original
+    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+
+
+def test_save_network_profile_replaces_atomically_and_keeps_unrelated_settings(settings_file):
+    payload = dict(UNRELATED_SETTINGS)
+    write_settings(settings_file, payload)
+
+    assert config.save_network_profile({"listenPort": 45123}) is True
+
+    assert read_settings(settings_file) == {**UNRELATED_SETTINGS, "network": {"listenPort": 45123}}
+    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+
+
+@pytest.mark.parametrize("content", ["{not json", "[]", '"tok-c3f1e9-string"', "42"])
+def test_malformed_settings_file_is_refused_not_discarded(settings_file, content):
+    settings_file.write_text(content, encoding="utf-8")
+
+    with pytest.raises(config.SettingsFileError) as excinfo:
+        config.read_settings_strict()
+    assert "tok-c3f1e9" not in str(excinfo.value)
+    with pytest.raises(config.SettingsFileError):
+        config.network_profile_for_autostart()
+    with pytest.raises(config.SettingsFileError):
+        config.save_network_profile({"listenPort": 45123})
+
+    assert settings_file.read_text(encoding="utf-8") == content
+    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
 
 
 def test_malformed_environment_port_fails_closed_without_import_crash(settings_file, monkeypatch):
