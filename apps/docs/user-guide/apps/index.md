@@ -1,6 +1,6 @@
 # Apps & Integrations
 
-SilentSuite is built on the [Etebase protocol](https://www.etebase.com/). Today you can sync calendars, contacts, and tasks through the web app, the native Android app, and supported desktop clients.
+SilentSuite is built on the [Etebase protocol](https://www.etebase.com/). Today you can sync calendars, contacts, and tasks through the web app, the native Android app, and supported desktop clients. Notes are available in the web app.
 
 <AppLogoStrip compact />
 

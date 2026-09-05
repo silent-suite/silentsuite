@@ -40,11 +40,12 @@ export function ConfirmDialog({
     return () => document.removeEventListener('keydown', handler)
   }, [onCancel])
 
+  // The backdrop must not be aria-hidden: the dialog is its child and would be
+  // hidden with it. aria-modal on the dialog already makes the rest inert.
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
       onClick={onCancel}
-      aria-hidden="true"
     >
       <div
         ref={dialogContainerRef}

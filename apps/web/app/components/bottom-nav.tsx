@@ -3,11 +3,12 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
-import { CalendarDays, CheckSquare, Users, Settings } from 'lucide-react'
+import { CalendarDays, CheckSquare, StickyNote, Users, Settings } from 'lucide-react'
 
 const items = [
   { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
   { href: '/tasks', labelKey: 'tasks', icon: CheckSquare },
+  { href: '/notes', labelKey: 'notes', icon: StickyNote },
   { href: '/contacts', labelKey: 'contacts', icon: Users },
   { href: '/settings', labelKey: 'settings', icon: Settings },
 ]

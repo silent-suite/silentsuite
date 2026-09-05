@@ -1,15 +1,26 @@
 import * as Etebase from 'etebase';
 
+import type { ItemMeta } from './types.js';
+
 export interface CollectionMeta {
   name: string;
   description?: string;
   color?: string;
+  mtime?: number;
 }
 
 export interface CollectionMetaUpdate {
   name?: string;
   description?: string;
   color?: string;
+  mtime?: number;
+}
+
+/** Etebase notes identify plain notes by an empty item type, so never upload one. */
+function toEtebaseItemMeta(meta: ItemMeta): ItemMeta {
+  const next: ItemMeta = { ...meta };
+  if (!next.type) delete next.type;
+  return next;
 }
 
 export interface ItemListResponse {
@@ -33,6 +44,7 @@ export async function createCollection(
       name: meta.name,
       description: meta.description,
       color: meta.color,
+      ...(meta.mtime !== undefined ? { mtime: meta.mtime } : {}),
     },
     '',
   );
@@ -78,6 +90,7 @@ export async function updateCollectionMeta(
     ...(meta.name !== undefined ? { name: meta.name } : {}),
     ...(meta.description !== undefined ? { description: meta.description } : {}),
     ...(meta.color !== undefined ? { color: meta.color } : {}),
+    ...(meta.mtime !== undefined ? { mtime: meta.mtime } : {}),
   };
 
   if (typeof (collection as any).setMeta === 'function') {
@@ -109,11 +122,11 @@ export async function createItem(
   account: Etebase.Account,
   collection: Etebase.Collection,
   content: string,
-  meta?: Record<string, string>,
+  meta?: ItemMeta,
 ): Promise<Etebase.Item> {
   const collectionManager = account.getCollectionManager();
   const itemManager = collectionManager.getItemManager(collection);
-  const item = await itemManager.create(meta ?? {}, content);
+  const item = await itemManager.create(toEtebaseItemMeta(meta ?? {}), content);
   // Ensure meta.name is set for bridge/EteSync compatibility
   const itemMeta = item.getMeta();
   if (!itemMeta.name) {
@@ -152,12 +165,14 @@ export async function updateItem(
   collection: Etebase.Collection,
   item: Etebase.Item,
   content: string,
-  meta?: Record<string, string>,
+  meta?: ItemMeta,
 ): Promise<Etebase.Item> {
   const collectionManager = account.getCollectionManager();
   const itemManager = collectionManager.getItemManager(collection);
   if (meta) {
-    await item.setMeta(meta);
+    // Merge so metadata written by other clients (e.g. EteSync Notes) survives.
+    const currentMeta: ItemMeta = item.getMeta?.() ?? {};
+    await item.setMeta(toEtebaseItemMeta({ ...currentMeta, ...meta }));
   }
   await item.setContent(content);
   await itemManager.batch([item]);

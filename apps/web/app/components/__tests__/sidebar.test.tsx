@@ -21,6 +21,7 @@ vi.mock('@/app/(app)/calendar/components/MiniCalendar', () => ({
 vi.mock('@/app/components/CalendarListPanel', () => ({ CalendarListPanel: () => <div>calendar lists</div> }))
 vi.mock('@/app/components/TaskListPanel', () => ({ TaskListPanel: () => null }))
 vi.mock('@/app/components/ContactListPanel', () => ({ ContactListPanel: () => null }))
+vi.mock('@/app/components/NotebookListPanel', () => ({ NotebookListPanel: () => null }))
 vi.mock('@/app/components/OnboardingChecklist', () => ({ OnboardingChecklist: () => null }))
 
 describe('Sidebar preference readiness', () => {

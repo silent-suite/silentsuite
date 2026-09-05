@@ -4,7 +4,7 @@ Use this recipe after preview or production deploys that could affect web login,
 
 ## What this proves and does not prove
 
-A passing smoke proves that an already-authenticated browser can restore its encrypted Etebase session, list the visible calendar/tasks/contacts collections and items, track collections, and start SyncEngine in the deployed app.
+A passing smoke proves that an already-authenticated browser can restore its encrypted Etebase session, list the visible calendar/tasks/contacts/notes collections and items, track collections, and start SyncEngine in the deployed app.
 
 It does **not** prove every event/task/contact is semantically correct. It does not inspect plaintext PIM. It does not replace focused server route contract tests, unit tests, CI, or later end-to-end automation.
 
@@ -27,7 +27,7 @@ Production smoke is mutation-free only when the account is already initialized. 
 
 - Use an approved internal/test account, or a customer/user-approved account where the user supplied the redacted diagnostics.
 - For production, get explicit owner approval first.
-- For production, confirm the account is already initialized with calendar, tasks, and contacts collections before running the smoke. If it is a new/empty account or required collections are missing, abort production smoke.
+- For production, confirm the account is already initialized with calendar, tasks, contacts, and notes collections before running the smoke. If it is a new/empty account or required collections are missing, abort production smoke. Accounts created before notes shipped get their default notebook on their first web sign-in after that deploy, so sign in once outside the smoke before treating such an account as initialized.
 - Use a browser profile approved for the smoke account.
 - Keep raw diagnostics in a temporary local file outside the repo and delete it after generating the report.
 
@@ -83,7 +83,7 @@ Production smoke has the same steps as preview, but with stricter gates:
 
 1. Get explicit owner approval for the production smoke.
 2. Use only an approved, already-initialized internal/test account or a user-approved account.
-3. Abort if the account is first-login, empty, partially initialized, or missing expected calendar/tasks/contacts collections.
+3. Abort if the account is first-login, empty, partially initialized, or missing expected calendar/tasks/contacts/notes collections.
 4. Do not create, update, import, delete, or rename any data during the smoke.
 5. Open production with explicit debug opt-in:
 
@@ -118,6 +118,7 @@ The raw diagnostics in `sessionStorage` should be JSON under the key `silentsuit
   - `listItems:calendar`
   - `listItems:tasks`
   - `listItems:contacts`
+  - `listItems:notes`
   - `syncEngineTrackCollections`
   - `syncEngineStart`
 
@@ -163,6 +164,7 @@ If the smoke fails, do not start with broad rollback. Use the failed phase to ch
 | `listItems:calendar` | Calendar item route/auth/msgpack/decrypt path. If safe local evidence shows HTTP 422, check FastAPI path binding and route contracts before more frontend rollback. |
 | `listItems:tasks` | Tasks item route/auth/msgpack/decrypt path. |
 | `listItems:contacts` | Contacts item route/auth/msgpack/decrypt path. |
+| `listItems:notes` | Notes item route/auth/msgpack/decrypt path. |
 | `syncEngineTrackCollections` | Collection tracking or stoken/cache seeding. |
 | `syncEngineStart` | SyncEngine startup/auth/network path. |
 | `unknown` | Failure before a phase marker or unclassified exception. |
@@ -188,6 +190,7 @@ phases:
   - listItems:calendar: ok|failed|missing (collections=N, items=N, pages=N)
   - listItems:tasks: ok|failed|missing (collections=N, items=N, pages=N)
   - listItems:contacts: ok|failed|missing (collections=N, items=N, pages=N)
+  - listItems:notes: ok|failed|missing (collections=N, items=N, pages=N)
   - syncEngineTrackCollections: ok|failed|missing
   - syncEngineStart: ok|failed|missing
 findings:

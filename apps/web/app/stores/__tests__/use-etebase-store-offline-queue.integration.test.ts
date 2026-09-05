@@ -47,15 +47,48 @@ function setAccount(options: {
   useEtebaseStore.setState({
     account: { getCollectionManager: () => ({ getItemManager: () => manager }) } as any,
     accountFingerprint: TEST_FINGERPRINT,
-    collections: { calendar: collections as any[], tasks: [], contacts: [], preferences: [] },
+    collections: { calendar: collections as any[], tasks: [], contacts: [], notes: [], preferences: [] },
     itemCache: new Map(items.map(({ uid, item }) => [uid, item])),
     itemTypeMap: new Map(items.map(({ uid }) => [uid, 'calendar' as const])),
     itemCollectionMap: new Map(items.map(({ uid, collectionUid }) => [uid, collectionUid])),
-    domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', preferences: 'unknown' },
+    domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' },
     isInitialized: true,
     syncEngine: null,
   } as any)
   return manager
+}
+
+function setNoteAccount(items: { uid: string; collectionUid: string; item: any }[] = []) {
+  const notesCollection = collection('notes-1')
+  useEtebaseStore.setState({
+    account: { getCollectionManager: () => ({}) } as any,
+    accountFingerprint: TEST_FINGERPRINT,
+    collections: { calendar: [], tasks: [], contacts: [], notes: [notesCollection], preferences: [] },
+    itemCache: new Map(items.map(({ uid, item }) => [uid, item])),
+    itemTypeMap: new Map(items.map(({ uid }) => [uid, 'notes' as const])),
+    itemCollectionMap: new Map(items.map(({ uid, collectionUid }) => [uid, collectionUid])),
+    domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' },
+    isInitialized: true,
+    syncEngine: null,
+  } as any)
+  return notesCollection
+}
+
+async function readRawCacheItems(): Promise<unknown[]> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('silentsuite-data-cache')
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+  try {
+    return await new Promise<unknown[]>((resolve, reject) => {
+      const request = db.transaction('items', 'readonly').objectStore('items').getAll()
+      request.onsuccess = () => resolve(request.result ?? [])
+      request.onerror = () => reject(request.error)
+    })
+  } finally {
+    db.close()
+  }
 }
 
 function switchAccountAtBoundary() {
@@ -109,7 +142,7 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     expect(await getMeta()).toBeNull()
     setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
     useEtebaseStore.setState({
-      collections: { calendar: [], tasks: [], contacts: [collection('col-1')], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [collection('col-1')], notes: [], preferences: [] },
     } as any)
     useContactListStore.setState({
       lists: [{ id: 'col-1', name: 'Contacts', color: '#fff', visible: true, accessLevel: 2 }],
@@ -144,12 +177,186 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
         expect.objectContaining({ uid: 'col-1' }),
         expect.objectContaining({ uid: 'item-1' }),
         persistedContent,
+        undefined,
       )
       expect(await getAll(queueGuard())).toEqual([])
       expect((await getItemsByType('contacts')).find((item) => item.itemUid === 'item-1')?.content).toBe(persistedContent)
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+
+  it('replays an offline note update from the encrypted cache with a content-free queue entry', async () => {
+    _setEncryptedQueuePersistenceAvailableForTests(false)
+    const item = { ...cachedItem('note-1'), getMeta: vi.fn(() => ({ name: 'Old title', mtime: 1 })) }
+    setNoteAccount([{ uid: 'note-1', collectionUid: 'notes-1', item }])
+    coreMock.updateItem.mockRejectedValueOnce(offlineError()).mockResolvedValueOnce(item)
+
+    await expect(useEtebaseStore.getState().updateItem(
+      'notes',
+      'note-1',
+      'PRIVATE UPDATED BODY',
+      { persistEncryptedOfflineContent: true, meta: { name: 'PRIVATE UPDATED TITLE', mtime: 222 } },
+    )).resolves.toBe('queued')
+
+    // Neither the queue nor the raw IndexedDB cache record holds plaintext.
+    const [entry] = await getAll(queueGuard())
+    expect(entry).toMatchObject({ type: 'update', itemUid: 'note-1', collectionUid: 'notes-1' })
+    expect(entry!.content).toBeUndefined()
+    expect(JSON.stringify(entry)).not.toContain('PRIVATE UPDATED')
+    expect(JSON.stringify(await readRawCacheItems())).not.toContain('PRIVATE UPDATED')
+    expect(JSON.parse((await getItemsByType('notes')).find((record) => record.itemUid === 'note-1')!.content))
+      .toEqual({ title: 'PRIVATE UPDATED TITLE', content: 'PRIVATE UPDATED BODY', mtime: 222 })
+
+    await replay(
+      (queued, checkpoint) => useEtebaseStore.getState().replayQueuedMutation(queued, queueGuard(), checkpoint),
+      queueGuard(),
+    )
+    expect(coreMock.updateItem).toHaveBeenLastCalledWith(
+      useEtebaseStore.getState().account,
+      expect.objectContaining({ uid: 'notes-1' }),
+      item,
+      'PRIVATE UPDATED BODY',
+      { name: 'PRIVATE UPDATED TITLE', mtime: 222 },
+    )
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('queues an edit made after a reload while offline for a note known only from the cache, then replays it by fetching the item', async () => {
+    _setEncryptedQueuePersistenceAvailableForTests(false)
+    // Reload while offline: the session is restored, but no collections or item objects are in memory.
+    setNoteAccount([])
+    useEtebaseStore.setState({ collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] } })
+
+    await expect(useEtebaseStore.getState().updateItem(
+      'notes',
+      'note-1',
+      'EDITED AFTER RELOAD',
+      { persistEncryptedOfflineContent: true, meta: { name: 'Cached title', mtime: 444 }, collectionUid: 'notes-1' },
+    )).resolves.toBe('queued')
+    expect(coreMock.updateItem).not.toHaveBeenCalled()
+
+    const [entry] = await getAll(queueGuard())
+    expect(entry).toMatchObject({ type: 'update', itemUid: 'note-1', collectionUid: 'notes-1' })
+    expect(entry!.content).toBeUndefined()
+    expect(JSON.stringify(entry)).not.toContain('EDITED AFTER RELOAD')
+    expect(JSON.stringify(await readRawCacheItems())).not.toContain('EDITED AFTER RELOAD')
+
+    // Back online: collections are listed again, but the item map stays empty until the replay fetches the item.
+    const remote = { ...cachedItem('note-1'), getMeta: vi.fn(() => ({ name: 'Cached title', mtime: 1 })) }
+    useEtebaseStore.setState({ collections: { calendar: [], tasks: [], contacts: [], notes: [collection('notes-1')], preferences: [] } })
+    coreMock.listItems.mockResolvedValue({ items: [remote], stoken: null, done: true })
+    coreMock.updateItem.mockResolvedValueOnce(remote)
+
+    await replay(
+      (queued, checkpoint) => useEtebaseStore.getState().replayQueuedMutation(queued, queueGuard(), checkpoint),
+      queueGuard(),
+    )
+    expect(coreMock.updateItem).toHaveBeenCalledWith(
+      useEtebaseStore.getState().account,
+      expect.objectContaining({ uid: 'notes-1' }),
+      remote,
+      'EDITED AFTER RELOAD',
+      { name: 'Cached title', mtime: 444 },
+    )
+    expect(await getAll(queueGuard())).toEqual([])
+    expect(useEtebaseStore.getState().itemCache.get('note-1')).toBe(remote)
+    expect(useEtebaseStore.getState().itemCollectionMap.get('note-1')).toBe('notes-1')
+  })
+
+  it('queues a delete for a cached note with no item in memory and replays it by fetching the item', async () => {
+    setNoteAccount([])
+
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect((await getAll(queueGuard()))[0]).toMatchObject({ type: 'delete', itemUid: 'note-1', collectionUid: 'notes-1' })
+
+    const remote = cachedItem('note-1')
+    coreMock.listItems.mockResolvedValue({ items: [remote], stoken: null, done: true })
+    coreMock.deleteItem.mockResolvedValueOnce(undefined)
+    await replay(
+      (queued, checkpoint) => useEtebaseStore.getState().replayQueuedMutation(queued, queueGuard(), checkpoint),
+      queueGuard(),
+    )
+    expect(coreMock.deleteItem).toHaveBeenCalledWith(useEtebaseStore.getState().account, expect.objectContaining({ uid: 'notes-1' }), remote)
+    expect(await getAll(queueGuard())).toEqual([])
+  })
+
+  it('drops queued note edits once a newer online update or a delete succeeds', async () => {
+    const item = cachedItem('note-1')
+    setNoteAccount([{ uid: 'note-1', collectionUid: 'notes-1', item }])
+    await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, queueGuard())
+
+    coreMock.updateItem.mockResolvedValueOnce(item)
+    await expect(useEtebaseStore.getState().updateItem(
+      'notes', 'note-1', 'NEWER BODY', { meta: { name: 'Newer title', mtime: 333 } },
+    )).resolves.toBe('remote')
+    expect(await getAll(queueGuard())).toEqual([])
+
+    await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, queueGuard())
+    coreMock.deleteItem.mockResolvedValueOnce(undefined)
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1')).resolves.toBe('remote')
+    expect(await getAll(queueGuard())).toEqual([])
+    expect(useEtebaseStore.getState().itemCache.has('note-1')).toBe(false)
+  })
+
+  it('keeps the pending offline note edit when the collection is refreshed from the server', async () => {
+    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
+    try {
+      const item = { ...cachedItem('note-1'), getMeta: vi.fn(() => ({ name: 'Server title', mtime: 1 })) }
+      const notesCollection = setNoteAccount([{ uid: 'note-1', collectionUid: 'notes-1', item }])
+      const serverItem = { ...remoteItem('note-1', 'SERVER BODY'), getMeta: vi.fn(() => ({ name: 'Server title', mtime: 1 })) }
+      useEtebaseStore.setState({
+        account: {
+          getCollectionManager: () => ({
+            fetch: async () => notesCollection,
+            getItemManager: () => ({ list: async () => ({ data: [serverItem], stoken: null, done: true }) }),
+          }),
+        } as any,
+      })
+      coreMock.updateItem.mockRejectedValueOnce(offlineError()).mockResolvedValueOnce(item)
+      await expect(useEtebaseStore.getState().updateItem(
+        'notes', 'note-1', 'OFFLINE BODY', { persistEncryptedOfflineContent: true, meta: { name: 'Offline title', mtime: 2 } },
+      )).resolves.toBe('queued')
+
+      await useEtebaseStore.getState().refreshCollection('notes')
+
+      // The cache replace must not overwrite the queued edit with the stale server copy.
+      expect(JSON.parse((await getItemsByType('notes')).find((record) => record.itemUid === 'note-1')!.content))
+        .toMatchObject({ title: 'Offline title', content: 'OFFLINE BODY' })
+      await replay(
+        (queued, checkpoint) => useEtebaseStore.getState().replayQueuedMutation(queued, queueGuard(), checkpoint),
+        queueGuard(),
+      )
+      expect(coreMock.updateItem).toHaveBeenLastCalledWith(
+        useEtebaseStore.getState().account,
+        expect.objectContaining({ uid: 'notes-1' }),
+        expect.objectContaining({ uid: 'note-1' }),
+        'OFFLINE BODY',
+        { name: 'Offline title', mtime: 2 },
+      )
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('skips items with a non-empty type when refreshing a notebook', async () => {
+    const notesCollection = setNoteAccount()
+    const note = { ...remoteItem('note-1', 'BODY'), getMeta: vi.fn(() => ({ name: 'Note', mtime: 1 })) }
+    const attachment = { ...remoteItem('att-1', 'BLOB'), getMeta: vi.fn(() => ({ name: 'file', type: 'attachment' })) }
+    useEtebaseStore.setState({
+      account: {
+        getCollectionManager: () => ({
+          fetch: async () => notesCollection,
+          getItemManager: () => ({ list: async () => ({ data: [note, attachment], stoken: null, done: true }) }),
+        }),
+      } as any,
+    })
+
+    const items = await useEtebaseStore.getState().refreshCollection('notes')
+
+    expect(items).toEqual([{ uid: 'note-1', content: 'BODY', collectionUid: 'notes-1', meta: { name: 'Note', mtime: 1 } }])
+    expect(useEtebaseStore.getState().itemCache.has('att-1')).toBe(false)
   })
 
   it('real createItem fallback persists the active fingerprint and is visible to guarded count and replay', async () => {
@@ -212,7 +419,7 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
 
   it.each([
     ['updateItem', async () => useEtebaseStore.getState().updateItem('calendar', 'item-1', 'NEW'), false],
-    ['deleteItem', async () => useEtebaseStore.getState().deleteItem('calendar', 'item-1'), undefined],
+    ['deleteItem', async () => useEtebaseStore.getState().deleteItem('calendar', 'item-1'), false],
   ] as const)('%s quietly cancels at its real queue put boundary', async (_name, mutate, expectedResult) => {
     setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
     coreMock.updateItem.mockRejectedValueOnce(offlineError())
@@ -378,7 +585,7 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
 
     coreMock.updateItem.mockResolvedValueOnce(created)
     await useEtebaseStore.getState().updateItem('calendar', 'server-fresh', 'UPDATED')
-    expect(coreMock.updateItem).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ uid: 'col-1' }), created, 'UPDATED')
+    expect(coreMock.updateItem).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ uid: 'col-1' }), created, 'UPDATED', undefined)
   })
 
   it('account boundary inside create cache publication publishes nothing and leaves a reconciliable checkpoint', async () => {
@@ -419,22 +626,21 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     expect(await getAll(queueGuard())).toEqual([])
   })
 
-  it('cold-start replay publishes a fresh target before queue success is exposed', async () => {
+  it('startup replay publishes a fresh target before queue success is exposed', async () => {
+    // SyncProvider calls replayOfflineQueue once the restored session and item
+    // maps are live; this is the same entry point.
     const content = 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:cold-start\r\nEND:VEVENT\r\nEND:VCALENDAR'
     const created = remoteItem('server-cold', content)
     setAccount()
     await enqueue({ type: 'create', collectionType: 'calendar', collectionUid: 'col-1', content, tempId: 'temp-cold' }, queueGuard())
     coreMock.createItem.mockResolvedValueOnce(created)
 
-    const cleanup = useSyncStore.getState().initializeSync()
-    try {
-      await vi.waitFor(() => expect(useEtebaseStore.getState().itemCache.get('server-cold')).toBe(created))
-      expect(useEtebaseStore.getState().itemTypeMap.get('server-cold')).toBe('calendar')
-      expect(useEtebaseStore.getState().itemCollectionMap.get('server-cold')).toBe('col-1')
-      expect(await getAll(queueGuard())).toEqual([])
-    } finally {
-      cleanup()
-    }
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(1)
+
+    expect(useEtebaseStore.getState().itemCache.get('server-cold')).toBe(created)
+    expect(useEtebaseStore.getState().itemTypeMap.get('server-cold')).toBe('calendar')
+    expect(useEtebaseStore.getState().itemCollectionMap.get('server-cold')).toBe('col-1')
+    expect(await getAll(queueGuard())).toEqual([])
   })
 
   it('account boundary after create commit retains recoverable old work and retry reconciles exactly one remote object', async () => {
@@ -490,7 +696,7 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     const updated = remoteItem('server-contact', 'UPDATED')
     coreMock.updateItem.mockResolvedValueOnce(updated)
     await useEtebaseStore.getState().updateItem('calendar', 'server-contact', 'UPDATED')
-    expect(coreMock.updateItem).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ uid: 'col-1' }), created, 'UPDATED')
+    expect(coreMock.updateItem).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ uid: 'col-1' }), created, 'UPDATED', undefined)
 
     coreMock.deleteItem.mockResolvedValueOnce(undefined)
     await useEtebaseStore.getState().deleteItem('calendar', 'server-contact')

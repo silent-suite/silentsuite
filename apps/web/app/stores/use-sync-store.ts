@@ -48,8 +48,8 @@ interface SyncActions {
    * Falls back to a brief visual indicator if no SyncEngine is available.
    */
   simulateSyncCycle: () => void
-  /** Replay queued offline mutations before syncing */
-  replayOfflineQueue: () => Promise<void>
+  /** Replay queued offline mutations. Resolves to how many were confirmed remotely. */
+  replayOfflineQueue: () => Promise<number>
 }
 
 export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
@@ -98,19 +98,10 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
     void refreshCounts()
 
-    // Set initial state
+    // Set initial state. Mutations queued by a previous session are replayed
+    // by SyncProvider once the Etebase session has been restored.
     if (navigator.onLine) {
       set({ isOnline: true })
-      captureQueueGuard().then(async (guard) => {
-        const count = await getPendingCount(guard)
-        assertCurrentAccountEpoch(guard.accountEpoch)
-        if (count > 0) {
-          logger.log(`[sync-store] Cold-start: replaying ${count} queued mutations`)
-          await get().replayOfflineQueue()
-        }
-      }).catch((err) => {
-        if (!(err instanceof AccountBoundaryChangedError)) logger.warn('[sync-store] Cold-start replay check failed', getSafeErrorDetails(err))
-      })
     } else {
       set({ syncStatus: 'offline', isOnline: false })
     }
@@ -127,7 +118,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     const guard = await captureQueueGuard()
     const count = await getPendingCount(guard)
     assertCurrentAccountEpoch(guard.accountEpoch)
-    if (count === 0) return
+    if (count === 0) return 0
 
     logger.log(`[sync-store] Replaying ${count} queued offline mutations...`)
 
@@ -184,8 +175,9 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     const succeeded = results.filter((r) => r.success).length
     const failed = results.filter((r) => !r.success).length
     logger.log(`[sync-store] Queue replay done: ${succeeded} succeeded, ${failed} failed`)
+    return succeeded
     } catch (err) {
-      if (err instanceof AccountBoundaryChangedError) return
+      if (err instanceof AccountBoundaryChangedError) return 0
       throw err
     }
   },
@@ -226,10 +218,11 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       }
 
       // Then refresh every collection of each type from the server
-      const [taskItems, contactItems, eventItems] = await Promise.all([
+      const [taskItems, contactItems, eventItems, noteItems] = await Promise.all([
         reconciledEtebase.refreshCollection('tasks'),
         reconciledEtebase.refreshCollection('contacts'),
         reconciledEtebase.refreshCollection('calendar'),
+        reconciledEtebase.refreshCollection('notes'),
       ])
       assertCurrentAccountEpoch(accountEpoch)
 
@@ -237,6 +230,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const { useTaskStore } = await import('@/app/stores/use-task-store')
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
+      const { useNoteStore } = await import('@/app/stores/use-note-store')
       const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
       assertCurrentAccountEpoch(accountEpoch)
 
@@ -273,6 +267,14 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       if (domainLoadState.calendar === 'loaded') {
         assertCurrentAccountEpoch(accountEpoch)
         useCalendarStore.getState().syncFromRemote(events)
+      } else {
+        partialDomainCount += 1
+      }
+
+      const notes = noteItems.map((item) => core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid))
+      if (domainLoadState.notes === 'loaded') {
+        assertCurrentAccountEpoch(accountEpoch)
+        useNoteStore.getState().syncFromRemote(notes)
       } else {
         partialDomainCount += 1
       }

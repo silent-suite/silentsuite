@@ -1,6 +1,6 @@
 # Getting Started
 
-Set up SilentSuite and start syncing your calendar, contacts, and tasks with end-to-end encryption.
+Set up SilentSuite and start syncing your calendar, contacts, tasks, and notes with end-to-end encryption.
 
 ## 1. Create an Account
 
@@ -15,7 +15,7 @@ Your password is used to derive your encryption keys locally on your device. It 
 
 ## 2. Set Up Your First Device
 
-After creating your account, you can use SilentSuite immediately in the web app. Add calendar events, contacts, and tasks right from your browser.
+After creating your account, you can use SilentSuite immediately in the web app. Add calendar events, contacts, tasks, and notes right from your browser.
 
 To sync with other apps and devices, see the [Apps & Integrations](./apps/index.md) page for supported Android and desktop setup guides. iOS is [on the roadmap](./apps/ios.md), coming soon, and is not currently supported.
 
@@ -26,6 +26,7 @@ Once set up, you can start adding:
 - **Calendar events** -- see [Calendar](./calendar.md)
 - **Contacts** -- see [Contacts](./contacts.md)
 - **Tasks** -- see [Tasks](./tasks.md)
+- **Notes** -- see [Notes](./notes.md)
 
 All data is encrypted on your device before syncing.
 

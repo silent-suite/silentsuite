@@ -6,7 +6,7 @@
 import { logger } from '@/app/lib/logger'
 import { AccountBoundaryChangedError, assertCurrentAccountEpoch } from '@/app/lib/account-epoch'
 
-type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
+type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'notes' | 'preferences'
 type MutationType = 'create' | 'update' | 'delete' | 'move'
 
 export interface QueueEntry {
@@ -374,6 +374,52 @@ export async function remove(id: string, guard?: OfflineQueueAccountGuard): Prom
     }
     tx.onerror = () => reject(tx.error)
     tx.onabort = () => reject(guard ? new AccountBoundaryChangedError() : tx.error)
+  })
+}
+
+/**
+ * Remove every pending or failed mutation for one logical item. Successful
+ * online mutations use this to supersede stale offline work before a later
+ * replay can overwrite or resurrect newer server state.
+ */
+export async function removeItemMutations(
+  collectionType: CollectionTypeKey,
+  itemUid: string,
+  guard: OfflineQueueAccountGuard,
+): Promise<number> {
+  assertGuard(guard)
+  const db = await openDB()
+  assertGuard(guard)
+  return new Promise<number>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    const request = store.getAll()
+    let removed = 0
+    request.onsuccess = () => {
+      try {
+        assertGuard(guard)
+        for (const entry of request.result as QueueEntry[]) {
+          if (
+            entry.accountFingerprint === guard.accountFingerprint
+            && entry.collectionType === collectionType
+            && (entry.itemUid === itemUid || entry.tempId === itemUid)
+          ) {
+            store.delete(entry.id)
+            removed++
+          }
+        }
+        queueCommitGuard(store, tx, guard)
+      } catch {
+        tx.abort()
+      }
+    }
+    request.onerror = () => reject(request.error)
+    tx.oncomplete = () => {
+      notifyListeners(guard)
+      resolve(removed)
+    }
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(new AccountBoundaryChangedError())
   })
 }
 

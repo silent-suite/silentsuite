@@ -4,10 +4,11 @@ import { useEffect, useRef } from 'react'
 import * as Sentry from '@sentry/nextjs'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { logger } from '@/app/lib/logger'
-import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { keepPendingCacheRecords, useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useNoteStore } from '@/app/stores/use-note-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import {
@@ -54,7 +55,7 @@ function safeLogSyncTiming(phase: SyncTimingPhase, startedAt: number, fields: Sy
 
 function countVisiblePartialDomains() {
   const state = useEtebaseStore.getState().domainLoadState
-  return (['tasks', 'contacts', 'calendar'] as const).filter((type) => state[type] === 'failed').length
+  return (['tasks', 'contacts', 'calendar', 'notes'] as const).filter((type) => state[type] === 'failed').length
 }
 
 function updatePartialLoadFlag() {
@@ -111,6 +112,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // before slower tasks/contacts finish. This replaces the old
         // post-initialize all-domain load, so no domain is replaced twice.
         const etebaseStartedAt = nowMs()
+        useNoteStore.setState({ isLoading: true })
         await etebaseInitialize({
           onCacheHydrate: async () => {
             const cacheStartedAt = nowMs()
@@ -119,6 +121,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           onDomainLoaded: async (event) => {
             await loadDomainIntoStore(event.type)
             assertCurrentAccountEpoch(accountEpoch)
+            if (event.type === 'notes') useNoteStore.setState({ isLoading: false })
             updatePartialLoadFlag()
           },
         })
@@ -148,15 +151,29 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         unsubStatus = wireStatusHandler()
         safeLogSyncTiming('wire-status-handler', statusHandlerStartedAt, { status: unsubStatus ? 'ok' : 'skipped' })
 
+        // Drain mutations queued before this reload now that the session, item
+        // maps, and change handlers are live (initializeSync runs before the
+        // session is restored, so it cannot). A non-empty replay is followed
+        // by a sync cycle so the stores show the replayed state.
+        let replayed = 0
+        try {
+          replayed = await useSyncStore.getState().replayOfflineQueue()
+        } catch (err) {
+          if (err instanceof AccountBoundaryChangedError) throw err
+          logger.warn('[sync-provider] Startup offline queue replay failed', getSafeErrorDetails(err))
+        }
         assertCurrentAccountEpoch(accountEpoch)
+
         setSyncStatus('synced')
         setLastSynced(new Date())
         safeLogSyncTiming('initial-sync-complete', initStartedAt)
+        if (replayed > 0) useSyncStore.getState().simulateSyncCycle()
       } catch (err) {
         if (!isCurrentAccountEpoch(accountEpoch)) return
         if (err instanceof AccountBoundaryChangedError) return
         safeLogSyncTiming('initial-sync-failed', initStartedAt, { errorCategory: safeTimingErrorCategory('unknown') })
         reportSyncError('init', err)
+        useNoteStore.setState({ isLoading: false })
         setSyncStatus('error')
         setError('Sync initialization failed')
       }
@@ -175,10 +192,11 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
      */
     async function hydrateFromCache(startedAt = nowMs()) {
       try {
-        const [taskItems, contactItems, eventItems, core] = await Promise.all([
+        const [taskItems, contactItems, eventItems, noteItems, core] = await Promise.all([
           cacheGetItemsByType('tasks'),
           cacheGetItemsByType('contacts'),
           cacheGetItemsByType('calendar'),
+          cacheGetItemsByType('notes'),
           import('@silentsuite/core'),
         ])
         assertCurrentAccountEpoch(accountEpoch)
@@ -221,11 +239,22 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             logger.warn('[sync-provider] Failed to hydrate calendar events from cache', getSafeErrorDetails(err))
           }
         }
+
+        if (noteItems.length > 0) {
+          try {
+            const notes = noteItems.map((it) => core.deserializeNote(it.content, it.itemUid, it.collectionUid))
+            useNoteStore.getState().syncFromRemote(notes)
+            logger.log(`[sync-provider] Hydrated ${notes.length} notes from cache`)
+          } catch (err) {
+            logger.warn('[sync-provider] Failed to hydrate notes from cache', getSafeErrorDetails(err))
+          }
+        }
         safeLogSyncTiming('cache-hydrate', startedAt, {
           status: 'ok',
           taskItemCount: taskItems.length,
           contactItemCount: contactItems.length,
           calendarItemCount: eventItems.length,
+          noteItemCount: noteItems.length,
         })
       } catch (err) {
         if (err instanceof AccountBoundaryChangedError) throw err
@@ -235,7 +264,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }
 
     async function mirrorToCache(
-      type: 'tasks' | 'contacts' | 'calendar',
+      type: 'tasks' | 'contacts' | 'calendar' | 'notes',
       items: { uid: string; content: string; collectionUid: string }[],
     ) {
       if (!isLocalCacheEnabled()) return
@@ -248,7 +277,9 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         lastModified: Date.now(),
       }))
       try {
-        await cacheReplaceItemsForType(type, records, accountEpoch)
+        const kept = await keepPendingCacheRecords(type, records, accountEpoch, useEtebaseStore.getState().accountFingerprint)
+        assertCurrentAccountEpoch(accountEpoch)
+        await cacheReplaceItemsForType(type, kept, accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
         safeLogSyncTiming('cache-mirror', startedAt, { type, itemCount: items.length })
       } catch (err) {
@@ -263,6 +294,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       tasks: 'tasks-load',
       contacts: 'contacts-load',
       calendar: 'calendar-load',
+      notes: 'notes-load',
     } as const
 
     /**
@@ -270,7 +302,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
      * Only replaces the store when that domain is 'loaded' -- a failed/unknown
      * domain (Slice 4) keeps its existing store contents untouched.
      */
-    async function loadDomainIntoStore(type: 'calendar' | 'tasks' | 'contacts') {
+    async function loadDomainIntoStore(type: 'calendar' | 'tasks' | 'contacts' | 'notes') {
       const startedAt = nowMs()
       const cacheEnabled = isLocalCacheEnabled()
       try {
@@ -290,6 +322,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             domainItemCount = tasks.length
             useTaskStore.getState().syncFromRemote(tasks)
             logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
+            await mirrorToCache(type, items)
           } else if (type === 'contacts') {
             const contacts = items.map((item) => {
               const contact = core.deserializeContact(item.content)
@@ -298,6 +331,17 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             domainItemCount = contacts.length
             useContactStore.getState().syncFromRemote(contacts)
             logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
+            await mirrorToCache(type, items)
+          } else if (type === 'notes') {
+            const notes = items.map((item) => core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid))
+            domainItemCount = notes.length
+            useNoteStore.getState().syncFromRemote(notes)
+            logger.log(`[sync-provider] Loaded ${notes.length} notes from server`)
+            await mirrorToCache(type, notes.map((note) => ({
+              uid: note.id,
+              content: core.serializeNote(note),
+              collectionUid: note.notebookId ?? '',
+            })))
           } else {
             const events = items.map((item) => {
               const event = core.deserializeCalendarEvent(item.content)
@@ -306,10 +350,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             domainItemCount = events.length
             useCalendarStore.getState().syncFromRemote(events)
             logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
+            await mirrorToCache(type, items)
           }
-          await mirrorToCache(type, items)
         }
-        const countField = type === 'tasks' ? 'taskCount' : type === 'contacts' ? 'contactCount' : 'eventCount'
+        const countField = type === 'tasks' ? 'taskCount' : type === 'contacts' ? 'contactCount' : type === 'notes' ? 'noteCount' : 'eventCount'
         safeLogSyncTiming(TIMING_PHASE_BY_TYPE[type], startedAt, {
           source: 'server',
           cacheEnabled,
@@ -392,6 +436,22 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           } catch (err) {
             if (err instanceof AccountBoundaryChangedError) return
             reportSyncError('sync calendar events', err)
+          }
+        } else if (collectionType === 'etebase.md.note') {
+          try {
+            await refresher('notes', event.collectionUid)
+            assertCurrentAccountEpoch(accountEpoch)
+            updatePartialLoadFlag()
+            if (useEtebaseStore.getState().domainLoadState.notes === 'loaded') {
+              const noteItems = await useEtebaseStore.getState().fetchAllItems('notes', accountEpoch)
+              assertCurrentAccountEpoch(accountEpoch)
+              const notes = noteItems.map((item) => core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid))
+              assertCurrentAccountEpoch(accountEpoch)
+              useNoteStore.getState().syncFromRemote(notes)
+            }
+          } catch (err) {
+            if (err instanceof AccountBoundaryChangedError) return
+            reportSyncError('sync notes', err)
           }
         } else if (collectionType === 'silentsuite.labelindex') {
           try {

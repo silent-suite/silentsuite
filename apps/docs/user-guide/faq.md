@@ -6,7 +6,7 @@ New hosted billing is annual only: Early Adopter access is **€36 annually (€
 
 ### What is SilentSuite?
 
-SilentSuite is a privacy-focused, end-to-end encrypted sync service for calendar, contacts, and tasks. Your data is encrypted on your device before it reaches the server. The server never sees plaintext.
+SilentSuite is a privacy-focused, end-to-end encrypted sync service for calendar, contacts, tasks, and notes. Your data is encrypted on your device before it reaches the server. The server never sees plaintext.
 
 ### Is SilentSuite free?
 

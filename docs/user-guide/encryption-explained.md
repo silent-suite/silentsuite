@@ -16,6 +16,7 @@ Everything.
 - Calendar event titles, dates, locations, descriptions, and reminders
 - Contact names, emails, phone numbers, addresses, and notes
 - Task titles, due dates, priorities, and notes
+- Note titles and Markdown bodies
 
 There is no toggle to turn encryption on or off. Encryption is the architecture, not a feature.
 
@@ -29,8 +30,8 @@ The server knows:
 
 The server **cannot** see:
 
-- The contents of any event, contact, or task
-- How many events, contacts, or tasks you have (data is stored in encrypted collections, not individually)
+- The contents of any event, contact, task, or note
+- How many events, contacts, tasks, or notes you have (data is stored in encrypted collections, not individually)
 - Any plaintext whatsoever
 
 ## What Happens If You Forget Your Password

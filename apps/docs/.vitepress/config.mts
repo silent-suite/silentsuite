@@ -14,14 +14,14 @@ export default defineConfig({
     },
   },
   title: 'SilentSuite Docs',
-  description: 'Documentation for SilentSuite — end-to-end encrypted calendar, contacts & tasks.',
+  description: 'Documentation for SilentSuite — end-to-end encrypted calendar, contacts, tasks & notes.',
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }],
 
     ['meta', { name: 'theme-color', content: '#0a1018' }],
     ['meta', { property: 'og:type', content: 'website' }],
     ['meta', { property: 'og:title', content: 'SilentSuite Docs' }],
-    ['meta', { property: 'og:description', content: 'Documentation for SilentSuite — end-to-end encrypted calendar, contacts & tasks.' }],
+    ['meta', { property: 'og:description', content: 'Documentation for SilentSuite — end-to-end encrypted calendar, contacts, tasks & notes.' }],
     ['meta', { property: 'og:url', content: 'https://docs.silentsuite.io' }],
   ],
 
@@ -48,6 +48,7 @@ export default defineConfig({
             { text: 'Calendar', link: '/user-guide/calendar' },
             { text: 'Contacts', link: '/user-guide/contacts' },
             { text: 'Tasks', link: '/user-guide/tasks' },
+            { text: 'Notes', link: '/user-guide/notes' },
             { text: 'How Encryption Works', link: '/user-guide/encryption-explained' },
             { text: 'FAQ', link: '/user-guide/faq' },
           ],

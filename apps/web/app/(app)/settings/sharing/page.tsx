@@ -5,7 +5,7 @@ import { MailPlus, RefreshCcw, ShieldCheck, Users } from 'lucide-react'
 import type { CollectionAccessLevel } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 
-type SharingCollectionType = 'calendar' | 'tasks' | 'contacts'
+type SharingCollectionType = 'calendar' | 'tasks' | 'contacts' | 'notes'
 
 type CollectionCard = {
   type: SharingCollectionType
@@ -22,6 +22,7 @@ const COLLECTION_LABELS: Record<SharingCollectionType, string> = {
   calendar: 'Calendar',
   tasks: 'Task list',
   contacts: 'Address book',
+  notes: 'Notebook',
 }
 
 const ACCESS_LEVEL_LABELS: Record<CollectionAccessLevel, string> = {
@@ -85,7 +86,7 @@ export default function SharingSettingsPage() {
 
   const collectionCards = useMemo<CollectionCard[]>(() => {
     const cards: CollectionCard[] = []
-    for (const type of ['calendar', 'tasks', 'contacts'] as const) {
+    for (const type of ['calendar', 'tasks', 'contacts', 'notes'] as const) {
       collections[type].forEach((collection, index) => {
         cards.push({
           type,
@@ -206,7 +207,7 @@ export default function SharingSettingsPage() {
       <div className="space-y-3">
         <h2 className="text-base font-semibold text-[rgb(var(--foreground))]">Sharing</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Sign in before managing shared calendars, task lists, or address books.
+          Sign in before managing shared calendars, task lists, address books, or notebooks.
         </p>
       </div>
     )
@@ -297,7 +298,7 @@ export default function SharingSettingsPage() {
           <div>
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">Collection members</p>
             <p className="text-xs text-[rgb(var(--muted))]">
-              Invite trusted accounts by username/email. Plain calendar, contact, and task data remains encrypted.
+              Invite trusted accounts by username/email. Plain calendar, contact, task, and note data remains encrypted.
             </p>
           </div>
         </div>
@@ -406,7 +407,7 @@ export default function SharingSettingsPage() {
             <p className="text-sm font-medium text-[rgb(var(--foreground))]">Zero-knowledge sharing</p>
             <p className="text-xs text-[rgb(var(--muted))]">
               Sharing uses Etebase encrypted collection membership. The server only sees encrypted membership material;
-              plaintext events, contacts, and tasks stay on your devices.
+              plaintext events, contacts, tasks, and notes stay on your devices.
             </p>
           </div>
         </div>
