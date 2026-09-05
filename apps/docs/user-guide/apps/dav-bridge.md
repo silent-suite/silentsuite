@@ -213,11 +213,46 @@ This configures the bridge to start when you log in:
 - **macOS**: Creates a launchd agent
 - **Windows**: Adds a startup registry entry
 
+### Listener settings survive auto-start
+
+Auto-start entries run the bridge with a clean environment, so shell exports are not
+visible to the restarted process. When you run `--install-autostart`, the bridge first
+validates the effective configuration and then persists only the variables you explicitly
+exported among `SILENTSUITE_LISTEN_ADDRESS`, `SILENTSUITE_LISTEN_PORT`,
+`SILENTSUITE_SERVER_HOSTS`, and `SILENTSUITE_ALLOW_REMOTE` into the `"network"` object of
+`settings.json`. All three platform entries read that same profile. Environment variables
+still take precedence over the persisted values whenever they are set.
+
+```bash
+SILENTSUITE_LISTEN_ADDRESS=::1 SILENTSUITE_LISTEN_PORT=45123 silentsuite-bridge --install-autostart
+```
+
+- With nothing exported, no `"network"` object is written and the bridge keeps `127.0.0.1:37358`.
+- A non-loopback address without `SILENTSUITE_ALLOW_REMOTE=1` is refused before anything is
+  written. The permission is persisted together with the bind, and the dashboard stays
+  disabled on remote binds.
+- Nothing else from the environment (server URL, data directory, log file, SSL paths,
+  credentials) is ever persisted by this command.
+- Running `--install-autostart` again merges newly exported variables over the retained
+  profile; values you do not export again are kept.
+- `SILENTSUITE_DATA_DIR` cannot be combined with `--install-autostart`; the command refuses
+  and changes nothing, because the restarted bridge would read the default data directory.
+- If the service manager does not confirm the start, the command exits non-zero and says
+  so; check `systemctl --user status silentsuite-bridge` or `launchctl list io.silentsuite.bridge`.
+
+The persisted profile is validated strictly on every start. If `settings.json` contains an
+invalid or unknown `"network"` entry, the bridge stops before binding and names the
+offending key without printing its value; other settings are left untouched.
+
 ### Remove Auto-Start
 
 ```bash
 silentsuite-bridge --remove-autostart
 ```
+
+This removes the startup entry but keeps the persisted `"network"` profile, so a manual
+`silentsuite-bridge` run still binds the same way. To reset to the loopback defaults,
+delete the `"network"` object from `settings.json` in the bridge data directory.
 
 ## Uninstall
 
@@ -263,9 +298,11 @@ Uninstalling the local Bridge only removes the desktop sync helper from this com
 | Variable | Default | Description |
 |---|---|---|
 | `SILENTSUITE_SERVER_URL` | `https://server.silentsuite.io` | Etebase server URL |
-| `SILENTSUITE_LISTEN_ADDRESS` | `localhost` | IP address to listen on |
-| `SILENTSUITE_LISTEN_PORT` | `37358` | Port to listen on |
-| `SILENTSUITE_DATA_DIR` | Platform-specific | Data storage location |
+| `SILENTSUITE_LISTEN_ADDRESS` | `127.0.0.1` | IP address to listen on (persisted by `--install-autostart` when exported) |
+| `SILENTSUITE_LISTEN_PORT` | `37358` | Port to listen on (persisted by `--install-autostart` when exported) |
+| `SILENTSUITE_SERVER_HOSTS` | listen address and port | Radicale `host:port` list (persisted by `--install-autostart` when exported) |
+| `SILENTSUITE_ALLOW_REMOTE` | unset | Required for a non-loopback bind; disables the dashboard (persisted by `--install-autostart` when exported) |
+| `SILENTSUITE_DATA_DIR` | Platform-specific | Data storage location (not supported with `--install-autostart`) |
 | `SILENTSUITE_SYNC_INTERVAL` | `900` (15 min) | Sync interval in seconds |
 | `SILENTSUITE_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
 

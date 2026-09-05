@@ -216,10 +216,17 @@ ensure_path() {
 }
 
 # --- Setup auto-start ---
+# The bridge validates and persists any explicitly exported
+# SILENTSUITE_LISTEN_ADDRESS / _LISTEN_PORT / _SERVER_HOSTS / _ALLOW_REMOTE into
+# settings.json before writing the autostart entry, so the clean-environment
+# restart binds the same way. A non-zero exit means the entry was not confirmed;
+# never report success in that case.
 setup_autostart() {
-    "${INSTALL_DIR}/${BINARY_NAME}" --install-autostart 2>/dev/null && \
-        info "Auto-start configured" || \
-        warn "Could not set up auto-start (you can do it later with: ${BINARY_NAME} --install-autostart)"
+    if "${INSTALL_DIR}/${BINARY_NAME}" --install-autostart; then
+        info "Auto-start configured. Remove with: ${BINARY_NAME} --remove-autostart"
+    else
+        warn "Auto-start was not confirmed. Review the messages above; retry later with: ${BINARY_NAME} --install-autostart"
+    fi
 }
 
 # --- Main ---
@@ -249,7 +256,6 @@ main() {
 
     step "Setting up auto-start..."
     setup_autostart
-    info "Auto-start configured. Remove with: ${BINARY_NAME} --remove-autostart"
 
     DASHBOARD_URL="http://localhost:37358/.web/"
 

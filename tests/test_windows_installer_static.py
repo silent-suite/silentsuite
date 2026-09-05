@@ -72,6 +72,19 @@ def test_windows_installer_polls_dashboard_after_starting_hidden_bridge():
     assert "Bridge exited after login" in script
 
 
+def test_windows_installer_checks_autostart_exit_code_before_claiming_success():
+    script = read(INSTALLER)
+    autostart_block = script[script.index("# --- Auto-start ---"):script.index("# --- Login ---")]
+
+    assert "--install-autostart" in autostart_block
+    assert "$LASTEXITCODE -ne 0" in autostart_block
+    assert "Auto-start was not confirmed" in autostart_block
+    ok_index = autostart_block.index('Write-Ok "Auto-start configured"')
+    assert autostart_block.index("$LASTEXITCODE -ne 0") < ok_index, (
+        "the installer must inspect the bridge exit code before reporting auto-start success"
+    )
+
+
 def test_browser_login_success_page_distinguishes_temporary_auth_port_from_dav_port():
     auth_browser = read(AUTH_BROWSER)
 
