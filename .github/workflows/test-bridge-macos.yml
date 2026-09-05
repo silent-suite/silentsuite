@@ -1,0 +1,61 @@
+name: Test Bridge (macOS, network profile / autostart)
+
+# Focused native macOS execution of the #658 durable network profile tests:
+# launchd plist rendering, install/remove semantics against a stubbed
+# launchctl, settings durability, and the --install-autostart -> clean-shell
+# CLI journey. Nothing here loads a real launchd agent; real launchd restart
+# acceptance remains a separate manual step.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'bridge/src/silentsuite_bridge/**'
+      - 'bridge/tests/test_network_profile.py'
+      - 'bridge/tests/test_autostart_profile.py'
+      - 'bridge/tests/test_autostart_clean_shell_cli.py'
+      - '.github/workflows/test-bridge-macos.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    name: Network profile / autostart tests (macOS arm64)
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # etebase-py 0.31.5 uses cpython 0.7.x which doesn't support Python 3.12+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      # Mirrors the macos-arm64 lane of build-bridge.yml: PyPI etebase 0.31.5
+      # has no macOS arm64 wheel and its sdist lacks build.rs, so install the
+      # upstream commit that builds with a modern toolchain.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: "1.96.0"
+
+      - name: Install dependencies
+        working-directory: bridge
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest
+
+      - name: Run network profile / autostart tests natively (#658)
+        working-directory: bridge
+        shell: bash
+        run: python -m pytest tests/test_network_profile.py tests/test_autostart_profile.py tests/test_autostart_clean_shell_cli.py -v --tb=short

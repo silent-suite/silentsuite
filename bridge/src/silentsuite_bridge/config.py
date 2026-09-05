@@ -80,6 +80,14 @@ class SettingsFileError(RuntimeError):
     """settings.json exists but is not a JSON object; message never echoes its content."""
 
 
+class SettingsDurabilityError(OSError):
+    """settings.json was replaced, but the directory sync that makes the replace durable failed.
+
+    Raised only after ``os.replace`` succeeded: the new content is visible on
+    disk, so callers must never report the file as unchanged.
+    """
+
+
 def _format_host_port(host: str, port: int) -> str:
     """Format host:port for Radicale, bracketing IPv6 literals."""
     return f"[{host}]:{port}" if ":" in host and not host.startswith("[") else f"{host}:{port}"
@@ -214,12 +222,19 @@ ALLOW_REMOTE = False
 NETWORK_PROFILE_ERROR: str | None = None
 
 
-def _resolve_network(settings: dict) -> None:
-    """Apply env > persisted profile > defaults to the module-level network globals."""
+def _resolve_network(settings: dict, settings_error: str | None = None) -> None:
+    """Apply env > persisted profile > defaults to the module-level network globals.
+
+    ``settings_error`` carries the bounded reason settings.json could not be
+    read as a JSON object. It is recorded like an invalid profile so startup
+    fails closed instead of silently falling back to the loopback defaults.
+    """
     global LISTEN_ADDRESS, LISTEN_PORT, DEFAULT_SERVER_HOSTS, SERVER_HOSTS, ALLOW_REMOTE
     global NETWORK_PROFILE_ERROR
 
     errors: list[str] = []
+    if settings_error:
+        errors.append(settings_error)
     persisted: dict = {}
     if NETWORK_PROFILE_KEY in settings:
         try:
@@ -510,21 +525,25 @@ def load_settings():
 
     Environment variables take precedence over settings file values where both
     are present, matching the env-override pattern used elsewhere in the bridge.
+
+    A settings.json that exists but is not a JSON object is never treated as
+    empty: no value from it is applied and a bounded error is recorded in
+    NETWORK_PROFILE_ERROR so validate_network_config() refuses to start the
+    listener. Loading never raises, so ``--remove-autostart`` stays usable.
     """
     global SYNC_INTERVAL, SSL_ENABLED, SSL_CERT_FILE, SSL_KEY_FILE
+    settings_error: str | None = None
     try:
-        with open(SETTINGS_FILE, "r") as f:
-            settings = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+        settings = read_settings_strict()
+    except SettingsFileError as exc:
         settings = {}
-    if not isinstance(settings, dict):
-        settings = {}
+        settings_error = str(exc)
     try:
         if "syncInterval" in settings:
             SYNC_INTERVAL = int(settings["syncInterval"])
     except ValueError:
         pass
-    _resolve_network(settings)
+    _resolve_network(settings, settings_error)
     # Environment variables override settings even if tests/processes set them
     # after the module was imported.
     env_ssl = os.environ.get("SILENTSUITE_BRIDGE_SSL")
@@ -547,12 +566,18 @@ def load_settings():
 
 
 def save_settings(settings):
-    """Save settings dict to settings.json, preserving caller-supplied keys."""
+    """Merge ``settings`` into settings.json with the shared safe-write guarantee.
+
+    settings.json also holds the durable network profile, so every writer
+    (sync interval, SSL enablement, network profile) goes through the same
+    path: the existing file is read strictly (a non-object file is refused,
+    never discarded) and replaced atomically, so a failed unrelated update
+    can never destroy a previously valid profile.
+    """
     ensure_data_dir()
-    existing = get_settings()
+    existing = read_settings_strict()
     existing.update(settings)
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(existing, f, indent=2)
+    _atomic_write_json(SETTINGS_FILE, existing)
 
 
 def save_network_profile(profile: dict) -> bool:
@@ -567,19 +592,39 @@ def save_network_profile(profile: dict) -> bool:
     normalized = validate_network_profile(profile)
     if not normalized:
         return False
-    ensure_data_dir()
-    existing = read_settings_strict()
-    existing[NETWORK_PROFILE_KEY] = normalized
-    _atomic_write_json(SETTINGS_FILE, existing)
+    save_settings({NETWORK_PROFILE_KEY: normalized})
+    return True
+
+
+def _fsync_directory(directory: str) -> bool:
+    """Sync a directory so a completed rename inside it survives a crash.
+
+    Returns True when the sync ran. Directory fsync is a POSIX guarantee; on
+    other platforms (Windows) nothing is attempted and False is returned rather
+    than pretending the step happened.
+    """
+    if os.name != "posix":
+        return False
+    fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     return True
 
 
 def _atomic_write_json(path: str, payload: dict) -> None:
-    """Write JSON to a sibling temp file, fsync, then atomically replace ``path``."""
+    """Write JSON to a sibling temp file, fsync, atomically replace ``path``, then sync its directory.
+
+    Any failure before the replace leaves ``path`` byte-for-byte unchanged and
+    removes the temp file. A failure of the directory sync after the replace
+    raises SettingsDurabilityError: the new content is already visible, only
+    its crash durability is unconfirmed.
+    """
     directory = os.path.dirname(path) or "."
     fd, temp_path = tempfile.mkstemp(prefix=".settings-", suffix=".tmp", dir=directory)
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
@@ -594,6 +639,16 @@ def _atomic_write_json(path: str, payload: dict) -> None:
         except OSError:
             pass
         raise
+
+    # From here on the replacement is visible; it must not be reported as
+    # "left unchanged". Complete the POSIX durability step for the rename.
+    try:
+        _fsync_directory(directory)
+    except OSError as exc:
+        raise SettingsDurabilityError(
+            "settings.json was replaced but its directory could not be synced; the new content is "
+            "visible but not confirmed durable across a crash"
+        ) from exc
 
 
 def read_settings_strict() -> dict:

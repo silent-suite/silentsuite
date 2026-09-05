@@ -58,17 +58,41 @@ def _get_binary_path():
 # --- Durable network profile ---
 
 
-def persist_network_profile() -> int:
+# Environment variables that relocate settings.json for the installing shell
+# only. Auto-start entries carry no shell environment, so a profile persisted
+# under a relocated directory would never be read by the restarted bridge.
+# Linux resolves the default data directory through XDG_DATA_HOME; macOS and
+# Windows do not consult it.
+_LOCATION_OVERRIDES = {
+    "linux": ("SILENTSUITE_DATA_DIR", "XDG_DATA_HOME"),
+    "macos": ("SILENTSUITE_DATA_DIR",),
+    "windows": ("SILENTSUITE_DATA_DIR",),
+}
+
+
+def unsupported_location_overrides(platform: str, environ=None) -> list[str]:
+    """Return the settings-location overrides present in ``environ`` for ``platform``."""
+    environ = os.environ if environ is None else environ
+    names = _LOCATION_OVERRIDES.get(platform, _LOCATION_OVERRIDES["linux"])
+    return [name for name in names if name in environ]
+
+
+def persist_network_profile(platform: str | None = None) -> int:
     """Validate and persist the explicit network profile before any autostart write.
 
-    Returns 0 on success, 1 when validation or the settings write failed. On
-    failure nothing has been changed.
+    Returns 0 on success, 1 on failure. On a validation failure or a write
+    failure before the replace nothing has been changed; when the replace
+    succeeded but its directory sync did not, the message says so rather than
+    claiming the file was left unchanged.
     """
-    if "SILENTSUITE_DATA_DIR" in os.environ:
+    platform = config.get_platform() if platform is None else platform
+    overrides = unsupported_location_overrides(platform)
+    if overrides:
+        names = " and ".join(overrides)
         print(
-            "Error: --install-autostart does not support SILENTSUITE_DATA_DIR. Auto-start entries run "
+            f"Error: --install-autostart does not support {names}. Auto-start entries run "
             "with a clean environment and would read the default data directory (different settings, "
-            "credentials, and cache) instead of the configured one. Unset SILENTSUITE_DATA_DIR and retry. "
+            f"credentials, and cache) instead of the configured one. Unset {names} and retry. "
             "Nothing was changed.",
             file=sys.stderr,
         )
@@ -87,6 +111,14 @@ def persist_network_profile() -> int:
         written = config.save_network_profile(profile)
     except config.SettingsFileError as exc:
         print(f"Error: {exc}; auto-start was not installed.", file=sys.stderr)
+        return 1
+    except config.SettingsDurabilityError as exc:
+        # os.replace completed: settings.json already shows the new profile.
+        print(
+            f"Error: {exc}. Auto-start was not installed; check the data directory's filesystem and "
+            "re-run --install-autostart to confirm the persisted profile.",
+            file=sys.stderr,
+        )
         return 1
     except OSError:
         print(
@@ -174,7 +206,8 @@ def install_autostart_linux() -> int:
 
     try:
         os.makedirs(service_dir, exist_ok=True)
-        with open(service_path, "w") as f:
+        # systemd reads unit files as UTF-8; never depend on the locale encoding.
+        with open(service_path, "w", encoding="utf-8") as f:
             f.write(render_systemd_service(binary_args))
     except OSError:
         print("Error: could not write the systemd user service file.", file=sys.stderr)
@@ -449,7 +482,7 @@ def install_autostart() -> int:
         print(f"Auto-start not supported on platform: {platform}")
         return 1
 
-    status = persist_network_profile()
+    status = persist_network_profile(platform)
     if status != 0:
         return status
 

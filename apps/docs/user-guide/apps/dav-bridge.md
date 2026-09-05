@@ -235,14 +235,16 @@ SILENTSUITE_LISTEN_ADDRESS=::1 SILENTSUITE_LISTEN_PORT=45123 silentsuite-bridge 
   credentials) is ever persisted by this command.
 - Running `--install-autostart` again merges newly exported variables over the retained
   profile; values you do not export again are kept.
-- `SILENTSUITE_DATA_DIR` cannot be combined with `--install-autostart`; the command refuses
-  and changes nothing, because the restarted bridge would read the default data directory.
+- `SILENTSUITE_DATA_DIR` (and, on Linux, `XDG_DATA_HOME`) cannot be combined with
+  `--install-autostart`; the command refuses and changes nothing, because the restarted
+  bridge would read the default data directory.
 - If the service manager does not confirm the start, the command exits non-zero and says
   so; check `systemctl --user status silentsuite-bridge` or `launchctl list io.silentsuite.bridge`.
 
 The persisted profile is validated strictly on every start. If `settings.json` contains an
-invalid or unknown `"network"` entry, the bridge stops before binding and names the
-offending key without printing its value; other settings are left untouched.
+invalid or unknown `"network"` entry, or is not valid JSON at all, the bridge stops before
+binding and names the offending key or file without printing its content; other settings
+are left untouched, and `--remove-autostart` still works.
 
 ### Remove Auto-Start
 

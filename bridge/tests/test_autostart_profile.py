@@ -24,6 +24,7 @@ BRIDGE_ROOT = Path(__file__).resolve().parents[1]
 NETWORK_ENV = tuple(config.NETWORK_PROFILE_ENV.values())
 OTHER_ENV = (
     "SILENTSUITE_DATA_DIR",
+    "XDG_DATA_HOME",
     "SILENTSUITE_BRIDGE_SSL",
     "SILENTSUITE_SSL",
     "SILENTSUITE_BRIDGE_SSL_CERT",
@@ -173,6 +174,48 @@ def test_install_autostart_rejects_custom_data_dir_before_any_write(env, capsys)
     assert env.manager.calls == []
 
 
+def test_install_autostart_rejects_xdg_data_home_override_on_linux_before_any_write(env, capsys):
+    # A shell-only XDG_DATA_HOME relocates settings.json for the installing
+    # process; the clean-environment restart would read the default directory
+    # and lose the profile, so the override is refused like SILENTSUITE_DATA_DIR.
+    relocated = env.home / "xdg-private"
+    set_env(env, XDG_DATA_HOME=str(relocated), SILENTSUITE_LISTEN_PORT="45123")
+
+    assert autostart.install_autostart() == 1
+
+    captured = capsys.readouterr()
+    assert "XDG_DATA_HOME" in captured.err
+    assert "Nothing was changed" in captured.err
+    assert str(relocated) not in captured.err
+    assert not env.settings.exists()
+    assert not env.unit.exists()
+    assert not relocated.exists()
+    assert env.manager.calls == []
+
+
+def test_install_autostart_reports_both_location_overrides_together(env, capsys):
+    set_env(env, XDG_DATA_HOME=str(env.home / "xdg-private"), SILENTSUITE_DATA_DIR=str(env.home / "private-data"))
+
+    assert autostart.install_autostart() == 1
+
+    err = capsys.readouterr().err
+    assert "SILENTSUITE_DATA_DIR and XDG_DATA_HOME" in err
+    assert autostart.unsupported_location_overrides("linux", {"XDG_DATA_HOME": ""}) == ["XDG_DATA_HOME"]
+    assert autostart.unsupported_location_overrides("linux", {}) == []
+
+
+@pytest.mark.parametrize("platform", ["macos", "windows"])
+def test_xdg_data_home_is_not_a_location_override_off_linux(env, capsys, platform):
+    env.monkeypatch.setattr(config, "get_platform", lambda: platform)
+    env.monkeypatch.setattr(autostart, f"install_autostart_{platform}", lambda: 0)
+    set_env(env, XDG_DATA_HOME=str(env.home / "xdg-ignored"), SILENTSUITE_LISTEN_PORT="45123")
+
+    assert autostart.unsupported_location_overrides(platform) == []
+    assert autostart.install_autostart() == 0
+    assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
+    assert "XDG_DATA_HOME" not in capsys.readouterr().err
+
+
 def test_install_autostart_persists_profile_then_installs_unit(env, capsys):
     set_env(env, SILENTSUITE_LISTEN_ADDRESS="::1", SILENTSUITE_LISTEN_PORT="45123")
 
@@ -308,6 +351,54 @@ def test_install_autostart_settings_write_failure_keeps_original_and_writes_no_u
     assert env.manager.calls == []
 
 
+def test_install_autostart_reports_unconfirmed_durability_when_directory_sync_fails(env, capsys):
+    env.data_dir.mkdir()
+    env.settings.write_text(json.dumps({"syncInterval": 120}), encoding="utf-8")
+    set_env(env, SILENTSUITE_LISTEN_PORT="45123")
+
+    def refuse_directory_sync(directory):
+        raise OSError("EIO")
+
+    env.monkeypatch.setattr(config, "_fsync_directory", refuse_directory_sync)
+
+    assert autostart.install_autostart() == 1
+
+    captured = capsys.readouterr()
+    # Honest post-replace semantics: the file was replaced, so the message must
+    # neither claim it was left unchanged nor claim the profile is durable.
+    assert "not confirmed durable" in captured.err
+    assert "left unchanged" not in captured.err
+    assert "Persisted explicit network settings" not in captured.out
+    assert read_settings(env.settings) == {"syncInterval": 120, "network": {"listenPort": 45123}}
+    assert [p.name for p in env.data_dir.iterdir()] == ["settings.json"]
+    assert not env.unit.exists()
+    assert env.manager.calls == []
+
+
+def test_remove_autostart_stays_usable_when_settings_file_is_malformed(env, capsys):
+    set_env(env, SILENTSUITE_LISTEN_PORT="45123")
+    assert autostart.install_autostart() == 0
+    env.settings.write_text("{tok-c3f1e9 not json", encoding="utf-8")
+    config.load_settings()
+    capsys.readouterr()
+
+    # Startup fails closed on the unreadable file (no silent loopback fallback) ...
+    assert config.NETWORK_PROFILE_ERROR is not None
+    assert "settings.json" in config.NETWORK_PROFILE_ERROR
+    assert "tok-c3f1e9" not in config.NETWORK_PROFILE_ERROR
+    with pytest.raises(config.NetworkProfileError, match="settings.json"):
+        config.validate_network_config()
+
+    # ... while removal neither validates nor writes settings.
+    assert autostart.remove_autostart() == 0
+
+    captured = capsys.readouterr()
+    assert "Auto-start removed." in captured.out
+    assert "tok-c3f1e9" not in captured.out + captured.err
+    assert env.settings.read_text(encoding="utf-8") == "{tok-c3f1e9 not json"
+    assert not env.unit.exists()
+
+
 # --- Honest removal status --------------------------------------------------
 
 
@@ -430,6 +521,56 @@ def test_windows_remove_source_documents_that_running_process_is_not_stopped():
     assert "was not stopped" in body
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="real registry round-trip runs natively on Windows only")
+def test_windows_install_and_remove_round_trip_against_isolated_registry_key(env, capsys):
+    """Execute the real winreg install/remove path against a throwaway HKCU key.
+
+    The production Run key is never opened: ``_windows_registry_key`` is
+    pointed at a uniquely named key created for this test and deleted in
+    ``finally``, so the runner's sign-in startup list stays untouched.
+    """
+    import uuid
+    import winreg
+
+    env.monkeypatch.setattr(config, "get_platform", lambda: "windows")
+    parent_key = rf"Software\SilentSuiteBridgeTest-{uuid.uuid4().hex}"
+    run_key = parent_key + r"\Run"
+    winreg.CloseKey(winreg.CreateKey(winreg.HKEY_CURRENT_USER, run_key))
+    env.monkeypatch.setattr(autostart, "_windows_registry_key", lambda: run_key)
+    set_env(env, SILENTSUITE_LISTEN_PORT="45123")
+
+    def read_run_value():
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, run_key) as key:
+            return winreg.QueryValueEx(key, autostart.WINDOWS_RUN_VALUE)
+
+    try:
+        assert autostart.install_autostart() == 0
+        value, kind = read_run_value()
+        assert value == autostart.render_windows_command([BINARY])
+        assert kind == winreg.REG_SZ
+        assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
+        assert "next sign-in" in capsys.readouterr().out
+
+        assert autostart.remove_autostart() == 0
+        out = capsys.readouterr().out
+        assert "no longer start at sign-in" in out
+        assert "was not stopped" in out
+        assert "was kept" in out
+        with pytest.raises(FileNotFoundError):
+            read_run_value()
+        assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
+
+        # Removing again is idempotent and never fails on a missing value.
+        assert autostart.remove_autostart() == 0
+        assert "Auto-start was not installed." in capsys.readouterr().out
+    finally:
+        for key_path in (run_key, parent_key):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            except OSError:
+                pass
+
+
 def test_macos_install_writes_escaped_plist_and_reports_load_failure(env, capsys):
     env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
     env.monkeypatch.setattr(autostart, "_get_binary_path", lambda: ["/Applications/Silent & Suite/bridge"])
@@ -445,7 +586,10 @@ def test_macos_install_writes_escaped_plist_and_reports_load_failure(env, capsys
     out = capsys.readouterr().out
     assert "launchctl load failed" in out
     assert "not confirmed running" in out
-    assert env.manager.actions() == ["launchctl load " + str(env.plist)]
+    # Compare the plist path as a path: expanduser keeps the literal "/Library/..."
+    # suffix, which differs from the fixture's native separators when this test
+    # runs on Windows.
+    assert [call[:2] + [Path(call[2])] for call in env.manager.calls] == [["launchctl", "load", env.plist]]
 
 
 def test_macos_install_success_does_not_claim_the_bridge_is_running(env, capsys):

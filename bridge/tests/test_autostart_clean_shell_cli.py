@@ -117,9 +117,12 @@ def _clean_shell_env(tmp_path):
     pythonpath = str(BRIDGE_ROOT / "src")
     if os.environ.get("PYTHONPATH"):
         pythonpath = pythonpath + os.pathsep + os.environ["PYTHONPATH"]
+    # No XDG_DATA_HOME: the data directory must resolve from HOME alone so the
+    # installing shell and the clean-shell restart agree on settings.json
+    # without any location override (a shell-only override is refused, see
+    # the dedicated test below).
     env = {
         "HOME": str(home),
-        "XDG_DATA_HOME": str(tmp_path / "xdg-data"),
         "XDG_CONFIG_HOME": str(home / ".config"),
         "PATH": str(fake_bin),
         "PYTHONPATH": pythonpath,
@@ -163,8 +166,7 @@ def test_cli_install_autostart_then_clean_shell_restart_uses_same_profile(tmp_pa
     if expected["exit"] != 0:
         assert "SILENTSUITE_ALLOW_REMOTE=1" in install.stderr
         assert not artifact.exists()
-        data_root = tmp_path / "xdg-data"
-        assert not data_root.exists() or not list(data_root.rglob("settings.json"))
+        assert not list(home.rglob("settings.json"))
         return
 
     assert artifact.exists()
@@ -194,3 +196,37 @@ def test_cli_install_autostart_then_clean_shell_restart_uses_same_profile(tmp_pa
         assert json.loads(text) == {"network": expected["network"]}
         assert "tok-c3f1e9" not in text
         assert "example.invalid" not in text
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="XDG_DATA_HOME relocates the data directory on Linux only")
+def test_cli_install_autostart_refuses_shell_only_xdg_data_home_that_the_clean_shell_would_lose(tmp_path):
+    """Loss-of-override boundary: XDG_DATA_HOME present at install, absent on restart.
+
+    Without the refusal the profile would be persisted under the relocated
+    directory and the clean-shell restart (which resolves settings.json from
+    HOME) would silently come up on the loopback defaults.
+    """
+    base_env, home = _clean_shell_env(tmp_path)
+    relocated = tmp_path / "xdg-data"
+    install_env = {**base_env, **DECOY_ENV, "XDG_DATA_HOME": str(relocated), "SILENTSUITE_LISTEN_PORT": "45123"}
+
+    install = _run(["-m", "silentsuite_bridge", "--install-autostart"], install_env, tmp_path)
+
+    assert install.returncode == 1, install.stdout + install.stderr
+    assert "Traceback" not in install.stderr
+    assert "XDG_DATA_HOME" in install.stderr
+    assert "Nothing was changed" in install.stderr
+    assert str(relocated) not in install.stderr
+    assert not (home / ".config" / "systemd" / "user" / "silentsuite-bridge.service").exists()
+    assert not list(tmp_path.rglob("settings.json"))
+
+    # The clean shell resolves settings.json under HOME, never under the
+    # relocated directory, and therefore observes the defaults.
+    probe = _run(["-c", CLEAN_SHELL_PROBE], base_env, tmp_path)
+    assert probe.returncode == 0, probe.stdout + probe.stderr
+    observed = json.loads(probe.stdout.strip().splitlines()[-1])
+    settings_path = Path(observed["settings"])
+    assert home in settings_path.parents
+    assert relocated not in settings_path.parents
+    assert observed["address"] == "127.0.0.1"
+    assert observed["port"] == 37358

@@ -72,7 +72,11 @@ jobs:
             echo "::error::base $BASE_SHA passed the remote persistence test; RED proof failed"; exit 1
           fi
           grep -q "1 failed" red.log || { echo "::error::expected exactly one behavioural failure, not a collection/import error"; exit 1; }
-          grep -Eq "assert '127.0.0.1' == '0.0.0.0'|AssertionError" red.log || { echo "::error::failure was not an assertion mismatch"; exit 1; }
+          # RED must be the clean-shell listener comparison itself (observed loopback
+          # default vs the installed remote bind), not an earlier assertion such as
+          # a failed installation exit code.
+          grep -Fq 'assert observed["address"] == expected["address"]' red.log || { echo "::error::failure was not at the clean-shell listener comparison"; exit 1; }
+          grep -Fq "assert '127.0.0.1' == '0.0.0.0'" red.log || { echo "::error::failure was not the observed loopback vs expected remote listener mismatch"; exit 1; }
           grep -Eq "ImportError|ModuleNotFoundError|ERROR collecting" red.log && { echo "::error::collection/import failure, not behavioural RED"; exit 1; }
           echo "Behavioural RED confirmed on base $BASE_SHA"
 

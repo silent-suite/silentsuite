@@ -7,6 +7,7 @@ an invalid persisted profile fails closed without leaking supplied values.
 """
 
 import json
+import os
 import sys
 
 import pytest
@@ -393,6 +394,75 @@ def test_oversized_numeric_port_strings_are_refused_without_value_error(settings
     assert config.LISTEN_PORT == 37358
 
 
+MALFORMED_SETTINGS = [
+    pytest.param("{tok-c3f1e9 not json", id="not-json"),
+    pytest.param('{"network": {"listenPort": 451', id="truncated-profile"),
+    pytest.param("[]", id="array"),
+    pytest.param('"tok-c3f1e9-string"', id="string"),
+    pytest.param("42", id="number"),
+]
+
+
+@pytest.mark.parametrize("content", MALFORMED_SETTINGS)
+def test_malformed_settings_file_fails_startup_closed_instead_of_defaulting(settings_file, monkeypatch, capsys, content):
+    settings_file.write_text(content, encoding="utf-8")
+
+    config.load_settings()
+
+    # Loading never raises (removal must stay usable) but records a bounded,
+    # content-free error instead of silently switching to the loopback defaults.
+    assert config.NETWORK_PROFILE_ERROR is not None
+    assert "settings.json" in config.NETWORK_PROFILE_ERROR
+    assert "tok-c3f1e9" not in config.NETWORK_PROFILE_ERROR
+    assert "451" not in config.NETWORK_PROFILE_ERROR
+    assert config.LISTEN_ADDRESS == "127.0.0.1"
+    assert config.LISTEN_PORT == 37358
+    with pytest.raises(config.NetworkProfileError, match="settings.json") as excinfo:
+        config.validate_network_config()
+    assert "tok-c3f1e9" not in str(excinfo.value)
+    with pytest.raises(RuntimeError):
+        bridge_main.build_radicale_configuration()
+
+    monkeypatch.setattr(sys, "argv", ["silentsuite-bridge"])
+    monkeypatch.setattr(bridge_main, "configure_logging", lambda: None)
+    monkeypatch.setattr(config, "ensure_data_dir", lambda: pytest.fail("must not touch the data dir"))
+    monkeypatch.setattr(bridge_main, "run_server", lambda: pytest.fail("no listener may start"))
+    with pytest.raises(SystemExit) as exit_info:
+        bridge_main.main()
+
+    assert exit_info.value.code == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err
+    assert "settings.json" in captured.err
+    assert "tok-c3f1e9" not in captured.out + captured.err
+    assert settings_file.read_text(encoding="utf-8") == content
+
+
+def test_remove_autostart_runs_with_malformed_settings_file(settings_file, monkeypatch, capsys):
+    from silentsuite_bridge import autostart
+
+    settings_file.write_text("{tok-c3f1e9 not json", encoding="utf-8")
+    config.load_settings()
+    assert config.NETWORK_PROFILE_ERROR is not None
+    monkeypatch.setattr(sys, "argv", ["silentsuite-bridge", "--remove-autostart"])
+    monkeypatch.setattr(bridge_main, "configure_logging", lambda: None)
+    monkeypatch.setattr(config, "ensure_data_dir", lambda: pytest.fail("must not touch the data dir"))
+    monkeypatch.setattr(config, "validate_network_config", lambda: pytest.fail("removal must not validate"))
+    monkeypatch.setattr(bridge_main, "run_server", lambda: pytest.fail("no listener may start"))
+    calls = []
+    monkeypatch.setattr(autostart, "remove_autostart", lambda: calls.append("removed") or 0)
+
+    with pytest.raises(SystemExit) as excinfo:
+        bridge_main.main()
+
+    assert excinfo.value.code == 0
+    assert calls == ["removed"]
+    assert settings_file.read_text(encoding="utf-8") == "{tok-c3f1e9 not json"
+    captured = capsys.readouterr()
+    assert "tok-c3f1e9" not in captured.out + captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_remove_autostart_runs_before_validation_with_corrupt_profile(settings_file, monkeypatch, capsys):
     from silentsuite_bridge import autostart
 
@@ -464,6 +534,92 @@ def test_save_network_profile_replaces_atomically_and_keeps_unrelated_settings(s
     assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
 
 
+def test_shared_settings_writers_cannot_destroy_the_persisted_profile_on_failure(settings_file, monkeypatch):
+    payload = {**UNRELATED_SETTINGS, "network": {"listenPort": 45123}}
+    write_settings(settings_file, payload)
+    original = settings_file.read_text(encoding="utf-8")
+
+    def refuse_replace(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(config.os, "replace", refuse_replace)
+
+    with pytest.raises(OSError):
+        config.save_settings({"sslEnabled": True})
+    with pytest.raises(OSError):
+        bridge_main._persist_ssl_settings(str(settings_file.parent / "cert.pem"), str(settings_file.parent / "key.pem"))
+
+    # Byte-for-byte intact, no temp files, and the runtime SSL flag was not flipped.
+    assert settings_file.read_text(encoding="utf-8") == original
+    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+    assert config.SSL_ENABLED is False
+
+
+def test_shared_settings_writers_merge_unrelated_updates_around_the_profile(settings_file):
+    write_settings(settings_file, {**UNRELATED_SETTINGS, "network": {"listenPort": 45123}})
+    cert = settings_file.parent / "cert.pem"
+    key = settings_file.parent / "key.pem"
+
+    config.save_settings({"syncInterval": 60})
+    bridge_main._persist_ssl_settings(str(cert), str(key))
+
+    stored = read_settings(settings_file)
+    assert stored["network"] == {"listenPort": 45123}
+    assert stored["customKey"] == "keep-me"
+    assert stored["syncInterval"] == 60
+    assert stored["sslEnabled"] is True
+    assert stored["sslCertFile"] == os.path.abspath(str(cert))
+    assert stored["sslKeyFile"] == os.path.abspath(str(key))
+    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+
+
+def test_settings_write_syncs_containing_directory_after_replace(settings_file, monkeypatch):
+    events = []
+    original_replace = config.os.replace
+    original_fsync_directory = config._fsync_directory
+
+    def record_replace(src, dst):
+        events.append(("replace", dst))
+        return original_replace(src, dst)
+
+    def record_fsync_directory(directory):
+        result = original_fsync_directory(directory)
+        events.append(("fsync-dir", directory, result))
+        return result
+
+    monkeypatch.setattr(config.os, "replace", record_replace)
+    monkeypatch.setattr(config, "_fsync_directory", record_fsync_directory)
+
+    assert config.save_network_profile({"listenPort": 45123}) is True
+
+    # The directory sync runs after the replace; it is a POSIX guarantee and
+    # reports False (not a fake success) where the platform has no equivalent.
+    assert events == [
+        ("replace", str(settings_file)),
+        ("fsync-dir", str(settings_file.parent), os.name == "posix"),
+    ]
+
+
+def test_directory_sync_failure_after_replace_is_reported_as_visible_but_unconfirmed(settings_file, monkeypatch):
+    write_settings(settings_file, {**UNRELATED_SETTINGS, "network": {"listenPort": 45123}})
+
+    def refuse_directory_sync(directory):
+        raise OSError("EIO")
+
+    monkeypatch.setattr(config, "_fsync_directory", refuse_directory_sync)
+
+    with pytest.raises(config.SettingsDurabilityError) as excinfo:
+        config.save_network_profile({"listenPort": 45999})
+
+    assert isinstance(excinfo.value, OSError)
+    assert "not confirmed durable" in str(excinfo.value)
+    assert "left unchanged" not in str(excinfo.value)
+    # The replace already completed: the new content is visible, so the test
+    # must not (and does not) claim the file was unchanged.
+    assert read_settings(settings_file) == {**UNRELATED_SETTINGS, "network": {"listenPort": 45999}}
+    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+
+
 @pytest.mark.parametrize("content", ["{not json", "[]", '"tok-c3f1e9-string"', "42"])
 def test_malformed_settings_file_is_refused_not_discarded(settings_file, content):
     settings_file.write_text(content, encoding="utf-8")
@@ -475,6 +631,8 @@ def test_malformed_settings_file_is_refused_not_discarded(settings_file, content
         config.network_profile_for_autostart()
     with pytest.raises(config.SettingsFileError):
         config.save_network_profile({"listenPort": 45123})
+    with pytest.raises(config.SettingsFileError):
+        config.save_settings({"syncInterval": 60})
 
     assert settings_file.read_text(encoding="utf-8") == content
     assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]

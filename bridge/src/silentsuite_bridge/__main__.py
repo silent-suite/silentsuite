@@ -466,11 +466,18 @@ def _open_certificate_for_trust(cert_path: str) -> bool:
 
 
 def _persist_ssl_settings(cert_path: str, key_path: str) -> None:
-    """Persist SSL enablement + paths so launchd autostart survives."""
-    settings = config.get_settings()
-    settings["sslEnabled"] = True
-    settings["sslCertFile"] = os.path.abspath(cert_path)
-    settings["sslKeyFile"] = os.path.abspath(key_path)
+    """Persist SSL enablement + paths so launchd autostart survives.
+
+    Goes through the shared safe settings writer: settings.json also holds
+    the durable network profile, and a failed SSL update must not destroy it.
+    Raises SettingsFileError / OSError (SettingsDurabilityError after a
+    completed replace) for the caller to report.
+    """
+    settings = {
+        "sslEnabled": True,
+        "sslCertFile": os.path.abspath(cert_path),
+        "sslKeyFile": os.path.abspath(key_path),
+    }
     config.save_settings(settings)
     config.SSL_ENABLED = True
     config.SSL_CERT_FILE = settings["sslCertFile"]
@@ -496,7 +503,20 @@ def setup_macos_apple_accounts() -> int:
         return 1
 
     if sys.platform == "darwin":
-        _persist_ssl_settings(cert_path, key_path)
+        try:
+            _persist_ssl_settings(cert_path, key_path)
+        except config.SettingsDurabilityError as exc:
+            print(f"Error: {exc}. Re-run this command to confirm the persisted SSL settings.")
+            return 1
+        except config.SettingsFileError as exc:
+            print(f"Error: {exc}; SSL settings were not persisted.")
+            return 1
+        except OSError:
+            print(
+                "Error: could not write the bridge settings file; the existing settings.json was left "
+                "unchanged and SSL settings were not persisted."
+            )
+            return 1
         print(f"Certificate: {cert_path}")
         print(f"Key: {key_path} (permissions hardened to 0600 best-effort)")
         if status == "generated":

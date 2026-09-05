@@ -1458,10 +1458,20 @@ class Web(BaseWeb):
                 if new_interval < 30:
                     new_interval = 30  # enforce minimum
 
-                # Save to settings.json
-                settings = config.get_settings()
-                settings["syncInterval"] = new_interval
-                config.save_settings(settings)
+                # Save through the shared safe writer: settings.json also holds
+                # the durable network profile, which a failed write must not destroy.
+                try:
+                    config.save_settings({"syncInterval": new_interval})
+                except config.SettingsDurabilityError:
+                    return _json_response(
+                        500,
+                        {"error": "settings.json was replaced but not confirmed durable; retry to confirm the sync interval"},
+                    )
+                except (config.SettingsFileError, OSError):
+                    return _json_response(
+                        500,
+                        {"error": "Could not write settings.json; the sync interval was not changed"},
+                    )
 
                 # Update running config
                 config.SYNC_INTERVAL = new_interval
