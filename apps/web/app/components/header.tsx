@@ -11,6 +11,7 @@ import { SyncIndicator } from '@/app/components/SyncIndicator'
 const titles: Record<string, string> = {
   '/calendar': 'Calendar',
   '/tasks': 'Tasks',
+  '/notes': 'Notes',
   '/contacts': 'Contacts',
   '/settings': 'Settings',
 }

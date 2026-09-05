@@ -13,6 +13,7 @@ export type SyncTimingPhase =
   | 'tasks-load'
   | 'contacts-load'
   | 'calendar-load'
+  | 'notes-load'
   | 'wire-change-handler'
   | 'wire-status-handler'
   | 'initial-sync-complete'
@@ -48,6 +49,7 @@ const VALID_PHASES = new Set<SyncTimingPhase>([
   'tasks-load',
   'contacts-load',
   'calendar-load',
+  'notes-load',
   'wire-change-handler',
   'wire-status-handler',
   'initial-sync-complete',
@@ -60,7 +62,7 @@ const VALID_STRING_FIELDS: Record<string, Set<string>> = {
   source: new Set(['cache', 'server', 'provider', 'calendar-page']),
   status: new Set(['ok', 'failed', 'skipped']),
   group: new Set(['startup', 'cache', 'server', 'handlers', 'calendar']),
-  type: new Set(['tasks', 'contacts', 'calendar']),
+  type: new Set(['tasks', 'contacts', 'calendar', 'notes']),
   view: new Set(['day', 'week', 'month', 'threeDay', 'sevenDay', 'agenda']),
   errorCategory: new Set(['unknown', 'network', 'storage', 'deserialize', 'cache', 'etebase', 'syncEngine', 'Error']),
 }
@@ -85,9 +87,11 @@ const VALID_FIELD_NAMES = new Set([
   'taskItemCount',
   'contactItemCount',
   'calendarItemCount',
+  'noteItemCount',
   'taskCount',
   'contactCount',
   'eventCount',
+  'noteCount',
   'visibleEventCount',
   'totalEventCount',
   'visibleCalendarCount',

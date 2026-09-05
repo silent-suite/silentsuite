@@ -36,7 +36,7 @@ const nextConfig = {
         source: '/signup/:path*',
         headers: [{ key: 'Content-Security-Policy', value: signupConnectSources }],
       },
-      ...['/calendar/:path*', '/contacts/:path*', '/tasks/:path*', '/settings/:path*'].map((source) => ({
+      ...['/calendar/:path*', '/contacts/:path*', '/tasks/:path*', '/notes/:path*', '/settings/:path*'].map((source) => ({
         source,
         headers: [{ key: 'Content-Security-Policy', value: hostedConnectSources }],
       })),

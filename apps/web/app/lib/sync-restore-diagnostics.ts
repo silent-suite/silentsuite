@@ -12,6 +12,7 @@ export type RestoreDiagnosticPhase =
   | 'listItems:calendar'
   | 'listItems:tasks'
   | 'listItems:contacts'
+  | 'listItems:notes'
   | 'syncEngineTrackCollections'
   | 'syncEngineStart'
   | 'unknown'
@@ -31,7 +32,7 @@ export interface RestoreDiagnosticEntry {
   errorName?: string
   session?: SessionPersistenceShape
   roundtripMatch?: boolean
-  collectionType?: 'calendar' | 'tasks' | 'contacts'
+  collectionType?: 'calendar' | 'tasks' | 'contacts' | 'notes'
   collectionCount?: number
   itemCount?: number
   pageCount?: number
@@ -225,6 +226,7 @@ const VALID_PHASES = new Set<RestoreDiagnosticPhase>([
   'listItems:calendar',
   'listItems:tasks',
   'listItems:contacts',
+  'listItems:notes',
   'syncEngineTrackCollections',
   'syncEngineStart',
   'unknown',
@@ -266,7 +268,7 @@ function sanitizeDiagnosticsEntry(entry: RestoreDiagnosticEntry): RestoreDiagnos
   const session = sanitizeSessionPersistence(entry.session)
   if (session) safe.session = session
   if (typeof entry.roundtripMatch === 'boolean') safe.roundtripMatch = entry.roundtripMatch
-  if (['calendar', 'tasks', 'contacts'].includes(entry.collectionType ?? '')) {
+  if (['calendar', 'tasks', 'contacts', 'notes'].includes(entry.collectionType ?? '')) {
     safe.collectionType = entry.collectionType
   }
   if (typeof entry.collectionCount === 'number') safe.collectionCount = entry.collectionCount

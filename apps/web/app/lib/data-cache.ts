@@ -19,7 +19,7 @@
 import { logger } from '@/app/lib/logger'
 import { AccountBoundaryChangedError, assertCurrentAccountEpoch } from '@/app/lib/account-epoch'
 
-export type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'preferences'
+export type CollectionTypeKey = 'calendar' | 'tasks' | 'contacts' | 'notes' | 'preferences'
 
 export interface CachedItem {
   itemUid: string

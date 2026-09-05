@@ -22,7 +22,7 @@ After signup you land on the calendar. Click any cell or tap the **+** button to
 - Title, location, description, all-day, start/end with timezone, reminders (`VALARM`), recurrence rule
 - Save — the event is encrypted in your browser before it leaves the page
 
-See [Calendar](./calendar.md), [Contacts](./contacts.md), and [Tasks](./tasks.md) for what each section covers.
+See [Calendar](./calendar.md), [Contacts](./contacts.md), [Tasks](./tasks.md), and [Notes](./notes.md) for what each section covers.
 
 ## 3. Add a Second Device
 
@@ -73,5 +73,6 @@ That's the success state for setup. From here, see the per-section guides:
 - [Calendar](./calendar.md) — events, recurrence, timezones, import/export
 - [Contacts](./contacts.md) — vCard CRUD and import/export
 - [Tasks](./tasks.md) — priorities, due dates, ICS task export
+- [Notes](./notes.md) — encrypted Markdown notebooks
 - [How Encryption Works](./encryption-explained.md) — what the server can and can't see
 - [FAQ](./faq.md) — anything we get asked twice

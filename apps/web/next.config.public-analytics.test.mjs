@@ -22,7 +22,7 @@ async function appliedCsp(pathname) {
 test('public analytics CSP uses the final matching route header', async () => {
   assert.match(await appliedCsp('/settings/subscription'), /https:\/\/plausible\.silentsuite\.io/)
   assert.match(await appliedCsp('/signup'), /https:\/\/plausible\.silentsuite\.io/)
-  for (const path of ['/settings', '/settings/account', '/calendar', '/contacts', '/tasks']) {
+  for (const path of ['/settings', '/settings/account', '/calendar', '/contacts', '/tasks', '/notes']) {
     assert.doesNotMatch(await appliedCsp(path), /https:\/\/plausible\.silentsuite\.io/)
   }
 })

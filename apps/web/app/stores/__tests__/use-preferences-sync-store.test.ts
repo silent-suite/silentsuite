@@ -34,11 +34,11 @@ function resetStores() {
   usePreferencesStore.setState({ notificationSound: true })
   useEtebaseStore.setState({
     account: null,
-    collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+    collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] },
     itemCache: new Map(),
     itemTypeMap: new Map(),
     itemCollectionMap: new Map(),
-    domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', preferences: 'unknown' },
+    domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' },
     isInitialized: false,
     syncEngine: null,
   })
@@ -128,7 +128,7 @@ describe('usePreferencesSyncStore', () => {
     bumpAccountEpoch()
     useEtebaseStore.setState({
       account: { id: 'new' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] },
       syncEngine: { trackCollection: newTrack } as any,
     })
     releaseList([{ uid: 'old-preferences' }])
@@ -160,7 +160,7 @@ describe('usePreferencesSyncStore', () => {
     usePreferencesStore.setState({ notificationSound: false })
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       itemCache: new Map([['pref-1', item]]),
       itemTypeMap: new Map([['pref-1', 'preferences']]),
       itemCollectionMap: new Map([['pref-1', 'prefs-col']]),
@@ -185,7 +185,7 @@ describe('usePreferencesSyncStore', () => {
     usePreferencesStore.setState({ timeFormat: '24h' })
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       syncEngine: { trackCollection: vi.fn(async () => {}) } as any,
       refreshCollection: vi.fn(async () => [{ uid: 'bad', content: 'not preferences' }]) as any,
     })
@@ -202,7 +202,7 @@ describe('usePreferencesSyncStore', () => {
       .mockResolvedValue(undefined)
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       syncEngine: { trackCollection } as any,
       refreshCollection: vi.fn(async () => []) as any,
     })
@@ -239,7 +239,7 @@ describe('usePreferencesSyncStore', () => {
     }))
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       syncEngine: { trackCollection: vi.fn() } as any,
       refreshCollection: refreshCollection as any,
     })
@@ -298,7 +298,7 @@ describe('usePreferencesSyncStore', () => {
     const updateItem = vi.fn()
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       refreshCollection: vi.fn(async () => [{ uid: 'bad', content: 'corrupt' }]) as any,
       createItem: createItem as any,
       updateItem: updateItem as any,
@@ -319,7 +319,7 @@ describe('usePreferencesSyncStore', () => {
     const updateItem = vi.fn()
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       syncEngine: { trackCollection: vi.fn() } as any,
       refreshCollection: vi.fn(async () => { throw new Error('network unavailable') }) as any,
       createItem: createItem as any,
@@ -416,7 +416,7 @@ describe('usePreferencesSyncStore', () => {
     })
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       itemCache: new Map([['pref-1', item]]),
       itemTypeMap: new Map([['pref-1', 'preferences']]),
       itemCollectionMap: new Map([['pref-1', 'prefs-col']]),
@@ -455,7 +455,7 @@ describe('usePreferencesSyncStore', () => {
     })
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       itemCache: new Map([['pref-1', item]]),
       itemTypeMap: new Map([['pref-1', 'preferences']]),
       itemCollectionMap: new Map([['pref-1', 'prefs-col']]),
@@ -476,7 +476,7 @@ describe('usePreferencesSyncStore', () => {
     const updateItem = vi.fn(async () => {})
     useEtebaseStore.setState({
       account: { id: 'account' } as any,
-      collections: { calendar: [], tasks: [], contacts: [], preferences: [{ uid: 'prefs-col' }] as any[] },
+      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [{ uid: 'prefs-col' }] as any[] },
       itemCache: new Map([['pref-1', item]]),
       itemTypeMap: new Map([['pref-1', 'preferences']]),
       itemCollectionMap: new Map([['pref-1', 'prefs-col']]),

@@ -1,6 +1,6 @@
 'use client'
 
-import { CalendarDays, CheckSquare, Users, Search, type LucideIcon } from 'lucide-react'
+import { CalendarDays, CheckSquare, StickyNote, Users, Search, type LucideIcon } from 'lucide-react'
 
 interface EmptyStateProps {
   icon: LucideIcon
@@ -53,6 +53,27 @@ export function TasksEmptyState() {
       icon={CheckSquare}
       title="No tasks yet"
       description="Stay on top of things. Add a task using the input above to get started."
+    />
+  )
+}
+
+export function NotesEmptyState({
+  onAddNote,
+  title,
+  description,
+  actionLabel,
+}: {
+  onAddNote?: () => void
+  title: string
+  description: string
+  actionLabel: string
+}) {
+  return (
+    <EmptyState
+      icon={StickyNote}
+      title={title}
+      description={description}
+      action={onAddNote ? { label: actionLabel, onClick: onAddNote } : undefined}
     />
   )
 }

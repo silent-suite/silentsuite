@@ -14,9 +14,11 @@ const {
   calendarSetState,
   taskSetState,
   contactSetState,
+  noteSetState,
   calendarListSetState,
   taskListSetState,
   contactListSetState,
+  notebookSetState,
   labelSuggestionsReset,
   labelColorSetState,
   preferencesReset,
@@ -27,9 +29,11 @@ const {
   calendarSetState: vi.fn(),
   taskSetState: vi.fn(),
   contactSetState: vi.fn(),
+  noteSetState: vi.fn(),
   calendarListSetState: vi.fn(),
   taskListSetState: vi.fn(),
   contactListSetState: vi.fn(),
+  notebookSetState: vi.fn(),
   labelSuggestionsReset: vi.fn(),
   labelColorSetState: vi.fn(),
   preferencesReset: vi.fn(),
@@ -83,9 +87,11 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
 vi.mock('@/app/stores/use-calendar-store', () => ({ useCalendarStore: { setState: calendarSetState } }))
 vi.mock('@/app/stores/use-task-store', () => ({ useTaskStore: { setState: taskSetState } }))
 vi.mock('@/app/stores/use-contact-store', () => ({ useContactStore: { setState: contactSetState } }))
+vi.mock('@/app/stores/use-note-store', () => ({ useNoteStore: { setState: noteSetState } }))
 vi.mock('@/app/stores/use-calendar-list-store', () => ({ useCalendarListStore: { setState: calendarListSetState } }))
 vi.mock('@/app/stores/use-task-list-store', () => ({ useTaskListStore: { setState: taskListSetState } }))
 vi.mock('@/app/stores/use-contact-list-store', () => ({ useContactListStore: { setState: contactListSetState } }))
+vi.mock('@/app/stores/use-notebook-store', () => ({ useNotebookStore: { setState: notebookSetState } }))
 vi.mock('@/app/stores/use-label-suggestions-store', () => ({
   useLabelSuggestionsStore: { getState: () => ({ reset: labelSuggestionsReset }) },
 }))
@@ -132,9 +138,11 @@ describe('useAuthStore', () => {
     calendarSetState.mockClear()
     taskSetState.mockClear()
     contactSetState.mockClear()
+    noteSetState.mockClear()
     calendarListSetState.mockClear()
     taskListSetState.mockClear()
     contactListSetState.mockClear()
+    notebookSetState.mockClear()
     labelSuggestionsReset.mockClear()
     labelColorSetState.mockClear()
     preferencesReset.mockClear()
@@ -1145,9 +1153,11 @@ describe('useAuthStore', () => {
     expect(calendarSetState).toHaveBeenCalledWith(expect.objectContaining({ events: [] }))
     expect(taskSetState).toHaveBeenCalledWith(expect.objectContaining({ tasks: [] }))
     expect(contactSetState).toHaveBeenCalledWith(expect.objectContaining({ contacts: [] }))
+    expect(noteSetState).toHaveBeenCalledWith(expect.objectContaining({ notes: [] }))
     expect(calendarListSetState).toHaveBeenCalledWith(expect.objectContaining({ defaultCalendarId: 'default' }))
     expect(taskListSetState).toHaveBeenCalledWith(expect.objectContaining({ activeListId: 'all' }))
     expect(contactListSetState).toHaveBeenCalledWith(expect.objectContaining({ activeListId: 'all' }))
+    expect(notebookSetState).toHaveBeenCalledWith(expect.objectContaining({ activeListId: 'all' }))
     expect(labelSuggestionsReset).toHaveBeenCalledTimes(1)
     expect(labelColorSetState).toHaveBeenCalledWith({ colors: {} })
     expect(preferencesReset).toHaveBeenCalled()

@@ -9,11 +9,12 @@ const REQUIRED_PHASES = [
   'listItems:calendar',
   'listItems:tasks',
   'listItems:contacts',
+  'listItems:notes',
   'syncEngineTrackCollections',
   'syncEngineStart',
 ]
 
-const VISIBLE_COLLECTION_TYPES = new Set(['calendar', 'tasks', 'contacts'])
+const VISIBLE_COLLECTION_TYPES = new Set(['calendar', 'tasks', 'contacts', 'notes'])
 
 function usage() {
   return [
@@ -145,6 +146,7 @@ function makePassingFixture() {
       { phase: 'listItems:calendar', status: 'ok', collectionType: 'calendar', collectionCount: 1, itemCount: 2, pageCount: 1 },
       { phase: 'listItems:tasks', status: 'ok', collectionType: 'tasks', collectionCount: 1, itemCount: 0, pageCount: 1 },
       { phase: 'listItems:contacts', status: 'ok', collectionType: 'contacts', collectionCount: 1, itemCount: 0, pageCount: 1 },
+      { phase: 'listItems:notes', status: 'ok', collectionType: 'notes', collectionCount: 1, itemCount: 0, pageCount: 1 },
       { phase: 'syncEngineTrackCollections', status: 'ok' },
       { phase: 'syncEngineStart', status: 'ok' },
     ],

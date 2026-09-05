@@ -11,6 +11,7 @@ import {
   clearAll,
   retryFailed,
   remove,
+  removeItemMutations,
   onCountChange,
   onEnqueue,
   isOfflineError,
@@ -429,6 +430,21 @@ describe('offline-queue', () => {
       const all = await getAll()
       expect(all).toHaveLength(1)
       expect(all[0].id).toBe(id2)
+    })
+
+    it('removes all pending and failed mutations for a superseded item', async () => {
+      const guard = testGuard()
+      await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, guard)
+      const fail = vi.fn(async () => { throw new Error('permanent failure') })
+      await replay(fail, guard)
+      await replay(fail, guard)
+      await replay(fail, guard)
+      await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, guard)
+      await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'other-note' }, guard)
+
+      await expect(removeItemMutations('notes', 'note-1', guard)).resolves.toBe(2)
+
+      expect((await getAll(guard)).map((entry) => entry.itemUid)).toEqual(['other-note'])
     })
   })
 

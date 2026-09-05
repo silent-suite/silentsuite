@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl'
 import {
   CalendarDays,
   CheckSquare,
+  StickyNote,
   Users,
   Settings,
   Shield,
@@ -20,12 +21,14 @@ import { MiniCalendar } from '@/app/(app)/calendar/components/MiniCalendar'
 import { CalendarListPanel } from '@/app/components/CalendarListPanel'
 import { TaskListPanel } from '@/app/components/TaskListPanel'
 import { ContactListPanel } from '@/app/components/ContactListPanel'
+import { NotebookListPanel } from '@/app/components/NotebookListPanel'
 import { OnboardingChecklist } from '@/app/components/OnboardingChecklist'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 
 const navItems = [
   { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
   { href: '/tasks', labelKey: 'tasks', icon: CheckSquare },
+  { href: '/notes', labelKey: 'notes', icon: StickyNote },
   { href: '/contacts', labelKey: 'contacts', icon: Users },
 ]
 
@@ -65,6 +68,7 @@ export function Sidebar() {
           {preferencesTerminal && <MiniCalendar />}
           {pathname.startsWith('/calendar') && <CalendarListPanel />}
           {pathname.startsWith('/tasks') && <TaskListPanel />}
+          {pathname.startsWith('/notes') && <NotebookListPanel />}
           {pathname.startsWith('/contacts') && <ContactListPanel />}
         </div>
       )}

@@ -1,6 +1,6 @@
 # User Guide
 
-How to use SilentSuite: your end-to-end encrypted sync for calendar, contacts, and tasks. Everything in this guide is grounded in the current beta. See the [latest release](https://github.com/silent-suite/silentsuite/releases/latest) for version-specific details.
+How to use SilentSuite: your end-to-end encrypted sync for calendar, contacts, tasks, and notes. Everything in this guide is grounded in the current beta. See the [latest release](https://github.com/silent-suite/silentsuite/releases/latest) for version-specific details.
 
 ---
 
@@ -10,6 +10,7 @@ How to use SilentSuite: your end-to-end encrypted sync for calendar, contacts, a
 | [Calendar](./calendar.md) | Events, recurrence, timezones, ICS import/export |
 | [Contacts](./contacts.md) | Contact CRUD, vCard import/export |
 | [Tasks](./tasks.md) | Tasks, priorities, due dates, ICS task export |
+| [Notes](./notes.md) | Encrypted Markdown notebooks (EteSync-compatible) |
 | [How Encryption Works](./encryption-explained.md) | What's encrypted, how, and what the server can and can't see |
 | [FAQ](./faq.md) | Common questions |
 
@@ -17,7 +18,7 @@ How to use SilentSuite: your end-to-end encrypted sync for calendar, contacts, a
 
 ## How SilentSuite Works
 
-All your data — events, contacts, tasks — is encrypted on your device before it leaves. The server only ever stores and syncs ciphertext. Nobody, including the SilentSuite team, can read your data.
+All your data — events, contacts, tasks, and notes — is encrypted on your device before it leaves. The server only ever stores and syncs ciphertext. Nobody, including the SilentSuite team, can read your data.
 
 ```
 Your Device          SilentSuite Server          Your Other Device

@@ -36,11 +36,11 @@ Open-source, zero-knowledge sync. Plaintext stays off the server; encryption key
 
 ## Private sync without a readable cloud copy
 
-SilentSuite encrypts calendar events, contacts, and tasks on your device before syncing them. The hosted server stores ciphertext and does not receive the keys needed to read record contents.
+SilentSuite encrypts calendar events, contacts, tasks, and notes on your device before syncing them. The hosted server stores ciphertext and does not receive the keys needed to read record contents.
 
 | Surface | What works today |
 |---|---|
-| **Web** | Calendar, contact, and task management in the hosted web app |
+| **Web** | Calendar, contact, task, and Markdown note management in the hosted web app |
 | **Android** | Sync through Android's calendar, contacts, and task providers |
 | **Desktop** | Local CalDAV/CardDAV Bridge for compatible calendar and address-book apps |
 | **Self-hosting** | Open-source server deployment on infrastructure you control |
