@@ -152,6 +152,25 @@ test('every GitHub API provenance, digest, identity, or key substitution is reje
   for (const [name, attempt, pattern] of substitutions) await assert.rejects(() => attempt(fixture()), pattern, name)
 })
 
+test('workflow contract: PROOF_DIRECTORY comes from a step via RUNNER_TEMP, never a job-level runner expression, and the docs preview ignores exactly this proof branch', () => {
+  const proof = readFileSync(resolve(PROOF_WORKFLOW_PATH), 'utf8')
+  const jobBody = proof.slice(proof.indexOf('\njobs:\n'))
+  const beforeSteps = jobBody.slice(0, jobBody.indexOf('\n    steps:\n'))
+  assert.ok(beforeSteps.length > 0, 'job must declare steps')
+  assert.doesNotMatch(beforeSteps, /\$\{\{\s*runner\./, 'runner context is invalid at job level')
+  assert.doesNotMatch(beforeSteps, /^\s{4}env:/m, 'job-level env must not carry PROOF_DIRECTORY')
+  assert.match(proof, /^\s+run: echo "PROOF_DIRECTORY=\$RUNNER_TEMP\/annual-artifact-transport-proof" >> "\$GITHUB_ENV"$/m)
+  assert.ok(proof.indexOf('>> "$GITHUB_ENV"') < proof.indexOf('annual-artifact-transport-proof.mjs produce'), 'directory must be initialized before produce')
+  assert.match(proof, /^\s+path: \$\{\{ runner\.temp \}\}\/annual-artifact-transport-proof\/stage\/annual-artifact-transport-proof\.json$/m, 'upload path must stay exact')
+  const preview = readFileSync(resolve('.github/workflows/preview-docs.yml'), 'utf8')
+  const ignoreBlock = /^\s{4}branches-ignore:\n((?:\s{6}.*\n)+)/m.exec(preview)
+  assert.ok(ignoreBlock, 'push.branches-ignore must exist')
+  const ignored = ignoreBlock[1].split('\n').map((line) => line.trim()).filter((line) => line.startsWith('- ')).map((line) => line.slice(2).trim())
+  assert.deepEqual(ignored, ['main', 'chore/annual-artifact-proof-20260905'], 'only main and the exact proof branch are ignored')
+  assert.ok(ignored.every((branch) => !/[*?\[\]+!]/.test(branch)), 'no glob may widen the exclusion')
+  assert.match(ignoreBlock[1], /annual artifact transport proof/i, 'exclusion must carry its explanatory comment')
+})
+
 function produceInto(root, extra = {}) {
   const env = { PROOF_DIRECTORY: join(root, 'proof'), GITHUB_REPOSITORY: repository, GITHUB_RUN_ID: String(run.runId), GITHUB_RUN_ATTEMPT: String(run.runAttempt), PROOF_SOURCE_SHA: sourceSha, ...extra }
   return env
