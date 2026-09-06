@@ -12,6 +12,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -408,6 +409,61 @@ def test_install_autostart_fails_closed_when_another_process_holds_the_settings_
     assert autostart.install_autostart() == 0
     assert read_settings(env.settings) == {"syncInterval": 60, "network": {"listenPort": 45123}}
     assert env.unit.exists()
+    assert data_dir_entries(env.data_dir) == ["settings.json"]
+
+
+def test_concurrent_installs_merge_in_order_keeping_disjoint_updates_and_revoked_permission(env, capsys):
+    """Two overlapping --install-autostart runs must apply one after the other.
+
+    Install A (the child, holding the real lock with a snapshot of the old
+    profile) moves the bind to loopback and revokes remote permission. Install
+    B (this process, exporting only a port) must merge over A's result: the
+    port is added, A's address survives, and the revoked permission stays
+    revoked. Merging outside the lock would instead restore ``0.0.0.0`` with
+    ``allowRemote`` from B's stale read.
+    """
+    env.data_dir.mkdir()
+    env.settings.write_text(
+        json.dumps({"syncInterval": 120, "network": {"listenAddress": "0.0.0.0", "allowRemote": True}}),
+        encoding="utf-8",
+    )
+    set_env(env, SILENTSUITE_LISTEN_PORT="45999")
+    outcome = {}
+
+    def install_b():
+        try:
+            outcome["exit"] = autostart.install_autostart()
+        except BaseException as exc:  # reported by the main thread
+            outcome["error"] = exc
+
+    revoked = {"listenAddress": "::1", "allowRemote": False}
+    with hold_settings_lock(env.data_dir, {"network": revoked}) as install_a:
+        assert install_a.snapshot["network"] == {"listenAddress": "0.0.0.0", "allowRemote": True}
+
+        installer = threading.Thread(target=install_b)
+        installer.start()
+        installer.join(timeout=1.0)
+
+        # B is inside the transaction waiting for the lock: nothing read or written yet.
+        assert installer.is_alive(), outcome
+        assert read_settings(env.settings)["network"] == {"listenAddress": "0.0.0.0", "allowRemote": True}
+        assert not env.unit.exists()
+
+        assert install_a.written == {"syncInterval": 120, "network": revoked}
+
+    installer.join(timeout=config.SETTINGS_LOCK_TIMEOUT + 5)
+    assert not installer.is_alive()
+    assert "error" not in outcome, outcome
+    assert outcome["exit"] == 0
+    assert env.unit.exists()
+    # B merged its disjoint port over A's completed result; A's revocation stands.
+    assert read_settings(env.settings) == {
+        "syncInterval": 120,
+        "network": {"listenAddress": "::1", "allowRemote": False, "listenPort": 45999},
+    }
+    captured = capsys.readouterr()
+    assert "Persisted explicit network settings" in captured.out
+    assert "0.0.0.0" not in captured.err
     assert data_dir_entries(env.data_dir) == ["settings.json"]
 
 

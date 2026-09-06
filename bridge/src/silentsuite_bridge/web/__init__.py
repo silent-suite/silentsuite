@@ -1010,22 +1010,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         btn.disabled = false;
                     });
             }
+            // Interval saves are serialized: one request in flight at a time, the
+            // selector disabled meanwhile, and the latest choice made while a save
+            // is pending sent afterwards. Out-of-order responses therefore cannot
+            // pair one request's failure with another's "Saved".
+            var intervalSave = { pending: null, queued: null, clearTimer: null };
             function updateInterval() {
                 var select = document.getElementById('syncInterval');
                 var st = document.getElementById('syncIntervalStatus');
+                if (intervalSave.pending) {
+                    intervalSave.queued = select.value;
+                    return intervalSave.pending;
+                }
                 var val = select.value;
-                // Last value the server confirmed; restored when this save fails.
+                // Last value the server acknowledged; restored when this save fails.
                 var previous = select.getAttribute('data-saved') || '';
+                if (intervalSave.clearTimer !== null) {
+                    clearTimeout(intervalSave.clearTimer);
+                    intervalSave.clearTimer = null;
+                }
+                select.disabled = true;
                 st.textContent = 'Saving...';
                 st.style.color = '#555';
                 // The promise is returned so the chain can be awaited in tests.
-                return fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({syncInterval: parseInt(val)})})
+                intervalSave.pending = fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({syncInterval: parseInt(val)})})
                     .then(handleJsonResponse)
                     .then(function(data) {
-                        select.setAttribute('data-saved', String(data.syncInterval));
+                        // Reconcile with what the server acknowledged, not what was sent.
+                        var acknowledged = String(data.syncInterval);
+                        select.setAttribute('data-saved', acknowledged);
+                        select.value = acknowledged;
                         st.textContent = 'Saved';
                         st.style.color = '#555';
-                        setTimeout(function() { st.textContent = ''; }, 2000);
+                        intervalSave.clearTimer = setTimeout(function() {
+                            intervalSave.clearTimer = null;
+                            st.textContent = '';
+                        }, 2000);
                     })
                     .catch(function(error) {
                         // Non-2xx (write failed, durability unconfirmed, lock held,
@@ -1034,7 +1054,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         if (previous) select.value = previous;
                         st.textContent = 'Not saved: ' + ((error && error.message) || 'request failed');
                         st.style.color = '#ff8a8a';
+                    })
+                    .then(function() {
+                        intervalSave.pending = null;
+                        select.disabled = false;
+                        var queued = intervalSave.queued;
+                        intervalSave.queued = null;
+                        if (queued !== null && queued !== select.getAttribute('data-saved')) {
+                            select.value = queued;
+                            return updateInterval();
+                        }
                     });
+                return intervalSave.pending;
             }
             // Live sync-status pill. Polls /api/progress every 2s so users see
             // a running sync without waiting for the 30s full-page refresh.

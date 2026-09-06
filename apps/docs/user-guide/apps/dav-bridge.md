@@ -249,10 +249,12 @@ are left untouched, and `--remove-autostart` still works.
 Every change to `settings.json` (this profile, the dashboard sync interval, SSL settings)
 is written atomically and one writer at a time: writers hold a lock on `settings.json.lock`
 in the data directory, so changing the sync interval in the dashboard while
-`--install-autostart` runs can never discard the freshly persisted profile. If the
-dashboard cannot save the interval (write failed, durability not confirmed, another
-process still writing), it shows `Not saved:` with the reason and keeps the previous
-value instead of reporting `Saved`.
+`--install-autostart` runs can never discard the freshly persisted profile, and two
+overlapping `--install-autostart` runs apply one after the other with both of their
+changes kept. If the dashboard cannot save the interval (write failed, durability not
+confirmed, another process still writing), it shows `Not saved:` with the reason and
+keeps the last acknowledged value instead of reporting `Saved`; the selector is disabled
+while a save is in flight.
 
 ### Remove Auto-Start
 

@@ -821,6 +821,39 @@ def test_reinstall_without_environment_retains_persisted_profile(settings_file):
     assert read_settings(settings_file) == {"network": {"listenPort": 45123}}
 
 
+def test_install_transaction_persists_the_previewed_profile_and_skips_empty_profiles(settings_file, monkeypatch):
+    # No explicit environment: preview is empty and the transaction writes nothing.
+    assert config.network_profile_for_autostart() == {}
+    assert config.install_network_profile() == ({}, False)
+    assert not settings_file.exists()
+
+    write_settings(settings_file, {**UNRELATED_SETTINGS, "network": {"listenAddress": "::1", "listenPort": 45123}})
+    reload_with_env(monkeypatch, SILENTSUITE_LISTEN_PORT="45999")
+
+    preview = config.network_profile_for_autostart()
+    profile, written = config.install_network_profile()
+
+    assert written is True
+    assert profile == preview == {"listenAddress": "::1", "listenPort": 45999}
+    assert read_settings(settings_file) == {**UNRELATED_SETTINGS, "network": profile}
+
+
+def test_install_transaction_refusal_writes_nothing_and_releases_the_lock(settings_file, monkeypatch):
+    write_settings(settings_file, {"network": {"listenPort": 45123}})
+    original = settings_file.read_text(encoding="utf-8")
+    reload_with_env(monkeypatch, SILENTSUITE_LISTEN_ADDRESS="0.0.0.0")
+
+    with pytest.raises(RuntimeError, match="SILENTSUITE_ALLOW_REMOTE=1") as excinfo:
+        config.install_network_profile()
+
+    assert "0.0.0.0" not in str(excinfo.value)
+    assert settings_file.read_text(encoding="utf-8") == original
+    # The lock was released on the way out.
+    monkeypatch.setattr(config, "SETTINGS_LOCK_TIMEOUT", 0.2)
+    with config.exclusive_settings_lock():
+        pass
+
+
 def test_reinstall_cannot_widen_a_retained_bind_without_permission(settings_file, monkeypatch):
     write_settings(settings_file, {"network": {"listenPort": 45123}})
     reload_with_env(monkeypatch, SILENTSUITE_LISTEN_ADDRESS="0.0.0.0")

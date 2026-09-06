@@ -494,16 +494,55 @@ def persisted_network_profile(settings: dict | None = None) -> dict:
     return validate_network_profile(settings[NETWORK_PROFILE_KEY])
 
 
+def _merge_autostart_profile(settings: dict, explicit: dict) -> dict:
+    """Merge explicit environment values over the persisted profile in ``settings`` and validate for restart."""
+    merged = {**persisted_network_profile(settings), **explicit}
+    return validate_restart_profile(merged)
+
+
 def network_profile_for_autostart() -> dict:
     """Compute the profile ``--install-autostart`` may persist, validating before any write.
 
     Explicit environment values are merged over the existing persisted profile
     (retention on reinstall); nothing is defaulted. Both the effective
     configuration and the resulting restart profile must validate.
+
+    This is a read-only preview and takes no lock; the installer persists via
+    install_network_profile(), which repeats the same merge and validation
+    inside the writer lock so a concurrent install cannot be merged over a
+    stale snapshot.
     """
     validate_network_config()
-    merged = {**persisted_network_profile(), **explicit_network_profile_from_env()}
-    return validate_restart_profile(merged)
+    return _merge_autostart_profile(read_settings_strict(), explicit_network_profile_from_env())
+
+
+def install_network_profile() -> tuple[dict, bool]:
+    """Persist the ``--install-autostart`` profile in one cross-process locked transaction.
+
+    Returns ``(profile, written)``. The persisted-profile read, the merge of
+    explicit environment values over it, the restart validation and the
+    atomic replacement all happen while the settings writer lock is held, so
+    two overlapping installs are applied one after the other: the second one
+    merges over the first one's result instead of over the snapshot it would
+    have read before the first wrote. Disjoint changes therefore both
+    survive, and a permission the first install revoked stays revoked.
+
+    Environment parsing and the effective-configuration validation run before
+    the lock is taken (they touch no file). An empty resulting profile writes
+    nothing, as with save_network_profile(). Raises the same errors as
+    network_profile_for_autostart() and save_settings().
+    """
+    validate_network_config()
+    explicit = explicit_network_profile_from_env()
+    ensure_data_dir()
+    with exclusive_settings_lock():
+        settings = read_settings_strict()
+        profile = _merge_autostart_profile(settings, explicit)
+        if not profile:
+            return profile, False
+        settings[NETWORK_PROFILE_KEY] = profile
+        _atomic_write_json(SETTINGS_FILE, settings)
+        return profile, True
 
 
 def dav_scheme() -> str:

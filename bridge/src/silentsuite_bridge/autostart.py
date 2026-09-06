@@ -98,19 +98,19 @@ def persist_network_profile(platform: str | None = None) -> int:
         )
         return 1
 
+    # Read, merge, validate and replace happen in one locked transaction so an
+    # overlapping --install-autostart cannot be merged over a stale profile.
     try:
-        profile = config.network_profile_for_autostart()
+        profile, written = config.install_network_profile()
+    except config.SettingsFileError as exc:
+        print(f"Error: {exc}; auto-start was not installed and nothing was changed.", file=sys.stderr)
+        return 1
     except RuntimeError as exc:
         # NetworkProfileError and the remote-bind refusal name settings and
-        # rules only; supplied values are never echoed.
+        # rules only; supplied values are never echoed. Validation failures
+        # inside the lock happen before the replace: nothing was written.
         print(f"Error: {exc}", file=sys.stderr)
         print("Auto-start was not installed and nothing was changed.", file=sys.stderr)
-        return 1
-
-    try:
-        written = config.save_network_profile(profile)
-    except config.SettingsFileError as exc:
-        print(f"Error: {exc}; auto-start was not installed.", file=sys.stderr)
         return 1
     except config.SettingsDurabilityError as exc:
         # os.replace completed: settings.json already shows the new profile.
