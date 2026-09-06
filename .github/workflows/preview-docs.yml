@@ -4,6 +4,10 @@ on:
   push:
     branches-ignore:
       - main
+      # Exact branch only: the annual finalized-artifact correction touches
+      # .github/workflows/** and package.json and must not deploy an incidental
+      # docs preview. No other branch is excluded.
+      - fix/annual-finalized-artifact-20260905
     paths:
       - 'apps/docs/**'
       - 'apps/web/**'

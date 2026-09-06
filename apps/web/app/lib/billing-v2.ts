@@ -3,7 +3,14 @@
  * promotions, terms and provider authority are intentionally never inferred
  * by the client: an invalid or incomplete server reply is a visible failure.
  */
-export type BillingV2Fetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+/**
+ * The injected fetcher is normally the browser's `fetch`, which rejects any
+ * receiver that is not the window ("Illegal invocation"). It must therefore be
+ * called as a plain function, never as a method of a params object. `this: void`
+ * states that contract and keeps receiver-dependent implementations out.
+ */
+export type BillingV2Fetch = (this: void, input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
 export type AnnualProvider = 'stripe' | 'btcpay'
 export type AnnualPlanId = 'early_annual' | 'standard_annual'
@@ -187,21 +194,24 @@ export async function fetchAnonymousAnnualOffer(params: {
   email: string
   requestId: string
 }): Promise<AnnualOfferResponse> {
-  const body = await jsonOrThrow(await params.fetcher(api(params.billingApiUrl, '/auth/offers/v2'), jsonInit('POST', { contractVersion: 2, email: params.email, requestId: params.requestId })))
+  const { fetcher } = params
+  const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/auth/offers/v2'), jsonInit('POST', { contractVersion: 2, email: params.email, requestId: params.requestId })))
   assertAnnualOfferResponse(body)
   if (body.requestId !== params.requestId) throw new Error('Billing returned an offer for another request')
   return body
 }
 
 export async function activateAnnualCheckout(params: { fetcher: BillingV2Fetch; billingApiUrl: string; offer: AnnualOfferResponse; email: string; emailOwnershipToken: string; trialPath: AnnualTrialPath; provider: 'none' | AnnualProvider; behavior: AnnualBehavior }): Promise<AnnualCheckoutActivation> {
+  const { fetcher } = params
   assertAnnualOfferResponse(params.offer)
-  const body = await jsonOrThrow(await params.fetcher(api(params.billingApiUrl, '/auth/offers/v2/activate'), jsonInit('POST', { contractVersion: 2, offerToken: params.offer.offer.offerToken, requestId: params.offer.requestId, email: params.email, emailOwnershipToken: params.emailOwnershipToken, trialPath: params.trialPath, provider: params.provider, behavior: params.behavior })))
+  const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/auth/offers/v2/activate'), jsonInit('POST', { contractVersion: 2, offerToken: params.offer.offer.offerToken, requestId: params.offer.requestId, email: params.email, emailOwnershipToken: params.emailOwnershipToken, trialPath: params.trialPath, provider: params.provider, behavior: params.behavior })))
   assertActivation(body)
   return body
 }
 
 export async function requestSignupEmailOwnership(params: { fetcher: BillingV2Fetch; billingApiUrl: string; email: string; requestId: string }) {
-  const response = await params.fetcher(api(params.billingApiUrl, '/auth/signup-email-verifications/v2'), jsonInit('POST', { contractVersion: 2, email: params.email, requestId: params.requestId }))
+  const { fetcher } = params
+  const response = await fetcher(api(params.billingApiUrl, '/auth/signup-email-verifications/v2'), jsonInit('POST', { contractVersion: 2, email: params.email, requestId: params.requestId }))
   if (response.status !== 202) {
     await jsonOrThrow(response)
     throw new Error('Billing did not acknowledge email proof delivery')
@@ -209,20 +219,23 @@ export async function requestSignupEmailOwnership(params: { fetcher: BillingV2Fe
 }
 
 export async function consumeSignupEmailOwnership(params: { fetcher: BillingV2Fetch; billingApiUrl: string; email: string; token: string }): Promise<EmailOwnership> {
-  const body = await jsonOrThrow(await params.fetcher(api(params.billingApiUrl, '/auth/signup-email-verifications/v2/consume'), jsonInit('POST', { contractVersion: 2, email: params.email, token: params.token })))
+  const { fetcher } = params
+  const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/auth/signup-email-verifications/v2/consume'), jsonInit('POST', { contractVersion: 2, email: params.email, token: params.token })))
   if (!isObject(body) || !hasExactKeys(body, ['contractVersion', 'emailOwnershipToken', 'expiresAt']) || body.contractVersion !== 2 || !isRecoveryToken(body.emailOwnershipToken) || !isUtcTimestamp(body.expiresAt)) throw new Error('Billing did not return valid email proof')
   return body as unknown as EmailOwnership
 }
 
 export async function fetchAuthenticatedAnnualOffer(params: { fetcher: BillingV2Fetch; billingApiUrl: string }): Promise<AnnualOfferResponse> {
-  const body = await jsonOrThrow(await params.fetcher(api(params.billingApiUrl, '/subscription/offers/v2'), jsonInit('GET')))
+  const { fetcher } = params
+  const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/subscription/offers/v2'), jsonInit('GET')))
   assertAnnualOfferResponse(body)
   return body
 }
 
 export async function activateAuthenticatedAnnualCheckout(params: { fetcher: BillingV2Fetch; billingApiUrl: string; offer: AnnualOfferResponse; trialPath: AnnualTrialPath; provider: 'none' | AnnualProvider; behavior: AnnualBehavior }): Promise<AnnualCheckoutActivation> {
+  const { fetcher } = params
   assertAnnualOfferResponse(params.offer)
-  const body = await jsonOrThrow(await params.fetcher(api(params.billingApiUrl, '/subscription/offers/v2/activate'), jsonInit('POST', { contractVersion: 2, offerToken: params.offer.offer.offerToken, requestId: params.offer.requestId, trialPath: params.trialPath, provider: params.provider, behavior: params.behavior })))
+  const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/subscription/offers/v2/activate'), jsonInit('POST', { contractVersion: 2, offerToken: params.offer.offer.offerToken, requestId: params.offer.requestId, trialPath: params.trialPath, provider: params.provider, behavior: params.behavior })))
   assertActivation(body)
   return body
 }
@@ -241,8 +254,9 @@ function assertAuthenticatedPayment(value: unknown): asserts value is Authentica
 }
 
 export async function startSignupAnnualPayment(params: { fetcher: BillingV2Fetch; billingApiUrl: string; checkoutIntentToken: string; email: string; requestKey: string; recoverySecret: string; wantsProductUpdates: boolean; rememberDevice: boolean; returnUrl: string }): Promise<SignupAnnualPayment> {
+  const { fetcher } = params
   const returnUrl = requireAbsoluteHttpUrl(params.returnUrl)
-  const body = await jsonOrThrow(await params.fetcher(api(params.billingApiUrl, '/auth/signup/payment-session/v2'), jsonInit('POST', { contractVersion: 2, checkoutIntentToken: params.checkoutIntentToken, email: params.email, requestKey: params.requestKey, recoverySecret: params.recoverySecret, wantsProductUpdates: params.wantsProductUpdates, rememberDevice: params.rememberDevice, returnUrl })))
+  const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/auth/signup/payment-session/v2'), jsonInit('POST', { contractVersion: 2, checkoutIntentToken: params.checkoutIntentToken, email: params.email, requestKey: params.requestKey, recoverySecret: params.recoverySecret, wantsProductUpdates: params.wantsProductUpdates, rememberDevice: params.rememberDevice, returnUrl })))
   assertSignupPayment(body)
   if (body.paymentSessionToken !== params.recoverySecret) throw new Error('Billing returned payment recovery for another signup')
   if (body.kind === 'btcpay' && body.cryptoInvoiceLookupToken !== params.recoverySecret) throw new Error('Billing returned Bitcoin recovery for another signup')
@@ -250,9 +264,10 @@ export async function startSignupAnnualPayment(params: { fetcher: BillingV2Fetch
 }
 
 export async function startAuthenticatedAnnualPayment(params: { fetcher: BillingV2Fetch; billingApiUrl: string; checkoutIntentToken: string; expectedAuthorityId: string; returnUrl: string }): Promise<AuthenticatedAnnualPayment> {
+  const { fetcher } = params
   if (!isUuid(params.expectedAuthorityId)) throw new Error('The expected annual authority is invalid')
   const returnUrl = requireAbsoluteHttpUrl(params.returnUrl)
-  const body = await jsonOrThrow(await params.fetcher(api(params.billingApiUrl, '/subscription/payment-flows/v2'), jsonInit('POST', { contractVersion: 2, checkoutIntentToken: params.checkoutIntentToken, returnUrl })))
+  const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/subscription/payment-flows/v2'), jsonInit('POST', { contractVersion: 2, checkoutIntentToken: params.checkoutIntentToken, returnUrl })))
   assertAuthenticatedPayment(body)
   if (body.authorityId !== params.expectedAuthorityId) throw new Error('Billing returned payment details for another annual authority')
   return body
@@ -287,6 +302,7 @@ async function anonymousPaymentSessionRecovery(
   path: '/current' | '/cancel' | '/reconcile',
   params: AnonymousPaymentSessionRecoveryRequest,
 ): Promise<AnonymousPaymentSessionRecovery> {
+  const { fetcher } = params
   if (!isRecoveryToken(params.paymentSessionToken)
     || !isRecoveryToken(params.recoverySecret)
     || params.paymentSessionToken !== params.recoverySecret
@@ -297,7 +313,7 @@ async function anonymousPaymentSessionRecovery(
     || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(params.email)) {
     throw new Error('The annual payment recovery context is invalid')
   }
-  const response = await params.fetcher(
+  const response = await fetcher(
     api(params.billingApiUrl, `/auth/signup/payment-session/v2${path}`),
     {
       method: 'POST',

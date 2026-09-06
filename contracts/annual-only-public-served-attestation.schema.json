@@ -1,18 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://silentsuite.io/contracts/annual-only-public-served-attestation.schema.json",
-  "description": "Stage B (public served attestation) v2. `privateSha` and `producerRun` identify the Stage A producer run; `deployedRuntime` is carried verbatim from the verified Stage A and is the only deployment identity claim.",
+  "description": "Stage B (public served attestation) v3. `privateSha` and `producerRun` identify the Stage A producer run; `deployedRuntime` is carried verbatim from the verified Stage A and is the only deployment identity claim. `publicArtifact` names the exact public repository, run, and attempt that stores this attestation and deliberately carries no storage artifact ID: the body is signed before upload, and the consumer binds the finalized artifact ID independently through the GitHub API together with the archive digest.",
   "type": "object", "additionalProperties": false,
   "required": ["schemaVersion", "predicateType", "privateSha", "publicSha", "privateAdmissionDigest", "billingImageDigest", "disclosureDigest", "deployedRuntime", "producerRun", "publicDeploymentRun", "publicArtifact", "clientServedAt", "verifiedAt", "signature"],
   "properties": {
-    "schemaVersion": { "const": 2 }, "predicateType": { "const": "https://silentsuite.io/attestations/annual-only-public-served/v2" },
+    "schemaVersion": { "const": 3 }, "predicateType": { "const": "https://silentsuite.io/attestations/annual-only-public-served/v3" },
     "privateSha": { "$ref": "#/$defs/sha" }, "publicSha": { "$ref": "#/$defs/sha" }, "privateAdmissionDigest": { "$ref": "#/$defs/digest" }, "billingImageDigest": { "$ref": "#/$defs/digest" }, "disclosureDigest": { "$ref": "#/$defs/digest" },
     "deployedRuntime": { "$ref": "#/$defs/deployedRuntime" }, "producerRun": { "$ref": "#/$defs/run" }, "publicDeploymentRun": { "$ref": "#/$defs/run" }, "publicArtifact": { "$ref": "#/$defs/artifact" }, "clientServedAt": { "$ref": "#/$defs/time" }, "verifiedAt": { "$ref": "#/$defs/time" }, "signature": { "$ref": "#/$defs/signature" }
   },
   "$defs": {
     "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }, "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "time": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
     "run": { "type": "object", "additionalProperties": false, "required": ["runId", "runAttempt"], "properties": { "runId": { "type": "integer", "minimum": 1 }, "runAttempt": { "type": "integer", "minimum": 1 } } },
-    "artifact": { "type": "object", "additionalProperties": false, "required": ["repository", "runId", "runAttempt", "artifactId"], "properties": { "repository": { "type": "string", "pattern": "^silent-suite/[a-z0-9._-]+$" }, "runId": { "type": "integer", "minimum": 1 }, "runAttempt": { "type": "integer", "minimum": 1 }, "artifactId": { "type": "integer", "minimum": 1 } } },
+    "artifact": { "type": "object", "additionalProperties": false, "required": ["repository", "runId", "runAttempt"], "properties": { "repository": { "type": "string", "pattern": "^silent-suite/[a-z0-9._-]+$" }, "runId": { "type": "integer", "minimum": 1 }, "runAttempt": { "type": "integer", "minimum": 1 } } },
     "deployedRuntime": { "type": "object", "additionalProperties": false, "required": ["privateSha", "imageDigest", "phase", "deployedAt", "observedAt", "reobservedAt"], "properties": { "privateSha": { "$ref": "#/$defs/sha" }, "imageDigest": { "$ref": "#/$defs/digest" }, "phase": { "const": "additive" }, "deployedAt": { "$ref": "#/$defs/time" }, "observedAt": { "$ref": "#/$defs/time" }, "reobservedAt": { "$ref": "#/$defs/time" } } }
   }
 }

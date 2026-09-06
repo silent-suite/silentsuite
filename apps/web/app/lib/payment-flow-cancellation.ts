@@ -93,10 +93,12 @@ export async function cancelPaymentFlow(params: {
     return failed('bitcoin-acknowledgement-required')
   }
 
+  const { fetcher } = params
+
   let response: Response
   let body: unknown
   try {
-    response = await params.fetcher(`${params.billingApiUrl.replace(/\/$/, '')}/subscription/payment-flows/cancel`, {
+    response = await fetcher(`${params.billingApiUrl.replace(/\/$/, '')}/subscription/payment-flows/cancel`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
