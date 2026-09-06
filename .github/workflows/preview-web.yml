@@ -83,12 +83,16 @@ jobs:
           push: false
           tags: |
             silentsuite-web:pr-${{ github.sha }}
+          # NEXT_PUBLIC_LOCAL_CACHE_ENABLED is preview-only and owner-approved.
+          # Production build workflows omit it so Dockerfile.web's default-off
+          # value applies there.
           build-args: |
             NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
             NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=
             NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
             NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
+            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=true
           cache-from: type=gha
 
       - name: Comment on PR
@@ -211,12 +215,16 @@ jobs:
           push: false
           tags: silentsuite-web:preview-${{ needs.resolve-trusted-target.outputs.target_sha }}
           outputs: type=docker,dest=${{ runner.temp }}/preview-image.tar
+          # NEXT_PUBLIC_LOCAL_CACHE_ENABLED is preview-only and owner-approved.
+          # Production build workflows omit it so Dockerfile.web's default-off
+          # value applies there.
           build-args: |
             NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
             NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
             NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
             NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
             NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
+            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=true
           cache-from: type=gha,scope=preview-${{ needs.resolve-trusted-target.outputs.cache_scope }}
           cache-to: type=gha,mode=max,scope=preview-${{ needs.resolve-trusted-target.outputs.cache_scope }}
 
