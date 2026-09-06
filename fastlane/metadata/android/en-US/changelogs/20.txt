@@ -1,0 +1,1 @@
+Improves the Android build tooling so the release can be rebuilt and verified on more Java 17 toolchains.
