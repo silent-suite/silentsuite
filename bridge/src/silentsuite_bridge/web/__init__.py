@@ -941,7 +941,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 accountAction(
                     '/.web/api/accounts/remove',
                     button,
-                    'Remove {account}? This deletes local bridge credentials and that account\'s local decrypted bridge cache on this computer. Other accounts are not affected.'
+                    'Remove {account}? This deletes local bridge credentials and that account\\'s local decrypted bridge cache on this computer. Other accounts are not affected.'
                 );
             }
             function toggleFingerprint(id, button) {

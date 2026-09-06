@@ -1211,6 +1211,55 @@ def _extract_js_function(html, name):
     raise AssertionError(f"unterminated function {name}")
 
 
+def _rendered_scripts(html):
+    """Every complete <script> block of the rendered dashboard, in document order."""
+    scripts = []
+    position = 0
+    while True:
+        start = html.find("<script>", position)
+        if start == -1:
+            return scripts
+        end = html.index("</script>", start)
+        scripts.append(html[start + len("<script>"):end])
+        position = end
+
+
+def test_rendered_dashboard_scripts_keep_javascript_escapes_through_the_python_template(tmp_path, monkeypatch):
+    """The template is a Python string: a lone backslash escape is consumed by
+    Python and reaches the browser unescaped, which breaks the whole script
+    block (and with it every handler in it, including the interval save)."""
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+
+    html = _render_dashboard()
+    scripts = _rendered_scripts(html)
+
+    assert len(scripts) == 3
+    remove_prompt = [s for s in scripts if "function removeAccount(" in s][0]
+    assert "that account\\'s local decrypted bridge cache" in remove_prompt
+    assert "that account's local" not in remove_prompt
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required to parse the rendered dashboard scripts")
+def test_rendered_dashboard_scripts_parse_completely(tmp_path, monkeypatch):
+    """Parse each complete rendered <script> block with node, not extracted functions."""
+    _reset_status()
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, username: f"fingerprint for {username}")
+    creds = Credentials()
+    creds.set_etebase("alice@example.com", "alice-session", "https://server-a.test")
+    creds.save()
+
+    html = _render_dashboard()
+    scripts = _rendered_scripts(html)
+    assert len(scripts) == 3
+
+    for index, script in enumerate(scripts):
+        path = tmp_path / f"dashboard-script-{index}.js"
+        path.write_text(script, encoding="utf-8")
+        check = subprocess.run([NODE, "--check", str(path)], capture_output=True, text=True, timeout=60)
+        assert check.returncode == 0, f"script block {index} does not parse:\n{check.stderr}"
+
+
 def _interval_script(html):
     """The dashboard's interval-save code: its script-level state plus the two functions it uses."""
     state_start = html.index("var intervalSave = {")
