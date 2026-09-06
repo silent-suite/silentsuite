@@ -2,6 +2,9 @@
 
 import io
 import json
+import shutil
+import subprocess
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,6 +27,9 @@ from silentsuite_bridge.web import (
     forget_account_status,
     update_status,
 )
+from tests.settings_lock_holder import hold_settings_lock
+
+NODE = shutil.which("node")
 
 # Default Host header matching a localhost variant so the SEC-R7.4 Host check
 # accepts the request. Tests that exercise the rejection path set this explicitly.
@@ -1060,3 +1066,295 @@ def test_dashboard_settings_post_accepts_valid_csrf(tmp_path, monkeypatch):
     assert status == 200
     assert headers["Content-Type"] == "application/json"
     assert json.loads(response_body) == {"ok": True, "syncInterval": 60}
+
+
+# --- Settings failures must never look like success (#658) ------------------
+
+
+def _isolated_settings(tmp_path, monkeypatch, current_interval=900):
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "SYNC_INTERVAL", current_interval)
+    return settings_file
+
+
+def _post_interval(seconds):
+    body = json.dumps({"syncInterval": seconds}).encode()
+    return Web.__new__(Web).post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token),
+        "",
+        "/.web/api/settings",
+        None,
+    )
+
+
+def test_dashboard_settings_post_reports_unconfirmed_durability_as_failure(tmp_path, monkeypatch):
+    settings_file = _isolated_settings(tmp_path, monkeypatch)
+    settings_file.write_text(json.dumps({"network": {"listenPort": 45123}}), encoding="utf-8")
+
+    def refuse_directory_sync(directory):
+        raise OSError("EIO")
+
+    monkeypatch.setattr(config, "_fsync_directory", refuse_directory_sync)
+
+    status, headers, response_body = _post_interval(60)
+
+    assert status == 500
+    assert headers["Content-Type"] == "application/json"
+    error = json.loads(response_body)["error"]
+    assert "not confirmed durable" in error
+    assert "retry" in error
+    # The replace completed (content visible, profile intact) but the running
+    # interval was not switched on an unconfirmed write.
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == {
+        "network": {"listenPort": 45123},
+        "syncInterval": 60,
+    }
+    assert config.SYNC_INTERVAL == 900
+
+
+def test_dashboard_settings_post_reports_write_failure_and_keeps_interval(tmp_path, monkeypatch):
+    settings_file = _isolated_settings(tmp_path, monkeypatch)
+    settings_file.write_text(json.dumps({"network": {"listenPort": 45123}}), encoding="utf-8")
+    original = settings_file.read_text(encoding="utf-8")
+
+    def refuse_replace(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(config.os, "replace", refuse_replace)
+
+    status, _, response_body = _post_interval(60)
+
+    assert status == 500
+    assert "was not changed" in json.loads(response_body)["error"]
+    assert settings_file.read_text(encoding="utf-8") == original
+    assert config.SYNC_INTERVAL == 900
+
+
+def test_dashboard_settings_post_waits_for_a_concurrent_install_and_keeps_its_profile(tmp_path, monkeypatch):
+    settings_file = _isolated_settings(tmp_path, monkeypatch)
+    settings_file.write_text(json.dumps({"syncInterval": 900}), encoding="utf-8")
+    outcome = {}
+
+    def post():
+        try:
+            outcome["response"] = _post_interval(60)
+        except BaseException as exc:  # reported by the main thread
+            outcome["error"] = exc
+
+    # --install-autostart in another process has read settings.json and holds
+    # the lock; the dashboard's write must wait for it rather than interleave.
+    with hold_settings_lock(tmp_path, {"network": {"listenPort": 45123}}) as installer:
+        assert installer.snapshot == {"syncInterval": 900}
+
+        request = threading.Thread(target=post)
+        request.start()
+        request.join(timeout=1.0)
+
+        assert request.is_alive(), outcome
+        assert json.loads(settings_file.read_text(encoding="utf-8")) == {"syncInterval": 900}
+        assert config.SYNC_INTERVAL == 900
+
+        assert installer.written == {"syncInterval": 900, "network": {"listenPort": 45123}}
+
+    request.join(timeout=config.SETTINGS_LOCK_TIMEOUT + 5)
+    assert not request.is_alive()
+    assert "error" not in outcome, outcome
+    status, _, response_body = outcome["response"]
+    assert status == 200
+    assert json.loads(response_body) == {"ok": True, "syncInterval": 60}
+    assert config.SYNC_INTERVAL == 60
+    # The dashboard merged over the completed install: the profile survived.
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == {
+        "syncInterval": 60,
+        "network": {"listenPort": 45123},
+    }
+
+
+def test_dashboard_settings_post_reports_lock_contention_without_changing_interval(tmp_path, monkeypatch):
+    settings_file = _isolated_settings(tmp_path, monkeypatch)
+    settings_file.write_text(json.dumps({"syncInterval": 900}), encoding="utf-8")
+    original = settings_file.read_text(encoding="utf-8")
+    monkeypatch.setattr(config, "SETTINGS_LOCK_TIMEOUT", 0.2)
+
+    with hold_settings_lock(tmp_path, {"network": {"listenPort": 45123}}) as installer:
+        status, headers, response_body = _post_interval(60)
+
+        assert status == 503
+        assert headers["Content-Type"] == "application/json"
+        error = json.loads(response_body)["error"]
+        assert "Another bridge process is updating settings.json" in error
+        assert "was not changed" in error
+        assert settings_file.read_text(encoding="utf-8") == original
+        assert config.SYNC_INTERVAL == 900
+
+        assert installer.written == {"syncInterval": 900, "network": {"listenPort": 45123}}
+
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == {
+        "syncInterval": 900,
+        "network": {"listenPort": 45123},
+    }
+
+
+def _extract_js_function(html, name):
+    """Return the source of top-level ``function name(...) {...}`` from the dashboard script."""
+    start = html.index(f"function {name}(")
+    depth = 0
+    for index in range(html.index("{", start), len(html)):
+        if html[index] == "{":
+            depth += 1
+        elif html[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return html[start:index + 1]
+    raise AssertionError(f"unterminated function {name}")
+
+
+def test_dashboard_interval_script_checks_the_http_status_before_reporting_saved(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+
+    html = _render_dashboard()
+    source = _extract_js_function(html, "updateInterval")
+
+    assert ".then(handleJsonResponse)" in source
+    assert "return r.json()" not in source
+    assert "'Saved'" in source.split(".then(handleJsonResponse)", 1)[1]
+    assert "sel.setAttribute('data-saved', sel.value)" in html
+
+
+DURABILITY_ERROR = "settings.json was replaced but not confirmed durable; retry to confirm the sync interval"
+WRITE_ERROR = "Could not write settings.json; the sync interval was not changed"
+LOCK_ERROR = "Another bridge process is updating settings.json; the sync interval was not changed, retry shortly"
+
+UPDATE_INTERVAL_SCENARIOS = [
+    {"id": "ok", "status": 200, "body": {"ok": True, "syncInterval": 300}},
+    {"id": "durability-unconfirmed", "status": 500, "body": {"error": DURABILITY_ERROR}},
+    {"id": "write-failed", "status": 500, "body": {"error": WRITE_ERROR}},
+    {"id": "lock-held", "status": 503, "body": {"error": LOCK_ERROR}},
+    {"id": "csrf-rejected", "status": 403, "body": {"error": "Invalid dashboard CSRF token"}},
+    {"id": "non-json-error-page", "status": 502, "body": None},
+    {"id": "transport-failure", "status": 0, "body": None, "transportError": True},
+]
+
+# Runs the extracted dashboard functions in a bare V8 context with a fake
+# document/fetch: the same code path a browser executes, minus the DOM.
+UPDATE_INTERVAL_HARNESS = r"""
+'use strict';
+const fs = require('fs');
+const vm = require('vm');
+const source = fs.readFileSync(process.argv[2], 'utf8');
+const scenarios = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+
+function element(value) {
+    const attributes = {};
+    return {
+        value: value,
+        textContent: '',
+        style: {},
+        getAttribute: function(name) {
+            return Object.prototype.hasOwnProperty.call(attributes, name) ? attributes[name] : null;
+        },
+        setAttribute: function(name, v) { attributes[name] = String(v); }
+    };
+}
+
+async function run(scenario) {
+    const select = element('300');
+    select.setAttribute('data-saved', '900');
+    const status = element('');
+    const requests = [];
+    const timers = [];
+    const sandbox = {
+        window: { SILENTSUITE_DASHBOARD_CSRF: 'csrf-token' },
+        document: {
+            getElementById: function(id) {
+                if (id === 'syncInterval') return select;
+                if (id === 'syncIntervalStatus') return status;
+                return null;
+            }
+        },
+        fetch: function(url, init) {
+            requests.push({ url: url, method: init.method, csrf: init.headers['X-SilentSuite-CSRF'], body: init.body });
+            if (scenario.transportError) return Promise.reject(new TypeError('Failed to fetch'));
+            return Promise.resolve({
+                ok: scenario.status >= 200 && scenario.status < 300,
+                status: scenario.status,
+                json: function() {
+                    if (scenario.body === null) return Promise.reject(new SyntaxError('Unexpected token < in JSON'));
+                    return Promise.resolve(scenario.body);
+                }
+            });
+        },
+        setTimeout: function(fn, delay) { timers.push(delay); }
+    };
+    const context = vm.createContext(sandbox);
+    vm.runInContext(source + '\nthis.__result = updateInterval();', context);
+    try { await context.__result; } catch (e) {}
+    for (let i = 0; i < 20; i++) await new Promise(function(r) { setImmediate(r); });
+    return {
+        id: scenario.id,
+        status: status.textContent,
+        color: status.style.color,
+        selected: select.value,
+        saved: select.getAttribute('data-saved'),
+        requests: requests,
+        timers: timers
+    };
+}
+
+(async function() {
+    const results = [];
+    for (const scenario of scenarios) results.push(await run(scenario));
+    process.stdout.write(JSON.stringify(results));
+})().catch(function(err) { console.error(err && err.stack || err); process.exit(1); });
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required to execute the dashboard script")
+def test_dashboard_update_interval_never_shows_saved_on_http_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    html = _render_dashboard()
+    source = "\n".join(_extract_js_function(html, name) for name in ("handleJsonResponse", "updateInterval"))
+    script = tmp_path / "dashboard-interval.js"
+    script.write_text(source, encoding="utf-8")
+    scenarios = tmp_path / "scenarios.json"
+    scenarios.write_text(json.dumps(UPDATE_INTERVAL_SCENARIOS), encoding="utf-8")
+    harness = tmp_path / "harness.js"
+    harness.write_text(UPDATE_INTERVAL_HARNESS, encoding="utf-8")
+
+    run = subprocess.run(
+        [NODE, str(harness), str(script), str(scenarios)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert run.returncode == 0, run.stderr
+    results = {result["id"]: result for result in json.loads(run.stdout)}
+    assert set(results) == {scenario["id"] for scenario in UPDATE_INTERVAL_SCENARIOS}
+
+    ok = results["ok"]
+    assert ok["status"] == "Saved"
+    assert ok["selected"] == "300"
+    assert ok["saved"] == "300"
+    assert ok["timers"] == [2000]
+    assert ok["requests"] == [
+        {"url": "/.web/api/settings", "method": "POST", "csrf": "csrf-token", "body": '{"syncInterval":300}'}
+    ]
+
+    for scenario in UPDATE_INTERVAL_SCENARIOS:
+        if scenario["id"] == "ok":
+            continue
+        failed = results[scenario["id"]]
+        assert failed["status"] != "Saved", scenario["id"]
+        assert failed["status"].startswith("Not saved: "), scenario["id"]
+        assert failed["color"] == "#ff8a8a", scenario["id"]
+        # The dropdown goes back to the last confirmed value and the error stays visible.
+        assert failed["selected"] == "900", scenario["id"]
+        assert failed["saved"] == "900", scenario["id"]
+        assert failed["timers"] == [], scenario["id"]
+        assert len(failed["requests"]) == 1, scenario["id"]
+        if scenario["body"] and "error" in scenario["body"]:
+            assert failed["status"] == "Not saved: " + scenario["body"]["error"], scenario["id"]
+    assert results["transport-failure"]["status"] == "Not saved: Failed to fetch"

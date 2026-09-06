@@ -4,14 +4,28 @@ Platform-appropriate paths for data storage and credentials.
 All defaults point to server.silentsuite.io.
 """
 
+import contextlib
+import errno
 import json
 import os
 import re
 import sys
 import tempfile
+import time
 from ipaddress import ip_address
 
 from appdirs import user_data_dir
+
+# Exclusive file locking is platform specific: flock on POSIX, byte-range
+# locking on Windows. Exactly one of the two modules exists on any platform.
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+try:
+    import msvcrt
+except ImportError:  # POSIX
+    msvcrt = None
 
 # --- Server ---
 ETEBASE_SERVER_URL = os.environ.get(
@@ -85,6 +99,14 @@ class SettingsDurabilityError(OSError):
 
     Raised only after ``os.replace`` succeeded: the new content is visible on
     disk, so callers must never report the file as unchanged.
+    """
+
+
+class SettingsLockError(OSError):
+    """The exclusive settings.json writer lock was not acquired within the wait budget.
+
+    Raised before anything is read or written, so settings.json is unchanged
+    and callers may report it as such.
     """
 
 
@@ -311,6 +333,18 @@ DAV_CHANGE_RETENTION = 10_000
 
 # --- Settings file ---
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+# Sibling lock file that serializes every settings.json writer across
+# processes (dashboard, --install-autostart, SSL setup). It is created on
+# first write and intentionally never deleted: unlinking a lock file after
+# unlock lets a third process lock a fresh inode while a second still waits
+# on the old one, which would defeat the exclusion.
+SETTINGS_LOCK_SUFFIX = ".lock"
+# How long a writer waits for another process to finish its read/merge/replace
+# before failing closed. The critical section is a few file operations, so a
+# wait this long means something is wrong; failing visibly beats hanging a
+# dashboard request or an installer.
+SETTINGS_LOCK_TIMEOUT = 30.0
+_SETTINGS_LOCK_POLL = 0.02
 
 # --- Collection types ---
 # These must match the Etebase collection types used by SilentSuite
@@ -565,6 +599,82 @@ def load_settings():
         SSL_KEY_FILE = str(settings["sslKeyFile"])
 
 
+def settings_lock_path(path: str | None = None) -> str:
+    """Return the lock file that serializes writers of ``path`` (default: SETTINGS_FILE)."""
+    return (SETTINGS_FILE if path is None else path) + SETTINGS_LOCK_SUFFIX
+
+
+def _try_lock_fd(fd: int) -> bool:
+    """Attempt a non-blocking exclusive lock on ``fd``; False when another holder has it."""
+    try:
+        if fcntl is not None:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        else:
+            # Lock the first byte; Windows permits byte ranges past EOF, so an
+            # empty lock file works. Position is 0 on a fresh descriptor.
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    except OSError as exc:
+        # BlockingIOError (EAGAIN/EWOULDBLOCK) on POSIX; EACCES or EDEADLK on Windows.
+        if exc.errno in _LOCK_BUSY_ERRNOS:
+            return False
+        raise
+    return True
+
+
+_LOCK_BUSY_ERRNOS = frozenset(
+    code
+    for code in (
+        errno.EAGAIN,
+        getattr(errno, "EWOULDBLOCK", errno.EAGAIN),
+        errno.EACCES,
+        getattr(errno, "EDEADLK", errno.EACCES),
+    )
+)
+
+
+def _unlock_fd(fd: int) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    else:
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+
+@contextlib.contextmanager
+def exclusive_settings_lock(path: str | None = None, timeout: float | None = None):
+    """Hold the cross-process exclusive lock for writers of settings.json.
+
+    Atomic replacement alone only prevents truncation: two processes that each
+    read, merge and replace can still lose an update when the second replaces
+    the file with a snapshot taken before the first wrote (for example a
+    dashboard interval change erasing a profile ``--install-autostart`` just
+    persisted). Every writer therefore holds this lock across its whole
+    read/merge/replace/sync sequence.
+
+    The lock is an OS-level lock on the sibling ``settings.json.lock`` file, so
+    it is released automatically if the holder dies. Acquisition waits up to
+    ``timeout`` seconds (default SETTINGS_LOCK_TIMEOUT) and then raises
+    SettingsLockError, an OSError, before anything has been read or written.
+    """
+    lock_path = settings_lock_path(path)
+    wait = SETTINGS_LOCK_TIMEOUT if timeout is None else timeout
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        deadline = time.monotonic() + wait
+        while not _try_lock_fd(fd):
+            if time.monotonic() >= deadline:
+                raise SettingsLockError(
+                    "another bridge process is updating settings.json and did not finish in time; "
+                    "nothing was written, retry shortly"
+                )
+            time.sleep(_SETTINGS_LOCK_POLL)
+        try:
+            yield
+        finally:
+            _unlock_fd(fd)
+    finally:
+        os.close(fd)
+
+
 def save_settings(settings):
     """Merge ``settings`` into settings.json with the shared safe-write guarantee.
 
@@ -573,11 +683,18 @@ def save_settings(settings):
     path: the existing file is read strictly (a non-object file is refused,
     never discarded) and replaced atomically, so a failed unrelated update
     can never destroy a previously valid profile.
+
+    The strict read, the merge, the atomic replace and the directory sync run
+    under the cross-process settings lock, so a concurrent writer can never
+    replace the file with a snapshot taken before this write. Raises
+    SettingsLockError (an OSError, nothing written) when the lock is not
+    acquired within SETTINGS_LOCK_TIMEOUT seconds.
     """
     ensure_data_dir()
-    existing = read_settings_strict()
-    existing.update(settings)
-    _atomic_write_json(SETTINGS_FILE, existing)
+    with exclusive_settings_lock():
+        existing = read_settings_strict()
+        existing.update(settings)
+        _atomic_write_json(SETTINGS_FILE, existing)
 
 
 def save_network_profile(profile: dict) -> bool:

@@ -120,6 +120,13 @@ def persist_network_profile(platform: str | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    except config.SettingsLockError as exc:
+        # Raised before any read or write: another writer held settings.json.
+        print(
+            f"Error: {exc}. The existing settings.json was left unchanged and auto-start was not installed.",
+            file=sys.stderr,
+        )
+        return 1
     except OSError:
         print(
             "Error: could not write the bridge settings file; the existing settings.json was left "

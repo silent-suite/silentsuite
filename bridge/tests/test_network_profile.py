@@ -8,12 +8,15 @@ an invalid persisted profile fails closed without leaking supplied values.
 
 import json
 import os
+import stat
 import sys
+import threading
 
 import pytest
 
 from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import config
+from tests.settings_lock_holder import hold_settings_lock
 
 NETWORK_ENV = tuple(config.NETWORK_PROFILE_ENV.values())
 OTHER_ENV = (
@@ -61,6 +64,12 @@ def write_settings(path, payload):
 
 def read_settings(path):
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def data_dir_entries(directory):
+    """Names in the data directory except the writer lock file, which is kept by design."""
+    lock_name = os.path.basename(config.settings_lock_path())
+    return sorted(p.name for p in directory.iterdir() if p.name != lock_name)
 
 
 def reload_with_env(monkeypatch, **env):
@@ -521,7 +530,7 @@ def test_save_network_profile_failure_preserves_original_file_and_leaves_no_temp
         config.save_network_profile({"listenPort": 45999})
 
     assert settings_file.read_text(encoding="utf-8") == original
-    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+    assert data_dir_entries(settings_file.parent) == ["settings.json"]
 
 
 def test_save_network_profile_replaces_atomically_and_keeps_unrelated_settings(settings_file):
@@ -531,7 +540,7 @@ def test_save_network_profile_replaces_atomically_and_keeps_unrelated_settings(s
     assert config.save_network_profile({"listenPort": 45123}) is True
 
     assert read_settings(settings_file) == {**UNRELATED_SETTINGS, "network": {"listenPort": 45123}}
-    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+    assert data_dir_entries(settings_file.parent) == ["settings.json"]
 
 
 def test_shared_settings_writers_cannot_destroy_the_persisted_profile_on_failure(settings_file, monkeypatch):
@@ -551,7 +560,7 @@ def test_shared_settings_writers_cannot_destroy_the_persisted_profile_on_failure
 
     # Byte-for-byte intact, no temp files, and the runtime SSL flag was not flipped.
     assert settings_file.read_text(encoding="utf-8") == original
-    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+    assert data_dir_entries(settings_file.parent) == ["settings.json"]
     assert config.SSL_ENABLED is False
 
 
@@ -570,7 +579,7 @@ def test_shared_settings_writers_merge_unrelated_updates_around_the_profile(sett
     assert stored["sslEnabled"] is True
     assert stored["sslCertFile"] == os.path.abspath(str(cert))
     assert stored["sslKeyFile"] == os.path.abspath(str(key))
-    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+    assert data_dir_entries(settings_file.parent) == ["settings.json"]
 
 
 def test_settings_write_syncs_containing_directory_after_replace(settings_file, monkeypatch):
@@ -617,7 +626,115 @@ def test_directory_sync_failure_after_replace_is_reported_as_visible_but_unconfi
     # The replace already completed: the new content is visible, so the test
     # must not (and does not) claim the file was unchanged.
     assert read_settings(settings_file) == {**UNRELATED_SETTINGS, "network": {"listenPort": 45999}}
-    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+    assert data_dir_entries(settings_file.parent) == ["settings.json"]
+
+
+# --- Cross-process serialization of shared writers -------------------------
+#
+# Atomic replacement prevents truncation but not lost updates: a writer that
+# read settings.json before another writer replaced it would put its stale
+# snapshot back. These tests hold the real lock from a separate bridge process
+# (tests/settings_lock_holder.py) mid-write, so the boundary exercised is the
+# production one, not a stub.
+
+
+def test_install_write_waits_for_a_concurrent_dashboard_write_and_keeps_both(settings_file):
+    write_settings(settings_file, {"syncInterval": 120})
+    outcome = {}
+
+    def install_profile():
+        try:
+            outcome["written"] = config.save_network_profile({"listenPort": 45123})
+        except BaseException as exc:  # reported by the main thread
+            outcome["error"] = exc
+
+    # A "dashboard" process has read the file and holds the lock while it
+    # still holds a snapshot that predates the install.
+    with hold_settings_lock(settings_file.parent, {"syncInterval": 60}) as dashboard:
+        assert dashboard.snapshot == {"syncInterval": 120}
+
+        installer = threading.Thread(target=install_profile)
+        installer.start()
+        installer.join(timeout=1.0)
+
+        # Serialized: without the lock the install completes here and the
+        # dashboard's stale snapshot then erases the profile.
+        assert installer.is_alive(), outcome
+        assert read_settings(settings_file) == {"syncInterval": 120}
+
+        assert dashboard.written == {"syncInterval": 60}
+
+    installer.join(timeout=config.SETTINGS_LOCK_TIMEOUT + 5)
+    assert not installer.is_alive()
+    assert "error" not in outcome, outcome
+    assert outcome["written"] is True
+    assert dashboard.release().returncode == 0
+    # The install merged over the dashboard's completed write: both survive.
+    assert read_settings(settings_file) == {"syncInterval": 60, "network": {"listenPort": 45123}}
+    assert data_dir_entries(settings_file.parent) == ["settings.json"]
+
+
+def test_settings_lock_wait_is_bounded_and_writes_nothing_on_timeout(settings_file, monkeypatch):
+    write_settings(settings_file, {"syncInterval": 120})
+    original = settings_file.read_text(encoding="utf-8")
+    monkeypatch.setattr(config, "SETTINGS_LOCK_TIMEOUT", 0.2)
+
+    with hold_settings_lock(settings_file.parent, {"network": {"listenPort": 45123}}) as installer:
+        with pytest.raises(config.SettingsLockError) as excinfo:
+            config.save_settings({"sslEnabled": True})
+        with pytest.raises(config.SettingsLockError):
+            bridge_main._persist_ssl_settings(
+                str(settings_file.parent / "cert.pem"), str(settings_file.parent / "key.pem")
+            )
+
+        # Fails closed before any read or write, as an OSError so existing
+        # "left unchanged" handling stays truthful.
+        assert isinstance(excinfo.value, OSError)
+        assert "nothing was written" in str(excinfo.value)
+        assert settings_file.read_text(encoding="utf-8") == original
+        assert config.SSL_ENABLED is False
+
+        assert installer.written == {"syncInterval": 120, "network": {"listenPort": 45123}}
+
+    # The holder's write was unaffected by the refused writer.
+    assert read_settings(settings_file) == {"syncInterval": 120, "network": {"listenPort": 45123}}
+    assert data_dir_entries(settings_file.parent) == ["settings.json"]
+
+
+def test_settings_lock_file_lives_beside_settings_and_is_private(settings_file):
+    lock_path = settings_file.parent / "settings.json.lock"
+    assert config.settings_lock_path() == str(lock_path)
+
+    assert config.save_network_profile({"listenPort": 45123}) is True
+
+    assert lock_path.is_file()
+    if os.name == "posix":
+        assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
+    # A second write reuses the lock file; it is never deleted (a deleted
+    # lock file would let two later writers lock different inodes).
+    config.save_settings({"syncInterval": 60})
+    assert lock_path.is_file()
+    assert read_settings(settings_file) == {"syncInterval": 60, "network": {"listenPort": 45123}}
+
+
+def test_settings_lock_is_released_after_a_failed_write(settings_file, monkeypatch):
+    write_settings(settings_file, {"syncInterval": 120})
+    original_replace = config.os.replace
+
+    def refuse_replace(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(config.os, "replace", refuse_replace)
+    with pytest.raises(OSError):
+        config.save_settings({"syncInterval": 60})
+    monkeypatch.setattr(config.os, "replace", original_replace)
+    monkeypatch.setattr(config, "SETTINGS_LOCK_TIMEOUT", 0.2)
+
+    # A later writer must not find the lock still held by the failed one.
+    with config.exclusive_settings_lock():
+        pass
+    config.save_settings({"syncInterval": 60})
+    assert read_settings(settings_file) == {"syncInterval": 60}
 
 
 @pytest.mark.parametrize("content", ["{not json", "[]", '"tok-c3f1e9-string"', "42"])
@@ -635,7 +752,7 @@ def test_malformed_settings_file_is_refused_not_discarded(settings_file, content
         config.save_settings({"syncInterval": 60})
 
     assert settings_file.read_text(encoding="utf-8") == content
-    assert sorted(p.name for p in settings_file.parent.iterdir()) == ["settings.json"]
+    assert data_dir_entries(settings_file.parent) == ["settings.json"]
 
 
 def test_malformed_environment_port_fails_closed_without_import_crash(settings_file, monkeypatch):

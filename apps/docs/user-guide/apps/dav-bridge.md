@@ -246,6 +246,14 @@ invalid or unknown `"network"` entry, or is not valid JSON at all, the bridge st
 binding and names the offending key or file without printing its content; other settings
 are left untouched, and `--remove-autostart` still works.
 
+Every change to `settings.json` (this profile, the dashboard sync interval, SSL settings)
+is written atomically and one writer at a time: writers hold a lock on `settings.json.lock`
+in the data directory, so changing the sync interval in the dashboard while
+`--install-autostart` runs can never discard the freshly persisted profile. If the
+dashboard cannot save the interval (write failed, durability not confirmed, another
+process still writing), it shows `Not saved:` with the reason and keeps the previous
+value instead of reporting `Saved`.
+
 ### Remove Auto-Start
 
 ```bash

@@ -511,6 +511,9 @@ def setup_macos_apple_accounts() -> int:
         except config.SettingsFileError as exc:
             print(f"Error: {exc}; SSL settings were not persisted.")
             return 1
+        except config.SettingsLockError as exc:
+            print(f"Error: {exc}. The existing settings.json was left unchanged and SSL settings were not persisted.")
+            return 1
         except OSError:
             print(
                 "Error: could not write the bridge settings file; the existing settings.json was left "

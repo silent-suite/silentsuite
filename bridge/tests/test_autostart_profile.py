@@ -19,6 +19,7 @@ import pytest
 
 from silentsuite_bridge import autostart, config
 from silentsuite_bridge.update import restart as update_restart
+from tests.settings_lock_holder import hold_settings_lock
 
 BRIDGE_ROOT = Path(__file__).resolve().parents[1]
 NETWORK_ENV = tuple(config.NETWORK_PROFILE_ENV.values())
@@ -110,6 +111,12 @@ def set_env(env, **values):
 
 def read_settings(path):
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def data_dir_entries(directory):
+    """Names in the data directory except the writer lock file, which is kept by design."""
+    lock_name = os.path.basename(config.settings_lock_path())
+    return sorted(p.name for p in directory.iterdir() if p.name != lock_name)
 
 
 # --- Generated artifacts ---------------------------------------------------
@@ -346,7 +353,7 @@ def test_install_autostart_settings_write_failure_keeps_original_and_writes_no_u
 
     assert "left unchanged" in capsys.readouterr().err
     assert env.settings.read_text(encoding="utf-8") == original
-    assert [p.name for p in env.data_dir.iterdir()] == ["settings.json"]
+    assert data_dir_entries(env.data_dir) == ["settings.json"]
     assert not env.unit.exists()
     assert env.manager.calls == []
 
@@ -370,9 +377,38 @@ def test_install_autostart_reports_unconfirmed_durability_when_directory_sync_fa
     assert "left unchanged" not in captured.err
     assert "Persisted explicit network settings" not in captured.out
     assert read_settings(env.settings) == {"syncInterval": 120, "network": {"listenPort": 45123}}
-    assert [p.name for p in env.data_dir.iterdir()] == ["settings.json"]
+    assert data_dir_entries(env.data_dir) == ["settings.json"]
     assert not env.unit.exists()
     assert env.manager.calls == []
+
+
+def test_install_autostart_fails_closed_when_another_process_holds_the_settings_lock(env, capsys):
+    env.data_dir.mkdir()
+    env.settings.write_text(json.dumps({"syncInterval": 120}), encoding="utf-8")
+    original = env.settings.read_text(encoding="utf-8")
+    set_env(env, SILENTSUITE_LISTEN_PORT="45123")
+    env.monkeypatch.setattr(config, "SETTINGS_LOCK_TIMEOUT", 0.2)
+
+    # A dashboard process is mid-write and holds the real settings lock.
+    with hold_settings_lock(env.data_dir, {"syncInterval": 60}) as dashboard:
+        assert autostart.install_autostart() == 1
+
+        captured = capsys.readouterr()
+        assert "another bridge process is updating settings.json" in captured.err
+        assert "left unchanged" in captured.err
+        assert "Persisted explicit network settings" not in captured.out
+        assert env.settings.read_text(encoding="utf-8") == original
+        assert not env.unit.exists()
+        assert env.manager.calls == []
+
+        assert dashboard.written == {"syncInterval": 60}
+
+    # The holder's write landed intact; a retry then installs normally.
+    assert read_settings(env.settings) == {"syncInterval": 60}
+    assert autostart.install_autostart() == 0
+    assert read_settings(env.settings) == {"syncInterval": 60, "network": {"listenPort": 45123}}
+    assert env.unit.exists()
+    assert data_dir_entries(env.data_dir) == ["settings.json"]
 
 
 def test_remove_autostart_stays_usable_when_settings_file_is_malformed(env, capsys):
