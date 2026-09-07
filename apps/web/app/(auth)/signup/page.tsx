@@ -25,6 +25,7 @@ import dynamic from 'next/dynamic'
 import { StepCreateVault } from './components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
+import { createEmailLinkContinuation } from '@/app/lib/signup-email-continuation'
 import { trackCheckoutInitiated, trackPlanSelected } from './commercial-funnel-analytics'
 import {
   activateAnnualCheckout,
@@ -101,6 +102,16 @@ function clearEmailProofContext(requestId?: string | null) {
   } catch {
     // A storage failure must not break the funnel it was only annotating.
   }
+}
+
+function saveEmailProofContext(context: EmailProofContext) {
+  const existing = (() => {
+    try {
+      const parsed: unknown = JSON.parse(localStorage.getItem(EMAIL_PROOF_CONTEXT_KEY) ?? '{}')
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed : {}
+    } catch { return {} }
+  })()
+  localStorage.setItem(EMAIL_PROOF_CONTEXT_KEY, JSON.stringify({ ...existing, [context.requestId]: context }))
 }
 
 /** Drops the single-use verification token from the address bar and history. */
@@ -1387,33 +1398,57 @@ export default function SignupPage() {
   const [recoveredSignupEmail, setRecoveredSignupEmail] = useState<string | null>(null)
   const [awaitingEmailProof, setAwaitingEmailProof] = useState(false)
   const [emailProofUnavailable, setEmailProofUnavailable] = useState(false)
+  const [emailProofError, setEmailProofError] = useState<string | null>(null)
+  const [emailProofBusy, setEmailProofBusy] = useState(false)
+  const [requestingEmailProof, setRequestingEmailProof] = useState(false)
+  const resendBusyRef = useRef(false)
+  const mountedRef = useRef(false)
+  const [emailProofAttempt, setEmailProofAttempt] = useState(0)
+  const emailContinuationRef = useRef<{
+    context: EmailProofContext
+    continuation: ReturnType<typeof createEmailLinkContinuation>
+  } | null>(null)
   const formDataRef = useRef<SignupFormData | null>(null)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   useEffect(() => {
     setReturnTo(normalizeSignupReturnTo(new URLSearchParams(window.location.search).get('return_to')))
   }, [])
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const token = params.get('email_verification_token') ?? params.get('token')
-    if (!token) return
-    const requestId = params.get('request_id')
-    const context = readEmailProofContext(requestId)
-    if (!context) {
-      // Without the draft there is no email to verify the token against, so the
-      // link cannot be spent here. Say so and leave the signup form usable
-      // rather than silently discarding the only path into plan selection.
-      clearEmailProofContext(requestId)
+    if (!emailContinuationRef.current) {
+      const params = new URLSearchParams(window.location.search)
+      const token = params.get('email_verification_token') ?? params.get('token')
+      if (!token) return
+      const requestId = params.get('request_id')
+      const context = readEmailProofContext(requestId)
+      // Capture once, then remove the bearer URL before any fallible request.
+      // Strict Mode replay joins the captured continuation, not a second consume.
       stripEmailVerificationTokenFromUrl()
-      setEmailProofUnavailable(true)
-      setAwaitingEmailProof(false)
-      return
+      if (!context) {
+        clearEmailProofContext(requestId)
+        setEmailProofUnavailable(true)
+        setAwaitingEmailProof(false)
+        return
+      }
+      emailContinuationRef.current = {
+        context,
+        continuation: createEmailLinkContinuation(
+          () => consumeSignupEmailOwnership({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email: context.email, token }),
+          () => fetchAnonymousAnnualOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email: context.email, requestId: context.requestId }),
+        ),
+      }
     }
-
+    const { context, continuation } = emailContinuationRef.current
     let cancelled = false
+    setEmailProofBusy(true)
+    setEmailProofError(null)
     void (async () => {
-      const ownership = await consumeSignupEmailOwnership({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email: context.email, token })
-      const offer = await fetchAnonymousAnnualOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email: context.email, requestId: context.requestId })
+      const { ownership, offer } = await continuation.load()
       if (cancelled) return
       prepareSignupDraft(context.email, context.wantsProductUpdates, context.rememberDevice)
       setEmailOwnershipToken(ownership.emailOwnershipToken)
@@ -1438,13 +1473,54 @@ export default function SignupPage() {
       // browser-profile storage. Other concurrently requested lineages remain.
       clearEmailProofContext(context.requestId)
       stripEmailVerificationTokenFromUrl()
-    })().catch((err: unknown) => {
-      if (!cancelled) setProvisionError(err instanceof Error ? err.message : 'Email verification could not be completed. Request a new link.')
+    })().catch(() => {
+      if (!cancelled) setEmailProofError(continuation.hasProof()
+        ? 'Your email was verified, but trial options could not be loaded. Retry, or request a new link if verification has expired.'
+        : 'This verification link could not be completed. It may have expired, already been used, or the connection was interrupted. Request a new link to continue safely.')
+    }).finally(() => {
+      if (!cancelled) setEmailProofBusy(false)
     })
     return () => { cancelled = true }
-  }, [prepareSignupDraft])
+  }, [prepareSignupDraft, emailProofAttempt])
+
+  const requestNewVerificationEmail = useCallback(async () => {
+    const previous = emailContinuationRef.current?.context
+    if (!previous || resendBusyRef.current) return
+    resendBusyRef.current = true
+    setRequestingEmailProof(true)
+    setEmailProofBusy(true)
+    const context = { ...previous, requestId: crypto.randomUUID(), expiresAt: Date.now() + 15 * 60_000 }
+    try {
+      // Persist the non-secret lineage before sending: a lost acknowledgement
+      // must not make a successfully delivered replacement link unusable.
+      saveEmailProofContext(context)
+      await requestSignupEmailOwnership({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email: context.email, requestId: context.requestId })
+      if (!mountedRef.current) return
+      clearEmailProofContext(previous.requestId)
+      emailContinuationRef.current = null
+      setEmailOwnershipToken(null)
+      setAnnualOffer(null)
+      setAnnualOfferRequestId(null)
+      setRecoveredSignupEmail(null)
+      setEmailProofError(null)
+      setEmailProofUnavailable(false)
+      setAwaitingEmailProof(true)
+    } catch {
+      if (mountedRef.current) setEmailProofError('A new verification email could not be confirmed. Check your inbox, or try requesting another link shortly.')
+    } finally {
+      resendBusyRef.current = false
+      if (mountedRef.current) {
+        setRequestingEmailProof(false)
+        setEmailProofBusy(false)
+      }
+    }
+  }, [])
 
   const handleAccountComplete = useCallback(async (data: SignupFormData) => {
+    emailContinuationRef.current = null
+    setEmailProofError(null)
+    setEmailOwnershipToken(null)
+    setAnnualOffer(null)
     formDataRef.current = data
     const normalizedUrl = serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined
     if (normalizedUrl) {
@@ -1486,11 +1562,10 @@ export default function SignupPage() {
       returnTo,
       expiresAt: Date.now() + 15 * 60_000,
     }
-    await requestSignupEmailOwnership({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email: identifier, requestId })
     // This full-navigation continuation intentionally contains no password, and
     // is browser-profile scoped so the emailed link works from a new tab.
-    const existing = (() => { try { return JSON.parse(localStorage.getItem(EMAIL_PROOF_CONTEXT_KEY) ?? '{}') as Record<string, EmailProofContext> } catch { return {} } })()
-    localStorage.setItem(EMAIL_PROOF_CONTEXT_KEY, JSON.stringify({ ...existing, [requestId]: context }))
+    saveEmailProofContext(context)
+    await requestSignupEmailOwnership({ fetcher: fetch, billingApiUrl: BILLING_API_URL, email: identifier, requestId })
     setEmailProofUnavailable(false)
     setAwaitingEmailProof(true)
   }, [createEtebaseAccount, prepareSignupDraft, rememberDevice, returnTo, serverUrl, wantsProductUpdates])
@@ -1789,6 +1864,22 @@ export default function SignupPage() {
       <div className="mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1">
         {step === 'account' && (
           <>
+            {emailProofBusy && <p role="status" className="mb-4 text-sm text-[rgb(var(--muted))]">{requestingEmailProof ? 'Requesting a new verification email...' : 'Verifying your email and loading trial options...'}</p>}
+            {emailProofError && (
+              <div role="alert" className="mb-4 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
+                <p>{emailProofError}</p>
+                {emailContinuationRef.current?.continuation.hasProof() && (
+                  <Button className="mt-3" disabled={emailProofBusy} onClick={() => setEmailProofAttempt((attempt) => attempt + 1)}>
+                    Retry loading trial options
+                  </Button>
+                )}
+                {emailContinuationRef.current && (
+                  <Button className="mt-3" variant="outline" disabled={emailProofBusy} onClick={requestNewVerificationEmail}>
+                    Request a new verification email
+                  </Button>
+                )}
+              </div>
+            )}
             {emailProofUnavailable && (
               <div role="alert" className="mb-4 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
                 <p className="font-medium">This verification link could not be matched to a signup in this browser.</p>
@@ -1797,7 +1888,7 @@ export default function SignupPage() {
                 </p>
               </div>
             )}
-            <StepCreateAccount
+            {!emailProofBusy && <StepCreateAccount
               onNext={handleAccountComplete}
               serverUrl={serverUrl}
               setServerUrl={setServerUrl}
@@ -1806,7 +1897,7 @@ export default function SignupPage() {
               onWantsProductUpdatesChange={setWantsProductUpdates}
               rememberDevice={rememberDevice}
               onRememberDeviceChange={setRememberDevice}
-            />
+            />}
             {awaitingEmailProof && <p role="status" className="mt-4 text-center text-sm text-[rgb(var(--muted))]">Check your email and open the verification link in this browser. Your password is not saved while you open the link.</p>}
           </>
         )}

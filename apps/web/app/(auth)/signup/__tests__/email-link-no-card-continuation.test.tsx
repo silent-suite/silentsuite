@@ -1,6 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SignupPage from '../page'
+import VerificationCallbackPage from '../verify-email/page'
+import { StrictMode } from 'react'
 
 vi.hoisted(() => {
   process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED = 'true'
@@ -43,12 +45,126 @@ vi.mock('next/link', () => ({ default: ({ children }: { children: React.ReactNod
 describe('email-link seven-day no-card continuation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubGlobal('scrollTo', vi.fn())
     sessionStorage.clear()
     localStorage.clear()
     window.history.replaceState({}, '', '/signup')
   })
 
-  it('survives a full navigation without persisting a password and completes the verified lineage', async () => {
+  it('retries an offer failure without consuming the email link again', async () => {
+    localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({
+      [requestId]: { email: 'retry@example.test', requestId, wantsProductUpdates: false, rememberDevice: false,
+        returnTo: null, expiresAt: Date.now() + 60_000 },
+    }))
+    let consumptions = 0
+    let offers = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/consume')) {
+        consumptions += 1
+        if (consumptions > 1) return new Response('{}', { status: 400 })
+        return new Response(JSON.stringify({ contractVersion: 2, emailOwnershipToken: ownershipToken,
+          expiresAt: new Date(Date.now() + 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z') }))
+      }
+      if (String(input).endsWith('/auth/offers/v2')) {
+        offers += 1
+        return offers === 1 ? new Response('{}', { status: 503 }) : new Response(JSON.stringify(offer))
+      }
+      throw new Error('Unexpected request')
+    }))
+    window.history.replaceState({}, '', `/signup?token=link-token&request_id=${requestId}`)
+    render(<StrictMode><SignupPage /></StrictMode>)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry loading trial options' }))
+    expect(await screen.findByRole('heading', { name: 'Re-enter your account details' })).toBeInTheDocument()
+    expect(consumptions).toBe(1)
+    expect(offers).toBe(2)
+    expect(window.location.search).not.toContain('link-token')
+    expect(JSON.stringify(localStorage)).not.toContain(ownershipToken)
+    expect(JSON.stringify(sessionStorage)).not.toContain(ownershipToken)
+  })
+
+  it.each(['expired', 'lost-response'])('requests a fresh lineage after %s without consuming the old link again', async (failure) => {
+    localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({
+      [requestId]: { email: 'retry@example.test', requestId, wantsProductUpdates: true, rememberDevice: false,
+        returnTo: 'silentsuite://signup-complete', expiresAt: Date.now() + 60_000 },
+    }))
+    let consumptions = 0
+    const requests: { email: string; requestId: string }[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/consume')) {
+        consumptions += 1
+        if (failure === 'lost-response') throw new TypeError('Network failed after commit')
+        return new Response('{}', { status: 400 })
+      }
+      if (String(input).endsWith('/auth/signup-email-verifications/v2')) {
+        requests.push(JSON.parse(String(init?.body)))
+        return new Response(JSON.stringify({ accepted: true }), { status: 202 })
+      }
+      throw new Error('Unexpected request')
+    }))
+    window.history.replaceState({}, '', `/signup?token=link-token&request_id=${requestId}`)
+    render(<StrictMode><SignupPage /></StrictMode>)
+    fireEvent.click(await screen.findByRole('button', { name: 'Request a new verification email' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Check your email'))
+    expect(consumptions).toBe(1)
+    expect(requests).toHaveLength(1)
+    expect(requests[0].email).toBe('retry@example.test')
+    expect(requests[0].requestId).not.toBe(requestId)
+    const stored = JSON.parse(localStorage.getItem('silentsuite-signup-email-proof') ?? '{}')
+    expect(stored).not.toHaveProperty(requestId)
+    expect(stored[requests[0].requestId]).toMatchObject({ wantsProductUpdates: true, rememberDevice: false, returnTo: 'silentsuite://signup-complete' })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(window.location.search).not.toContain('link-token')
+    expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+  })
+
+  it('does not publish a continuation after the page unmounts', async () => {
+    localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({
+      [requestId]: { email: 'retry@example.test', requestId, wantsProductUpdates: false, rememberDevice: false,
+        returnTo: null, expiresAt: Date.now() + 60_000 },
+    }))
+    let resolveOffer!: (value: Response) => void
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/consume')) return new Response(JSON.stringify({
+        contractVersion: 2, emailOwnershipToken: ownershipToken, expiresAt: '2099-01-01T00:00:00Z',
+      }))
+      return new Promise<Response>((resolve) => { resolveOffer = resolve })
+    }))
+    window.history.replaceState({}, '', `/signup?token=link-token&request_id=${requestId}`)
+    const view = render(<SignupPage />)
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+    view.unmount()
+    await act(async () => { resolveOffer(new Response(JSON.stringify(offer))) })
+    expect(authState.prepareSignupDraft).not.toHaveBeenCalled()
+    expect(localStorage.getItem('silentsuite-signup-email-proof')).toContain(requestId)
+  })
+
+  it('preserves the new non-secret lineage when a resend acknowledgement is lost', async () => {
+    localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({
+      [requestId]: { email: 'retry@example.test', requestId, wantsProductUpdates: false, rememberDevice: false,
+        returnTo: null, expiresAt: Date.now() + 60_000 },
+    }))
+    let nextId = ''
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/consume')) return new Response('{}', { status: 400 })
+      nextId = JSON.parse(String(init?.body)).requestId
+      // The emailed link may arrive even though this response never does.
+      expect(localStorage.getItem('silentsuite-signup-email-proof')).toContain(nextId)
+      throw new TypeError('Acknowledgement lost')
+    }))
+    window.history.replaceState({}, '', `/signup?token=link-token&request_id=${requestId}`)
+    render(<SignupPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Request a new verification email' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Check your inbox'))
+    expect(nextId).not.toBe(requestId)
+    expect(localStorage.getItem('silentsuite-signup-email-proof')).toContain(nextId)
+    expect(screen.getByRole('button', { name: 'Request a new verification email' })).toBeEnabled()
+    expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
+  })
+
+  it.each(['/signup', '/signup/verify-email'])('completes the verified lineage through %s without persisting a password', async (callbackPath) => {
     localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({
       [requestId]: { email: 'customer@example.test', requestId, wantsProductUpdates: true, rememberDevice: false,
         returnTo: 'silentsuite://signup-complete', expiresAt: Date.now() + 60_000 },
@@ -68,8 +184,9 @@ describe('email-link seven-day no-card continuation', () => {
 
     const firstMount = render(<SignupPage />)
     firstMount.unmount()
-    window.history.replaceState({}, '', `/signup?email_verification_token=link-token&request_id=${requestId}`)
-    render(<SignupPage />)
+    window.history.replaceState({}, '', `${callbackPath}?token=link-token&request_id=${requestId}`)
+    const Page = callbackPath === '/signup' ? SignupPage : VerificationCallbackPage
+    render(<Page />)
 
     expect(await screen.findByRole('heading', { name: 'Re-enter your account details' })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'ValidPass1' } })
