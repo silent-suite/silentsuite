@@ -108,6 +108,20 @@ function resetStore() {
   })
 }
 
+function mockSignupBillingSession(id: string, email: string, isAdmin = false, emailVerified = true) {
+  vi.mocked(fetch)
+    .mockImplementationOnce(async (url, init) => {
+      expect(String(url)).toContain('/auth/token-exchange')
+      expect(init?.credentials).toBe('include')
+      return new Response(JSON.stringify({ id, email, isAdmin, emailVerified, rememberDevice: false }))
+    })
+    .mockImplementationOnce(async (url, init) => {
+      expect(String(url)).toContain('/auth/session')
+      expect(init?.credentials).toBe('include')
+      return new Response(JSON.stringify({ id, email, emailVerified }))
+    })
+}
+
 function paidSignupRequestBody(callIndex = 0) {
   const [, init] = vi.mocked(fetch).mock.calls[callIndex]
   return JSON.parse(init?.body as string) as Record<string, unknown>
@@ -452,6 +466,7 @@ describe('useAuthStore', () => {
       useAuthStore.setState({
         pendingSignup: {
           email: 'completed@example.com',
+          billingSessionUserId: 'user-1',
           provisionedUser: { id: 'user-1', planId: 'early_annual', isAdmin: false },
           provisionedSubscriptionStatus: 'active',
         },
@@ -579,6 +594,7 @@ describe('useAuthStore', () => {
         cryptoInvoiceLookupToken: null,
       })))
 
+      mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'finalize@example.com')
       await useAuthStore.getState().finalizePaidSignup()
 
       expect(fetch).toHaveBeenCalledWith(
@@ -659,6 +675,7 @@ describe('useAuthStore', () => {
       }),
     } as Response)
 
+    mockSignupBillingSession('user-1', 'paid@example.com', true, false)
     await useAuthStore.getState().finalizePaidSignup()
 
     expect(fetch).toHaveBeenCalledWith(
@@ -733,6 +750,7 @@ describe('useAuthStore', () => {
       createdAt: '2026-08-11T00:00:00Z', clientSecret: null, cryptoCheckoutUrl: null,
       cryptoInvoiceId: null, cryptoInvoiceLookupToken: null,
     })))
+    mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'recover-no-card@example.test')
     await useAuthStore.getState().provisionAnnualNoCard('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')
 
     expect(etebaseLogIn).toHaveBeenCalledWith('recover-no-card@example.test', 'password123', undefined)
@@ -758,6 +776,7 @@ describe('useAuthStore', () => {
       rememberDevice: false, isAdmin: false, createdAt: '2026-08-11T00:00:00Z', clientSecret: null,
       cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null,
     })))
+    mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'recover-paid@example.test')
     await useAuthStore.getState().finalizePaidSignup()
 
     expect(etebaseLogIn).toHaveBeenCalledWith('recover-paid@example.test', 'password123', undefined)
@@ -781,6 +800,7 @@ describe('useAuthStore', () => {
       cryptoInvoiceId: null,
       cryptoInvoiceLookupToken: null,
     })))
+    mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'customer@example.test')
     await useAuthStore.getState().provisionAnnualNoCard('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')
     expect(useAuthStore.getState().pendingSignup?.provisionedUser?.planId).toBeNull()
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toMatchObject({ contractVersion: 2, checkoutIntentToken: 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG' })
@@ -1016,6 +1036,7 @@ describe('useAuthStore', () => {
       useAuthStore.setState({
         pendingSignup: {
           email: 'new@user.com',
+          billingSessionUserId: 'new-1',
           provisionedUser: { id: 'new-1', planId: 'pro', isAdmin: false },
           provisionedSubscriptionStatus: 'trialing',
         },

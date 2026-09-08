@@ -40,6 +40,9 @@ interface PendingSignup {
   rememberDevice?: boolean
   paidSignupAttemptId?: string
   noCardProvisionAttemptId?: string
+  /** In-memory only; redirect storage must never attest a live session. */
+  billingSessionUserId?: string
+  etebaseAccountReady?: boolean
   /** v1 remains readable only for a persisted historical redirect/retry. */
   billingContractVersion?: 1 | 2
   /** Provisioned user data — stored here until the entire signup flow completes. */
@@ -105,6 +108,8 @@ interface AuthState {
   /** Clear only this exact authority after Billing proved it terminal/cancelled. */
   clearPendingSignupPaymentRecovery: (identity: PaidSignupRecoveryRelease) => void
   finalizePaidSignup: () => Promise<SignupResult>
+  /** Restore only session authority for an already completed signup receipt. */
+  recoverCompletedSignupSession: (password?: string) => Promise<void>
   /** Call after the entire signup flow (including payment + vault) to finalize authentication. */
   completeSignup: () => void
   login: (email: string, password: string, serverUrl?: string, rememberDevice?: boolean) => Promise<void>
@@ -839,6 +844,72 @@ async function deleteHostedServerSession(context: string) {
   }
 }
 
+const SIGNUP_SESSION_ERROR = 'Your account is set up, but we could not confirm the Billing session. Retry to finish signing in; your account and payment are retained.'
+
+/** Publish the promise before entering async work so duplicate clicks share it. */
+function signupSingleFlight<A extends unknown[], R>(operation: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  let active: { args: A; promise: Promise<R> } | undefined
+  return (...args) => {
+    if (active) {
+      if (args.length === active.args.length && args.every((arg, index) => arg === active!.args[index])) return active.promise
+      return Promise.reject(new Error('Another signup operation is in progress.'))
+    }
+    const promise = Promise.resolve().then(() => operation(...args))
+    active = { args, promise }
+    void promise.then(() => { active = undefined }, () => { active = undefined })
+    return promise
+  }
+}
+
+/** Completion JSON is not a cookie: exchange a fresh proof and verify the protected identity. */
+async function establishSignupBillingSession(
+  pending: PendingSignup,
+  get: () => AuthState,
+  set: (state: Partial<AuthState>) => void,
+): Promise<void> {
+  if (get().pendingSignup !== pending) throw new Error('Signup was superseded.')
+  const expected = pending.provisionedUser
+  if (!expected?.id) throw new Error(SIGNUP_SESSION_ERROR)
+  pending = { ...pending, billingSessionUserId: undefined }
+  set({ pendingSignup: pending, isLoading: true, error: null })
+  const assertCurrent = () => {
+    if (get().pendingSignup !== pending) throw new Error('Signup was superseded.')
+  }
+  const matchesIdentity = (value: unknown): value is Record<string, unknown> => isRecord(value)
+    && value.id === expected.id && typeof value.email === 'string'
+    && value.email.trim().toLowerCase() === pending.email.trim().toLowerCase()
+  try {
+    const savedSession = await secureGet('etebase_session')
+    assertCurrent()
+    if (!savedSession) throw new Error(SIGNUP_SESSION_ERROR)
+    const { issueBillingLinkProof } = await import('@/app/lib/etebase-auth')
+    const etebaseLinkProof = await issueBillingLinkProof(savedSession, pending.serverUrl)
+    assertCurrent()
+    const exchange = await fetch(`${BILLING_API_URL}/auth/token-exchange`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ etebaseLinkProof, rememberDevice: pending.rememberDevice === true }),
+    })
+    const profile: unknown = await exchange.json().catch(() => null)
+    assertCurrent()
+    if (!exchange.ok || !matchesIdentity(profile)
+      || profile.isAdmin !== expected.isAdmin
+      || profile.rememberDevice !== (pending.rememberDevice === true)) throw new Error(SIGNUP_SESSION_ERROR)
+    const session = await fetch(`${BILLING_API_URL}/auth/session`, { method: 'GET', credentials: 'include', cache: 'no-store' })
+    const identity: unknown = await session.json().catch(() => null)
+    assertCurrent()
+    if (!session.ok || !matchesIdentity(identity)
+      || (pending.billingContractVersion === 2 && identity.emailVerified !== true)
+      || await secureGet('etebase_session') !== savedSession) throw new Error(SIGNUP_SESSION_ERROR)
+    assertCurrent()
+    set({ pendingSignup: { ...pending, billingSessionUserId: expected.id }, isLoading: false, error: null })
+  } catch (error) {
+    if (get().pendingSignup === pending) set({ error: SIGNUP_SESSION_ERROR, isLoading: false })
+    // Never turn session failure into a renewable checkout Problem or clear recovery.
+    throw new Error(get().pendingSignup === pending ? SIGNUP_SESSION_ERROR : 'Signup was superseded.')
+  }
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isAuthenticated: false,
@@ -877,12 +948,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         paidSignupAttemptId: undefined,
         provisionedUser: undefined,
         provisionedSubscriptionStatus: undefined,
+        billingSessionUserId: undefined,
+        noCardProvisionAttemptId: undefined,
       },
       error: null,
     })
   },
 
-  createEtebaseAccount: async (email: string, password: string, serverUrl?: string) => {
+  createEtebaseAccount: signupSingleFlight(async (email: string, password: string, serverUrl?: string) => {
+    const existing = get().pendingSignup
+    if (existing?.etebaseAccountReady && existing.provisionedUser
+      && existing.email === email && existing.serverUrl === serverUrl
+      && await secureGet('etebase_session')) return
     set({ isLoading: true, error: null })
     try {
       const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
@@ -898,8 +975,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         authResult = await etebaseLogIn(email, password, serverUrl)
       }
       const { savedSession } = authResult
+      if (get().pendingSignup !== existing) throw new Error('Signup was superseded.')
       if (!isSelfHosted && !isCustomServer(serverUrl)) clearHostedValidationMarkers()
       await secureSet('etebase_session', savedSession)
+      if (get().pendingSignup !== existing) throw new Error('Signup was superseded.')
       if (isCustomServer(serverUrl) && serverUrl) {
         localStorage.setItem('silentsuite-server-url', serverUrl)
       }
@@ -914,7 +993,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({
         // Hosted annual-v2 eligibility is server-authoritative and is returned only
         // by the closed provision/finalization responses. Do not infer it locally.
-        pendingSignup: { ...(reusablePending ?? {}), email, serverUrl },
+        pendingSignup: { ...(reusablePending ?? {}), email, serverUrl, etebaseAccountReady: true, billingSessionUserId: undefined },
         isLoading: false,
       })
     } catch (err) {
@@ -929,22 +1008,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           message = err.message
         }
       }
-      set({ error: message, isLoading: false })
+      if (get().pendingSignup === existing) set({ error: message, isLoading: false })
       throw new Error(message)
     }
-  },
+  }),
 
-  provisionAnnualNoCard: async (checkoutIntentToken: string) => {
+  provisionAnnualNoCard: signupSingleFlight(async (checkoutIntentToken: string) => {
     const pending = get().pendingSignup
     if (!pending || isSelfHosted || isCustomServer(pending.serverUrl)) throw new Error('No hosted annual signup is ready to provision.')
+    if (pending.provisionedUser) return establishSignupBillingSession(pending, get, set)
     const savedEtebaseSession = await secureGet('etebase_session')
     if (!savedEtebaseSession) throw new Error('Create your account before starting the no-card trial.')
+    if (get().pendingSignup !== pending) throw new Error('Signup was superseded.')
     const attemptId = crypto.randomUUID()
     set({ pendingSignup: { ...pending, noCardProvisionAttemptId: attemptId }, isLoading: true, error: null })
     try {
       const { issueBillingLinkProof } = await import('@/app/lib/etebase-auth')
       const etebaseLinkProof = await issueBillingLinkProof(savedEtebaseSession)
-      const response = await fetch(`${BILLING_API_URL}/auth/provision/v2`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ contractVersion: 2, checkoutIntentToken, etebaseLinkProof, wantsProductUpdates: pending.wantsProductUpdates !== false, rememberDevice: pending.rememberDevice === true }) })
+      const response = await fetch(`${BILLING_API_URL}/auth/provision/v2`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ contractVersion: 2, checkoutIntentToken, etebaseLinkProof, wantsProductUpdates: pending.wantsProductUpdates === true, rememberDevice: pending.rememberDevice === true }) })
       const data = await response.json().catch(() => null)
       if (!response.ok) throw new BillingResponseError(
         typeof (data as { detail?: unknown } | null)?.detail === 'string' ? (data as { detail: string }).detail : 'Billing did not confirm the no-card annual trial.',
@@ -954,13 +1035,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!isExactNoCardProvision(data, pending.email)) throw new Error('Billing did not confirm the no-card annual trial.')
       const current = get().pendingSignup
       if (!current || current.noCardProvisionAttemptId !== attemptId || current.email.trim().toLowerCase() !== pending.email.trim().toLowerCase()) throw new Error('Signup was superseded.')
-      syncAdminCookie(false, data.rememberDevice)
-      set({ pendingSignup: { ...current, noCardProvisionAttemptId: undefined, billingContractVersion: 2, earlyAdopter: data.earlyAdopter, provisionedUser: { id: data.id, planId: null, isAdmin: false }, provisionedSubscriptionStatus: data.provisioningStatus, rememberDevice: data.rememberDevice }, isLoading: false })
+      const completed: PendingSignup = { ...current, noCardProvisionAttemptId: undefined, billingContractVersion: 2, earlyAdopter: data.earlyAdopter, provisionedUser: { id: data.id, planId: null, isAdmin: false }, provisionedSubscriptionStatus: data.provisioningStatus, rememberDevice: data.rememberDevice }
+      // Retain completion even if the separate cookie boundary fails.
+      set({ pendingSignup: completed })
+      await establishSignupBillingSession(completed, get, set)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not start the no-card annual trial.'
       if (get().pendingSignup?.noCardProvisionAttemptId === attemptId) set({ error: message, isLoading: false }); throw err
     }
-  },
+  }),
 
   startAnnualSignupPayment: async (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string) => {
     const pending = get().pendingSignup
@@ -973,7 +1056,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const parsedReturnUrl = new URL(returnUrl, window.location.origin)
       if (parsedReturnUrl.origin !== window.location.origin) throw new Error('Annual signup return URL must stay on this origin.')
       const absoluteReturnUrl = parsedReturnUrl.toString()
-      const payment = await startSignupAnnualPayment({ fetcher: fetch, billingApiUrl: BILLING_API_URL, checkoutIntentToken, email: pending.email, requestKey: recovery.requestKey, recoverySecret: recovery.recoverySecret, wantsProductUpdates: pending.wantsProductUpdates !== false, rememberDevice: pending.rememberDevice === true, returnUrl: absoluteReturnUrl })
+      const payment = await startSignupAnnualPayment({ fetcher: fetch, billingApiUrl: BILLING_API_URL, checkoutIntentToken, email: pending.email, requestKey: recovery.requestKey, recoverySecret: recovery.recoverySecret, wantsProductUpdates: pending.wantsProductUpdates === true, rememberDevice: pending.rememberDevice === true, returnUrl: absoluteReturnUrl })
       if (payment.kind !== provider) throw new Error('Billing returned the wrong payment provider.')
       const current = get().pendingSignup
       if (!current || current.paidSignupAttemptId !== attemptId || paidSignupRecoveryScope(current.email, current.wantsProductUpdates, current.rememberDevice) !== recoveryScope) throw new Error('Signup was superseded.')
@@ -1058,7 +1141,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     throw new Error('Hosted signup requires a fresh annual offer and checkout authority.')
   },
 
-  finalizePaidSignup: async () => {
+  finalizePaidSignup: signupSingleFlight(async () => {
     const pending = get().pendingSignup
     if (isCustomServer(pending?.serverUrl)) {
       throw new Error('Paid signup is not available for custom servers.')
@@ -1067,6 +1150,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!pending || !savedEtebaseSession || !pending.paymentSessionToken) {
       throw new Error('No completed payment session. Please start signup again.')
     }
+    if (pending.provisionedUser) {
+      await establishSignupBillingSession(pending, get, set)
+      return { clientSecret: null, cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null, paymentSessionToken: null }
+    }
+    if (get().pendingSignup !== pending) throw new Error('Signup was superseded.')
     const expectedPaymentSessionToken = pending.paymentSessionToken
     const expectedRequestKey = pending.paymentSessionRequestKey
     const attemptId = crypto.randomUUID()
@@ -1099,17 +1187,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const isAdmin = completion.isAdmin === true
       const current = get().pendingSignup
       if (!current || current.paidSignupAttemptId !== attemptId || current.paymentSessionToken !== expectedPaymentSessionToken || current.paymentSessionRequestKey !== expectedRequestKey) throw new Error('Signup was superseded.')
-      set({
-        pendingSignup: {
+      const completed: PendingSignup = {
           ...current,
           paidSignupAttemptId: undefined,
           provisionedUser: { id: typeof completion.id === 'string' ? completion.id : '', planId: typeof completion.planId === 'string' ? completion.planId : null, isAdmin },
           provisionedSubscriptionStatus: typeof completion.provisioningStatus === 'string' ? completion.provisioningStatus : 'active',
           earlyAdopter: completion.earlyAdopter === true,
           rememberDevice: completion.rememberDevice === true,
-        },
-        isLoading: false,
-      })
+      }
+      set({ pendingSignup: completed })
+      await establishSignupBillingSession(completed, get, set)
       return {
         clientSecret: null,
         cryptoCheckoutUrl: null,
@@ -1122,13 +1209,49 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (get().pendingSignup?.paidSignupAttemptId === attemptId) set({ error: message, isLoading: false })
       throw err
     }
-  },
+  }),
+
+  recoverCompletedSignupSession: signupSingleFlight(async (password?: string) => {
+    let pending = get().pendingSignup
+    if (!pending?.provisionedUser) throw new Error('No completed signup is available to recover.')
+    // Local-server completion never requires a hosted Billing session.
+    if (isSelfHosted || isCustomServer(pending.serverUrl)) return
+    pending = { ...pending, billingSessionUserId: undefined }
+    set({ pendingSignup: pending, isLoading: true, error: null })
+    try {
+      if (password) {
+        // Recover the existing account, never sign up or re-submit payment.
+        const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+        const { savedSession } = await etebaseLogIn(pending.email, password, pending.serverUrl)
+        if (get().pendingSignup !== pending) throw new Error('Signup was superseded.')
+        await secureSet('etebase_session', savedSession)
+      }
+      if (get().pendingSignup !== pending) throw new Error('Signup was superseded.')
+      if (!await secureGet('etebase_session')) {
+        throw new Error('Enter your existing account password to finish signing in. Your payment will not be submitted again.')
+      }
+      await establishSignupBillingSession(pending, get, set)
+    } catch (error) {
+      if (get().pendingSignup === pending) {
+        const message = password
+          ? 'Could not sign in. Check your existing account password and try again. Your payment will not be submitted again.'
+          : error instanceof Error ? error.message : SIGNUP_SESSION_ERROR
+        set({ error: message, isLoading: false })
+        throw new Error(message)
+      }
+      throw error
+    }
+  }),
 
   completeSignup: () => {
     const pending = get().pendingSignup
     if (!pending?.provisionedUser) {
       logger.warn('completeSignup called without provisioned data')
       return
+    }
+    if (!isSelfHosted && !isCustomServer(pending.serverUrl)
+      && pending.billingSessionUserId !== pending.provisionedUser.id) {
+      throw new Error('Your account is set up, but the Billing session is not confirmed. Retry to finish signing in.')
     }
     // Clear the signup-in-progress flag so restoreSession works normally
     clearPaidSignupRecoveryIdentity()
