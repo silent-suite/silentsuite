@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -73,22 +73,29 @@ export function StepCreatePaidAccount({
   onNext,
   initialError,
   continuation = 'payment-confirmed',
+  initialData,
 }: {
   email: string
   onNext: (data: PaidAccountFormData) => Promise<void>
   initialError?: string | null
-  /** Passwords for a verified no-card continuation stay in this component only. */
+  initialData?: PaidAccountFormData
+  /** Verified signup chooses a password once; the parent retains it only in memory. */
   continuation?: 'payment-confirmed' | 'verified-no-card'
 }) {
   const [submitError, setSubmitError] = useState<string | null>(initialError ?? null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
+  const [showPassword, setShowPassword] = useState(false)
   const {
     register,
     handleSubmit,
     watch,
     formState: { errors, isValid },
   } = useForm<PaidAccountFormData>({
-    resolver: zodResolver(paidAccountSchema) as any,
+    resolver: zodResolver(continuation === 'verified-no-card'
+      ? z.object({ password: paidAccountSchema.shape.password })
+      : paidAccountSchema) as any,
+    defaultValues: initialData,
     mode: 'onChange',
   })
   const password = watch('password', '')
@@ -97,23 +104,26 @@ export function StepCreatePaidAccount({
     <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
       <div className="space-y-2 text-center">
         <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">
-          {continuation === 'verified-no-card' ? 'Re-enter your account details' : 'Create your account'}
+          {continuation === 'verified-no-card' ? 'Choose your password' : 'Create your account'}
         </h2>
         <p className="text-sm text-[rgb(var(--muted))]">
           {continuation === 'verified-no-card'
-            ? <>Your email is verified. Enter a password to continue with the 7-day no-card trial for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>.</>
+            ? <>Your email is verified. Choose a password, then select a trial or payment option for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>.</>
             : <>Payment is confirmed. Choose the password for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>.</>}
         </p>
       </div>
 
       <form onSubmit={handleSubmit(async (data) => {
+        if (submittingRef.current) return
+        submittingRef.current = true
         setSubmitError(null)
         setIsSubmitting(true)
         try {
-          await onNext(data)
+          await onNext(continuation === 'verified-no-card' ? { ...data, confirmPassword: data.password } : data)
         } catch (err) {
           setSubmitError(err instanceof Error ? err.message : 'Could not create account. Please try again.')
         } finally {
+          submittingRef.current = false
           setIsSubmitting(false)
         }
       })} className="space-y-4">
@@ -128,7 +138,8 @@ export function StepCreatePaidAccount({
           </label>
           <Input
             id="paid-signup-password"
-            type="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="new-password"
             aria-invalid={!!errors.password}
             aria-describedby={errors.password ? 'paid-signup-password-error' : undefined}
             {...register('password')}
@@ -138,7 +149,9 @@ export function StepCreatePaidAccount({
           <PasswordStrength password={password} />
         </div>
 
-        <div className="space-y-2">
+        <button type="button" aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)} className="text-sm underline">{showPassword ? 'Hide password' : 'Show password'}</button>
+
+        {continuation !== 'verified-no-card' && <div className="space-y-2">
           <label htmlFor="paid-signup-confirm-password" className="block text-sm font-medium text-[rgb(var(--foreground))]/80">
             Confirm password
           </label>
@@ -151,10 +164,10 @@ export function StepCreatePaidAccount({
             className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
           />
           {errors.confirmPassword && <p id="paid-signup-confirm-password-error" role="alert" className="text-xs text-red-400">{errors.confirmPassword.message}</p>}
-        </div>
+        </div>}
 
         {submitError && (
-          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+          <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
             <p className="text-sm text-red-400">{submitError}</p>
           </div>
         )}

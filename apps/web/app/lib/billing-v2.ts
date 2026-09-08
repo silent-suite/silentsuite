@@ -61,6 +61,8 @@ export interface AnnualCheckoutActivation {
 
 export interface EmailOwnership { contractVersion: 2; emailOwnershipToken: string; expiresAt: string }
 
+export interface AnnualSelectionRelease { contractVersion: 2; requestId: string; checkoutIntentJti: string; state: 'released' }
+
 export type SignupAnnualPayment =
   | { contractVersion: 2; kind: 'stripe'; clientSecret: string; paymentSessionToken: string }
   | { contractVersion: 2; kind: 'btcpay'; cryptoCheckoutUrl: string; cryptoInvoiceId: string; cryptoInvoiceLookupToken: string; paymentSessionToken: string }
@@ -221,6 +223,32 @@ async function jsonOrThrow(response: Response): Promise<unknown> {
 
 function api(url: string, path: string) { return `${url.replace(/\/$/, '')}${path}` }
 function jsonInit(method: 'POST' | 'GET', body?: object): RequestInit { return { method, credentials: 'include', headers: { 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) } }
+
+export async function cancelUnclaimedAnnualSelection(params: {
+  fetcher: BillingV2Fetch; billingApiUrl: string; email: string; requestId: string;
+  checkoutIntentToken: string; emailOwnershipToken: string;
+}): Promise<AnnualSelectionRelease> {
+  const { fetcher } = params
+  if (!isUuid(params.requestId) || !isSignedAuthorityToken(params.checkoutIntentToken, 'checkout-intent')
+    || !isSignedAuthorityToken(params.emailOwnershipToken, 'email-ownership')) throw new Error('Invalid selection cancellation request')
+  // Decode only a bounded transport-validated identity for response correlation.
+  // This is not signature/expiry authority: Billing checks the exact stored token
+  // and live ownership proof, including replay after checkout expiry.
+  const claims: unknown = JSON.parse(atob(params.checkoutIntentToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+  if (!isObject(claims) || !isUuid(claims.jti) || claims.requestId !== params.requestId) throw new Error('Invalid selection cancellation identity')
+  const response = await fetcher(api(params.billingApiUrl, '/auth/offers/v2/cancel'), jsonInit('POST', {
+    contractVersion: 2, email: params.email, requestId: params.requestId,
+    checkoutIntentToken: params.checkoutIntentToken, emailOwnershipToken: params.emailOwnershipToken,
+  }))
+  const body = await jsonOrThrow(response)
+  if (response.status !== 200 || !isObject(body)
+    || !hasExactKeys(body, ['contractVersion', 'requestId', 'checkoutIntentJti', 'state'])
+    || body.contractVersion !== 2 || body.state !== 'released'
+    || body.requestId !== params.requestId || body.checkoutIntentJti !== claims.jti) {
+    throw new Error('Billing did not confirm cancellation of this exact selection')
+  }
+  return body as unknown as AnnualSelectionRelease
+}
 
 export async function fetchAnonymousAnnualOffer(params: {
   fetcher: BillingV2Fetch

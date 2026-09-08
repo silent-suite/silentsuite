@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, Suspense } from 'react'
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CheckCircle, AlertTriangle, Lock } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
@@ -14,7 +14,7 @@ import { CheckoutReturnAnalytics } from '../commercial-funnel-analytics'
 // Inner component that reads searchParams (must be inside <Suspense>)
 // ---------------------------------------------------------------------------
 
-type RedirectState = 'loading' | 'account' | 'vault' | 'failed' | 'expired' | 'none'
+type RedirectState = 'loading' | 'session' | 'account' | 'vault' | 'failed' | 'expired' | 'none'
 
 function SignupSuccessInner() {
   const router = useRouter()
@@ -22,6 +22,7 @@ function SignupSuccessInner() {
   const completeSignup = useAuthStore((s) => s.completeSignup)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
   const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
+  const recoverCompletedSignupSession = useAuthStore((s) => s.recoverCompletedSignupSession)
   const restoreSignupStateFromRedirect = useAuthStore((s) => s.restoreSignupStateFromRedirect)
   const redirectStatus = searchParams.get('redirect_status')
   const setupIntent = searchParams.get('setup_intent')
@@ -32,9 +33,31 @@ function SignupSuccessInner() {
   const [state, setState] = useState<RedirectState>(isStripeRedirect ? 'loading' : 'none')
   const [restoredEmail, setRestoredEmail] = useState<string>('')
   const [showReturnFallback, setShowReturnFallback] = useState(false)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+  const [password, setPassword] = useState('')
+  const recoveryInFlight = useRef(false)
+  const restoredOnce = useRef(false)
+
+  const recoverSession = useCallback(async (credential?: string) => {
+    if (recoveryInFlight.current) return
+    recoveryInFlight.current = true
+    setSessionError(null)
+    setState('loading')
+    try {
+      await recoverCompletedSignupSession(credential)
+      setPassword('')
+      setState('vault')
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : 'Could not finish signing in. Please retry.')
+      setState('session')
+    } finally {
+      recoveryInFlight.current = false
+    }
+  }, [recoverCompletedSignupSession])
 
   useEffect(() => {
-    if (!isStripeRedirect) return
+    if (!isStripeRedirect || restoredOnce.current) return
+    restoredOnce.current = true
 
     if (redirectStatus === 'failed') {
       setState('failed')
@@ -45,7 +68,7 @@ function SignupSuccessInner() {
       const restored = restoreSignupStateFromRedirect()
       if (restored?.pendingSignup.provisionedUser) {
         setRestoredEmail(restored.pendingSignup.email)
-        setState('vault')
+        void recoverSession()
       } else if (restored?.pendingSignup.paymentSessionToken) {
         setRestoredEmail(restored.pendingSignup.email)
         setState('account')
@@ -100,6 +123,22 @@ function SignupSuccessInner() {
         {checkoutReturn}
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
         <p className="mt-4 text-sm text-[rgb(var(--muted))]">Completing setup...</p>
+      </div>
+    )
+  }
+
+  if (state === 'session') {
+    return (
+      <div className="max-w-md mx-auto space-y-6">
+        {checkoutReturn}
+        <h2 className="text-xl font-semibold">Finish signing in</h2>
+        <p className="text-sm text-[rgb(var(--muted))]">Your account is already set up. Retry signing in, or enter the existing password for {restoredEmail} if this browser no longer has your account session. Your payment will not be submitted again.</p>
+        {sessionError && <p role="alert" className="text-sm text-red-500">{sessionError}</p>}
+        <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void recoverSession(password || undefined) }}>
+          <label htmlFor="recovery-password" className="block text-sm">Existing account password</label>
+          <input id="recovery-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-3" />
+          <Button type="submit" className="w-full">Retry sign in</Button>
+        </form>
       </div>
     )
   }

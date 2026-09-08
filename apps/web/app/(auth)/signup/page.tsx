@@ -22,6 +22,8 @@ import { DISPLAY_VERSION } from '@/app/lib/constants'
 import { findCommonEmailDomainTypo, normalizeEmailForComparison, signupEmailSchema } from '@/app/lib/email-recovery'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
+import { AnnualConfirmationSummary } from './components/annual-confirmation-summary'
+import { useSignupNavigation } from './use-signup-navigation'
 import { StepCreateVault } from './components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
@@ -31,6 +33,8 @@ import {
   activateAnnualCheckout,
   consumeSignupEmailOwnership,
   fetchAnonymousAnnualOffer,
+  cancelUnclaimedAnnualSelection,
+  BillingResponseError,
   isRenewableAnnualOfferError,
   requestSignupEmailOwnership,
   type AnnualCheckoutActivation,
@@ -272,6 +276,8 @@ function StepCreateAccount({
 }) {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const submittingRef = useRef(false)
+  const needsPassword = isSelfHosted || isCustomServer(serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined)
 
   const {
     register,
@@ -284,7 +290,7 @@ function StepCreateAccount({
     // causing a type mismatch. The runtime works fine — only the types clash.
     // Remove this cast once @hookform/resolvers ships native zod v4 support.
     // Tracking: https://github.com/react-hook-form/resolvers/issues
-    resolver: zodResolver(signupSchema) as any,
+    resolver: zodResolver(needsPassword ? signupSchema : signupEmailSchema) as any,
     mode: 'onChange',
     defaultValues: initialData ?? undefined,
   })
@@ -302,14 +308,17 @@ function StepCreateAccount({
       </div>
 
       <form onSubmit={handleSubmit(async (data) => {
+        if (submittingRef.current) return
+        submittingRef.current = true
         setSubmitError(null)
         setIsSubmitting(true)
         try {
-          await onNext(data)
+          await onNext(needsPassword ? data : { email: data.email, confirmEmail: data.confirmEmail, password: '', confirmPassword: '' })
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Account creation failed. Please try again.'
           setSubmitError(message)
         } finally {
+          submittingRef.current = false
           setIsSubmitting(false)
         }
       })} className="space-y-4">
@@ -359,7 +368,7 @@ function StepCreateAccount({
           )}
         </div>
 
-        <div className="space-y-2">
+        {needsPassword && <><div className="space-y-2">
           <label
             htmlFor="password"
             className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
@@ -401,6 +410,8 @@ function StepCreateAccount({
             </p>
           )}
         </div>
+
+        </>}
 
         {/* Product updates opt-in */}
         <label className="flex items-start gap-2.5 cursor-pointer">
@@ -453,7 +464,7 @@ function StepCreateAccount({
         </details>
 
         {submitError && (
-          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+          <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
             <p className="text-sm text-red-600 dark:text-red-400">{submitError}</p>
           </div>
         )}
@@ -471,7 +482,7 @@ function StepCreateAccount({
 
         <p className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
           <KeyRound className="h-3 w-3 text-emerald-500" />
-          No phone number required. Just email and password.
+          {needsPassword ? 'No phone number required. Just email and password.' : 'First verify your email. You will choose a password next.'}
         </p>
       </form>
 
@@ -493,11 +504,6 @@ type PlanView = 'cards' | 'method' | 'confirm' | 'payment' | 'crypto'
 type PendingAnnualClaim = {
   activation: AnnualCheckoutActivation
   provider: 'none' | 'stripe' | 'btcpay'
-}
-
-function formatDisclosureTimestamp(value: string | null): string {
-  if (!value) return 'Not applicable'
-  return `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`
 }
 
 function CryptoPaymentPanel({
@@ -750,7 +756,7 @@ function StepChoosePlan({
 
   const handleSelectCard = useCallback(() => {
     if (!stripeAvailable) {
-      setPaymentMethodError('Card checkout is not available for this server-owned annual offer.')
+      setPaymentMethodError('Card checkout is not available for this annual offer.')
       return
     }
     setPaymentMethodError(null)
@@ -760,7 +766,7 @@ function StepChoosePlan({
 
   const handleSelectBitcoin = useCallback(() => {
     if (!bitcoinAvailable) {
-      setPaymentMethodError('Bitcoin checkout is not available for this server-owned annual offer.')
+      setPaymentMethodError('Bitcoin checkout is not available for this annual offer.')
       return
     }
     setPaymentMethodError(null)
@@ -781,24 +787,13 @@ function StepChoosePlan({
       <div ref={contentRef} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
         <div className="space-y-2 text-center">
           <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Confirm annual terms</h2>
-          <p className="text-sm text-[rgb(var(--muted))]">Review the exact server-issued schedule before this checkout authority is claimed.</p>
         </div>
-        <dl className="space-y-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 text-sm">
-          <div className="flex justify-between gap-4"><dt>Annual price</dt><dd>€{(disclosure.annualAmountMinor / 100).toFixed(2)}/year</dd></div>
-          <div className="flex justify-between gap-4"><dt>First charge amount</dt><dd>€{(disclosure.firstChargeAmountMinor / 100).toFixed(2)}</dd></div>
-          <div className="flex justify-between gap-4"><dt>First charge time</dt><dd>{formatDisclosureTimestamp(disclosure.firstChargeAt)}</dd></div>
-          <div className="flex justify-between gap-4"><dt>Cancel before</dt><dd>{formatDisclosureTimestamp(disclosure.cancelBy)}</dd></div>
-          <div className="flex justify-between gap-4"><dt>Renews</dt><dd>{formatDisclosureTimestamp(disclosure.renewalAt)}</dd></div>
-          <div className="flex justify-between gap-4"><dt>Renewal amount</dt><dd>{disclosure.renewalAmountMinor === null ? 'Not applicable' : `€${(disclosure.renewalAmountMinor / 100).toFixed(2)}/year`}</dd></div>
-          <div className="flex justify-between gap-4"><dt>Refund window</dt><dd>{disclosure.refundWindowDays ? `${disclosure.refundWindowDays} days` : 'Not applicable'}</dd></div>
-          <div className="flex justify-between gap-4"><dt>Auto-renewal</dt><dd>{disclosure.autoRenew ? 'On' : 'Off'}</dd></div>
-          <div className="flex justify-between gap-4"><dt>Prepaid</dt><dd>{disclosure.prepaid ? 'Yes' : 'No'}</dd></div>
-          <div className="flex justify-between gap-4"><dt>Access through</dt><dd>{formatDisclosureTimestamp(disclosure.entitlementEndsAt)}</dd></div>
-        </dl>
+        <AnnualConfirmationSummary disclosure={disclosure} />
+        {provisionError && <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">{provisionError}</div>}
         <Button type="button" className="w-full" disabled={provisioning} onClick={onConfirmAnnualClaim}>
-          {provisioning ? 'Starting…' : 'Confirm annual terms and continue'}
+          {provisioning ? 'Starting…' : pendingAnnualClaim.provider === 'none' ? 'Create account and start free trial' : 'Confirm annual terms and continue'}
         </Button>
-        <button type="button" onClick={onBack} className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors">
+        <button type="button" disabled={provisioning} onClick={onBack} className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors">
           <ArrowLeft className="h-4 w-4" /> Back
         </button>
       </div>
@@ -809,7 +804,7 @@ function StepChoosePlan({
     if (!bitcoinAvailable) {
       return (
         <div className="space-y-4" role="alert">
-          <p className="text-sm text-red-600 dark:text-red-400">Bitcoin checkout is not available for this server-owned annual offer.</p>
+          <p className="text-sm text-red-600 dark:text-red-400">Bitcoin checkout is not available for this annual offer.</p>
           <Button type="button" variant="outline" onClick={onBack}>Back to payment methods</Button>
         </div>
       )
@@ -896,13 +891,13 @@ function StepChoosePlan({
 
           {!stripeAvailable && !bitcoinAvailable && (
             <p role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
-              No payment method is authorized for this server-owned annual offer.
+              No payment method is authorized for this annual offer.
             </p>
           )}
         </div>
 
         {(paymentMethodError || provisionError) && (
-          <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+          <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
             <p className="text-sm text-red-600 dark:text-red-400">{paymentMethodError ?? provisionError}</p>
           </div>
         )}
@@ -1106,7 +1101,7 @@ function StepChoosePlan({
 
       {/* Error display */}
       {provisionError && (
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+        <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
           <p className="text-sm text-red-600 dark:text-red-400">{provisionError}</p>
           <button
             onClick={onClearError}
@@ -1259,9 +1254,11 @@ function StepAdminInfo({ serverUrl, onNext }: { serverUrl: string; onNext: () =>
 type Step = 'account' | 'verifiedAccount' | 'plan' | 'selfhost' | 'admin' | 'paidAccount' | 'vault'
 
 const STEPS_HOSTED = [
-  { key: 'account' as const, label: 'Account', number: 1 },
-  { key: 'plan' as const, label: 'Plan', number: 2 },
-  { key: 'vault' as const, label: 'Setup', number: 3 },
+  { key: 'account' as const, label: 'Email', number: 1 },
+  { key: 'verifiedAccount' as const, label: 'Password', number: 2 },
+  { key: 'plan' as const, label: 'Plan', number: 3 },
+  { key: 'paidAccount' as const, label: 'Account setup', number: 4 },
+  { key: 'vault' as const, label: 'Finish', number: 5 },
 ]
 
 const STEPS_SELFHOST = [
@@ -1385,16 +1382,23 @@ export default function SignupPage() {
   const [cryptoPaymentSession, setCryptoPaymentSession] = useState<CryptoPaymentSession | null>(null)
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisioning, setProvisioning] = useState(false)
+  const operationRef = useRef(false)
   const [usingSelfHostedServer, setUsingSelfHostedServer] = useState(false)
   const [planView, setPlanView] = useState<PlanView>('cards')
   const [wantsProductUpdates, setWantsProductUpdates] = useState(false)
   const [rememberDevice, setRememberDevice] = useState(false)
   const [returnTo, setReturnTo] = useState<string | null>(null)
   const [showReturnFallback, setShowReturnFallback] = useState(false)
+  const claimAttemptedRef = useRef(false)
   const [emailOwnershipToken, setEmailOwnershipToken] = useState<string | null>(null)
   const [annualOffer, setAnnualOffer] = useState<AnnualOfferResponse | null>(null)
   const [annualOfferRequestId, setAnnualOfferRequestId] = useState<string | null>(null)
   const [pendingAnnualClaim, setPendingAnnualClaim] = useState<PendingAnnualClaim | null>(null)
+  // Reservation cancellation never resolves Etebase/account or provider authority.
+  // Keep this bounded UI pre-claim; partial/uncertain creation keeps its continuation.
+  const [selectionCancellation, setSelectionCancellation] = useState<'confirm' | 'unknown' | 'refused' | 'verify' | null>(null)
+  const pendingAnnualClaimRef = useRef(pendingAnnualClaim)
+  pendingAnnualClaimRef.current = pendingAnnualClaim
   const [recoveredSignupEmail, setRecoveredSignupEmail] = useState<string | null>(null)
   const [awaitingEmailProof, setAwaitingEmailProof] = useState(false)
   const [emailProofUnavailable, setEmailProofUnavailable] = useState(false)
@@ -1409,6 +1413,30 @@ export default function SignupPage() {
     continuation: ReturnType<typeof createEmailLinkContinuation>
   } | null>(null)
   const formDataRef = useRef<SignupFormData | null>(null)
+
+  const navigation = useSignupNavigation({
+    enabled: !usingSelfHostedServer && !!emailOwnershipToken && step !== 'vault',
+    step,
+    view: planView,
+    restore: (checkpoint) => {
+      if (operationRef.current || selectionCancellation) return false
+      if (checkpoint.step === 'verifiedAccount' && !claimAttemptedRef.current) {
+        setStep('verifiedAccount')
+        return true
+      }
+      if (checkpoint.step !== 'plan' || !annualOffer || !formDataRef.current?.password) return false
+      const view = checkpoint.view
+      if (view === 'cards' || view === 'method'
+        || (view === 'confirm' && pendingAnnualClaim)
+        || (view === 'payment' && clientSecret)
+        || (view === 'crypto' && cryptoPaymentSession)) {
+        setPlanView(view as PlanView)
+        setStep('plan')
+        return true
+      }
+      return false
+    },
+  })
 
   useEffect(() => {
     mountedRef.current = true
@@ -1585,7 +1613,7 @@ export default function SignupPage() {
 
   const handleVerifiedAccountComplete = useCallback(async (data: PaidAccountFormData) => {
     if (!annualOffer || !emailOwnershipToken || !recoveredSignupEmail) {
-      throw new Error('Your verified annual offer is no longer available. Request a new email link.')
+      throw new Error('Your trial options are no longer available. Request a new email link.')
     }
     const email = normalizeEmailForComparison(recoveredSignupEmail)
     if (!email) throw new Error('Your verified email is unavailable. Request a new email link.')
@@ -1632,6 +1660,19 @@ export default function SignupPage() {
   }, [annualOfferRequestId, recoveredSignupEmail])
 
   const handleSelectFree = useCallback(async () => {
+    if (operationRef.current) return
+    if (clientSecret || cryptoPaymentSession) {
+      setProvisionError('A payment is already pending. Resume it below, or use payment recovery to cancel it before choosing another option.')
+      return
+    }
+    if (pendingAnnualClaim && (claimAttemptedRef.current || Date.parse(pendingAnnualClaim.activation.expiresAt) > Date.now())) {
+      if (pendingAnnualClaim.provider === 'none') setPlanView('confirm')
+      else setProvisionError(claimAttemptedRef.current
+        ? 'Setup may have started. Return to your current selection below to finish or retry safely.'
+        : `Your current option is held until ${new Date(pendingAnnualClaim.activation.expiresAt).toUTCString()}. After that time, choose a different option and continue. Or return to your current selection below.`)
+      return
+    }
+    operationRef.current = true
     setProvisioning(true)
     setProvisionError(null)
     try {
@@ -1658,16 +1699,31 @@ export default function SignupPage() {
       const message = err instanceof Error ? err.message : 'Failed to set up your account'
       setProvisionError(message)
     } finally {
+      operationRef.current = false
       setProvisioning(false)
     }
-  }, [annualOffer, emailOwnershipToken, recoveredSignupEmail, renewAnnualOfferAndRequireConsent])
+  }, [annualOffer, clientSecret, cryptoPaymentSession, emailOwnershipToken, pendingAnnualClaim, recoveredSignupEmail, renewAnnualOfferAndRequireConsent])
 
   const handleSelectPaid = useCallback(async () => {
+    if (operationRef.current) return
+    if (clientSecret) { setPlanView('payment'); return }
+    if (cryptoPaymentSession) {
+      setProvisionError('A Bitcoin payment is already pending. Use payment recovery to cancel it before choosing card payment.')
+      return
+    }
+    if (pendingAnnualClaim && (claimAttemptedRef.current || Date.parse(pendingAnnualClaim.activation.expiresAt) > Date.now())) {
+      if (pendingAnnualClaim.provider === 'stripe') setPlanView('confirm')
+      else setProvisionError(claimAttemptedRef.current
+        ? 'Setup may have started. Return to your current selection below to finish or retry safely.'
+        : `Your current option is held until ${new Date(pendingAnnualClaim.activation.expiresAt).toUTCString()}. After that time, choose a different option and continue. Or return to your current selection below.`)
+      return
+    }
+    operationRef.current = true
     setProvisionError(null)
     setProvisioning(true)
     try {
       if (!annualOffer || !emailOwnershipToken || !recoveredSignupEmail) throw new Error('Verify your email before selecting a trial.')
-      if (!isAnnualOfferProviderAvailable(annualOffer.offer, 'stripe')) throw new Error('Card checkout is not available for this server-owned annual offer.')
+      if (!isAnnualOfferProviderAvailable(annualOffer.offer, 'stripe')) throw new Error('Card checkout is not available for this annual offer.')
       const authority = await activateAnnualCheckout({
         fetcher: fetch,
         billingApiUrl: BILLING_API_URL,
@@ -1689,16 +1745,31 @@ export default function SignupPage() {
       setProvisionError(message)
       setPlanView('method')
     } finally {
+      operationRef.current = false
       setProvisioning(false)
     }
-  }, [annualOffer, emailOwnershipToken, recoveredSignupEmail, renewAnnualOfferAndRequireConsent])
+  }, [annualOffer, clientSecret, cryptoPaymentSession, emailOwnershipToken, pendingAnnualClaim, recoveredSignupEmail, renewAnnualOfferAndRequireConsent])
 
   const handleSelectCrypto = useCallback(async () => {
+    if (operationRef.current) return
+    if (cryptoPaymentSession) { setPlanView('crypto'); return }
+    if (clientSecret) {
+      setProvisionError('A card payment is already pending. Use payment recovery to cancel it before choosing Bitcoin.')
+      return
+    }
+    if (pendingAnnualClaim && (claimAttemptedRef.current || Date.parse(pendingAnnualClaim.activation.expiresAt) > Date.now())) {
+      if (pendingAnnualClaim.provider === 'btcpay') setPlanView('confirm')
+      else setProvisionError(claimAttemptedRef.current
+        ? 'Setup may have started. Return to your current selection below to finish or retry safely.'
+        : `Your current option is held until ${new Date(pendingAnnualClaim.activation.expiresAt).toUTCString()}. After that time, choose a different option and continue. Or return to your current selection below.`)
+      return
+    }
+    operationRef.current = true
     setProvisionError(null)
     setProvisioning(true)
     try {
       if (!annualOffer || !emailOwnershipToken || !recoveredSignupEmail) throw new Error('Verify your email before selecting a payment method.')
-      if (!isAnnualOfferProviderAvailable(annualOffer.offer, 'btcpay', CRYPTO_CHECKOUT_ENABLED)) throw new Error('Bitcoin checkout is not available for this server-owned annual offer.')
+      if (!isAnnualOfferProviderAvailable(annualOffer.offer, 'btcpay', CRYPTO_CHECKOUT_ENABLED)) throw new Error('Bitcoin checkout is not available for this annual offer.')
       if (cryptoPaymentSession) {
         setPlanView('crypto')
         return
@@ -1722,16 +1793,28 @@ export default function SignupPage() {
       }
       setProvisionError(err instanceof Error ? err.message : 'Failed to start crypto checkout')
     } finally {
+      operationRef.current = false
       setProvisioning(false)
     }
-  }, [annualOffer, cryptoPaymentSession, emailOwnershipToken, recoveredSignupEmail, renewAnnualOfferAndRequireConsent])
+  }, [annualOffer, clientSecret, cryptoPaymentSession, emailOwnershipToken, pendingAnnualClaim, recoveredSignupEmail, renewAnnualOfferAndRequireConsent])
 
   const handleConfirmAnnualClaim = useCallback(async () => {
     const pending = pendingAnnualClaim
-    if (!pending || !annualOffer) return
+    if (!pending || !annualOffer || operationRef.current) return
+    // Only unattempted authority can be discarded. An expired token after a
+    // dispatched request may still own an account or payment with an unknown outcome.
+    if (!claimAttemptedRef.current && Date.parse(pending.activation.expiresAt) <= Date.now()) {
+      setPendingAnnualClaim(null)
+      setPlanView('cards')
+      setProvisionError('Your selected terms expired. Review the options and choose again before continuing.')
+      return
+    }
+    operationRef.current = true
     setProvisioning(true)
     setProvisionError(null)
     try {
+      navigation.markMutation(pending.provider === 'none' ? 'setup' : 'payment')
+      claimAttemptedRef.current = true
       if (pending.provider === 'none') {
         const data = formDataRef.current
         if (!data) throw new Error('Please enter your account details again.')
@@ -1790,14 +1873,16 @@ export default function SignupPage() {
       const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
       setProvisionError(message)
     } finally {
+      operationRef.current = false
       setProvisioning(false)
     }
-  }, [annualOffer, createEtebaseAccount, pendingAnnualClaim, provisionAnnualNoCard, recoveredSignupEmail, renewAnnualOfferAndRequireConsent, returnTo, serverUrl, startAnnualSignupPayment])
+  }, [annualOffer, createEtebaseAccount, navigation, pendingAnnualClaim, provisionAnnualNoCard, recoveredSignupEmail, renewAnnualOfferAndRequireConsent, returnTo, serverUrl, startAnnualSignupPayment])
 
   const handlePlanBack = useCallback(() => {
+    if (operationRef.current) return
     if (planView === 'confirm') {
-      setPendingAnnualClaim(null)
-      setPlanView('method')
+      // Back is navigation, not cancellation of the server reservation.
+      setPlanView(pendingAnnualClaim?.provider === 'none' ? 'cards' : 'method')
     } else if (planView === 'crypto') {
       setPlanView('method')
     } else if (planView === 'payment') {
@@ -1805,10 +1890,73 @@ export default function SignupPage() {
     } else if (planView === 'method') {
       setPlanView('cards')
     } else {
-      // Back from cards view goes to account step
-      setStep('account')
+      // A claim may already have created the encrypted account. Do not let
+      // navigation change its password while that outcome is unresolved.
+      if (claimAttemptedRef.current || clientSecret || cryptoPaymentSession) {
+        setProvisionError('Continue your current selection to finish setup. Your account details are retained while setup is pending.')
+        return
+      }
+      setStep('verifiedAccount')
     }
-  }, [planView])
+  }, [clientSecret, cryptoPaymentSession, pendingAnnualClaim, planView])
+
+  const handleCancelSelection = useCallback(async () => {
+    const pending = pendingAnnualClaim
+    if (!pending || !annualOfferRequestId || !recoveredSignupEmail || !emailOwnershipToken
+      || operationRef.current || claimAttemptedRef.current || clientSecret || cryptoPaymentSession) return
+    operationRef.current = true
+    setProvisioning(true)
+    setProvisionError(null)
+    const ownsSelection = () => mountedRef.current && pendingAnnualClaimRef.current === pending
+    try {
+      await cancelUnclaimedAnnualSelection({
+        fetcher: fetch, billingApiUrl: BILLING_API_URL,
+        email: recoveredSignupEmail, requestId: annualOfferRequestId,
+        checkoutIntentToken: pending.activation.checkoutIntentToken, emailOwnershipToken,
+      })
+      if (!ownsSelection()) return
+      // Only this exact reservation is released. Never reset pendingSignup,
+      // credentials, session attestation, or a payment recovery capability.
+      setPendingAnnualClaim(null)
+      setSelectionCancellation(null)
+      setPlanView('cards')
+    } catch (error) {
+      if (!ownsSelection()) return
+      if (error instanceof BillingResponseError && error.billingStatus === 409
+        && error.billingProblemType === 'https://api.silentsuite.io/errors/authority-in-progress') {
+        claimAttemptedRef.current = true
+        setSelectionCancellation('refused')
+        setProvisionError('Setup or payment has already started. Your selection was not cancelled. Continue or recover the existing setup; do not start another payment.')
+      } else if (error instanceof BillingResponseError && error.billingStatus === 400) {
+        setSelectionCancellation('verify')
+        setProvisionError('Cancellation could not be verified. Your selection is retained. Verify ownership again using the same signup request, then retry.')
+      } else {
+        setSelectionCancellation('unknown')
+        setProvisionError('Cancellation is not confirmed. Your selection is retained. Retry cancellation to check this exact selection before choosing again.')
+      }
+    } finally {
+      operationRef.current = false
+      if (mountedRef.current) setProvisioning(false)
+    }
+  }, [annualOfferRequestId, clientSecret, cryptoPaymentSession, emailOwnershipToken, pendingAnnualClaim, recoveredSignupEmail])
+
+  const handleVerifySelectionOwnership = useCallback(async () => {
+    if (operationRef.current || !annualOfferRequestId || !recoveredSignupEmail) return
+    operationRef.current = true
+    setProvisioning(true)
+    try {
+      saveEmailProofContext({ email: recoveredSignupEmail, requestId: annualOfferRequestId,
+        wantsProductUpdates, rememberDevice, returnTo, expiresAt: Date.now() + 15 * 60_000 })
+      await requestSignupEmailOwnership({ fetcher: fetch, billingApiUrl: BILLING_API_URL,
+        email: recoveredSignupEmail, requestId: annualOfferRequestId })
+      if (mountedRef.current) setProvisionError('Check your email for a verification link for this same signup. Your selection has not been cleared or replaced.')
+    } catch {
+      if (mountedRef.current) setProvisionError('A verification email could not be confirmed. Your selection is retained; retry verification.')
+    } finally {
+      operationRef.current = false
+      if (mountedRef.current) setProvisioning(false)
+    }
+  }, [annualOfferRequestId, recoveredSignupEmail, rememberDevice, returnTo, wantsProductUpdates])
 
   const createAndFinalizePaidAccount = useCallback(async (password?: string) => {
     const data = formDataRef.current
@@ -1819,6 +1967,8 @@ export default function SignupPage() {
   }, [createEtebaseAccount, finalizePaidSignup, serverUrl])
 
   const handlePaymentComplete = useCallback(async () => {
+    if (operationRef.current) return
+    operationRef.current = true
     setProvisioning(true)
     setProvisionError(null)
     try {
@@ -1829,6 +1979,7 @@ export default function SignupPage() {
       setProvisionError(err instanceof Error ? err.message : 'Payment succeeded, but account creation needs one more step.')
       setStep('paidAccount')
     } finally {
+      operationRef.current = false
       setProvisioning(false)
     }
   }, [createAndFinalizePaidAccount])
@@ -1841,6 +1992,7 @@ export default function SignupPage() {
   const handleVaultComplete = useCallback(() => {
     // Finalize authentication — only NOW does the user become authenticated.
     completeSignup()
+    navigation.clear()
     if (returnTo) {
       setShowReturnFallback(false)
       window.location.href = returnTo
@@ -1850,7 +2002,7 @@ export default function SignupPage() {
       return
     }
     router.push('/')
-  }, [completeSignup, returnTo, router])
+  }, [completeSignup, navigation, returnTo, router])
 
   const email = formDataRef.current?.email || ''
 
@@ -1858,10 +2010,56 @@ export default function SignupPage() {
     ? STEPS_SELFHOST
     : STEPS_HOSTED
 
+  if (navigation.recovery) {
+    return <div className="mx-auto w-full max-w-md space-y-4">
+      <h1 className="text-xl font-semibold">Continue your signup safely</h1>
+      <p role="status">Your password and verification proof were not saved. Refreshing has not repeated account creation or started another payment.</p>
+      {navigation.recovery === 'review' ? <>
+        <p>Verify your email again to continue. If you already chose a trial, it may remain reserved briefly; we will not replace a pending payment.</p>
+        <Button onClick={() => navigation.clear()}>Verify email again</Button>
+      </> : <>
+        <p>Setup may already have started. Do not start a second signup or payment. {navigation.recovery === 'payment' ? 'Recover your existing payment to check its status.' : 'Try signing in with the password you chose. If setup is incomplete, contact support to recover it.'}</p>
+        {navigation.recovery === 'payment' && <Link href="/signup/pending-payment" className="block underline">Recover existing payment</Link>}
+        <Link href="/login" className="block underline">Sign in to your account</Link>
+        <a href="mailto:support@silentsuite.io" className="block underline">Contact support</a>
+      </>}
+    </div>
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch justify-center md:flex-row md:items-start">
-      <ProgressStepper currentStep={step === 'paidAccount' ? 'vault' : step === 'verifiedAccount' ? 'account' : step} steps={activeSteps} />
+      <ProgressStepper currentStep={provisioning && step === 'plan' && claimAttemptedRef.current ? 'paidAccount' : step} steps={activeSteps} />
       <div className="mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1">
+        {navigation.notice && <p role="status" className="mb-4 text-sm text-[rgb(var(--muted))]">Finish or recover your current setup before changing account details. Your password has not been saved.</p>}
+        {step === 'plan' && pendingAnnualClaim && !claimAttemptedRef.current && !clientSecret && !cryptoPaymentSession && !selectionCancellation && (
+          <Button variant="outline" className="mb-4 w-full" disabled={provisioning} onClick={() => {
+            if (operationRef.current) return
+            setProvisionError(null)
+            setSelectionCancellation('confirm')
+          }}>Cancel this selection and choose again</Button>
+        )}
+        {step === 'plan' && selectionCancellation && <section className="space-y-4" aria-label="Cancel selection">
+          <h2 className="text-xl font-semibold">Cancel this selection?</h2>
+          <p>This releases only your trial or payment selection. It does not cancel a payment or subscription, delete an account, or start another trial. You will choose again and review new terms before continuing.</p>
+          {provisionError && <p role="alert">{provisionError}</p>}
+          {selectionCancellation !== 'refused' && <Button disabled={provisioning} onClick={handleCancelSelection}>
+            {provisioning ? 'Checking selection...' : selectionCancellation === 'confirm' ? 'Confirm cancellation' : 'Retry cancellation'}
+          </Button>}
+          {selectionCancellation === 'confirm' && <Button variant="outline" disabled={provisioning} onClick={() => {
+            if (!operationRef.current) setSelectionCancellation(null)
+          }}>Keep current selection</Button>}
+          {selectionCancellation === 'verify' && <Button variant="outline" disabled={provisioning} onClick={handleVerifySelectionOwnership}>Verify ownership again</Button>}
+          {selectionCancellation === 'refused' && <>
+            <Button onClick={() => { setSelectionCancellation(null); setPlanView('confirm') }}>Continue current selection</Button>
+            <Link href="/signup/pending-payment" className="block underline">Recover existing payment</Link>
+          </>}
+        </section>}
+        {step === 'plan' && !selectionCancellation && planView !== 'confirm' && pendingAnnualClaim && <Button variant="outline" disabled={provisioning} className="mb-4 w-full" onClick={() => { setProvisionError(null); setPlanView('confirm') }}>Return to current selection</Button>}
+        {step === 'plan' && (clientSecret || cryptoPaymentSession) && planView !== 'payment' && planView !== 'crypto' && <div className="mb-4 space-y-2">
+          <Button variant="outline" disabled={provisioning} onClick={() => setPlanView(clientSecret ? 'payment' : 'crypto')}>Resume pending payment</Button>
+          <Link href="/signup/pending-payment" className="block text-sm underline">Recover pending payment</Link>
+          {cryptoPaymentSession && <p className="text-sm">A live Bitcoin invoice must expire before another payment can be started. Returning here does not cancel it.</p>}
+        </div>}
         {step === 'account' && (
           <>
             {emailProofBusy && <p role="status" className="mb-4 text-sm text-[rgb(var(--muted))]">{requestingEmailProof ? 'Requesting a new verification email...' : 'Verifying your email and loading trial options...'}</p>}
@@ -1898,7 +2096,7 @@ export default function SignupPage() {
               rememberDevice={rememberDevice}
               onRememberDeviceChange={setRememberDevice}
             />}
-            {awaitingEmailProof && <p role="status" className="mt-4 text-center text-sm text-[rgb(var(--muted))]">Check your email and open the verification link in this browser. Your password is not saved while you open the link.</p>}
+            {awaitingEmailProof && <p role="status" className="mt-4 text-center text-sm text-[rgb(var(--muted))]">Check your email and open the verification link in this browser. Then choose your password.</p>}
           </>
         )}
         {step === 'verifiedAccount' && (
@@ -1907,6 +2105,7 @@ export default function SignupPage() {
             onNext={handleVerifiedAccountComplete}
             initialError={provisionError}
             continuation="verified-no-card"
+            initialData={formDataRef.current ?? undefined}
           />
         )}
         {step === 'selfhost' && (
@@ -1915,7 +2114,7 @@ export default function SignupPage() {
         {step === 'admin' && (
           <StepAdminInfo serverUrl={serverUrl.trim()} onNext={handleAdminInfoComplete} />
         )}
-        {step === 'plan' && (
+        {step === 'plan' && !selectionCancellation && (
           annualOffer ? <StepChoosePlan
             key={`${annualOffer.requestId}:${annualOffer.offer.offerToken}`}
             annualOffer={annualOffer}
@@ -1935,7 +2134,7 @@ export default function SignupPage() {
             pendingAnnualClaim={pendingAnnualClaim}
             onConfirmAnnualClaim={handleConfirmAnnualClaim}
           /> : <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
-            <p>{provisionError ?? 'Your server-owned annual offer is unavailable. Verify your email to request a new offer.'}</p>
+            <p>{provisionError ?? 'Your annual offer is unavailable. Verify your email to request a new offer.'}</p>
             {annualOfferRequestId && recoveredSignupEmail && (
               <button
                 type="button"
