@@ -1,3 +1,4 @@
+import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import { describe, expect, it } from 'vitest'
 import {
   activateAnnualCheckout,
@@ -22,7 +23,7 @@ const token = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG'
 const email = 'customer@example.test'
 const offer = { contractVersion: 2, requestId, offer: { planId: 'early_annual', customerClass: 'early', billingInterval: 'annual', annualAmountMinor: 3600, monthlyEquivalentMinor: 300, currency: 'EUR', providers: ['stripe', 'btcpay'], offerRevision: 1, offerToken: 'signed-offer', expiresAt: '2026-08-10T12:10:00Z' } }
 const disclosure = { kind: 'prepaid', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: null, monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null, cancelBy: null, cancelByInclusive: false, autoRenew: false, prepaid: true, refundWindowDays: 30, bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null }
-const activation = { contractVersion: 2, checkoutIntentToken: token, expiresAt: '2026-08-10T12:05:00Z', disclosure }
+const activation = { contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-10T12:05:00Z', disclosure }
 const recovery = { contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }
 
 function json(body: unknown, status = 200) {
@@ -50,13 +51,13 @@ const recoveryParams = (fetcher: BillingV2Fetch) => ({ fetcher, billingApiUrl, p
 
 const cases: ReadonlyArray<readonly [string, () => Response, (fetcher: BillingV2Fetch) => Promise<unknown>]> = [
   ['fetchAnonymousAnnualOffer', () => json(offer), fetcher => fetchAnonymousAnnualOffer({ fetcher, billingApiUrl, email, requestId })],
-  ['activateAnnualCheckout', () => json(activation), fetcher => activateAnnualCheckout({ fetcher, billingApiUrl, offer, email, emailOwnershipToken: token, trialPath: 'immediate', provider: 'btcpay', behavior: 'prepaid_bitcoin' })],
+  ['activateAnnualCheckout', () => json(activation), fetcher => activateAnnualCheckout({ fetcher, billingApiUrl, offer, email, emailOwnershipToken: signedEmailProof, trialPath: 'immediate', provider: 'btcpay', behavior: 'prepaid_bitcoin' })],
   ['requestSignupEmailOwnership', () => new Response('{}', { status: 202 }), fetcher => requestSignupEmailOwnership({ fetcher, billingApiUrl, email, requestId })],
-  ['consumeSignupEmailOwnership', () => json({ contractVersion: 2, emailOwnershipToken: token, expiresAt: '2026-08-10T12:05:00Z' }), fetcher => consumeSignupEmailOwnership({ fetcher, billingApiUrl, email, token })],
+  ['consumeSignupEmailOwnership', () => json({ contractVersion: 2, emailOwnershipToken: signedEmailProof, expiresAt: '2026-08-10T12:05:00Z' }), fetcher => consumeSignupEmailOwnership({ fetcher, billingApiUrl, email, token })],
   ['fetchAuthenticatedAnnualOffer', () => json(offer), fetcher => fetchAuthenticatedAnnualOffer({ fetcher, billingApiUrl })],
   ['activateAuthenticatedAnnualCheckout', () => json(activation), fetcher => activateAuthenticatedAnnualCheckout({ fetcher, billingApiUrl, offer, trialPath: 'immediate', provider: 'stripe', behavior: 'immediate_card' })],
-  ['startSignupAnnualPayment', () => json({ contractVersion: 2, kind: 'stripe', clientSecret: 'pi_secret', paymentSessionToken: token }), fetcher => startSignupAnnualPayment({ fetcher, billingApiUrl, checkoutIntentToken: token, email, requestKey, recoverySecret: token, wantsProductUpdates: true, rememberDevice: false, returnUrl: 'https://app.example.test/signup/success' })],
-  ['startAuthenticatedAnnualPayment', () => json({ contractVersion: 2, kind: 'stripe', authorityId: requestKey, clientSecret: 'pi_secret' }), fetcher => startAuthenticatedAnnualPayment({ fetcher, billingApiUrl, checkoutIntentToken: token, expectedAuthorityId: requestKey, returnUrl: 'https://app.example.test/settings/subscription' })],
+  ['startSignupAnnualPayment', () => json({ contractVersion: 2, kind: 'stripe', clientSecret: 'pi_secret', paymentSessionToken: token }), fetcher => startSignupAnnualPayment({ fetcher, billingApiUrl, checkoutIntentToken: signedCheckoutIntent, email, requestKey, recoverySecret: token, wantsProductUpdates: true, rememberDevice: false, returnUrl: 'https://app.example.test/signup/success' })],
+  ['startAuthenticatedAnnualPayment', () => json({ contractVersion: 2, kind: 'stripe', authorityId: requestKey, clientSecret: 'pi_secret' }), fetcher => startAuthenticatedAnnualPayment({ fetcher, billingApiUrl, checkoutIntentToken: signedCheckoutIntent, expectedAuthorityId: requestKey, returnUrl: 'https://app.example.test/settings/subscription' })],
   ['getAnonymousPaymentSessionRecovery', () => json(recovery), fetcher => getAnonymousPaymentSessionRecovery(recoveryParams(fetcher))],
   ['cancelAnonymousPaymentSessionRecovery', () => json(recovery), fetcher => cancelAnonymousPaymentSessionRecovery(recoveryParams(fetcher))],
   ['reconcileAnonymousPaymentSessionRecovery', () => json(recovery), fetcher => reconcileAnonymousPaymentSessionRecovery(recoveryParams(fetcher))],

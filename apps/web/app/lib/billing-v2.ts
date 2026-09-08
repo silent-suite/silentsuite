@@ -123,6 +123,40 @@ function isUtcTimestamp(value: unknown): value is string {
 function isNullableTimestamp(value: unknown): value is string | null { return value === null || isUtcTimestamp(value) }
 function isUuid(value: unknown): value is string { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) }
 function isRecoveryToken(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9_-]{43,128}$/.test(value) }
+
+/**
+ * Transport/profile validation only, NOT signature verification. Billing's
+ * HostedOfferAuthority verifies signatures, time, subject and request binding.
+ * Signed authorities are compact ES256 JWS; payment recovery stays opaque.
+ */
+function isSignedAuthorityToken(value: unknown, profile: 'email-ownership' | 'checkout-intent'): value is string {
+  // Bound decoding work before parsing untrusted JSON. Current closed profiles
+  // fit comfortably below 8 KiB, including the larger checkout schedule.
+  if (typeof value !== 'string' || value.length > 8192) return false
+  const parts = value.split('.')
+  if (parts.length !== 3 || parts[0].length > 1024 || parts[2].length !== 86) return false
+  try {
+    const decoded = parts.map(part => {
+      if (!/^[A-Za-z0-9_-]+$/.test(part)) throw new Error('Invalid JWS encoding')
+      const bytes = atob(part.replace(/-/g, '+').replace(/_/g, '/'))
+      // Reject padding and noncanonical trailing bits, including the signature.
+      if (btoa(bytes).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_') !== part) throw new Error('Invalid JWS encoding')
+      return Uint8Array.from(bytes, character => character.charCodeAt(0))
+    })
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    const header: unknown = JSON.parse(decoder.decode(decoded[0]))
+    const payload: unknown = JSON.parse(decoder.decode(decoded[1]))
+    const checkout = profile === 'checkout-intent'
+    return isObject(header) && hasExactKeys(header, ['alg', 'typ', 'kid'])
+      && header.alg === 'ES256' && header.typ === `ss-${profile}+jwt`
+      && typeof header.kid === 'string' && header.kid.length > 0
+      && decoded[2].length === 64 && isObject(payload)
+      && payload.iss === 'silentsuite-billing'
+      && payload.aud === (checkout ? 'silentsuite-billing-checkout' : 'silentsuite-billing-signup-email-ownership')
+      && payload.purpose === (checkout ? 'checkout_intent' : 'email_ownership')
+      && payload.contractVersion === 2
+  } catch { return false }
+}
 function isHttpsUrl(value: unknown): value is string { try { return typeof value === 'string' && new URL(value).protocol === 'https:' } catch { return false } }
 function requireAbsoluteHttpUrl(value: string): string {
   let url: URL
@@ -165,7 +199,7 @@ export function assertAnnualDisclosure(value: unknown): asserts value is AnnualD
 }
 
 function assertActivation(value: unknown): asserts value is AnnualCheckoutActivation {
-  if (!isObject(value) || !hasExactKeys(value, ['contractVersion', 'checkoutIntentToken', 'expiresAt', 'disclosure']) || value.contractVersion !== 2 || !isRecoveryToken(value.checkoutIntentToken) || !isUtcTimestamp(value.expiresAt)) throw new Error('Billing did not return a valid annual checkout authority')
+  if (!isObject(value) || !hasExactKeys(value, ['contractVersion', 'checkoutIntentToken', 'expiresAt', 'disclosure']) || value.contractVersion !== 2 || !isSignedAuthorityToken(value.checkoutIntentToken, 'checkout-intent') || !isUtcTimestamp(value.expiresAt)) throw new Error('Billing did not return a valid annual checkout authority')
   assertAnnualDisclosure(value.disclosure)
 }
 
@@ -221,7 +255,7 @@ export async function requestSignupEmailOwnership(params: { fetcher: BillingV2Fe
 export async function consumeSignupEmailOwnership(params: { fetcher: BillingV2Fetch; billingApiUrl: string; email: string; token: string }): Promise<EmailOwnership> {
   const { fetcher } = params
   const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/auth/signup-email-verifications/v2/consume'), jsonInit('POST', { contractVersion: 2, email: params.email, token: params.token })))
-  if (!isObject(body) || !hasExactKeys(body, ['contractVersion', 'emailOwnershipToken', 'expiresAt']) || body.contractVersion !== 2 || !isRecoveryToken(body.emailOwnershipToken) || !isUtcTimestamp(body.expiresAt)) throw new Error('Billing did not return valid email proof')
+  if (!isObject(body) || !hasExactKeys(body, ['contractVersion', 'emailOwnershipToken', 'expiresAt']) || body.contractVersion !== 2 || !isSignedAuthorityToken(body.emailOwnershipToken, 'email-ownership') || !isUtcTimestamp(body.expiresAt)) throw new Error('Billing did not return valid email proof')
   return body as unknown as EmailOwnership
 }
 
