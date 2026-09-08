@@ -1,6 +1,6 @@
 import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import { describe, expect, it, vi } from 'vitest'
-import { BillingResponseError, activateAnnualCheckout, activateAuthenticatedAnnualCheckout, buildSameOriginReturnUrl, cancelAnonymousPaymentSessionRecovery, consumeSignupEmailOwnership, fetchAnonymousAnnualOffer, fetchAuthenticatedAnnualOffer, getAnonymousPaymentSessionRecovery, isRenewableAnnualOfferError, reconcileAnonymousPaymentSessionRecovery, requestSignupEmailOwnership, startAuthenticatedAnnualPayment, startSignupAnnualPayment, type BillingV2Fetch } from '../billing-v2'
+import { BillingResponseError, cancelUnclaimedAnnualSelection, activateAnnualCheckout, activateAuthenticatedAnnualCheckout, buildSameOriginReturnUrl, cancelAnonymousPaymentSessionRecovery, consumeSignupEmailOwnership, fetchAnonymousAnnualOffer, fetchAuthenticatedAnnualOffer, getAnonymousPaymentSessionRecovery, isRenewableAnnualOfferError, reconcileAnonymousPaymentSessionRecovery, requestSignupEmailOwnership, startAuthenticatedAnnualPayment, startSignupAnnualPayment, type BillingV2Fetch } from '../billing-v2'
 
 const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'
 const requestKey = '5fd4d86d-34de-4b82-9a66-9598ddf6e02f'
@@ -10,6 +10,39 @@ const prepaidDisclosure = { kind: 'prepaid', annualAmountMinor: 3600, firstCharg
 const chargeNowDisclosure = { ...prepaidDisclosure, kind: 'charge_now', renewalAmountMinor: 3600, autoRenew: true, prepaid: false }
 
 describe('billing v2 public authority client', () => {
+  it('cancels only an exact bound selection receipt, replaying identical expired authority after response loss', async () => {
+    const receipt = { contractVersion: 2, requestId, checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released' }
+    const fetcher = vi.fn<BillingV2Fetch>(function (this: unknown) {
+      expect(this === undefined || this === globalThis).toBe(true)
+      return Promise.resolve(new Response(JSON.stringify(receipt)))
+    }).mockRejectedValueOnce(new Error('response lost'))
+    const params = { fetcher, billingApiUrl: 'https://billing.example.test', email: 'customer@example.test', requestId,
+      checkoutIntentToken: signedCheckoutIntent, emailOwnershipToken: signedEmailProof }
+    await expect(cancelUnclaimedAnnualSelection(params)).rejects.toThrow('response lost')
+    await expect(cancelUnclaimedAnnualSelection(params)).resolves.toEqual(receipt)
+    expect(fetcher.mock.calls[0]).toEqual(fetcher.mock.calls[1])
+    expect(fetcher.mock.calls[1][0]).toBe('https://billing.example.test/auth/offers/v2/cancel')
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({ contractVersion: 2, email: params.email,
+      requestId, checkoutIntentToken: signedCheckoutIntent, emailOwnershipToken: signedEmailProof })
+  })
+
+  it.each([
+    { status: 201 }, { status: 202 }, { contractVersion: 3 }, { state: 'closed' },
+    { requestId: requestKey }, { checkoutIntentJti: requestKey }, { extra: 'not-canonical' },
+    { checkoutIntentJti: null },
+  ])('rejects nonauthoritative cancellation receipt %j', async ({ status = 200, ...changes }) => {
+    const fetcher = vi.fn<BillingV2Fetch>().mockResolvedValue(new Response(JSON.stringify({ contractVersion: 2,
+      requestId, checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released', ...changes }), { status }))
+    await expect(cancelUnclaimedAnnualSelection({ fetcher, billingApiUrl: 'https://billing.example.test',
+      email: 'customer@example.test', requestId, checkoutIntentToken: signedCheckoutIntent, emailOwnershipToken: signedEmailProof })).rejects.toThrow('exact selection')
+  })
+
+  it.each([400, 409, 429, 503])('retains the cancellation error boundary for HTTP %s', async (status) => {
+    const fetcher = vi.fn<BillingV2Fetch>().mockResolvedValue(new Response(JSON.stringify({ type: 'https://api.silentsuite.io/errors/authority-in-progress' }), { status }))
+    await expect(cancelUnclaimedAnnualSelection({ fetcher, billingApiUrl: 'https://billing.example.test',
+      email: 'customer@example.test', requestId, checkoutIntentToken: signedCheckoutIntent, emailOwnershipToken: signedEmailProof })).rejects.toMatchObject({ billingStatus: status })
+  })
+
   it('builds only absolute same-origin HTTP(S) return URLs', () => {
     expect(buildSameOriginReturnUrl('/signup', 'https://app.example.test')).toBe('https://app.example.test/signup')
     expect(buildSameOriginReturnUrl('/signup/pending-payment', 'https://app.example.test')).toBe('https://app.example.test/signup/pending-payment')

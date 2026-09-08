@@ -33,6 +33,8 @@ import {
   activateAnnualCheckout,
   consumeSignupEmailOwnership,
   fetchAnonymousAnnualOffer,
+  cancelUnclaimedAnnualSelection,
+  BillingResponseError,
   isRenewableAnnualOfferError,
   requestSignupEmailOwnership,
   type AnnualCheckoutActivation,
@@ -1392,6 +1394,11 @@ export default function SignupPage() {
   const [annualOffer, setAnnualOffer] = useState<AnnualOfferResponse | null>(null)
   const [annualOfferRequestId, setAnnualOfferRequestId] = useState<string | null>(null)
   const [pendingAnnualClaim, setPendingAnnualClaim] = useState<PendingAnnualClaim | null>(null)
+  // Reservation cancellation never resolves Etebase/account or provider authority.
+  // Keep this bounded UI pre-claim; partial/uncertain creation keeps its continuation.
+  const [selectionCancellation, setSelectionCancellation] = useState<'confirm' | 'unknown' | 'refused' | 'verify' | null>(null)
+  const pendingAnnualClaimRef = useRef(pendingAnnualClaim)
+  pendingAnnualClaimRef.current = pendingAnnualClaim
   const [recoveredSignupEmail, setRecoveredSignupEmail] = useState<string | null>(null)
   const [awaitingEmailProof, setAwaitingEmailProof] = useState(false)
   const [emailProofUnavailable, setEmailProofUnavailable] = useState(false)
@@ -1412,7 +1419,7 @@ export default function SignupPage() {
     step,
     view: planView,
     restore: (checkpoint) => {
-      if (operationRef.current) return false
+      if (operationRef.current || selectionCancellation) return false
       if (checkpoint.step === 'verifiedAccount' && !claimAttemptedRef.current) {
         setStep('verifiedAccount')
         return true
@@ -1893,6 +1900,64 @@ export default function SignupPage() {
     }
   }, [clientSecret, cryptoPaymentSession, pendingAnnualClaim, planView])
 
+  const handleCancelSelection = useCallback(async () => {
+    const pending = pendingAnnualClaim
+    if (!pending || !annualOfferRequestId || !recoveredSignupEmail || !emailOwnershipToken
+      || operationRef.current || claimAttemptedRef.current || clientSecret || cryptoPaymentSession) return
+    operationRef.current = true
+    setProvisioning(true)
+    setProvisionError(null)
+    const ownsSelection = () => mountedRef.current && pendingAnnualClaimRef.current === pending
+    try {
+      await cancelUnclaimedAnnualSelection({
+        fetcher: fetch, billingApiUrl: BILLING_API_URL,
+        email: recoveredSignupEmail, requestId: annualOfferRequestId,
+        checkoutIntentToken: pending.activation.checkoutIntentToken, emailOwnershipToken,
+      })
+      if (!ownsSelection()) return
+      // Only this exact reservation is released. Never reset pendingSignup,
+      // credentials, session attestation, or a payment recovery capability.
+      setPendingAnnualClaim(null)
+      setSelectionCancellation(null)
+      setPlanView('cards')
+    } catch (error) {
+      if (!ownsSelection()) return
+      if (error instanceof BillingResponseError && error.billingStatus === 409
+        && error.billingProblemType === 'https://api.silentsuite.io/errors/authority-in-progress') {
+        claimAttemptedRef.current = true
+        setSelectionCancellation('refused')
+        setProvisionError('Setup or payment has already started. Your selection was not cancelled. Continue or recover the existing setup; do not start another payment.')
+      } else if (error instanceof BillingResponseError && error.billingStatus === 400) {
+        setSelectionCancellation('verify')
+        setProvisionError('Cancellation could not be verified. Your selection is retained. Verify ownership again using the same signup request, then retry.')
+      } else {
+        setSelectionCancellation('unknown')
+        setProvisionError('Cancellation is not confirmed. Your selection is retained. Retry cancellation to check this exact selection before choosing again.')
+      }
+    } finally {
+      operationRef.current = false
+      if (mountedRef.current) setProvisioning(false)
+    }
+  }, [annualOfferRequestId, clientSecret, cryptoPaymentSession, emailOwnershipToken, pendingAnnualClaim, recoveredSignupEmail])
+
+  const handleVerifySelectionOwnership = useCallback(async () => {
+    if (operationRef.current || !annualOfferRequestId || !recoveredSignupEmail) return
+    operationRef.current = true
+    setProvisioning(true)
+    try {
+      saveEmailProofContext({ email: recoveredSignupEmail, requestId: annualOfferRequestId,
+        wantsProductUpdates, rememberDevice, returnTo, expiresAt: Date.now() + 15 * 60_000 })
+      await requestSignupEmailOwnership({ fetcher: fetch, billingApiUrl: BILLING_API_URL,
+        email: recoveredSignupEmail, requestId: annualOfferRequestId })
+      if (mountedRef.current) setProvisionError('Check your email for a verification link for this same signup. Your selection has not been cleared or replaced.')
+    } catch {
+      if (mountedRef.current) setProvisionError('A verification email could not be confirmed. Your selection is retained; retry verification.')
+    } finally {
+      operationRef.current = false
+      if (mountedRef.current) setProvisioning(false)
+    }
+  }, [annualOfferRequestId, recoveredSignupEmail, rememberDevice, returnTo, wantsProductUpdates])
+
   const createAndFinalizePaidAccount = useCallback(async (password?: string) => {
     const data = formDataRef.current
     if (!data?.email) throw new Error('Please enter your account details again.')
@@ -1966,10 +2031,34 @@ export default function SignupPage() {
       <ProgressStepper currentStep={provisioning && step === 'plan' && claimAttemptedRef.current ? 'paidAccount' : step} steps={activeSteps} />
       <div className="mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1">
         {navigation.notice && <p role="status" className="mb-4 text-sm text-[rgb(var(--muted))]">Finish or recover your current setup before changing account details. Your password has not been saved.</p>}
-        {step === 'plan' && planView !== 'confirm' && pendingAnnualClaim && <Button variant="outline" disabled={provisioning} className="mb-4 w-full" onClick={() => { setProvisionError(null); setPlanView('confirm') }}>Return to current selection</Button>}
+        {step === 'plan' && pendingAnnualClaim && !claimAttemptedRef.current && !clientSecret && !cryptoPaymentSession && !selectionCancellation && (
+          <Button variant="outline" className="mb-4 w-full" disabled={provisioning} onClick={() => {
+            if (operationRef.current) return
+            setProvisionError(null)
+            setSelectionCancellation('confirm')
+          }}>Cancel this selection and choose again</Button>
+        )}
+        {step === 'plan' && selectionCancellation && <section className="space-y-4" aria-label="Cancel selection">
+          <h2 className="text-xl font-semibold">Cancel this selection?</h2>
+          <p>This releases only your trial or payment selection. It does not cancel a payment or subscription, delete an account, or start another trial. You will choose again and review new terms before continuing.</p>
+          {provisionError && <p role="alert">{provisionError}</p>}
+          {selectionCancellation !== 'refused' && <Button disabled={provisioning} onClick={handleCancelSelection}>
+            {provisioning ? 'Checking selection...' : selectionCancellation === 'confirm' ? 'Confirm cancellation' : 'Retry cancellation'}
+          </Button>}
+          {selectionCancellation === 'confirm' && <Button variant="outline" disabled={provisioning} onClick={() => {
+            if (!operationRef.current) setSelectionCancellation(null)
+          }}>Keep current selection</Button>}
+          {selectionCancellation === 'verify' && <Button variant="outline" disabled={provisioning} onClick={handleVerifySelectionOwnership}>Verify ownership again</Button>}
+          {selectionCancellation === 'refused' && <>
+            <Button onClick={() => { setSelectionCancellation(null); setPlanView('confirm') }}>Continue current selection</Button>
+            <Link href="/signup/pending-payment" className="block underline">Recover existing payment</Link>
+          </>}
+        </section>}
+        {step === 'plan' && !selectionCancellation && planView !== 'confirm' && pendingAnnualClaim && <Button variant="outline" disabled={provisioning} className="mb-4 w-full" onClick={() => { setProvisionError(null); setPlanView('confirm') }}>Return to current selection</Button>}
         {step === 'plan' && (clientSecret || cryptoPaymentSession) && planView !== 'payment' && planView !== 'crypto' && <div className="mb-4 space-y-2">
           <Button variant="outline" disabled={provisioning} onClick={() => setPlanView(clientSecret ? 'payment' : 'crypto')}>Resume pending payment</Button>
-          <Link href="/signup/pending-payment" className="block text-sm underline">Recover or cancel pending payment</Link>
+          <Link href="/signup/pending-payment" className="block text-sm underline">Recover pending payment</Link>
+          {cryptoPaymentSession && <p className="text-sm">A live Bitcoin invoice must expire before another payment can be started. Returning here does not cancel it.</p>}
         </div>}
         {step === 'account' && (
           <>
@@ -2025,7 +2114,7 @@ export default function SignupPage() {
         {step === 'admin' && (
           <StepAdminInfo serverUrl={serverUrl.trim()} onNext={handleAdminInfoComplete} />
         )}
-        {step === 'plan' && (
+        {step === 'plan' && !selectionCancellation && (
           annualOffer ? <StepChoosePlan
             key={`${annualOffer.requestId}:${annualOffer.offer.offerToken}`}
             annualOffer={annualOffer}

@@ -1,5 +1,5 @@
-import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent, signedAuthorityFixture } from '@/src/__tests__/fixtures/annual-authority'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BillingResponseError } from '@/app/lib/billing-v2'
 import SignupPage from '../page'
@@ -131,13 +131,13 @@ describe('email-link seven-day no-card continuation', () => {
     } finally { clock.mockRestore() }
   })
 
-  async function openConfirmation(provider: 'none' | 'stripe') {
+  async function openConfirmation(provider: 'none' | 'stripe' | 'btcpay', checkoutToken = signedCheckoutIntent) {
     localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({
       [requestId]: { email: 'expiry@example.test', requestId, wantsProductUpdates: false, rememberDevice: false, returnTo: null, expiresAt: Date.now() + 60_000 },
     }))
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith('/consume')) return new Response(JSON.stringify({ contractVersion: 2, emailOwnershipToken: ownershipToken, expiresAt: '2099-01-01T00:00:00Z' }))
-      if (String(input).endsWith('/activate')) return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2099-01-01T00:00:00Z', disclosure: provider === 'none' ? noCardDisclosure : { ...noCardDisclosure, kind: 'card_trial', firstChargeAmountMinor: 3600, renewalAmountMinor: 3600, firstChargeAt: noCardDisclosure.trialEndsAt, cancelBy: noCardDisclosure.trialEndsAt, autoRenew: true, refundWindowDays: 30, periodEndRule: 'first_charge_plus_1_utc_calendar_year', renewalAt: '2099-09-10T12:00:00Z', entitlementEndsAt: '2099-09-10T12:00:00Z' } }))
+      if (String(input).endsWith('/activate')) return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: checkoutToken, expiresAt: '2099-01-01T00:00:00Z', disclosure: provider === 'none' ? noCardDisclosure : provider === 'btcpay' ? { ...noCardDisclosure, kind: 'prepaid', firstChargeAmountMinor: 3600, trialEndsAt: null, prepaid: true, refundWindowDays: 30, periodEndRule: 'confirmation_plus_1_utc_calendar_year', entitlementEndsAt: null } : { ...noCardDisclosure, kind: 'card_trial', firstChargeAmountMinor: 3600, renewalAmountMinor: 3600, firstChargeAt: noCardDisclosure.trialEndsAt, cancelBy: noCardDisclosure.trialEndsAt, autoRenew: true, refundWindowDays: 30, periodEndRule: 'first_charge_plus_1_utc_calendar_year', renewalAt: '2099-09-10T12:00:00Z', entitlementEndsAt: '2099-09-10T12:00:00Z' } }))
       return new Response(JSON.stringify(offer))
     }))
     window.history.replaceState({}, '', `/signup?token=link-token&request_id=${requestId}`)
@@ -150,8 +150,184 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(await screen.findByRole('button', { name: provider === 'none' ? /7 day free trial/i : /30-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     if (provider === 'stripe') fireEvent.click(await screen.findByRole('button', { name: /continue to card payment/i }))
+    if (provider === 'btcpay') fireEvent.click(await screen.findByRole('button', { name: /^pay .* with bitcoin for/i }))
     return screen.findByRole('button', { name: /create account and start free trial|confirm annual terms and continue/i })
   }
+
+  it.each(['none', 'stripe', 'btcpay'] as const)('explicitly cancels %s review with single-flight response-loss retry and fresh consent', async (provider) => {
+    await openConfirmation(provider)
+    const previousFetch = vi.mocked(fetch).getMockImplementation()!
+    const successorToken = signedAuthorityFixture('checkout-intent', {}, { jti: '885a9c19-3e5e-4462-b4c1-1c32fc7ac612' })
+    let release: ((response: Response) => void) | undefined
+    let cancels = 0
+    const payloads: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/cancel')) {
+        payloads.push(JSON.parse(String(init?.body)))
+        cancels++
+        if (cancels === 1) throw new Error('response lost')
+        return new Promise<Response>((resolve) => { release = resolve })
+      }
+      if (String(input).endsWith('/activate')) {
+        expect(JSON.parse(String(init?.body)).requestId).toBe(requestId)
+        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: successorToken,
+          expiresAt: '2099-01-01T00:00:00Z', disclosure: noCardDisclosure }))
+      }
+      return previousFetch(input, init)
+    }))
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+    expect(cancels).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this selection and choose again' }))
+    expect(cancels).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm cancellation' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cancellation is not confirmed')
+    expect(screen.queryByRole('button', { name: 'Return to current selection' })).not.toBeInTheDocument()
+    const retry = screen.getByRole('button', { name: 'Retry cancellation' })
+    fireEvent.click(retry)
+    fireEvent.click(retry)
+    expect(cancels).toBe(2)
+    expect(payloads[0]).toEqual(payloads[1])
+    expect(screen.queryByRole('button', { name: /^back$/i })).not.toBeInTheDocument()
+    await act(async () => { window.dispatchEvent(new PopStateEvent('popstate', { state: { silentsuiteSignup: { version: 1, journey: 'other', phase: 'review', step: 'verifiedAccount', view: 'cards' } } })) })
+    expect(screen.getByRole('heading', { name: 'Cancel this selection?' })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+    await act(async () => { release!(new Response(JSON.stringify({ contractVersion: 2, requestId,
+      checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released' }))) })
+    expect(screen.queryByRole('button', { name: 'Return to current selection' })).not.toBeInTheDocument()
+    expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
+    expect(authState.provisionAnnualNoCard).not.toHaveBeenCalled()
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
+    await screen.findByRole('button', { name: /create account and start free trial/i })
+    expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
+    expect(authState.prepareSignupDraft).toHaveBeenCalledTimes(1)
+    const consent = screen.getByRole('button', { name: /create account and start free trial/i })
+    fireEvent.click(consent)
+    await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(successorToken))
+    expect(authState.createEtebaseAccount).toHaveBeenCalledWith('expiry@example.test', 'ValidPass1', undefined)
+  })
+
+  it('ignores an independently delayed cancellation response from an unmounted predecessor', async () => {
+    await openConfirmation('none')
+    let deliverOldResponse!: (response: Response) => void
+    const oldFetch = vi.fn(() => new Promise<Response>((resolve) => { deliverOldResponse = resolve }))
+    vi.stubGlobal('fetch', oldFetch)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this selection and choose again' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm cancellation' }))
+    expect(oldFetch).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Checking selection...' })).toBeDisabled()
+    cleanup()
+
+    // A separate mounted continuation has acquired a successor. The old request
+    // is still unresolved, not a second resolve() on an already-settled promise.
+    const successorToken = signedAuthorityFixture('checkout-intent', {}, { jti: '885a9c19-3e5e-4462-b4c1-1c32fc7ac612' })
+    await openConfirmation('none', successorToken)
+    await act(async () => { deliverOldResponse(new Response(JSON.stringify({ contractVersion: 2, requestId,
+      checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released' }))) })
+    expect(screen.getByRole('button', { name: /create account and start free trial/i })).toBeEnabled()
+    expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /create account and start free trial/i }))
+    await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledExactlyOnceWith(successorToken))
+  })
+
+  it('continues cancellation with renewed same-request proof through a mocked email-link remount', async () => {
+    await openConfirmation('none')
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!
+    const renewedProof = signedAuthorityFixture('email-ownership', {}, { jti: '885a9c19-3e5e-4462-b4c1-1c32fc7ac612' })
+    let proofRenewed = false
+    const cancellationPayloads: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/cancel')) {
+        const payload = JSON.parse(String(init?.body))
+        cancellationPayloads.push(payload)
+        if (payload.emailOwnershipToken !== renewedProof) return new Response(JSON.stringify({
+          type: 'https://api.silentsuite.io/errors/invalid-request',
+        }), { status: 400 })
+        return new Response(JSON.stringify({ contractVersion: 2, requestId,
+          checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released' }))
+      }
+      if (String(input).endsWith('/request')) {
+        expect(JSON.parse(String(init?.body)).requestId).toBe(requestId)
+        return new Response('{}', { status: 202 })
+      }
+      if (String(input).endsWith('/consume') && proofRenewed) return new Response(JSON.stringify({
+        contractVersion: 2, emailOwnershipToken: renewedProof, expiresAt: '2099-01-01T00:00:00Z',
+      }))
+      if (String(input).endsWith('/activate') && proofRenewed) {
+        expect(JSON.parse(String(init?.body)).emailOwnershipToken).toBe(renewedProof)
+        expect(JSON.parse(String(init?.body)).requestId).toBe(requestId)
+      }
+      return originalFetch(input, init)
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this selection and choose again' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm cancellation' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Verify ownership again' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('same signup'))
+    const saved = JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!)
+    expect(Object.keys(saved)).toEqual([requestId])
+    expect(saved[requestId]).not.toHaveProperty('password')
+    expect(saved[requestId]).not.toHaveProperty('checkoutIntentToken')
+    // Model following a NEW link; no real email delivery or server release is
+    // exercised. No in-memory password or reservation is persisted across mounts.
+    cleanup()
+    proofRenewed = true
+    window.history.replaceState({}, '', `/signup?token=renewed-link-fixture&request_id=${requestId}`)
+    render(<SignupPage />)
+    await screen.findByRole('heading', { name: 'Choose your password' })
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'ValidPass1' } })
+    const next = screen.getByRole('button', { name: /continue to trial options/i })
+    await waitFor(() => expect(next).toBeEnabled())
+    fireEvent.click(next)
+    fireEvent.click(await screen.findByRole('button', { name: /7 day free trial/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
+    await screen.findByRole('button', { name: /create account and start free trial/i })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this selection and choose again' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm cancellation' }))
+    await screen.findByRole('button', { name: /7 day free trial/i })
+    expect(cancellationPayloads).toHaveLength(2)
+    expect(cancellationPayloads[1]).toEqual({ ...cancellationPayloads[0], emailOwnershipToken: renewedProof })
+    expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
+    expect(authState.provisionAnnualNoCard).not.toHaveBeenCalled()
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+  })
+
+  it.each([400, 409, 503, 'wrong-receipt'] as const)('retains the exact selection on cancellation %s without account/password reset', async (failure) => {
+    await openConfirmation('none')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(failure === 'wrong-receipt'
+      ? { contractVersion: 2, requestId, checkoutIntentJti: requestId, state: 'released' }
+      : { type: `https://api.silentsuite.io/errors/${failure === 409 ? 'authority-in-progress' : failure === 400 ? 'invalid-request' : 'recovery-unavailable'}` }), { status: typeof failure === 'number' ? failure : 200 })))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this selection and choose again' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm cancellation' }))
+    await screen.findByRole('alert')
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+    expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
+    expect(authState.prepareSignupDraft).toHaveBeenCalledTimes(1)
+    expect(authState.provisionAnnualNoCard).not.toHaveBeenCalled()
+    if (failure === 409) {
+      fireEvent.click(screen.getByRole('button', { name: 'Continue current selection' }))
+      expect(screen.getByRole('button', { name: /create account and start free trial/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Cancel this selection and choose again' })).not.toBeInTheDocument()
+    } else if (failure === 400) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 202 })))
+      fireEvent.click(screen.getByRole('button', { name: 'Verify ownership again' }))
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('same signup'))
+      expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)).requestId).toBe(requestId)
+      expect(screen.getByRole('button', { name: 'Retry cancellation' })).toBeInTheDocument()
+    }
+  })
+
+  it.each(['none', 'stripe'] as const)('never exposes reservation cancellation after uncertain %s account/payment creation', async (provider) => {
+    const confirm = await openConfirmation(provider)
+    authState.provisionAnnualNoCard.mockRejectedValue(new Error('Unknown outcome'))
+    authState.startAnnualSignupPayment.mockRejectedValue(new Error('Unknown outcome'))
+    fireEvent.click(confirm)
+    await screen.findByRole('alert')
+    expect(screen.queryByRole('button', { name: 'Cancel this selection and choose again' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+    expect(screen.queryByRole('button', { name: 'Cancel this selection and choose again' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+  })
 
   it.each(['none', 'stripe'] as const)('renews expired unattempted %s confirmation before any mutation and requires consent again', async (provider) => {
     const confirm = await openConfirmation(provider)
