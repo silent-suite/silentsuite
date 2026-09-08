@@ -1,3 +1,4 @@
+import { checkoutIntentToken } from '@/src/__tests__/fixtures/annual-authority'
 import React from 'react'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -85,7 +86,7 @@ const annualOffer = {
 
 const activation = {
   contractVersion: 2,
-  checkoutIntentToken: 'A'.repeat(43),
+  checkoutIntentToken,
   expiresAt: '2026-08-10T12:05:00Z',
   disclosure: {
     kind: 'charge_now', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: 3600,

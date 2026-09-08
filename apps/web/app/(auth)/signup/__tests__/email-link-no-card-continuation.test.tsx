@@ -1,3 +1,4 @@
+import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SignupPage from '../page'
@@ -9,7 +10,7 @@ vi.hoisted(() => {
 })
 
 const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'
-const ownershipToken = 'A'.repeat(43)
+const ownershipToken = signedEmailProof
 const offer = {
   contractVersion: 2,
   requestId,
@@ -177,7 +178,7 @@ describe('email-link seven-day no-card continuation', () => {
       }
       if (url.endsWith('/auth/offers/v2')) return new Response(JSON.stringify(offer))
       if (url.endsWith('/auth/offers/v2/activate')) {
-        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: ownershipToken, expiresAt: '2026-08-11T12:05:00Z', disclosure: noCardDisclosure }))
+        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-11T12:05:00Z', disclosure: noCardDisclosure }))
       }
       return new Response('{}', { status: 404 })
     }))
@@ -199,7 +200,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     fireEvent.click(await screen.findByRole('button', { name: /confirm annual terms and continue/i }))
 
-    await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(ownershipToken))
+    await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
     expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'ValidPass1', undefined)
     expect(window.location.search).toContain('return_to=silentsuite')
     expect(fetch).toHaveBeenCalledTimes(3)
@@ -220,7 +221,7 @@ describe('email-link seven-day no-card continuation', () => {
       }
       if (url.endsWith('/auth/offers/v2')) return new Response(JSON.stringify(offer))
       if (url.endsWith('/auth/offers/v2/activate')) {
-        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: ownershipToken, expiresAt: '2026-08-11T12:05:00Z', disclosure: noCardDisclosure }))
+        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-11T12:05:00Z', disclosure: noCardDisclosure }))
       }
       return new Response('{}', { status: 404 })
     }))
@@ -239,7 +240,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     fireEvent.click(await screen.findByRole('button', { name: /confirm annual terms and continue/i }))
 
-    await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(ownershipToken))
+    await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
     expect(authState.createEtebaseAccount).toHaveBeenCalledWith('newtab@example.test', 'ValidPass1', undefined)
     // The consumed continuation must not outlive the funnel it authorized.
     expect(localStorage.getItem('silentsuite-signup-email-proof')).toBeNull()
@@ -328,7 +329,7 @@ describe('email-link seven-day no-card continuation', () => {
       if (url.endsWith('/auth/offers/v2')) return new Response(JSON.stringify(standardOffer))
       if (url.endsWith('/auth/offers/v2/activate')) {
         return new Response(JSON.stringify({
-          contractVersion: 2, checkoutIntentToken: ownershipToken, expiresAt: '2026-08-11T12:05:00Z',
+          contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-11T12:05:00Z',
           disclosure: { ...standardDisclosure, kind: 'card_trial', firstChargeAmountMinor: 4800, renewalAmountMinor: 4800, trialEndsAt: '2026-09-10T12:00:00Z', firstChargeAt: '2026-09-10T12:00:00Z', cancelBy: '2026-09-10T12:00:00Z', autoRenew: true, refundWindowDays: 30, periodEndRule: 'first_charge_plus_1_utc_calendar_year', renewalAt: '2027-09-10T12:00:00Z', entitlementEndsAt: '2027-09-10T12:00:00Z' },
         }))
       }
@@ -372,7 +373,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(screen.getAllByText('2027-09-10 12:00 UTC')).toHaveLength(2)
     fireEvent.click(screen.getByRole('button', { name: /confirm annual terms and continue/i }))
     await waitFor(() => expect(authState.startAnnualSignupPayment).toHaveBeenCalledWith(
-      ownershipToken,
+      signedCheckoutIntent,
       'stripe',
       'http://localhost:3000/signup',
     ))
@@ -418,7 +419,7 @@ describe('email-link seven-day no-card continuation', () => {
             detail: 'The selected annual checkout is unavailable.',
           }), { status: 409 })
         }
-        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: ownershipToken, expiresAt: '2026-08-11T12:05:00Z', disclosure: { ...noCardDisclosure, annualAmountMinor: 4800, monthlyEquivalentMinor: 400 } }))
+        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-11T12:05:00Z', disclosure: { ...noCardDisclosure, annualAmountMinor: 4800, monthlyEquivalentMinor: 400 } }))
       }
       return new Response('{}', { status: 404 })
     }))
@@ -446,7 +447,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     fireEvent.click(await screen.findByRole('button', { name: /confirm annual terms and continue/i }))
-    await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(ownershipToken))
+    await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
     expect(authState.createEtebaseAccount).toHaveBeenCalledWith('renew@example.test', 'ValidPass1', undefined)
   })
 

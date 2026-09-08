@@ -1,3 +1,4 @@
+import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import { describe, expect, it, vi } from 'vitest'
 import { BillingResponseError, activateAnnualCheckout, activateAuthenticatedAnnualCheckout, buildSameOriginReturnUrl, cancelAnonymousPaymentSessionRecovery, consumeSignupEmailOwnership, fetchAnonymousAnnualOffer, fetchAuthenticatedAnnualOffer, getAnonymousPaymentSessionRecovery, isRenewableAnnualOfferError, reconcileAnonymousPaymentSessionRecovery, requestSignupEmailOwnership, startAuthenticatedAnnualPayment, startSignupAnnualPayment, type BillingV2Fetch } from '../billing-v2'
 
@@ -18,7 +19,7 @@ describe('billing v2 public authority client', () => {
 
   it('rejects relative payment return URLs before fetch', async () => {
     const fetcher = vi.fn<BillingV2Fetch>()
-    await expect(startAuthenticatedAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: token, expectedAuthorityId: requestId, returnUrl: '/settings/subscription' })).rejects.toThrow('absolute HTTP')
+    await expect(startAuthenticatedAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: signedCheckoutIntent, expectedAuthorityId: requestId, returnUrl: '/settings/subscription' })).rejects.toThrow('absolute HTTP')
     expect(fetcher).not.toHaveBeenCalled()
   })
 
@@ -26,35 +27,35 @@ describe('billing v2 public authority client', () => {
     const fetcher = vi.fn<BillingV2Fetch>().mockResolvedValue(new Response(JSON.stringify(offer), { status: 200 }))
     const returned = await fetchAnonymousAnnualOffer({ fetcher, billingApiUrl: 'https://billing.example.test', email: 'Customer@example.test', requestId })
     expect(returned).toEqual(offer)
-    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: token, expiresAt: '2026-08-10T12:05:00Z', disclosure: prepaidDisclosure }), { status: 200 }))
-    await activateAnnualCheckout({ fetcher, billingApiUrl: 'https://billing.example.test', offer: returned, email: 'Customer@example.test', emailOwnershipToken: token, trialPath: 'immediate', provider: 'btcpay', behavior: 'prepaid_bitcoin' })
-    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({ contractVersion: 2, offerToken: 'signed-offer', requestId, email: 'Customer@example.test', emailOwnershipToken: token, trialPath: 'immediate', provider: 'btcpay', behavior: 'prepaid_bitcoin' })
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-10T12:05:00Z', disclosure: prepaidDisclosure }), { status: 200 }))
+    await activateAnnualCheckout({ fetcher, billingApiUrl: 'https://billing.example.test', offer: returned, email: 'Customer@example.test', emailOwnershipToken: signedEmailProof, trialPath: 'immediate', provider: 'btcpay', behavior: 'prepaid_bitcoin' })
+    expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toEqual({ contractVersion: 2, offerToken: 'signed-offer', requestId, email: 'Customer@example.test', emailOwnershipToken: signedEmailProof, trialPath: 'immediate', provider: 'btcpay', behavior: 'prepaid_bitcoin' })
   })
 
   it('fails closed for malformed offers, terms and provider identifiers', async () => {
     const fetcher = vi.fn<BillingV2Fetch>().mockResolvedValue(new Response(JSON.stringify({ ...offer, offer: { ...offer.offer, planId: 'early_monthly', annualAmountMinor: 3240, monthlyEquivalentMinor: 270 } }), { status: 200 }))
     await expect(fetchAnonymousAnnualOffer({ fetcher, billingApiUrl: 'https://billing.example.test', email: 'customer@example.test', requestId })).rejects.toThrow('annual offer')
-    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: token, expiresAt: '2026-08-10T12:05:00Z', disclosure: { kind: 'prepaid' } }), { status: 200 }))
-    await expect(activateAnnualCheckout({ fetcher, billingApiUrl: 'https://billing.example.test', offer, email: 'customer@example.test', emailOwnershipToken: token, trialPath: 'immediate', provider: 'btcpay', behavior: 'prepaid_bitcoin' })).rejects.toThrow('terms')
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-10T12:05:00Z', disclosure: { kind: 'prepaid' } }), { status: 200 }))
+    await expect(activateAnnualCheckout({ fetcher, billingApiUrl: 'https://billing.example.test', offer, email: 'customer@example.test', emailOwnershipToken: signedEmailProof, trialPath: 'immediate', provider: 'btcpay', behavior: 'prepaid_bitcoin' })).rejects.toThrow('terms')
   })
 
   it('uses the canonical closed email, signup and authenticated payment paths without a caller-selected provider', async () => {
     const fetcher = vi.fn<BillingV2Fetch>()
       .mockResolvedValueOnce(new Response('{}', { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, emailOwnershipToken: token, expiresAt: '2026-08-10T12:05:00Z' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, emailOwnershipToken: signedEmailProof, expiresAt: '2026-08-10T12:05:00Z' })))
       .mockResolvedValueOnce(new Response(JSON.stringify(offer)))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: token, expiresAt: '2026-08-10T12:05:00Z', disclosure: chargeNowDisclosure })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-10T12:05:00Z', disclosure: chargeNowDisclosure })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, kind: 'stripe', clientSecret: 'pi_secret', paymentSessionToken: token })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, kind: 'stripe', authorityId: requestKey, clientSecret: 'pi_secret' })))
     await requestSignupEmailOwnership({ fetcher, billingApiUrl: 'https://billing.example.test', email: 'customer@example.test', requestId })
     await consumeSignupEmailOwnership({ fetcher, billingApiUrl: 'https://billing.example.test', email: 'customer@example.test', token })
     const authenticatedOffer = await fetchAuthenticatedAnnualOffer({ fetcher, billingApiUrl: 'https://billing.example.test' })
     await activateAuthenticatedAnnualCheckout({ fetcher, billingApiUrl: 'https://billing.example.test', offer: authenticatedOffer, trialPath: 'immediate', provider: 'stripe', behavior: 'immediate_card' })
-    await startSignupAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: token, email: 'customer@example.test', requestKey, recoverySecret: token, wantsProductUpdates: true, rememberDevice: false, returnUrl: 'https://app.example.test/signup/success' })
-    await startAuthenticatedAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: token, expectedAuthorityId: requestKey, returnUrl: 'https://app.example.test/settings/subscription' })
+    await startSignupAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: signedCheckoutIntent, email: 'customer@example.test', requestKey, recoverySecret: token, wantsProductUpdates: true, rememberDevice: false, returnUrl: 'https://app.example.test/signup/success' })
+    await startAuthenticatedAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: signedCheckoutIntent, expectedAuthorityId: requestKey, returnUrl: 'https://app.example.test/settings/subscription' })
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['https://billing.example.test/auth/signup-email-verifications/v2', 'https://billing.example.test/auth/signup-email-verifications/v2/consume', 'https://billing.example.test/subscription/offers/v2', 'https://billing.example.test/subscription/offers/v2/activate', 'https://billing.example.test/auth/signup/payment-session/v2', 'https://billing.example.test/subscription/payment-flows/v2'])
-    expect(JSON.parse(String(fetcher.mock.calls[4][1]?.body))).toEqual({ contractVersion: 2, checkoutIntentToken: token, email: 'customer@example.test', requestKey, recoverySecret: token, wantsProductUpdates: true, rememberDevice: false, returnUrl: 'https://app.example.test/signup/success' })
-    expect(JSON.parse(String(fetcher.mock.calls[5][1]?.body))).toEqual({ contractVersion: 2, checkoutIntentToken: token, returnUrl: 'https://app.example.test/settings/subscription' })
+    expect(JSON.parse(String(fetcher.mock.calls[4][1]?.body))).toEqual({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, email: 'customer@example.test', requestKey, recoverySecret: token, wantsProductUpdates: true, rememberDevice: false, returnUrl: 'https://app.example.test/signup/success' })
+    expect(JSON.parse(String(fetcher.mock.calls[5][1]?.body))).toEqual({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, returnUrl: 'https://app.example.test/settings/subscription' })
   })
 
   it.each([
@@ -69,7 +70,7 @@ describe('billing v2 public authority client', () => {
     await expect(startAuthenticatedAnnualPayment({
       fetcher,
       billingApiUrl: 'https://billing.example.test',
-      checkoutIntentToken: token,
+      checkoutIntentToken: signedCheckoutIntent,
       expectedAuthorityId: requestId,
       returnUrl: 'https://app.example.test/settings/subscription',
     })).rejects.toThrow('another annual authority')
@@ -118,7 +119,7 @@ describe('billing v2 public authority client', () => {
     await expect(startSignupAnnualPayment({
       fetcher,
       billingApiUrl: 'https://billing.example.test',
-      checkoutIntentToken: token,
+      checkoutIntentToken: signedCheckoutIntent,
       email: 'customer@example.test',
       requestKey,
       recoverySecret: token,
@@ -140,7 +141,7 @@ describe('billing v2 public authority client', () => {
     await expect(startSignupAnnualPayment({
       fetcher,
       billingApiUrl: 'https://billing.example.test',
-      checkoutIntentToken: token,
+      checkoutIntentToken: signedCheckoutIntent,
       email: 'customer@example.test',
       requestKey,
       recoverySecret: token,

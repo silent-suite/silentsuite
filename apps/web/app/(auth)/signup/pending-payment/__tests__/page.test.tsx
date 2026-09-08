@@ -1,3 +1,4 @@
+import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -278,7 +279,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
 })
 
 describe('PendingPaymentPage Bitcoin restart across the email navigation', () => {
-  const emailOwnershipToken = 'C'.repeat(43)
+  const emailOwnershipToken = signedEmailProof
   const rotatedRequestKey = '7c3f1a52-9a1e-4a1e-8b7c-2f4d6e8a0b12'
   const checkoutUrl = 'https://btcpay.silentsuite.io/i/restarted-invoice'
   const prepaidDisclosure = {
@@ -357,7 +358,7 @@ describe('PendingPaymentPage Bitcoin restart across the email navigation', () =>
       }
       if (url.endsWith('/auth/offers/v2')) return new Response(JSON.stringify({ ...restartOffer, requestId: persisted.requestId }), { status: 200 })
       if (url.endsWith('/auth/offers/v2/activate')) {
-        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: emailOwnershipToken, expiresAt: '2026-08-11T12:05:00Z', disclosure: prepaidDisclosure }), { status: 200 })
+        return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-11T12:05:00Z', disclosure: prepaidDisclosure }), { status: 200 })
       }
       return new Response('{}', { status: 404 })
     }))
@@ -379,7 +380,7 @@ describe('PendingPaymentPage Bitcoin restart across the email navigation', () =>
     expect(screen.getByText(/does not renew automatically/i)).toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: /agree.*create bitcoin invoice/i }))
-    await waitFor(() => expect(authState.startAnnualSignupPayment).toHaveBeenCalledWith(emailOwnershipToken, 'btcpay', 'https://app.silentsuite.io/signup/pending-payment'))
+    await waitFor(() => expect(authState.startAnnualSignupPayment).toHaveBeenCalledWith(signedCheckoutIntent, 'btcpay', 'https://app.silentsuite.io/signup/pending-payment'))
     expect(screen.queryByText(/return to signup to verify your email/i)).not.toBeInTheDocument()
     expect(window.location.href).toBe(checkoutUrl)
     expect(sessionStorage.getItem('silentsuite-pending-crypto-invoice')).toBe('invoice-restarted')
@@ -419,7 +420,7 @@ describe('PendingPaymentPage Bitcoin restart across the email navigation', () =>
       const url = String(input)
       if (url.endsWith('/auth/signup-email-verifications/v2/consume')) return new Response(JSON.stringify({ contractVersion: 2, emailOwnershipToken, expiresAt: '2026-08-11T12:05:00Z' }))
       if (url.endsWith('/auth/offers/v2')) return new Response(JSON.stringify({ ...restartOffer, requestId }))
-      if (url.endsWith('/auth/offers/v2/activate')) return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: emailOwnershipToken, expiresAt: '2026-08-11T12:05:00Z', disclosure: prepaidDisclosure }))
+      if (url.endsWith('/auth/offers/v2/activate')) return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-11T12:05:00Z', disclosure: prepaidDisclosure }))
       return new Response('{}', { status: 404 })
     }))
 
