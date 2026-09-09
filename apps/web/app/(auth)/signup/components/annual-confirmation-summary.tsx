@@ -14,6 +14,7 @@ export function AnnualConfirmationSummary({ disclosure }: { disclosure: AnnualDi
           : disclosure.kind === 'charge_now' ? `Pay ${money(disclosure.firstChargeAmountMinor)} now by card. This is an annual purchase, not a free trial.`
             : `Pay ${money(disclosure.firstChargeAmountMinor)} in Bitcoin. This is a prepaid annual purchase, not a free trial. No automatic renewal.`}
     </p>
+    {disclosure.kind === 'prepaid' && disclosure.refundWindowDays === 30 && <p className="text-sm">Request a full refund within 30 days of your first payment—no questions asked.</p>}
     <dl className="space-y-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 text-sm">
       {!noCard && <>
         <div className="flex justify-between gap-4"><dt>{cardTrial ? 'After your trial' : 'Payment'}</dt><dd>{money(disclosure.firstChargeAmountMinor)}{cardTrial ? '/year' : ''}</dd></div>

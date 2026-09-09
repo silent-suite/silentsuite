@@ -1,5 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '../use-auth-store'
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
+import { createElement } from 'react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import SignupPage from '../../(auth)/signup/page'
+import { checkoutIntentToken, emailOwnershipToken } from '@/src/__tests__/fixtures/annual-authority'
+
+vi.mock('@/app/lib/config', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/app/lib/config')>(),
+  BILLING_API_URL: 'https://billing.test',
+}))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('next/link', () => ({ default: ({ children }: { children: React.ReactNode }) => children }))
 
 const mocks = vi.hoisted(() => ({
   session: null as string | null,
@@ -29,14 +42,165 @@ const json = (value: unknown, status = 200) => new Response(JSON.stringify(value
 beforeEach(() => {
   useAuthStore.setState({ pendingSignup: null, user: null, isAuthenticated: false, isLoading: false, error: null, subscriptionStatus: null })
   localStorage.clear(); sessionStorage.clear()
+  window.history.replaceState({}, '', '/signup')
+  vi.stubGlobal('scrollTo', vi.fn())
   mocks.session = null
-  mocks.signup.mockClear(); mocks.login.mockReset(); mocks.proof.mockReset()
+  mocks.signup.mockClear(); mocks.login.mockReset().mockResolvedValue({ savedSession: 'encrypted-session', authToken: 'unused' }); mocks.proof.mockReset()
   let sequence = 0
   mocks.proof.mockImplementation(async () => `fresh-proof-${++sequence}`)
   vi.stubGlobal('fetch', vi.fn())
 })
 
 describe('signup Billing session boundary', () => {
+  it('wires encrypted creation, failed proof, release and fresh consent without exposing replacement credentials', async () => {
+    const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'
+    const disclosure = {
+      kind: 'no_auto_charge', annualAmountMinor: 3600, firstChargeAmountMinor: 0, renewalAmountMinor: null,
+      monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: '2099-01-08T00:00:00Z', firstChargeAt: null,
+      cancelBy: null, cancelByInclusive: false, autoRenew: false, prepaid: false, refundWindowDays: null,
+      bonusDays: 0, periodEndRule: 'activation_plus_trial', renewalAt: null, entitlementEndsAt: '2099-01-08T00:00:00Z',
+    }
+    localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({ [requestId]: {
+      email, requestId, wantsProductUpdates: false, rememberDevice: false, returnTo: null, expiresAt: Date.now() + 60_000,
+    } }))
+    window.history.replaceState({}, '', `/signup?token=fixture&request_id=${requestId}`)
+    let provisions = 0
+    mocks.proof.mockRejectedValueOnce(new Error('Identity proof unavailable'))
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const pathname = new URL(String(url)).pathname
+      if (pathname.endsWith('/consume')) return json({ contractVersion: 2, emailOwnershipToken, expiresAt: '2099-01-01T00:00:00Z' })
+      if (pathname.endsWith('/activate')) return json({ contractVersion: 2, checkoutIntentToken, expiresAt: '2099-01-01T00:00:00Z', disclosure })
+      if (pathname.endsWith('/cancel')) return json({ contractVersion: 2, requestId, checkoutIntentJti: 'a2c4f872-01b7-4176-8325-522486b20cae', state: 'released' })
+      if (pathname.endsWith('/offers/v2')) return json({ contractVersion: 2, requestId, offer: {
+        planId: 'early_annual', customerClass: 'early', billingInterval: 'annual', annualAmountMinor: 3600,
+        monthlyEquivalentMinor: 300, currency: 'EUR', providers: ['stripe', 'btcpay'], offerRevision: 1,
+        offerToken: 'fixture-offer', expiresAt: '2099-01-01T00:00:00Z',
+      } })
+      if (pathname === '/auth/provision/v2') { provisions++; return json(completed, 201) }
+      return json(profile)
+    })
+    render(createElement(SignupPage))
+    const passwordInput = await screen.findByLabelText(/^password$/i)
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      '/auth/signup-email-verifications/v2/consume', '/auth/offers/v2',
+    ])
+    expect(useAuthStore.getState().pendingSignup?.email).toBe(email)
+    expect(mocks.signup).not.toHaveBeenCalled()
+    expect(mocks.proof).not.toHaveBeenCalled()
+    fireEvent.change(passwordInput, { target: { value: 'OriginalPass1' } })
+    const continueToOptions = screen.getByRole('button', { name: /continue to trial options/i })
+    // react-hook-form's async resolver must publish validity before a real click.
+    await waitFor(() => expect(continueToOptions).toBeEnabled())
+    fireEvent.click(continueToOptions)
+    const choose = async () => {
+      fireEvent.click(await screen.findByRole('button', { name: /7 day free trial/i }))
+      fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
+      fireEvent.click(await screen.findByRole('button', { name: /create account and start free trial/i }))
+    }
+    await choose()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Identity proof unavailable')
+    expect(useAuthStore.getState().pendingSignup?.etebaseAccountReady).toBe(true)
+    expect(provisions).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+    await screen.findByRole('heading', { name: /choose your plan/i })
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/original password remains unchanged/i)).toBeVisible()
+    await choose()
+    await waitFor(() => expect(useAuthStore.getState().pendingSignup?.billingSessionUserId).toBe(id))
+    expect(mocks.signup).toHaveBeenCalledTimes(1)
+    expect(mocks.login).toHaveBeenCalledWith(email, 'OriginalPass1', undefined)
+    expect(provisions).toBe(1)
+  })
+
+
+  // Opt-in because the public checkout does not include the private Billing app.
+  // Run with BILLING_CONTRACT_ROOT=<installed billing app> to exercise its actual routes.
+  it.skipIf(!process.env.BILLING_CONTRACT_ROOT).each([
+    ['none', '2026-09-09T12:00:00.000Z'], ['none', '2026-09-09T12:00:00.123Z'],
+    ['stripe', '2026-09-09T12:00:00.000Z'], ['stripe', '2026-09-09T12:00:00.123Z'],
+  ])('admits actual Fastify %s Date serialization %s through the store and protected session', async (provider, createdAt) => {
+    useAuthStore.getState().prepareSignupDraft(email)
+    await useAuthStore.getState().createEtebaseAccount(email, 'test-password')
+    const paid = provider === 'stripe'
+    if (paid) useAuthStore.setState({ pendingSignup: { ...useAuthStore.getState().pendingSignup!, billingContractVersion: 2, paymentSessionToken: capability } })
+    mocks.proof.mockResolvedValue(capability)
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      const pathname = new URL(String(url)).pathname
+      if (pathname === '/auth/provision/v2' || pathname === '/auth/signup/finalize-payment/v2') {
+        const wire = JSON.parse(execFileSync(process.execPath, [path.resolve('scripts/test-billing-serializer.cjs'), process.env.BILLING_CONTRACT_ROOT!], {
+          encoding: 'utf8', input: JSON.stringify({ url: pathname, payload: JSON.parse(String(init?.body)), createdAt,
+            completed: { ...completed, ...(paid ? { provisioningStatus: 'active', planId: 'early_annual', isAdmin: false } : {}) } }),
+        }))
+        expect(wire.status).toBe(201)
+        expect(JSON.parse(wire.body).createdAt).toBe(createdAt)
+        return new Response(wire.body, { status: wire.status })
+      }
+      return json({ ...profile, ...(paid ? { provisioningStatus: 'active' } : {}) })
+    })
+    await (paid ? useAuthStore.getState().finalizePaidSignup() : useAuthStore.getState().provisionAnnualNoCard(capability))
+    expect(useAuthStore.getState().pendingSignup?.billingSessionUserId).toBe(id)
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)).toContain('/auth/session')
+  })
+
+
+  it.each(['none', 'stripe'] as const)('accepts serialized fractional createdAt on %s completion', async (provider) => {
+    useAuthStore.getState().prepareSignupDraft(email)
+    await useAuthStore.getState().createEtebaseAccount(email, 'test-password')
+    if (provider === 'stripe') useAuthStore.setState({ pendingSignup: { ...useAuthStore.getState().pendingSignup!, billingContractVersion: 2, paymentSessionToken: capability } })
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const path = new URL(String(url)).pathname
+      const paid = provider === 'stripe'
+      if (path === '/auth/provision/v2' || path === '/auth/signup/finalize-payment/v2') return json({ ...completed, createdAt: new Date('2026-09-09T12:00:00.123Z').toISOString(), ...(paid ? { provisioningStatus: 'active', planId: 'early_annual', isAdmin: false } : {}) }, 201)
+      return json({ ...profile, ...(paid ? { provisioningStatus: 'active' } : {}) })
+    })
+    await (provider === 'none' ? useAuthStore.getState().provisionAnnualNoCard(capability) : useAuthStore.getState().finalizePaidSignup())
+    expect(useAuthStore.getState().pendingSignup?.billingSessionUserId).toBe(id)
+  })
+
+  it.each(['2026-02-30T00:00:00Z', '2026-09-09T24:00:00Z', '2026-09-09T00:00:00+00:00', '2026-09-09T00:00:00.12Z'])('rejects noncanonical or impossible createdAt %s', async (createdAt) => {
+    useAuthStore.getState().prepareSignupDraft(email)
+    await useAuthStore.getState().createEtebaseAccount(email, 'test-password')
+    vi.mocked(fetch).mockResolvedValue(json({ ...completed, createdAt }, 201))
+    await expect(useAuthStore.getState().provisionAnnualNoCard(capability)).rejects.toThrow('Billing did not confirm')
+    expect(useAuthStore.getState().pendingSignup?.provisionedUser).toBeUndefined()
+  })
+
+  it('reuses the exact retained encrypted account before Billing completes', async () => {
+    useAuthStore.getState().prepareSignupDraft(email)
+    await useAuthStore.getState().createEtebaseAccount(email, 'test-password')
+    await useAuthStore.getState().createEtebaseAccount(email, 'test-password')
+    expect(mocks.signup).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['session', 'email', 'server'] as const)('does not reuse a retained account with a different %s binding', async (change) => {
+    useAuthStore.getState().prepareSignupDraft(email)
+    await useAuthStore.getState().createEtebaseAccount(email, 'test-password')
+    if (change === 'session') mocks.session = 'unrelated-session'
+    const retry = useAuthStore.getState().createEtebaseAccount(change === 'email' ? 'other@example.test' : email, 'test-password', change === 'server' ? 'https://other.test' : undefined)
+    if (change === 'session') {
+      await retry
+      expect(mocks.login).toHaveBeenCalledWith(email, 'test-password', undefined)
+    } else await expect(retry).rejects.toThrow('already set up')
+    expect(mocks.signup).toHaveBeenCalledTimes(1)
+  })
+
+  it('never changes identity for a completed Billing receipt', async () => {
+    useAuthStore.setState({ pendingSignup: { email, provisionedUser: { id, planId: null, isAdmin: false } } })
+    await expect(useAuthStore.getState().createEtebaseAccount('other@example.test', 'test-password')).rejects.toThrow('already set up')
+    expect(mocks.signup).not.toHaveBeenCalled()
+    expect(mocks.login).not.toHaveBeenCalled()
+    expect(useAuthStore.getState().pendingSignup?.provisionedUser?.id).toBe(id)
+  })
+
+  it('uses login, never signup, when a Billing receipt outlives the encrypted session', async () => {
+    useAuthStore.setState({ pendingSignup: { email, provisionedUser: { id, planId: null, isAdmin: false } } })
+    mocks.login.mockResolvedValue({ savedSession: 'recovered', authToken: 'unused' })
+    await useAuthStore.getState().createEtebaseAccount(email, 'test-password')
+    expect(mocks.signup).not.toHaveBeenCalled()
+    expect(mocks.login).toHaveBeenCalledTimes(1)
+  })
+
   it.each([undefined, false, true])('sends explicit no-card and paid opt-in for %s', async (consent) => {
     useAuthStore.getState().prepareSignupDraft(email, consent)
     await useAuthStore.getState().createEtebaseAccount(email, 'test-password')
