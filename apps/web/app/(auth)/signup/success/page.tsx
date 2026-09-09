@@ -9,6 +9,7 @@ import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
 import { CheckoutReturnAnalytics } from '../commercial-funnel-analytics'
+import { SignupRecoveryWarning } from '../components/signup-recovery-warning'
 
 // ---------------------------------------------------------------------------
 // Inner component that reads searchParams (must be inside <Suspense>)
@@ -65,7 +66,7 @@ function SignupSuccessInner() {
     }
 
     if (redirectStatus === 'succeeded' || redirectStatus === 'processing') {
-      const restored = restoreSignupStateFromRedirect()
+      const restored = restoreSignupStateFromRedirect({ retainForRecovery: true })
       if (restored?.pendingSignup.provisionedUser) {
         setRestoredEmail(restored.pendingSignup.email)
         void recoverSession()
@@ -273,15 +274,19 @@ function SignupSuccessInner() {
 
 export default function SignupSuccessPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="max-w-md mx-auto flex flex-col items-center justify-center py-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
-          <p className="mt-4 text-sm text-[rgb(var(--muted))]">Loading...</p>
-        </div>
-      }
-    >
-      <SignupSuccessInner />
-    </Suspense>
+    <>
+      {/* Keep recovery disclosure mounted across every status and Suspense fallback. */}
+      <div className="max-w-md mx-auto"><SignupRecoveryWarning /></div>
+      <Suspense
+        fallback={
+          <div className="max-w-md mx-auto flex flex-col items-center justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
+            <p className="mt-4 text-sm text-[rgb(var(--muted))]">Loading...</p>
+          </div>
+        }
+      >
+        <SignupSuccessInner />
+      </Suspense>
+    </>
   )
 }

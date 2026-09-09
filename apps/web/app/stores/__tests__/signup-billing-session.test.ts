@@ -3,7 +3,7 @@ import { useAuthStore } from '../use-auth-store'
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { createElement } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import SignupPage from '../../(auth)/signup/page'
 import { checkoutIntentToken, emailOwnershipToken } from '@/src/__tests__/fixtures/annual-authority'
 
@@ -52,6 +52,74 @@ beforeEach(() => {
 })
 
 describe('signup Billing session boundary', () => {
+  it('keeps a visible memory-only warning through real finalization and failed session exchange, then clears it only after a durable receipt write', async () => {
+    const key = 'silentsuite-signup-redirect-state'
+    mocks.session = 'encrypted-session'
+    useAuthStore.setState({ pendingSignup: { email, paymentSessionToken: capability, paymentSessionRequestKey: id, billingContractVersion: 2 } })
+    useAuthStore.getState().saveSignupStateForRedirect('annual')
+    const issued = JSON.parse(sessionStorage.getItem(key)!).savedAt
+    window.history.replaceState({}, '', '/signup?recovery=payment')
+    vi.mocked(fetch).mockResolvedValue(json({ contractVersion: 2, state: 'closed', flow: null }))
+    render(createElement(SignupPage))
+    await screen.findByRole('heading', { name: 'Payment release not confirmed' })
+
+    const originalWrite = Storage.prototype.setItem
+    let failReceiptWrite = false
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (failReceiptWrite && key === 'silentsuite-signup-redirect-state') throw new Error('quota')
+      return originalWrite.call(this, key, value)
+    })
+    const paths: string[] = []
+    let exchangeStartedWithVisibleWarning = false
+    let failExchange!: () => void
+    const exchange = new Promise<Response>((resolve) => { failExchange = () => resolve(json({}, 503)) })
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const pathname = new URL(String(url)).pathname
+      if (pathname.endsWith('/payment-session/v2/current')) return json({ contractVersion: 2, state: 'closed', flow: null })
+      paths.push(pathname)
+      if (pathname.endsWith('/finalize-payment/v2')) {
+        failReceiptWrite = true
+        return json({ ...completed, provisioningStatus: 'active', planId: 'early_annual', isAdmin: false })
+      }
+      expect(useAuthStore.getState().signupRecoveryDurability).toBe('memory-only')
+      expect(screen.getByText(/Stay in this tab/)).toBeVisible()
+      expect(useAuthStore.getState().pendingSignup?.provisionedUser?.id).toBe(id)
+      expect(sessionStorage.getItem(key)).toBeNull()
+      exchangeStartedWithVisibleWarning = true
+      return exchange
+    })
+    try {
+      const finalization = useAuthStore.getState().finalizePaidSignup().catch((error) => error as Error)
+      const warning = await screen.findByText(/Stay in this tab/)
+      expect(warning).toBeVisible()
+      expect(warning).toHaveTextContent(/Refreshing, closing, or leaving this tab can lose this continuation/)
+      expect(warning).toHaveTextContent(/do not start another signup or payment/)
+      await screen.findByRole('heading', { name: 'Finish signing in' })
+      expect(screen.queryByRole('link', { name: 'Back to signup' })).not.toBeInTheDocument()
+      await act(async () => { failExchange(); expect(await finalization).toBeInstanceOf(Error) })
+      expect(warning).toBeVisible()
+      expect(exchangeStartedWithVisibleWarning).toBe(true)
+      expect(paths).toEqual(['/auth/signup/finalize-payment/v2', '/auth/token-exchange'])
+      expect(mocks.signup).not.toHaveBeenCalled()
+      expect(useAuthStore.getState().pendingSignup?.billingSessionUserId).toBeUndefined()
+      act(() => useAuthStore.getState().clearError())
+      expect(warning).toBeVisible()
+
+      // The original receipt's lifetime and identity survive a successful retry.
+      failReceiptWrite = false
+      act(() => useAuthStore.getState().saveSignupStateForRedirect('annual'))
+      expect(useAuthStore.getState().signupRecoveryDurability).toBe('persisted')
+      expect(screen.queryByText(/Stay in this tab/)).not.toBeInTheDocument()
+      expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({ savedAt: issued, pendingSignup: {
+        email, paymentSessionToken: capability, paymentSessionRequestKey: id, billingContractVersion: 2, provisionedUser: { id },
+      } })
+      expect(sessionStorage.getItem(key)).not.toMatch(/billingSessionUserId|encrypted-session|signupRecoveryDurability/)
+      expect(useAuthStore.getState().pendingSignup?.billingSessionUserId).toBeUndefined()
+      expect(() => useAuthStore.getState().completeSignup()).toThrow(/session/i)
+      expect(useAuthStore.getState().signupRecoveryDurability).toBe('persisted')
+    } finally { write.mockRestore() }
+  })
+
   it('wires encrypted creation, failed proof, release and fresh consent without exposing replacement credentials', async () => {
     const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'
     const disclosure = {
@@ -331,4 +399,33 @@ describe('signup Billing session boundary', () => {
     expect(useAuthStore.getState().user?.id).toBe(id)
     expect(useAuthStore.getState().isAuthenticated).toBe(true)
   })
+})
+
+
+it('checkpoints actual paid finalization before failed exchange and only recovers session after document reset', async () => {
+  const key = 'silentsuite-signup-redirect-state'
+  mocks.session = 'encrypted-session'
+  useAuthStore.setState({ pendingSignup: { email, paymentSessionToken: capability, paymentSessionRequestKey: id, billingContractVersion: 2 } })
+  useAuthStore.getState().saveSignupStateForRedirect('annual')
+  const issued = JSON.parse(sessionStorage.getItem(key)!).savedAt
+  const paths: string[] = []
+  vi.mocked(fetch).mockImplementation(async (url) => {
+    const pathname = new URL(String(url)).pathname
+    paths.push(pathname)
+    if (pathname.endsWith('/finalize-payment/v2')) return json({ ...completed, provisioningStatus: 'active', planId: 'early_annual', isAdmin: false })
+    // The receipt must already be durable before this later fallible exchange.
+    expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({ savedAt: issued, pendingSignup: { provisionedUser: { id }, provisionedSubscriptionStatus: 'active' } })
+    return json({}, 503)
+  })
+  await expect(useAuthStore.getState().finalizePaidSignup()).rejects.toThrow(/session/i)
+  useAuthStore.setState({ pendingSignup: null })
+  expect(useAuthStore.getState().restoreSignupStateFromRedirect({ retainForRecovery: true })?.pendingSignup.provisionedUser?.id).toBe(id)
+  expect(useAuthStore.getState().pendingSignup).not.toHaveProperty('billingSessionUserId')
+  vi.mocked(fetch).mockImplementation(async (url) => { paths.push(new URL(String(url)).pathname); return json({ ...profile, provisioningStatus: 'active' }) })
+  await useAuthStore.getState().recoverCompletedSignupSession()
+  useAuthStore.getState().completeSignup()
+  expect(paths.filter((p) => p.endsWith('/finalize-payment/v2'))).toHaveLength(1)
+  expect(paths.every((p) => ['/auth/signup/finalize-payment/v2', '/auth/token-exchange', '/auth/session'].includes(p))).toBe(true)
+  expect(mocks.signup).not.toHaveBeenCalled()
+  expect(sessionStorage.getItem(key)).toBeNull()
 })

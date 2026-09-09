@@ -91,6 +91,8 @@ describe('completed historical redirect session recovery', () => {
     fireEvent.change(screen.getByLabelText('Existing account password'), { target: { value: 'correct-password' } })
     fireEvent.click(screen.getByRole('button', { name: 'Retry sign in' }))
     await screen.findByText('Complete vault')
+    expect(sessionStorage.getItem(key)).not.toBeNull() // Retained until vault completion, not merely session recovery.
+    fireEvent.click(screen.getByText('Complete vault'))
     expect(mocks.login).toHaveBeenLastCalledWith(email, 'correct-password', undefined)
     expect(mocks.signup).not.toHaveBeenCalled()
     expect(vi.mocked(fetch).mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/auth/token-exchange', '/auth/session'])

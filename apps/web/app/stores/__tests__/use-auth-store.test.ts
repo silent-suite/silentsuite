@@ -347,6 +347,28 @@ describe('useAuthStore', () => {
       })
     })
 
+    it.each(['stripe', 'btcpay'] as const)('retains exact %s recovery before dispatch and after a lost start response', async (provider) => {
+      useAuthStore.getState().prepareSignupDraft('lost@example.com')
+      vi.mocked(fetch).mockImplementation(async (_input, init) => {
+        const body = JSON.parse(String(init?.body))
+        expect(useAuthStore.getState().pendingSignup).toMatchObject({
+          billingContractVersion: 2, paymentMethod: provider,
+          paymentSessionToken: body.recoverySecret, paymentSessionRequestKey: body.requestKey,
+        })
+        throw new TypeError('Network response lost')
+      })
+      await expect(startAnnualPayment(provider)).rejects.toThrow('Network response lost')
+      const first = paidSignupRequestBody()
+      expect(useAuthStore.getState().pendingSignup).toMatchObject({
+        email: 'lost@example.com', paymentMethod: provider,
+        paymentSessionToken: first.recoverySecret, paymentSessionRequestKey: first.requestKey,
+      })
+      expect(useAuthStore.getState().pendingSignup?.provisionedUser).toBeUndefined()
+      await expect(startAnnualPayment(provider)).rejects.toThrow('Network response lost')
+      expect(paidSignupRequestBody(1)).toEqual(first)
+      expect(persistedPaidSignupIdentities()).toHaveLength(1)
+    })
+
     it('rejects cross-origin annual return URLs before contacting Billing', async () => {
       useAuthStore.getState().prepareSignupDraft('origin@example.com')
       await expect(useAuthStore.getState().startAnnualSignupPayment(
@@ -1682,6 +1704,26 @@ describe('useAuthStore', () => {
       email: 'user@example.com',
       paymentSessionToken: 'payment-session-token',
     }
+
+    it('retains a recovery snapshot across document resets without persisting credentials or renewing its TTL', () => {
+      useAuthStore.setState({ pendingSignup: {
+        email: 'customer@example.test', password: 'NeverPersistThis1',
+        serverUrl: 'https://server.silentsuite.io', billingContractVersion: 2,
+        paymentMethod: 'btcpay', paymentSessionToken: 'A'.repeat(43),
+        paymentSessionRequestKey: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f',
+      } })
+      useAuthStore.getState().saveSignupStateForRedirect('annual')
+      const original = sessionStorage.getItem('silentsuite-signup-redirect-state')!
+      expect(original).not.toContain('NeverPersistThis1')
+      for (let document = 0; document < 3; document += 1) {
+        useAuthStore.setState({ pendingSignup: null })
+        const restored = useAuthStore.getState().restoreSignupStateFromRedirect({ retainForRecovery: true })
+        expect(restored?.pendingSignup).toMatchObject({ email: 'customer@example.test', paymentSessionToken: 'A'.repeat(43), paymentSessionRequestKey: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f' })
+        expect(restored?.pendingSignup).not.toHaveProperty('password')
+        expect(JSON.parse(sessionStorage.getItem('silentsuite-signup-redirect-state')!)).toEqual(JSON.parse(original))
+        expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      }
+    })
 
     it('saves redirect state to sessionStorage, not localStorage', () => {
       useAuthStore.setState({ pendingSignup: pending })

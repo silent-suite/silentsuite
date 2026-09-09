@@ -23,7 +23,9 @@ import { findCommonEmailDomainTypo, normalizeEmailForComparison, signupEmailSche
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { AnnualConfirmationSummary } from './components/annual-confirmation-summary'
+import PendingPaymentPage from './pending-payment/page'
 import { useSignupNavigation } from './use-signup-navigation'
+import { SignupRecoveryWarning } from './components/signup-recovery-warning'
 import { StepCreateVault } from './components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
@@ -154,6 +156,7 @@ type CryptoPaymentMethod = {
 }
 
 type CryptoPaymentSession = {
+  disclosure: AnnualCheckoutActivation['disclosure']
   invoiceId: string
   lookupToken: string
   checkoutUrl: string
@@ -510,13 +513,19 @@ function CryptoPaymentPanel({
   annualOffer,
   session,
   onBack,
-  onInvoiceInactive,
+  disclosure,
+  onConfirm,
+  provisioning = false,
+  provisionError,
   onPaymentComplete,
 }: {
   annualOffer: AnnualOfferResponse['offer']
-  session: CryptoPaymentSession
+  session: CryptoPaymentSession | null
+  disclosure: AnnualCheckoutActivation['disclosure']
+  onConfirm?: () => void
+  provisioning?: boolean
+  provisionError?: string | null
   onBack: () => void
-  onInvoiceInactive: () => void
   onPaymentComplete: () => void
 }) {
   const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
@@ -530,6 +539,7 @@ function CryptoPaymentPanel({
     let cancelled = false
 
     async function loadPaymentMethods() {
+      if (!session) return
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}/payment-methods`, {
           credentials: 'include',
@@ -555,13 +565,14 @@ function CryptoPaymentPanel({
 
     loadPaymentMethods()
     return () => { cancelled = true }
-  }, [session.invoiceId, session.lookupToken])
+  }, [session])
 
   useEffect(() => {
     let cancelled = false
     let timer: number | undefined
 
     async function poll() {
+      if (!session) return
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}`, {
           credentials: 'include',
@@ -593,7 +604,7 @@ function CryptoPaymentPanel({
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [onPaymentComplete, session.invoiceId, session.lookupToken])
+  }, [onPaymentComplete, session])
 
   const selectedMethod = paymentMethods.find((method) => method.id === selectedMethodId) ?? paymentMethods[0]
   const qrValue = selectedMethod?.qrValue ?? selectedMethod?.paymentLink ?? selectedMethod?.address ?? ''
@@ -623,7 +634,13 @@ function CryptoPaymentPanel({
         </p>
       </div>
 
-      {status === 'settled' ? (
+      <AnnualConfirmationSummary disclosure={disclosure} />
+      {provisionError && <p role="alert">{provisionError}</p>}
+      {!session ? (
+        <Button type="button" className="w-full" disabled={provisioning} onClick={onConfirm}>
+          {provisioning ? 'Starting…' : 'Confirm annual terms and continue'}
+        </Button>
+      ) : status === 'settled' ? (
         <div className="space-y-4 text-center">
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
             Payment settled. Your {annualOfferPlanLabel(annualOffer)} annual access ({annualOffer.planId}) is active. Taking you to vault setup...
@@ -692,10 +709,11 @@ function CryptoPaymentPanel({
 
       <button
         onClick={handleBack}
+        disabled={provisioning}
         className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Back to payment methods
+        {session ? 'Back to payment methods' : 'Back'}
       </button>
     </div>
   )
@@ -783,6 +801,10 @@ function StepChoosePlan({
   // --- Payment sub-step ---
   if (planView === 'confirm' && pendingAnnualClaim) {
     const disclosure = pendingAnnualClaim.activation.disclosure
+    if (pendingAnnualClaim.provider === 'btcpay') return <CryptoPaymentPanel
+      annualOffer={annualOfferDetails} session={null} disclosure={disclosure}
+      onConfirm={onConfirmAnnualClaim} provisioning={provisioning} provisionError={provisionError}
+      onBack={onBack} onPaymentComplete={onPaymentComplete} />
     return (
       <div ref={contentRef} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
         <div className="space-y-2 text-center">
@@ -814,7 +836,7 @@ function StepChoosePlan({
         annualOffer={annualOfferDetails}
         session={cryptoPaymentSession}
         onBack={onBack}
-        onInvoiceInactive={onClearCryptoPaymentSession}
+        disclosure={cryptoPaymentSession.disclosure}
         onPaymentComplete={onPaymentComplete}
       />
     )
@@ -1003,10 +1025,6 @@ function StepChoosePlan({
           {annualOfferPlanLabel(annualOfferDetails)} pricing
         </p>
       </div>
-
-      <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-center text-sm text-[rgb(var(--muted))]">
-        Annual access only. Exact price and renewal terms are confirmed by Billing before checkout.
-      </p>
 
       <div className="space-y-3 sm:space-y-4">
         {/* Card A: 7 Day Free Trial — no card */}
@@ -1257,8 +1275,7 @@ const STEPS_HOSTED = [
   { key: 'account' as const, label: 'Email', number: 1 },
   { key: 'verifiedAccount' as const, label: 'Password', number: 2 },
   { key: 'plan' as const, label: 'Plan', number: 3 },
-  { key: 'paidAccount' as const, label: 'Account setup', number: 4 },
-  { key: 'vault' as const, label: 'Finish', number: 5 },
+  { key: 'vault' as const, label: 'Finish', number: 4 },
 ]
 
 const STEPS_SELFHOST = [
@@ -1363,6 +1380,16 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
 // ---------------------------------------------------------------------------
 
 export default function SignupPage() {
+  const [paymentRecovery, setPaymentRecovery] = useState<boolean | null>(null)
+  useEffect(() => {
+    // This nonsecret route hint selects a recovery screen, never payment authority.
+    setPaymentRecovery(new URLSearchParams(window.location.search).get('recovery') === 'payment')
+  }, [])
+  if (paymentRecovery === null) return null
+  return paymentRecovery ? <PendingPaymentPage /> : <SignupJourney />
+}
+
+function SignupJourney() {
   const router = useRouter()
   const prepareSignupDraft = useAuthStore((s) => s.prepareSignupDraft)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
@@ -1887,6 +1914,7 @@ export default function SignupPage() {
         sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
       }
       setCryptoPaymentSession({
+        disclosure: pending.activation.disclosure,
         invoiceId: result.cryptoInvoiceId,
         lookupToken: result.cryptoInvoiceLookupToken,
         checkoutUrl: checkoutUrl.toString(),
@@ -1899,7 +1927,10 @@ export default function SignupPage() {
         await renewAnnualOfferAndRequireConsent(annualOffer)
         return
       }
-      const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
+      const message = err instanceof BillingResponseError
+        && err.billingProblemType === 'https://api.silentsuite.io/errors/provider-unavailable'
+        ? 'Payment creation is not yet confirmed. Retry this same payment, or recover its status. Do not start another payment.'
+        : err instanceof Error ? err.message : 'Failed to start crypto checkout'
       setProvisionError(message)
     } finally {
       operationRef.current = false
@@ -1960,6 +1991,12 @@ export default function SignupPage() {
     if (operationRef.current) return
     if (useAuthStore.getState().pendingSignup?.provisionedUser) {
       setProvisionError('Your account is already created. Continue setup to establish your session; no new trial or payment is needed.')
+      return
+    }
+    if (pendingAnnualClaim && pendingAnnualClaim.provider !== 'none' && claimAttemptedRef.current) {
+      setSelectionCancellation(null)
+      setPlanView('confirm')
+      setProvisionError('Payment creation is not yet confirmed. Retry this same payment below, or recover its status. Back cannot confirm cancellation.')
       return
     }
     if (pendingAnnualClaim) { void handleCancelSelection(); return }
@@ -2061,6 +2098,7 @@ export default function SignupPage() {
 
   if (navigation.recovery) {
     return <div className="mx-auto w-full max-w-md space-y-4">
+      <SignupRecoveryWarning />
       <h1 className="text-xl font-semibold">Continue your signup safely</h1>
       <p role="status">Your password and verification proof were not saved. Refreshing has not repeated account creation or started another payment.</p>
       {navigation.recovery === 'review' ? <>
@@ -2076,9 +2114,10 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch justify-center md:flex-row md:items-start">
-      <ProgressStepper currentStep={provisioning && step === 'plan' && claimAttemptedRef.current ? 'paidAccount' : step} steps={activeSteps} />
-      <div className="mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1">
+    <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch justify-center md:flex-row">
+      <ProgressStepper currentStep={!usingSelfHostedServer && (step === 'paidAccount' || (provisioning && step === 'plan' && claimAttemptedRef.current)) ? 'vault' : step} steps={activeSteps} />
+      <div className={`mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1 ${step === 'account' && (awaitingEmailProof || sendingEmail) ? 'flex flex-col justify-center' : ''}`}>
+        <SignupRecoveryWarning />
         {navigation.notice && <p role="status" className="mb-4 text-sm text-[rgb(var(--muted))]">Finish or recover your current setup before changing account details. Your password has not been saved.</p>}
         {step === 'plan' && selectionCancellation && <section className="space-y-4" aria-label="Cancel selection">
           <h2 className="text-xl font-semibold">Cancel this selection?</h2>
@@ -2097,9 +2136,9 @@ export default function SignupPage() {
           </>}
         </section>}
         {step === 'plan' && !selectionCancellation && planView !== 'confirm' && pendingAnnualClaim && <Button variant="outline" disabled={provisioning} className="mb-4 w-full" onClick={() => { setProvisionError(null); setPlanView('confirm') }}>Return to current selection</Button>}
-        {step === 'plan' && (clientSecret || cryptoPaymentSession) && <div className="mb-4 space-y-2">
-          {provisionError && <p role="alert">{provisionError}</p>}
-          {planView !== 'payment' && planView !== 'crypto' && <Button variant="outline" disabled={provisioning} onClick={() => setPlanView(clientSecret ? 'payment' : 'crypto')}>Resume pending payment</Button>}
+        {step === 'plan' && (clientSecret || cryptoPaymentSession || (pendingAnnualClaim?.provider !== 'none' && claimAttemptedRef.current)) && <div className="mb-4 space-y-2">
+          {provisionError && planView !== 'confirm' && <p role="alert">{provisionError}</p>}
+          {(clientSecret || cryptoPaymentSession) && planView !== 'payment' && planView !== 'crypto' && <Button variant="outline" disabled={provisioning} onClick={() => setPlanView(clientSecret ? 'payment' : 'crypto')}>Resume pending payment</Button>}
           <Link href="/signup/pending-payment" className="block text-sm underline">Recover pending payment</Link>
           {cryptoPaymentSession && <p className="text-sm">Returning here does not cancel your Bitcoin invoice. Recover the existing payment to check its status; another payment cannot be started here.</p>}
         </div>}
@@ -2139,8 +2178,10 @@ export default function SignupPage() {
               rememberDevice={rememberDevice}
               onRememberDeviceChange={setRememberDevice}
             />}
-            {sendingEmail && <><Button variant="outline" onClick={handleEmailBack}>Back</Button><p role="status">Sending verification email...</p></>}
-            {awaitingEmailProof && <><Button variant="outline" onClick={handleEmailBack}>Back</Button><p role="status" className="mt-4 text-center text-sm text-[rgb(var(--muted))]">Check your email and open the verification link in this browser. Then choose your password.</p></>}
+            {(sendingEmail || awaitingEmailProof) && <section aria-label="Email verification" className="flex flex-col items-center justify-center gap-5 py-8 text-center">
+              <p role="status" className="text-sm text-[rgb(var(--muted))]">{sendingEmail ? 'Sending verification email...' : 'Check your email and open the verification link in this browser. Then choose your password.'}</p>
+              <Button variant="outline" onClick={handleEmailBack}>Back</Button>
+            </section>}
           </>
         )}
         {step === 'verifiedAccount' && (
