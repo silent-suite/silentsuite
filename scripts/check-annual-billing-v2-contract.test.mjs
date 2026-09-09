@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path'
 import { checkAnnualBillingV2Contract } from './check-annual-billing-v2-contract.mjs'
 
 const pendingPath = 'apps/web/app/(auth)/signup/pending-payment/page.tsx'
+const signupPath = 'apps/web/app/(auth)/signup/page.tsx'
+const termsPath = 'apps/web/app/(auth)/signup/components/annual-confirmation-summary.tsx'
 const files = [
   'contracts/annual-only-billing-v2.schema.sha256',
   'contracts/annual-only-billing-v2.schema.json',
@@ -13,20 +15,18 @@ const files = [
   'apps/web/app/stores/use-auth-store.ts',
   'apps/web/app/components/payment-choice-panel.tsx',
   'apps/web/app/(auth)/signup/page.tsx',
+  termsPath,
   pendingPath,
   'apps/web/app/lib/annual-offer-presentation.ts',
   'apps/web/app/lib/public-analytics.ts',
 ]
 
-function withPendingMutation(from, to, check) {
+function withSourceMutation(path, mutate, check) {
   const root = mkdtempSync(join(tmpdir(), 'annual-contract-'))
   try {
     for (const file of files) {
       let source = readFileSync(file, 'utf8')
-      if (file === pendingPath) {
-        assert.ok(source.includes(from), 'mutation must change actual source')
-        source = source.replace(from, to)
-      }
+      if (file === path) source = mutate(source)
       mkdirSync(dirname(join(root, file)), { recursive: true })
       writeFileSync(join(root, file), source)
     }
@@ -34,9 +34,36 @@ function withPendingMutation(from, to, check) {
   } finally { rmSync(root, { recursive: true, force: true }) }
 }
 
+function withPendingMutation(from, to, check) {
+  withSourceMutation(pendingPath, (source) => {
+    assert.ok(source.includes(from), 'mutation must change actual source')
+    return source.replace(from, to)
+  }, check)
+}
+
 test('the public annual client, persistence, and authenticated UI stay compatible with the pinned closed v2 wire contract', () => {
   assert.doesNotThrow(() => checkAnnualBillingV2Contract())
 })
+
+for (const field of ['kind', 'firstChargeAmountMinor', 'firstChargeAt', 'autoRenew', 'renewalAmountMinor', 'refundWindowDays']) {
+  test(`rejects signup terms that replace disclosure ${field} with fixed copy`, () => {
+    withSourceMutation(termsPath, (source) => {
+      const from = `disclosure.${field}`
+      assert.ok(source.includes(from))
+      return source.replaceAll(from, 'null') + `\n// ${from}\n`
+    }, (root) => assert.throws(() => checkAnnualBillingV2Contract(root), /Signup terms must derive/))
+  })
+}
+
+for (const disclosure of ['disclosure', 'cardDisclosure']) {
+  test(`rejects removing the rendered ${disclosure} terms even with a source comment`, () => {
+    withSourceMutation(signupPath, (source) => {
+      const from = `<AnnualTermsSummary disclosure={${disclosure}} />`
+      assert.ok(source.includes(from))
+      return source.replaceAll(from, '<span />') + `\n// ${from}\n`
+    }, (root) => assert.throws(() => checkAnnualBillingV2Contract(root), /Signup terms must render/))
+  })
+}
 
 const mutations = [
   ['generic closed releases authority', "setState('unknown')", "useAuthStore.getState().clearPendingSignupPaymentRecovery(recovery); setState('unknown')"],

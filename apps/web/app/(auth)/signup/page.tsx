@@ -1516,6 +1516,7 @@ function SignupJourney() {
 
   const navigation = useSignupNavigation({
     enabled: !usingSelfHostedServer && (!!emailOwnershipToken || awaitingEmailProof || sendingEmail) && step !== 'vault',
+    warnOnLeave: !(awaitingEmailProof && emailConfirmedElsewhere),
     step,
     view: awaitingEmailProof ? 'sent' : sendingEmail ? 'sending' : planView,
     intercept: () => {

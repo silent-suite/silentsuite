@@ -7,8 +7,9 @@ type Recovery = 'review' | 'setup' | 'payment'
 const KEY = 'silentsuiteSignup'
 
 /** History contains presentation state only, never proof, password or payment capabilities. */
-export function useSignupNavigation({ enabled, step, view, restore, intercept }: {
+export function useSignupNavigation({ enabled, warnOnLeave = true, step, view, restore, intercept }: {
   enabled: boolean
+  warnOnLeave?: boolean
   step: string
   view: string
   intercept?: () => boolean
@@ -63,12 +64,12 @@ export function useSignupNavigation({ enabled, step, view, restore, intercept }:
     }
     const onLeave = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('popstate', onPop)
-    window.addEventListener('beforeunload', onLeave)
+    if (warnOnLeave) window.addEventListener('beforeunload', onLeave)
     return () => {
       window.removeEventListener('popstate', onPop)
       window.removeEventListener('beforeunload', onLeave)
     }
-  }, [enabled, recovery])
+  }, [enabled, recovery, warnOnLeave])
 
   const markMutation = (next: 'setup' | 'payment') => {
     try {

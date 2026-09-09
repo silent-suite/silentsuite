@@ -89,6 +89,12 @@ describe('email-link seven-day no-card continuation', () => {
     await screen.findByText(/Check your email and open/)
     const [currentRequest] = Object.keys(JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!))
     const preparedBeforeMarker = authState.prepareSignupDraft.mock.calls.length
+    const warnsOnLeave = () => {
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    expect(warnsOnLeave()).toBe(true)
     const publish = (id: string, expiresAt = Date.now() + 60_000) => act(() => {
       window.dispatchEvent(new StorageEvent('storage', {
         key: 'silentsuite-signup-email-verified', storageArea: localStorage,
@@ -98,8 +104,10 @@ describe('email-link seven-day no-card continuation', () => {
     publish(requestId)
     publish(currentRequest, Date.now() - 1)
     expect(screen.queryByText(/Email confirmed/)).not.toBeInTheDocument()
+    expect(warnsOnLeave()).toBe(true)
     publish(currentRequest)
     expect(screen.getByText('Email confirmed. Continue in the other tab. This tab is safe to close.')).toBeVisible()
+    expect(warnsOnLeave()).toBe(false)
     expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
     expect(authState.prepareSignupDraft).toHaveBeenCalledTimes(preparedBeforeMarker)
     expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
@@ -113,6 +121,7 @@ describe('email-link seven-day no-card continuation', () => {
     await waitFor(() => expect(again).toBeEnabled())
     fireEvent.click(again)
     await screen.findByText(/Check your email and open/)
+    expect(warnsOnLeave()).toBe(true)
     publish(currentRequest)
     expect(screen.queryByText(/Email confirmed/)).not.toBeInTheDocument()
     const [replacement] = Object.keys(JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!))
