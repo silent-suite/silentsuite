@@ -22,8 +22,10 @@ import { DISPLAY_VERSION } from '@/app/lib/constants'
 import { findCommonEmailDomainTypo, normalizeEmailForComparison, signupEmailSchema } from '@/app/lib/email-recovery'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
-import { AnnualConfirmationSummary } from './components/annual-confirmation-summary'
+import { AnnualConfirmationSummary, annualConfirmationTitle, annualConfirmationAction, annualCardSubmitLabel } from './components/annual-confirmation-summary'
+import PendingPaymentPage from './pending-payment/page'
 import { useSignupNavigation } from './use-signup-navigation'
+import { SignupRecoveryWarning } from './components/signup-recovery-warning'
 import { StepCreateVault } from './components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
@@ -154,6 +156,7 @@ type CryptoPaymentMethod = {
 }
 
 type CryptoPaymentSession = {
+  disclosure: AnnualCheckoutActivation['disclosure']
   invoiceId: string
   lookupToken: string
   checkoutUrl: string
@@ -240,13 +243,13 @@ function PasswordStrength({ password }: { password: string }) {
 
 // ---------------------------------------------------------------------------
 // Price display helper — used inline in the trial subhead, intentionally
-// modest in size so it doesn't dominate the "30-day free trial" headline.
+// modest in size so it doesn't dominate the plan heading.
 // ---------------------------------------------------------------------------
 
 function PriceDisplay({ offer }: { offer: AnnualOfferResponse['offer'] }) {
   return (
     <span className="text-sm text-[rgb(var(--muted))]">
-      Then <span className="font-semibold text-[rgb(var(--foreground))]">{annualOfferAnnualLabel(offer)}</span>, billed annually ({formatAnnualOfferMonthlyEquivalent(offer)}/month). Cancel anytime before day 30, no charge.
+      <span className="font-semibold text-[rgb(var(--foreground))]">{annualOfferAnnualLabel(offer)}</span>, billed annually ({formatAnnualOfferMonthlyEquivalent(offer)}/month).
     </span>
   )
 }
@@ -510,13 +513,19 @@ function CryptoPaymentPanel({
   annualOffer,
   session,
   onBack,
-  onInvoiceInactive,
+  disclosure,
+  onConfirm,
+  provisioning = false,
+  provisionError,
   onPaymentComplete,
 }: {
   annualOffer: AnnualOfferResponse['offer']
-  session: CryptoPaymentSession
+  session: CryptoPaymentSession | null
+  disclosure: AnnualCheckoutActivation['disclosure']
+  onConfirm?: () => void
+  provisioning?: boolean
+  provisionError?: string | null
   onBack: () => void
-  onInvoiceInactive: () => void
   onPaymentComplete: () => void
 }) {
   const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
@@ -530,6 +539,7 @@ function CryptoPaymentPanel({
     let cancelled = false
 
     async function loadPaymentMethods() {
+      if (!session) return
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}/payment-methods`, {
           credentials: 'include',
@@ -555,13 +565,14 @@ function CryptoPaymentPanel({
 
     loadPaymentMethods()
     return () => { cancelled = true }
-  }, [session.invoiceId, session.lookupToken])
+  }, [session])
 
   useEffect(() => {
     let cancelled = false
     let timer: number | undefined
 
     async function poll() {
+      if (!session) return
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}`, {
           credentials: 'include',
@@ -593,11 +604,11 @@ function CryptoPaymentPanel({
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [onPaymentComplete, session.invoiceId, session.lookupToken])
+  }, [onPaymentComplete, session])
 
   const selectedMethod = paymentMethods.find((method) => method.id === selectedMethodId) ?? paymentMethods[0]
   const qrValue = selectedMethod?.qrValue ?? selectedMethod?.paymentLink ?? selectedMethod?.address ?? ''
-  const handleExternalCheckout = () => saveSignupStateForRedirect('annual')
+  const handleExternalCheckout = () => saveSignupStateForRedirect(annualOffer.billingInterval)
 
   async function handleCopyPaymentDetails() {
     try {
@@ -619,14 +630,20 @@ function CryptoPaymentPanel({
       <div className="space-y-2 text-center">
         <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Pay {annualOfferAnnualLabel(annualOffer)} with Bitcoin</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
-          Scan the QR code or copy the payment details to pay {annualOfferRenewalCopy(annualOffer)} for your {annualOfferPlanLabel(annualOffer)} (Plan ID: {annualOffer.planId}). Access unlocks after settlement confirms.
+          Scan the QR code or copy the payment details to pay {annualOfferRenewalCopy(annualOffer)} for your {annualOfferPlanLabel(annualOffer)}. Access unlocks after settlement confirms.
         </p>
       </div>
 
-      {status === 'settled' ? (
+      <AnnualConfirmationSummary disclosure={disclosure} />
+      {provisionError && <p role="alert">{provisionError}</p>}
+      {!session ? (
+        <Button type="button" className="w-full" disabled={provisioning} onClick={onConfirm}>
+          {provisioning ? 'Starting…' : annualConfirmationAction(disclosure)}
+        </Button>
+      ) : status === 'settled' ? (
         <div className="space-y-4 text-center">
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
-            Payment settled. Your {annualOfferPlanLabel(annualOffer)} annual access ({annualOffer.planId}) is active. Taking you to vault setup...
+            Payment confirmed for your {annualOfferPlanLabel(annualOffer)}. Account and vault setup still need to finish.
           </div>
         </div>
       ) : status === 'expired' ? (
@@ -692,10 +709,11 @@ function CryptoPaymentPanel({
 
       <button
         onClick={handleBack}
+        disabled={provisioning}
         className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Back to payment methods
+        {session ? 'Back to payment methods' : 'Back'}
       </button>
     </div>
   )
@@ -710,6 +728,7 @@ function StepChoosePlan({
   planView,
   onBack,
   clientSecret,
+  cardDisclosure,
   provisioning,
   provisionError,
   onClearError,
@@ -727,6 +746,7 @@ function StepChoosePlan({
   planView: PlanView
   onBack: () => void
   clientSecret: string | null
+  cardDisclosure: AnnualCheckoutActivation['disclosure'] | null
   provisioning: boolean
   provisionError: string | null
   onClearError: () => void
@@ -783,15 +803,19 @@ function StepChoosePlan({
   // --- Payment sub-step ---
   if (planView === 'confirm' && pendingAnnualClaim) {
     const disclosure = pendingAnnualClaim.activation.disclosure
+    if (pendingAnnualClaim.provider === 'btcpay') return <CryptoPaymentPanel
+      annualOffer={annualOfferDetails} session={null} disclosure={disclosure}
+      onConfirm={onConfirmAnnualClaim} provisioning={provisioning} provisionError={provisionError}
+      onBack={onBack} onPaymentComplete={onPaymentComplete} />
     return (
       <div ref={contentRef} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300 motion-reduce:animate-none">
         <div className="space-y-2 text-center">
-          <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Confirm annual terms</h2>
+          <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">{annualConfirmationTitle(disclosure)}</h2>
         </div>
         <AnnualConfirmationSummary disclosure={disclosure} />
         {provisionError && <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">{provisionError}</div>}
         <Button type="button" className="w-full" disabled={provisioning} onClick={onConfirmAnnualClaim}>
-          {provisioning ? 'Starting…' : pendingAnnualClaim.provider === 'none' ? 'Create account and start free trial' : 'Confirm annual terms and continue'}
+          {provisioning ? 'Starting…' : annualConfirmationAction(disclosure)}
         </Button>
         <button type="button" disabled={provisioning} onClick={onBack} className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors">
           <ArrowLeft className="h-4 w-4" /> Back
@@ -814,7 +838,7 @@ function StepChoosePlan({
         annualOffer={annualOfferDetails}
         session={cryptoPaymentSession}
         onBack={onBack}
-        onInvoiceInactive={onClearCryptoPaymentSession}
+        disclosure={cryptoPaymentSession.disclosure}
         onPaymentComplete={onPaymentComplete}
       />
     )
@@ -826,7 +850,7 @@ function StepChoosePlan({
         <div className="space-y-2 text-center">
           <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Choose how to pay</h2>
           <p className="text-sm text-[rgb(var(--muted))]">
-            Your 30-day trial starts after the payment method is set up. No charge today for card payments.
+            Choose a payment method to review its price and terms before continuing.
           </p>
         </div>
 
@@ -838,7 +862,7 @@ function StepChoosePlan({
             </div>
             <span className="text-sm text-[rgb(var(--foreground))]">{annualOfferAnnualLabel(annualOfferDetails)}</span>
           </div>
-          <p className="mt-1 text-xs text-[rgb(var(--muted))]">Plan ID: {annualOfferDetails.planId} · {annualOfferRenewalCopy(annualOfferDetails)}</p>
+          <p className="mt-1 text-xs text-[rgb(var(--muted))]">{annualOfferRenewalCopy(annualOfferDetails)}</p>
         </div>
 
         <div className="grid gap-3">
@@ -857,7 +881,7 @@ function StepChoosePlan({
                 <div className="flex-1">
                   <h3 className="font-semibold text-[rgb(var(--foreground))]">Card with Stripe</h3>
                   <p className="mt-1 text-sm text-[rgb(var(--muted))]">
-                    Start the 30-day trial now. Your card is charged {annualOfferAnnualLabel(annualOfferDetails)} after the trial unless you cancel.
+                    Review your card offer, including any free trial and the first charge date, before continuing.
                   </p>
                 </div>
               </div>
@@ -919,7 +943,7 @@ function StepChoosePlan({
         <div className="space-y-2 text-center">
           <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Add your payment method</h2>
           <p className="text-sm text-[rgb(var(--muted))]">
-            Your card will not be charged for 30 days. It renews at {annualOfferAnnualLabel(annualOfferDetails)} unless you cancel before then.
+            Review your selected terms below before confirming with Stripe.
           </p>
         </div>
 
@@ -932,9 +956,7 @@ function StepChoosePlan({
             </div>
             <span className="text-sm text-[rgb(var(--foreground))]">{annualOfferAnnualLabel(annualOfferDetails)}</span>
           </div>
-          <p className="mt-1 text-xs text-[rgb(var(--muted))]">
-            Plan ID: {annualOfferDetails.planId}. Card secures your trial — {annualOfferRenewalCopy(annualOfferDetails)} after day 30 unless you cancel before then.
-          </p>
+          {cardDisclosure && <AnnualConfirmationSummary disclosure={cardDisclosure} />}
           <div className="mt-2 flex items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
             <Lock className="h-3 w-3 text-emerald-500" />
             <span>Secured by Stripe. We never see your card details.</span>
@@ -947,7 +969,7 @@ function StepChoosePlan({
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
             <p className="mt-3 text-sm text-[rgb(var(--muted))]">Preparing payment form...</p>
           </div>
-        ) : clientSecret ? (
+        ) : clientSecret && cardDisclosure ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <CreditCard className="h-4 w-4 text-[rgb(var(--muted))]" />
@@ -956,9 +978,9 @@ function StepChoosePlan({
             <StripePaymentForm
               clientSecret={clientSecret}
               onSuccess={onPaymentComplete}
-              submitLabel={`Start 30-day free trial — then ${annualOfferAnnualLabel(annualOfferDetails)}`}
-              mode="setup"
-              selectedInterval="annual"
+              submitLabel={annualCardSubmitLabel(cardDisclosure)}
+              mode={cardDisclosure.kind === 'card_trial' ? 'setup' : 'payment'}
+              selectedInterval={annualOfferDetails.billingInterval}
             />
             <p className="flex items-center justify-center gap-1.5 text-[10px] text-[rgb(var(--muted))]">
               <Lock className="h-3 w-3 text-emerald-500" />
@@ -1004,10 +1026,6 @@ function StepChoosePlan({
         </p>
       </div>
 
-      <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-center text-sm text-[rgb(var(--muted))]">
-        Annual access only. Exact price and renewal terms are confirmed by Billing before checkout.
-      </p>
-
       <div className="space-y-3 sm:space-y-4">
         {/* Card A: 7 Day Free Trial — no card */}
         <button
@@ -1039,10 +1057,10 @@ function StepChoosePlan({
           </div>
         </button>
 
-        {/* Card B: 30 Day Free Trial — card secures the trial, no charge for 30 days */}
+        {/* Paid options are disclosed after the customer chooses a provider. */}
         <button
           onClick={() => setSelectedTrial('30day')}
-          aria-label={`30-day free trial — then ${annualOfferRenewalCopy(annualOfferDetails)}, cancel anytime before day 30 with no charge`}
+          aria-label={`Annual plan — ${annualOfferRenewalCopy(annualOfferDetails)}`}
           className={`group w-full rounded-xl border-2 p-4 sm:p-6 text-left transition-all ${
             selectedTrial === '30day'
               ? 'border-emerald-500 bg-emerald-500/5'
@@ -1055,7 +1073,7 @@ function StepChoosePlan({
             </div>
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <h3 className="text-xl sm:text-2xl font-bold text-[rgb(var(--foreground))] leading-tight">30-day free trial</h3>
+                <h3 className="text-xl sm:text-2xl font-bold text-[rgb(var(--foreground))] leading-tight">Annual plan</h3>
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
                   Recommended
                 </span>
@@ -1070,11 +1088,11 @@ function StepChoosePlan({
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  Card secures your trial &mdash; no charge until day 30
+                  Review available payment methods
                 </li>
                 <li className="flex items-center gap-2 text-sm text-[rgb(var(--muted))]">
                   <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                  {annualOfferRenewalCopy(annualOfferDetails)} after trial
+                  Review payment and renewal terms before you confirm
                 </li>
               </ul>
             </div>
@@ -1115,7 +1133,7 @@ function StepChoosePlan({
       {/* Trust signals */}
       <div className="flex items-center justify-center gap-1.5 text-xs text-[rgb(var(--muted))]">
         <ShieldCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-        <span className="text-center">Cancel anytime · Your data stays encrypted · Export anytime</span>
+        <span className="text-center">Your data stays encrypted · Export anytime</span>
       </div>
 
       {/* Back button — bottom-left */}
@@ -1257,8 +1275,7 @@ const STEPS_HOSTED = [
   { key: 'account' as const, label: 'Email', number: 1 },
   { key: 'verifiedAccount' as const, label: 'Password', number: 2 },
   { key: 'plan' as const, label: 'Plan', number: 3 },
-  { key: 'paidAccount' as const, label: 'Account setup', number: 4 },
-  { key: 'vault' as const, label: 'Finish', number: 5 },
+  { key: 'vault' as const, label: 'Finish', number: 4 },
 ]
 
 const STEPS_SELFHOST = [
@@ -1363,6 +1380,16 @@ function ProgressStepper({ currentStep, steps }: { currentStep: Step; steps: rea
 // ---------------------------------------------------------------------------
 
 export default function SignupPage() {
+  const [paymentRecovery, setPaymentRecovery] = useState<boolean | null>(null)
+  useEffect(() => {
+    // This nonsecret route hint selects a recovery screen, never payment authority.
+    setPaymentRecovery(new URLSearchParams(window.location.search).get('recovery') === 'payment')
+  }, [])
+  if (paymentRecovery === null) return <p role="status" className="py-12 text-center text-sm text-[rgb(var(--muted))]">Loading signup…</p>
+  return paymentRecovery ? <PendingPaymentPage /> : <SignupJourney />
+}
+
+function SignupJourney() {
   const router = useRouter()
   const prepareSignupDraft = useAuthStore((s) => s.prepareSignupDraft)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
@@ -1379,6 +1406,7 @@ export default function SignupPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [step])
   const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [cardDisclosure, setCardDisclosure] = useState<AnnualCheckoutActivation['disclosure'] | null>(null)
   const [cryptoPaymentSession, setCryptoPaymentSession] = useState<CryptoPaymentSession | null>(null)
   const [provisionError, setProvisionError] = useState<string | null>(null)
   const [provisioning, setProvisioning] = useState(false)
@@ -1593,6 +1621,7 @@ export default function SignupPage() {
 
     prepareSignupDraft(identifier, wantsProductUpdates, rememberDevice)
     setClientSecret(null)
+    setCardDisclosure(null)
     setCryptoPaymentSession(null)
     setProvisionError(null)
     setPlanView('cards')
@@ -1659,6 +1688,7 @@ export default function SignupPage() {
     // Provider choice, card secret, and Bitcoin checkout data are consent
     // derived from the rejected offer, so none may survive a refresh.
     setClientSecret(null)
+    setCardDisclosure(null)
     setCryptoPaymentSession(null)
     setPendingAnnualClaim(null)
     setPlanView('cards')
@@ -1690,7 +1720,7 @@ export default function SignupPage() {
   const handleSelectFree = useCallback(async () => {
     if (operationRef.current) return
     if (clientSecret || cryptoPaymentSession) {
-      setProvisionError('A payment is already pending. Resume it below, or use payment recovery to cancel it before choosing another option.')
+      setProvisionError('A payment is already pending. Resume it below, or recover its status. Contact support for help with cancellation or switching payment methods.')
       return
     }
     if (pendingAnnualClaim && (claimAttemptedRef.current || Date.parse(pendingAnnualClaim.activation.expiresAt) > Date.now())) {
@@ -1736,7 +1766,7 @@ export default function SignupPage() {
     if (operationRef.current) return
     if (clientSecret) { setPlanView('payment'); return }
     if (cryptoPaymentSession) {
-      setProvisionError('A Bitcoin payment is already pending. Use payment recovery to cancel it before choosing card payment.')
+      setProvisionError('A Bitcoin payment is already pending. Recover its status to continue. Contact support for help with cancellation or switching payment methods.')
       return
     }
     if (pendingAnnualClaim && (claimAttemptedRef.current || Date.parse(pendingAnnualClaim.activation.expiresAt) > Date.now())) {
@@ -1782,7 +1812,7 @@ export default function SignupPage() {
     if (operationRef.current) return
     if (cryptoPaymentSession) { setPlanView('crypto'); return }
     if (clientSecret) {
-      setProvisionError('A card payment is already pending. Use payment recovery to cancel it before choosing Bitcoin.')
+      setProvisionError('A card payment is already pending. Recover its status to continue. Contact support for help with cancellation or switching payment methods.')
       return
     }
     if (pendingAnnualClaim && (claimAttemptedRef.current || Date.parse(pendingAnnualClaim.activation.expiresAt) > Date.now())) {
@@ -1855,10 +1885,11 @@ export default function SignupPage() {
         return
       }
       const returnPath = pending.provider === 'stripe' ? '/signup' : '/signup/pending-payment'
-      const result = await startAnnualSignupPayment(pending.activation.checkoutIntentToken, pending.provider, new URL(returnPath, window.location.origin).toString())
+      const result = await startAnnualSignupPayment(pending.activation.checkoutIntentToken, pending.provider, new URL(returnPath, window.location.origin).toString(), annualOffer.offer.billingInterval)
       if (pending.provider === 'stripe') {
         if (result.clientSecret) {
           trackCheckoutInitiated(annualOffer.offer, 'stripe')
+          setCardDisclosure(pending.activation.disclosure)
           setClientSecret(result.clientSecret)
         }
         setPendingAnnualClaim(null)
@@ -1887,6 +1918,7 @@ export default function SignupPage() {
         sessionStorage.removeItem('silentsuite-pending-crypto-return-to')
       }
       setCryptoPaymentSession({
+        disclosure: pending.activation.disclosure,
         invoiceId: result.cryptoInvoiceId,
         lookupToken: result.cryptoInvoiceLookupToken,
         checkoutUrl: checkoutUrl.toString(),
@@ -1899,7 +1931,10 @@ export default function SignupPage() {
         await renewAnnualOfferAndRequireConsent(annualOffer)
         return
       }
-      const message = err instanceof Error ? err.message : 'Failed to start crypto checkout'
+      const message = err instanceof BillingResponseError
+        && err.billingProblemType === 'https://api.silentsuite.io/errors/provider-unavailable'
+        ? 'Payment creation is not yet confirmed. Retry this same payment, or recover its status. Do not start another payment.'
+        : err instanceof Error ? err.message : 'Failed to start crypto checkout'
       setProvisionError(message)
     } finally {
       operationRef.current = false
@@ -1960,6 +1995,12 @@ export default function SignupPage() {
     if (operationRef.current) return
     if (useAuthStore.getState().pendingSignup?.provisionedUser) {
       setProvisionError('Your account is already created. Continue setup to establish your session; no new trial or payment is needed.')
+      return
+    }
+    if (pendingAnnualClaim && pendingAnnualClaim.provider !== 'none' && claimAttemptedRef.current) {
+      setSelectionCancellation(null)
+      setPlanView('confirm')
+      setProvisionError('Payment creation is not yet confirmed. Retry this same payment below, or recover its status. Back cannot confirm cancellation.')
       return
     }
     if (pendingAnnualClaim) { void handleCancelSelection(); return }
@@ -2061,6 +2102,7 @@ export default function SignupPage() {
 
   if (navigation.recovery) {
     return <div className="mx-auto w-full max-w-md space-y-4">
+      <SignupRecoveryWarning />
       <h1 className="text-xl font-semibold">Continue your signup safely</h1>
       <p role="status">Your password and verification proof were not saved. Refreshing has not repeated account creation or started another payment.</p>
       {navigation.recovery === 'review' ? <>
@@ -2076,9 +2118,10 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch justify-center md:flex-row md:items-start">
-      <ProgressStepper currentStep={provisioning && step === 'plan' && claimAttemptedRef.current ? 'paidAccount' : step} steps={activeSteps} />
-      <div className="mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1">
+    <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch justify-center md:flex-row">
+      <ProgressStepper currentStep={!usingSelfHostedServer && (step === 'paidAccount' || (provisioning && step === 'plan' && claimAttemptedRef.current)) ? 'vault' : step} steps={activeSteps} />
+      <div className={`mx-auto w-full max-w-md min-w-0 md:mx-0 md:flex-1 ${step === 'account' && (awaitingEmailProof || sendingEmail) ? 'flex flex-col justify-center' : ''}`}>
+        <SignupRecoveryWarning />
         {navigation.notice && <p role="status" className="mb-4 text-sm text-[rgb(var(--muted))]">Finish or recover your current setup before changing account details. Your password has not been saved.</p>}
         {step === 'plan' && selectionCancellation && <section className="space-y-4" aria-label="Cancel selection">
           <h2 className="text-xl font-semibold">Cancel this selection?</h2>
@@ -2097,9 +2140,9 @@ export default function SignupPage() {
           </>}
         </section>}
         {step === 'plan' && !selectionCancellation && planView !== 'confirm' && pendingAnnualClaim && <Button variant="outline" disabled={provisioning} className="mb-4 w-full" onClick={() => { setProvisionError(null); setPlanView('confirm') }}>Return to current selection</Button>}
-        {step === 'plan' && (clientSecret || cryptoPaymentSession) && <div className="mb-4 space-y-2">
-          {provisionError && <p role="alert">{provisionError}</p>}
-          {planView !== 'payment' && planView !== 'crypto' && <Button variant="outline" disabled={provisioning} onClick={() => setPlanView(clientSecret ? 'payment' : 'crypto')}>Resume pending payment</Button>}
+        {step === 'plan' && (clientSecret || cryptoPaymentSession || (pendingAnnualClaim?.provider !== 'none' && claimAttemptedRef.current)) && <div className="mb-4 space-y-2">
+          {provisionError && planView !== 'confirm' && <p role="alert">{provisionError}</p>}
+          {(clientSecret || cryptoPaymentSession) && planView !== 'payment' && planView !== 'crypto' && <Button variant="outline" disabled={provisioning} onClick={() => setPlanView(clientSecret ? 'payment' : 'crypto')}>Resume pending payment</Button>}
           <Link href="/signup/pending-payment" className="block text-sm underline">Recover pending payment</Link>
           {cryptoPaymentSession && <p className="text-sm">Returning here does not cancel your Bitcoin invoice. Recover the existing payment to check its status; another payment cannot be started here.</p>}
         </div>}
@@ -2139,8 +2182,10 @@ export default function SignupPage() {
               rememberDevice={rememberDevice}
               onRememberDeviceChange={setRememberDevice}
             />}
-            {sendingEmail && <><Button variant="outline" onClick={handleEmailBack}>Back</Button><p role="status">Sending verification email...</p></>}
-            {awaitingEmailProof && <><Button variant="outline" onClick={handleEmailBack}>Back</Button><p role="status" className="mt-4 text-center text-sm text-[rgb(var(--muted))]">Check your email and open the verification link in this browser. Then choose your password.</p></>}
+            {(sendingEmail || awaitingEmailProof) && <section aria-label="Email verification" className="flex flex-col items-center justify-center gap-5 py-8 text-center">
+              <p role="status" className="text-sm text-[rgb(var(--muted))]">{sendingEmail ? 'Sending verification email...' : 'Check your email and open the verification link in this browser. Then choose your password.'}</p>
+              <Button variant="outline" onClick={handleEmailBack}>Back</Button>
+            </section>}
           </>
         )}
         {step === 'verifiedAccount' && (
@@ -2169,6 +2214,7 @@ export default function SignupPage() {
             planView={planView}
             onBack={handlePlanBack}
             clientSecret={clientSecret}
+            cardDisclosure={cardDisclosure}
             provisioning={provisioning}
             provisionError={provisionError}
             onClearError={() => setProvisionError(null)}

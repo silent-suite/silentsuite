@@ -80,7 +80,7 @@ export function StepCreatePaidAccount({
   initialError?: string | null
   initialData?: PaidAccountFormData
   /** Verified signup chooses a password once; the parent retains it only in memory. */
-  continuation?: 'payment-confirmed' | 'verified-no-card'
+  continuation?: 'payment-confirmed' | 'payment-return' | 'verified-no-card'
 }) {
   const [submitError, setSubmitError] = useState<string | null>(initialError ?? null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -109,6 +109,8 @@ export function StepCreatePaidAccount({
         <p className="text-sm text-[rgb(var(--muted))]">
           {continuation === 'verified-no-card'
             ? <>Your email is verified. Choose a password, then select a trial or payment option for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>.</>
+            : continuation === 'payment-return'
+            ? <>Choose the password for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>. Billing must confirm the original payment before access is activated.</>
             : <>Payment is confirmed. Choose the password for <span className="font-medium text-[rgb(var(--foreground))]">{email}</span>.</>}
         </p>
       </div>

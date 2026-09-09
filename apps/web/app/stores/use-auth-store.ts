@@ -1,6 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
+import { flushSync } from 'react-dom'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { logger } from '@/app/lib/logger'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
@@ -11,7 +12,7 @@ import { clearAll as clearOfflineQueue } from '@/app/lib/offline-queue'
 import { createLoginSessionPersistenceDiagnostics } from '@/app/lib/sync-restore-diagnostics'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
-import { BillingResponseError, startSignupAnnualPayment } from '@/app/lib/billing-v2'
+import { BillingResponseError, startSignupAnnualPayment, type AnnualOffer } from '@/app/lib/billing-v2'
 
 export interface User {
   isAdmin?: boolean
@@ -95,6 +96,8 @@ interface AuthState {
   isLoading: boolean
   error: string | null
   pendingSignup: PendingSignup | null
+  /** Checkpoint durability only, never payment or authenticated-session authority. */
+  signupRecoveryDurability: 'none' | 'memory-only' | 'persisted'
   subscriptionStatus: string | null
   isDegraded: () => boolean
   isReadOnly: () => boolean
@@ -104,7 +107,7 @@ interface AuthState {
   /** Historical signature retained for callers; fresh hosted v1 creation rejects. */
   signup: (planId: string, trialPath: string) => Promise<SignupResult>
   provisionAnnualNoCard: (checkoutIntentToken: string) => Promise<void>
-  startAnnualSignupPayment: (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string) => Promise<SignupResult>
+  startAnnualSignupPayment: (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string, selectedInterval: AnnualOffer['billingInterval']) => Promise<SignupResult>
   /** Clear only this exact authority after Billing proved it terminal/cancelled. */
   clearPendingSignupPaymentRecovery: (identity: PaidSignupRecoveryRelease) => void
   finalizePaidSignup: () => Promise<SignupResult>
@@ -137,10 +140,11 @@ interface AuthState {
   saveSignupStateForRedirect: (selectedInterval: 'monthly' | 'annual') => void
   /**
    * Restore signup state saved before a Stripe 3DS redirect.
-   * Returns the saved data and removes it from sessionStorage (one-time use).
+   * Returns the saved data and consumes it by default. Pending recovery may
+   * retain the sanitized snapshot at its original expiry across document loads.
    * Returns null if no data exists or if it is older than 2 hours.
    */
-  restoreSignupStateFromRedirect: () => RedirectSignupState | null
+  restoreSignupStateFromRedirect: (options?: { retainForRecovery: boolean }) => RedirectSignupState | null
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -198,6 +202,118 @@ function parseRedirectPendingSignup(value: unknown): RedirectPendingSignup | nul
   if (typeof value.provisionedSubscriptionStatus === 'string') redirect.provisionedSubscriptionStatus = value.provisionedSubscriptionStatus
   return redirect
 }
+
+/** One tab-local checkpoint lifecycle, independent of React mount ordering.
+ * savedAt is the immutable issuance time (expiry = savedAt + TTL), not a last-write time.
+ * A receipt is continuation data only: no passwords or session attestation enter storage.
+ */
+class SignupRedirectCheckpoint {
+  private current: RedirectSignupState | null = null
+
+  private same(a: RedirectPendingSignup, b: RedirectPendingSignup) {
+    return a.email === b.email && a.serverUrl === b.serverUrl
+      && a.paymentSessionToken === b.paymentSessionToken
+      && a.paymentSessionRequestKey === b.paymentSessionRequestKey
+      && a.billingContractVersion === b.billingContractVersion
+  }
+
+  private read(): RedirectSignupState | null {
+    try {
+      const raw = sessionStorage.getItem(REDIRECT_SIGNUP_STATE_KEY)
+      if (!raw) return null
+      const value: unknown = JSON.parse(raw)
+      if (!isRecord(value) || (value.selectedInterval !== 'monthly' && value.selectedInterval !== 'annual')
+        || typeof value.savedAt !== 'number' || !Number.isFinite(value.savedAt)) return null
+      const pendingSignup = parseRedirectPendingSignup(value.pendingSignup)
+      return pendingSignup ? { pendingSignup, selectedInterval: value.selectedInterval, savedAt: value.savedAt } : null
+    } catch { return null }
+  }
+
+  private live(data: RedirectSignupState) {
+    const age = Date.now() - data.savedAt
+    return age >= 0 && age < REDIRECT_SIGNUP_STATE_TTL_MS
+  }
+
+  private publishDurability(status: AuthState['signupRecoveryDurability']) {
+    if (useAuthStore.getState().signupRecoveryDurability !== status) {
+      useAuthStore.setState({ signupRecoveryDurability: status })
+    }
+  }
+
+  resetMemory() {
+    this.current = null
+    this.publishDurability('none')
+  }
+
+  clear() {
+    this.resetMemory()
+    try { sessionStorage.removeItem(REDIRECT_SIGNUP_STATE_KEY) } catch { /* Unavailable storage cannot block logout/completion. */ }
+  }
+
+  save(pending: PendingSignup, selectedInterval?: 'monthly' | 'annual') {
+    if (pending === this.current?.pendingSignup) {
+      if (!this.live(this.current)) this.publishDurability('memory-only')
+      return
+    }
+    const stored = this.read()
+    const previous = this.current && this.same(this.current.pendingSignup, pending) ? this.current
+      : stored && this.same(stored.pendingSignup, pending) ? stored : null
+    // Store publication only updates an existing matching checkpoint. Explicit
+    // redirect preparation may create one for a genuinely different attempt.
+    if (!previous && !selectedInterval) {
+      this.publishDurability('none')
+      return
+    }
+    const next = makeRedirectPendingSignup(pending)
+    if (previous?.pendingSignup.provisionedUser
+      && (!next.provisionedUser || next.provisionedUser.id !== previous.pendingSignup.provisionedUser.id)) {
+      // Never downgrade or cross-bind a completed receipt on a stale publication.
+      next.provisionedUser = previous.pendingSignup.provisionedUser
+      next.provisionedSubscriptionStatus = previous.pendingSignup.provisionedSubscriptionStatus
+    }
+    const data: RedirectSignupState = {
+      pendingSignup: next,
+      selectedInterval: previous?.selectedInterval ?? selectedInterval ?? 'annual',
+      savedAt: previous?.savedAt ?? Date.now(),
+    }
+    this.current = data
+    if (!this.live(data)) {
+      // Expired runtime state must not mint a fresh lifetime or claim durability.
+      this.publishDurability('memory-only')
+      return
+    }
+    let durability: AuthState['signupRecoveryDurability'] = 'persisted'
+    try {
+      sessionStorage.setItem(REDIRECT_SIGNUP_STATE_KEY, JSON.stringify(data))
+    } catch {
+      // Do not leave a known stale pre-completion capability promising safe Back.
+      // The latest receipt and original lifetime remain in memory for a later retry.
+      durability = 'memory-only'
+      try { sessionStorage.removeItem(REDIRECT_SIGNUP_STATE_KEY) } catch { /* best effort */ }
+    }
+    // Publish outside the storage exception boundary and before finalization
+    // continues to its fallible session exchange, independent of React effects.
+    this.publishDurability(durability)
+  }
+
+  restore(retain: boolean): RedirectSignupState | null {
+    const data = this.read()
+    if (!data || !this.live(data)) {
+      // Discard persistence without erasing an in-memory attempt's original lifetime.
+      this.current ??= data
+      try { sessionStorage.removeItem(REDIRECT_SIGNUP_STATE_KEY) } catch { /* best effort */ }
+      return null
+    }
+    this.current = data
+    // Retention needs no rewrite: quota failures must not destroy a readable receipt.
+    if (!retain) {
+      try { sessionStorage.removeItem(REDIRECT_SIGNUP_STATE_KEY) } catch { /* best effort */ }
+    }
+    return data
+  }
+}
+
+const signupRedirectCheckpoint = new SignupRedirectCheckpoint()
 
 function isUtcTimestamp(value: unknown): value is string {
   if (typeof value !== 'string' || !UTC_TIMESTAMP.test(value)) return false
@@ -793,9 +909,11 @@ async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth') 
     logger.warn(`[auth-store] Failed to clear offline queue during ${reason}:`, err)
   }
 
+  signupRedirectCheckpoint.clear()
   clearPaidSignupRecoveryIdentity()
   if (typeof window !== 'undefined') {
-    for (const key of ['silentsuite-signup-in-progress', 'silentsuite-signup-redirect-state']) {
+    for (const key of ['silentsuite-signup-in-progress', 'silentsuite-pending-crypto-token',
+      'silentsuite-pending-crypto-invoice', 'silentsuite-pending-crypto-recovery-context', 'silentsuite-pending-crypto-return-to']) {
       try {
         sessionStorage.removeItem(key)
       } catch {
@@ -923,6 +1041,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isLoading: false,
   error: null,
   pendingSignup: null,
+  signupRecoveryDurability: 'none',
   subscriptionStatus: null,
 
   isDegraded: () => get().subscriptionStatus === 'billing_unavailable',
@@ -1055,7 +1174,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   }),
 
-  startAnnualSignupPayment: async (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string) => {
+  startAnnualSignupPayment: async (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string, selectedInterval: AnnualOffer['billingInterval']) => {
+    if (selectedInterval !== 'annual') throw new Error('A validated annual offer is required.')
     const pending = get().pendingSignup
     if (!pending || isSelfHosted || isCustomServer(pending.serverUrl)) throw new Error('No hosted annual checkout is ready.')
     const recoveryScope = paidSignupRecoveryScope(pending.email, pending.wantsProductUpdates, pending.rememberDevice)
@@ -1066,6 +1186,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const parsedReturnUrl = new URL(returnUrl, window.location.origin)
       if (parsedReturnUrl.origin !== window.location.origin) throw new Error('Annual signup return URL must stay on this origin.')
       const absoluteReturnUrl = parsedReturnUrl.toString()
+      // A lost start response is not evidence no payment authority exists.
+      // Attach the exact existing recovery identity before dispatch so the
+      // pending route can reconcile it without minting a replacement.
+      // Initialize before dispatch, even when this tab has never redirected.
+      // Flush the warning into the rendered UI before the next fallible operation.
+      flushSync(() => {
+        set({ pendingSignup: { ...pending, paidSignupAttemptId: attemptId,
+          billingContractVersion: 2, paymentSessionToken: recovery.recoverySecret,
+          paymentSessionRequestKey: recovery.requestKey, paymentMethod: provider } })
+        signupRedirectCheckpoint.save(get().pendingSignup!, selectedInterval)
+      })
       const payment = await startSignupAnnualPayment({ fetcher: fetch, billingApiUrl: BILLING_API_URL, checkoutIntentToken, email: pending.email, requestKey: recovery.requestKey, recoverySecret: recovery.recoverySecret, wantsProductUpdates: pending.wantsProductUpdates === true, rememberDevice: pending.rememberDevice === true, returnUrl: absoluteReturnUrl })
       if (payment.kind !== provider) throw new Error('Billing returned the wrong payment provider.')
       const current = get().pendingSignup
@@ -1263,6 +1394,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       && pending.billingSessionUserId !== pending.provisionedUser.id) {
       throw new Error('Your account is set up, but the Billing session is not confirmed. Retry to finish signing in.')
     }
+    signupRedirectCheckpoint.clear()
     // Clear the signup-in-progress flag so restoreSession works normally
     clearPaidSignupRecoveryIdentity()
     if (typeof window !== 'undefined') {
@@ -1403,7 +1535,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Stop rendering protected account data before any network request or
     // asynchronous storage cleanup can yield.
     syncAdminCookie(false)
-    set({ user: null, isAuthenticated: false, error: null, subscriptionStatus: null })
+    set({ user: null, isAuthenticated: false, pendingSignup: null, isLoading: false, error: null, subscriptionStatus: null })
 
     if (!isSelfHosted) {
       await deleteHostedServerSession('invalid-hosted-auth')
@@ -1693,60 +1825,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   saveSignupStateForRedirect: (selectedInterval) => {
     const pending = get().pendingSignup
-    if (!pending) {
-      logger.warn('[auth-store] saveSignupStateForRedirect: no pendingSignup to save')
-      return
-    }
-    const data: RedirectSignupState = {
-      pendingSignup: makeRedirectPendingSignup(pending),
-      selectedInterval,
-      savedAt: Date.now(),
-    }
-    try {
-      sessionStorage.setItem(REDIRECT_SIGNUP_STATE_KEY, JSON.stringify(data))
-    } catch (err) {
-      logger.warn('[auth-store] Failed to save signup redirect state:', err)
-    }
+    if (pending) signupRedirectCheckpoint.save(pending, selectedInterval)
   },
 
-  restoreSignupStateFromRedirect: () => {
-    try {
-      const raw = sessionStorage.getItem(REDIRECT_SIGNUP_STATE_KEY)
-      if (!raw) return null
-      // Always remove immediately — one-time use
-      sessionStorage.removeItem(REDIRECT_SIGNUP_STATE_KEY)
-      const value = JSON.parse(raw) as unknown
-      if (!isRecord(value) || (value.selectedInterval !== 'monthly' && value.selectedInterval !== 'annual') || typeof value.savedAt !== 'number' || !Number.isFinite(value.savedAt)) {
-        logger.warn('[auth-store] Redirect signup state is malformed, discarding')
-        return null
-      }
-      const pendingSignup = parseRedirectPendingSignup(value.pendingSignup)
-      if (!pendingSignup) {
-        logger.warn('[auth-store] Redirect signup state is malformed, discarding')
-        return null
-      }
-      // Reject if older than 2 hours. Bitcoin settlement can outlive the old
-      // 10-minute Stripe-only window, but this is still tab-scoped sessionStorage.
-      if (Date.now() - value.savedAt >= REDIRECT_SIGNUP_STATE_TTL_MS) {
-        logger.warn('[auth-store] Redirect signup state expired (>2h old)')
-        return null
-      }
-      const data: RedirectSignupState = {
-        pendingSignup,
-        selectedInterval: value.selectedInterval,
-        savedAt: value.savedAt,
-      }
-      // Restore pendingSignup into the Zustand store and re-set the signup-in-progress
-      // flag so restoreSession() doesn't run concurrently and clobber the restored state.
-      set({ pendingSignup })
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem('silentsuite-signup-in-progress', 'true')
-      }
-      return data
-    } catch (err) {
-      logger.warn('[auth-store] Failed to restore signup redirect state:', err)
-      sessionStorage.removeItem(REDIRECT_SIGNUP_STATE_KEY)
-      return null
-    }
+  restoreSignupStateFromRedirect: (options) => {
+    const data = signupRedirectCheckpoint.restore(options?.retainForRecovery === true)
+    if (!data) return null
+    set({ pendingSignup: data.pendingSignup, signupRecoveryDurability: options?.retainForRecovery === true ? 'persisted' : 'memory-only' })
+    try { sessionStorage.setItem('silentsuite-signup-in-progress', 'true') } catch { /* best effort */ }
+    return data
   },
 }))
+
+useAuthStore.subscribe((state, previous) => {
+  if (!state.pendingSignup) { signupRedirectCheckpoint.resetMemory(); return }
+  if (state.pendingSignup === previous.pendingSignup) return
+  signupRedirectCheckpoint.save(state.pendingSignup)
+})

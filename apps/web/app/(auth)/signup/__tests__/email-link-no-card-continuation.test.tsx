@@ -1,7 +1,7 @@
 import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent, signedAuthorityFixture } from '@/src/__tests__/fixtures/annual-authority'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { BillingResponseError } from '@/app/lib/billing-v2'
+import { BillingResponseError, type AnnualDisclosure } from '@/app/lib/billing-v2'
 import SignupPage from '../page'
 import VerificationCallbackPage from '../verify-email/page'
 import { StrictMode } from 'react'
@@ -42,6 +42,7 @@ vi.mock('@/app/stores/use-etebase-store', () => ({ normalizeServerUrl: (value: s
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
 vi.mock('@/app/lib/self-hosted', () => ({ isSelfHosted: false, isCustomServer: () => false }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('@/app/components/stripe-payment-form', () => ({ default: ({ submitLabel, mode }: { submitLabel: string; mode: string }) => <button data-testid="card-submit" data-mode={mode}>{submitLabel}</button> }))
 vi.mock('next/link', () => ({ default: ({ children }: { children: React.ReactNode }) => <>{children}</> }))
 
 describe('email-link seven-day no-card continuation', () => {
@@ -64,7 +65,13 @@ describe('email-link seven-day no-card continuation', () => {
     const next = screen.getByRole('button', { name: /^continue$/i })
     await waitFor(() => expect(next).toBeEnabled())
     fireEvent.click(next)
-    await screen.findByText('Check your email and open the verification link in this browser. Then choose your password.')
+    const message = await screen.findByText('Check your email and open the verification link in this browser. Then choose your password.')
+    const panel = screen.getByRole('region', { name: 'Email verification' })
+    expect(panel).toContainElement(message)
+    expect(panel).toContainElement(screen.getByRole('button', { name: /^back$/i }))
+    expect(panel).toHaveClass('flex', 'flex-col', 'items-center', 'justify-center')
+    expect(screen.queryByText('Account setup')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Finish')).toHaveLength(2)
     expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument()
     expect(localStorage.getItem('silentsuite-signup-email-proof')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
@@ -138,7 +145,7 @@ describe('email-link seven-day no-card continuation', () => {
       return prior(input, init)
     }))
     if (back === 'app') fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    else act(() => window.history.back())
+    else await traverseHistory('back')
     await screen.findByRole('heading', { name: /choose your plan/i })
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(1)
     act(() => window.dispatchEvent(new PopStateEvent('popstate', { state: oldCheckpoint })))
@@ -155,7 +162,7 @@ describe('email-link seven-day no-card continuation', () => {
     await openConfirmation('none')
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Cancellation is not confirmed')
-    expect(screen.queryByRole('button', { name: /30-day free trial/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /annual plan/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Continue current selection' }))
     expect(screen.getByRole('button', { name: /create account and start free trial/i })).toBeEnabled()
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/activate'))).toHaveLength(1)
@@ -236,13 +243,59 @@ describe('email-link seven-day no-card continuation', () => {
     expect(screen.queryByRole('heading', { name: /choose your plan/i })).not.toBeInTheDocument()
   })
 
-  async function openConfirmation(provider: 'none' | 'stripe' | 'btcpay', checkoutToken = signedCheckoutIntent) {
+  it('keeps Bitcoin terms on the payment panel and exposes no instructions before consent', async () => {
+    const confirm = await openConfirmation('btcpay')
+    expect(screen.getByRole('heading', { name: /pay .* with bitcoin/i })).toBeVisible()
+    expect(screen.queryByText('Confirm annual terms')).not.toBeInTheDocument()
+    expect(screen.queryByText('Copy payment details')).not.toBeInTheDocument()
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+    authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/terms', cryptoInvoiceId: 'terms', cryptoInvoiceLookupToken: 'lookup' })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input).endsWith('/payment-methods') ? { paymentMethods: [{ id: 'BTC', address: 'test-address' }] } : { status: 'new' }))))
+    fireEvent.click(confirm)
+    await screen.findByText('Copy payment details')
+    expect(screen.getByText(/Request a full refund within 30 days/)).toBeVisible()
+    expect(screen.getByText(/This is a prepaid annual purchase/)).toHaveTextContent('€36.00')
+  })
+
+  it('retains a usable same-attempt retry after failed Bitcoin start and browser Back/Forward', async () => {
+    const confirm = await openConfirmation('btcpay')
+    authState.startAnnualSignupPayment.mockRejectedValue(new BillingResponseError('Payment provider confirmation is pending. Retry with the same recovery secret.', 503, 'https://api.silentsuite.io/errors/provider-unavailable'))
+    fireEvent.click(confirm)
+    await screen.findByText(/Payment creation is not yet confirmed/)
+    expect(screen.queryByText(/webhook|secret/i)).not.toBeInTheDocument()
+    await traverseHistory('back')
+    expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument()
+    await traverseHistory('forward')
+    const retry = await screen.findByRole('button', { name: /^continue to (bitcoin payment|card setup|card payment)$/i })
+    fireEvent.click(retry)
+    await waitFor(() => expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(2))
+    expect(authState.startAnnualSignupPayment.mock.calls[0]).toEqual(authState.startAnnualSignupPayment.mock.calls[1])
+  })
+
+  it('describes Bitcoin settlement separately from unfinished account and vault setup', async () => {
+    const confirm = await openConfirmation('btcpay')
+    authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/settled', cryptoInvoiceId: 'settled', cryptoInvoiceLookupToken: 'lookup' })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input).endsWith('/payment-methods') ? { paymentMethods: [{ id: 'BTC', address: 'test-address' }] } : { status: 'settled' }))))
+    fireEvent.click(confirm)
+    expect(await screen.findByText(/Payment confirmed for your Early Adopter Plan/)).toHaveTextContent('Account and vault setup still need to finish')
+    expect(screen.queryByText(/access is active|early_annual|Plan ID/)).not.toBeInTheDocument()
+    expect(authState.finalizePaidSignup).not.toHaveBeenCalled()
+    expect(authState.completeSignup).not.toHaveBeenCalled()
+  })
+
+  async function traverseHistory(direction: 'back' | 'forward') {
+    const observed = new Promise<void>((resolve) => window.addEventListener('popstate', () => resolve(), { once: true }))
+    await act(async () => { window.history[direction](); await observed })
+  }
+
+  async function openConfirmation(provider: 'none' | 'stripe' | 'btcpay', checkoutToken = signedCheckoutIntent, selectedDisclosure?: AnnualDisclosure) {
     localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({
       [requestId]: { email: 'expiry@example.test', requestId, wantsProductUpdates: false, rememberDevice: false, returnTo: null, expiresAt: Date.now() + 60_000 },
     }))
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const requestedProvider = init?.body ? JSON.parse(String(init.body)).provider : undefined
       if (String(input).endsWith('/consume')) return new Response(JSON.stringify({ contractVersion: 2, emailOwnershipToken: ownershipToken, expiresAt: '2099-01-01T00:00:00Z' }))
-      if (String(input).endsWith('/activate')) return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: checkoutToken, expiresAt: '2099-01-01T00:00:00Z', disclosure: provider === 'none' ? noCardDisclosure : provider === 'btcpay' ? { ...noCardDisclosure, kind: 'prepaid', firstChargeAmountMinor: 3600, trialEndsAt: null, prepaid: true, refundWindowDays: 30, periodEndRule: 'confirmation_plus_1_utc_calendar_year', entitlementEndsAt: null } : { ...noCardDisclosure, kind: 'card_trial', firstChargeAmountMinor: 3600, renewalAmountMinor: 3600, firstChargeAt: noCardDisclosure.trialEndsAt, cancelBy: noCardDisclosure.trialEndsAt, autoRenew: true, refundWindowDays: 30, periodEndRule: 'first_charge_plus_1_utc_calendar_year', renewalAt: '2099-09-10T12:00:00Z', entitlementEndsAt: '2099-09-10T12:00:00Z' } }))
+      if (String(input).endsWith('/activate')) return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: checkoutToken, expiresAt: '2099-01-01T00:00:00Z', disclosure: selectedDisclosure ?? (requestedProvider === 'none' ? noCardDisclosure : requestedProvider === 'btcpay' ? { ...noCardDisclosure, kind: 'prepaid', firstChargeAmountMinor: 3600, trialEndsAt: null, prepaid: true, refundWindowDays: 30, periodEndRule: 'confirmation_plus_1_utc_calendar_year', entitlementEndsAt: null } : { ...noCardDisclosure, kind: 'card_trial', firstChargeAmountMinor: 3600, renewalAmountMinor: 3600, firstChargeAt: noCardDisclosure.trialEndsAt, cancelBy: noCardDisclosure.trialEndsAt, autoRenew: true, refundWindowDays: 30, periodEndRule: 'first_charge_plus_1_utc_calendar_year', renewalAt: '2099-09-10T12:00:00Z', entitlementEndsAt: '2099-09-10T12:00:00Z' }) }))
       return new Response(JSON.stringify(offer))
     }))
     window.history.replaceState({}, '', `/signup?token=link-token&request_id=${requestId}`)
@@ -252,12 +305,38 @@ describe('email-link seven-day no-card continuation', () => {
     const next = screen.getByRole('button', { name: /continue to trial options/i })
     await waitFor(() => expect(next).toBeEnabled())
     fireEvent.click(next)
-    fireEvent.click(await screen.findByRole('button', { name: provider === 'none' ? /7 day free trial/i : /30-day free trial/i }))
+    await screen.findByRole('heading', { name: /choose your plan/i })
+    expect(screen.queryByText('Annual access only. Exact price and renewal terms are confirmed by Billing before checkout.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/before day 30|no charge until|30-day free trial/i)).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: provider === 'none' ? /7 day free trial/i : /annual plan/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     if (provider === 'stripe') fireEvent.click(await screen.findByRole('button', { name: /continue to card payment/i }))
     if (provider === 'btcpay') fireEvent.click(await screen.findByRole('button', { name: /^pay .* with bitcoin for/i }))
-    return screen.findByRole('button', { name: /create account and start free trial|confirm annual terms and continue/i })
+    return screen.findByRole('button', { name: /^(create account and start free trial|continue to (bitcoin payment|card setup|card payment))$/i })
   }
+
+  it.each(['charge_now', 'card_trial'] as const)('keeps the validated %s disclosure through card confirmation', async (kind) => {
+    const disclosure: AnnualDisclosure = {
+      kind, annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: 3600,
+      monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null,
+      cancelBy: null, cancelByInclusive: false, autoRenew: true, prepaid: false, refundWindowDays: 30,
+      bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null,
+      ...(kind === 'card_trial' ? { trialEndsAt: '2099-09-10T12:00:00Z', firstChargeAt: '2099-09-10T12:00:00Z', cancelBy: '2099-09-10T12:00:00Z', periodEndRule: 'first_charge_plus_1_utc_calendar_year', renewalAt: '2100-09-10T12:00:00Z', entitlementEndsAt: '2100-09-10T12:00:00Z' } : {}),
+    }
+    const confirm = await openConfirmation('stripe', signedCheckoutIntent, disclosure)
+    expect(screen.queryByText(/early_annual|Plan ID|Confirm annual terms/)).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: kind === 'card_trial' ? 'Review your free trial' : 'Review your card payment' })).toBeVisible()
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+    authState.startAnnualSignupPayment.mockResolvedValue({ clientSecret: kind === 'card_trial' ? 'seti_fixture' : 'pi_fixture' })
+    fireEvent.click(confirm)
+    const submit = await screen.findByTestId('card-submit')
+    expect(submit).toHaveAttribute('data-mode', kind === 'card_trial' ? 'setup' : 'payment')
+    expect(submit).toHaveTextContent(kind === 'card_trial' ? 'Start free trial — no charge today' : 'Pay €36.00 now')
+    expect(screen.queryByText(/early_annual|Plan ID|30-day|day 30/)).not.toBeInTheDocument()
+    if (kind === 'charge_now') expect(screen.queryByText(/No charge today|after.*trial/i)).not.toBeInTheDocument()
+    else expect(screen.getAllByText('2099-09-10 12:00 UTC')).toHaveLength(2)
+    expect(authState.startAnnualSignupPayment).toHaveBeenCalledWith(signedCheckoutIntent, 'stripe', 'http://localhost:3000/signup', offer.offer.billingInterval)
+  })
 
   it.each(['none', 'stripe', 'btcpay'] as const)('explicitly cancels %s review with single-flight response-loss retry and fresh consent', async (provider) => {
     await openConfirmation(provider)
@@ -459,7 +538,9 @@ describe('email-link seven-day no-card continuation', () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2100-01-01T00:00:00Z'))
     try {
       fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-      expect(await screen.findByRole('alert')).toHaveTextContent('Cancellation is not confirmed')
+      expect(await screen.findByRole('alert')).toHaveTextContent(provider === 'none'
+        ? 'Cancellation is not confirmed'
+        : 'Payment creation is not yet confirmed')
       expect(screen.queryByRole('button', { name: /7 day free trial/i })).not.toBeInTheDocument()
       expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/activate'))).toHaveLength(1)
     } finally { clock.mockRestore() }
@@ -518,9 +599,9 @@ describe('email-link seven-day no-card continuation', () => {
     await waitFor(() => expect(next).toBeEnabled())
     fireEvent.click(next)
     await screen.findByRole('heading', { name: /choose your plan/i })
-    act(() => window.history.back())
+    await traverseHistory('back')
     await screen.findByRole('heading', { name: 'Choose your password' })
-    act(() => window.history.forward())
+    await traverseHistory('forward')
     await screen.findByRole('heading', { name: /choose your plan/i })
     expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: /back/i }))
@@ -530,7 +611,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(await screen.findByRole('button', { name: /7 day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     await screen.findByRole('button', { name: /create account and start free trial/i })
-    act(() => window.history.back())
+    await traverseHistory('back')
     expect(await screen.findByRole('alert')).toHaveTextContent('Cancellation is not confirmed')
     fireEvent.click(screen.getByRole('button', { name: 'Continue current selection' }))
     fireEvent.click(await screen.findByRole('button', { name: /create account and start free trial/i }))
@@ -709,7 +790,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(await screen.findByRole('heading', { name: /choose your plan/i })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /create account and start free trial|confirm annual terms and continue/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^(create account and start free trial|continue to (bitcoin payment|card setup|card payment))$/i }))
 
     await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
     expect(authState.createEtebaseAccount).toHaveBeenCalledWith('customer@example.test', 'ValidPass1', undefined)
@@ -749,7 +830,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(await screen.findByRole('heading', { name: /choose your plan/i })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /create account and start free trial|confirm annual terms and continue/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^(create account and start free trial|continue to (bitcoin payment|card setup|card payment))$/i }))
 
     await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
     expect(authState.createEtebaseAccount).toHaveBeenCalledWith('newtab@example.test', 'ValidPass1', undefined)
@@ -863,7 +944,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(continuation)
 
     expect(await screen.findByText('Standard Plan pricing')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /then €48\.00\/year.*€4\.00\/month/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /annual plan.*€48\.00\/year.*€4\.00\/month/i })).toBeInTheDocument()
     expect(screen.queryByText(/Early Adopter/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/€36/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
@@ -879,15 +960,16 @@ describe('email-link seven-day no-card continuation', () => {
     ))
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => String((init as RequestInit | undefined)?.body).includes('"provider":"btcpay"'))).toBe(false)
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
-    expect(await screen.findByText('Confirm annual terms')).toBeInTheDocument()
+    expect(await screen.findByText('Review your free trial')).toBeInTheDocument()
     expect(screen.getAllByText('2026-09-10 12:00 UTC')).toHaveLength(2)
     expect(screen.getByText('2027-09-10 12:00 UTC')).toBeInTheDocument()
     expect(screen.getByText('€48.00/year from 2027-09-10 12:00 UTC')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /create account and start free trial|confirm annual terms and continue/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^(create account and start free trial|continue to (bitcoin payment|card setup|card payment))$/i }))
     await waitFor(() => expect(authState.startAnnualSignupPayment).toHaveBeenCalledWith(
       signedCheckoutIntent,
       'stripe',
       'http://localhost:3000/signup',
+      'annual',
     ))
     expect(await screen.findByText('Add your payment method')).toBeInTheDocument()
     expect(screen.getByText('Standard Plan')).toBeInTheDocument()
@@ -952,13 +1034,13 @@ describe('email-link seven-day no-card continuation', () => {
 
     expect(await screen.findByText(/annual terms changed/i)).toBeInTheDocument()
     expect(screen.getByText('Standard Plan pricing')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /then €48\.00\/year.*€4\.00\/month/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /annual plan.*€48\.00\/year.*€4\.00\/month/i })).toBeInTheDocument()
     expect(authState.createEtebaseAccount).not.toHaveBeenCalled()
     expect(authState.provisionAnnualNoCard).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: /7 day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /create account and start free trial|confirm annual terms and continue/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^(create account and start free trial|continue to (bitcoin payment|card setup|card payment))$/i }))
     await waitFor(() => expect(authState.provisionAnnualNoCard).toHaveBeenCalledWith(signedCheckoutIntent))
     expect(authState.createEtebaseAccount).toHaveBeenCalledWith('renew@example.test', 'ValidPass1', undefined)
   })

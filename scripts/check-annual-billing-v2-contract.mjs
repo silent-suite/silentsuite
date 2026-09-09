@@ -3,6 +3,10 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
+import { createRequire } from 'node:module'
+
+// Use the web app's installed compiler without adding a second dependency.
+const ts = createRequire(new URL('../apps/web/package.json', import.meta.url))('typescript')
 
 const PIN_FILE = 'contracts/annual-only-billing-v2.schema.sha256'
 const SCHEMA_FILE = 'contracts/annual-only-billing-v2.schema.json'
@@ -38,6 +42,93 @@ function functionBlock(source, name) {
   const end = source.indexOf('\n}\n', start)
   assert(end >= 0, `Could not delimit ${name} exact-response guard`)
   return source.slice(start, end + 2)
+}
+
+function checkPendingPaymentRecovery(source) {
+  const requireContract = (condition, message) => assert(condition, `Pending payment contract: ${message}`)
+  const parse = (text) => ts.createSourceFile('pending.tsx', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const tree = parse(source)
+  requireContract(tree.parseDiagnostics.length === 0, 'pending-payment source must parse')
+  const nodes = []
+  const visit = (node) => { nodes.push(node); ts.forEachChild(node, visit) }
+  visit(tree)
+  // Compare syntax trees, never comments or text-search sentinels. Leaf text is
+  // retained so changing a capability binding or state value is a real change.
+  const shape = (node) => {
+    const children = []
+    ts.forEachChild(node, (child) => { children.push(shape(child)) })
+    return [node.kind, children.length ? children : (node.text ?? node.getText())]
+  }
+  const same = (node, expected) => JSON.stringify(shape(node)) === JSON.stringify(shape(expected))
+  const statement = (text) => parse(text).statements[0]
+  const expression = (text) => statement(`const expected = ${text};`).declarationList.declarations[0].initializer
+  const exact = (node, text) => same(node, expression(text))
+  const one = (matches, message) => {
+    requireContract(matches.length === 1, message)
+    return matches[0]
+  }
+  const declarations = nodes.filter(ts.isVariableDeclaration)
+  const flow = one(declarations.filter((node) => node.name.getText(tree) === 'loadCurrentFlow'), 'one recovery callback is required')
+  requireContract(ts.isCallExpression(flow.initializer) && exact(flow.initializer.expression, 'useCallback'), 'recovery callback must remain explicit')
+  const callback = flow.initializer.arguments[0]
+  requireContract(ts.isArrowFunction(callback) && ts.isBlock(callback.body), 'recovery callback must have a block body')
+  const flowNodes = []
+  const walkFlow = (node) => { flowNodes.push(node); ts.forEachChild(node, walkFlow) }
+  walkFlow(callback.body)
+  for (const [condition, body] of [
+    ["result.state === 'closed'", "{ setFlowCheckState('ready'); setState('unknown'); return 'stop'; }"],
+    ['!recovery', "{ if (!isCancelled()) { setFlowCheckState('ready'); } return 'stop'; }"],
+  ]) {
+    const branch = one(flowNodes.filter((node) => ts.isIfStatement(node) && exact(node.expression, condition)), `${condition} must fail closed`)
+    requireContract(!branch.elseStatement && same(branch.thenStatement, statement(body)), `${condition} cannot release, restart, or confer payment authority`)
+  }
+  const recoveryReaders = ['getAnonymousPaymentSessionRecovery', 'reconcileAnonymousPaymentSessionRecovery']
+  for (const name of recoveryReaders) {
+    const call = one(flowNodes.filter((node) => ts.isCallExpression(node) && exact(node.expression, name)), `${name} must be called once`)
+    requireContract(call.arguments.length === 1 && exact(call.arguments[0], `({
+      fetcher: fetch, billingApiUrl: BILLING_API_URL,
+      paymentSessionToken: recovery.paymentSessionToken,
+      recoverySecret: recovery.paymentSessionToken,
+      requestKey: recovery.requestKey, email: recovery.email
+    })`.slice(1, -1)), `${name} must carry the same attempt's email, request key, and proof`)
+  }
+  // This page has no fresh-payment or release authority at all. Only the two
+  // proof-bound recovery readers may be imported from the billing client, and
+  // store selection cannot regain removed creation/release capabilities.
+  const storeCapabilities = new Set(['completeSignup', 'createEtebaseAccount', 'finalizePaidSignup', 'saveSignupStateForRedirect', 'restoreSignupStateFromRedirect', 'pendingSignup', 'recoverCompletedSignupSession'])
+  for (const node of nodes) {
+    if (ts.isImportDeclaration(node) && node.moduleSpecifier.text === '@/app/lib/billing-v2') {
+      const bindings = node.importClause?.namedBindings
+      requireContract(!node.importClause?.name && bindings && ts.isNamedImports(bindings)
+        && bindings.elements.length === 2
+        && bindings.elements.every((item) => !item.propertyName && recoveryReaders.includes(item.name.text)), 'billing imports are recovery-only; legacy restart must fail closed')
+    }
+    if (ts.isCallExpression(node) && exact(node.expression, 'useAuthStore')) {
+      const selector = node.arguments[0]
+      requireContract(node.arguments.length === 1 && ts.isArrowFunction(selector)
+        && ts.isPropertyAccessExpression(selector.body) && selector.parameters.length === 1
+        && same(selector.body.expression, selector.parameters[0].name)
+        && storeCapabilities.has(selector.body.name.text), 'store selectors cannot acquire fresh-payment or release authority')
+    }
+    if (ts.isPropertyAccessExpression(node) && ts.isCallExpression(node.expression)
+      && exact(node.expression.expression, 'useAuthStore.getState')) {
+      requireContract(node.name.text === 'pendingSignup', 'imperative store access is read-only')
+    }
+    if (ts.isCallExpression(node) && exact(node.expression, 'fetch')) {
+      requireContract(false, 'direct transport cannot bypass proof-bound recovery')
+    }
+    if ((ts.isIdentifier(node) || (ts.isStringLiteral(node) && ts.isCallExpression(node.parent)
+      && ts.isPropertyAccessExpression(node.parent.expression) && node.parent.expression.name.text === 'getItem')) && /invoice/i.test(node.text)) {
+      requireContract(false, 'unbound local invoice data cannot authorize checkout availability or fresh payment')
+    }
+  }
+  const linkEffect = one(nodes.filter((node) => ts.isVariableDeclaration(node)
+    && node.name.getText(tree) === 'params' && node.initializer
+    && exact(node.initializer, 'new URLSearchParams(window.location.search)')), 'legacy link handling must remain explicit')
+  requireContract(same(linkEffect.parent.parent.parent, statement(`{
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('email_verification_token') || params.has('token')) setEmailProofUnavailable(true);
+  }`)), 'legacy restart links must only disclose unavailable proof, not consume or create authority')
 }
 
 export function checkAnnualBillingV2Contract(root = process.cwd()) {
@@ -95,7 +186,7 @@ export function checkAnnualBillingV2Contract(root = process.cwd()) {
     assert(source.includes("isAnnualOfferProviderAvailable") && source.includes("'stripe'") && source.includes("'btcpay'"), 'Public annual UI must gate Stripe and BTCPay with canonical offer providers')
   }
   assert(signup.includes('annualOffer={annualOffer}'), 'Signup must pass the signed annual offer through StepChoosePlan')
-  assert(pendingPayment.includes("isAnnualOfferProviderAvailable(offer.offer, 'btcpay', CRYPTO_CHECKOUT_ENABLED)"), 'Bitcoin restart must fail closed when a refreshed offer does not authorize BTCPay')
+  checkPendingPaymentRecovery(pendingPayment)
   for (const forbiddenPresentationConstant of [/&euro;36/, /€36(?:\.00)?(?:\/year)?/, /€3(?:\.00)?(?:\/month)?/, /Early Adopter(?: Plan)?/]) {
     assert(!forbiddenPresentationConstant.test(signup) && !forbiddenPresentationConstant.test(paymentPanel), `Public annual UI contains reintroduced fixed offer copy: ${forbiddenPresentationConstant}`)
   }
