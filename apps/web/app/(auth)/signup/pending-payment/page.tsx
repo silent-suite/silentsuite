@@ -311,8 +311,8 @@ export default function PendingPaymentPage() {
       {hasRecovery && <button type="button" onClick={() => { void loadCurrentFlow() }} disabled={flowCheckState === 'loading'} className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-[rgb(var(--border))] px-4 py-2 text-sm">
         {flowCheckState === 'loading' ? 'Checking current payment...' : flowCheckState === 'failed' ? 'Retry payment status' : 'Check payment status again'}
       </button>}
-      <p className="text-sm">Back does not cancel a payment. Cancellation and replacement cannot yet be confirmed safely here.</p>
-      <a href="/signup?recovery=payment" onClick={handleRecoveryBack} className="block underline">Back to signup</a>
+      <p className="text-sm">Reloading keeps this same payment. Cancellation and switching payment methods are not available here; contact support for help.</p>
+      <a href="/signup?recovery=payment" onClick={handleRecoveryBack} className="block underline">Reload this payment recovery</a>
       <a href="mailto:support@silentsuite.io" className="block underline">Contact support</a>
     </div>
   }

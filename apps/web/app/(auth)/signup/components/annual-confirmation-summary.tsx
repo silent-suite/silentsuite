@@ -3,6 +3,22 @@ import type { AnnualDisclosure } from '@/app/lib/billing-v2'
 const money = (minor: number) => `€${(minor / 100).toFixed(2)}`
 const timestamp = (value: string) => `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`
 
+export function annualConfirmationTitle(disclosure: AnnualDisclosure): string {
+  return disclosure.kind === 'no_auto_charge' ? 'Start your free trial'
+    : disclosure.kind === 'card_trial' ? 'Review your free trial'
+      : disclosure.kind === 'charge_now' ? 'Review your card payment' : 'Review your Bitcoin payment'
+}
+
+export function annualConfirmationAction(disclosure: AnnualDisclosure): string {
+  return disclosure.kind === 'no_auto_charge' ? 'Create account and start free trial'
+    : disclosure.kind === 'card_trial' ? 'Continue to card setup'
+      : disclosure.kind === 'charge_now' ? 'Continue to card payment' : 'Continue to Bitcoin payment'
+}
+
+export function annualCardSubmitLabel(disclosure: AnnualDisclosure): string {
+  return disclosure.kind === 'card_trial' ? 'Start free trial — no charge today' : `Pay ${money(disclosure.firstChargeAmountMinor)} now`
+}
+
 /** Only the server disclosure kind determines whether the next step charges. */
 export function AnnualConfirmationSummary({ disclosure }: { disclosure: AnnualDisclosure }) {
   const noCard = disclosure.kind === 'no_auto_charge'

@@ -7,12 +7,14 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import SignupPage from '../../(auth)/signup/page'
 import { checkoutIntentToken, emailOwnershipToken } from '@/src/__tests__/fixtures/annual-authority'
 
+vi.hoisted(() => { process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED = 'true' })
+
 vi.mock('@/app/lib/config', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/app/lib/config')>(),
   BILLING_API_URL: 'https://billing.test',
 }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
-vi.mock('next/link', () => ({ default: ({ children }: { children: React.ReactNode }) => children }))
+vi.mock('next/link', () => ({ default: ({ children, href }: { children: React.ReactNode; href: string }) => createElement('a', { href }, children) }))
 
 const mocks = vi.hoisted(() => ({
   session: null as string | null,
@@ -284,7 +286,7 @@ describe('signup Billing session boundary', () => {
       expect(body.wantsProductUpdates).toBe(consent === true)
       return json({ contractVersion: 2, kind: 'stripe', clientSecret: 'pi_secret', paymentSessionToken: body.recoverySecret })
     })
-    await useAuthStore.getState().startAnnualSignupPayment(capability, 'stripe', window.location.origin + '/signup')
+    await useAuthStore.getState().startAnnualSignupPayment(capability, 'stripe', window.location.origin + '/signup', 'annual')
   })
 
   it('shares duplicate create/provision clicks rather than superseding an identical signup', async () => {
@@ -428,4 +430,104 @@ it('checkpoints actual paid finalization before failed exchange and only recover
   expect(paths.every((p) => ['/auth/signup/finalize-payment/v2', '/auth/token-exchange', '/auth/session'].includes(p))).toBe(true)
   expect(mocks.signup).not.toHaveBeenCalled()
   expect(sessionStorage.getItem(key)).toBeNull()
+})
+
+// Fresh rendered signup: no redirect checkpoint or legacy crypto token is seeded.
+it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retains the first payment across document loss: %s', async (scenario) => {
+  const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'
+  const key = 'silentsuite-signup-redirect-state'
+  localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({ [requestId]: {
+    email, requestId, wantsProductUpdates: false, rememberDevice: false, returnTo: null, expiresAt: Date.now() + 60_000,
+  } }))
+  window.history.replaceState({}, '', `/signup?token=fixture&request_id=${requestId}`)
+  let started: Record<string, unknown> | undefined
+  let beforeDispatch: string | null = null
+  let warningBeforeDispatch = false
+  let confirmed = false
+  const disclosure = {
+    kind: 'prepaid', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: null,
+    monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null,
+    cancelBy: null, cancelByInclusive: false, autoRenew: false, prepaid: true, refundWindowDays: 30,
+    bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null,
+  }
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    const pathname = new URL(String(url)).pathname
+    if (pathname.endsWith('/consume')) return json({ contractVersion: 2, emailOwnershipToken, expiresAt: '2099-01-01T00:00:00Z' })
+    if (pathname.endsWith('/offers/v2')) return json({ contractVersion: 2, requestId, offer: {
+      planId: 'early_annual', customerClass: 'early', billingInterval: 'annual', annualAmountMinor: 3600,
+      monthlyEquivalentMinor: 300, currency: 'EUR', providers: ['stripe', 'btcpay'], offerRevision: 1,
+      offerToken: 'fixture-offer', expiresAt: '2099-01-01T00:00:00Z',
+    } })
+    if (pathname.endsWith('/activate')) return json({ contractVersion: 2, checkoutIntentToken, expiresAt: '2099-01-01T00:00:00Z', disclosure })
+    if (pathname.endsWith('/payment-session/v2')) {
+      started = JSON.parse(String(init?.body))
+      beforeDispatch = sessionStorage.getItem(key)
+      warningBeforeDispatch = screen.queryByText(/Stay in this tab/) !== null
+      if (scenario !== 'inline Bitcoin') throw new Error('Start response lost')
+      return json({ contractVersion: 2, kind: 'btcpay', paymentSessionToken: started!.recoverySecret,
+        cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/fixture', cryptoInvoiceId: 'fixture', cryptoInvoiceLookupToken: started!.recoverySecret })
+    }
+    if (pathname.endsWith('/payment-methods')) return json({ paymentMethods: [{ id: 'BTC', address: 'bc1-fixture', qrValue: 'bitcoin:bc1-fixture', amount: '0.001', currency: 'BTC' }] })
+    if (pathname.endsWith('/invoice/fixture')) return json({ status: 'new' })
+    if (/payment-session\/v2\/(current|reconcile)$/.test(pathname)) {
+      expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email, requestKey: started!.requestKey, recoverySecret: started!.recoverySecret })
+      return json({ contractVersion: 2, state: confirmed ? 'confirmed' : 'open', flow: { provider: 'btcpay', status: confirmed ? 'provider_confirmed' : 'provider_pending' } })
+    }
+    throw new Error(`Unexpected test request: ${pathname}`)
+  })
+  let document = render(createElement(SignupPage))
+  fireEvent.change(await screen.findByLabelText(/^password$/i), { target: { value: 'OriginalPass1' } })
+  const next = screen.getByRole('button', { name: /continue to trial options/i })
+  await waitFor(() => expect(next).toBeEnabled())
+  fireEvent.click(next)
+  fireEvent.click(await screen.findByRole('button', { name: /^continue$/i }))
+  fireEvent.click(await screen.findByRole('button', { name: /with bitcoin for/i }))
+  const confirm = await screen.findByRole('button', { name: /confirm annual terms and continue|continue to bitcoin payment/i })
+  expect(sessionStorage.getItem(key)).toBeNull()
+  const originalWrite = Storage.prototype.setItem
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, name, value) {
+    if (scenario === 'storage failure' && name === key) throw new Error('quota')
+    return originalWrite.call(this, name, value)
+  })
+  try {
+    fireEvent.click(confirm)
+    if (scenario === 'inline Bitcoin') await screen.findByText('bc1-fixture')
+    else await screen.findByText('Start response lost')
+    expect(started).toBeDefined()
+    if (scenario === 'storage failure') {
+      expect(warningBeforeDispatch).toBe(true)
+      expect(screen.getByText(/Stay in this tab/)).toBeVisible()
+      expect(useAuthStore.getState().signupRecoveryDurability).toBe('memory-only')
+      expect(sessionStorage.getItem(key)).toBeNull()
+      return
+    }
+    expect(beforeDispatch).not.toBeNull()
+    const saved = JSON.parse(beforeDispatch!)
+    expect(saved).toMatchObject({ selectedInterval: 'annual', pendingSignup: { email, paymentSessionRequestKey: started!.requestKey, paymentSessionToken: started!.recoverySecret } })
+    expect(beforeDispatch).not.toMatch(/OriginalPass1|billingSessionUserId|encrypted-session|checkoutIntentToken|emailOwnershipToken/)
+    for (const destination of ['/signup', '/signup/pending-payment']) {
+      document.unmount()
+      useAuthStore.setState({ pendingSignup: null })
+      window.history.replaceState(window.history.state, '', destination)
+      document = render(createElement(SignupPage))
+      if (destination === '/signup') {
+        await screen.findByRole('link', { name: /recover existing payment/i })
+        document.unmount()
+        window.history.replaceState({}, '', '/signup?recovery=payment')
+        document = render(createElement(SignupPage))
+      } else {
+        document.unmount()
+        const { default: PendingPaymentPage } = await import('../../(auth)/signup/pending-payment/page')
+        document = render(createElement(PendingPaymentPage))
+      }
+      await screen.findByRole('button', { name: /check payment status again/i })
+      expect(useAuthStore.getState().pendingSignup).toMatchObject(saved.pendingSignup)
+      expect(JSON.parse(sessionStorage.getItem(key)!).savedAt).toBe(saved.savedAt)
+    }
+    confirmed = true
+    fireEvent.click(screen.getByRole('button', { name: /check payment status again/i }))
+    await screen.findByLabelText(/^password$/i)
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/payment-session/v2'))).toHaveLength(1)
+    expect(mocks.signup).not.toHaveBeenCalled()
+  } finally { write.mockRestore() }
 })

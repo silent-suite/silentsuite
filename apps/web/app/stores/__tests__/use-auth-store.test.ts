@@ -307,7 +307,7 @@ describe('useAuthStore', () => {
       return useAuthStore.getState().startAnnualSignupPayment(
         checkoutIntentToken,
         provider,
-        'http://localhost:3000/signup/return',
+        'http://localhost:3000/signup/return', 'annual',
       )
     }
 
@@ -372,9 +372,28 @@ describe('useAuthStore', () => {
     it('rejects cross-origin annual return URLs before contacting Billing', async () => {
       useAuthStore.getState().prepareSignupDraft('origin@example.com')
       await expect(useAuthStore.getState().startAnnualSignupPayment(
-        checkoutIntentToken, 'stripe', 'https://attacker.example/return',
+        checkoutIntentToken, 'stripe', 'https://attacker.example/return', 'annual',
       )).rejects.toThrow('must stay on this origin')
       expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('cannot resurrect a logged-out attempt from a late payment response', async () => {
+      useAuthStore.getState().prepareSignupDraft('logout@example.test')
+      let deliver!: (response: Response) => void
+      let recoverySecret = ''
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        if (String(input).endsWith('/auth/session')) return new Response('{}')
+        recoverySecret = JSON.parse(String(init?.body)).recoverySecret
+        return new Promise<Response>((resolve) => { deliver = resolve })
+      })
+      const pending = startAnnualPayment().catch((error) => error as Error)
+      expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).not.toBeNull()
+      await useAuthStore.getState().logout()
+      deliver(new Response(JSON.stringify(stripePayment(recoverySecret))))
+      expect(await pending).toBeInstanceOf(Error)
+      expect(useAuthStore.getState().pendingSignup).toBeNull()
+      expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).toBeNull()
+      expect(persistedPaidSignupIdentities()).toHaveLength(0)
     })
 
     it('does not commit an in-flight authority into a superseding signup draft', async () => {
@@ -769,7 +788,7 @@ describe('useAuthStore', () => {
         paymentSessionToken: request.recoverySecret,
       }))
     })
-    const result = await useAuthStore.getState().startAnnualSignupPayment('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG', 'stripe', 'http://localhost:3000/signup/success')
+    const result = await useAuthStore.getState().startAnnualSignupPayment('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG', 'stripe', 'http://localhost:3000/signup/success', 'annual')
     expect(result.clientSecret).toBe('pi_secret')
     const [, init] = vi.mocked(fetch).mock.calls[0]
     expect(JSON.parse(String(init?.body))).toMatchObject({ contractVersion: 2, checkoutIntentToken: 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG', email: 'customer@example.test' })
@@ -1184,12 +1203,17 @@ describe('useAuthStore', () => {
     })
   })
 
-  it('logout clears state', async () => {
+  it('logout clears state and the retained tab payment checkpoint', async () => {
     // Set up logged-in state
     useAuthStore.setState({
       user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
       isAuthenticated: true,
+      pendingSignup: { email: 'test@example.com', paymentSessionToken: 'r'.repeat(43), billingContractVersion: 2 },
     })
+    useAuthStore.getState().saveSignupStateForRedirect('annual')
+    sessionStorage.setItem('silentsuite-pending-crypto-token', 'r'.repeat(43))
+    sessionStorage.setItem('silentsuite-pending-crypto-recovery-context', JSON.stringify({ email: 'test@example.com', requestKey: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f' }))
+    expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).not.toBeNull()
 
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
 
@@ -1198,6 +1222,12 @@ describe('useAuthStore', () => {
     const state = useAuthStore.getState()
     expect(state.user).toBeNull()
     expect(state.isAuthenticated).toBe(false)
+    expect(state.pendingSignup).toBeNull()
+    expect(state.signupRecoveryDurability).toBe('none')
+    expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).toBeNull()
+    expect(state.restoreSignupStateFromRedirect({ retainForRecovery: true })).toBeNull()
+    expect(sessionStorage.getItem('silentsuite-pending-crypto-token')).toBeNull()
+    expect(sessionStorage.getItem('silentsuite-pending-crypto-recovery-context')).toBeNull()
   })
 
   it('logout clears decrypted account stores before another account can authenticate', async () => {

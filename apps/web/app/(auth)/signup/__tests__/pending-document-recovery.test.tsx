@@ -26,7 +26,7 @@ it.each(['btcpay', 'stripe'] as const)('restores the exact %s attempt after full
   useAuthStore.setState({ pendingSignup: { email, password: 'NeverPersist1', serverUrl: 'https://server.silentsuite.io', paymentSessionToken: token, paymentSessionRequestKey: requestKey, paymentMethod, billingContractVersion: 2 } })
   let document = render(<PendingPaymentPage />)
   await screen.findByRole('button', { name: /check payment status again/i })
-  const href = screen.getByRole('link', { name: /back to signup/i }).getAttribute('href')!
+  const href = screen.getByRole('link', { name: /reload this payment recovery/i }).getAttribute('href')!
   expect(href).toBe('/signup?recovery=payment')
   const snapshot = sessionStorage.getItem(key)!
   expect(snapshot).not.toContain('NeverPersist1')
@@ -62,7 +62,7 @@ it('blocks full-document Back if its persisted continuation is lost', async () =
   render(<PendingPaymentPage />)
   await screen.findByRole('heading', { name: /payment release not confirmed/i })
   sessionStorage.removeItem(key)
-  expect(fireEvent.click(screen.getByRole('link', { name: /back to signup/i }))).toBe(false)
+  expect(fireEvent.click(screen.getByRole('link', { name: /reload this payment recovery/i }))).toBe(false)
   await screen.findByText(/This browser could not retain payment recovery/)
   expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(token)
 })
@@ -83,7 +83,7 @@ it('guarded Back and payment checks cannot hide the memory-only warning', async 
     expect(screen.getByText(/Stay in this tab/)).toBeVisible()
     expect(await screen.findByRole('button', { name: /checking current payment/i })).toBeDisabled()
     expect(fetcher).toHaveBeenCalledTimes(2)
-    expect(fireEvent.click(screen.getByRole('link', { name: /back to signup/i }))).toBe(false)
+    expect(fireEvent.click(screen.getByRole('link', { name: /reload this payment recovery/i }))).toBe(false)
     expect(screen.getByText(/Stay in this tab/)).toBeVisible()
     finishTerminalRead(closed())
     // The terminal heading is committed before the effect keyed by that new

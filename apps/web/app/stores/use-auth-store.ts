@@ -1,6 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
+import { flushSync } from 'react-dom'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { logger } from '@/app/lib/logger'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
@@ -11,7 +12,7 @@ import { clearAll as clearOfflineQueue } from '@/app/lib/offline-queue'
 import { createLoginSessionPersistenceDiagnostics } from '@/app/lib/sync-restore-diagnostics'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
-import { BillingResponseError, startSignupAnnualPayment } from '@/app/lib/billing-v2'
+import { BillingResponseError, startSignupAnnualPayment, type AnnualOffer } from '@/app/lib/billing-v2'
 
 export interface User {
   isAdmin?: boolean
@@ -106,7 +107,7 @@ interface AuthState {
   /** Historical signature retained for callers; fresh hosted v1 creation rejects. */
   signup: (planId: string, trialPath: string) => Promise<SignupResult>
   provisionAnnualNoCard: (checkoutIntentToken: string) => Promise<void>
-  startAnnualSignupPayment: (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string) => Promise<SignupResult>
+  startAnnualSignupPayment: (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string, selectedInterval: AnnualOffer['billingInterval']) => Promise<SignupResult>
   /** Clear only this exact authority after Billing proved it terminal/cancelled. */
   clearPendingSignupPaymentRecovery: (identity: PaidSignupRecoveryRelease) => void
   finalizePaidSignup: () => Promise<SignupResult>
@@ -250,7 +251,10 @@ class SignupRedirectCheckpoint {
   }
 
   save(pending: PendingSignup, selectedInterval?: 'monthly' | 'annual') {
-    if (pending === this.current?.pendingSignup) return
+    if (pending === this.current?.pendingSignup) {
+      if (!this.live(this.current)) this.publishDurability('memory-only')
+      return
+    }
     const stored = this.read()
     const previous = this.current && this.same(this.current.pendingSignup, pending) ? this.current
       : stored && this.same(stored.pendingSignup, pending) ? stored : null
@@ -908,7 +912,8 @@ async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth') 
   signupRedirectCheckpoint.clear()
   clearPaidSignupRecoveryIdentity()
   if (typeof window !== 'undefined') {
-    for (const key of ['silentsuite-signup-in-progress']) {
+    for (const key of ['silentsuite-signup-in-progress', 'silentsuite-pending-crypto-token',
+      'silentsuite-pending-crypto-invoice', 'silentsuite-pending-crypto-recovery-context', 'silentsuite-pending-crypto-return-to']) {
       try {
         sessionStorage.removeItem(key)
       } catch {
@@ -1169,7 +1174,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   }),
 
-  startAnnualSignupPayment: async (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string) => {
+  startAnnualSignupPayment: async (checkoutIntentToken: string, provider: 'stripe' | 'btcpay', returnUrl: string, selectedInterval: AnnualOffer['billingInterval']) => {
+    if (selectedInterval !== 'annual') throw new Error('A validated annual offer is required.')
     const pending = get().pendingSignup
     if (!pending || isSelfHosted || isCustomServer(pending.serverUrl)) throw new Error('No hosted annual checkout is ready.')
     const recoveryScope = paidSignupRecoveryScope(pending.email, pending.wantsProductUpdates, pending.rememberDevice)
@@ -1183,9 +1189,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // A lost start response is not evidence no payment authority exists.
       // Attach the exact existing recovery identity before dispatch so the
       // pending route can reconcile it without minting a replacement.
-      set({ pendingSignup: { ...pending, paidSignupAttemptId: attemptId,
-        billingContractVersion: 2, paymentSessionToken: recovery.recoverySecret,
-        paymentSessionRequestKey: recovery.requestKey, paymentMethod: provider } })
+      // Initialize before dispatch, even when this tab has never redirected.
+      // Flush the warning into the rendered UI before the next fallible operation.
+      flushSync(() => {
+        set({ pendingSignup: { ...pending, paidSignupAttemptId: attemptId,
+          billingContractVersion: 2, paymentSessionToken: recovery.recoverySecret,
+          paymentSessionRequestKey: recovery.requestKey, paymentMethod: provider } })
+        signupRedirectCheckpoint.save(get().pendingSignup!, selectedInterval)
+      })
       const payment = await startSignupAnnualPayment({ fetcher: fetch, billingApiUrl: BILLING_API_URL, checkoutIntentToken, email: pending.email, requestKey: recovery.requestKey, recoverySecret: recovery.recoverySecret, wantsProductUpdates: pending.wantsProductUpdates === true, rememberDevice: pending.rememberDevice === true, returnUrl: absoluteReturnUrl })
       if (payment.kind !== provider) throw new Error('Billing returned the wrong payment provider.')
       const current = get().pendingSignup
@@ -1524,7 +1535,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Stop rendering protected account data before any network request or
     // asynchronous storage cleanup can yield.
     syncAdminCookie(false)
-    set({ user: null, isAuthenticated: false, error: null, subscriptionStatus: null })
+    set({ user: null, isAuthenticated: false, pendingSignup: null, isLoading: false, error: null, subscriptionStatus: null })
 
     if (!isSelfHosted) {
       await deleteHostedServerSession('invalid-hosted-auth')

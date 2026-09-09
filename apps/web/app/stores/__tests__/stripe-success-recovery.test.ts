@@ -48,14 +48,14 @@ beforeEach(() => {
 
 
 import SignupSuccessPage from '../../(auth)/signup/success/page';
-it.each(['succeeded','processing'])('review4: Stripe %s discloses undurable completed receipt before exchange and loss', async (status) => {
+it.each(['setup_intent', 'payment_intent'].flatMap((intent) => ['succeeded', 'processing'].map((status) => [intent, status])))('review4: Stripe %s %s discloses undurable completed receipt before exchange and loss', async (intent, status) => {
  const key='silentsuite-signup-redirect-state'; mocks.session='encrypted-session';
  useAuthStore.setState({pendingSignup:{email,paymentSessionToken:capability,paymentSessionRequestKey:id,paymentMethod:'stripe',billingContractVersion:2}});
  useAuthStore.getState().saveSignupStateForRedirect('annual');
  useAuthStore.setState({pendingSignup:null});
- window.history.replaceState({},'',`/signup/success?setup_intent=fixture&redirect_status=${status}`);
+ window.history.replaceState({},'',`/signup/success?${intent}=fixture&redirect_status=${status}`);
  const view=render(createElement(SignupSuccessPage));
- await screen.findByText('Card verified successfully');
+ await screen.findByText('Continue account setup');
  const original=Storage.prototype.setItem; let failReceipt=false;
  const spy=vi.spyOn(Storage.prototype,'setItem').mockImplementation(function(this:Storage,k,v){if(failReceipt&&k===key)throw new Error('quota'); return original.call(this,k,v)});
  let atExchange=false; let warningAtExchange=false;
@@ -76,7 +76,7 @@ it.each(['succeeded','processing'])('review4: Stripe %s discloses undurable comp
   const warningAfterFailure=Boolean(screen.queryByText(/Stay in this tab/));
   view.unmount(); useAuthStore.setState({pendingSignup:null}); mocks.session=null;
   render(createElement(SignupSuccessPage));
-  await screen.findByRole('heading',{name:'Session expired'});
+  await screen.findByRole('heading',{name:'Payment confirmation required'});
   expect(useAuthStore.getState().pendingSignup).toBeNull();
   expect({warningAtExchange,warningAfterFailure}).toEqual({warningAtExchange:true,warningAfterFailure:true});
  } finally {spy.mockRestore()}

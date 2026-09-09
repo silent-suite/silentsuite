@@ -111,7 +111,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     render(<PendingPaymentPage />)
     await waitFor(() => expect(screen.queryByText('Checking current payment...')).not.toBeInTheDocument())
     expect(screen.queryByText(/Waiting for BTCPay settlement|webhook activates|check your email to continue/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /back to signup/i })).toBeVisible()
+    expect(screen.getByRole('link', { name: /reload this payment recovery/i })).toBeVisible()
     expect(screen.queryByRole('button', { name: /start a new invoice|cancel and start/i })).not.toBeInTheDocument()
   })
 
@@ -169,7 +169,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     render(<PendingPaymentPage />)
     await screen.findByRole('button', { name: /check payment status again/i })
     expect(screen.queryByRole('button', { name: /cancel/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/Cancellation and replacement cannot yet be confirmed safely/)).toBeVisible()
+    expect(screen.getByText(/Cancellation and switching payment methods are not available here/)).toBeVisible()
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
   })
 
@@ -180,7 +180,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
 
     render(<PendingPaymentPage />)
 
-    expect(await screen.findByRole('link', { name: /back to signup/i })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: /reload this payment recovery/i })).toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -291,7 +291,7 @@ describe('PendingPaymentPage legacy restart links fail closed', () => {
     vi.stubGlobal('fetch', vi.fn())
     render(<PendingPaymentPage />)
     expect(await screen.findByText(/verification link could not be matched/i)).toBeVisible()
-    expect(screen.getByRole('link', { name: /back to signup/i })).toBeVisible()
+    expect(screen.getByRole('link', { name: /reload this payment recovery/i })).toBeVisible()
     expect(fetch).not.toHaveBeenCalled()
     expect(authState.prepareSignupDraft).not.toHaveBeenCalled()
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
