@@ -212,6 +212,26 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().error).toMatch(/already signed in/i)
   })
 
+  it('rejects a replacement password for a retained encrypted account rather than pretending it changed', async () => {
+    const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    useAuthStore.getState().prepareSignupDraft('identity@example.test')
+    await useAuthStore.getState().createEtebaseAccount('identity@example.test', 'OriginalPass1')
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('Invalid original credentials'))
+    await expect(useAuthStore.getState().createEtebaseAccount('identity@example.test', 'DifferentPass2')).rejects.toThrow('Invalid original credentials')
+    expect(etebaseLogIn).toHaveBeenCalledWith('identity@example.test', 'DifferentPass2', undefined)
+    expect(etebaseSignUp).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(fetch).not.toHaveBeenCalled()
+    await useAuthStore.getState().createEtebaseAccount('identity@example.test', 'OriginalPass1')
+    expect(etebaseLogIn).toHaveBeenLastCalledWith('identity@example.test', 'OriginalPass1', undefined)
+    // A later login must not treat the rejected replacement as the account password.
+    await useAuthStore.getState().logout()
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('Invalid original credentials'))
+    await useAuthStore.getState().login('identity@example.test', 'DifferentPass2')
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useAuthStore.getState().user).toBeNull()
+  })
+
   it('reuses an Etebase account created by an ambiguous prior signup attempt', async () => {
     const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
     vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('409 conflict'))
@@ -742,7 +762,8 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'temporary failure' }), { status: 503 }))
     await expect(useAuthStore.getState().provisionAnnualNoCard('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')).rejects.toMatchObject({ billingStatus: 503 })
 
-    vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('409 conflict'))
+    const signupCalls = vi.mocked(etebaseSignUp).mock.calls.length
+    const loginCalls = vi.mocked(etebaseLogIn).mock.calls.length
     await useAuthStore.getState().createEtebaseAccount('recover-no-card@example.test', 'password123')
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
       contractVersion: 2, id: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f', email: 'recover-no-card@example.test',
@@ -753,7 +774,8 @@ describe('useAuthStore', () => {
     mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'recover-no-card@example.test')
     await useAuthStore.getState().provisionAnnualNoCard('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')
 
-    expect(etebaseLogIn).toHaveBeenCalledWith('recover-no-card@example.test', 'password123', undefined)
+    expect(etebaseSignUp).toHaveBeenCalledTimes(signupCalls)
+    expect(etebaseLogIn).toHaveBeenCalledTimes(loginCalls + 1)
     expect(useAuthStore.getState().pendingSignup?.provisionedUser?.id).toBe('5fd4d86d-34de-4b82-9a66-9598ddf6e02f')
   })
 
@@ -768,7 +790,8 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'temporary failure' }), { status: 503 }))
     await expect(useAuthStore.getState().finalizePaidSignup()).rejects.toThrow('temporary failure')
 
-    vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('409 conflict'))
+    const signupCalls = vi.mocked(etebaseSignUp).mock.calls.length
+    const loginCalls = vi.mocked(etebaseLogIn).mock.calls.length
     await useAuthStore.getState().createEtebaseAccount('recover-paid@example.test', 'password123')
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
       contractVersion: 2, id: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f', email: 'recover-paid@example.test',
@@ -779,7 +802,8 @@ describe('useAuthStore', () => {
     mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'recover-paid@example.test')
     await useAuthStore.getState().finalizePaidSignup()
 
-    expect(etebaseLogIn).toHaveBeenCalledWith('recover-paid@example.test', 'password123', undefined)
+    expect(etebaseSignUp).toHaveBeenCalledTimes(signupCalls)
+    expect(etebaseLogIn).toHaveBeenCalledTimes(loginCalls + 1)
     expect(useAuthStore.getState().pendingSignup?.provisionedUser?.planId).toBe('early_annual')
   })
 

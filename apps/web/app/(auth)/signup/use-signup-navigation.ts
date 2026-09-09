@@ -7,16 +7,17 @@ type Recovery = 'review' | 'setup' | 'payment'
 const KEY = 'silentsuiteSignup'
 
 /** History contains presentation state only, never proof, password or payment capabilities. */
-export function useSignupNavigation({ enabled, step, view, restore }: {
+export function useSignupNavigation({ enabled, step, view, restore, intercept }: {
   enabled: boolean
   step: string
   view: string
+  intercept?: () => boolean
   restore: (checkpoint: Checkpoint) => boolean
 }) {
   const journey = useRef<string | null>(null)
   const phase = useRef<Recovery>('review')
-  const latest = useRef({ step, view, restore })
-  latest.current = { step, view, restore }
+  const latest = useRef({ step, view, restore, intercept })
+  latest.current = { step, view, restore, intercept }
   const [recovery, setRecovery] = useState<Recovery | null>(null)
   const [notice, setNotice] = useState(false)
 
@@ -49,7 +50,7 @@ export function useSignupNavigation({ enabled, step, view, restore }: {
     if (!enabled || recovery) return
     const onPop = (event: PopStateEvent) => {
       const saved = event.state?.[KEY]
-      if (saved?.journey === journey.current && latest.current.restore(saved)) {
+      if (!latest.current.intercept?.() && saved?.journey === journey.current && latest.current.restore(saved)) {
         setNotice(false)
         return
       }
@@ -91,5 +92,14 @@ export function useSignupNavigation({ enabled, step, view, restore }: {
     phase.current = 'review'
     setRecovery(null)
   }
-  return { recovery, notice, markMutation, clear }
+  const retireCheckpoints = () => {
+    // Retire stale Back/Forward presentation without forgetting possible account creation.
+    journey.current = crypto.randomUUID()
+    window.history.replaceState({ ...window.history.state, [KEY]: {
+      version: 1, journey: journey.current, step: latest.current.step,
+      view: latest.current.view, phase: phase.current,
+    } }, '')
+    setNotice(false)
+  }
+  return { recovery, notice, markMutation, clear, retireCheckpoints }
 }

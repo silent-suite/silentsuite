@@ -144,7 +144,9 @@ interface AuthState {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const UTC_TIMESTAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/
+const UTC_TIMESTAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/
+// Runtime-only binding; never serialized into redirect or browser storage.
+
 const REDIRECT_SIGNUP_STATE_KEY = 'silentsuite-signup-redirect-state'
 const REDIRECT_SIGNUP_STATE_TTL_MS = 2 * 60 * 60 * 1000
 
@@ -198,7 +200,12 @@ function parseRedirectPendingSignup(value: unknown): RedirectPendingSignup | nul
 }
 
 function isUtcTimestamp(value: unknown): value is string {
-  return typeof value === 'string' && UTC_TIMESTAMP.test(value) && !Number.isNaN(Date.parse(value))
+  if (typeof value !== 'string' || !UTC_TIMESTAMP.test(value)) return false
+  const parsed = new Date(value)
+  // Date parsing alone normalizes impossible dates (February 30, hour 24).
+  // Accept exactly the two forms emitted by Billing's Date.toISOString serializer.
+  if (!Number.isFinite(parsed.getTime())) return false
+  return parsed.toISOString() === (value.includes('.') ? value : value.replace('Z', '.000Z'))
 }
 
 function isExactNoCardProvision(value: unknown, email: string): value is {
@@ -957,15 +964,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   createEtebaseAccount: signupSingleFlight(async (email: string, password: string, serverUrl?: string) => {
     const existing = get().pendingSignup
-    if (existing?.etebaseAccountReady && existing.provisionedUser
-      && existing.email === email && existing.serverUrl === serverUrl
-      && await secureGet('etebase_session')) return
+    if ((existing?.provisionedUser || existing?.etebaseAccountReady) && (existing.email !== email || existing.serverUrl !== serverUrl)) {
+      throw new Error('Your account is already set up. Sign in with its original account details.')
+    }
     set({ isLoading: true, error: null })
     try {
       const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
       let authResult: { authToken: string; savedSession: string }
       try {
-        authResult = await etebaseSignUp(email, password, serverUrl)
+        authResult = existing?.provisionedUser || existing?.etebaseAccountReady
+          ? await etebaseLogIn(email, password, serverUrl)
+          : await etebaseSignUp(email, password, serverUrl)
       } catch (signupErr) {
         const raw = signupErr instanceof Error ? signupErr.message.toLowerCase() : ''
         if (!raw.includes('conflict') && !raw.includes('409') && !raw.includes('already')) {
@@ -982,6 +991,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (isCustomServer(serverUrl) && serverUrl) {
         localStorage.setItem('silentsuite-server-url', serverUrl)
       }
+
 
       // Mark signup as in progress so restoreSession won't authenticate mid-flow
       if (typeof window !== 'undefined') {
