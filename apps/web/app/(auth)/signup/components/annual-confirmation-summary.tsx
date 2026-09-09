@@ -3,44 +3,61 @@ import type { AnnualDisclosure } from '@/app/lib/billing-v2'
 const money = (minor: number) => `€${(minor / 100).toFixed(2)}`
 const timestamp = (value: string) => `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`
 
-export function annualConfirmationTitle(disclosure: AnnualDisclosure): string {
-  return disclosure.kind === 'no_auto_charge' ? 'Start your free trial'
-    : disclosure.kind === 'card_trial' ? 'Review your free trial'
-      : disclosure.kind === 'charge_now' ? 'Review your card payment' : 'Review your Bitcoin payment'
-}
-
-export function annualConfirmationAction(disclosure: AnnualDisclosure): string {
-  return disclosure.kind === 'no_auto_charge' ? 'Create account and start free trial'
-    : disclosure.kind === 'card_trial' ? 'Continue to card setup'
-      : disclosure.kind === 'charge_now' ? 'Continue to card payment' : 'Continue to Bitcoin payment'
+/** Label for retrying a payment start that did not complete for the same claim. */
+export function annualRetryAction(disclosure: AnnualDisclosure): string {
+  return disclosure.kind === 'card_trial' ? 'Retry card setup'
+    : disclosure.kind === 'charge_now' ? 'Retry card payment'
+      : disclosure.kind === 'prepaid' ? 'Retry Bitcoin payment' : 'Continue to your workspace'
 }
 
 export function annualCardSubmitLabel(disclosure: AnnualDisclosure): string {
   return disclosure.kind === 'card_trial' ? 'Start free trial — no charge today' : `Pay ${money(disclosure.firstChargeAmountMinor)} now`
 }
 
-/** Only the server disclosure kind determines whether the next step charges. */
-export function AnnualConfirmationSummary({ disclosure }: { disclosure: AnnualDisclosure }) {
-  const noCard = disclosure.kind === 'no_auto_charge'
-  const cardTrial = disclosure.kind === 'card_trial'
-  return <>
-    <p className="text-sm text-[rgb(var(--muted))]">
-      {noCard ? 'Start your 7-day free trial. No card required. No automatic charge or renewal.'
-        : cardTrial ? 'Add a card next. No charge today. Cancel before the deadline below to avoid the annual charge.'
-          : disclosure.kind === 'charge_now' ? `Pay ${money(disclosure.firstChargeAmountMinor)} now by card. This is an annual purchase, not a free trial.`
-            : `Pay ${money(disclosure.firstChargeAmountMinor)} in Bitcoin. This is a prepaid annual purchase, not a free trial. No automatic renewal.`}
-    </p>
-    {disclosure.kind === 'prepaid' && disclosure.refundWindowDays === 30 && <p className="text-sm">Request a full refund within 30 days of your first payment—no questions asked.</p>}
-    <dl className="space-y-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4 text-sm">
-      {!noCard && <>
-        <div className="flex justify-between gap-4"><dt>{cardTrial ? 'After your trial' : 'Payment'}</dt><dd>{money(disclosure.firstChargeAmountMinor)}{cardTrial ? '/year' : ''}</dd></div>
-        {disclosure.firstChargeAt && <div className="flex justify-between gap-4"><dt>First charge</dt><dd>{timestamp(disclosure.firstChargeAt)}</dd></div>}
-        {disclosure.cancelBy && <div className="flex justify-between gap-4"><dt>Cancel before</dt><dd>{timestamp(disclosure.cancelBy)}</dd></div>}
-        {disclosure.autoRenew && <div className="flex justify-between gap-4"><dt>Automatic renewal</dt><dd>{disclosure.renewalAmountMinor !== null ? `${money(disclosure.renewalAmountMinor)}/year` : 'Annual'}{disclosure.renewalAt ? ` from ${timestamp(disclosure.renewalAt)}` : ', one year after payment confirmation'}</dd></div>}
-        {disclosure.refundWindowDays && <div className="flex justify-between gap-4"><dt>Refund window</dt><dd>{disclosure.refundWindowDays} days</dd></div>}
-      </>}
-      {disclosure.entitlementEndsAt && <div className="flex justify-between gap-4"><dt>{noCard ? 'Free until' : 'Access through'}</dt><dd>{timestamp(disclosure.entitlementEndsAt)}</dd></div>}
-      {!disclosure.entitlementEndsAt && <div className="flex justify-between gap-4"><dt>Access</dt><dd>One year from payment confirmation{disclosure.bonusDays ? `, plus ${disclosure.bonusDays} bonus days` : ''}</dd></div>}
-    </dl>
-  </>
+/** One line stating what continuing does on the no-card path; it is the only mutation there. */
+export function noCardTrialConsequence(disclosure: AnnualDisclosure): string | null {
+  if (disclosure.kind !== 'no_auto_charge') return null
+  return 'Continuing creates your account and starts your 7-day free trial. No card required. No automatic charge or renewal.'
+}
+
+/**
+ * Concise customer terms beside the payable controls. Only the server
+ * disclosure kind determines whether, when and how much the next step charges.
+ */
+export function AnnualTermsSummary({ disclosure }: { disclosure: AnnualDisclosure }) {
+  const access = `one year of access${disclosure.bonusDays ? ` plus ${disclosure.bonusDays} bonus days` : ''}`
+  if (disclosure.kind === 'no_auto_charge') {
+    return <p className="text-sm text-[rgb(var(--muted))]">{noCardTrialConsequence(disclosure)}</p>
+  }
+  if (disclosure.kind === 'card_trial') {
+    return (
+      <div className="space-y-1 text-sm text-[rgb(var(--muted))]">
+        <p>
+          No charge today. {money(disclosure.firstChargeAmountMinor)}/year is charged
+          {disclosure.firstChargeAt ? ` on ${timestamp(disclosure.firstChargeAt)}` : ' after your 30-day trial'}. Cancel before then and nothing is charged.
+        </p>
+        <p>
+          {disclosure.autoRenew ? `Renews automatically each year at ${money(disclosure.renewalAmountMinor ?? disclosure.annualAmountMinor)}. ` : 'No automatic renewal. '}
+          Cancel anytime.{disclosure.refundWindowDays ? ` ${disclosure.refundWindowDays}-day refund window.` : ''}
+        </p>
+      </div>
+    )
+  }
+  if (disclosure.kind === 'charge_now') {
+    return (
+      <div className="space-y-1 text-sm text-[rgb(var(--muted))]">
+        <p>{money(disclosure.firstChargeAmountMinor)} is charged now by card for {access}. This is an annual purchase, not a free trial.</p>
+        <p>
+          {disclosure.autoRenew ? `Renews automatically each year at ${money(disclosure.renewalAmountMinor ?? disclosure.annualAmountMinor)} unless you cancel. ` : 'No automatic renewal. '}
+          {disclosure.refundWindowDays ? `${disclosure.refundWindowDays}-day refund window.` : ''}
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-1 text-sm text-[rgb(var(--muted))]">
+      <p>{money(disclosure.firstChargeAmountMinor)} paid now in Bitcoin for {access}. This is a prepaid annual purchase, not a free trial. No automatic renewal.</p>
+      {disclosure.refundWindowDays === 30 && <p>Full refund within 30 days of your payment, no questions asked.</p>}
+    </div>
+  )
 }

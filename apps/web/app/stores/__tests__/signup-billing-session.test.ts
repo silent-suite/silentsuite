@@ -165,7 +165,11 @@ describe('signup Billing session boundary', () => {
     const choose = async () => {
       fireEvent.click(await screen.findByRole('button', { name: /7 day free trial/i }))
       fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
-      fireEvent.click(await screen.findByRole('button', { name: /create account and start free trial/i }))
+      // No review screen: the password-loss acknowledgement gates the only creation step.
+      const action = await screen.findByRole('button', { name: /continue to your workspace/i })
+      expect(action).toBeDisabled()
+      fireEvent.click(screen.getByRole('checkbox', { name: /cannot recover my password/i }))
+      fireEvent.click(action)
     }
     await choose()
     expect(await screen.findByRole('alert')).toHaveTextContent('Identity proof unavailable')
@@ -481,8 +485,7 @@ it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retain
   await waitFor(() => expect(next).toBeEnabled())
   fireEvent.click(next)
   fireEvent.click(await screen.findByRole('button', { name: /^continue$/i }))
-  fireEvent.click(await screen.findByRole('button', { name: /with bitcoin for/i }))
-  const confirm = await screen.findByRole('button', { name: /confirm annual terms and continue|continue to bitcoin payment/i })
+  const bitcoin = await screen.findByRole('button', { name: /with bitcoin for/i })
   expect(sessionStorage.getItem(key)).toBeNull()
   const originalWrite = Storage.prototype.setItem
   const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, name, value) {
@@ -490,7 +493,7 @@ it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retain
     return originalWrite.call(this, name, value)
   })
   try {
-    fireEvent.click(confirm)
+    fireEvent.click(bitcoin)
     if (scenario === 'inline Bitcoin') await screen.findByText('bc1-fixture')
     else await screen.findByText('Start response lost')
     expect(started).toBeDefined()
