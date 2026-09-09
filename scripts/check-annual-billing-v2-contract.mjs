@@ -14,6 +14,7 @@ const CLIENT_FILE = 'apps/web/app/lib/billing-v2.ts'
 const AUTH_STORE_FILE = 'apps/web/app/stores/use-auth-store.ts'
 const PAYMENT_PANEL_FILE = 'apps/web/app/components/payment-choice-panel.tsx'
 const SIGNUP_PAGE_FILE = 'apps/web/app/(auth)/signup/page.tsx'
+const SIGNUP_TERMS_FILE = 'apps/web/app/(auth)/signup/components/annual-confirmation-summary.tsx'
 const PENDING_PAYMENT_FILE = 'apps/web/app/(auth)/signup/pending-payment/page.tsx'
 const OFFER_PRESENTATION_FILE = 'apps/web/app/lib/annual-offer-presentation.ts'
 const PUBLIC_ANALYTICS_FILE = 'apps/web/app/lib/public-analytics.ts'
@@ -182,8 +183,32 @@ export function checkAnnualBillingV2Contract(root = process.cwd()) {
   const presentation = readFileSync(resolve(root, OFFER_PRESENTATION_FILE), 'utf8')
   const analytics = readFileSync(resolve(root, PUBLIC_ANALYTICS_FILE), 'utf8')
   for (const source of [signup, paymentPanel]) {
-    assert(source.includes('annualOfferPlanLabel') && source.includes('annualOfferAnnualLabel') && source.includes('annualOfferRenewalCopy'), 'Public annual UI must derive class, amount, and renewal copy from the canonical offer')
+    assert(source.includes('annualOfferPlanLabel') && source.includes('annualOfferAnnualLabel'), 'Public annual UI must derive class and amount from the canonical offer')
     assert(source.includes("isAnnualOfferProviderAvailable") && source.includes("'stripe'") && source.includes("'btcpay'"), 'Public annual UI must gate Stripe and BTCPay with canonical offer providers')
+  }
+  assert(paymentPanel.includes('annualOfferRenewalCopy'), 'Authenticated annual UI must derive renewal copy from the canonical offer')
+  // Signup now puts validated disclosure terms beside the form/QR, rather than
+  // repeating offer-only annual wording on the initial trial-choice screen.
+  const signupTree = ts.createSourceFile('signup.tsx', signup, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const termsTree = ts.createSourceFile('terms.tsx', functionBlock(readFileSync(resolve(root, SIGNUP_TERMS_FILE), 'utf8'), 'AnnualTermsSummary'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const suppliedDisclosures = new Set()
+  const readDisclosureFields = new Set()
+  const visitSignup = (node) => {
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(signupTree) === 'AnnualTermsSummary') {
+      const attribute = node.attributes.properties.find((item) => ts.isJsxAttribute(item) && item.name.getText(signupTree) === 'disclosure')
+      if (attribute?.initializer && ts.isJsxExpression(attribute.initializer) && attribute.initializer.expression) suppliedDisclosures.add(attribute.initializer.expression.getText(signupTree))
+    }
+    ts.forEachChild(node, visitSignup)
+  }
+  const visitTerms = (node) => {
+    if (ts.isPropertyAccessExpression(node) && node.expression.getText(termsTree) === 'disclosure') readDisclosureFields.add(node.name.text)
+    ts.forEachChild(node, visitTerms)
+  }
+  visitSignup(signupTree)
+  visitTerms(termsTree)
+  assert(suppliedDisclosures.has('disclosure') && suppliedDisclosures.has('cardDisclosure'), 'Signup terms must render the validated disclosure for card and Bitcoin')
+  for (const field of ['kind', 'firstChargeAmountMinor', 'firstChargeAt', 'autoRenew', 'renewalAmountMinor', 'refundWindowDays']) {
+    assert(readDisclosureFields.has(field), `Signup terms must derive ${field} from the validated disclosure`)
   }
   assert(signup.includes('annualOffer={annualOffer}'), 'Signup must pass the signed annual offer through StepChoosePlan')
   checkPendingPaymentRecovery(pendingPayment)
