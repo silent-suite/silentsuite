@@ -15,7 +15,8 @@ const AUTH_STORE_FILE = 'apps/web/app/stores/use-auth-store.ts'
 const PAYMENT_PANEL_FILE = 'apps/web/app/components/payment-choice-panel.tsx'
 const SIGNUP_PAGE_FILE = 'apps/web/app/(auth)/signup/page.tsx'
 const SIGNUP_TERMS_FILE = 'apps/web/app/(auth)/signup/components/annual-confirmation-summary.tsx'
-const PENDING_PAYMENT_FILE = 'apps/web/app/(auth)/signup/pending-payment/page.tsx'
+const PENDING_PAYMENT_FILE = 'apps/web/app/(auth)/signup/pending-payment/payment-recovery.tsx'
+const PENDING_PAYMENT_ROUTE_FILE = 'apps/web/app/(auth)/signup/pending-payment/page.tsx'
 const OFFER_PRESENTATION_FILE = 'apps/web/app/lib/annual-offer-presentation.ts'
 const PUBLIC_ANALYTICS_FILE = 'apps/web/app/lib/public-analytics.ts'
 const SHA256 = /^[0-9a-f]{64}$/
@@ -197,6 +198,16 @@ export function checkAnnualBillingV2Contract(root = process.cwd()) {
   // component tests run against the standard offer.
   const signup = readFileSync(resolve(root, SIGNUP_PAGE_FILE), 'utf8')
   const pendingPayment = readFileSync(resolve(root, PENDING_PAYMENT_FILE), 'utf8')
+  const route = ts.createSourceFile('route.tsx', readFileSync(resolve(root, PENDING_PAYMENT_ROUTE_FILE), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const [routeImport, routeComponent] = route.statements
+  const routeReturn = routeComponent && ts.isFunctionDeclaration(routeComponent) && routeComponent.body?.statements[0]
+  assert(route.statements.length === 2 && routeImport && ts.isImportDeclaration(routeImport)
+    && routeImport.moduleSpecifier.text === './payment-recovery' && routeImport.importClause?.name
+    && routeComponent.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.DefaultKeyword)
+    && routeComponent.body?.statements.length === 1 && routeReturn && ts.isReturnStatement(routeReturn)
+    && routeReturn.expression && ts.isJsxSelfClosingElement(routeReturn.expression)
+    && routeReturn.expression.tagName.getText(route) === routeImport.importClause.name.text,
+  'Pending payment contract: route must render the guarded recovery component')
   const presentation = readFileSync(resolve(root, OFFER_PRESENTATION_FILE), 'utf8')
   const analytics = readFileSync(resolve(root, PUBLIC_ANALYTICS_FILE), 'utf8')
   for (const source of [signup, paymentPanel]) {

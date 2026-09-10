@@ -554,17 +554,20 @@ describe('useAuthStore', () => {
       const pending = useAuthStore.getState().pendingSignup!
       const originalToken = pending.paymentSessionToken
       const onReleased = vi.fn()
-      const { PaymentSwitchDecision } = await import('../../(auth)/signup/components/payment-switch-decision')
-      render(createElement(PaymentSwitchDecision, { provider, onReleased, onKeep: vi.fn() }))
+      const { PaymentBackModal } = await import('../../(auth)/signup/components/payment-back-modal')
+      render(createElement(PaymentBackModal, { provider, onReleased, onStay: vi.fn() }))
       vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, state: 'closed', flow: null })))
-      const action = screen.getByRole('button', { name: provider === 'stripe' ? 'Cancel card payment and choose Bitcoin' : 'Cancel Bitcoin payment and choose card' })
-      if (provider === 'btcpay') { expect(action).toBeDisabled(); fireEvent.click(screen.getByLabelText('I have not sent any Bitcoin.')) }
-      fireEvent.click(action)
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
       await screen.findByRole('alert')
+      // The destructive choice itself is the affirmative no-funds acknowledgement for Bitcoin.
+      const cancelBody = JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]?.body))
+      expect(cancelBody).toMatchObject({ switchingProfile: 'v1', requestKey: pending.paymentSessionRequestKey, ...(provider === 'btcpay' ? { confirmNoBitcoinSent: true } : {}) })
+      if (provider === 'stripe') expect(cancelBody).not.toHaveProperty('confirmNoBitcoinSent')
       expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(originalToken)
       expect(onReleased).not.toHaveBeenCalled()
       vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, state: 'released', flow: { provider, status: 'reconciliation_required' }, release: { requestKey: pending.paymentSessionRequestKey, provider, providerObjectId: 'exact' } })))
-      fireEvent.click(action)
+      fireEvent.click(screen.getByRole('button', { name: 'Retry cancellation' }))
       await waitFor(() => expect(onReleased).toHaveBeenCalledTimes(1))
       expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBeUndefined()
       expect(sessionStorage.getItem('silentsuite-signup-redirect-state') ?? '').not.toContain(originalToken!)

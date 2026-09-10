@@ -77,6 +77,45 @@ import { createProviderRecoveryFixture } from '@billing-recovery-fixture'
 for (const provider of ['stripe', 'btcpay'] as const) describe(provider + ' runtime-to-rendered recovery', () => {
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
+  it('continues the same payment through the real recovery route after the bounded polling timeout', async () => {
+    vi.clearAllMocks()
+    sessionStorage.clear()
+    authState.pendingSignup = anonymousRecoverySignup({ paymentMethod: provider })
+    vi.stubGlobal('Uint8Array', Object.getPrototypeOf(Buffer.prototype).constructor)
+    vi.stubGlobal('crypto', webcrypto)
+    const fixture = await createProviderRecoveryFixture(provider)
+    const authorityId = fixture.repository.latestSignupPaymentSession()!.id
+    const pending: Promise<unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn((url: string, init: RequestInit) => {
+      expect(new URL(url).pathname).toBe('/auth/signup/payment-session/v2/current')
+      expect(JSON.parse(String(init.body))).toEqual(fixture.request)
+      const request = fixture.app.inject({ method: 'POST', url: new URL(url).pathname, payload: JSON.parse(String(init.body)) })
+        .then(reply => new Response(reply.body, { status: reply.statusCode, headers: { 'content-type': 'application/json' } }))
+      pending.push(request)
+      return request
+    }))
+    const settle = async () => { await act(async () => { await Promise.all(pending) }) }
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    const view = render(<PendingPaymentPage />)
+    try {
+      await settle()
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60_000) })
+        await settle()
+      }
+      expect(fetch).toHaveBeenCalledTimes(20)
+      expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled()
+      await fixture.repository.confirmPaymentSession(authorityId)
+      fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+      await settle()
+      expect(screen.getByTestId('step-create-paid-account')).toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledTimes(21)
+      expect(fixture.repository.latestSignupPaymentSession()!.id).toBe(authorityId)
+      expect(fixture.calls().cancel).toBe(0)
+      expect(authState.clearPendingSignupPaymentRecovery).not.toHaveBeenCalled()
+    } finally { view.unmount(); vi.useRealTimers(); await fixture.app.close() }
+  })
+
   it.each(['missing', 'confirmed', 'proof-invalid'] as const)('keeps entered controls through a provider exception, then removes them for %s', async terminal => {
     vi.clearAllMocks()
     sessionStorage.clear()
@@ -112,17 +151,19 @@ for (const provider of ['stripe', 'btcpay'] as const) describe(provider + ' runt
       if (elements) expect(screen.getByTestId('stripe-elements')).toBe(elements)
       if (provider === 'stripe') expect(control).toHaveValue('entered card data')
       expect(bodies[1]).not.toContain('DO_NOT_LEAK')
-      expect(screen.getByRole('button', { name: /retry payment status/i })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
       // Explicit retry traverses the same client/runtime boundary too.
-      fireEvent.click(screen.getByRole('button', { name: /retry payment status/i }))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
       await settle()
       expect(statuses).toEqual([200, 503, 503])
       expect(control).toBeInTheDocument()
       fixture.observe(async () => fixture.controls)
-      fireEvent.click(screen.getByRole('button', { name: /retry payment status/i }))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
       await settle()
       expect(control).toBeInTheDocument()
       if (provider === 'stripe') expect(control).toHaveValue('entered card data')
+      // A successful read leaves no manual status control; only the scheduled poll continues.
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
       if (terminal === 'missing') fixture.observe(async () => null)
       if (terminal === 'confirmed') fixture.observe(async () => {
         await fixture.repository.confirmPaymentSession(fixture.repository.latestSignupPaymentSession()!.id)
@@ -132,7 +173,7 @@ for (const provider of ['stripe', 'btcpay'] as const) describe(provider + ' runt
         vi.spyOn(fixture.repository, 'recoverPaymentSession').mockResolvedValue(null)
         throw new Error('provider failed after proof expired')
       })
-      fireEvent.click(screen.getByRole('button', { name: /check payment status again/i }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(4 * 60_000) })
       await settle()
       expect(control).not.toBeInTheDocument()
       expect(statuses.at(-1)).toBe(200)

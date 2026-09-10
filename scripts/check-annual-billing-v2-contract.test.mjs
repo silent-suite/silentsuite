@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { checkAnnualBillingV2Contract } from './check-annual-billing-v2-contract.mjs'
 
-const pendingPath = 'apps/web/app/(auth)/signup/pending-payment/page.tsx'
+const pendingPath = 'apps/web/app/(auth)/signup/pending-payment/payment-recovery.tsx'
+const pendingRoutePath = 'apps/web/app/(auth)/signup/pending-payment/page.tsx'
 const signupPath = 'apps/web/app/(auth)/signup/page.tsx'
 const termsPath = 'apps/web/app/(auth)/signup/components/annual-confirmation-summary.tsx'
 const files = [
@@ -17,6 +18,7 @@ const files = [
   'apps/web/app/(auth)/signup/page.tsx',
   termsPath,
   pendingPath,
+  pendingRoutePath,
   'apps/web/app/lib/annual-offer-presentation.ts',
   'apps/web/app/lib/public-analytics.ts',
 ]
@@ -95,5 +97,11 @@ test('comments cannot satisfy the closed-flow invariant and harmless comments do
   })
   withPendingMutation("setState('unknown')", "/* setState('unknown') */ setState('account')", (root) => {
     assert.throws(() => checkAnnualBillingV2Contract(root), /Pending payment contract:/)
+  })
+})
+
+test('the route cannot disconnect the guarded recovery implementation', () => {
+  withSourceMutation(pendingRoutePath, source => source.replace('<PendingPaymentRecovery />', '<div />'), root => {
+    assert.throws(() => checkAnnualBillingV2Contract(root), /route must render/)
   })
 })
