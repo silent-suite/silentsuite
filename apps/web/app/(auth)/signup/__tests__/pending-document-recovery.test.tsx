@@ -72,7 +72,7 @@ it('guarded Back and payment checks cannot hide the memory-only warning', async 
   const closed = () => new Response(JSON.stringify({ contractVersion: 2, state: 'closed', flow: null }))
   let finishTerminalRead!: (response: Response) => void
   const terminalRead = new Promise<Response>((resolve) => { finishTerminalRead = resolve })
-  // Entering the terminal state starts a final effect-owned read. Hold it so
+  // Terminal results stop automatic polling. Hold an explicit status retry so
   // the Back interaction deterministically overlaps that real loading state.
   const fetcher = vi.fn().mockResolvedValueOnce(closed()).mockReturnValueOnce(terminalRead).mockImplementation(async () => closed())
   vi.stubGlobal('fetch', fetcher)
@@ -81,14 +81,15 @@ it('guarded Back and payment checks cannot hide the memory-only warning', async 
     render(<PendingPaymentPage />)
     await screen.findByRole('heading', { name: /payment release not confirmed/i })
     expect(screen.getByText(/Stay in this tab/)).toBeVisible()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: /check payment status again/i }))
     expect(await screen.findByRole('button', { name: /checking current payment/i })).toBeDisabled()
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(fireEvent.click(screen.getByRole('link', { name: /reload this payment recovery/i }))).toBe(false)
     expect(screen.getByText(/Stay in this tab/)).toBeVisible()
     finishTerminalRead(closed())
-    // The terminal heading is committed before the effect keyed by that new
-    // state finishes its final recovery read. Back does not await that read.
-    // Await the enabled retry control, not just the earlier heading render.
+    // Back does not await the explicit read. Await its enabled retry control
+    // before checking that another deliberate status request preserves recovery.
     const retry = await screen.findByRole('button', { name: /check payment status again/i })
     expect(retry).toBeEnabled()
     fireEvent.click(retry)

@@ -66,6 +66,9 @@ for (const disclosure of ['disclosure', 'cardDisclosure']) {
 }
 
 const mutations = [
+  ['automatic polling exceeds the reconcile budget', 'SETTLEMENT_POLL_DELAY_MS = 4 * 60_000', 'SETTLEMENT_POLL_DELAY_MS = 10_000'],
+  ['manual reads widen the backend budget', 'current: 10, reconcile: 5', 'current: 11, reconcile: 6'],
+  ['polling becomes unbounded', 'SETTLEMENT_POLL_MAX_ATTEMPTS = 20', 'SETTLEMENT_POLL_MAX_ATTEMPTS = Infinity'],
   ['generic closed releases authority', "setState('unknown')", "useAuthStore.getState().clearPendingSignupPaymentRecovery(recovery); setState('unknown')"],
   ['generic closed restarts payment', "setState('unknown')", "useAuthStore.getState().startAnnualSignupPayment('intent', 'btcpay', '/'); setState('unknown')"],
   ['missing recovery authorizes restart', 'if (!recovery) {', "if (!recovery) { useAuthStore.getState().startAnnualSignupPayment('intent', 'btcpay', '/');"],

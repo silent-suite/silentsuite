@@ -89,12 +89,14 @@ export type AnonymousPaymentSessionRecovery = {
 export class BillingResponseError extends Error {
   readonly billingStatus: number
   readonly billingProblemType: string | null
+  readonly retryAfterMs: number | null
 
-  constructor(message: string, billingStatus: number, billingProblemType: string | null) {
+  constructor(message: string, billingStatus: number, billingProblemType: string | null, retryAfterMs: number | null = null) {
     super(message)
     this.name = 'BillingResponseError'
     this.billingStatus = billingStatus
     this.billingProblemType = billingProblemType
+    this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -208,9 +210,14 @@ function assertActivation(value: unknown): asserts value is AnnualCheckoutActiva
 }
 
 async function jsonOrThrow(response: Response): Promise<unknown> {
+  const retryHeader = response.headers?.get('retry-after') ?? null
+  const retryDelay = retryHeader === null ? NaN : /^\d+$/.test(retryHeader.trim())
+    ? Number(retryHeader) * 1000 : Date.parse(retryHeader) - Date.now()
+  const retryAfterMs = Number.isFinite(retryDelay) ? Math.max(0, retryDelay)
+    : response.status === 429 ? 15 * 60_000 : null
   let body: unknown
   try { body = await response.json() } catch {
-    if (!response.ok) throw new BillingResponseError('Billing returned an invalid error response', response.status, null)
+    if (!response.ok) throw new BillingResponseError('Billing returned an invalid error response', response.status, null, retryAfterMs)
     throw new Error('Billing returned an invalid response')
   }
   if (!response.ok) {
@@ -218,6 +225,7 @@ async function jsonOrThrow(response: Response): Promise<unknown> {
       isObject(body) && typeof body.detail === 'string' ? body.detail : 'Billing request failed',
       response.status,
       isObject(body) && typeof body.type === 'string' ? body.type : null,
+      retryAfterMs,
     )
   }
   return body

@@ -1,10 +1,11 @@
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import PendingPaymentPage from '../page'
 
 vi.hoisted(() => {
   process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED = 'true'
+  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = 'pk_test_recovery'
 })
 
 const paymentSessionToken = 'A'.repeat(43)
@@ -26,6 +27,20 @@ vi.mock('@/app/stores/use-auth-store', () => {
   useAuthStore.getState = () => authState
   return { useAuthStore }
 })
+// Render the real StripePaymentForm; replace only the external Stripe SDK.
+vi.mock('@stripe/stripe-js/pure', () => {
+  const loadStripe = Object.assign(vi.fn(async () => ({})), { setLoadParameters: vi.fn() })
+  return { loadStripe }
+})
+vi.mock('@stripe/react-stripe-js', () => ({
+  Elements: ({ children }: { children: ReactNode }) => <div data-testid="stripe-elements">{children}</div>,
+  PaymentElement: ({ onReady }: { onReady: () => void }) => {
+    useEffect(() => { onReady() }, [])
+    return <input aria-label="Card details" defaultValue="" />
+  },
+  useStripe: () => ({}), useElements: () => ({}),
+}))
+vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'light' }) }))
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
 vi.mock('@/app/lib/signup-return', () => ({ normalizeSignupReturnTo: (value: string | null) => value }))
 vi.mock('next/link', () => ({ default: ({ href, children, ...props }: { href: string; children: ReactNode }) => <a href={href} {...props}>{children}</a> }))
@@ -344,10 +359,10 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     expect(fetch).toHaveBeenCalledTimes(REQUESTS_PER_OPEN_POLL)
     expect(screen.getByRole('button', { name: /check payment status again/i })).toBeInTheDocument()
 
-    await advance(10_000)
+    await advance(4 * 60_000)
     expect(fetch).toHaveBeenCalledTimes(REQUESTS_PER_OPEN_POLL * 2)
 
-    await advance(10_000)
+    await advance(4 * 60_000)
     expect(fetch).toHaveBeenCalledTimes(REQUESTS_PER_OPEN_POLL * 3)
   })
 
@@ -356,10 +371,10 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<PendingPaymentPage />)
     await settle()
-    await advance(10_000)
+    await advance(4 * 60_000)
 
     fetchMock.mockImplementation(async () => confirmedRecovery())
-    await advance(10_000)
+    await advance(4 * 60_000)
     expect(screen.getByTestId('step-create-paid-account')).toBeInTheDocument()
 
     const callsAtSettlement = fetchMock.mock.calls.length
@@ -367,13 +382,84 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     expect(fetchMock).toHaveBeenCalledTimes(callsAtSettlement)
   })
 
+  const disclosure = { kind: 'prepaid', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: null, monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null, cancelBy: null, cancelByInclusive: false, autoRenew: false, prepaid: true, refundWindowDays: 30, bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null }
+  const payableRecovery = (provider: 'stripe' | 'btcpay') => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider, status: 'provider_pending' }, continuation: {
+    requestKey: paymentSessionRequestKey, provider, providerObjectId: 'exact_payment',
+    ...(provider === 'stripe' ? { clientSecret: 'pi_exact_secret_test', disclosure: { ...disclosure, kind: 'charge_now', autoRenew: true, prepaid: false, renewalAmountMinor: 3600 } }
+      : { checkoutUrl: 'https://btcpay.silentsuite.io/i/exact', disclosure }),
+  } }))
+
+  it.each(['stripe', 'btcpay'] as const)('keeps the same mounted %s controls through transient reads and honors retry timing', async provider => {
+    authState.pendingSignup = anonymousRecoverySignup({ paymentMethod: provider })
+    const fetchMock = vi.fn(async () => payableRecovery(provider))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<PendingPaymentPage />)
+    await settle()
+    const control = provider === 'stripe' ? screen.getByLabelText('Card details') : screen.getByRole('link', { name: 'Continue this Bitcoin payment' })
+    if (provider === 'stripe') fireEvent.change(control, { target: { value: 'entered card data' } })
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 429, headers: { 'Retry-After': '600' } }))
+    await advance(4 * 60_000)
+    expect(control).toBeInTheDocument()
+    if (provider === 'stripe') expect(control).toHaveValue('entered card data')
+    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeDisabled()
+    await advance(599_999)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    fetchMock.mockImplementation(async () => { throw new TypeError('Network unavailable') })
+    await advance(1)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(control).toBeInTheDocument()
+    fetchMock.mockImplementation(async () => new Response('{}', { status: 503 }))
+    await advance(4 * 60_000)
+    expect(control).toBeInTheDocument()
+    fetchMock.mockImplementation(async () => payableRecovery(provider))
+    await advance(4 * 60_000)
+    expect(control).toBeInTheDocument()
+    if (provider === 'stripe') expect(control).toHaveValue('entered card data')
+    fetchMock.mockImplementation(async () => confirmedRecovery())
+    if (provider === 'stripe') fetchMock.mockImplementation(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'confirmed', flow: { provider, status: 'provider_confirmed' } })))
+    await advance(4 * 60_000)
+    expect(control).not.toBeInTheDocument()
+  })
+
+  it('stays inside both real route budgets for fifteen minutes, including explicit checks', async () => {
+    const calls: { route: string; at: number }[] = []
+    vi.stubGlobal('fetch', vi.fn(async url => { calls.push({ route: String(url).split('/').at(-1)!, at: Date.now() }); return openRecovery() }))
+    render(<PendingPaymentPage />)
+    await settle()
+    for (let tick = 0; tick < 15; tick++) {
+      fireEvent.click(screen.getByRole('button', { name: /check payment status again|retry payment status/i }))
+      await advance(60_000)
+    }
+    for (const call of calls) {
+      const inWindow = calls.filter(other => other.at > call.at - 15 * 60_000 && other.at <= call.at && other.route === call.route)
+      expect(inWindow.length).toBeLessThanOrEqual(call.route === 'current' ? 10 : 5)
+    }
+  })
+
+  it.each(['closed', 'proof-expired', 'identity', 'logout'] as const)('clears payable controls after %s', async outcome => {
+    vi.stubGlobal('fetch', vi.fn(async () => payableRecovery('btcpay')))
+    const view = render(<PendingPaymentPage />)
+    await settle()
+    const control = screen.getByRole('link', { name: 'Continue this Bitcoin payment' })
+    if (outcome === 'identity' || outcome === 'logout') {
+      authState.pendingSignup = outcome === 'logout' ? null : anonymousRecoverySignup({ paymentSessionRequestKey: '6fd4d86d-34de-4b82-9a66-9598ddf6e02f' })
+      vi.mocked(fetch).mockImplementation(async () => new Response('{}', { status: 503 }))
+      view.rerender(<PendingPaymentPage />)
+      await settle()
+    } else {
+      vi.mocked(fetch).mockImplementation(async () => outcome === 'proof-expired' ? new Response('{}', { status: 401 }) : new Response(JSON.stringify({ contractVersion: 2, state: 'closed', flow: null })))
+      await advance(4 * 60_000)
+    }
+    expect(control).not.toBeInTheDocument()
+  })
+
   it('gives up after the bounded schedule and offers a manual re-check', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => openRecovery()))
     render(<PendingPaymentPage />)
     await settle()
 
-    // 180 attempts: 10s apart for the first 30, then 30s apart.
-    await advance(30 * 10_000 + 150 * 30_000)
+    // 20 bounded attempts, four minutes apart.
+    await advance(20 * 4 * 60_000)
 
     expect(screen.getByRole('heading', { name: /payment status is still unconfirmed/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /check again/i })).toBeInTheDocument()
