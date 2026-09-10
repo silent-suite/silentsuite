@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Loader2 } from 'lucide-react'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
@@ -13,7 +13,8 @@ import {
 } from '@/app/lib/billing-v2'
 import StripePaymentForm from '@/app/components/stripe-payment-form'
 import { AnnualTermsSummary, annualCardSubmitLabel } from '../components/annual-confirmation-summary'
-import { PaymentSwitchDecision, paymentSwitchLabel } from '../components/payment-switch-decision'
+import { PaymentBackModal } from '../components/payment-back-modal'
+import { PaymentProblemsLink } from '../components/payment-problems-link'
 import type { AnonymousPaymentSessionRecovery, AnnualProvider } from '@/app/lib/billing-v2'
 import { SignupRecoveryWarning } from '../components/signup-recovery-warning'
 import { StepCreateVault } from '../components/step-create-vault'
@@ -69,20 +70,6 @@ function readPersistedPaymentSessionRecoveryContext(): PersistedPaymentSessionRe
   } catch {
     return null
   }
-}
-
-function hasPersistedRecovery(pending: SignupPaymentContinuation | null): boolean {
-  try {
-    const raw = sessionStorage.getItem('silentsuite-signup-redirect-state')
-    if (!raw || !pending) return false
-    const saved = JSON.parse(raw)
-    return saved.pendingSignup?.email === pending.email
-      && saved.pendingSignup?.paymentSessionToken === pending.paymentSessionToken
-      && saved.pendingSignup?.paymentSessionRequestKey === pending.paymentSessionRequestKey
-      && saved.pendingSignup?.serverUrl === pending.serverUrl
-      && typeof saved.savedAt === 'number' && Date.now() >= saved.savedAt
-      && Date.now() - saved.savedAt < 2 * 60 * 60 * 1000
-  } catch { return false }
 }
 
 function readPaymentSessionRecoveryContext(pending: {
@@ -365,37 +352,31 @@ export default function PendingPaymentPage() {
   const description = state === 'settled'
     ? 'Your annual prepaid access is active. Continue to vault setup.'
     : !hasRecovery
-      ? 'This browser has no payment recovery capability. Return to the original signup tab to retry, or contact support if payment may have started. Do not start a second payment.'
-      : payable ? 'These controls continue the same payment. Your original payment terms still apply.' : 'An invoice or payment has not been confirmed. Check the existing checkout status. Back keeps this same payment recovery; it does not cancel or start another payment.'
+      ? 'This browser has no payment recovery capability. Return to the original signup tab, or contact support if payment may have started. Do not start a second payment.'
+      : payable ? 'Continue the same payment below. Your account continues automatically once it is confirmed.' : 'This payment has not been confirmed yet. Its status is checked automatically, and your account continues once it is confirmed.'
+  // Back cancels this exact owned payment; the provider is authoritative once
+  // read, otherwise the persisted method of the same capability.
+  const backProvider: AnnualProvider | null = ownedProvider
+    ?? (activePendingSignup?.paymentMethod === 'stripe' || activePendingSignup?.paymentMethod === 'btcpay' ? activePendingSignup.paymentMethod : null)
 
-  function handleRecoveryBack(event: MouseEvent<HTMLAnchorElement>) {
-    if (hasRecovery && !hasPersistedRecovery(activePendingSignup)) {
-      event.preventDefault()
-      setRestartError('This browser could not retain payment recovery. Stay on this page to check the existing payment, or contact support. Do not start another payment.')
-    }
-  }
-
-  function renderBitcoinRecoveryAction() {
+  function renderPaymentControls() {
     return <div className="space-y-3">
-      {hasRecovery && <button type="button" onClick={() => { void loadCurrentFlow() }} disabled={flowCheckState === 'loading' || retryUntil > Date.now()} className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-[rgb(var(--border))] px-4 py-2 text-sm">
-        {flowCheckState === 'loading' ? 'Checking current payment...' : flowCheckState === 'failed' ? 'Retry payment status' : 'Check payment status again'}
-      </button>}
-      {switching && ownedProvider ? <PaymentSwitchDecision provider={ownedProvider} onKeep={() => setSwitching(false)} onReleased={() => { setSwitching(false); setPayable(undefined); setReleased(true) }} /> : <>
-        {payable && <div className="space-y-4">
-          <AnnualTermsSummary disclosure={payable.disclosure} />
-          {payable.provider === 'stripe' && payable.clientSecret
-            ? <StripePaymentForm key={payable.providerObjectId} clientSecret={payable.clientSecret} mode={payable.disclosure.kind === 'card_trial' ? 'setup' : 'payment'} submitLabel={annualCardSubmitLabel(payable.disclosure)} selectedInterval="annual" onSuccess={() => { setPayable(undefined); void loadCurrentFlow() }} />
-            : payable.checkoutUrl && <a href={payable.checkoutUrl} onClick={() => saveSignupStateForRedirect('annual')} className="block rounded-md border p-3 text-center">Continue this Bitcoin payment</a>}
-        </div>}
-        {ownedProvider && <button type="button" className="block underline" onClick={() => setSwitching(true)}>{paymentSwitchLabel(ownedProvider)}</button>}
-      </>}
-      <p className="text-sm">Keep this payment until cancellation is confirmed. If its status remains uncertain, contact support.</p>
-      <a href="/signup?recovery=payment" onClick={handleRecoveryBack} className="block underline">Reload this payment recovery</a>
-      <a href="mailto:support@silentsuite.io" className="block underline">Contact support</a>
+      {payable && <div className="space-y-4">
+        <AnnualTermsSummary disclosure={payable.disclosure} />
+        {payable.provider === 'stripe' && payable.clientSecret
+          ? <StripePaymentForm key={payable.providerObjectId} clientSecret={payable.clientSecret} mode={payable.disclosure.kind === 'card_trial' ? 'setup' : 'payment'} submitLabel={annualCardSubmitLabel(payable.disclosure)} selectedInterval="annual" onSuccess={() => { setPayable(undefined); void loadCurrentFlow() }} />
+          : payable.checkoutUrl && <a href={payable.checkoutUrl} onClick={() => saveSignupStateForRedirect('annual')} className="block rounded-md border p-3 text-center">Continue this Bitcoin payment</a>}
+      </div>}
+      {hasRecovery && flowCheckState === 'loading' && <p role="status" className="text-xs text-[rgb(var(--muted))]">Checking current payment...</p>}
+      {hasRecovery && flowCheckState === 'failed' && <button type="button" onClick={() => { void loadCurrentFlow() }} disabled={retryUntil > Date.now()} className="text-sm underline disabled:opacity-50">Retry</button>}
+      {hasRecovery && backProvider
+        ? <button type="button" onClick={() => setSwitching(true)} disabled={flowCheckState === 'loading'} className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-[rgb(var(--border))] px-4 py-2 text-sm disabled:opacity-50">Back</button>
+        : <a href="/signup" className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-[rgb(var(--border))] px-4 py-2 text-sm">Back</a>}
+      <PaymentProblemsLink />
     </div>
   }
 
-  if (released) return <div className="space-y-4"><h1 className="text-xl font-semibold">Payment cancelled</h1><p>You can return to signup and choose another payment method. Verify your email again if this browser no longer has your signup details.</p><a href="/signup" className="underline">Choose another payment method</a></div>
+  if (released) return <div className="space-y-4"><h1 className="text-xl font-semibold">Payment cancelled</h1><p>Choose another payment method to continue your signup. Verify your email again if this browser no longer has your signup details.</p><a href="/signup" className="underline">Choose a payment method</a></div>
 
   if (state === 'vault') {
     return (
@@ -469,7 +450,10 @@ export default function PendingPaymentPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center space-y-6 text-center">
+    <>
+    {switching && backProvider && <PaymentBackModal provider={backProvider} onStay={() => setSwitching(false)}
+      onReleased={() => { setSwitching(false); setPayable(undefined); setReleased(true) }} />}
+    <div aria-hidden={switching ? true : undefined} inert={switching} className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center space-y-6 text-center">
       <SignupRecoveryWarning />
       <CheckoutReturnAnalytics outcome="pending" paymentMethod="btcpay" />
       <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10">
@@ -514,17 +498,16 @@ export default function PendingPaymentPage() {
             <button type="button" onClick={() => { void loadCurrentFlow() }} className="inline-flex h-9 w-full items-center justify-center rounded-md bg-teal-500 px-4 py-2 text-sm font-medium text-white shadow transition-colors hover:bg-teal-600">
               Check again
             </button>
-            {renderBitcoinRecoveryAction()}
+            {renderPaymentControls()}
           </>
-        ) : state === 'pending' || state === 'expired' || state === 'unknown' ? (
-          renderBitcoinRecoveryAction()
         ) : (
-          renderBitcoinRecoveryAction()
+          renderPaymentControls()
         )}
         {restartError && (
           <p className="text-xs text-red-400">{restartError}</p>
         )}
       </div>
     </div>
+    </>
   )
 }

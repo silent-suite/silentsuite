@@ -514,7 +514,9 @@ it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retain
       window.history.replaceState(window.history.state, '', destination)
       document = render(createElement(SignupPage))
       if (destination === '/signup') {
-        await screen.findByRole('link', { name: /recover existing payment/i })
+        // A refreshed payment checkpoint continues the same owned payment inline.
+        await screen.findByRole('button', { name: 'Back' })
+        expect(screen.queryByRole('link', { name: /recover existing payment/i })).not.toBeInTheDocument()
         document.unmount()
         window.history.replaceState({}, '', '/signup?recovery=payment')
         document = render(createElement(SignupPage))
@@ -523,12 +525,16 @@ it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retain
         const { default: PendingPaymentPage } = await import('../../(auth)/signup/pending-payment/page')
         document = render(createElement(PendingPaymentPage))
       }
-      await screen.findByRole('button', { name: /check payment status again/i })
+      await screen.findByRole('button', { name: 'Back' })
       expect(useAuthStore.getState().pendingSignup).toMatchObject(saved.pendingSignup)
       expect(JSON.parse(sessionStorage.getItem(key)!).savedAt).toBe(saved.savedAt)
     }
+    // Backend confirmation is picked up by the next same-owned read; no manual check exists.
     confirmed = true
-    fireEvent.click(screen.getByRole('button', { name: /check payment status again/i }))
+    document.unmount()
+    useAuthStore.setState({ pendingSignup: null })
+    const { default: RefreshedPendingPaymentPage } = await import('../../(auth)/signup/pending-payment/page')
+    document = render(createElement(RefreshedPendingPaymentPage))
     await screen.findByLabelText(/^password$/i)
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/payment-session/v2'))).toHaveLength(1)
     expect(mocks.signup).not.toHaveBeenCalled()

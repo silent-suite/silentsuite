@@ -13,6 +13,8 @@ const key = 'silentsuite-signup-redirect-state'
 const email = 'recovery@example.test'
 const requestKey = '5fd4d86d-34de-4b82-9a66-9598ddf6e02f'
 const token = 'A'.repeat(43)
+// The same-document recovery entry the signup page still serves for this capability.
+const recoveryHref = '/signup?recovery=payment'
 beforeEach(() => {
   vi.clearAllMocks()
   sessionStorage.clear(); localStorage.clear()
@@ -25,27 +27,30 @@ it.each(['btcpay', 'stripe'] as const)('restores the exact %s attempt after full
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: confirmed ? 'confirmed' : 'open', flow: { provider: paymentMethod, status: confirmed ? 'provider_confirmed' : 'provider_pending' } }))))
   useAuthStore.setState({ pendingSignup: { email, password: 'NeverPersist1', serverUrl: 'https://server.silentsuite.io', paymentSessionToken: token, paymentSessionRequestKey: requestKey, paymentMethod, billingContractVersion: 2 } })
   let document = render(<PendingPaymentPage />)
-  await screen.findByRole('button', { name: /check payment status again/i })
-  const href = screen.getByRole('link', { name: /reload this payment recovery/i }).getAttribute('href')!
-  expect(href).toBe('/signup?recovery=payment')
+  await screen.findByRole('button', { name: 'Back' })
+  expect(screen.queryByRole('link', { name: /reload this payment recovery|recover/i })).not.toBeInTheDocument()
   const snapshot = sessionStorage.getItem(key)!
   expect(snapshot).not.toContain('NeverPersist1')
   // jsdom cannot navigate documents: discard all runtime state and remount the
   // actual destination at the anchor URL, retaining only browser sessionStorage.
-  for (const target of [href, href, '/signup/pending-payment']) {
+  for (const target of [recoveryHref, recoveryHref, '/signup/pending-payment']) {
     document.unmount()
     useAuthStore.setState({ pendingSignup: null })
     window.history.replaceState({}, '', target)
     document = render(<StrictMode>{target === '/signup/pending-payment' ? <PendingPaymentPage /> : <SignupPage />}</StrictMode>)
-    await screen.findByRole('button', { name: /check payment status again/i })
+    await screen.findByRole('button', { name: 'Back' })
     expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Your invoice is available/)).not.toBeInTheDocument()
     expect(useAuthStore.getState().pendingSignup).toMatchObject({ email, paymentSessionToken: token, paymentSessionRequestKey: requestKey, paymentMethod })
     expect(useAuthStore.getState().pendingSignup).not.toHaveProperty('password')
     expect(JSON.parse(sessionStorage.getItem(key)!)).toEqual(JSON.parse(snapshot))
   }
+  // Backend confirmation completes the account step automatically on the next
+  // same-owned read; no manual status check exists.
   confirmed = true
-  fireEvent.click(screen.getByRole('button', { name: /check payment status again/i }))
+  document.unmount()
+  useAuthStore.setState({ pendingSignup: null })
+  document = render(<PendingPaymentPage />)
   await screen.findByText('Recovered account continuation')
   expect(screen.queryByText(/Bitcoin payment settled/)).not.toBeInTheDocument()
   expect(useAuthStore.getState().isAuthenticated).toBe(false)
@@ -56,25 +61,23 @@ it.each(['btcpay', 'stripe'] as const)('restores the exact %s attempt after full
   }
 })
 
-it('blocks full-document Back if its persisted continuation is lost', async () => {
+it('Back opens the cancellation decision in the same document and never navigates or releases by itself', async () => {
   useAuthStore.setState({ pendingSignup: { email, paymentSessionToken: token, paymentSessionRequestKey: requestKey, paymentMethod: 'btcpay', billingContractVersion: 2 } })
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'closed', flow: null }))))
   render(<PendingPaymentPage />)
   await screen.findByRole('heading', { name: /payment release not confirmed/i })
   sessionStorage.removeItem(key)
-  expect(fireEvent.click(screen.getByRole('link', { name: /reload this payment recovery/i }))).toBe(false)
-  await screen.findByText(/This browser could not retain payment recovery/)
+  fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+  expect(await screen.findByRole('dialog', { name: 'Cancel this Bitcoin payment?' })).toBeVisible()
+  expect(window.location.pathname).toBe('/signup/pending-payment')
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
   expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(token)
 })
 
-it('guarded Back and payment checks cannot hide the memory-only warning', async () => {
-  useAuthStore.setState({ pendingSignup: { email, paymentSessionToken: token, paymentSessionRequestKey: requestKey, billingContractVersion: 2 } })
+it('the Back decision cannot hide the memory-only warning', async () => {
+  useAuthStore.setState({ pendingSignup: { email, paymentSessionToken: token, paymentSessionRequestKey: requestKey, paymentMethod: 'btcpay', billingContractVersion: 2 } })
   const closed = () => new Response(JSON.stringify({ contractVersion: 2, state: 'closed', flow: null }))
-  let finishTerminalRead!: (response: Response) => void
-  const terminalRead = new Promise<Response>((resolve) => { finishTerminalRead = resolve })
-  // Terminal results stop automatic polling. Hold an explicit status retry so
-  // the Back interaction deterministically overlaps that real loading state.
-  const fetcher = vi.fn().mockResolvedValueOnce(closed()).mockReturnValueOnce(terminalRead).mockImplementation(async () => closed())
+  const fetcher = vi.fn(async () => closed())
   vi.stubGlobal('fetch', fetcher)
   const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
   try {
@@ -82,20 +85,13 @@ it('guarded Back and payment checks cannot hide the memory-only warning', async 
     await screen.findByRole('heading', { name: /payment release not confirmed/i })
     expect(screen.getByText(/Stay in this tab/)).toBeVisible()
     expect(fetcher).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('button', { name: /check payment status again/i }))
-    expect(await screen.findByRole('button', { name: /checking current payment/i })).toBeDisabled()
-    expect(fetcher).toHaveBeenCalledTimes(2)
-    expect(fireEvent.click(screen.getByRole('link', { name: /reload this payment recovery/i }))).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    await screen.findByRole('dialog', { name: 'Cancel this Bitcoin payment?' })
     expect(screen.getByText(/Stay in this tab/)).toBeVisible()
-    finishTerminalRead(closed())
-    // Back does not await the explicit read. Await its enabled retry control
-    // before checking that another deliberate status request preserves recovery.
-    const retry = await screen.findByRole('button', { name: /check payment status again/i })
-    expect(retry).toBeEnabled()
-    fireEvent.click(retry)
-    await screen.findByRole('button', { name: /check payment status again/i })
-    expect(fetcher).toHaveBeenCalledTimes(3)
+    fireEvent.click(screen.getByRole('button', { name: 'Stay' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByText(/Stay in this tab/)).toBeVisible()
+    expect(fetcher).toHaveBeenCalledTimes(1)
     expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(token)
     expect(useAuthStore.getState().isAuthenticated).toBe(false)
   } finally { write.mockRestore() }
@@ -103,7 +99,7 @@ it('guarded Back and payment checks cannot hide the memory-only warning', async 
 
 it('an expired persisted capability is not renewed or treated as payment authority', async () => {
   sessionStorage.setItem(key, JSON.stringify({ pendingSignup: { email, paymentSessionToken: token, paymentSessionRequestKey: requestKey, billingContractVersion: 2 }, selectedInterval: 'annual', savedAt: 0 }))
-  window.history.replaceState({}, '', '/signup?recovery=payment')
+  window.history.replaceState({}, '', recoveryHref)
   vi.stubGlobal('fetch', vi.fn())
   render(<SignupPage />)
   await screen.findByRole('heading', { name: /recovery details unavailable/i })
@@ -112,7 +108,7 @@ it('an expired persisted capability is not renewed or treated as payment authori
 })
 
 it('a route hint alone cannot create fresh signup or grant payment authority', async () => {
-  window.history.replaceState({}, '', '/signup?recovery=payment')
+  window.history.replaceState({}, '', recoveryHref)
   vi.stubGlobal('fetch', vi.fn())
   render(<SignupPage />)
   await screen.findByRole('heading', { name: /recovery details unavailable/i })

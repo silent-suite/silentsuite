@@ -117,7 +117,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     sessionStorage.setItem('silentsuite-pending-crypto-invoice', 'stale-unbound-invoice')
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }))))
     render(<PendingPaymentPage />)
-    await screen.findByRole('button', { name: /check payment status again/i })
+    await screen.findByRole('button', { name: 'Back' })
     expect(screen.queryByText(/Your invoice is available/)).not.toBeInTheDocument()
   })
   it.each([null, 'provider_pending', 'unrecognized'])('never claims settlement without invoice evidence (%s)', async (status) => {
@@ -126,7 +126,10 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     render(<PendingPaymentPage />)
     await waitFor(() => expect(screen.queryByText('Checking current payment...')).not.toBeInTheDocument())
     expect(screen.queryByText(/Waiting for BTCPay settlement|webhook activates|check your email to continue/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /reload this payment recovery/i })).toBeVisible()
+    // Without a capability Back is a plain link; with one it opens the cancellation decision.
+    expect(screen.getByRole(status ? 'button' : 'link', { name: 'Back' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Problems with payment?' })).toHaveAttribute('href', 'mailto:support@silentsuite.io')
+    expect(screen.queryByText(/Recover pending payment|Reload this payment recovery|Check payment status|Keep this payment/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /start a new invoice|cancel and start/i })).not.toBeInTheDocument()
   })
 
@@ -150,7 +153,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'unauthorized', type: 'authentication-failed' }), { status: 401 })))
 
     render(<PendingPaymentPage />)
-    fireEvent.click(await screen.findByRole('button', { name: /retry payment status/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
     expect(authState.clearPendingSignupPaymentRecovery).not.toHaveBeenCalled()
     for (const [url] of (fetch as ReturnType<typeof vi.fn>).mock.calls) expect(String(url)).not.toContain('/subscription/')
@@ -179,14 +182,61 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     }
   })
 
-  it('opens an explicit Bitcoin cancellation decision without issuing a cancel request', async () => {
+  it('Back opens the Bitcoin cancellation decision without issuing a cancel request, and Stay resumes', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }))))
     render(<PendingPaymentPage />)
-    await screen.findByRole('button', { name: /check payment status again/i })
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' }))
-    expect(screen.getByLabelText('I have not sent any Bitcoin.')).not.toBeChecked()
-    expect(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' })).toBeDisabled()
+    fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
+    const dialog = screen.getByRole('dialog', { name: 'Cancel this Bitcoin payment?' })
+    expect(dialog).toHaveTextContent('Only continue if you haven’t sent payment. This checkout will be cancelled. Do not send Bitcoin or Lightning to its old payment details.')
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel and go back' })).toBeEnabled()
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Stay' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back' })).toBeVisible()
+  })
+
+  it('the Back dialog takes focus, hides the page behind it, and Escape dismisses it without a cancel request', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }))))
+    render(<PendingPaymentPage />)
+    const back = await screen.findByRole('button', { name: 'Back' })
+    fireEvent.click(back)
+    const dialog = screen.getByRole('dialog', { name: 'Cancel this Bitcoin payment?' })
+    expect(document.activeElement).toBe(dialog)
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    // The page behind the dialog is inert: its Back control is no longer accessible.
+    expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Problems with payment?' })).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back' })).toBeVisible()
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
+  })
+
+  it('confirming Back sends the affirmative no-funds acknowledgement and shows cancelled only on an exact release', async () => {
+    const pending = anonymousRecoverySignup()
+    authState.pendingSignup = pending
+    authState.clearPendingSignupPaymentRecovery.mockImplementation(() => { authState.pendingSignup = { ...pending, paymentSessionToken: undefined, paymentSessionRequestKey: undefined } })
+    const bodies: Record<string, unknown>[] = []
+    let releaseResponse: () => Response = () => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }))
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/cancel')) { bodies.push(JSON.parse(String(init?.body))); return releaseResponse() }
+      return new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }))
+    }))
+    render(<PendingPaymentPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cancellation is not confirmed yet')
+    expect(bodies).toEqual([{ contractVersion: 2, email: pending.email, requestKey: paymentSessionRequestKey, recoverySecret: paymentSessionToken, switchingProfile: 'v1', confirmNoBitcoinSent: true }])
+    expect(authState.clearPendingSignupPaymentRecovery).not.toHaveBeenCalled()
+    expect(screen.queryByText('Payment cancelled')).not.toBeInTheDocument()
+    releaseResponse = () => new Response(JSON.stringify({ contractVersion: 2, state: 'released', flow: { provider: 'btcpay', status: 'reconciliation_required' }, release: { requestKey: paymentSessionRequestKey, provider: 'btcpay', providerObjectId: 'invoice_exact' } }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry cancellation' }))
+    expect(await screen.findByRole('heading', { name: 'Payment cancelled' })).toBeVisible()
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1]).toEqual(bodies[0])
+    expect(authState.clearPendingSignupPaymentRecovery).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('link', { name: 'Choose a payment method' })).toHaveAttribute('href', '/signup')
   })
 
 
@@ -206,7 +256,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
 
     render(<PendingPaymentPage />)
 
-    expect(await screen.findByRole('link', { name: /reload this payment recovery/i })).toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Back' })).toHaveAttribute('href', '/signup')
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -264,7 +314,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
 
     render(<PendingPaymentPage />)
 
-    expect(await screen.findByRole('button', { name: /check payment status again/i })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Back' })).toBeInTheDocument()
     expect(authState.pendingSignup).toMatchObject({
       paymentSessionToken,
       paymentSessionRequestKey,
@@ -317,7 +367,7 @@ describe('PendingPaymentPage legacy restart links fail closed', () => {
     vi.stubGlobal('fetch', vi.fn())
     render(<PendingPaymentPage />)
     expect(await screen.findByText(/verification link could not be matched/i)).toBeVisible()
-    expect(screen.getByRole('link', { name: /reload this payment recovery/i })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Back' })).toBeVisible()
     expect(fetch).not.toHaveBeenCalled()
     expect(authState.prepareSignupDraft).not.toHaveBeenCalled()
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
@@ -357,7 +407,8 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     await settle()
 
     expect(fetch).toHaveBeenCalledTimes(REQUESTS_PER_OPEN_POLL)
-    expect(screen.getByRole('button', { name: /check payment status again/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /check|retry/i })).not.toBeInTheDocument()
 
     await advance(4 * 60_000)
     expect(fetch).toHaveBeenCalledTimes(REQUESTS_PER_OPEN_POLL * 2)
@@ -401,7 +452,7 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     await advance(4 * 60_000)
     expect(control).toBeInTheDocument()
     if (provider === 'stripe') expect(control).toHaveValue('entered card data')
-    expect(screen.getByRole('button', { name: /retry payment status/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled()
     await advance(599_999)
     expect(fetchMock).toHaveBeenCalledTimes(2)
     fetchMock.mockImplementation(async () => { throw new TypeError('Network unavailable') })
@@ -421,13 +472,14 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     expect(control).not.toBeInTheDocument()
   })
 
-  it('stays inside both real route budgets for fifteen minutes, including explicit checks', async () => {
+  it('stays inside both real route budgets for fifteen minutes, including explicit retries', async () => {
     const calls: { route: string; at: number }[] = []
-    vi.stubGlobal('fetch', vi.fn(async url => { calls.push({ route: String(url).split('/').at(-1)!, at: Date.now() }); return openRecovery() }))
+    // Transient failures expose the inline retry; a healthy read has no manual check.
+    vi.stubGlobal('fetch', vi.fn(async url => { calls.push({ route: String(url).split('/').at(-1)!, at: Date.now() }); return new Response('{}', { status: 503 }) }))
     render(<PendingPaymentPage />)
     await settle()
     for (let tick = 0; tick < 15; tick++) {
-      fireEvent.click(screen.getByRole('button', { name: /check payment status again|retry payment status/i }))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
       await advance(60_000)
     }
     for (const call of calls) {

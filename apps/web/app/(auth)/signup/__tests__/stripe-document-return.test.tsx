@@ -135,7 +135,7 @@ describe.each(['setup_intent', 'payment_intent'])('%s full-document callback', (
     window.history.replaceState({}, '', '/signup?recovery=payment')
     render(<SignupPage />)
     await screen.findByRole('heading', { name: 'Payment recovery details unavailable' })
-    expect(screen.getByRole('link', { name: /support/i })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Problems with payment?' })).toHaveAttribute('href', 'mailto:support@silentsuite.io')
     expect(fetch).not.toHaveBeenCalled()
   })
   it.each(['unsettled', 'receipt-email', 'session-identity'])('rejects %s despite a succeeded URL', async (failure) => {
