@@ -23,7 +23,7 @@ import { findCommonEmailDomainTypo, normalizeEmailForComparison, signupEmailSche
 import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { AnnualTermsSummary, annualRetryAction, annualCardSubmitLabel, noCardTrialConsequence } from './components/annual-confirmation-summary'
-import PendingPaymentPage from './pending-payment/page'
+import PendingPaymentPage from './pending-payment/payment-recovery'
 import { PaymentBackModal } from './components/payment-back-modal'
 import { PaymentProblemsLink } from './components/payment-problems-link'
 import { useSignupNavigation } from './use-signup-navigation'
@@ -564,6 +564,8 @@ function CryptoPaymentPanel({
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [detailsAttempt, setDetailsAttempt] = useState(0)
+  const [statusAttempt, setStatusAttempt] = useState(0)
+  const [pollStopped, setPollStopped] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -606,7 +608,7 @@ function CryptoPaymentPanel({
 
     async function poll() {
       if (!session) return
-      if (++attempts > 180) { setStatus('processing'); return }
+      if (++attempts > 180) { setStatus('processing'); setPollStopped(true); return }
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}`, {
           credentials: 'include',
@@ -626,6 +628,7 @@ function CryptoPaymentPanel({
         if (data.status === 'processing') setStatus('processing')
         if (data.status === 'expired' || data.status === 'invalid') {
           setStatus('expired')
+          setPollStopped(true)
           return
         }
         timer = window.setTimeout(poll, 10_000)
@@ -639,7 +642,7 @@ function CryptoPaymentPanel({
       cancelled = true
       if (timer) window.clearTimeout(timer)
     }
-  }, [onPaymentComplete, session])
+  }, [onPaymentComplete, session, statusAttempt])
 
   const selectedMethod = paymentMethods.find((method) => method.id === selectedMethodId) ?? paymentMethods[0]
   const qrValue = selectedMethod?.qrValue ?? selectedMethod?.paymentLink ?? selectedMethod?.address ?? ''
@@ -671,6 +674,7 @@ function CryptoPaymentPanel({
         </p>
       </div>
 
+      {pollStopped && <button type="button" onClick={() => { setPollStopped(false); setStatusAttempt(value => value + 1) }} className="text-sm underline">Check payment status</button>}
       {/* Terms stay beside the payable controls instead of on a separate review screen. */}
       <AnnualTermsSummary disclosure={disclosure} />
       {provisionError && <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">{provisionError}</div>}
@@ -685,10 +689,10 @@ function CryptoPaymentPanel({
           </div>
         </div>
       ) : status === 'processing' ? (
-        <div className="space-y-3 text-sm"><p>Payment is processing or still unconfirmed. Your account continues automatically once it is confirmed.</p></div>
+        <div className="space-y-3 text-sm"><p>{pollStopped ? 'Payment is still unconfirmed. Check its status again to continue when it is confirmed.' : 'Payment is processing or still unconfirmed. Your account continues automatically once it is confirmed.'}</p></div>
       ) : status === 'expired' ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-200">
-          This Bitcoin invoice expired. Expiry alone does not confirm cancellation: use Back to cancel it, or contact support if you sent a payment.
+          This Bitcoin invoice expired or became invalid. Its payment remains owned until cancellation is confirmed. Check for a late payment below, or contact support if you sent funds.
         </div>
       ) : status === 'error' ? (
         <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
@@ -1440,10 +1444,10 @@ export default function SignupPage() {
     setPaymentRecovery(new URLSearchParams(window.location.search).get('recovery') === 'payment')
   }, [])
   if (paymentRecovery === null) return <p role="status" className="py-12 text-center text-sm text-[rgb(var(--muted))]">Loading signup…</p>
-  return paymentRecovery ? <PendingPaymentPage /> : <SignupJourney />
+  return <SignupJourney initialPaymentRecovery={paymentRecovery} />
 }
 
-function SignupJourney() {
+function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecovery?: boolean }) {
   const router = useRouter()
   const prepareSignupDraft = useAuthStore((s) => s.prepareSignupDraft)
   const createEtebaseAccount = useAuthStore((s) => s.createEtebaseAccount)
@@ -1478,6 +1482,10 @@ function SignupJourney() {
   const [pendingAnnualClaim, setPendingAnnualClaim] = useState<PendingAnnualClaim | null>(null)
   // Reservation cancellation never resolves Etebase/account or provider authority.
   // Keep this bounded UI pre-claim; partial/uncertain creation keeps its continuation.
+  const paymentBackOpener = useRef<HTMLElement | null>(null)
+  const [paymentReceiptReceived, setPaymentReceiptReceived] = useState(false)
+  const [paymentNeedsVerification, setPaymentNeedsVerification] = useState(false)
+  const [emailOwnershipExpiresAt, setEmailOwnershipExpiresAt] = useState<string | null>(null)
   const [paymentSwitch, setPaymentSwitch] = useState<'stripe' | 'btcpay' | null>(null)
   const [selectionCancellation, setSelectionCancellation] = useState<'confirm' | 'unknown' | 'refused' | 'verify' | null>(null)
   const pendingAnnualClaimRef = useRef(pendingAnnualClaim)
@@ -1605,6 +1613,7 @@ function SignupJourney() {
       if (cancelled) return
       prepareSignupDraft(context.email, context.wantsProductUpdates, context.rememberDevice)
       setEmailOwnershipToken(ownership.emailOwnershipToken)
+      setEmailOwnershipExpiresAt(ownership.expiresAt)
       setAnnualOffer(offer)
       setAnnualOfferRequestId(offer.requestId)
       setRecoveredSignupEmail(context.email)
@@ -2119,6 +2128,7 @@ function SignupJourney() {
     }
     if (clientSecret || cryptoPaymentSession) {
       setProvisionError(null)
+      paymentBackOpener.current = document.activeElement as HTMLElement | null
       setPaymentSwitch(cryptoPaymentSession ? 'btcpay' : 'stripe')
       return
     }
@@ -2228,7 +2238,28 @@ function SignupJourney() {
 
   // A refresh during payment continues the same owned payment inline: the
   // pending-payment continuation restores its capability and controls itself.
-  if (navigation.recovery === 'payment') return <PendingPaymentPage />
+  const handleRecoveredPaymentRelease = () => {
+    setPaymentReceiptReceived(true)
+    navigation.clear({ retirePayment: true })
+    setClientSecret(null)
+    setCardDisclosure(null)
+    setCryptoPaymentSession(null)
+    pendingAnnualClaimRef.current = null
+    setPendingAnnualClaim(null)
+    claimAttemptedRef.current = false
+    if (annualOffer && Date.parse(annualOffer.offer.expiresAt) > Date.now()
+      && emailOwnershipToken && emailOwnershipExpiresAt && Date.parse(emailOwnershipExpiresAt) > Date.now()
+      && recoveredSignupEmail) {
+      setStep('plan')
+      setPlanView('method')
+    } else setPaymentNeedsVerification(true)
+  }
+  if (!paymentReceiptReceived && (initialPaymentRecovery || navigation.recovery === 'payment')) return <PendingPaymentPage onReleased={handleRecoveredPaymentRelease} />
+  if (paymentNeedsVerification) return <div className="space-y-4">
+    <h1 className="text-xl font-semibold">Verify email to choose a payment method</h1>
+    <p>Payment cancelled. This browser no longer has valid email verification and signed signup terms. Verify your email again to load payment choices.</p>
+    <Button onClick={() => { setPaymentNeedsVerification(false); setStep('account') }}>Verify email again</Button>
+  </div>
   if (navigation.recovery) {
     return <div className="mx-auto w-full max-w-md space-y-4">
       <SignupRecoveryWarning />
@@ -2326,7 +2357,7 @@ function SignupJourney() {
         {step === 'admin' && (
           <StepAdminInfo serverUrl={serverUrl.trim()} onNext={handleAdminInfoComplete} />
         )}
-        {step === 'plan' && paymentSwitch && <PaymentBackModal provider={paymentSwitch}
+        {step === 'plan' && paymentSwitch && <PaymentBackModal provider={paymentSwitch} restoreFocusTo={paymentBackOpener.current}
           onStay={() => setPaymentSwitch(null)}
           onLeaveUnreleased={() => {
             // The payment stays owned and resumable; no other provider becomes payable.
@@ -2343,7 +2374,7 @@ function SignupJourney() {
             setPendingAnnualClaim(null)
             claimAttemptedRef.current = false
             setProvisionError(null)
-            navigation.clear()
+            navigation.clear({ retirePayment: true })
             setPlanView('method')
           }} />}
         <div aria-hidden={paymentSwitch ? true : undefined} inert={Boolean(paymentSwitch)}>

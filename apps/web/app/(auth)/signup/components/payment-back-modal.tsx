@@ -1,6 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { ModalDialog } from '@/app/components/modal-dialog'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { cancelAnonymousPaymentSessionRecovery, type AnnualProvider } from '@/app/lib/billing-v2'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -26,8 +28,9 @@ export const PAYMENT_BACK_ALREADY_CONFIRMED = 'This payment has already been con
  * cancellation contract requires; there is no separate checkbox. Only an exact
  * `released` receipt for the same provider and capability counts as cancelled.
  */
-export function PaymentBackModal({ provider, onStay, onReleased, onLeaveUnreleased }: {
+export function PaymentBackModal({ provider, onStay, onReleased, onLeaveUnreleased, restoreFocusTo }: {
   provider: Exclude<AnnualProvider, 'none'>
+  restoreFocusTo?: HTMLElement | null
   onStay: () => void
   onReleased: () => void
   /** Optional: navigate to the payment-method choices while this payment stays owned. */
@@ -36,13 +39,20 @@ export function PaymentBackModal({ provider, onStay, onReleased, onLeaveUnreleas
   const [busy, setBusy] = useState(false)
   const [outcome, setOutcome] = useState<'idle' | 'unconfirmed' | 'confirmed'>('idle')
   const running = useRef(false)
-  const dialog = useRef<HTMLDivElement>(null)
-  useEffect(() => { dialog.current?.focus() }, [])
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !running.current) onStay() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onStay])
+  const portal = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    // The portal is a body sibling of the entire auth layout, including theme
+    // and legal controls. Restore each sibling's original accessibility state.
+    const siblings = Array.from(document.body.children).filter(node => node !== portal.current)
+    const previous = siblings.map(node => ({ node, inert: node.getAttribute('inert'), hidden: node.getAttribute('aria-hidden') }))
+    for (const { node } of previous) { node.setAttribute('inert', ''); node.setAttribute('aria-hidden', 'true') }
+    return () => {
+      for (const { node, inert, hidden } of previous) {
+        if (inert === null) node.removeAttribute('inert'); else node.setAttribute('inert', inert)
+        if (hidden === null) node.removeAttribute('aria-hidden'); else node.setAttribute('aria-hidden', hidden)
+      }
+    }
+  }, [])
 
   async function cancel() {
     if (running.current) return
@@ -67,13 +77,10 @@ export function PaymentBackModal({ provider, onStay, onReleased, onLeaveUnreleas
   }
 
   const copy = PAYMENT_BACK_COPY[provider]
-  const titleId = `payment-back-title-${provider}`
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => { if (!busy) onStay() }}>
-      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
-        onClick={event => event.stopPropagation()}
-        className="w-full max-w-sm space-y-4 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-5 text-left shadow-lg outline-none">
-        <h2 id={titleId} className="text-lg font-semibold text-[rgb(var(--foreground))]">{copy.title}</h2>
+  return createPortal(
+    <div ref={portal}>
+      <ModalDialog title={copy.title} description={copy.body} onClose={onStay}
+        closeOnEscape={!busy} closeOnBackdrop={!busy} restoreFocusTo={restoreFocusTo} className="space-y-4 text-left">
         <p className="text-sm text-[rgb(var(--muted))]">{copy.body}</p>
         {outcome !== 'idle' && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{outcome === 'confirmed' ? PAYMENT_BACK_ALREADY_CONFIRMED : PAYMENT_BACK_UNCONFIRMED}</p>}
         <div className="flex flex-col gap-2">
@@ -83,7 +90,7 @@ export function PaymentBackModal({ provider, onStay, onReleased, onLeaveUnreleas
           </button>}
           {outcome === 'unconfirmed' && onLeaveUnreleased && <button type="button" disabled={busy} onClick={onLeaveUnreleased} className="text-sm underline disabled:opacity-50">Back without cancelling</button>}
         </div>
-      </div>
-    </div>
+      </ModalDialog>
+    </div>, document.body
   )
 }

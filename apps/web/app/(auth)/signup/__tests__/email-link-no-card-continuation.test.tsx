@@ -303,6 +303,39 @@ describe('email-link seven-day no-card continuation', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it.each(['timeout', 'expired', 'invalid'] as const)('checks the existing Bitcoin invoice after %s and continues on late settlement', async reason => {
+    await reachPlanScreen()
+    authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/retained', cryptoInvoiceId: 'retained', cryptoInvoiceLookupToken: 'lookup' })
+    const prior = vi.mocked(fetch).getMockImplementation()!
+    let settled = false
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/payment-methods')) return new Response(JSON.stringify({ paymentMethods: [{ id: 'BTC', address: 'test-address', qrValue: 'bitcoin:test-address' }] }))
+      if (String(input).endsWith('/invoice/retained')) { reads++; expect(new Headers(init?.headers).get('X-Invoice-Lookup-Token')).toBe('lookup'); return new Response(JSON.stringify({ status: settled ? 'settled' : reason === 'timeout' ? 'processing' : reason })) }
+      return prior(input, init)
+    }))
+    let poll: (() => void) | undefined
+    const realTimeout = window.setTimeout.bind(window)
+    const scheduling = vi.spyOn(window, 'setTimeout').mockImplementation((callback, delay, ...args) => {
+      if (delay === 10_000 || delay === 15_000) { poll = callback as () => void; return 98765 }
+      return realTimeout(callback, delay, ...args)
+    })
+    await choosePaymentMethod('btcpay')
+    await waitFor(() => expect(reads).toBe(1))
+    try {
+      if (reason === 'timeout') for (let attempt = 0; attempt < 180; attempt++) await act(async () => { const next = poll; poll = undefined; next?.() })
+      const stopped = reads
+      expect(poll).toBeUndefined()
+      expect(reads).toBe(stopped)
+      settled = true
+      fireEvent.click(screen.getByRole('button', { name: 'Check payment status' }))
+      await act(async () => {})
+      expect(reads).toBe(stopped + 1)
+      expect(screen.getByText(/Payment confirmed for your/)).toBeVisible()
+      expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
+    } finally { scheduling.mockRestore() }
+  })
+
   it.each(['card', 'pending', 'error', 'expired'] as const)('shows retained payment Back recovery on the actual %s panel', async (state) => {
     await reachPlanScreen()
     authState.startAnnualSignupPayment.mockResolvedValue(state === 'card' ? { clientSecret: 'seti_retained_secret' } : {

@@ -202,12 +202,12 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     const back = await screen.findByRole('button', { name: 'Back' })
     fireEvent.click(back)
     const dialog = screen.getByRole('dialog', { name: 'Cancel this Bitcoin payment?' })
-    expect(document.activeElement).toBe(dialog)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stay' })).toHaveFocus())
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     // The page behind the dialog is inert: its Back control is no longer accessible.
     expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Problems with payment?' })).not.toBeInTheDocument()
-    fireEvent.keyDown(window, { key: 'Escape' })
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Back' })).toBeVisible()
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
@@ -232,11 +232,11 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     expect(screen.queryByText('Payment cancelled')).not.toBeInTheDocument()
     releaseResponse = () => new Response(JSON.stringify({ contractVersion: 2, state: 'released', flow: { provider: 'btcpay', status: 'reconciliation_required' }, release: { requestKey: paymentSessionRequestKey, provider: 'btcpay', providerObjectId: 'invoice_exact' } }))
     fireEvent.click(screen.getByRole('button', { name: 'Retry cancellation' }))
-    expect(await screen.findByRole('heading', { name: 'Payment cancelled' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Verify email to choose a payment method' })).toBeVisible()
     expect(bodies).toHaveLength(2)
     expect(bodies[1]).toEqual(bodies[0])
     expect(authState.clearPendingSignupPaymentRecovery).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('link', { name: 'Choose a payment method' })).toHaveAttribute('href', '/signup')
+    expect(screen.getByRole('link', { name: 'Verify email again' })).toHaveAttribute('href', '/signup')
   })
 
 
@@ -400,6 +400,28 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
   async function advance(ms: number) {
     await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
   }
+
+  it.each(['timeout', 'expired', 'invalid'] as const)('recovers the same authority after %s without restarting or over-polling', async reason => {
+    const fetcher = vi.fn(async () => reason === 'timeout' ? openRecovery() : new Response(JSON.stringify({ contractVersion: 2, state: 'closed', flow: { provider: 'btcpay', status: reason } })))
+    vi.stubGlobal('fetch', fetcher)
+    render(<PendingPaymentPage />)
+    await settle()
+    if (reason === 'timeout') await advance(4 * 60_000 * 20)
+    const stopped = fetcher.mock.calls.length
+    await advance(16 * 60_000)
+    expect(fetcher).toHaveBeenCalledTimes(stopped)
+    expect(stopped).toBe(reason === 'timeout' ? 40 : 1)
+    fetcher.mockImplementation(async () => confirmedRecovery())
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    await settle()
+    expect(screen.getByTestId('step-create-paid-account')).toBeInTheDocument()
+    expect(fetcher).toHaveBeenCalledTimes(stopped + 1)
+    for (const [url, init] of vi.mocked(fetch).mock.calls) {
+      expect(String(url)).toMatch(/payment-session\/v2\/(current|reconcile)$/)
+      expect(JSON.parse(String(init?.body))).toEqual(recoveryBody)
+    }
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+  })
 
   it('re-polls the anonymous recovery sibling while the invoice stays open', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => openRecovery()))
