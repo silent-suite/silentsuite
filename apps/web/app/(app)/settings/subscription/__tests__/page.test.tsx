@@ -1,3 +1,4 @@
+import { checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
@@ -84,7 +85,7 @@ const annualOffer = {
 }
 const annualActivation = {
   contractVersion: 2,
-  checkoutIntentToken: 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',
+  checkoutIntentToken: signedCheckoutIntent,
   expiresAt: '2026-08-10T12:05:00Z',
   disclosure: {
     kind: 'charge_now', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: 3600,

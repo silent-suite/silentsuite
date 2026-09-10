@@ -1,3 +1,4 @@
+import { checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -74,7 +75,7 @@ describe('PaymentChoicePanel cancellation safety', () => {
       if (url.endsWith('/subscription/offers/v2')) return response(annualOffer)
       if (url.endsWith('/subscription/offers/v2/activate')) return response({
         contractVersion: 2,
-        checkoutIntentToken: 'A'.repeat(43),
+        checkoutIntentToken: signedCheckoutIntent,
         expiresAt: '2026-08-10T12:05:00Z',
         disclosure: {
           kind: 'charge_now', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: 3600,
@@ -114,7 +115,7 @@ describe('PaymentChoicePanel cancellation safety', () => {
         return response({ ...annualOffer, requestId: offerReads === 1 ? annualOffer.requestId : '22222222-2222-4222-8222-222222222222' })
       }
       if (url.endsWith('/subscription/offers/v2/activate')) return response({
-        contractVersion: 2, checkoutIntentToken: 'A'.repeat(43), expiresAt: '2026-08-10T12:05:00Z',
+        contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-10T12:05:00Z',
         disclosure: {
           kind: 'charge_now', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: 3600,
           monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null, cancelBy: null,

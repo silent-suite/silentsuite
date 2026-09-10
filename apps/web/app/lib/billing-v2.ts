@@ -61,6 +61,8 @@ export interface AnnualCheckoutActivation {
 
 export interface EmailOwnership { contractVersion: 2; emailOwnershipToken: string; expiresAt: string }
 
+export interface AnnualSelectionRelease { contractVersion: 2; requestId: string; checkoutIntentJti: string; state: 'released' }
+
 export type SignupAnnualPayment =
   | { contractVersion: 2; kind: 'stripe'; clientSecret: string; paymentSessionToken: string }
   | { contractVersion: 2; kind: 'btcpay'; cryptoCheckoutUrl: string; cryptoInvoiceId: string; cryptoInvoiceLookupToken: string; paymentSessionToken: string }
@@ -73,7 +75,9 @@ export type AnonymousPaymentSessionRecovery = {
   contractVersion: 2
   // A closed response deliberately reveals no account, request, or provider
   // correlation. The local capability proves the recovery request instead.
-  state: 'open' | 'confirmed' | 'closed'
+  state: 'open' | 'confirmed' | 'closed' | 'released'
+  release?: { requestKey: string; provider: AnnualProvider; providerObjectId: string | null }
+  continuation?: { requestKey: string; provider: AnnualProvider; providerObjectId: string; disclosure: AnnualDisclosure; clientSecret?: string; checkoutUrl?: string }
   flow: { provider: AnnualProvider; status: string } | null
 }
 
@@ -85,12 +89,14 @@ export type AnonymousPaymentSessionRecovery = {
 export class BillingResponseError extends Error {
   readonly billingStatus: number
   readonly billingProblemType: string | null
+  readonly retryAfterMs: number | null
 
-  constructor(message: string, billingStatus: number, billingProblemType: string | null) {
+  constructor(message: string, billingStatus: number, billingProblemType: string | null, retryAfterMs: number | null = null) {
     super(message)
     this.name = 'BillingResponseError'
     this.billingStatus = billingStatus
     this.billingProblemType = billingProblemType
+    this.retryAfterMs = retryAfterMs
   }
 }
 
@@ -123,6 +129,40 @@ function isUtcTimestamp(value: unknown): value is string {
 function isNullableTimestamp(value: unknown): value is string | null { return value === null || isUtcTimestamp(value) }
 function isUuid(value: unknown): value is string { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) }
 function isRecoveryToken(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9_-]{43,128}$/.test(value) }
+
+/**
+ * Transport/profile validation only, NOT signature verification. Billing's
+ * HostedOfferAuthority verifies signatures, time, subject and request binding.
+ * Signed authorities are compact ES256 JWS; payment recovery stays opaque.
+ */
+function isSignedAuthorityToken(value: unknown, profile: 'email-ownership' | 'checkout-intent'): value is string {
+  // Bound decoding work before parsing untrusted JSON. Current closed profiles
+  // fit comfortably below 8 KiB, including the larger checkout schedule.
+  if (typeof value !== 'string' || value.length > 8192) return false
+  const parts = value.split('.')
+  if (parts.length !== 3 || parts[0].length > 1024 || parts[2].length !== 86) return false
+  try {
+    const decoded = parts.map(part => {
+      if (!/^[A-Za-z0-9_-]+$/.test(part)) throw new Error('Invalid JWS encoding')
+      const bytes = atob(part.replace(/-/g, '+').replace(/_/g, '/'))
+      // Reject padding and noncanonical trailing bits, including the signature.
+      if (btoa(bytes).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_') !== part) throw new Error('Invalid JWS encoding')
+      return Uint8Array.from(bytes, character => character.charCodeAt(0))
+    })
+    const decoder = new TextDecoder('utf-8', { fatal: true })
+    const header: unknown = JSON.parse(decoder.decode(decoded[0]))
+    const payload: unknown = JSON.parse(decoder.decode(decoded[1]))
+    const checkout = profile === 'checkout-intent'
+    return isObject(header) && hasExactKeys(header, ['alg', 'typ', 'kid'])
+      && header.alg === 'ES256' && header.typ === `ss-${profile}+jwt`
+      && typeof header.kid === 'string' && header.kid.length > 0
+      && decoded[2].length === 64 && isObject(payload)
+      && payload.iss === 'silentsuite-billing'
+      && payload.aud === (checkout ? 'silentsuite-billing-checkout' : 'silentsuite-billing-signup-email-ownership')
+      && payload.purpose === (checkout ? 'checkout_intent' : 'email_ownership')
+      && payload.contractVersion === 2
+  } catch { return false }
+}
 function isHttpsUrl(value: unknown): value is string { try { return typeof value === 'string' && new URL(value).protocol === 'https:' } catch { return false } }
 function requireAbsoluteHttpUrl(value: string): string {
   let url: URL
@@ -165,14 +205,19 @@ export function assertAnnualDisclosure(value: unknown): asserts value is AnnualD
 }
 
 function assertActivation(value: unknown): asserts value is AnnualCheckoutActivation {
-  if (!isObject(value) || !hasExactKeys(value, ['contractVersion', 'checkoutIntentToken', 'expiresAt', 'disclosure']) || value.contractVersion !== 2 || !isRecoveryToken(value.checkoutIntentToken) || !isUtcTimestamp(value.expiresAt)) throw new Error('Billing did not return a valid annual checkout authority')
+  if (!isObject(value) || !hasExactKeys(value, ['contractVersion', 'checkoutIntentToken', 'expiresAt', 'disclosure']) || value.contractVersion !== 2 || !isSignedAuthorityToken(value.checkoutIntentToken, 'checkout-intent') || !isUtcTimestamp(value.expiresAt)) throw new Error('Billing did not return a valid annual checkout authority')
   assertAnnualDisclosure(value.disclosure)
 }
 
 async function jsonOrThrow(response: Response): Promise<unknown> {
+  const retryHeader = response.headers?.get('retry-after') ?? null
+  const retryDelay = retryHeader === null ? NaN : /^\d+$/.test(retryHeader.trim())
+    ? Number(retryHeader) * 1000 : Date.parse(retryHeader) - Date.now()
+  const retryAfterMs = Number.isFinite(retryDelay) ? Math.max(0, retryDelay)
+    : response.status === 429 ? 15 * 60_000 : null
   let body: unknown
   try { body = await response.json() } catch {
-    if (!response.ok) throw new BillingResponseError('Billing returned an invalid error response', response.status, null)
+    if (!response.ok) throw new BillingResponseError('Billing returned an invalid error response', response.status, null, retryAfterMs)
     throw new Error('Billing returned an invalid response')
   }
   if (!response.ok) {
@@ -180,6 +225,7 @@ async function jsonOrThrow(response: Response): Promise<unknown> {
       isObject(body) && typeof body.detail === 'string' ? body.detail : 'Billing request failed',
       response.status,
       isObject(body) && typeof body.type === 'string' ? body.type : null,
+      retryAfterMs,
     )
   }
   return body
@@ -187,6 +233,32 @@ async function jsonOrThrow(response: Response): Promise<unknown> {
 
 function api(url: string, path: string) { return `${url.replace(/\/$/, '')}${path}` }
 function jsonInit(method: 'POST' | 'GET', body?: object): RequestInit { return { method, credentials: 'include', headers: { 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) } }
+
+export async function cancelUnclaimedAnnualSelection(params: {
+  fetcher: BillingV2Fetch; billingApiUrl: string; email: string; requestId: string;
+  checkoutIntentToken: string; emailOwnershipToken: string;
+}): Promise<AnnualSelectionRelease> {
+  const { fetcher } = params
+  if (!isUuid(params.requestId) || !isSignedAuthorityToken(params.checkoutIntentToken, 'checkout-intent')
+    || !isSignedAuthorityToken(params.emailOwnershipToken, 'email-ownership')) throw new Error('Invalid selection cancellation request')
+  // Decode only a bounded transport-validated identity for response correlation.
+  // This is not signature/expiry authority: Billing checks the exact stored token
+  // and live ownership proof, including replay after checkout expiry.
+  const claims: unknown = JSON.parse(atob(params.checkoutIntentToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+  if (!isObject(claims) || !isUuid(claims.jti) || claims.requestId !== params.requestId) throw new Error('Invalid selection cancellation identity')
+  const response = await fetcher(api(params.billingApiUrl, '/auth/offers/v2/cancel'), jsonInit('POST', {
+    contractVersion: 2, email: params.email, requestId: params.requestId,
+    checkoutIntentToken: params.checkoutIntentToken, emailOwnershipToken: params.emailOwnershipToken,
+  }))
+  const body = await jsonOrThrow(response)
+  if (response.status !== 200 || !isObject(body)
+    || !hasExactKeys(body, ['contractVersion', 'requestId', 'checkoutIntentJti', 'state'])
+    || body.contractVersion !== 2 || body.state !== 'released'
+    || body.requestId !== params.requestId || body.checkoutIntentJti !== claims.jti) {
+    throw new Error('Billing did not confirm cancellation of this exact selection')
+  }
+  return body as unknown as AnnualSelectionRelease
+}
 
 export async function fetchAnonymousAnnualOffer(params: {
   fetcher: BillingV2Fetch
@@ -221,7 +293,7 @@ export async function requestSignupEmailOwnership(params: { fetcher: BillingV2Fe
 export async function consumeSignupEmailOwnership(params: { fetcher: BillingV2Fetch; billingApiUrl: string; email: string; token: string }): Promise<EmailOwnership> {
   const { fetcher } = params
   const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/auth/signup-email-verifications/v2/consume'), jsonInit('POST', { contractVersion: 2, email: params.email, token: params.token })))
-  if (!isObject(body) || !hasExactKeys(body, ['contractVersion', 'emailOwnershipToken', 'expiresAt']) || body.contractVersion !== 2 || !isRecoveryToken(body.emailOwnershipToken) || !isUtcTimestamp(body.expiresAt)) throw new Error('Billing did not return valid email proof')
+  if (!isObject(body) || !hasExactKeys(body, ['contractVersion', 'emailOwnershipToken', 'expiresAt']) || body.contractVersion !== 2 || !isSignedAuthorityToken(body.emailOwnershipToken, 'email-ownership') || !isUtcTimestamp(body.expiresAt)) throw new Error('Billing did not return valid email proof')
   return body as unknown as EmailOwnership
 }
 
@@ -274,20 +346,33 @@ export async function startAuthenticatedAnnualPayment(params: { fetcher: Billing
 }
 
 function assertAnonymousPaymentRecovery(value: unknown): asserts value is AnonymousPaymentSessionRecovery {
-  if (!isObject(value)
-    || !hasExactKeys(value, ['contractVersion', 'state', 'flow'])
-    || value.contractVersion !== 2
-    || !['open', 'confirmed', 'closed'].includes(String(value.state))) {
-    throw new Error('Billing did not return valid annual payment recovery')
-  }
-  if (value.flow === null) return
-  if (!isObject(value.flow)
-    || !hasExactKeys(value.flow, ['provider', 'status'])
-    || (value.flow.provider !== 'stripe' && value.flow.provider !== 'btcpay')
-    || typeof value.flow.status !== 'string') {
-    throw new Error('Billing did not return valid annual payment recovery')
+  const invalid = () => { throw new Error('Billing did not return valid annual payment recovery') }
+  if (!isObject(value) || !hasExactKeys(value, ['contractVersion', 'state', 'flow', ...('release' in value ? ['release'] : []), ...('continuation' in value ? ['continuation'] : [])])
+    || value.contractVersion !== 2 || !['open', 'confirmed', 'closed', 'released'].includes(String(value.state))) return invalid()
+  if (value.flow !== null && (!isObject(value.flow) || !hasExactKeys(value.flow, ['provider', 'status'])
+    || !['stripe', 'btcpay'].includes(String(value.flow.provider)) || typeof value.flow.status !== 'string')) return invalid()
+  if (value.state === 'released') {
+    const r = value.release
+    if (!isObject(r) || !hasExactKeys(r, ['requestKey', 'provider', 'providerObjectId']) || !isUuid(r.requestKey)
+      || !isObject(value.flow) || r.provider !== value.flow.provider
+      || (r.providerObjectId !== null && (typeof r.providerObjectId !== 'string' || !r.providerObjectId))) return invalid()
+  } else if ('release' in value) return invalid()
+  if ('continuation' in value) {
+    const c = value.continuation
+    if (value.state !== 'open' || !isObject(c) || !isObject(value.flow) || c.provider !== value.flow.provider
+      || !isUuid(c.requestKey) || typeof c.providerObjectId !== 'string' || !c.providerObjectId) return invalid()
+    const control = c.provider === 'stripe' ? 'clientSecret' : 'checkoutUrl'
+    if (!hasExactKeys(c, ['requestKey', 'provider', 'providerObjectId', 'disclosure', control]) || typeof c[control] !== 'string' || !c[control]) return invalid()
+    assertAnnualDisclosure(c.disclosure)
+    if (c.provider === 'stripe' && !['card_trial', 'charge_now'].includes(c.disclosure.kind)) return invalid()
+    if (c.provider === 'btcpay') {
+      if (c.disclosure.kind !== 'prepaid') return invalid()
+      try { const url = new URL(c.checkoutUrl as string); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return invalid() } catch { return invalid() }
+    }
   }
 }
+
+export const ANONYMOUS_RECOVERY_SWITCHING_PROFILE = 'v1' as const
 
 type AnonymousPaymentSessionRecoveryRequest = {
   fetcher: BillingV2Fetch
@@ -296,6 +381,7 @@ type AnonymousPaymentSessionRecoveryRequest = {
   recoverySecret: string
   requestKey: string
   email: string
+  confirmNoBitcoinSent?: boolean
 }
 
 async function anonymousPaymentSessionRecovery(
@@ -303,7 +389,8 @@ async function anonymousPaymentSessionRecovery(
   params: AnonymousPaymentSessionRecoveryRequest,
 ): Promise<AnonymousPaymentSessionRecovery> {
   const { fetcher } = params
-  if (!isRecoveryToken(params.paymentSessionToken)
+  if ((params.confirmNoBitcoinSent !== undefined && typeof params.confirmNoBitcoinSent !== 'boolean')
+    || !isRecoveryToken(params.paymentSessionToken)
     || !isRecoveryToken(params.recoverySecret)
     || params.paymentSessionToken !== params.recoverySecret
     || !isUuid(params.requestKey)
@@ -326,12 +413,19 @@ async function anonymousPaymentSessionRecovery(
         email: params.email,
         requestKey: params.requestKey,
         recoverySecret: params.recoverySecret,
+        // Explicit opt-in to release receipts, payable continuation and
+        // provider cancellation. A Billing release that ignores this literal
+        // still answers with the legacy open/confirmed/closed shape, which the
+        // validator below accepts without granting any switching authority.
+        switchingProfile: ANONYMOUS_RECOVERY_SWITCHING_PROFILE,
+        ...(path === '/cancel' && params.confirmNoBitcoinSent !== undefined ? { confirmNoBitcoinSent: params.confirmNoBitcoinSent } : {}),
       }),
     },
   )
   const body = await jsonOrThrow(response)
   if (response.status !== 200) throw new Error('Billing returned an invalid annual payment recovery response status')
   assertAnonymousPaymentRecovery(body)
+  if ((body.release && body.release.requestKey !== params.requestKey) || (body.continuation && body.continuation.requestKey !== params.requestKey)) throw new Error('Billing returned mismatched payment recovery identity')
   return body
 }
 

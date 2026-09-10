@@ -1,3 +1,5 @@
+import { createElement } from 'react'
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useAuthStore } from '../use-auth-store'
 import { secureClear } from '@/app/lib/secure-storage'
@@ -114,6 +116,20 @@ function resetStore() {
   })
 }
 
+function mockSignupBillingSession(id: string, email: string, isAdmin = false, emailVerified = true) {
+  vi.mocked(fetch)
+    .mockImplementationOnce(async (url, init) => {
+      expect(String(url)).toContain('/auth/token-exchange')
+      expect(init?.credentials).toBe('include')
+      return new Response(JSON.stringify({ id, email, isAdmin, emailVerified, rememberDevice: false }))
+    })
+    .mockImplementationOnce(async (url, init) => {
+      expect(String(url)).toContain('/auth/session')
+      expect(init?.credentials).toBe('include')
+      return new Response(JSON.stringify({ id, email, emailVerified }))
+    })
+}
+
 function paidSignupRequestBody(callIndex = 0) {
   const [, init] = vi.mocked(fetch).mock.calls[callIndex]
   return JSON.parse(init?.body as string) as Record<string, unknown>
@@ -206,6 +222,26 @@ describe('useAuthStore', () => {
     expect(useAuthStore.getState().error).toMatch(/already signed in/i)
   })
 
+  it('rejects a replacement password for a retained encrypted account rather than pretending it changed', async () => {
+    const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    useAuthStore.getState().prepareSignupDraft('identity@example.test')
+    await useAuthStore.getState().createEtebaseAccount('identity@example.test', 'OriginalPass1')
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('Invalid original credentials'))
+    await expect(useAuthStore.getState().createEtebaseAccount('identity@example.test', 'DifferentPass2')).rejects.toThrow('Invalid original credentials')
+    expect(etebaseLogIn).toHaveBeenCalledWith('identity@example.test', 'DifferentPass2', undefined)
+    expect(etebaseSignUp).toHaveBeenCalledTimes(1)
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(fetch).not.toHaveBeenCalled()
+    await useAuthStore.getState().createEtebaseAccount('identity@example.test', 'OriginalPass1')
+    expect(etebaseLogIn).toHaveBeenLastCalledWith('identity@example.test', 'OriginalPass1', undefined)
+    // A later login must not treat the rejected replacement as the account password.
+    await useAuthStore.getState().logout()
+    vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('Invalid original credentials'))
+    await useAuthStore.getState().login('identity@example.test', 'DifferentPass2')
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useAuthStore.getState().user).toBeNull()
+  })
+
   it('reuses an Etebase account created by an ambiguous prior signup attempt', async () => {
     const { etebaseSignUp, etebaseLogIn } = await import('@/app/lib/etebase-auth')
     vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('409 conflict'))
@@ -281,7 +317,7 @@ describe('useAuthStore', () => {
       return useAuthStore.getState().startAnnualSignupPayment(
         checkoutIntentToken,
         provider,
-        'http://localhost:3000/signup/return',
+        'http://localhost:3000/signup/return', 'annual',
       )
     }
 
@@ -321,12 +357,53 @@ describe('useAuthStore', () => {
       })
     })
 
+    it.each(['stripe', 'btcpay'] as const)('retains exact %s recovery before dispatch and after a lost start response', async (provider) => {
+      useAuthStore.getState().prepareSignupDraft('lost@example.com')
+      vi.mocked(fetch).mockImplementation(async (_input, init) => {
+        const body = JSON.parse(String(init?.body))
+        expect(useAuthStore.getState().pendingSignup).toMatchObject({
+          billingContractVersion: 2, paymentMethod: provider,
+          paymentSessionToken: body.recoverySecret, paymentSessionRequestKey: body.requestKey,
+        })
+        throw new TypeError('Network response lost')
+      })
+      await expect(startAnnualPayment(provider)).rejects.toThrow('Network response lost')
+      const first = paidSignupRequestBody()
+      expect(useAuthStore.getState().pendingSignup).toMatchObject({
+        email: 'lost@example.com', paymentMethod: provider,
+        paymentSessionToken: first.recoverySecret, paymentSessionRequestKey: first.requestKey,
+      })
+      expect(useAuthStore.getState().pendingSignup?.provisionedUser).toBeUndefined()
+      await expect(startAnnualPayment(provider)).rejects.toThrow('Network response lost')
+      expect(paidSignupRequestBody(1)).toEqual(first)
+      expect(persistedPaidSignupIdentities()).toHaveLength(1)
+    })
+
     it('rejects cross-origin annual return URLs before contacting Billing', async () => {
       useAuthStore.getState().prepareSignupDraft('origin@example.com')
       await expect(useAuthStore.getState().startAnnualSignupPayment(
-        checkoutIntentToken, 'stripe', 'https://attacker.example/return',
+        checkoutIntentToken, 'stripe', 'https://attacker.example/return', 'annual',
       )).rejects.toThrow('must stay on this origin')
       expect(fetch).not.toHaveBeenCalled()
+    })
+
+    it('cannot resurrect a logged-out attempt from a late payment response', async () => {
+      useAuthStore.getState().prepareSignupDraft('logout@example.test')
+      let deliver!: (response: Response) => void
+      let recoverySecret = ''
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        if (String(input).endsWith('/auth/session')) return new Response('{}')
+        recoverySecret = JSON.parse(String(init?.body)).recoverySecret
+        return new Promise<Response>((resolve) => { deliver = resolve })
+      })
+      const pending = startAnnualPayment().catch((error) => error as Error)
+      expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).not.toBeNull()
+      await useAuthStore.getState().logout()
+      deliver(new Response(JSON.stringify(stripePayment(recoverySecret))))
+      expect(await pending).toBeInstanceOf(Error)
+      expect(useAuthStore.getState().pendingSignup).toBeNull()
+      expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).toBeNull()
+      expect(persistedPaidSignupIdentities()).toHaveLength(0)
     })
 
     it('does not commit an in-flight authority into a superseding signup draft', async () => {
@@ -460,6 +537,7 @@ describe('useAuthStore', () => {
       useAuthStore.setState({
         pendingSignup: {
           email: 'completed@example.com',
+          billingSessionUserId: 'user-1',
           provisionedUser: { id: 'user-1', planId: 'early_annual', isAdmin: false },
           provisionedSubscriptionStatus: 'active',
         },
@@ -472,6 +550,37 @@ describe('useAuthStore', () => {
 
       expect(nextAttempt.requestKey).not.toBe(oldAttempt.requestKey)
       expect(nextAttempt.recoverySecret).not.toBe(oldAttempt.recoverySecret)
+    })
+
+    it.each(['stripe', 'btcpay'] as const)('switches %s only after an exact release using the real store and client', async provider => {
+      useAuthStore.getState().prepareSignupDraft('switch@example.com')
+      vi.mocked(fetch).mockImplementation(async (_input, init) => {
+        const body = JSON.parse(String(init?.body))
+        return new Response(JSON.stringify(provider === 'stripe' ? stripePayment(body.recoverySecret) : bitcoinPayment(body.recoverySecret)))
+      })
+      await startAnnualPayment(provider)
+      const pending = useAuthStore.getState().pendingSignup!
+      const originalToken = pending.paymentSessionToken
+      const onReleased = vi.fn()
+      const { PaymentBackModal } = await import('../../(auth)/signup/components/payment-back-modal')
+      render(createElement(PaymentBackModal, { provider, onReleased, onStay: vi.fn() }))
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, state: 'closed', flow: null })))
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
+      await screen.findByRole('alert')
+      // The destructive choice itself is the affirmative no-funds acknowledgement for Bitcoin.
+      const cancelBody = JSON.parse(String(vi.mocked(fetch).mock.calls.at(-1)![1]?.body))
+      expect(cancelBody).toMatchObject({ switchingProfile: 'v1', requestKey: pending.paymentSessionRequestKey, ...(provider === 'btcpay' ? { confirmNoBitcoinSent: true } : {}) })
+      if (provider === 'stripe') expect(cancelBody).not.toHaveProperty('confirmNoBitcoinSent')
+      expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(originalToken)
+      expect(onReleased).not.toHaveBeenCalled()
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, state: 'released', flow: { provider, status: 'reconciliation_required' }, release: { requestKey: pending.paymentSessionRequestKey, provider, providerObjectId: 'exact' } })))
+      fireEvent.click(screen.getByRole('button', { name: 'Retry cancellation' }))
+      await waitFor(() => expect(onReleased).toHaveBeenCalledTimes(1))
+      expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBeUndefined()
+      expect(sessionStorage.getItem('silentsuite-signup-redirect-state') ?? '').not.toContain(originalToken!)
+      expect(useAuthStore.getState().pendingSignup?.email).toBe(pending.email)
+      cleanup()
     })
 
     it('atomically releases only a verified terminal Bitcoin identity before a fresh invoice claim', async () => {
@@ -587,6 +696,7 @@ describe('useAuthStore', () => {
         cryptoInvoiceLookupToken: null,
       })))
 
+      mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'finalize@example.com')
       await useAuthStore.getState().finalizePaidSignup()
 
       expect(fetch).toHaveBeenCalledWith(
@@ -667,6 +777,7 @@ describe('useAuthStore', () => {
       }),
     } as Response)
 
+    mockSignupBillingSession('user-1', 'paid@example.com', true, false)
     await useAuthStore.getState().finalizePaidSignup()
 
     expect(fetch).toHaveBeenCalledWith(
@@ -718,7 +829,7 @@ describe('useAuthStore', () => {
         paymentSessionToken: request.recoverySecret,
       }))
     })
-    const result = await useAuthStore.getState().startAnnualSignupPayment('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG', 'stripe', 'http://localhost:3000/signup/success')
+    const result = await useAuthStore.getState().startAnnualSignupPayment('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG', 'stripe', 'http://localhost:3000/signup/success', 'annual')
     expect(result.clientSecret).toBe('pi_secret')
     const [, init] = vi.mocked(fetch).mock.calls[0]
     expect(JSON.parse(String(init?.body))).toMatchObject({ contractVersion: 2, checkoutIntentToken: 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG', email: 'customer@example.test' })
@@ -733,7 +844,8 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'temporary failure' }), { status: 503 }))
     await expect(useAuthStore.getState().provisionAnnualNoCard('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')).rejects.toMatchObject({ billingStatus: 503 })
 
-    vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('409 conflict'))
+    const signupCalls = vi.mocked(etebaseSignUp).mock.calls.length
+    const loginCalls = vi.mocked(etebaseLogIn).mock.calls.length
     await useAuthStore.getState().createEtebaseAccount('recover-no-card@example.test', 'password123')
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
       contractVersion: 2, id: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f', email: 'recover-no-card@example.test',
@@ -741,9 +853,11 @@ describe('useAuthStore', () => {
       createdAt: '2026-08-11T00:00:00Z', clientSecret: null, cryptoCheckoutUrl: null,
       cryptoInvoiceId: null, cryptoInvoiceLookupToken: null,
     })))
+    mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'recover-no-card@example.test')
     await useAuthStore.getState().provisionAnnualNoCard('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')
 
-    expect(etebaseLogIn).toHaveBeenCalledWith('recover-no-card@example.test', 'password123', undefined)
+    expect(etebaseSignUp).toHaveBeenCalledTimes(signupCalls)
+    expect(etebaseLogIn).toHaveBeenCalledTimes(loginCalls + 1)
     expect(useAuthStore.getState().pendingSignup?.provisionedUser?.id).toBe('5fd4d86d-34de-4b82-9a66-9598ddf6e02f')
   })
 
@@ -758,7 +872,8 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'temporary failure' }), { status: 503 }))
     await expect(useAuthStore.getState().finalizePaidSignup()).rejects.toThrow('temporary failure')
 
-    vi.mocked(etebaseSignUp).mockRejectedValueOnce(new Error('409 conflict'))
+    const signupCalls = vi.mocked(etebaseSignUp).mock.calls.length
+    const loginCalls = vi.mocked(etebaseLogIn).mock.calls.length
     await useAuthStore.getState().createEtebaseAccount('recover-paid@example.test', 'password123')
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({
       contractVersion: 2, id: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f', email: 'recover-paid@example.test',
@@ -766,9 +881,11 @@ describe('useAuthStore', () => {
       rememberDevice: false, isAdmin: false, createdAt: '2026-08-11T00:00:00Z', clientSecret: null,
       cryptoCheckoutUrl: null, cryptoInvoiceId: null, cryptoInvoiceLookupToken: null,
     })))
+    mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'recover-paid@example.test')
     await useAuthStore.getState().finalizePaidSignup()
 
-    expect(etebaseLogIn).toHaveBeenCalledWith('recover-paid@example.test', 'password123', undefined)
+    expect(etebaseSignUp).toHaveBeenCalledTimes(signupCalls)
+    expect(etebaseLogIn).toHaveBeenCalledTimes(loginCalls + 1)
     expect(useAuthStore.getState().pendingSignup?.provisionedUser?.planId).toBe('early_annual')
   })
 
@@ -789,6 +906,7 @@ describe('useAuthStore', () => {
       cryptoInvoiceId: null,
       cryptoInvoiceLookupToken: null,
     })))
+    mockSignupBillingSession('5fd4d86d-34de-4b82-9a66-9598ddf6e02f', 'customer@example.test')
     await useAuthStore.getState().provisionAnnualNoCard('abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG')
     expect(useAuthStore.getState().pendingSignup?.provisionedUser?.planId).toBeNull()
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toMatchObject({ contractVersion: 2, checkoutIntentToken: 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG' })
@@ -1024,6 +1142,7 @@ describe('useAuthStore', () => {
       useAuthStore.setState({
         pendingSignup: {
           email: 'new@user.com',
+          billingSessionUserId: 'new-1',
           provisionedUser: { id: 'new-1', planId: 'pro', isAdmin: false },
           provisionedSubscriptionStatus: 'trialing',
         },
@@ -1125,12 +1244,17 @@ describe('useAuthStore', () => {
     })
   })
 
-  it('logout clears state', async () => {
+  it('logout clears state and the retained tab payment checkpoint', async () => {
     // Set up logged-in state
     useAuthStore.setState({
       user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
       isAuthenticated: true,
+      pendingSignup: { email: 'test@example.com', paymentSessionToken: 'r'.repeat(43), billingContractVersion: 2 },
     })
+    useAuthStore.getState().saveSignupStateForRedirect('annual')
+    sessionStorage.setItem('silentsuite-pending-crypto-token', 'r'.repeat(43))
+    sessionStorage.setItem('silentsuite-pending-crypto-recovery-context', JSON.stringify({ email: 'test@example.com', requestKey: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f' }))
+    expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).not.toBeNull()
 
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
 
@@ -1139,6 +1263,12 @@ describe('useAuthStore', () => {
     const state = useAuthStore.getState()
     expect(state.user).toBeNull()
     expect(state.isAuthenticated).toBe(false)
+    expect(state.pendingSignup).toBeNull()
+    expect(state.signupRecoveryDurability).toBe('none')
+    expect(sessionStorage.getItem('silentsuite-signup-redirect-state')).toBeNull()
+    expect(state.restoreSignupStateFromRedirect({ retainForRecovery: true })).toBeNull()
+    expect(sessionStorage.getItem('silentsuite-pending-crypto-token')).toBeNull()
+    expect(sessionStorage.getItem('silentsuite-pending-crypto-recovery-context')).toBeNull()
   })
 
   it('logout clears decrypted account stores before another account can authenticate', async () => {
@@ -1683,6 +1813,26 @@ describe('useAuthStore', () => {
       email: 'user@example.com',
       paymentSessionToken: 'payment-session-token',
     }
+
+    it('retains a recovery snapshot across document resets without persisting credentials or renewing its TTL', () => {
+      useAuthStore.setState({ pendingSignup: {
+        email: 'customer@example.test', password: 'NeverPersistThis1',
+        serverUrl: 'https://server.silentsuite.io', billingContractVersion: 2,
+        paymentMethod: 'btcpay', paymentSessionToken: 'A'.repeat(43),
+        paymentSessionRequestKey: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f',
+      } })
+      useAuthStore.getState().saveSignupStateForRedirect('annual')
+      const original = sessionStorage.getItem('silentsuite-signup-redirect-state')!
+      expect(original).not.toContain('NeverPersistThis1')
+      for (let document = 0; document < 3; document += 1) {
+        useAuthStore.setState({ pendingSignup: null })
+        const restored = useAuthStore.getState().restoreSignupStateFromRedirect({ retainForRecovery: true })
+        expect(restored?.pendingSignup).toMatchObject({ email: 'customer@example.test', paymentSessionToken: 'A'.repeat(43), paymentSessionRequestKey: '5fd4d86d-34de-4b82-9a66-9598ddf6e02f' })
+        expect(restored?.pendingSignup).not.toHaveProperty('password')
+        expect(JSON.parse(sessionStorage.getItem('silentsuite-signup-redirect-state')!)).toEqual(JSON.parse(original))
+        expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      }
+    })
 
     it('saves redirect state to sessionStorage, not localStorage', () => {
       useAuthStore.setState({ pendingSignup: pending })

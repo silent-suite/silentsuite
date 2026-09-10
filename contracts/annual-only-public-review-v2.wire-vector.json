@@ -1,10 +1,10 @@
 {
   "hmacKey": "wire-vector-key-20260830-abcdefghijklmnopqrstuvwxyz",
-  "disclosureDigest": "sha256:3f59c62fb0663e3049bd6ed67a6b9bcdac497ece2020dc3fac1d036c96ca9819",
-  "disclosureSignature": "580dc13d906d98afce31cbf02571c72108e7b92e4522fe549f2e82e3aa132e59",
-  "reviewSignature": "9a1cb213c01853c4f4a122fbbb9bc5e5f7527437d8a61a0d5648c167a25a261d",
+  "disclosureDigest": "sha256:f0a9e6ed194e2f761aa48f3466d73c3a9571c335cf778c02f725d08ee29ce933",
+  "disclosureSignature": "151d5b5dd1bc6e2df090f300ee21c6d7479b8dcbc8659ed53a0d5ca4455ed096",
+  "reviewSignature": "f8b97b1bfc66f5e48d73f4f3155d64ede636e5a090fbfdc05a2ec95d4a7cbf9b",
   "publicSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "runId": 123456789,
   "runAttempt": 4,
-  "sourceDigest": "sha256:b59768d644fb7eb8b28cd08aadd57ecfc7f99d645496e415bba6d16b8cee6acf"
+  "sourceDigest": "sha256:dbba12ea2af1276b30d70f77a519038f816e3c08b2bbb1af0358ce2325fc278b"
 }
