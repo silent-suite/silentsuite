@@ -24,6 +24,7 @@ import { ContactListPanel } from '@/app/components/ContactListPanel'
 import { NotebookListPanel } from '@/app/components/NotebookListPanel'
 import { OnboardingChecklist } from '@/app/components/OnboardingChecklist'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
+import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
 
 const navItems = [
   { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
@@ -33,6 +34,7 @@ const navItems = [
 ]
 
 export function Sidebar() {
+  const notesEnabled = useNotesEnabled()
   const t = useTranslations('Navigation')
   const { isExpanded, toggle } = useSidebarStore()
   const pathname = usePathname()
@@ -68,14 +70,14 @@ export function Sidebar() {
           {preferencesTerminal && <MiniCalendar />}
           {pathname.startsWith('/calendar') && <CalendarListPanel />}
           {pathname.startsWith('/tasks') && <TaskListPanel />}
-          {pathname.startsWith('/notes') && <NotebookListPanel />}
+          {notesEnabled && pathname.startsWith('/notes') && <NotebookListPanel />}
           {pathname.startsWith('/contacts') && <ContactListPanel />}
         </div>
       )}
 
       {/* Nav items */}
       <div className="mt-2 flex flex-1 flex-col gap-1 px-2">
-        {navItems.map(({ href, labelKey, icon: Icon }) => {
+        {navItems.filter(({ href }) => href !== '/notes' || notesEnabled).map(({ href, labelKey, icon: Icon }) => {
           const isActive = pathname.startsWith(href)
           const label = t(labelKey)
           return (

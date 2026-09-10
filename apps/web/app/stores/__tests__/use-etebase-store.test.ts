@@ -289,6 +289,35 @@ describe('useEtebaseStore.initialize restoreBlocked flag', () => {
     expect(useEtebaseStore.getState().restoreBlocked).toBe(false)
   })
 
+  it('does not create Notes on sign-in, but still loads and tracks existing notebooks', async () => {
+    const { secureGet } = await getSecureStorage()
+    vi.mocked(secureGet).mockResolvedValue('raw-session')
+    coreMock.restoreSession.mockResolvedValue({ id: 'account' })
+    coreMock.getAccountFingerprint.mockReturnValue('fingerprint')
+    coreMock.listCollections.mockResolvedValue([])
+    coreMock.createCollection.mockImplementation(async (_account, type) => mockCollection(type))
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+    const track = vi.fn()
+    coreMock.SyncEngine.mockImplementation(function (this: any) {
+      this.trackCollection = track
+      this.onStokenAdvance = vi.fn()
+      this.start = vi.fn(async () => {})
+    })
+    await useEtebaseStore.getState().initialize()
+    expect(coreMock.createCollection.mock.calls.map((call) => call[1])).toEqual(['etebase.vevent', 'etebase.vtodo', 'etebase.vcard'])
+    expect(useEtebaseStore.getState().collections.notes).toEqual([])
+    expect(useEtebaseStore.getState().domainLoadState.notes).toBe('loaded')
+
+    coreMock.createCollection.mockClear()
+    coreMock.listCollections.mockImplementation(async (_account, type) => [mockCollection(type)])
+    useEtebaseStore.setState({ isInitialized: false, account: null, syncEngine: null })
+    await useEtebaseStore.getState().initialize()
+    expect(coreMock.createCollection).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().collections.notes).toHaveLength(1)
+    expect(coreMock.listItems).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ uid: 'etebase.md.note' }), null)
+    expect(track).toHaveBeenCalledWith('etebase.md.note', 'etebase.md.note')
+  })
+
   it('sets restoreBlocked when there is no saved session, without toast or removal', async () => {
     const { secureGet, secureRemove } = await getSecureStorage()
     vi.mocked(secureGet).mockResolvedValueOnce(null)

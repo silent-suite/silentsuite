@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
+import Link from 'next/link'
+import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { ArrowLeft, Eye, Folder, Plus, Search, StickyNote, Trash2, WifiOff } from 'lucide-react'
 import { useLocale, useTranslations } from 'next-intl'
 import type { DateFormat, Note, TimeFormat } from '@silentsuite/core'
@@ -189,6 +193,7 @@ function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelet
 }) {
   const t = useTranslations('Notes')
   const updateNote = useNoteStore((s) => s.updateNote)
+  const accountEpoch = useRef(getAccountEpoch()).current
   const titleRef = useRef<HTMLInputElement>(null)
   const [title, setTitle] = useState(note.title)
   const [content, setContent] = useState(note.content)
@@ -213,6 +218,7 @@ function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelet
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
+    if (!isCurrentAccountEpoch(accountEpoch)) return
     const draft = draftRef.current
     if (draft.title === savedRef.current.title && draft.content === savedRef.current.content) return
     inFlightRef.current += 1
@@ -224,13 +230,13 @@ function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelet
     }
     // Serialize saves so two flushes never race on the same Etebase item.
     saveChainRef.current = saveChainRef.current
-      .then(() => updateNote(note.id, draft))
+      .then(() => isCurrentAccountEpoch(accountEpoch) ? updateNote(note.id, draft) : false)
       .then((saved) => {
         if (saved) savedRef.current = draft
         settle(saved)
       })
       .catch(() => settle(false))
-  }, [note.id, updateNote])
+  }, [accountEpoch, note.id, updateNote])
 
   const schedule = useCallback((patch: Partial<Draft>) => {
     draftRef.current = { ...draftRef.current, ...patch }
@@ -388,6 +394,21 @@ function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelet
 }
 
 export default function NotesPage() {
+  const enabled = useNotesEnabled()
+  const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
+  if (!enabled) {
+    return (
+      <section className="mx-auto max-w-lg space-y-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-6">
+        <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Notes is experimental</h2>
+        <p className="text-sm text-[rgb(var(--muted))]">Enable Notes in Settings to use encrypted Markdown notes. Any existing notes are preserved while this feature is off.</p>
+        <Link href="/settings/experimental" className="inline-block text-sm text-[rgb(var(--primary))] underline">Open Experimental settings</Link>
+      </section>
+    )
+  }
+  return <NotesPageBody key={fingerprint} />
+}
+
+function NotesPageBody() {
   const t = useTranslations('Notes')
   const collectionsT = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())

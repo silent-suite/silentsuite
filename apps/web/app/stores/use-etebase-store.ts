@@ -191,7 +191,7 @@ async function ensureCollectionsForAccount(
     if (existing.length > 0) {
       collections[key] = existing
       logger.debug(`[etebase-store] Found ${existing.length} existing ${key} collection(s)`)
-    } else {
+    } else if (key !== 'notes') {
       if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
       const created = await core.createCollection(account, colType, { name: defaultName, mtime: Date.now() })
       if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
@@ -942,7 +942,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         logger.warn('[etebase-store] Cache fingerprint check failed', err)
       }
 
-      // 2. Ensure collections exist (create if first login, fetch if returning)
+      // 2. Discover existing collections. Only core domains get automatic defaults;
+      // the first Notes notebook is created by the explicit Experimental opt-in.
       diagnostics.startPhase('ensureCollections')
       const collections = await ensureCollectionsForAccount(account, core, accountEpoch)
       assertCurrentAccountEpoch(accountEpoch)

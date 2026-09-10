@@ -6,6 +6,12 @@ import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import type { Note } from '@silentsuite/core'
 import type { Notebook } from '@/app/stores/use-notebook-store'
 import { useSidebarStore } from '@/app/stores/use-sidebar-store'
+import { useExperimentalStore } from '@/app/stores/use-experimental-store'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+
+vi.mock('@/app/stores/use-etebase-store', () => ({
+  useEtebaseStore: (selector: (state: { accountFingerprint: string }) => unknown) => selector({ accountFingerprint: 'notes-test-account' }),
+}))
 
 const storeMock = vi.hoisted(() => ({
   noteState: {
@@ -100,6 +106,8 @@ function loaded(notes: Note[], lists: Notebook[] = [NOTEBOOK]) {
 
 describe('NotesPage', () => {
   beforeEach(() => {
+    localStorage.clear()
+    useExperimentalStore.setState({ hydrated: true, notesAccounts: ['notes-test-account'] })
     storeMock.noteState.isLoading = true
     storeMock.noteState.notes = []
     storeMock.notebookState.lists = []
@@ -122,6 +130,32 @@ describe('NotesPage', () => {
     expect(screen.queryByText('No notes yet')).not.toBeInTheDocument()
   })
 
+  it('blocks direct URLs until opted in without mounting the editor or mutating notes', () => {
+    useExperimentalStore.setState({ notesAccounts: [] })
+    loaded([note('existing')])
+    renderWithIntl(<NotesPage />)
+    expect(screen.getByRole('link', { name: 'Open Experimental settings' })).toHaveAttribute('href', '/settings/experimental')
+    expect(screen.queryByRole('button', { name: 'New note' })).not.toBeInTheDocument()
+    expect(storeMock.noteState.createNote).not.toHaveBeenCalled()
+    expect(storeMock.noteState.updateNote).not.toHaveBeenCalled()
+    expect(storeMock.noteState.deleteNote).not.toHaveBeenCalled()
+    act(() => useExperimentalStore.getState().setNotesEnabled('notes-test-account', true))
+    expect(screen.getByRole('button', { name: /existing/ })).toBeInTheDocument()
+  })
+
+  it('flushes pending edits when hidden and preserves existing notes for re-enabling', async () => {
+    loaded([note('existing')])
+    renderWithIntl(<NotesPage />)
+    fireEvent.click(screen.getByRole('button', { name: /existing/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note title' }), { target: { value: 'Pending title' } })
+    await act(async () => useExperimentalStore.getState().setNotesEnabled('notes-test-account', false))
+    expect(storeMock.noteState.updateNote).toHaveBeenCalledWith('existing', expect.objectContaining({ title: 'Pending title' }))
+    expect(storeMock.noteState.deleteNote).not.toHaveBeenCalled()
+    expect(storeMock.noteState.notes).toHaveLength(1)
+    act(() => useExperimentalStore.getState().setNotesEnabled('notes-test-account', true))
+    expect(screen.getByRole('button', { name: /existing/ })).toBeInTheDocument()
+  })
+
   it('creates a note and opens it in the editor', async () => {
     loaded([])
     renderWithIntl(<NotesPage />)
@@ -139,6 +173,18 @@ describe('NotesPage', () => {
     // The default title is selected so typing replaces it.
     expect(title.selectionStart).toBe(0)
     expect(title.selectionEnd).toBe('Untitled'.length)
+  })
+
+  it('does not flush an old account draft into the next account on gate unmount', async () => {
+    loaded([note('existing')])
+    renderWithIntl(<NotesPage />)
+    fireEvent.click(screen.getByRole('button', { name: /existing/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note title' }), { target: { value: 'Old account draft' } })
+    await act(async () => {
+      bumpAccountEpoch()
+      useExperimentalStore.setState({ notesAccounts: [] })
+    })
+    expect(storeMock.noteState.updateNote).not.toHaveBeenCalled()
   })
 
   it('focuses the title only for a note created here, not for one opened from the list', async () => {

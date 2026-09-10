@@ -10,7 +10,9 @@ Notes is an experimental feature, currently available only in the web app, inclu
 
 Notes are grouped into notebooks. Each notebook is its own encrypted collection, and you can share one the same way you share a calendar or task list.
 
-If your account has no notebooks yet, SilentSuite creates a **Personal Notes** notebook on first sign-in.
+Notes is off by default. Turn on **Settings → Experimental → Enable Notes** to show it in navigation. This choice is remembered for your account in this browser, not synced to other devices. Turning it off hides Notes without deleting notes or stopping existing sync.
+
+If your account has no notebooks yet, SilentSuite creates a **Personal Notes** notebook when you enable Notes, not on sign-in.
 
 - With more than one notebook, a row of notebook chips above the list narrows it. **All** shows every visible notebook, and each row then names its notebook.
 - The **Notebook** menu below a note's title moves the note to another notebook. The note keeps its text and its last-edited time.

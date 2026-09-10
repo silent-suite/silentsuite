@@ -2,6 +2,11 @@ import { screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BottomNav } from '../bottom-nav'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
+import { useExperimentalStore } from '@/app/stores/use-experimental-store'
+
+vi.mock('@/app/stores/use-etebase-store', () => ({
+  useEtebaseStore: (selector: (state: { accountFingerprint: string }) => unknown) => selector({ accountFingerprint: 'nav-account' }),
+}))
 
 const nav = vi.hoisted(() => ({ pathname: '/calendar' }))
 
@@ -17,6 +22,7 @@ function renderNav(pathname: string) {
 
 describe('BottomNav', () => {
   beforeEach(() => {
+    useExperimentalStore.setState({ hydrated: true, notesAccounts: ['nav-account'] })
     nav.pathname = '/calendar'
   })
 
@@ -31,6 +37,12 @@ describe('BottomNav', () => {
     expect(notes).toHaveAttribute('href', '/notes')
     // Exactly one Notes tab: guards against a duplicate entry being added later.
     expect(within(mobileNav).getAllByRole('link', { name: 'Notes' })).toHaveLength(1)
+  })
+
+  it('hides Notes while disabled without removing other navigation', () => {
+    useExperimentalStore.setState({ notesAccounts: [] })
+    const mobileNav = renderNav('/calendar')
+    expect(within(mobileNav).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(['/calendar', '/tasks', '/contacts', '/settings'])
   })
 
   it('marks Notes as the current page on /notes and nested notes routes only', () => {
