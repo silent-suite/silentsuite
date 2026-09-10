@@ -117,7 +117,7 @@ describe.each(['setup_intent', 'payment_intent'])('%s full-document callback', (
     expect(useAuthStore.getState().pendingSignup).toEqual(original.pendingSignup)
     for (const [url, init] of vi.mocked(fetch).mock.calls) {
       expect(String(url)).toMatch(/payment-session\/v2\/current$/)
-      expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email, requestKey: id, recoverySecret: token })
+      expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email, requestKey: id, recoverySecret: token, switchingProfile: 'v1' })
     }
   })
   it.each(['missing', 'expired'])('does not trust succeeded with a %s checkpoint; recovery destination remains usable', async (kind) => {

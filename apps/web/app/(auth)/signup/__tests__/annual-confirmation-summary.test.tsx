@@ -12,28 +12,34 @@ const base: AnnualDisclosure = {
 describe('server-disclosed concise terms', () => {
   it('never promises no charge or a trial for immediate Stripe payment', () => {
     render(<AnnualTermsSummary disclosure={base} />)
-    expect(screen.getByText(/€36.00 is charged now by card/)).toHaveTextContent('not a free trial')
+    expect(screen.getByText(/€36.00 now by card/)).toHaveTextContent('one year of access')
     expect(screen.queryByText(/No charge today|30-day trial|Start.*free trial/)).not.toBeInTheDocument()
     expect(screen.queryByText('Not applicable')).not.toBeInTheDocument()
-    expect(screen.getByText(/Renews automatically each year at €36.00/)).toHaveTextContent('30-day refund window')
+    expect(screen.getByText(/Auto-renews at €36.00\/year/)).toHaveTextContent('30-day refund window')
     expect(annualCardSubmitLabel(base)).toBe('Pay €36.00 now')
     expect(annualRetryAction(base)).toBe('Retry card payment')
   })
   it('describes Bitcoin as prepaid without renewal or fake dates', () => {
     render(<AnnualTermsSummary disclosure={{ ...base, kind: 'prepaid', prepaid: true, autoRenew: false, renewalAmountMinor: null, bonusDays: 14 }} />)
-    expect(screen.getByText(/€36.00 paid now in Bitcoin/)).toHaveTextContent('No automatic renewal')
+    expect(screen.getByText(/€36.00 now/)).toHaveTextContent('No automatic renewal')
     expect(screen.getByText(/plus 14 bonus days/)).toBeInTheDocument()
-    expect(screen.getByText(/Full refund within 30 days/)).toBeInTheDocument()
+    expect(screen.getByText(/30-day full refund, no questions asked/)).toBeInTheDocument()
     expect(screen.queryByText(/Cancel before|Not applicable|UTC/)).not.toBeInTheDocument()
     expect(annualRetryAction({ ...base, kind: 'prepaid' })).toBe('Retry Bitcoin payment')
   })
   it('shows card-trial amount, exact charge date and no charge today', () => {
     const cardTrial: AnnualDisclosure = { ...base, kind: 'card_trial', firstChargeAt: '2099-09-10T12:00:00Z', cancelBy: '2099-09-10T12:00:00Z' }
     render(<AnnualTermsSummary disclosure={cardTrial} />)
-    expect(screen.getByText(/No charge today/)).toHaveTextContent('€36.00/year is charged on 2099-09-10 12:00 UTC')
-    expect(screen.getByText(/Renews automatically each year at €36.00/)).toHaveTextContent('Cancel anytime')
+    expect(screen.getByText(/€0 today/)).toHaveTextContent('€36.00 on 2099-09-10 12:00 UTC')
+    expect(screen.getByText(/Auto-renews at €36.00\/year/)).toHaveTextContent('Cancel anytime')
     expect(annualCardSubmitLabel(cardTrial)).toBe('Start free trial — no charge today')
     expect(annualRetryAction(cardTrial)).toBe('Retry card setup')
+  })
+  it('keeps a different renewal price visible in compact card terms', () => {
+    render(<AnnualTermsSummary disclosure={{ ...base, kind: 'card_trial', firstChargeAt: '2099-09-10T12:00:00Z', renewalAmountMinor: 4800 }} />)
+    expect(screen.getByText(/€0 today/)).toHaveTextContent('€36.00 on 2099-09-10 12:00 UTC')
+    expect(screen.getByText(/Auto-renews at €48.00\/year/)).toBeInTheDocument()
+    expect(screen.getByText(/Cancel before then to avoid a charge/)).toBeInTheDocument()
   })
   it('keeps the no-card line limited to free terms and states that continuing creates the account', () => {
     const noCard: AnnualDisclosure = { ...base, kind: 'no_auto_charge', firstChargeAmountMinor: 0, renewalAmountMinor: null, autoRenew: false, refundWindowDays: null, entitlementEndsAt: '2099-09-10T12:00:00Z' }

@@ -10,6 +10,10 @@ import {
   getAnonymousPaymentSessionRecovery,
   reconcileAnonymousPaymentSessionRecovery,
 } from '@/app/lib/billing-v2'
+import StripePaymentForm from '@/app/components/stripe-payment-form'
+import { AnnualTermsSummary, annualCardSubmitLabel } from '../components/annual-confirmation-summary'
+import { PaymentSwitchDecision, paymentSwitchLabel } from '../components/payment-switch-decision'
+import type { AnonymousPaymentSessionRecovery, AnnualProvider } from '@/app/lib/billing-v2'
 import { SignupRecoveryWarning } from '../components/signup-recovery-warning'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
@@ -111,6 +115,10 @@ export default function PendingPaymentPage() {
   const pendingSignup = useAuthStore((s) => s.pendingSignup)
   const [returnTo, setReturnTo] = useState<string | null>(null)
   const [showReturnFallback, setShowReturnFallback] = useState(false)
+  const [payable, setPayable] = useState<AnonymousPaymentSessionRecovery['continuation']>(undefined)
+  const [ownedProvider, setOwnedProvider] = useState<AnnualProvider | null>(null)
+  const [switching, setSwitching] = useState(false)
+  const [released, setReleased] = useState(false)
   const [state, setState] = useState<PaymentState>('pending')
   const [restoredEmail, setRestoredEmail] = useState('')
   const [restartError, setRestartError] = useState<string | null>(null)
@@ -160,7 +168,7 @@ export default function PendingPaymentPage() {
         requestKey: recovery.requestKey,
         email: recovery.email,
       })
-      if (result.state === 'open') {
+      if (result.state === 'open' && !result.continuation) {
         result = await reconcileAnonymousPaymentSessionRecovery({
           fetcher: fetch,
           billingApiUrl: BILLING_API_URL,
@@ -171,6 +179,15 @@ export default function PendingPaymentPage() {
         })
       }
       if (isCancelled()) return 'stop'
+      if (result.flow && activePendingSignup?.paymentMethod && result.flow.provider !== activePendingSignup.paymentMethod) throw new Error('Mismatched payment provider')
+      setOwnedProvider(result.flow?.provider ?? null)
+      setPayable(result.continuation)
+      if (result.state === 'released' && result.release) {
+        useAuthStore.getState().clearPendingSignupPaymentRecovery({ email: recovery.email, requestKey: recovery.requestKey, recoverySecret: recovery.paymentSessionToken })
+        if (!useAuthStore.getState().pendingSignup?.paymentSessionToken) setReleased(true)
+        setFlowCheckState('ready')
+        return 'stop'
+      }
       if (result.state === 'closed') {
         // Generic closed is also returned for unknown proof: never release authority.
         setFlowCheckState('ready')
@@ -187,6 +204,7 @@ export default function PendingPaymentPage() {
       return 'poll'
     } catch {
       if (!isCancelled()) {
+        setPayable(undefined)
         setFlowCheckState('failed')
         setRestartError('Could not verify whether a payment is already in progress. Retry before starting another invoice.')
       }
@@ -213,7 +231,7 @@ export default function PendingPaymentPage() {
 
   useEffect(() => {
     setReturnTo(normalizeSignupReturnTo(sessionStorage.getItem('silentsuite-pending-crypto-return-to')))
-    if (!recoveryInitialized) return
+    if (!recoveryInitialized || released || switching) return
     if (state === 'vault' || state === 'account' || state === 'settled') return
 
     let cancelled = false
@@ -241,7 +259,7 @@ export default function PendingPaymentPage() {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [loadCurrentFlow, recoveryInitialized, state])
+  }, [loadCurrentFlow, recoveryInitialized, state, released, switching])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -292,12 +310,12 @@ export default function PendingPaymentPage() {
     : state === 'unknown' ? 'Payment release not confirmed'
     : !hasRecovery ? 'Payment recovery details unavailable'
     : state === 'timeout' ? 'Payment status is still unconfirmed'
-    : 'Checking checkout status'
+    : payable ? 'Continue your existing payment' : 'Checking checkout status'
   const description = state === 'settled'
     ? 'Your annual prepaid access is active. Continue to vault setup.'
     : !hasRecovery
       ? 'This browser has no payment recovery capability. Return to the original signup tab to retry, or contact support if payment may have started. Do not start a second payment.'
-      : 'An invoice or payment has not been confirmed. Check the existing checkout status. Back keeps this same payment recovery; it does not cancel or start another payment.'
+      : payable ? 'These controls continue the same payment. Your original payment terms still apply.' : 'An invoice or payment has not been confirmed. Check the existing checkout status. Back keeps this same payment recovery; it does not cancel or start another payment.'
 
   function handleRecoveryBack(event: MouseEvent<HTMLAnchorElement>) {
     if (hasRecovery && !hasPersistedRecovery(activePendingSignup)) {
@@ -311,11 +329,22 @@ export default function PendingPaymentPage() {
       {hasRecovery && <button type="button" onClick={() => { void loadCurrentFlow() }} disabled={flowCheckState === 'loading'} className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-[rgb(var(--border))] px-4 py-2 text-sm">
         {flowCheckState === 'loading' ? 'Checking current payment...' : flowCheckState === 'failed' ? 'Retry payment status' : 'Check payment status again'}
       </button>}
-      <p className="text-sm">Reloading keeps this same payment. Cancellation and switching payment methods are not available here; contact support for help.</p>
+      {switching && ownedProvider ? <PaymentSwitchDecision provider={ownedProvider} onKeep={() => setSwitching(false)} onReleased={() => { setSwitching(false); setPayable(undefined); setReleased(true) }} /> : <>
+        {payable && <div className="space-y-4">
+          <AnnualTermsSummary disclosure={payable.disclosure} />
+          {payable.provider === 'stripe' && payable.clientSecret
+            ? <StripePaymentForm clientSecret={payable.clientSecret} mode={payable.disclosure.kind === 'card_trial' ? 'setup' : 'payment'} submitLabel={annualCardSubmitLabel(payable.disclosure)} selectedInterval="annual" onSuccess={() => { setPayable(undefined); void loadCurrentFlow() }} />
+            : payable.checkoutUrl && <a href={payable.checkoutUrl} onClick={() => saveSignupStateForRedirect('annual')} className="block rounded-md border p-3 text-center">Continue this Bitcoin payment</a>}
+        </div>}
+        {ownedProvider && <button type="button" className="block underline" onClick={() => setSwitching(true)}>{paymentSwitchLabel(ownedProvider)}</button>}
+      </>}
+      <p className="text-sm">Keep this payment until cancellation is confirmed. If its status remains uncertain, contact support.</p>
       <a href="/signup?recovery=payment" onClick={handleRecoveryBack} className="block underline">Reload this payment recovery</a>
       <a href="mailto:support@silentsuite.io" className="block underline">Contact support</a>
     </div>
   }
+
+  if (released) return <div className="space-y-4"><h1 className="text-xl font-semibold">Payment cancelled</h1><p>You can return to signup and choose another payment method. Verify your email again if this browser no longer has your signup details.</p><a href="/signup" className="underline">Choose another payment method</a></div>
 
   if (state === 'vault') {
     return (

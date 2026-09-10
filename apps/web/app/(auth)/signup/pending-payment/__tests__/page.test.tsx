@@ -52,7 +52,7 @@ function anonymousRecoverySignup(overrides: Record<string, unknown> = {}) {
   }
 }
 
-const recoveryBody = { contractVersion: 2, email: 'customer@example.test', requestKey: paymentSessionRequestKey, recoverySecret: paymentSessionToken }
+const recoveryBody = { contractVersion: 2, email: 'customer@example.test', requestKey: paymentSessionRequestKey, recoverySecret: paymentSessionToken, switchingProfile: 'v1' }
 const REDIRECT_STATE_KEY = 'silentsuite-signup-redirect-state'
 
 function persistedRedirectSignup(overrides: Record<string, unknown> = {}) {
@@ -164,15 +164,26 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     }
   })
 
-  it('does not offer unsafe live Bitcoin cancellation or issue a cancel request', async () => {
+  it('opens an explicit Bitcoin cancellation decision without issuing a cancel request', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }))))
     render(<PendingPaymentPage />)
     await screen.findByRole('button', { name: /check payment status again/i })
-    expect(screen.queryByRole('button', { name: /cancel/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/Cancellation and switching payment methods are not available here/)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' }))
+    expect(screen.getByLabelText('I have not sent any Bitcoin.')).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' })).toBeDisabled()
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
   })
 
+
+  it('restores the exact payable Bitcoin continuation without creating or reconciling another invoice', async () => {
+    const pending = anonymousRecoverySignup()
+    authState.pendingSignup = pending
+    const disclosure = { kind: 'prepaid', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: null, monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null, cancelBy: null, cancelByInclusive: false, autoRenew: false, prepaid: true, refundWindowDays: 30, bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' }, continuation: { requestKey: pending.paymentSessionRequestKey, provider: 'btcpay', providerObjectId: 'invoice_exact', checkoutUrl: 'https://btcpay.silentsuite.io/i/exact', disclosure } }))))
+    render(<PendingPaymentPage />)
+    expect(await screen.findByRole('link', { name: 'Continue this Bitcoin payment' })).toHaveAttribute('href', 'https://btcpay.silentsuite.io/i/exact')
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(['https://billing.test/auth/signup/payment-session/v2/current'])
+  })
 
   it('does not contact any recovery or authenticated endpoint when the local capability is absent', async () => {
     authState.pendingSignup = { email: 'customer@example.test', billingContractVersion: 2 }

@@ -75,7 +75,9 @@ export type AnonymousPaymentSessionRecovery = {
   contractVersion: 2
   // A closed response deliberately reveals no account, request, or provider
   // correlation. The local capability proves the recovery request instead.
-  state: 'open' | 'confirmed' | 'closed'
+  state: 'open' | 'confirmed' | 'closed' | 'released'
+  release?: { requestKey: string; provider: AnnualProvider; providerObjectId: string | null }
+  continuation?: { requestKey: string; provider: AnnualProvider; providerObjectId: string; disclosure: AnnualDisclosure; clientSecret?: string; checkoutUrl?: string }
   flow: { provider: AnnualProvider; status: string } | null
 }
 
@@ -336,20 +338,33 @@ export async function startAuthenticatedAnnualPayment(params: { fetcher: Billing
 }
 
 function assertAnonymousPaymentRecovery(value: unknown): asserts value is AnonymousPaymentSessionRecovery {
-  if (!isObject(value)
-    || !hasExactKeys(value, ['contractVersion', 'state', 'flow'])
-    || value.contractVersion !== 2
-    || !['open', 'confirmed', 'closed'].includes(String(value.state))) {
-    throw new Error('Billing did not return valid annual payment recovery')
-  }
-  if (value.flow === null) return
-  if (!isObject(value.flow)
-    || !hasExactKeys(value.flow, ['provider', 'status'])
-    || (value.flow.provider !== 'stripe' && value.flow.provider !== 'btcpay')
-    || typeof value.flow.status !== 'string') {
-    throw new Error('Billing did not return valid annual payment recovery')
+  const invalid = () => { throw new Error('Billing did not return valid annual payment recovery') }
+  if (!isObject(value) || !hasExactKeys(value, ['contractVersion', 'state', 'flow', ...('release' in value ? ['release'] : []), ...('continuation' in value ? ['continuation'] : [])])
+    || value.contractVersion !== 2 || !['open', 'confirmed', 'closed', 'released'].includes(String(value.state))) return invalid()
+  if (value.flow !== null && (!isObject(value.flow) || !hasExactKeys(value.flow, ['provider', 'status'])
+    || !['stripe', 'btcpay'].includes(String(value.flow.provider)) || typeof value.flow.status !== 'string')) return invalid()
+  if (value.state === 'released') {
+    const r = value.release
+    if (!isObject(r) || !hasExactKeys(r, ['requestKey', 'provider', 'providerObjectId']) || !isUuid(r.requestKey)
+      || !isObject(value.flow) || r.provider !== value.flow.provider
+      || (r.providerObjectId !== null && (typeof r.providerObjectId !== 'string' || !r.providerObjectId))) return invalid()
+  } else if ('release' in value) return invalid()
+  if ('continuation' in value) {
+    const c = value.continuation
+    if (value.state !== 'open' || !isObject(c) || !isObject(value.flow) || c.provider !== value.flow.provider
+      || !isUuid(c.requestKey) || typeof c.providerObjectId !== 'string' || !c.providerObjectId) return invalid()
+    const control = c.provider === 'stripe' ? 'clientSecret' : 'checkoutUrl'
+    if (!hasExactKeys(c, ['requestKey', 'provider', 'providerObjectId', 'disclosure', control]) || typeof c[control] !== 'string' || !c[control]) return invalid()
+    assertAnnualDisclosure(c.disclosure)
+    if (c.provider === 'stripe' && !['card_trial', 'charge_now'].includes(c.disclosure.kind)) return invalid()
+    if (c.provider === 'btcpay') {
+      if (c.disclosure.kind !== 'prepaid') return invalid()
+      try { const url = new URL(c.checkoutUrl as string); if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return invalid() } catch { return invalid() }
+    }
   }
 }
+
+export const ANONYMOUS_RECOVERY_SWITCHING_PROFILE = 'v1' as const
 
 type AnonymousPaymentSessionRecoveryRequest = {
   fetcher: BillingV2Fetch
@@ -358,6 +373,7 @@ type AnonymousPaymentSessionRecoveryRequest = {
   recoverySecret: string
   requestKey: string
   email: string
+  confirmNoBitcoinSent?: boolean
 }
 
 async function anonymousPaymentSessionRecovery(
@@ -365,7 +381,8 @@ async function anonymousPaymentSessionRecovery(
   params: AnonymousPaymentSessionRecoveryRequest,
 ): Promise<AnonymousPaymentSessionRecovery> {
   const { fetcher } = params
-  if (!isRecoveryToken(params.paymentSessionToken)
+  if ((params.confirmNoBitcoinSent !== undefined && typeof params.confirmNoBitcoinSent !== 'boolean')
+    || !isRecoveryToken(params.paymentSessionToken)
     || !isRecoveryToken(params.recoverySecret)
     || params.paymentSessionToken !== params.recoverySecret
     || !isUuid(params.requestKey)
@@ -388,12 +405,19 @@ async function anonymousPaymentSessionRecovery(
         email: params.email,
         requestKey: params.requestKey,
         recoverySecret: params.recoverySecret,
+        // Explicit opt-in to release receipts, payable continuation and
+        // provider cancellation. A Billing release that ignores this literal
+        // still answers with the legacy open/confirmed/closed shape, which the
+        // validator below accepts without granting any switching authority.
+        switchingProfile: ANONYMOUS_RECOVERY_SWITCHING_PROFILE,
+        ...(path === '/cancel' && params.confirmNoBitcoinSent !== undefined ? { confirmNoBitcoinSent: params.confirmNoBitcoinSent } : {}),
       }),
     },
   )
   const body = await jsonOrThrow(response)
   if (response.status !== 200) throw new Error('Billing returned an invalid annual payment recovery response status')
   assertAnonymousPaymentRecovery(body)
+  if ((body.release && body.release.requestKey !== params.requestKey) || (body.continuation && body.continuation.requestKey !== params.requestKey)) throw new Error('Billing returned mismatched payment recovery identity')
   return body
 }
 

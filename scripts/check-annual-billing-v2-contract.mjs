@@ -93,12 +93,12 @@ function checkPendingPaymentRecovery(source) {
       requestKey: recovery.requestKey, email: recovery.email
     })`.slice(1, -1)), `${name} must carry the same attempt's email, request key, and proof`)
   }
-  // This page has no fresh-payment or release authority at all. Only the two
-  // proof-bound recovery readers may be imported from the billing client, and
-  // store selection cannot regain removed creation/release capabilities.
+  // Only proof-bound recovery readers may be imported. Exact released receipts
+  // may clear their own capability; generic closed and fresh creation stay sealed.
   const storeCapabilities = new Set(['completeSignup', 'createEtebaseAccount', 'finalizePaidSignup', 'saveSignupStateForRedirect', 'restoreSignupStateFromRedirect', 'pendingSignup', 'recoverCompletedSignupSession'])
   for (const node of nodes) {
     if (ts.isImportDeclaration(node) && node.moduleSpecifier.text === '@/app/lib/billing-v2') {
+      if (node.importClause?.isTypeOnly) continue
       const bindings = node.importClause?.namedBindings
       requireContract(!node.importClause?.name && bindings && ts.isNamedImports(bindings)
         && bindings.elements.length === 2
@@ -113,7 +113,13 @@ function checkPendingPaymentRecovery(source) {
     }
     if (ts.isPropertyAccessExpression(node) && ts.isCallExpression(node.expression)
       && exact(node.expression.expression, 'useAuthStore.getState')) {
-      requireContract(node.name.text === 'pendingSignup', 'imperative store access is read-only')
+      if (node.name.text !== 'pendingSignup') {
+        requireContract(node.name.text === 'clearPendingSignupPaymentRecovery', 'imperative store access cannot create payment')
+        let ancestor = node.parent
+        while (ancestor && !(ts.isIfStatement(ancestor) && exact(ancestor.expression, "result.state === 'released' && result.release"))) ancestor = ancestor.parent
+        requireContract(Boolean(ancestor), 'only an exact released receipt can clear recovery')
+        requireContract(exact(node.parent, 'useAuthStore.getState().clearPendingSignupPaymentRecovery({ email: recovery.email, requestKey: recovery.requestKey, recoverySecret: recovery.paymentSessionToken })'), 'release must retain exact proof identity')
+      }
     }
     if (ts.isCallExpression(node) && exact(node.expression, 'fetch')) {
       requireContract(false, 'direct transport cannot bypass proof-bound recovery')

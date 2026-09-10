@@ -474,7 +474,7 @@ it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retain
     if (pathname.endsWith('/payment-methods')) return json({ paymentMethods: [{ id: 'BTC', address: 'bc1-fixture', qrValue: 'bitcoin:bc1-fixture', amount: '0.001', currency: 'BTC' }] })
     if (pathname.endsWith('/invoice/fixture')) return json({ status: 'new' })
     if (/payment-session\/v2\/(current|reconcile)$/.test(pathname)) {
-      expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email, requestKey: started!.requestKey, recoverySecret: started!.recoverySecret })
+      expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email, requestKey: started!.requestKey, recoverySecret: started!.recoverySecret, switchingProfile: 'v1' })
       return json({ contractVersion: 2, state: confirmed ? 'confirmed' : 'open', flow: { provider: 'btcpay', status: confirmed ? 'provider_confirmed' : 'provider_pending' } })
     }
     throw new Error(`Unexpected test request: ${pathname}`)

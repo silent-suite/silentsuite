@@ -52,7 +52,7 @@ it.each(['btcpay', 'stripe'] as const)('restores the exact %s attempt after full
   for (const [url, init] of vi.mocked(fetch).mock.calls) {
     expect(String(url)).toMatch(/\/auth\/signup\/payment-session\/v2\/(current|reconcile)$/)
     expect(String(url)).not.toContain(token)
-    expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email, requestKey, recoverySecret: token })
+    expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email, requestKey, recoverySecret: token, switchingProfile: 'v1' })
   }
 })
 

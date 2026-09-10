@@ -24,6 +24,7 @@ import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import dynamic from 'next/dynamic'
 import { AnnualTermsSummary, annualRetryAction, annualCardSubmitLabel, noCardTrialConsequence } from './components/annual-confirmation-summary'
 import PendingPaymentPage from './pending-payment/page'
+import { PaymentSwitchDecision, paymentSwitchLabel } from './components/payment-switch-decision'
 import { useSignupNavigation } from './use-signup-navigation'
 import { SignupRecoveryWarning } from './components/signup-recovery-warning'
 import { PasswordKeyAcknowledgement, StepCreateVault } from './components/step-create-vault'
@@ -558,9 +559,10 @@ function CryptoPaymentPanel({
   const saveSignupStateForRedirect = useAuthStore((s) => s.saveSignupStateForRedirect)
   const [paymentMethods, setPaymentMethods] = useState<CryptoPaymentMethod[]>([])
   const [selectedMethodId, setSelectedMethodId] = useState<string | null>(null)
-  const [status, setStatus] = useState<'loading' | 'pending' | 'settled' | 'expired' | 'error'>('loading')
+  const [status, setStatus] = useState<'loading' | 'pending' | 'processing' | 'settled' | 'expired' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [detailsAttempt, setDetailsAttempt] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -579,27 +581,31 @@ function CryptoPaymentPanel({
         if (!methods.some((method) => method.qrValue || method.paymentLink || method.address)) {
           throw new Error('Could not load Bitcoin payment details.')
         }
-        setPaymentMethods(methods)
-        setSelectedMethodId(methods[0]?.id ?? null)
-        setStatus('pending')
+        const usable = methods.filter(method => (method.id === 'BTC-CHAIN' || method.id === 'BTC-LN' || method.id === 'BTC') && (method.qrValue || method.paymentLink || method.address))
+        if (!usable.length) throw new Error('Could not load Bitcoin payment details.')
+        setPaymentMethods(usable)
+        setSelectedMethodId(usable[0].id)
+        setStatus(current => ['settled', 'expired', 'processing'].includes(current) ? current : 'pending')
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Could not load Bitcoin payment details.')
-          setStatus('error')
+          setStatus(current => ['settled', 'expired', 'processing'].includes(current) ? current : 'error')
         }
       }
     }
 
     loadPaymentMethods()
     return () => { cancelled = true }
-  }, [session])
+  }, [session, detailsAttempt])
 
   useEffect(() => {
     let cancelled = false
     let timer: number | undefined
+    let attempts = 0
 
     async function poll() {
       if (!session) return
+      if (++attempts > 180) { setStatus('processing'); return }
       try {
         const res = await fetch(`${BILLING_API_URL}/subscription/crypto/invoice/${session.invoiceId}`, {
           credentials: 'include',
@@ -616,6 +622,7 @@ function CryptoPaymentPanel({
           timer = window.setTimeout(onPaymentComplete, 1200)
           return
         }
+        if (data.status === 'processing') setStatus('processing')
         if (data.status === 'expired' || data.status === 'invalid') {
           setStatus('expired')
           return
@@ -676,6 +683,8 @@ function CryptoPaymentPanel({
             Payment confirmed for your {annualOfferPlanLabel(annualOffer)}. Account and vault setup still need to finish.
           </div>
         </div>
+      ) : status === 'processing' ? (
+        <div className="space-y-3 text-sm"><p>Payment is processing or still unconfirmed. Check this payment before taking another action.</p><a className="underline" href="/signup?recovery=payment">Check this payment’s status</a></div>
       ) : status === 'expired' ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-200">
           This Bitcoin invoice expired. Recover the existing payment to check its final status before choosing another payment. Expiry alone does not confirm cancellation.
@@ -683,6 +692,7 @@ function CryptoPaymentPanel({
       ) : status === 'error' ? (
         <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
           <p>{error ?? 'Could not load Bitcoin payment details.'}</p>
+          <button type="button" onClick={() => { setError(null); setStatus('loading'); setDetailsAttempt(value => value + 1) }} className="underline">Retry Bitcoin payment details</button>
           <Link href={session.checkoutUrl} onClick={handleExternalCheckout} className="inline-flex h-9 w-full items-center justify-center rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-500/10 dark:text-red-200">
             Open in BTCPay instead
           </Link>
@@ -753,7 +763,7 @@ function CryptoPaymentPanel({
         className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        {session ? 'Back to payment methods' : 'Back'}
+        {session ? paymentSwitchLabel('btcpay') : 'Back'}
       </button>
     </div>
   )
@@ -908,6 +918,8 @@ function StepChoosePlan({
       <CryptoPaymentPanel
         annualOffer={annualOfferDetails}
         session={cryptoPaymentSession}
+        provisionError={provisionError}
+        provisioning={provisioning}
         onBack={onBack}
         disclosure={cryptoPaymentSession.disclosure}
         onPaymentComplete={onPaymentComplete}
@@ -1033,6 +1045,8 @@ function StepChoosePlan({
           </div>
         </div>
 
+        <button type="button" disabled={provisioning} onClick={onBack} className="text-sm underline">{paymentSwitchLabel('stripe')}</button>
+        {provisionError && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{provisionError}</p>}
         {/* Stripe payment form */}
         {provisioning ? (
           <div className="flex flex-col items-center justify-center py-8">
@@ -1081,7 +1095,7 @@ function StepChoosePlan({
           className="flex items-center gap-1.5 text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to plan selection
+          {paymentSwitchLabel('stripe')}
         </button>
       </div>
     )
@@ -1486,6 +1500,7 @@ function SignupJourney() {
   const [pendingAnnualClaim, setPendingAnnualClaim] = useState<PendingAnnualClaim | null>(null)
   // Reservation cancellation never resolves Etebase/account or provider authority.
   // Keep this bounded UI pre-claim; partial/uncertain creation keeps its continuation.
+  const [paymentSwitch, setPaymentSwitch] = useState<'stripe' | 'btcpay' | null>(null)
   const [selectionCancellation, setSelectionCancellation] = useState<'confirm' | 'unknown' | 'refused' | 'verify' | null>(null)
   const pendingAnnualClaimRef = useRef(pendingAnnualClaim)
   pendingAnnualClaimRef.current = pendingAnnualClaim
@@ -1520,7 +1535,7 @@ function SignupJourney() {
     step,
     view: awaitingEmailProof ? 'sent' : sendingEmail ? 'sending' : planView,
     intercept: () => {
-      if (operationRef.current || selectionCancellation) return true
+      if (operationRef.current || selectionCancellation || paymentSwitch) return true
       if (awaitingEmailProof || sendingEmail || pendingAnnualClaim || clientSecret || cryptoPaymentSession || claimAttemptedRef.current) {
         backRef.current()
         return true
@@ -2122,6 +2137,11 @@ function SignupJourney() {
       setProvisionError('Your account is already created. Continue setup to establish your session; no new trial or payment is needed.')
       return
     }
+    if (clientSecret || cryptoPaymentSession) {
+      setProvisionError(null)
+      setPaymentSwitch(cryptoPaymentSession ? 'btcpay' : 'stripe')
+      return
+    }
     if (pendingAnnualClaim && pendingAnnualClaim.provider !== 'none' && claimAttemptedRef.current) {
       setSelectionCancellation(null)
       setPlanView('confirm')
@@ -2333,6 +2353,21 @@ function SignupJourney() {
         {step === 'admin' && (
           <StepAdminInfo serverUrl={serverUrl.trim()} onNext={handleAdminInfoComplete} />
         )}
+        {step === 'plan' && paymentSwitch && <PaymentSwitchDecision provider={paymentSwitch}
+          onKeep={() => setPaymentSwitch(null)}
+          onReleased={() => {
+            setPaymentSwitch(null)
+            setClientSecret(null)
+            setCardDisclosure(null)
+            setCryptoPaymentSession(null)
+            pendingAnnualClaimRef.current = null
+            setPendingAnnualClaim(null)
+            claimAttemptedRef.current = false
+            setProvisionError(null)
+            navigation.clear()
+            setPlanView('method')
+          }} />}
+        <div hidden={Boolean(paymentSwitch)}>
         {step === 'plan' && !selectionCancellation && (
           annualOffer ? <StepChoosePlan
             key={`${annualOffer.requestId}:${annualOffer.offer.offerToken}:${selectionGeneration}`}
@@ -2367,6 +2402,7 @@ function SignupJourney() {
             )}
           </div>
         )}
+        </div>
         {step === 'paidAccount' && (
           <StepCreatePaidAccount
             email={formDataRef.current?.email ?? ''}
